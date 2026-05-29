@@ -1,10 +1,21 @@
-from kokoro_agent.application.run_agent import run_agent
+from kokoro_agent.application.run_agent import RunAgentInput, run_agent
 
 
-def test_run_agent_emits_message_and_completion_events() -> None:
-    events = list(run_agent("hello kokoro"))
+def test_run_agent_emits_replayable_session_events() -> None:
+    events = list(
+        run_agent(
+            RunAgentInput(
+                session_id="ses_01",
+                conversation_id="conv_01",
+                user_input="hello kokoro",
+            )
+        )
+    )
 
-    assert events[0]["event"] == "run.created"
-    assert any(event["event"] == "message.delta" for event in events)
-    assert any(event["event"] == "message.completed" for event in events)
+    assert events[0]["event"] == "session.created"
+    assert events[0]["session_id"] == "ses_01"
+    assert events[0]["conversation_id"] == "conv_01"
+    assert events[1]["event"] == "message.delta"
+    assert events[1]["payload"]["role"] == "assistant"
     assert events[-1]["event"] == "run.completed"
+    assert events[-1]["payload"]["status"] == "completed"

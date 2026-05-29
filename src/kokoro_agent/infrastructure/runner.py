@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-
-from kokoro_agent.application.run_agent import run_agent
+from kokoro_agent.infrastructure.http_server import build_server
 
 
-def run(user_input: str) -> Iterator[dict[str, object]]:
-    return run_agent(user_input)
+# runner 只负责启动 HTTP + SSE 入口，避免把传输细节泄露回应用层。
+def run(host: str = "127.0.0.1", port: int = 8001) -> None:
+    server = build_server(host=host, port=port)
+    server.serve_forever()

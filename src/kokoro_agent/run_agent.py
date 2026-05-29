@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from uuid import uuid4
 
-from kokoro_agent.domain import events
+import kokoro_agent.events as events
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-from kokoro_agent.application.run_agent import RunAgentInput, run_agent
+from kokoro_agent.run_agent import RunAgentInput, run_agent
 
 
 def test_run_agent_emits_replayable_session_events() -> None:

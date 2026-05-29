@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from kokoro_agent.domain.events import SessionEvent
+from kokoro_agent.events import SessionEvent
 
 
 # SSE id 直接复用 cursor，方便 session 侧后续承接重放游标。

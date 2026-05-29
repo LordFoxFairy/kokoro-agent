@@ -6,9 +6,9 @@ from collections.abc import Callable, Iterator
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from kokoro_agent.application.run_agent import RunAgentInput, run_agent
-from kokoro_agent.domain.events import SessionEvent
-from kokoro_agent.infrastructure.sse import format_sse
+from kokoro_agent.events import SessionEvent
+from kokoro_agent.run_agent import RunAgentInput, run_agent
+from kokoro_agent.sse import format_sse
 
 LOGGER = logging.getLogger(__name__)
 RunAgentFn = Callable[[RunAgentInput], Iterator[SessionEvent]]

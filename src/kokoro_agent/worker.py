@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from langchain_core.language_models import BaseChatModel
 from pydantic import ValidationError
 
 from kokoro_agent.events import RunRequest
 from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.stream_port import StreamPort, make_stream_port
-from kokoro_agent.run_agent import run_agent
+from kokoro_agent.run_agent import BrainModel, run_agent
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ async def _handle_request(
     port: StreamPort,
     raw: dict[str, object],
     processed: set[str],
-    model: BaseChatModel,
+    model: BrainModel,
 ) -> None:
     try:
         request = RunRequest.model_validate(raw)
@@ -43,7 +42,7 @@ async def _handle_request(
 
 
 async def run_once(
-    port: StreamPort, processed: set[str], model: BaseChatModel
+    port: StreamPort, processed: set[str], model: BrainModel
 ) -> None:
     """Drain currently-pending run requests once and emit their event streams.
 

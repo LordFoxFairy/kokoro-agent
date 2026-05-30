@@ -1,135 +1,196 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, BaseMessage
 
 from kokoro_agent.events import RunRequest
 from kokoro_agent.run_agent import run_agent
 
 
-class _ChunkFake(GenericFakeChatModel):
-    """Fake brain that emits one ``on_chat_model_stream`` event with given content.
-
-    GenericFakeChatModel itself rejects non-string / empty content at the
-    generation layer, so to exercise ``_text_of``'s list-content branch we
-    override ``astream_events`` directly with the exact event shape LangChain
-    produces (``on_chat_model_stream`` carrying an ``AIMessageChunk``).
-    """
-
-    chunk_content: Any = ""
-
-    async def astream_events(  # type: ignore[override]
-        self, *args: object, **kwargs: object
-    ) -> AsyncIterator[dict[str, Any]]:
-        yield {
-            "event": "on_chat_model_stream",
-            "data": {"chunk": AIMessageChunk(content=self.chunk_content)},
-        }
-
-
-class _EmptyStreamFake(GenericFakeChatModel):
-    """Fake brain whose stream yields no model-stream events at all."""
-
-    async def astream_events(  # type: ignore[override]
-        self, *args: object, **kwargs: object
-    ) -> AsyncIterator[dict[str, Any]]:
-        return
-        yield  # pragma: no cover — marks this an async generator
-
-
 class _BoomFake(GenericFakeChatModel):
-    """Fake brain that fails as soon as streaming starts."""
+    """Fake brain that fails as soon as it is invoked."""
 
-    async def astream_events(  # type: ignore[override]
+    async def ainvoke(  # type: ignore[override]
         self, *args: object, **kwargs: object
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> BaseMessage:
         raise RuntimeError("model down")
-        yield  # pragma: no cover — marks this an async generator
 
 
-def _req(text: str = "hi") -> RunRequest:
+class _LoopFake(GenericFakeChatModel):
+    """Fake brain that always asks for a tool call -> drives the loop cap."""
+
+    async def ainvoke(  # type: ignore[override]
+        self, *args: object, **kwargs: object
+    ) -> BaseMessage:
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "echo_search",
+                    "args": {"query": "x"},
+                    "id": "call_loop",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+
+def _req(text: str = "hi", style: str = "fast") -> RunRequest:
     return RunRequest(
         kind="run.request",
         run_id="run_1",
         session_id="s",
         conversation_id="c",
         input=text,
-        execution_style="fast",
+        execution_style=style,
     )
 
 
-@pytest.mark.asyncio
-async def test_run_agent_streams_text_then_completes() -> None:
-    # GenericFakeChatModel streams "Hello world" as ["Hello", " ", "world"].
-    model = GenericFakeChatModel(messages=iter([AIMessage(content="Hello world")]))
-    events = [e async for e in run_agent(_req(), model)]
-    kinds = [e.kind for e in events]
-    assert kinds[0] == "run.started"
-    assert "text.delta" in kinds
-    assert kinds[-2] == "text.completed"
-    assert kinds[-1] == "run.completed"
+def _tc(name: str, args: dict[str, Any], call_id: str) -> dict[str, Any]:
+    return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
 
-    # seq strictly increasing from 1, no duplicates.
+
+def _assert_seq_monotonic(events: list[Any]) -> None:
     seqs = [e.seq for e in events]
     assert seqs == sorted(seqs)
     assert seqs[0] == 1
     assert len(set(seqs)) == len(seqs)
 
-    # Delta concatenation == completed text == full message (robust to chunking).
-    deltas = "".join(
-        str(e.payload["text"]) for e in events if e.kind == "text.delta"
-    )
-    completed = next(e for e in events if e.kind == "text.completed")
-    assert completed.payload["text"] == deltas == "Hello world"
 
-    # run.completed carries terminal status.
+@pytest.mark.asyncio
+async def test_plain_text_run_completes() -> None:
+    model = GenericFakeChatModel(messages=iter([AIMessage(content="Final")]))
+    events = [e async for e in run_agent(_req(), model)]
+    kinds = [e.kind for e in events]
+    assert kinds == [
+        "run.started",
+        "text.delta",
+        "text.completed",
+        "run.completed",
+    ]
+    _assert_seq_monotonic(events)
+    completed = next(e for e in events if e.kind == "text.completed")
+    assert completed.payload["text"] == "Final"
     assert events[-1].payload == {"status": "completed"}
 
 
 @pytest.mark.asyncio
-async def test_list_content_extracts_only_text_blocks() -> None:
-    # A multi-block chunk: only the text block may surface; thinking must not.
-    model = _ChunkFake(
-        messages=iter([]),
-        chunk_content=[
-            {"type": "text", "text": "Hi"},
-            {"type": "thinking", "thinking": "secret"},
-        ],
+async def test_tool_call_then_final_text() -> None:
+    model = GenericFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[_tc("echo_search", {"query": "cats"}, "call_1")],
+                ),
+                AIMessage(content="Final"),
+            ]
+        )
     )
     events = [e async for e in run_agent(_req(), model)]
-    full = "".join(
-        str(e.payload["text"]) for e in events if e.kind == "text.delta"
-    )
-    assert "secret" not in full
-    assert full == "Hi"
-    completed = next(e for e in events if e.kind == "text.completed")
-    assert completed.payload["text"] == "Hi"
+    kinds = [e.kind for e in events]
+    assert kinds == [
+        "run.started",
+        "tool.invoked",
+        "tool.returned",
+        "text.delta",
+        "text.completed",
+        "run.completed",
+    ]
+    _assert_seq_monotonic(events)
+
+    invoked = next(e for e in events if e.kind == "tool.invoked")
+    returned = next(e for e in events if e.kind == "tool.returned")
+    assert invoked.payload["tool_call_ref"] == returned.payload["tool_call_ref"] == "call_1"
+    assert invoked.payload["tool_name"] == "echo_search"
+    assert returned.payload["status"] == "ok"
 
 
 @pytest.mark.asyncio
-async def test_empty_stream_still_completes() -> None:
-    # No stream chunks at all -> still a well-formed run with empty completion.
-    model = _EmptyStreamFake(messages=iter([]))
-    events = [e async for e in run_agent(_req(""), model)]
+async def test_tool_error_surfaces_error_status() -> None:
+    model = GenericFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[_tc("nope", {"query": "x"}, "call_e")],
+                ),
+                AIMessage(content="Done"),
+            ]
+        )
+    )
+    events = [e async for e in run_agent(_req(), model)]
+    returned = next(e for e in events if e.kind == "tool.returned")
+    assert returned.payload["status"] == "error"
+    assert events[-1].kind == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_thinking_style_emits_thinking_before_text() -> None:
+    model = GenericFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content=[
+                        {"type": "thinking", "thinking": "reasoning"},
+                        {"type": "text", "text": "Final"},
+                    ]
+                )
+            ]
+        )
+    )
+    events = [e async for e in run_agent(_req(style="thinking"), model)]
     kinds = [e.kind for e in events]
-    assert kinds == ["run.started", "text.completed", "run.completed"]
-    assert "text.delta" not in kinds
-    completed = next(e for e in events if e.kind == "text.completed")
-    assert completed.payload["text"] == ""
+    assert "thinking.delta" in kinds
+    assert kinds.index("thinking.delta") < kinds.index("text.delta")
+
+    thinking = next(e for e in events if e.kind == "thinking.delta")
+    assert thinking.payload == {"text": "reasoning"}
+
+    # Reasoning must never leak into the visible answer.
+    text_blob = "".join(
+        str(e.payload["text"]) for e in events if e.kind == "text.delta"
+    )
+    assert "reasoning" not in text_blob
+    assert text_blob == "Final"
+
+
+@pytest.mark.asyncio
+async def test_fast_style_has_no_thinking() -> None:
+    model = GenericFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content=[
+                        {"type": "thinking", "thinking": "reasoning"},
+                        {"type": "text", "text": "Final"},
+                    ]
+                )
+            ]
+        )
+    )
+    events = [e async for e in run_agent(_req(style="fast"), model)]
+    assert "thinking.delta" not in [e.kind for e in events]
 
 
 @pytest.mark.asyncio
 async def test_brain_error_yields_run_failed() -> None:
-    # Any brain failure is caught and surfaced, never re-raised.
     model = _BoomFake(messages=iter([]))
     events = [e async for e in run_agent(_req(), model)]
     assert events[0].kind == "run.started"
     assert events[-1].kind == "run.failed"
     assert events[-1].payload["error_kind"] == "RuntimeError"
     assert "model down" in str(events[-1].payload["message"])
-    # No completion event when the run failed.
+    assert "run.completed" not in [e.kind for e in events]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_limit_fails_loud() -> None:
+    model = _LoopFake(messages=iter([]))
+    events = [e async for e in run_agent(_req(), model)]
+    assert events[-1].kind == "run.failed"
+    assert events[-1].payload["error_kind"] == "ToolLoopLimit"
     assert "run.completed" not in [e.kind for e in events]

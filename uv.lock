@@ -553,6 +553,7 @@ source = { editable = "." }
 dependencies = [
     { name = "deepagents" },
     { name = "langchain" },
+    { name = "langchain-anthropic" },
     { name = "pydantic" },
     { name = "redis" },
 ]
@@ -569,6 +570,7 @@ dev = [
 requires-dist = [
     { name = "deepagents" },
     { name = "langchain" },
+    { name = "langchain-anthropic" },
     { name = "pydantic", specifier = ">=2" },
     { name = "redis", specifier = ">=5" },
 ]

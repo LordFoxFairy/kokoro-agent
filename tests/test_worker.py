@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from kokoro_agent.infrastructure.model import make_agent

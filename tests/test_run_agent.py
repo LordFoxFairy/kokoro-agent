@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from kokoro_agent.events import RunRequest
+from kokoro_agent.events import AgentEvent, RunRequest
 from kokoro_agent.infrastructure.model import make_agent
 from kokoro_agent.run_agent import run_agent
 
@@ -21,7 +21,7 @@ def _req(text: str = "plan and search", style: str = "thinking") -> RunRequest:
     )
 
 
-async def _collect(req: RunRequest) -> list:
+async def _collect(req: RunRequest) -> list[AgentEvent]:
     agent = make_agent()  # KOKORO_MODEL=scripted via monkeypatch
     return [e async for e in run_agent(req, agent)]
 
@@ -89,7 +89,7 @@ async def test_run_failed_on_agent_error(
 
     async def _boom_gen():  # type: ignore[no-untyped-def]
         raise RuntimeError("agent down")
-        yield  # make it an async generator  # noqa: unreachable
+        yield  # make it an async generator
 
     bad_agent = MagicMock()
     bad_agent.astream_events = MagicMock(return_value=_boom_gen())

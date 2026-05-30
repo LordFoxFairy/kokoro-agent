@@ -54,12 +54,13 @@ class DeepAgentsFakeChatModel(GenericFakeChatModel):
         result: ChatResult = self._generate(messages, stop=stop, **kwargs)
         message = result.generations[0].message
         if not isinstance(message, AIMessage):
+            # Non-AIMessage: cast content to str for safety
             yield ChatGenerationChunk(
-                message=AIMessageChunk(content=str(message.content))
+                message=AIMessageChunk(content=str(message.content))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
             )
             return
         chunk = AIMessageChunk(
-            content=message.content,
+            content=message.content,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
             tool_calls=message.tool_calls,  # type: ignore[arg-type]
             id=message.id,
         )

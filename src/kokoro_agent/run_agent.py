@@ -41,9 +41,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from typing import cast
-
-from langgraph.graph.state import CompiledStateGraph
+from typing import Any, cast
 
 from kokoro_agent.events import AgentEvent, RunRequest
 
@@ -51,9 +49,6 @@ LOGGER = logging.getLogger(__name__)
 
 ASTREAM_TIMEOUT_S = 120
 RECURSION_LIMIT = 25
-
-# A brain is now a DeepAgents graph; only astream_events is consumed.
-Agent = CompiledStateGraph  # type: ignore[type-arg]
 
 
 def _text_and_thinking(chunk: object) -> tuple[str, str]:
@@ -83,7 +78,7 @@ def _text_and_thinking(chunk: object) -> tuple[str, str]:
 
 
 async def run_agent(  # noqa: C901 — cohesive event mapper
-    req: RunRequest, agent: Agent
+    req: RunRequest, agent: Any
 ) -> AsyncIterator[AgentEvent]:
     """Stream a DeepAgents run as raw agent events (fully generic).
 
@@ -115,8 +110,8 @@ async def run_agent(  # noqa: C901 — cohesive event mapper
                 config={"recursion_limit": RECURSION_LIMIT},
             )
             async for event in stream:
-                evt_type = cast("str", event["event"])
-                name = cast("str", event.get("name", ""))
+                evt_type: str = event["event"]
+                name: str = event.get("name", "")
                 data = cast("dict[str, object]", event.get("data", {}))
 
                 if evt_type == "on_chat_model_stream":

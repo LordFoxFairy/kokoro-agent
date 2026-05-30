@@ -61,9 +61,10 @@ from __future__ import annotations
 
 import os
 
-from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, create_deep_agent, register_harness_profile
+from typing import Any
+
+from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, create_deep_agent, register_harness_profile  # pyright: ignore[reportUnknownVariableType]
 from langchain.chat_models import init_chat_model
-from langgraph.graph.state import CompiledStateGraph
 
 from kokoro_agent.infrastructure._scripted import DeepAgentsFakeChatModel, scripted_planning_model
 from kokoro_agent.tools import TOOL_OBJECTS
@@ -98,8 +99,12 @@ register_harness_profile("deepagents-fake-chat-model", _KOKORO_HARNESS_PROFILE)
 register_harness_profile("anthropic", _KOKORO_HARNESS_PROFILE)
 
 
-def make_agent() -> CompiledStateGraph:  # type: ignore[type-arg]
+def make_agent() -> Any:
     """Build the DeepAgents engine selected by ``KOKORO_MODEL``.
+
+    Returns a ``CompiledStateGraph`` (langgraph graph with ``astream_events``).
+    Typed as ``Any`` because langgraph lacks published type stubs and the
+    CompiledStateGraph generic parameters propagate Unknown through the chain.
 
     Only ``write_todos`` (planning) + user-registered tools (echo_search,
     clock) are visible to the model; FS/execute/task tools are excluded.
@@ -111,7 +116,7 @@ def make_agent() -> CompiledStateGraph:  # type: ignore[type-arg]
     else:
         model = init_chat_model(spec)  # type: ignore[assignment]
 
-    return create_deep_agent(  # type: ignore[return-value]
+    return create_deep_agent(  # pyright: ignore[reportUnknownVariableType,reportReturnType]
         model=model,  # type: ignore[arg-type]
         tools=TOOL_OBJECTS,
         system_prompt=KOKORO_AGENT_PROMPT,

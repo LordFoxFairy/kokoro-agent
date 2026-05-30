@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import json
+import os
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 _CURSOR_WIDTH = 20
+_REDIS_FIELD = "data"
+_BLOCK_MS = 1000
+
+# Redis async client methods are typed with sync/async overloads that pyright
+# resolves loosely; these aliases pin the concrete shapes we rely on.
+_Fields = dict[bytes, bytes]
+_Entry = tuple[bytes, _Fields]
+_ReadResponse = list[tuple[bytes, list[_Entry]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,3 +96,76 @@ class MemoryStreamPort:
             if index >= len(self._streams.get(stream, ())):
                 signal.clear()
                 await signal.wait()
+
+
+def _decode(value: object) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
+class RedisStreamPort:
+    """Redis Streams StreamPort.
+
+    Each event is XADD'ed as a single JSON blob under the ``data`` field; the
+    Redis entry id is the natural cursor. ``read_all`` uses XRANGE - +;
+    ``subscribe`` uses XREAD BLOCK looping from the last seen cursor. Works
+    across processes and languages (Python <-> TS).
+    """
+
+    def __init__(self, url: str = "redis://127.0.0.1:6379/0") -> None:
+        from redis.asyncio import from_url
+
+        self._redis: Redis = from_url(url)
+
+    async def aclose(self) -> None:
+        await self._redis.aclose()
+
+    def _to_item(self, entry_id: bytes, fields: _Fields) -> StreamItem:
+        raw = fields.get(_REDIS_FIELD.encode())
+        event: dict[str, object] = json.loads(_decode(raw)) if raw is not None else {}
+        return StreamItem(cursor=_decode(entry_id), event=event)
+
+    async def publish(self, stream: str, event: dict[str, object]) -> StreamItem:
+        payload = json.dumps(event, ensure_ascii=False)
+        call = cast(
+            Awaitable[bytes],
+            self._redis.xadd(stream, {_REDIS_FIELD: payload}),
+        )
+        entry_id = await call
+        return StreamItem(cursor=_decode(entry_id), event=dict(event))
+
+    async def read_all(self, stream: str) -> list[StreamItem]:
+        call = cast(
+            Awaitable[Sequence[_Entry]],
+            self._redis.xrange(stream, min="-", max="+"),
+        )
+        entries = await call
+        return [self._to_item(entry_id, fields) for entry_id, fields in entries]
+
+    async def subscribe(
+        self, stream: str, from_cursor: str | None = None
+    ) -> AsyncIterator[StreamItem]:
+        last = from_cursor if from_cursor is not None else "0-0"
+        while True:
+            call = cast(
+                Awaitable[_ReadResponse | None],
+                self._redis.xread({stream: last}, block=_BLOCK_MS),
+            )
+            response = await call
+            if not response:
+                continue
+            for _stream_name, entries in response:
+                for entry_id, fields in entries:
+                    item = self._to_item(entry_id, fields)
+                    last = item.cursor
+                    yield item
+
+
+def make_stream_port() -> StreamPort:
+    """Construct a StreamPort from ``KOKORO_STREAM_BACKEND`` (memory|redis)."""
+    backend = os.environ.get("KOKORO_STREAM_BACKEND", "memory").lower()
+    if backend == "redis":
+        url = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
+        return RedisStreamPort(url)
+    if backend == "memory":
+        return MemoryStreamPort()
+    raise ValueError(f"unknown KOKORO_STREAM_BACKEND: {backend!r}")

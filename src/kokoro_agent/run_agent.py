@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import cast
 
 from langchain_core.language_models import BaseChatModel
 
@@ -20,12 +21,17 @@ def _text_of(content: object) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
+        blocks = cast("list[object]", content)
         parts: list[str] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text = block.get("text", "")
-                if isinstance(text, str):
-                    parts.append(text)
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            typed_block = cast("dict[object, object]", block)
+            if typed_block.get("type") != "text":
+                continue
+            text = typed_block.get("text", "")
+            if isinstance(text, str):
+                parts.append(text)
         return "".join(parts)
     return ""
 

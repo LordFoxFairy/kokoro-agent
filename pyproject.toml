@@ -5,7 +5,7 @@ description = "Kokoro agent runtime"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "deepagents",
+  "deepagents==0.6.6",
   "langchain",
   "langchain-anthropic",
   "pydantic>=2",

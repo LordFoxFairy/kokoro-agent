@@ -568,7 +568,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepagents" },
+    { name = "deepagents", specifier = "==0.6.6" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
     { name = "pydantic", specifier = ">=2" },

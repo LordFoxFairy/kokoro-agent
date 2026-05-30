@@ -6,9 +6,9 @@ import logging
 from pydantic import ValidationError
 
 from kokoro_agent.events import RunRequest
-from kokoro_agent.infrastructure.model import make_chat_model
+from kokoro_agent.infrastructure.model import make_agent
 from kokoro_agent.infrastructure.stream_port import StreamPort, make_stream_port
-from kokoro_agent.run_agent import BrainModel, run_agent
+from kokoro_agent.run_agent import run_agent
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def _handle_request(
     port: StreamPort,
     raw: dict[str, object],
     processed: set[str],
-    model: BrainModel,
+    agent: object,
 ) -> None:
     try:
         request = RunRequest.model_validate(raw)
@@ -37,12 +37,12 @@ async def _handle_request(
     processed.add(request.run_id)
 
     stream = events_stream(request.run_id)
-    async for event in run_agent(request, model):
+    async for event in run_agent(request, agent):  # type: ignore[arg-type]
         await port.publish(stream, event.model_dump())
 
 
 async def run_once(
-    port: StreamPort, processed: set[str], model: BrainModel
+    port: StreamPort, processed: set[str], agent: object
 ) -> None:
     """Drain currently-pending run requests once and emit their event streams.
 
@@ -50,14 +50,14 @@ async def run_once(
     duplicate request for a run that already ran is ignored.
     """
     for item in await port.read_all(REQUESTS_STREAM):
-        await _handle_request(port, item.event, processed, model)
+        await _handle_request(port, item.event, processed, agent)
 
 
 async def _serve(port: StreamPort) -> None:
-    model = make_chat_model()
+    agent = make_agent()
     processed: set[str] = set()
     async for item in port.subscribe(REQUESTS_STREAM):
-        await _handle_request(port, item.event, processed, model)
+        await _handle_request(port, item.event, processed, agent)
 
 
 def main() -> None:

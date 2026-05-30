@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
+import os
 
+import pytest
+
+from kokoro_agent.infrastructure.model import make_agent
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
 from kokoro_agent.worker import REQUESTS_STREAM, events_stream, run_once
-
-
-def _fake_model(*replies: str) -> BaseChatModel:
-    return GenericFakeChatModel(
-        messages=iter([AIMessage(content=text) for text in replies])
-    )
 
 
 def _request(run_id: str = "run_01") -> dict[str, object]:
@@ -20,47 +15,47 @@ def _request(run_id: str = "run_01") -> dict[str, object]:
         "run_id": run_id,
         "session_id": "ses_01",
         "conversation_id": "conv_01",
-        "input": "hello kokoro",
+        "input": "plan and search for kokoro",
     }
 
 
-async def test_run_once_streams_with_injected_model() -> None:
+@pytest.mark.asyncio
+async def test_run_once_streams_with_deep_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KOKORO_MODEL", "scripted")
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request())
 
+    agent = make_agent()
     processed: set[str] = set()
-    await run_once(port, processed, _fake_model("Hello world"))
+    await run_once(port, processed, agent)
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
     assert kinds[0] == "run.started"
-    assert "text.delta" in kinds
-    assert kinds[-2] == "text.completed"
+    assert "tool.invoked" in kinds
+    assert "text.completed" in kinds
     assert kinds[-1] == "run.completed"
 
     # seq is monotonic from 1.
     seqs = [item.event["seq"] for item in items]
     assert seqs == list(range(1, len(seqs) + 1))
 
-    # Streamed deltas reconstruct the full model reply.
-    deltas = "".join(
-        str(item.event["payload"]["text"])  # type: ignore[index]
-        for item in items
-        if item.event["kind"] == "text.delta"
-    )
-    assert deltas == "Hello world"
 
-
-async def test_run_once_is_idempotent_per_run_id() -> None:
+@pytest.mark.asyncio
+async def test_run_once_is_idempotent_per_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KOKORO_MODEL", "scripted")
     port = MemoryStreamPort()
-    # Two replies queued so a non-idempotent worker would emit a second run.
-    model = _fake_model("Hello world", "Hello world")
     processed: set[str] = set()
 
+    agent = make_agent()
     await port.publish(REQUESTS_STREAM, _request())
-    await run_once(port, processed, model)
+    await run_once(port, processed, agent)
     await port.publish(REQUESTS_STREAM, _request())  # duplicate run_id
-    await run_once(port, processed, model)
+    await run_once(port, processed, agent)
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
@@ -69,7 +64,11 @@ async def test_run_once_is_idempotent_per_run_id() -> None:
     assert kinds.count("run.started") == 1  # processed exactly once
 
 
-async def test_run_once_rejects_malformed_request() -> None:
+@pytest.mark.asyncio
+async def test_run_once_rejects_malformed_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KOKORO_MODEL", "scripted")
     port = MemoryStreamPort()
     # missing required "input"
     await port.publish(
@@ -82,8 +81,9 @@ async def test_run_once_rejects_malformed_request() -> None:
         },
     )
 
+    agent = make_agent()
     processed: set[str] = set()
-    await run_once(port, processed, _fake_model("unused"))
+    await run_once(port, processed, agent)
 
     # malformed request produces no events and does not crash the loop
     assert await port.read_all(events_stream("run_bad")) == []

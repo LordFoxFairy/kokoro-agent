@@ -1,104 +1,127 @@
+"""astream_events mapper — consume a DeepAgents graph as raw agent events.
+
+## A1 Spike — Locked astream_events event shapes (deepagents==0.6.6)
+------------------------------------------------------------------------
+
+All events in the stream have at least ``event["event"]`` (str) and
+``event["data"]`` (dict).  The ``event["run_id"]`` is unique per graph node
+invocation and is the stable pairing key for tool start/end.
+
+### Relevant event types:
+
+``on_chat_model_stream``
+  ``data["chunk"]``: an ``AIMessageChunk``.
+  ``chunk.content``: ``str`` — empty ``""`` for tool-call-only turns;
+  plain text for text turns; or a list of blocks for thinking turns
+  (``[{"type": "thinking", "thinking": "..."}, {"type": "text", "text": "..."}]``).
+  ``chunk.tool_call_chunks``: populated for tool-call-only turns (not used
+  directly; we use ``on_tool_start/end`` for tool events).
+
+``on_tool_start``
+  ``event["name"]``: tool name (e.g. ``"write_todos"``, ``"echo_search"``).
+  ``event["run_id"]``: stable ID, identical to the matching ``on_tool_end``.
+  ``data["input"]``: the tool's argument dict (e.g. ``{"todos": [...]}``,
+  ``{"query": "..."}``) — passed verbatim as ``args`` in ``tool.invoked``.
+
+``on_tool_end``
+  ``event["name"]``: same tool name as the matching ``on_tool_start``.
+  ``event["run_id"]``: same as the matching ``on_tool_start`` — use as
+  ``tool_call_ref`` to pair start/end.
+
+``on_chat_model_end``
+  ``data["output"].generations`` is always ``[]`` in the scripted fake (0
+  count); in a real model it carries the full message.  Do NOT use this for
+  text completion — instead accumulate from ``on_chat_model_stream`` chunks.
+
+Run boundary: no explicit run event from DeepAgents.  We yield ``run.started``
+before the astream loop and ``run.completed`` after it finishes normally.
+"""
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import cast
 
-from langchain_core.language_models import LanguageModelInput
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.runnables import Runnable
+from langgraph.graph.state import CompiledStateGraph
 
 from kokoro_agent.events import AgentEvent, RunRequest
-from kokoro_agent.tools import run_tool
+
+LOGGER = logging.getLogger(__name__)
 
 ASTREAM_TIMEOUT_S = 120
-TOOL_LOOP_LIMIT = 8
+RECURSION_LIMIT = 25
 
-# A brain is anything invocable with chat input -> a message: a BaseChatModel,
-# a tool-bound RunnableBinding, or a scripted fake. Only ``ainvoke`` is used.
-BrainModel = Runnable[LanguageModelInput, BaseMessage]
+# A brain is now a DeepAgents graph; only astream_events is consumed.
+Agent = CompiledStateGraph  # type: ignore[type-arg]
 
 
-def _walk_blocks(content: object, want: str) -> str:
-    """Concatenate the text payload of ``{"type": want}`` blocks in ``content``.
+def _text_and_thinking(chunk: object) -> tuple[str, str]:
+    """Split a streamed chat-model chunk's content into (text, thinking).
 
-    Strings pass through only when ``want == "text"``; list content is scanned
-    block-by-block. Non-matching blocks (thinking when extracting text, and vice
-    versa) are dropped so reasoning never leaks into ``text.delta`` and final
-    text never leaks into ``thinking.delta``.
+    Content is either a str (text) or a list of blocks; thinking blocks carry
+    ``{"type": "thinking", "thinking": ...}``.  Shapes confirmed in the A1
+    spike: real Anthropic models emit list blocks; scripted fakes emit plain
+    strings.
     """
+    content = getattr(chunk, "content", "")
     if isinstance(content, str):
-        return content if want == "text" else ""
+        return content, ""
+    text_parts: list[str] = []
+    think_parts: list[str] = []
     if isinstance(content, list):
-        blocks = cast("list[object]", content)
-        parts: list[str] = []
-        for block in blocks:
+        for block in cast("list[object]", content):
             if not isinstance(block, dict):
                 continue
-            typed_block = cast("dict[object, object]", block)
-            if typed_block.get("type") != want:
-                continue
-            value = typed_block.get(want, "")
-            if isinstance(value, str):
-                parts.append(value)
-        return "".join(parts)
-    return ""
+            b = cast("dict[object, object]", block)
+            t = b.get("type")
+            if t == "text" and isinstance(b.get("text"), str):
+                text_parts.append(cast("str", b["text"]))
+            elif t == "thinking" and isinstance(b.get("thinking"), str):
+                think_parts.append(cast("str", b["thinking"]))
+    return "".join(text_parts), "".join(think_parts)
 
 
-def _text_of(content: object) -> str:
-    """Extract plain text blocks from a message's ``content``."""
-    return _walk_blocks(content, "text")
-
-
-def _thinking_of(content: object) -> str:
-    """Extract reasoning text from ``{"type": "thinking"}`` content blocks."""
-    return _walk_blocks(content, "thinking")
-
-
-def _tool_calls_of(ai: BaseMessage) -> list[dict[str, object]]:
-    """Return the message's tool calls as plain dicts (name/args/id)."""
-    if not isinstance(ai, AIMessage):
-        return []
-    return cast("list[dict[str, object]]", ai.tool_calls)
-
-
-def _content_of(ai: BaseMessage) -> object:
-    """Return a message's content erased to ``object`` for block walking.
-
-    LangChain types content as a partially-unknown union; this boundary cast
-    keeps the downstream block walkers strict-clean without leaking ``Unknown``.
-    """
-    return cast("object", ai.content)  # pyright: ignore[reportUnknownMemberType]
-
-
-async def run_agent(  # noqa: C901 — single cohesive brain loop
-    req: RunRequest, model: BrainModel
+async def run_agent(  # noqa: C901 — cohesive event mapper
+    req: RunRequest, agent: Agent
 ) -> AsyncIterator[AgentEvent]:
-    """Stream a brain's tool-calling loop as raw agent events.
+    """Stream a DeepAgents run as raw agent events (fully generic).
 
-    Emits ``run.started`` then iterates: on each turn it calls ``model.ainvoke``,
-    surfaces ``thinking.delta`` (only when ``execution_style == "thinking"``),
-    and either runs requested tools (``tool.invoked`` -> ``tool.returned``, feeding
-    a ``ToolMessage`` back) or finalizes with ``text.delta`` -> ``text.completed``.
-    Closes with ``run.completed``. Any failure -> a single ``run.failed`` (never
-    re-raised); exceeding ``TOOL_LOOP_LIMIT`` -> ``run.failed{ToolLoopLimit}``.
-    The agent fills only execution semantics — cursors/ids/owner belong to
-    kokoro-session.
+    Maps ``astream_events`` (v2) to the raw family:
+
+    - Model token chunks → ``text.delta`` / ``thinking.delta``
+      (``thinking.delta`` only when ``execution_style=="thinking"``).
+    - ALL tools (including ``write_todos``) → ``tool.invoked{...,args}`` /
+      ``tool.returned``.  The agent does NOT know about "plan"; session
+      harness recognizes ``write_todos`` by tool_name.
+    - End of stream → ``run.completed``.
+    - Any error → ``run.failed``.
+
+    ``tool.invoked`` always carries ``args`` = the tool's raw input dict
+    (``event["data"]["input"]`` from ``on_tool_start``), so the session
+    harness can extract ``todos`` from ``write_todos`` calls without
+    re-parsing.
     """
     seq = 1
     message_ref = "m1"
     thinking_mode = req.execution_style == "thinking"
-    messages: list[BaseMessage] = [HumanMessage(content=req.input)]
+    text_buf = ""
     yield AgentEvent(kind="run.started", run_id=req.run_id, seq=seq, payload={})
     try:
         async with asyncio.timeout(ASTREAM_TIMEOUT_S):
-            for _ in range(TOOL_LOOP_LIMIT):
-                ai = await model.ainvoke(messages)
-                content = _content_of(ai)
+            stream = agent.astream_events(
+                {"messages": [("user", req.input)]},
+                version="v2",
+                config={"recursion_limit": RECURSION_LIMIT},
+            )
+            async for event in stream:
+                evt_type = cast("str", event["event"])
+                name = cast("str", event.get("name", ""))
+                data = cast("dict[str, object]", event.get("data", {}))
 
-                if thinking_mode:
-                    thinking = _thinking_of(content)
-                    if thinking:
+                if evt_type == "on_chat_model_stream":
+                    text, thinking = _text_and_thinking(data.get("chunk"))
+                    if thinking and thinking_mode:
                         seq += 1
                         yield AgentEvent(
                             kind="thinking.delta",
@@ -106,67 +129,58 @@ async def run_agent(  # noqa: C901 — single cohesive brain loop
                             seq=seq,
                             payload={"text": thinking},
                         )
-
-                tool_calls = _tool_calls_of(ai)
-                if tool_calls:
-                    messages.append(ai)
-                    for tc in tool_calls:
-                        name = str(tc["name"])
-                        ref = str(tc["id"])
-                        args = cast("dict[str, object]", tc.get("args", {}))
+                    if text:
+                        text_buf += text
                         seq += 1
                         yield AgentEvent(
-                            kind="tool.invoked",
+                            kind="text.delta",
                             run_id=req.run_id,
                             seq=seq,
-                            payload={"tool_call_ref": ref, "tool_name": name},
+                            payload={"message_ref": message_ref, "text": text},
                         )
-                        status, output = run_tool(name, args)
-                        seq += 1
-                        yield AgentEvent(
-                            kind="tool.returned",
-                            run_id=req.run_id,
-                            seq=seq,
-                            payload={
-                                "tool_call_ref": ref,
-                                "tool_name": name,
-                                "status": status,
-                            },
-                        )
-                        messages.append(
-                            ToolMessage(content=output, tool_call_id=ref)
-                        )
-                    continue
 
-                full = _text_of(content)
-                if full:
+                elif evt_type == "on_tool_start":
+                    # All tools treated generically (incl. write_todos).
+                    # Spike confirmed: event["run_id"] is stable across
+                    # on_tool_start / on_tool_end for the same invocation.
+                    tool_call_ref = str(event.get("run_id", ""))
+                    payload: dict[str, object] = {
+                        "tool_call_ref": tool_call_ref,
+                        "tool_name": name,
+                    }
+                    tool_input = data.get("input")
+                    if isinstance(tool_input, dict):
+                        payload["args"] = tool_input
                     seq += 1
                     yield AgentEvent(
-                        kind="text.delta",
+                        kind="tool.invoked",
                         run_id=req.run_id,
                         seq=seq,
-                        payload={"message_ref": message_ref, "text": full},
+                        payload=payload,
                     )
-                seq += 1
-                yield AgentEvent(
-                    kind="text.completed",
-                    run_id=req.run_id,
-                    seq=seq,
-                    payload={"message_ref": message_ref, "text": full},
-                )
-                break
-            else:
-                seq += 1
-                yield AgentEvent(
-                    kind="run.failed",
-                    run_id=req.run_id,
-                    seq=seq,
-                    payload={
-                        "error_kind": "ToolLoopLimit",
-                        "message": f"tool loop exceeded {TOOL_LOOP_LIMIT} turns",
-                    },
-                )
-                return
+
+                elif evt_type == "on_tool_end":
+                    tool_call_ref = str(event.get("run_id", ""))
+                    seq += 1
+                    yield AgentEvent(
+                        kind="tool.returned",
+                        run_id=req.run_id,
+                        seq=seq,
+                        payload={
+                            "tool_call_ref": tool_call_ref,
+                            "tool_name": name,
+                            "status": "ok",
+                        },
+                    )
+
+        if text_buf:
+            seq += 1
+            yield AgentEvent(
+                kind="text.completed",
+                run_id=req.run_id,
+                seq=seq,
+                payload={"message_ref": message_ref, "text": text_buf},
+            )
         seq += 1
         yield AgentEvent(
             kind="run.completed",
@@ -174,11 +188,15 @@ async def run_agent(  # noqa: C901 — single cohesive brain loop
             seq=seq,
             payload={"status": "completed"},
         )
-    except Exception as error:  # noqa: BLE001 — boundary: any brain failure -> run.failed
+    except Exception as error:  # noqa: BLE001 — boundary: any failure -> run.failed
+        LOGGER.exception("run_agent error for run_id=%s", req.run_id)
         seq += 1
         yield AgentEvent(
             kind="run.failed",
             run_id=req.run_id,
             seq=seq,
-            payload={"error_kind": type(error).__name__, "message": str(error)},
+            payload={
+                "error_kind": type(error).__name__,
+                "message": str(error),
+            },
         )

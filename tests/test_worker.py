@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage
+
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
 from kokoro_agent.worker import REQUESTS_STREAM, events_stream, run_once
 
-EXPECTED_KINDS = [
-    "run.started",
-    "text.delta",
-    "text.completed",
-    "run.completed",
-]
+
+def _fake_model(*replies: str) -> BaseChatModel:
+    return GenericFakeChatModel(
+        messages=iter([AIMessage(content=text) for text in replies])
+    )
 
 
 def _request(run_id: str = "run_01") -> dict[str, object]:
@@ -21,36 +24,49 @@ def _request(run_id: str = "run_01") -> dict[str, object]:
     }
 
 
-async def test_run_once_consumes_request_and_emits_full_sequence() -> None:
+async def test_run_once_streams_with_injected_model() -> None:
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request())
 
     processed: set[str] = set()
-    await run_once(port, processed)
+    await run_once(port, processed, _fake_model("Hello world"))
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
-    assert kinds == EXPECTED_KINDS
+    assert kinds[0] == "run.started"
+    assert "text.delta" in kinds
+    assert kinds[-2] == "text.completed"
+    assert kinds[-1] == "run.completed"
 
+    # seq is monotonic from 1.
     seqs = [item.event["seq"] for item in items]
-    assert seqs == [1, 2, 3, 4]
+    assert seqs == list(range(1, len(seqs) + 1))
 
-    delta = items[1].event["payload"]
-    assert isinstance(delta, dict)
-    assert delta["text"] == "Kokoro received: hello kokoro"
+    # Streamed deltas reconstruct the full model reply.
+    deltas = "".join(
+        str(item.event["payload"]["text"])  # type: ignore[index]
+        for item in items
+        if item.event["kind"] == "text.delta"
+    )
+    assert deltas == "Hello world"
 
 
 async def test_run_once_is_idempotent_per_run_id() -> None:
     port = MemoryStreamPort()
-    await port.publish(REQUESTS_STREAM, _request())
-    await port.publish(REQUESTS_STREAM, _request())
-
+    # Two replies queued so a non-idempotent worker would emit a second run.
+    model = _fake_model("Hello world", "Hello world")
     processed: set[str] = set()
-    await run_once(port, processed)
+
+    await port.publish(REQUESTS_STREAM, _request())
+    await run_once(port, processed, model)
+    await port.publish(REQUESTS_STREAM, _request())  # duplicate run_id
+    await run_once(port, processed, model)
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
-    assert kinds == EXPECTED_KINDS
+    assert kinds[0] == "run.started"
+    assert kinds[-1] == "run.completed"
+    assert kinds.count("run.started") == 1  # processed exactly once
 
 
 async def test_run_once_rejects_malformed_request() -> None:
@@ -67,7 +83,7 @@ async def test_run_once_rejects_malformed_request() -> None:
     )
 
     processed: set[str] = set()
-    await run_once(port, processed)
+    await run_once(port, processed, _fake_model("unused"))
 
     # malformed request produces no events and does not crash the loop
     assert await port.read_all(events_stream("run_bad")) == []

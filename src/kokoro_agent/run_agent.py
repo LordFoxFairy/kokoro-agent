@@ -1,37 +1,87 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import AsyncIterator
+
+from langchain_core.language_models import BaseChatModel
 
 from kokoro_agent.events import AgentEvent, RunRequest
 
+ASTREAM_TIMEOUT_S = 120
 
-def run_agent(req: RunRequest) -> Iterator[AgentEvent]:
-    """Deterministic echo brain.
 
-    Emits the raw agent-event sequence defined by the agent-events contract:
-    ``run.started`` -> ``text.delta`` -> ``text.completed`` -> ``run.completed``.
-    No real LLM is invoked. The agent only fills execution semantics; it does
-    not assign cursors/ids/owner — that is kokoro-session's responsibility.
+def _text_of(content: object) -> str:
+    """Extract plain text from a chunk's ``content``.
+
+    Strings pass through. For list content (multi-modal / content blocks) only
+    ``{"type": "text"}`` blocks are surfaced; thinking/tool/other blocks are
+    deliberately dropped so they never leak into ``text.delta``.
     """
-    text = f"Kokoro received: {req.input}"
-    message_ref = "m1"
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return ""
 
-    yield AgentEvent(kind="run.started", run_id=req.run_id, seq=1, payload={})
-    yield AgentEvent(
-        kind="text.delta",
-        run_id=req.run_id,
-        seq=2,
-        payload={"message_ref": message_ref, "text": text},
-    )
-    yield AgentEvent(
-        kind="text.completed",
-        run_id=req.run_id,
-        seq=3,
-        payload={"message_ref": message_ref, "text": text},
-    )
-    yield AgentEvent(
-        kind="run.completed",
-        run_id=req.run_id,
-        seq=4,
-        payload={"status": "completed"},
-    )
+
+async def run_agent(
+    req: RunRequest, model: BaseChatModel
+) -> AsyncIterator[AgentEvent]:
+    """Stream a real LLM brain as raw agent events.
+
+    Emits the agent-events contract sequence:
+    ``run.started`` -> ``text.delta``* -> ``text.completed`` -> ``run.completed``.
+    Any failure during streaming is caught and surfaced as a single
+    ``run.failed`` event (never re-raised). ``seq`` is monotonic from 1; a single
+    ``message_ref`` groups the streamed deltas. The agent fills only execution
+    semantics — cursors/ids/owner belong to kokoro-session.
+    """
+    seq = 1
+    message_ref = "m1"
+    full = ""
+    yield AgentEvent(kind="run.started", run_id=req.run_id, seq=seq, payload={})
+    try:
+        async with asyncio.timeout(ASTREAM_TIMEOUT_S):
+            async for ev in model.astream_events([("user", req.input)]):
+                if ev.get("event") != "on_chat_model_stream":
+                    continue
+                chunk = ev.get("data", {}).get("chunk")
+                text = _text_of(getattr(chunk, "content", ""))
+                if not text:
+                    continue
+                seq += 1
+                full += text
+                yield AgentEvent(
+                    kind="text.delta",
+                    run_id=req.run_id,
+                    seq=seq,
+                    payload={"message_ref": message_ref, "text": text},
+                )
+        seq += 1
+        yield AgentEvent(
+            kind="text.completed",
+            run_id=req.run_id,
+            seq=seq,
+            payload={"message_ref": message_ref, "text": full},
+        )
+        seq += 1
+        yield AgentEvent(
+            kind="run.completed",
+            run_id=req.run_id,
+            seq=seq,
+            payload={"status": "completed"},
+        )
+    except Exception as error:  # noqa: BLE001 — boundary: any brain failure -> run.failed
+        seq += 1
+        yield AgentEvent(
+            kind="run.failed",
+            run_id=req.run_id,
+            seq=seq,
+            payload={"error_kind": type(error).__name__, "message": str(error)},
+        )

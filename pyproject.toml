@@ -7,6 +7,19 @@ requires-python = ">=3.11"
 dependencies = [
   "deepagents",
   "langchain",
+  "pydantic>=2",
+  "redis>=5",
+]
+
+[project.scripts]
+kokoro-agent-worker = "kokoro_agent.worker:main"
+
+[dependency-groups]
+dev = [
+  "pyright>=1.1.380",
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.6",
 ]
 
 [build-system]
@@ -15,3 +28,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"

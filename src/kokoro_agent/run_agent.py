@@ -4,14 +4,19 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import cast
 
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import Runnable
 
 from kokoro_agent.events import AgentEvent, RunRequest
 from kokoro_agent.tools import run_tool
 
 ASTREAM_TIMEOUT_S = 120
 TOOL_LOOP_LIMIT = 8
+
+# A brain is anything invocable with chat input -> a message: a BaseChatModel,
+# a tool-bound RunnableBinding, or a scripted fake. Only ``ainvoke`` is used.
+BrainModel = Runnable[LanguageModelInput, BaseMessage]
 
 
 def _walk_blocks(content: object, want: str) -> str:
@@ -50,12 +55,14 @@ def _thinking_of(content: object) -> str:
     return _walk_blocks(content, "thinking")
 
 
-def _tool_calls_of(ai: AIMessage) -> list[dict[str, object]]:
+def _tool_calls_of(ai: BaseMessage) -> list[dict[str, object]]:
     """Return the message's tool calls as plain dicts (name/args/id)."""
+    if not isinstance(ai, AIMessage):
+        return []
     return cast("list[dict[str, object]]", ai.tool_calls)
 
 
-def _content_of(ai: AIMessage) -> object:
+def _content_of(ai: BaseMessage) -> object:
     """Return a message's content erased to ``object`` for block walking.
 
     LangChain types content as a partially-unknown union; this boundary cast
@@ -65,7 +72,7 @@ def _content_of(ai: AIMessage) -> object:
 
 
 async def run_agent(  # noqa: C901 — single cohesive brain loop
-    req: RunRequest, model: BaseChatModel
+    req: RunRequest, model: BrainModel
 ) -> AsyncIterator[AgentEvent]:
     """Stream a brain's tool-calling loop as raw agent events.
 

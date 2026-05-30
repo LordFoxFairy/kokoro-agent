@@ -51,9 +51,10 @@ async def test_scripted_run_emits_generic_tool_text_family(
         "in_progress",
         "completed",
     }
-    # seq monotonically increasing
+    # seq must be unique AND contiguous from 1 — the session layer dedups by
+    # (run_id, seq), so a merely-monotonic (with gaps/dupes) sequence is unsafe.
     seqs = [e.seq for e in events]
-    assert seqs == sorted(seqs)
+    assert seqs == list(range(1, len(seqs) + 1))
 
 
 @pytest.mark.asyncio
@@ -81,11 +82,8 @@ async def test_tool_invoked_ref_matches_tool_returned(
 
 
 @pytest.mark.asyncio
-async def test_run_failed_on_agent_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_run_failed_on_agent_error() -> None:
     """Any unhandled exception from the agent stream yields run.failed."""
-    monkeypatch.setenv("KOKORO_MODEL", "scripted")
 
     async def _boom_gen():  # type: ignore[no-untyped-def]
         raise RuntimeError("agent down")

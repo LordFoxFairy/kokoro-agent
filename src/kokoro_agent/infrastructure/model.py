@@ -84,16 +84,29 @@ _KOKORO_EXCLUDED_TOOLS: frozenset[str] = frozenset(
     {"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute", "task"}
 )
 
-# Register once per process for each model LLM type we use.  The scripted
-# fake's _llm_type is "deepagents-fake-chat-model"; real Anthropic models
-# register under "anthropic".  We register for both so the same profile
-# applies regardless of which model is in use.
+# Register once per process for each model provider key we use.  DeepAgents
+# looks up harness profiles by the model's resolved ``ls_provider`` (lowercased,
+# hyphens stripped) — NOT by ``_llm_type``.  We derive the scripted fake's
+# actual provider key from the model itself rather than hardcode-guessing it,
+# so the FS/execute/task exclusion is reliably applied to the scripted model.
 _KOKORO_HARNESS_PROFILE = HarnessProfile(
     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
     excluded_tools=_KOKORO_EXCLUDED_TOOLS,
 )
 
-register_harness_profile("deepagents-fake-chat-model", _KOKORO_HARNESS_PROFILE)
+
+def _resolve_fake_provider_key() -> str:
+    """Return the ``ls_provider`` key DeepAgents uses to look up the harness
+    profile for the scripted fake.  It is the model's resolved provider
+    (lowercased, hyphens stripped), NOT its ``_llm_type`` — so we derive it
+    from the model instance rather than hardcode-guessing it.
+    """
+    params = DeepAgentsFakeChatModel(messages=iter([]))._get_ls_params()  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+    return params.get("ls_provider", "")
+
+
+_FAKE_PROVIDER_KEY: str = _resolve_fake_provider_key()
+register_harness_profile(_FAKE_PROVIDER_KEY, _KOKORO_HARNESS_PROFILE)
 # Register for the real Anthropic provider too so the same tool exclusions
 # apply when running with a live key.
 register_harness_profile("anthropic", _KOKORO_HARNESS_PROFILE)

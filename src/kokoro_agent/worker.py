@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -23,7 +24,7 @@ async def _handle_request(
     port: StreamPort,
     raw: dict[str, object],
     processed: set[str],
-    agent: object,
+    agent: Any,
 ) -> None:
     try:
         request = RunRequest.model_validate(raw)
@@ -37,12 +38,12 @@ async def _handle_request(
     processed.add(request.run_id)
 
     stream = events_stream(request.run_id)
-    async for event in run_agent(request, agent):  # type: ignore[arg-type]
+    async for event in run_agent(request, agent):
         await port.publish(stream, event.model_dump())
 
 
 async def run_once(
-    port: StreamPort, processed: set[str], agent: object
+    port: StreamPort, processed: set[str], agent: Any
 ) -> None:
     """Drain currently-pending run requests once and emit their event streams.
 

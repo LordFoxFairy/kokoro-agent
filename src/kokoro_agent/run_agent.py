@@ -110,7 +110,12 @@ async def run_agent(  # noqa: C901 — cohesive event mapper
                 config={"recursion_limit": RECURSION_LIMIT},
             )
             async for event in stream:
-                evt_type: str = event["event"]
+                # Guard the dispatch key (consistent with the surrounding .get
+                # style); a missing "event" key would otherwise raise KeyError
+                # and degrade the whole run to run.failed.
+                evt_type: str = event.get("event", "")
+                if not evt_type:
+                    continue
                 name: str = event.get("name", "")
                 data = cast("dict[str, object]", event.get("data", {}))
 
@@ -168,6 +173,10 @@ async def run_agent(  # noqa: C901 — cohesive event mapper
                         },
                     )
 
+        # text.completed and run.completed are emitted AFTER the
+        # ``async with asyncio.timeout(...)`` block intentionally: these are
+        # local, instant operations (building two events), not I/O, so they
+        # must not consume — or be cancelled by — the stream timeout budget.
         if text_buf:
             seq += 1
             yield AgentEvent(

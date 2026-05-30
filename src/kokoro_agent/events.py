@@ -10,6 +10,7 @@ AgentKind = Literal[
     "text.completed",
     "tool.invoked",
     "tool.returned",
+    "thinking.delta",
     "run.completed",
     "run.failed",
 ]

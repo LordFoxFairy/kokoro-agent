@@ -1,55 +1,37 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
-from uuid import uuid4
 
-import kokoro_agent.events as events
+from kokoro_agent.events import AgentEvent, RunRequest
 
 
-@dataclass(frozen=True)
-class RunAgentInput:
-    session_id: str
-    conversation_id: str
-    user_input: str
+def run_agent(req: RunRequest) -> Iterator[AgentEvent]:
+    """Deterministic echo brain.
 
+    Emits the raw agent-event sequence defined by the agent-events contract:
+    ``run.started`` -> ``text.delta`` -> ``text.completed`` -> ``run.completed``.
+    No real LLM is invoked. The agent only fills execution semantics; it does
+    not assign cursors/ids/owner — that is kokoro-session's responsibility.
+    """
+    text = f"Kokoro received: {req.input}"
+    message_ref = "m1"
 
-# 先产出最小可回放事件序列，后续再把真实 DeepAgents 输出映射进来。
-def run_agent(input: RunAgentInput) -> Iterator[events.SessionEvent]:
-    run_id = f"run_{uuid4().hex[:8]}"
-    message_id = f"msg_{uuid4().hex[:8]}"
-    content = f"Kokoro received: {input.user_input}"
-
-    yield events.session_created(
-        session_id=input.session_id,
-        conversation_id=input.conversation_id,
-        run_id=run_id,
-        sequence=1,
-        title="Kokoro Session",
-        owner_id="kokoro-agent",
+    yield AgentEvent(kind="run.started", run_id=req.run_id, seq=1, payload={})
+    yield AgentEvent(
+        kind="text.delta",
+        run_id=req.run_id,
+        seq=2,
+        payload={"message_ref": message_ref, "text": text},
     )
-    yield events.message_delta(
-        session_id=input.session_id,
-        conversation_id=input.conversation_id,
-        run_id=run_id,
-        sequence=2,
-        message_id=message_id,
-        delta=content,
-        role="assistant",
+    yield AgentEvent(
+        kind="text.completed",
+        run_id=req.run_id,
+        seq=3,
+        payload={"message_ref": message_ref, "text": text},
     )
-    yield events.message_completed(
-        session_id=input.session_id,
-        conversation_id=input.conversation_id,
-        run_id=run_id,
-        sequence=3,
-        message_id=message_id,
-        content=content,
-        role="assistant",
-    )
-    yield events.run_completed(
-        session_id=input.session_id,
-        conversation_id=input.conversation_id,
-        run_id=run_id,
-        sequence=4,
-        final_message_id=message_id,
+    yield AgentEvent(
+        kind="run.completed",
+        run_id=req.run_id,
+        seq=4,
+        payload={"status": "completed"},
     )

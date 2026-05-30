@@ -69,6 +69,22 @@ def test_agent_event_rejects_unknown_kind() -> None:
         )
 
 
+def test_tool_invoked_carries_args() -> None:
+    ev = AgentEvent(
+        kind="tool.invoked",
+        run_id="run_1",
+        seq=3,
+        payload={
+            "tool_call_ref": "call_1",
+            "tool_name": "write_todos",
+            "args": {"todos": [{"content": "step 1", "status": "pending"}]},
+        },
+    )
+    todos = ev.payload["args"]  # type: ignore[index]
+    assert isinstance(todos, dict)
+    assert todos["todos"][0]["status"] == "pending"  # type: ignore[index]
+
+
 def test_text_delta_roundtrip() -> None:
     event = AgentEvent(
         kind="text.delta",

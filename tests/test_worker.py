@@ -1,11 +1,34 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import TypeGuard, TypedDict, cast
+
+import pytest
+from _pytest.monkeypatch import MonkeyPatch
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
+from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
 from kokoro_agent.worker import REQUESTS_STREAM, events_stream, run_once
+
+
+class _TextPayload(TypedDict):
+    text: str
+
+
+def _is_text_payload(value: object) -> TypeGuard[_TextPayload]:
+    if not isinstance(value, Mapping):
+        return False
+
+    text = cast("Mapping[str, object]", value).get("text")
+    return isinstance(text, str)
+
+
+def _payload_text(value: object) -> str:
+    assert _is_text_payload(value)
+    return value["text"]
 
 
 def _fake_model(*replies: str) -> BaseChatModel:
@@ -44,7 +67,7 @@ async def test_run_once_streams_with_injected_model() -> None:
 
     # Streamed deltas reconstruct the full model reply.
     deltas = "".join(
-        str(item.event["payload"]["text"])  # type: ignore[index]
+        _payload_text(item.event["payload"])
         for item in items
         if item.event["kind"] == "text.delta"
     )
@@ -87,3 +110,31 @@ async def test_run_once_rejects_malformed_request() -> None:
 
     # malformed request produces no events and does not crash the loop
     assert await port.read_all(events_stream("run_bad")) == []
+
+
+@pytest.mark.asyncio
+async def test_run_once_streams_with_local_fake_model(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    port = MemoryStreamPort()
+    await port.publish(REQUESTS_STREAM, _request("run_local_fake"))
+
+    monkeypatch.setenv(LOCAL_FAKE_MODEL_FLAG, "1")
+    model = make_chat_model()
+
+    processed: set[str] = set()
+    await run_once(port, processed, model)
+
+    items = await port.read_all(events_stream("run_local_fake"))
+    kinds = [item.event["kind"] for item in items]
+    assert kinds[0] == "run.started"
+    assert "text.delta" in kinds
+    assert kinds[-2] == "text.completed"
+    assert kinds[-1] == "run.completed"
+
+    completed = next(item for item in items if item.event["kind"] == "text.completed")
+    payload = completed.event["payload"]
+    assert _payload_text(payload) == (
+        "Local fallback active. Configure real model credentials to use the "
+        "provider-backed agent runtime."
+    )

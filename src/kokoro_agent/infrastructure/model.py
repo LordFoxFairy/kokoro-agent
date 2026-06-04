@@ -5,15 +5,22 @@ import os
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
+from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
+LOCAL_FAKE_MODEL_FLAG = "KOKORO_LOCAL_FAKE_MODEL"
 
 
 def make_chat_model() -> BaseChatModel:
-    """Build the chat model selected by ``KOKORO_MODEL`` (provider:model spec).
+    """Build the configured chat model for the worker.
 
-    Construction is lazy and performs no network I/O — ``init_chat_model`` only
-    builds the client object. An invalid spec or a missing provider package
-    raises loudly here rather than degrading to a silent fallback.
+    When ``KOKORO_LOCAL_FAKE_MODEL=1`` is set, return a deterministic local
+    fake model so the real Redis-backed three-repo chain can be exercised
+    without external provider credentials. Otherwise, keep the current fail-loud
+    real-provider behavior based on ``KOKORO_MODEL``.
     """
+    if os.environ.get(LOCAL_FAKE_MODEL_FLAG) == "1":
+        return make_local_fake_chat_model()
+
     spec = os.environ.get("KOKORO_MODEL", DEFAULT_MODEL)
     return init_chat_model(spec)

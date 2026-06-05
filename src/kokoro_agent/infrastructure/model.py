@@ -23,4 +23,8 @@ def make_chat_model() -> BaseChatModel:
         return make_local_fake_chat_model()
 
     spec = os.environ.get("KOKORO_MODEL", DEFAULT_MODEL)
+    # Some OpenAI-compatible gateways reject streaming (concurrency caps); set
+    # KOKORO_DISABLE_STREAMING=1 to run the deep-agent loop non-streaming.
+    if os.environ.get("KOKORO_DISABLE_STREAMING") == "1":
+        return init_chat_model(spec, disable_streaming=True)
     return init_chat_model(spec)

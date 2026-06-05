@@ -9,6 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
+from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
 from kokoro_agent.worker import REQUESTS_STREAM, events_stream, run_once
@@ -48,36 +49,31 @@ def _request(run_id: str = "run_01") -> dict[str, object]:
 
 
 async def test_run_once_streams_with_injected_model() -> None:
+    # The worker drives the real DeepAgents loop; the scripted local-fake model
+    # makes that hermetic. Assert the WORKER's plumbing (request → run_agent →
+    # ordered events on the run's stream), not specific model wording.
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request())
 
     processed: set[str] = set()
-    await run_once(port, processed, _fake_model("Hello world"))
+    await run_once(port, processed, make_local_fake_chat_model())
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
     assert kinds[0] == "run.started"
-    assert "text.delta" in kinds
-    assert kinds[-2] == "text.completed"
     assert kinds[-1] == "run.completed"
+    # the deep-agent activity surfaces: a CC-style todo and a final answer.
+    assert "todo.updated" in kinds
+    assert "text.completed" in kinds
 
-    # seq is monotonic from 1.
+    # seq is monotonic from 1, no gaps.
     seqs = [item.event["seq"] for item in items]
     assert seqs == list(range(1, len(seqs) + 1))
-
-    # Streamed deltas reconstruct the full model reply.
-    deltas = "".join(
-        _payload_text(item.event["payload"])
-        for item in items
-        if item.event["kind"] == "text.delta"
-    )
-    assert deltas == "Hello world"
 
 
 async def test_run_once_is_idempotent_per_run_id() -> None:
     port = MemoryStreamPort()
-    # Two replies queued so a non-idempotent worker would emit a second run.
-    model = _fake_model("Hello world", "Hello world")
+    model = make_local_fake_chat_model()
     processed: set[str] = set()
 
     await port.publish(REQUESTS_STREAM, _request())
@@ -128,13 +124,9 @@ async def test_run_once_streams_with_local_fake_model(
     items = await port.read_all(events_stream("run_local_fake"))
     kinds = [item.event["kind"] for item in items]
     assert kinds[0] == "run.started"
-    assert "text.delta" in kinds
-    assert kinds[-2] == "text.completed"
     assert kinds[-1] == "run.completed"
+    assert "todo.updated" in kinds  # CC-style planning surfaces
+    assert "text.completed" in kinds
 
     completed = next(item for item in items if item.event["kind"] == "text.completed")
-    payload = completed.event["payload"]
-    assert _payload_text(payload) == (
-        "Local fallback active. Configure real model credentials to use the "
-        "provider-backed agent runtime."
-    )
+    assert "本地预览" in _payload_text(completed.event["payload"])

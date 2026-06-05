@@ -6,13 +6,32 @@ from pydantic import BaseModel, ConfigDict
 
 AgentKind = Literal[
     "run.started",
+    "thinking.delta",
     "text.delta",
     "text.completed",
     "tool.invoked",
     "tool.returned",
+    "todo.updated",
+    "subagent.started",
+    "subagent.finished",
     "run.completed",
     "run.failed",
 ]
+
+# Per-kind ``payload`` shapes (the payload stays a loose dict here; strict
+# per-kind validation is kokoro-session's job at the Zod boundary). Documented
+# so the DeepAgents emitter and the session normalizer share one contract:
+#   run.started        {}
+#   thinking.delta     {"message_ref": str, "text": str}        # reasoning stream
+#   text.delta         {"message_ref": str, "text": str}
+#   text.completed     {"message_ref": str, "text": str}
+#   tool.invoked       {"tool_id": str, "name": str, "args": dict[str, object]}
+#   tool.returned      {"tool_id": str, "name": str, "result": str}
+#   todo.updated       {"todos": [{"content": str, "status": "pending"|"in_progress"|"completed"}]}
+#   subagent.started   {"subagent_id": str, "name": str, "description": str}
+#   subagent.finished  {"subagent_id": str, "name": str}
+#   run.completed      {"status": str}
+#   run.failed         {"error_kind": str, "message": str}
 
 
 class RunRequest(BaseModel):

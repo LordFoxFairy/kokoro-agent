@@ -74,3 +74,14 @@ async def test_subscribe_from_cursor_skips_earlier(port: RedisStreamPort) -> Non
     await task
 
     assert [item.event["seq"] for item in received] == [1, 2]
+
+
+async def test_redis_port_allows_custom_block_ms() -> None:
+    stream = _stream()
+    port = RedisStreamPort(REDIS_URL, block_ms=25)
+    try:
+        await port.publish(stream, {"seq": 1})
+        items = await port.read_all(stream)
+        assert items[0].event["seq"] == 1
+    finally:
+        await port.aclose()

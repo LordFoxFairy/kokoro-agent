@@ -25,7 +25,7 @@ async def _handle_request(
     port: StreamPort,
     raw: dict[str, object],
     processed: set[str],
-    model: BaseChatModel,
+    model: BaseChatModel | None = None,
 ) -> None:
     try:
         request = RunRequest.model_validate(raw)
@@ -39,12 +39,13 @@ async def _handle_request(
     processed.add(request.run_id)
 
     stream = events_stream(request.run_id)
-    async for event in run_agent(request, model):
+    resolved_model = model if model is not None else make_chat_model(request.execution_style)
+    async for event in run_agent(request, resolved_model):
         await port.publish(stream, event.model_dump())
 
 
 async def run_once(
-    port: StreamPort, processed: set[str], model: BaseChatModel
+    port: StreamPort, processed: set[str], model: BaseChatModel | None = None
 ) -> None:
     """Drain currently-pending run requests once and emit their event streams.
 
@@ -56,10 +57,9 @@ async def run_once(
 
 
 async def _serve(port: StreamPort) -> None:
-    model = make_chat_model()
     processed: set[str] = set()
     async for item in port.subscribe(REQUESTS_STREAM):
-        await _handle_request(port, item.event, processed, model)
+        await _handle_request(port, item.event, processed)
 
 
 def main() -> None:

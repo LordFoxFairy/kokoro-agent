@@ -9,6 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
+from kokoro_agent.events import AgentEvent
 from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
@@ -130,3 +131,38 @@ async def test_run_once_streams_with_local_fake_model(
 
     completed = next(item for item in items if item.event["kind"] == "text.completed")
     assert "本地预览" in _payload_text(completed.event["payload"])
+
+
+@pytest.mark.asyncio
+async def test_run_once_resolves_model_from_request_execution_style(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    port = MemoryStreamPort()
+    processed: set[str] = set()
+    seen_styles: list[str] = []
+    await port.publish(
+        REQUESTS_STREAM,
+        {
+            **_request(),
+            "execution_style": "thinking",
+        },
+    )
+
+    def fake_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
+        seen_styles.append(execution_style)
+        return make_local_fake_chat_model()
+
+    async def fake_run_agent(request: object, model: BaseChatModel):
+        yield AgentEvent(
+            kind="run.completed",
+            run_id="run_01",
+            seq=1,
+            payload={"status": "completed"},
+        )
+
+    monkeypatch.setattr("kokoro_agent.worker.make_chat_model", fake_make_chat_model)
+    monkeypatch.setattr("kokoro_agent.worker.run_agent", fake_run_agent)
+
+    await run_once(port, processed, None)
+
+    assert seen_styles == ["thinking"]

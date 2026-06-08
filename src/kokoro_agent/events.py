@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+ExecutionStyle = Literal["fast", "thinking"]
+
 from pydantic import BaseModel, ConfigDict
 
 AgentKind = Literal[
@@ -14,6 +16,8 @@ AgentKind = Literal[
     "todo.updated",
     "subagent.started",
     "subagent.finished",
+    "subagent.text.delta",
+    "subagent.text.completed",
     "run.completed",
     "run.failed",
 ]
@@ -25,11 +29,13 @@ AgentKind = Literal[
 #   thinking.delta     {"message_ref": str, "text": str}        # reasoning stream
 #   text.delta         {"message_ref": str, "text": str}
 #   text.completed     {"message_ref": str, "text": str}
-#   tool.invoked       {"tool_id": str, "name": str, "args": dict[str, object]}
-#   tool.returned      {"tool_id": str, "name": str, "result": str}
+#   tool.invoked       {"message_ref": str, "tool_id": str, "name": str, "args": dict[str, object]}
+#   tool.returned      {"message_ref": str, "tool_id": str, "name": str, "result": str}
 #   todo.updated       {"todos": [{"content": str, "status": "pending"|"in_progress"|"completed"}]}
-#   subagent.started   {"subagent_id": str, "name": str, "description": str}
-#   subagent.finished  {"subagent_id": str, "name": str}
+#   subagent.started   {"message_ref": str, "subagent_id": str, "name": str, "description": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
+#   subagent.finished  {"message_ref": str, "subagent_id": str, "name": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
+#   subagent.text.delta {"message_ref": str, "subagent_id": str, "text": str}
+#   subagent.text.completed {"message_ref": str, "subagent_id": str, "text": str}
 #   run.completed      {"status": str}
 #   run.failed         {"error_kind": str, "message": str}
 
@@ -44,7 +50,7 @@ class RunRequest(BaseModel):
     session_id: str
     conversation_id: str
     input: str
-    execution_style: str = "fast"
+    execution_style: ExecutionStyle = "fast"
 
 
 class AgentEvent(BaseModel):

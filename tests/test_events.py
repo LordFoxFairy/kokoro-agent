@@ -39,6 +39,18 @@ def test_run_request_forbids_extra_fields() -> None:
         )
 
 
+def test_run_request_rejects_unknown_execution_style() -> None:
+    with pytest.raises(ValidationError):
+        RunRequest(
+            kind="run.request",
+            run_id="run_01",
+            session_id="ses_01",
+            conversation_id="conv_01",
+            input="hello",
+            execution_style="default",  # type: ignore[arg-type]
+        )
+
+
 def test_run_request_strict_rejects_coerced_input() -> None:
     with pytest.raises(ValidationError):
         RunRequest(
@@ -117,10 +129,19 @@ def test_agent_event_strict_rejects_coerced_seq() -> None:
     ("kind", "payload"),
     [
         ("thinking.delta", {"message_ref": "m1", "text": "let me think"}),
-        ("tool.invoked", {"tool_id": "t1", "name": "write_todos", "args": {"todos": []}}),
-        ("tool.returned", {"tool_id": "t1", "name": "write_todos", "result": "ok"}),
-        ("subagent.started", {"subagent_id": "s1", "name": "researcher", "description": "dig"}),
-        ("subagent.finished", {"subagent_id": "s1", "name": "researcher"}),
+        (
+            "tool.invoked",
+            {"message_ref": "m1", "tool_id": "t1", "name": "write_todos", "args": {"todos": []}},
+        ),
+        (
+            "tool.returned",
+            {"message_ref": "m1", "tool_id": "t1", "name": "write_todos", "result": "ok"},
+        ),
+        (
+            "subagent.started",
+            {"message_ref": "m1", "subagent_id": "s1", "name": "researcher", "description": "dig"},
+        ),
+        ("subagent.finished", {"message_ref": "m1", "subagent_id": "s1", "name": "researcher"}),
     ],
 )
 def test_activity_kinds_accepted(kind: str, payload: dict[str, object]) -> None:
@@ -143,3 +164,31 @@ def test_todo_updated_roundtrip_preserves_statuses() -> None:
     restored = AgentEvent.model_validate(event.model_dump())
     assert restored == event
     assert restored.payload["todos"] == payload["todos"]
+
+
+def test_tool_and_subagent_events_preserve_message_ref() -> None:
+    tool_event = AgentEvent(
+        kind="tool.invoked",
+        run_id="run_01",
+        seq=5,
+        payload={
+            "message_ref": "msgref_01",
+            "tool_id": "tool_01",
+            "name": "get_weather",
+            "args": {"city": "北京"},
+        },
+    )
+    subagent_event = AgentEvent(
+        kind="subagent.started",
+        run_id="run_01",
+        seq=6,
+        payload={
+            "message_ref": "msgref_01",
+            "subagent_id": "subagent_01",
+            "name": "researcher",
+            "description": "查资料",
+        },
+    )
+
+    assert tool_event.model_dump()["payload"]["message_ref"] == "msgref_01"
+    assert subagent_event.model_dump()["payload"]["message_ref"] == "msgref_01"

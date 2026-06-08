@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from typing import cast
+from typing import Any, cast
 
 from deepagents import create_deep_agent  # pyright: ignore  # untyped third-party
+from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessage
+from pydantic import BaseModel, Field
 
 from kokoro_agent.events import AgentEvent, AgentKind, RunRequest
+from kokoro_agent.subagents import (
+    RuntimeSubagentRegistry,
+    materialize_runtime_subagents,
+    subagent_source_for,
+)
 
 ASTREAM_TIMEOUT_S = 120
 
@@ -23,6 +31,7 @@ _SYSTEM_PROMPT = (
 # a generic tool.invoked/returned pair.
 _TODO_TOOL = "write_todos"
 _SUBAGENT_TOOL = "task"
+_RUNTIME_SUBAGENT_TOOL = "agent"
 
 
 def _text_of(content: object) -> str:
@@ -92,6 +101,13 @@ def _as_ai_message(output: object) -> AIMessage | None:
     return output if isinstance(output, AIMessage) else None
 
 
+class RuntimeSubagentToolInput(BaseModel):
+    name: str = Field(min_length=1, description="Runtime custom subagent name")
+    description: str = Field(min_length=1, description="Short role or responsibility summary")
+    system_prompt: str = Field(min_length=1, description="System prompt for the runtime custom subagent")
+    task: str = Field(min_length=1, description="The concrete task the runtime custom subagent should perform")
+
+
 # Intent kinds that run_agent expands rather than emitting verbatim.
 _TEXT_INTENT = "text"
 
@@ -129,13 +145,30 @@ def translate_stream_event(
             todos = args.get("todos")
             out.append(("todo.updated", {"todos": todos if isinstance(todos, list) else []}))
         elif name == _SUBAGENT_TOOL:
+            subagent_type = str(args.get("subagent_type") or "subagent")
             out.append(
                 (
                     "subagent.started",
                     {
                         "subagent_id": tool_id,
-                        "name": str(args.get("subagent_type") or "subagent"),
+                        "name": subagent_type,
                         "description": str(args.get("description") or ""),
+                        "subagent_type": subagent_type,
+                        "source": subagent_source_for(subagent_type),
+                    },
+                )
+            )
+        elif name == _RUNTIME_SUBAGENT_TOOL:
+            runtime_name = str(args.get("name") or "runtime-subagent")
+            out.append(
+                (
+                    "subagent.started",
+                    {
+                        "subagent_id": tool_id,
+                        "name": runtime_name,
+                        "description": str(args.get("description") or ""),
+                        "subagent_type": runtime_name,
+                        "source": "runtime-custom",
                     },
                 )
             )
@@ -145,7 +178,43 @@ def translate_stream_event(
         if name == _TODO_TOOL:
             return out  # the list was already emitted on tool start
         if name == _SUBAGENT_TOOL:
-            out.append(("subagent.finished", {"subagent_id": tool_id, "name": name}))
+            input_obj = data.get("input")
+            args: Mapping[str, object] = (
+                cast("Mapping[str, object]", input_obj)
+                if isinstance(input_obj, Mapping)
+                else {}
+            )
+            subagent_type = str(args.get("subagent_type") or "subagent")
+            out.append(
+                (
+                    "subagent.finished",
+                    {
+                        "subagent_id": tool_id,
+                        "name": subagent_type,
+                        "subagent_type": subagent_type,
+                        "source": subagent_source_for(subagent_type),
+                    },
+                )
+            )
+        elif name == _RUNTIME_SUBAGENT_TOOL:
+            input_obj = data.get("input")
+            args: Mapping[str, object] = (
+                cast("Mapping[str, object]", input_obj)
+                if isinstance(input_obj, Mapping)
+                else {}
+            )
+            runtime_name = str(args.get("name") or "runtime-subagent")
+            out.append(
+                (
+                    "subagent.finished",
+                    {
+                        "subagent_id": tool_id,
+                        "name": runtime_name,
+                        "subagent_type": runtime_name,
+                        "source": "runtime-custom",
+                    },
+                )
+            )
         else:
             out.append(
                 (
@@ -167,11 +236,85 @@ def translate_stream_event(
     return out
 
 
+def _build_runtime_custom_subagent_tool(
+    model: BaseChatModel,
+    runtime_registry: RuntimeSubagentRegistry,
+) -> StructuredTool:
+    create_agent_fn = cast("Any", create_agent)
+    tool_cls = cast("Any", StructuredTool)
+
+    async def agent_runtime(
+        name: str,
+        description: str,
+        system_prompt: str,
+        task: str,
+    ) -> str:
+        spec = runtime_registry.get(name)
+        if spec is None:
+            spec = runtime_registry.register(name, description, system_prompt)
+
+        runner = create_agent_fn(
+            model,
+            system_prompt=spec.system_prompt,
+            tools=[],
+            name=spec.name,
+        )
+        result_obj: object = await runner.ainvoke(
+            {"messages": [{"role": "user", "content": task}]}
+        )
+        if isinstance(result_obj, Mapping):
+            result_map = cast("Mapping[str, object]", result_obj)
+            messages_obj = result_map.get("messages")
+        else:
+            messages_obj = None
+        if isinstance(messages_obj, list):
+            message_items = cast("list[object]", messages_obj)
+            for message_obj in reversed(message_items):
+                if isinstance(message_obj, AIMessage):
+                    text_attr = cast("str | None", message_obj.text)
+                    if text_attr:
+                        text = text_attr.rstrip()
+                    else:
+                        raw_content = getattr(message_obj, "content", "")
+                        text = _text_of(raw_content)
+                    if text:
+                        return text
+        return ""
+
+    def agent_runtime_sync(
+        name: str,
+        description: str,
+        system_prompt: str,
+        task: str,
+    ) -> str:
+        msg = "runtime custom subagent tool requires async execution"
+        raise RuntimeError(msg)
+
+    return tool_cls.from_function(
+        name=_RUNTIME_SUBAGENT_TOOL,
+        func=agent_runtime_sync,
+        coroutine=agent_runtime,
+        infer_schema=False,
+        args_schema=RuntimeSubagentToolInput,
+        description=(
+            "Create and run a runtime custom subagent. Use this when you need an ad-hoc"
+            " specialized helper that is not part of the built-in or config-defined"
+            " subagent set."
+        ),
+    )
+
+
 def _build_agent(model: BaseChatModel) -> object:
-    # deepagents is an untyped boundary; treat the builder as returning an opaque
-    # graph and reach it only via the cast astream_events iterator in run_agent.
+    # deepagents is an untyped boundary; keep the built-in subagent registry
+    # explicit so richer task-path activity stays on the same resolved
+    # provider/model rather than falling back to the SDK's default general-
+    # purpose subagent path.
+    runtime_registry = RuntimeSubagentRegistry()
     return create_deep_agent(  # pyright: ignore[reportUnknownMemberType]
-        model=model, tools=[], system_prompt=_SYSTEM_PROMPT
+        model=model,
+        tools=[_build_runtime_custom_subagent_tool(model, runtime_registry)],
+        system_prompt=_SYSTEM_PROMPT,
+        subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
     )
 
 
@@ -189,11 +332,27 @@ async def drive_agent_events(
         return seq
 
     ref = 0
+    active_message_ref: str | None = None
+    segment_completed = False
+    active_subagent: tuple[str, str] | None = None
 
     def new_ref() -> str:
         nonlocal ref
         ref += 1
         return f"msg_{ref:04d}"
+
+    def ref_for_segment_body() -> str:
+        nonlocal active_message_ref, segment_completed
+        if active_message_ref is None or segment_completed:
+            active_message_ref = new_ref()
+            segment_completed = False
+        return active_message_ref
+
+    def ref_for_segment_activity() -> str:
+        nonlocal active_message_ref
+        if active_message_ref is None:
+            active_message_ref = new_ref()
+        return active_message_ref
 
     yield AgentEvent(kind="run.started", run_id=run_id, seq=nxt(), payload={})
     try:
@@ -201,16 +360,66 @@ async def drive_agent_events(
             async for ev in raw_events:
                 for kind, payload in translate_stream_event(ev):
                     if kind == _TEXT_INTENT:
-                        message_ref = new_ref()
+                        metadata_obj = ev.get("metadata")
+                        metadata: Mapping[str, object] = (
+                            cast("Mapping[str, object]", metadata_obj)
+                            if isinstance(metadata_obj, Mapping)
+                            else {}
+                        )
+                        lc_agent_name_obj = metadata.get("lc_agent_name")
+                        lc_agent_name = (
+                            lc_agent_name_obj if isinstance(lc_agent_name_obj, str) else ""
+                        )
+                        if active_subagent is not None and lc_agent_name == active_subagent[1]:
+                            subagent_body = {
+                                "message_ref": ref_for_segment_activity(),
+                                "subagent_id": active_subagent[0],
+                                "text": payload["text"],
+                            }
+                            yield AgentEvent(
+                                kind="subagent.text.delta",
+                                run_id=run_id,
+                                seq=nxt(),
+                                payload=subagent_body,
+                            )
+                            yield AgentEvent(
+                                kind="subagent.text.completed",
+                                run_id=run_id,
+                                seq=nxt(),
+                                payload=subagent_body,
+                            )
+                            continue
+                        message_ref = ref_for_segment_body()
                         body = {"message_ref": message_ref, "text": payload["text"]}
                         yield AgentEvent(kind="text.delta", run_id=run_id, seq=nxt(), payload=body)
                         yield AgentEvent(kind="text.completed", run_id=run_id, seq=nxt(), payload=body)
+                        segment_completed = True
                     elif kind == "thinking.delta":
                         yield AgentEvent(
                             kind="thinking.delta",
                             run_id=run_id,
                             seq=nxt(),
-                            payload={"message_ref": new_ref(), "text": payload["text"]},
+                            payload={"message_ref": ref_for_segment_body(), "text": payload["text"]},
+                        )
+                    elif kind in {
+                        "tool.invoked",
+                        "tool.returned",
+                        "subagent.started",
+                        "subagent.finished",
+                    }:
+                        event_payload = {"message_ref": ref_for_segment_activity(), **payload}
+                        if kind == "subagent.started":
+                            active_subagent = (
+                                cast("str", payload["subagent_id"]),
+                                cast("str", payload["name"]),
+                            )
+                        elif kind == "subagent.finished":
+                            active_subagent = None
+                        yield AgentEvent(
+                            kind=cast("AgentKind", kind),
+                            run_id=run_id,
+                            seq=nxt(),
+                            payload=event_payload,
                         )
                     else:
                         yield AgentEvent(

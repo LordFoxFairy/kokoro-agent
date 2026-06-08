@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
 from langchain_core.messages import AIMessage
 
 from kokoro_agent.run_agent import drive_agent_events, translate_stream_event
+from kokoro_agent.subagents import CUSTOM_SUBAGENTS_ENV
 
 
 # --- pure mapper: one astream_events(v2) event -> (kind, payload) intents -----
@@ -58,6 +60,87 @@ def test_generic_tool_start_and_end_pair() -> None:
     ]
 
 
+async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref() -> None:
+    events = [
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {
+                "output": AIMessage(
+                    content="第一段",
+                    additional_kwargs={"reasoning_content": "先想一下"},
+                )
+            },
+        },
+        {
+            "event": "on_tool_start",
+            "name": "get_weather",
+            "run_id": "tool_x",
+            "data": {"input": {"city": "北京"}},
+        },
+        {
+            "event": "on_tool_end",
+            "name": "get_weather",
+            "run_id": "tool_x",
+            "data": {"output": "晴"},
+        },
+        {
+            "event": "on_tool_start",
+            "name": "task",
+            "run_id": "subagent_x",
+            "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
+        },
+        {
+            "event": "on_tool_end",
+            "name": "task",
+            "run_id": "subagent_x",
+            "data": {"output": "done"},
+        },
+    ]
+
+    out = [event async for event in drive_agent_events("run_1", _aiter(events))]
+    segment_ref = next(event.payload["message_ref"] for event in out if event.kind == "text.completed")
+
+    for kind in (
+        "thinking.delta",
+        "text.delta",
+        "tool.invoked",
+        "tool.returned",
+        "subagent.started",
+        "subagent.finished",
+    ):
+        payload = next(event.payload for event in out if event.kind == kind)
+        assert payload["message_ref"] == segment_ref
+
+
+async def test_drive_agent_events_allocates_new_message_ref_only_for_new_segment() -> None:
+    raw = [
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {"output": AIMessage(content="第一段")},
+        },
+        {
+            "event": "on_tool_start",
+            "name": "get_weather",
+            "run_id": "tool_x",
+            "data": {"input": {"city": "北京"}},
+        },
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {"output": AIMessage(content="第二段")},
+        },
+    ]
+
+    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
+    completed_refs = [event.payload["message_ref"] for event in out if event.kind == "text.completed"]
+    tool_ref = next(event.payload["message_ref"] for event in out if event.kind == "tool.invoked")
+
+    assert completed_refs == ["msg_0001", "msg_0002"]
+    assert tool_ref == completed_refs[0]
+
+
 def test_task_tool_maps_to_subagent_lifecycle() -> None:
     start: Mapping[str, object] = {
         "event": "on_tool_start",
@@ -66,17 +149,159 @@ def test_task_tool_maps_to_subagent_lifecycle() -> None:
         "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
     }
     assert translate_stream_event(start) == [
-        ("subagent.started", {"subagent_id": "sa1", "name": "researcher", "description": "查资料"})
+        (
+            "subagent.started",
+            {
+                "subagent_id": "sa1",
+                "name": "researcher",
+                "description": "查资料",
+                "subagent_type": "researcher",
+                "source": "built-in",
+            },
+        )
     ]
     end: Mapping[str, object] = {
         "event": "on_tool_end",
         "name": "task",
         "run_id": "sa1",
-        "data": {"output": "done"},
+        "data": {"input": {"subagent_type": "researcher"}, "output": "done"},
     }
     assert translate_stream_event(end) == [
-        ("subagent.finished", {"subagent_id": "sa1", "name": "task"})
+        (
+            "subagent.finished",
+            {
+                "subagent_id": "sa1",
+                "name": "researcher",
+                "subagent_type": "researcher",
+                "source": "built-in",
+            },
+        )
     ]
+
+
+def test_task_tool_marks_env_registered_subagent_as_custom(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        CUSTOM_SUBAGENTS_ENV,
+        '[{"name":"reviewer","description":"审稿","system_prompt":"检查内容质量"}]',
+    )
+    start: Mapping[str, object] = {
+        "event": "on_tool_start",
+        "name": "task",
+        "run_id": "sa2",
+        "data": {"input": {"subagent_type": "reviewer", "description": "审稿"}},
+    }
+
+    assert translate_stream_event(start) == [
+        (
+            "subagent.started",
+            {
+                "subagent_id": "sa2",
+                "name": "reviewer",
+                "description": "审稿",
+                "subagent_type": "reviewer",
+                "source": "config-custom",
+            },
+        )
+    ]
+
+
+async def test_drive_agent_events_routes_subagent_text_into_nested_subagent_stream() -> None:
+    raw = [
+        {
+            "event": "on_tool_start",
+            "name": "task",
+            "run_id": "subagent_x",
+            "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
+        },
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "metadata": {"lc_agent_name": "researcher"},
+            "data": {"output": AIMessage(content="子智能体结论")},
+        },
+        {
+            "event": "on_tool_end",
+            "name": "task",
+            "run_id": "subagent_x",
+            "data": {"input": {"subagent_type": "researcher"}, "output": "done"},
+        },
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {"output": AIMessage(content="主助手总结")},
+        },
+    ]
+
+    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
+    kinds = [event.kind for event in out]
+    assert "subagent.text.delta" in kinds
+    assert "subagent.text.completed" in kinds
+    assert kinds.count("text.completed") == 1
+
+    sub_delta = next(event for event in out if event.kind == "subagent.text.delta")
+    sub_done = next(event for event in out if event.kind == "subagent.text.completed")
+    final_done = [event for event in out if event.kind == "text.completed"][0]
+
+    assert sub_delta.payload["subagent_id"] == "subagent_x"
+    assert sub_done.payload["text"] == "子智能体结论"
+    assert final_done.payload["text"] == "主助手总结"
+
+
+def test_runtime_agent_tool_maps_to_runtime_custom_lifecycle() -> None:
+    start: Mapping[str, object] = {
+        "event": "on_tool_start",
+        "name": "agent",
+        "run_id": "sa3",
+        "data": {
+            "input": {
+                "name": "runtime-reviewer",
+                "description": "运行时审稿",
+                "system_prompt": "检查一致性",
+                "task": "核查 1+1=2",
+            }
+        },
+    }
+    end: Mapping[str, object] = {
+        "event": "on_tool_end",
+        "name": "agent",
+        "run_id": "sa3",
+        "data": {
+            "input": {
+                "name": "runtime-reviewer",
+                "description": "运行时审稿",
+                "system_prompt": "检查一致性",
+                "task": "核查 1+1=2",
+            },
+            "output": "done",
+        },
+    }
+
+    assert translate_stream_event(start) == [
+        (
+            "subagent.started",
+            {
+                "subagent_id": "sa3",
+                "name": "runtime-reviewer",
+                "description": "运行时审稿",
+                "subagent_type": "runtime-reviewer",
+                "source": "runtime-custom",
+            },
+        )
+    ]
+    assert translate_stream_event(end) == [
+        (
+            "subagent.finished",
+            {
+                "subagent_id": "sa3",
+                "name": "runtime-reviewer",
+                "subagent_type": "runtime-reviewer",
+                "source": "runtime-custom",
+            },
+        )
+    ]
+
 
 
 def test_final_model_message_becomes_text_intent() -> None:
@@ -133,7 +358,7 @@ def test_internal_graph_nodes_are_skipped(ev: Mapping[str, object]) -> None:
 # --- envelope: run.started ... run.completed | run.failed ---------------------
 
 
-async def _aiter(items: list[Mapping[str, object]]) -> AsyncIterator[Mapping[str, object]]:
+async def _aiter(items: Sequence[Mapping[str, object]]) -> AsyncIterator[Mapping[str, object]]:
     for item in items:
         yield item
 

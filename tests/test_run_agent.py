@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
 
 from kokoro_agent.run_agent import drive_agent_events, translate_stream_event
 from kokoro_agent.subagents import CUSTOM_SUBAGENTS_ENV
@@ -311,6 +311,150 @@ def test_final_model_message_becomes_text_intent() -> None:
         "data": {"output": AIMessage(content="适合出门。")},
     }
     assert translate_stream_event(ev) == [("text", {"text": "适合出门。"})]
+
+
+def test_model_stream_chunk_becomes_text_stream_intent() -> None:
+    # A streamed token chunk carries only its incremental slice of the answer.
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_stream",
+        "name": "ChatOpenAI",
+        "data": {"chunk": AIMessageChunk(content="适合")},
+    }
+    assert translate_stream_event(ev) == [("text.stream", {"text": "适合"})]
+
+
+def test_empty_model_stream_chunk_is_silent() -> None:
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_stream",
+        "name": "ChatOpenAI",
+        "data": {"chunk": AIMessageChunk(content="")},
+    }
+    assert translate_stream_event(ev) == []
+
+
+def test_tool_call_only_stream_chunk_is_silent() -> None:
+    # Tool-call argument chunks carry no user-visible text; they must not leak.
+    chunk = AIMessageChunk(
+        content="",
+        tool_call_chunks=[
+            {"name": "get_weather", "args": '{"ci', "id": "c1", "index": 0, "type": "tool_call_chunk"}
+        ],
+    )
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_stream",
+        "name": "ChatOpenAI",
+        "data": {"chunk": chunk},
+    }
+    assert translate_stream_event(ev) == []
+
+
+def test_model_stream_chunk_surfaces_incremental_reasoning() -> None:
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_stream",
+        "name": "ChatOpenAI",
+        "data": {"chunk": AIMessageChunk(content="答", additional_kwargs={"reasoning_content": "想"})},
+    }
+    assert translate_stream_event(ev) == [
+        ("thinking.delta", {"text": "想"}),
+        ("text.stream", {"text": "答"}),
+    ]
+
+
+async def test_drive_agent_events_streams_incremental_deltas_then_single_completed() -> None:
+    # Real token streaming: several stream chunks, then the final end carries the
+    # whole message. The driver must emit one delta per chunk (each incremental)
+    # and exactly one completed with the full accumulated text — all on one ref.
+    raw: list[Mapping[str, object]] = [
+        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="晴，")}},
+        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="适合")}},
+        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="出门。")}},
+        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="晴，适合出门。")}},
+    ]
+    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
+    kinds = [e.kind for e in events]
+    assert kinds == [
+        "run.started",
+        "text.delta",
+        "text.delta",
+        "text.delta",
+        "text.completed",
+        "run.completed",
+    ]
+    deltas = [e for e in events if e.kind == "text.delta"]
+    completed = next(e for e in events if e.kind == "text.completed")
+    # Each delta is the incremental slice, not the cumulative buffer.
+    assert [d.payload["text"] for d in deltas] == ["晴，", "适合", "出门。"]
+    # One completed carrying the full accumulated text — not another delta.
+    assert completed.payload["text"] == "晴，适合出门。"
+    # Every event in the segment shares one message_ref.
+    refs = {e.payload["message_ref"] for e in events if e.kind in ("text.delta", "text.completed")}
+    assert len(refs) == 1
+
+
+async def test_drive_agent_events_streamed_then_fresh_segment_uses_new_ref() -> None:
+    # After a streamed segment completes, a new streamed segment must get a new
+    # ref (the streamed completed closes the segment just like the fallback path).
+    raw: list[Mapping[str, object]] = [
+        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="第一")}},
+        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第一")}},
+        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="第二")}},
+        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第二")}},
+    ]
+    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
+    completed_refs = [e.payload["message_ref"] for e in events if e.kind == "text.completed"]
+    assert completed_refs == ["msg_0001", "msg_0002"]
+
+
+async def test_drive_agent_events_routes_streamed_subagent_chunks_into_subagent_stream() -> None:
+    # A streaming sub-agent's chunks must route to subagent.text.delta, and the
+    # sub-agent's end must produce one subagent.text.completed with the full text.
+    raw: list[Mapping[str, object]] = [
+        {
+            "event": "on_tool_start",
+            "name": "task",
+            "run_id": "subagent_x",
+            "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
+        },
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatOpenAI",
+            "metadata": {"lc_agent_name": "researcher"},
+            "data": {"chunk": AIMessageChunk(content="子")},
+        },
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatOpenAI",
+            "metadata": {"lc_agent_name": "researcher"},
+            "data": {"chunk": AIMessageChunk(content="结论")},
+        },
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "metadata": {"lc_agent_name": "researcher"},
+            "data": {"output": AIMessage(content="子结论")},
+        },
+        {
+            "event": "on_tool_end",
+            "name": "task",
+            "run_id": "subagent_x",
+            "data": {"input": {"subagent_type": "researcher"}, "output": "done"},
+        },
+    ]
+    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
+    sub_deltas = [e for e in events if e.kind == "subagent.text.delta"]
+    sub_completed = [e for e in events if e.kind == "subagent.text.completed"]
+    assert [d.payload["text"] for d in sub_deltas] == ["子", "结论"]
+    assert len(sub_completed) == 1
+    assert sub_completed[0].payload["text"] == "子结论"
+    assert sub_completed[0].payload["subagent_id"] == "subagent_x"
+    sub_refs = {
+        e.payload["message_ref"]
+        for e in events
+        if e.kind in ("subagent.text.delta", "subagent.text.completed")
+    }
+    assert len(sub_refs) == 1
+    # The parent thread never gets a text.delta/completed for a sub-agent segment.
+    assert "text.completed" not in [e.kind for e in events]
 
 
 def test_intermediate_tool_call_turn_emits_no_text() -> None:

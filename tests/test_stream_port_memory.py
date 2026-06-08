@@ -86,3 +86,10 @@ async def test_subscribe_blocks_without_busy_wait() -> None:
     await port.publish(STREAM, {"seq": 42})
     item = await asyncio.wait_for(task, timeout=2)
     assert item.event["seq"] == 42
+
+
+async def test_memory_port_allows_custom_cursor_width() -> None:
+    port = MemoryStreamPort(cursor_width=6)
+    await port.publish(STREAM, {"seq": 1})
+    item = (await port.read_all(STREAM))[0]
+    assert item.cursor == "000000"

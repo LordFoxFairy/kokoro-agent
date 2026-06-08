@@ -50,14 +50,17 @@ class MemoryStreamPort:
     """In-process append-only StreamPort.
 
     Single-process only (cannot bridge Python<->TS). Cursors are zero-padded
-    monotonic integers so lexical ordering matches insertion order. Subscribers
-    block on an :class:`asyncio.Event` instead of busy-waiting.
+    monotonic integers so lexical ordering matches insertion order. Cursor width
+    is a cross-language contract default, but may be narrowed in tests via the
+    constructor for explicit contract checks. Subscribers block on an
+    :class:`asyncio.Event` instead of busy-waiting.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cursor_width: int = _CURSOR_WIDTH) -> None:
         self._streams: dict[str, list[StreamItem]] = {}
         self._counters: dict[str, int] = {}
         self._signals: dict[str, asyncio.Event] = {}
+        self._cursor_width = cursor_width
 
     def _signal_for(self, stream: str) -> asyncio.Event:
         signal = self._signals.get(stream)
@@ -69,7 +72,7 @@ class MemoryStreamPort:
     async def publish(self, stream: str, event: dict[str, object]) -> StreamItem:
         seq = self._counters.get(stream, 0)
         self._counters[stream] = seq + 1
-        cursor = str(seq).zfill(_CURSOR_WIDTH)
+        cursor = str(seq).zfill(self._cursor_width)
         item = StreamItem(cursor=cursor, event=dict(event))
         self._streams.setdefault(stream, []).append(item)
         signal = self._signal_for(stream)
@@ -107,14 +110,18 @@ class RedisStreamPort:
 
     Each event is XADD'ed as a single JSON blob under the ``data`` field; the
     Redis entry id is the natural cursor. ``read_all`` uses XRANGE - +;
-    ``subscribe`` uses XREAD BLOCK looping from the last seen cursor. Works
-    across processes and languages (Python <-> TS).
+    ``subscribe`` uses XREAD BLOCK looping from the last seen cursor. The Redis
+    field name and default block interval are the Python side of a shared
+    Python/TypeScript transport contract, while tests may override block_ms via
+    the constructor for focused polling behavior checks. Works across processes
+    and languages (Python <-> TS).
     """
 
-    def __init__(self, url: str = "redis://127.0.0.1:6379/0") -> None:
+    def __init__(self, url: str = "redis://127.0.0.1:6379/0", block_ms: int = _BLOCK_MS) -> None:
         from redis.asyncio import from_url
 
         self._redis: Redis = from_url(url)
+        self._block_ms = block_ms
 
     async def aclose(self) -> None:
         await self._redis.aclose()
@@ -148,7 +155,7 @@ class RedisStreamPort:
         while True:
             call = cast(
                 Awaitable[_ReadResponse | None],
-                self._redis.xread({stream: last}, block=_BLOCK_MS),
+                self._redis.xread({stream: last}, block=self._block_ms),
             )
             response = await call
             if not response:

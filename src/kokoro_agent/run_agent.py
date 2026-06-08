@@ -8,7 +8,7 @@ from deepagents import create_deep_agent  # pyright: ignore  # untyped third-par
 from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
 from pydantic import BaseModel, Field
 
 from kokoro_agent.events import AgentEvent, AgentKind, RunRequest
@@ -101,6 +101,11 @@ def _as_ai_message(output: object) -> AIMessage | None:
     return output if isinstance(output, AIMessage) else None
 
 
+def _is_tool_call_only_chunk(chunk: AIMessageChunk) -> bool:
+    """A chunk that carries only tool-call argument fragments, no answer text."""
+    return bool(chunk.tool_call_chunks) and not _text_of(cast("object", chunk.content))  # pyright: ignore  # langchain Any field
+
+
 class RuntimeSubagentToolInput(BaseModel):
     name: str = Field(min_length=1, description="Runtime custom subagent name")
     description: str = Field(min_length=1, description="Short role or responsibility summary")
@@ -110,6 +115,10 @@ class RuntimeSubagentToolInput(BaseModel):
 
 # Intent kinds that run_agent expands rather than emitting verbatim.
 _TEXT_INTENT = "text"
+# An incremental token slice from on_chat_model_stream; run_agent turns each into
+# a real text.delta and remembers it streamed so the matching _TEXT_INTENT (from
+# on_chat_model_end) closes the segment with one text.completed, no extra delta.
+_TEXT_STREAM_INTENT = "text.stream"
 
 
 def translate_stream_event(
@@ -222,6 +231,15 @@ def translate_stream_event(
                     {"tool_id": tool_id, "name": name, "result": _result_text(data.get("output"))},
                 )
             )
+    elif event == "on_chat_model_stream":
+        chunk = data.get("chunk")
+        if isinstance(chunk, AIMessageChunk) and not _is_tool_call_only_chunk(chunk):
+            reasoning = _reasoning_of(chunk)
+            if reasoning:
+                out.append(("thinking.delta", {"text": reasoning}))
+            text = _text_of(cast("object", chunk.content))  # pyright: ignore  # langchain Any field
+            if text:
+                out.append((_TEXT_STREAM_INTENT, {"text": text}))
     elif event == "on_chat_model_end":
         message = _as_ai_message(data.get("output"))
         if message is not None:
@@ -335,6 +353,10 @@ async def drive_agent_events(
     active_message_ref: str | None = None
     segment_completed = False
     active_subagent: tuple[str, str] | None = None
+    # Accumulated streamed text for the open parent / subagent segment. None means
+    # no stream chunk has arrived yet -> on_chat_model_end takes the fallback path.
+    streamed_text: str | None = None
+    sub_streamed_text: str | None = None
 
     def new_ref() -> str:
         nonlocal ref
@@ -354,26 +376,68 @@ async def drive_agent_events(
             active_message_ref = new_ref()
         return active_message_ref
 
+    def routed_subagent(ev: Mapping[str, object]) -> str | None:
+        """The active sub-agent id when this model event belongs to it, else None."""
+        if active_subagent is None:
+            return None
+        metadata_obj = ev.get("metadata")
+        metadata: Mapping[str, object] = (
+            cast("Mapping[str, object]", metadata_obj)
+            if isinstance(metadata_obj, Mapping)
+            else {}
+        )
+        lc_agent_name_obj = metadata.get("lc_agent_name")
+        lc_agent_name = lc_agent_name_obj if isinstance(lc_agent_name_obj, str) else ""
+        return active_subagent[0] if lc_agent_name == active_subagent[1] else None
+
     yield AgentEvent(kind="run.started", run_id=run_id, seq=nxt(), payload={})
     try:
         async with asyncio.timeout(ASTREAM_TIMEOUT_S):
             async for ev in raw_events:
                 for kind, payload in translate_stream_event(ev):
-                    if kind == _TEXT_INTENT:
-                        metadata_obj = ev.get("metadata")
-                        metadata: Mapping[str, object] = (
-                            cast("Mapping[str, object]", metadata_obj)
-                            if isinstance(metadata_obj, Mapping)
-                            else {}
+                    if kind == _TEXT_STREAM_INTENT:
+                        text = cast("str", payload["text"])
+                        sub_id = routed_subagent(ev)
+                        if sub_id is not None:
+                            sub_streamed_text = (sub_streamed_text or "") + text
+                            yield AgentEvent(
+                                kind="subagent.text.delta",
+                                run_id=run_id,
+                                seq=nxt(),
+                                payload={
+                                    "message_ref": ref_for_segment_activity(),
+                                    "subagent_id": sub_id,
+                                    "text": text,
+                                },
+                            )
+                            continue
+                        streamed_text = (streamed_text or "") + text
+                        yield AgentEvent(
+                            kind="text.delta",
+                            run_id=run_id,
+                            seq=nxt(),
+                            payload={"message_ref": ref_for_segment_body(), "text": text},
                         )
-                        lc_agent_name_obj = metadata.get("lc_agent_name")
-                        lc_agent_name = (
-                            lc_agent_name_obj if isinstance(lc_agent_name_obj, str) else ""
-                        )
-                        if active_subagent is not None and lc_agent_name == active_subagent[1]:
+                    elif kind == _TEXT_INTENT:
+                        sub_id = routed_subagent(ev)
+                        if sub_id is not None:
+                            message_ref = ref_for_segment_activity()
+                            if sub_streamed_text is not None:
+                                yield AgentEvent(
+                                    kind="subagent.text.completed",
+                                    run_id=run_id,
+                                    seq=nxt(),
+                                    payload={
+                                        "message_ref": message_ref,
+                                        "subagent_id": sub_id,
+                                        "text": sub_streamed_text,
+                                    },
+                                )
+                                sub_streamed_text = None
+                                continue
                             subagent_body = {
-                                "message_ref": ref_for_segment_activity(),
-                                "subagent_id": active_subagent[0],
+                                "message_ref": message_ref,
+                                "subagent_id": sub_id,
                                 "text": payload["text"],
                             }
                             yield AgentEvent(
@@ -390,6 +454,16 @@ async def drive_agent_events(
                             )
                             continue
                         message_ref = ref_for_segment_body()
+                        if streamed_text is not None:
+                            yield AgentEvent(
+                                kind="text.completed",
+                                run_id=run_id,
+                                seq=nxt(),
+                                payload={"message_ref": message_ref, "text": streamed_text},
+                            )
+                            streamed_text = None
+                            segment_completed = True
+                            continue
                         body = {"message_ref": message_ref, "text": payload["text"]}
                         yield AgentEvent(kind="text.delta", run_id=run_id, seq=nxt(), payload=body)
                         yield AgentEvent(kind="text.completed", run_id=run_id, seq=nxt(), payload=body)

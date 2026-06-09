@@ -61,17 +61,9 @@ def test_generic_tool_start_and_end_pair() -> None:
 
 
 async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref() -> None:
+    # 同一段内：工具/子智能体先到（真实 ReAct 顺序），随后该段的思考+正文落定，
+    # 全部共享同一个 message_ref。
     events = [
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {
-                "output": AIMessage(
-                    content="第一段",
-                    additional_kwargs={"reasoning_content": "先想一下"},
-                )
-            },
-        },
         {
             "event": "on_tool_start",
             "name": "get_weather",
@@ -96,6 +88,16 @@ async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref(
             "run_id": "subagent_x",
             "data": {"output": "done"},
         },
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {
+                "output": AIMessage(
+                    content="第一段",
+                    additional_kwargs={"reasoning_content": "先想一下"},
+                )
+            },
+        },
     ]
 
     out = [event async for event in drive_agent_events("run_1", _aiter(events))]
@@ -113,7 +115,8 @@ async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref(
         assert payload["message_ref"] == segment_ref
 
 
-async def test_drive_agent_events_allocates_new_message_ref_only_for_new_segment() -> None:
+async def test_drive_agent_events_attaches_activity_to_the_following_segment() -> None:
+    # 工具出现在上一段「已落定」之后，属于即将到来的下一段，不再挂回旧段。
     raw = [
         {
             "event": "on_chat_model_end",
@@ -138,7 +141,30 @@ async def test_drive_agent_events_allocates_new_message_ref_only_for_new_segment
     tool_ref = next(event.payload["message_ref"] for event in out if event.kind == "tool.invoked")
 
     assert completed_refs == ["msg_0001", "msg_0002"]
-    assert tool_ref == completed_refs[0]
+    # 工具属于第二段（它后面那条消息），而不是第一段。
+    assert tool_ref == completed_refs[1]
+
+
+async def test_drive_agent_events_interleaved_tool_text_tool_text_groups_each_tool_with_following_text() -> None:
+    # 真实交错流：工具1 → 文本1 → 工具2 → 文本2。
+    # 每个工具属于它「后面」那条消息，分成两段、各挂各的工具，绝不塌缩成一段。
+    raw = [
+        {"event": "on_tool_start", "name": "tool_a", "run_id": "ta", "data": {"input": {"q": "a"}}},
+        {"event": "on_tool_end", "name": "tool_a", "run_id": "ta", "data": {"output": "ra"}},
+        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第一段")}},
+        {"event": "on_tool_start", "name": "tool_b", "run_id": "tb", "data": {"input": {"q": "b"}}},
+        {"event": "on_tool_end", "name": "tool_b", "run_id": "tb", "data": {"output": "rb"}},
+        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第二段")}},
+    ]
+
+    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
+    tool_refs = [event.payload["message_ref"] for event in out if event.kind == "tool.invoked"]
+    text_refs = [event.payload["message_ref"] for event in out if event.kind == "text.completed"]
+
+    assert text_refs == ["msg_0001", "msg_0002"]
+    assert tool_refs == ["msg_0001", "msg_0002"]
+    # tool_b 与第二段同段（msg_0002），不是第一段。
+    assert tool_refs[1] == text_refs[1]
 
 
 def test_task_tool_maps_to_subagent_lifecycle() -> None:

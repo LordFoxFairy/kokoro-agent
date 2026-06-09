@@ -371,9 +371,12 @@ async def drive_agent_events(
         return active_message_ref
 
     def ref_for_segment_activity() -> str:
-        nonlocal active_message_ref
-        if active_message_ref is None:
+        # 活动（工具/子智能体）与正文一样：上一段已落定后再来的活动，属于即将到来的
+        # 下一段，开新 ref——而不是挂回旧段（否则「工具→文本→工具→文本」会塌成一段）。
+        nonlocal active_message_ref, segment_completed
+        if active_message_ref is None or segment_completed:
             active_message_ref = new_ref()
+            segment_completed = False
         return active_message_ref
 
     def routed_subagent(ev: Mapping[str, object]) -> str | None:

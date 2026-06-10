@@ -9,7 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from kokoro_agent.events import AgentEvent
+from kokoro_agent.domain.events import AgentEvent
 from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort

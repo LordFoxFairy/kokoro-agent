@@ -3,24 +3,16 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Literal, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from langchain_core.language_models import BaseChatModel
+
+from kokoro_agent.domain.subagent import RegisteredSubagent, SubagentSource
 
 if TYPE_CHECKING:
     from deepagents.middleware.subagents import SubAgent
 
 CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
-SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
-
-
-@dataclass(frozen=True, slots=True)
-class RegisteredSubagent:
-    name: str
-    description: str
-    system_prompt: str
-    source: SubagentSource
 
 
 class RuntimeSubagentRegistry:

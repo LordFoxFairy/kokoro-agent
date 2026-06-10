@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from pydantic import ValidationError
 
-from kokoro_agent.events import RunRequest
+from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.stream_port import StreamPort, make_stream_port
 from kokoro_agent.run_agent import run_agent

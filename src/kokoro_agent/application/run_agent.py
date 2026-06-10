@@ -15,7 +15,7 @@ from kokoro_agent.infrastructure.stream_translator import (
 )
 from kokoro_agent.domain.events import AgentEvent, AgentKind
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.subagents import (
+from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
 )

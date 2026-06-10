@@ -7,8 +7,8 @@ from _pytest.monkeypatch import MonkeyPatch
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from kokoro_agent.infrastructure.stream_translator import translate_stream_event
-from kokoro_agent.run_agent import drive_agent_events
-from kokoro_agent.subagents import CUSTOM_SUBAGENTS_ENV
+from kokoro_agent.application.run_agent import drive_agent_events
+from kokoro_agent.infrastructure.subagent_registry import CUSTOM_SUBAGENTS_ENV
 
 
 # --- pure mapper: one astream_events(v2) event -> (kind, payload) intents -----

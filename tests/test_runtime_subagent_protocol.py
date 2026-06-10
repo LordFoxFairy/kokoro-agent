@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from kokoro_agent.subagents import RuntimeSubagentRegistry
+from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
 
 
 def test_runtime_registry_registers_runtime_custom_source() -> None:

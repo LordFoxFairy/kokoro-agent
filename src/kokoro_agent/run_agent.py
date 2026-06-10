@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from typing import Any, cast
+from typing import cast
 
 from deepagents import create_deep_agent  # pyright: ignore  # untyped third-party
-from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import StructuredTool
-from langchain_core.messages import AIMessage, AIMessageChunk
-from pydantic import BaseModel, Field
 
+from kokoro_agent.event_translator import (
+    RuntimeSubagentToolInput as RuntimeSubagentToolInput,
+    TEXT_INTENT,
+    TEXT_STREAM_INTENT,
+    build_runtime_custom_subagent_tool,
+    translate_stream_event as translate_stream_event,
+)
 from kokoro_agent.events import AgentEvent, AgentKind, RunRequest
 from kokoro_agent.subagents import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
-    subagent_source_for,
 )
 
 ASTREAM_TIMEOUT_S = 120
@@ -27,300 +29,6 @@ _SYSTEM_PROMPT = (
     "并随进展更新；需要时调用可用工具，必要时用 task 委派子智能体。回答简洁、清晰。"
 )
 
-# write_todos / task are mapped to dedicated event families; every other tool is
-# a generic tool.invoked/returned pair.
-_TODO_TOOL = "write_todos"
-_SUBAGENT_TOOL = "task"
-_RUNTIME_SUBAGENT_TOOL = "agent"
-
-
-def _text_of(content: object) -> str:
-    """Extract plain text from a message ``content``.
-
-    Strings pass through. For list content (multi-modal / content blocks) only
-    ``{"type": "text"}`` blocks are surfaced; thinking/tool/other blocks are
-    deliberately dropped so they never leak into ``text``.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        blocks = cast("list[object]", content)
-        parts: list[str] = []
-        for block in blocks:
-            if not isinstance(block, Mapping):
-                continue
-            typed_block = cast("Mapping[object, object]", block)
-            if typed_block.get("type") != "text":
-                continue
-            text = typed_block.get("text", "")
-            if isinstance(text, str):
-                parts.append(text)
-        return "".join(parts)
-    return ""
-
-
-def _reasoning_of(message: AIMessage) -> str:
-    """Reasoning/thinking text, when the model exposes it (reasoning models).
-
-    Looks at ``additional_kwargs.reasoning_content`` and any ``thinking`` /
-    ``reasoning`` content blocks. Returns "" for models that don't surface
-    reasoning (e.g. plain chat models) — thinking then simply doesn't appear.
-    """
-    extra = cast("Mapping[str, object]", message.additional_kwargs or {})  # pyright: ignore  # langchain Any field
-    reasoning = extra.get("reasoning_content")
-    if isinstance(reasoning, str) and reasoning:
-        return reasoning
-    content = cast("object", message.content)  # pyright: ignore  # langchain Any field
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in cast("list[object]", content):
-            if not isinstance(block, Mapping):
-                continue
-            typed = cast("Mapping[object, object]", block)
-            kind = typed.get("type")
-            if kind not in ("thinking", "reasoning"):
-                continue
-            value = typed.get(kind) or typed.get("text")
-            if isinstance(value, str):
-                parts.append(value)
-        return "".join(parts)
-    return ""
-
-
-def _result_text(output: object) -> str:
-    """Best-effort textual result of a tool call (ToolMessage/Command/str)."""
-    content = getattr(output, "content", None)
-    if isinstance(content, str):
-        return content
-    if content is not None:
-        return str(content)
-    return "" if output is None else str(output)
-
-
-def _as_ai_message(output: object) -> AIMessage | None:
-    return output if isinstance(output, AIMessage) else None
-
-
-def _is_tool_call_only_chunk(chunk: AIMessageChunk) -> bool:
-    """A chunk that carries only tool-call argument fragments, no answer text."""
-    return bool(chunk.tool_call_chunks) and not _text_of(cast("object", chunk.content))  # pyright: ignore  # langchain Any field
-
-
-class RuntimeSubagentToolInput(BaseModel):
-    name: str = Field(min_length=1, description="Runtime custom subagent name")
-    description: str = Field(min_length=1, description="Short role or responsibility summary")
-    system_prompt: str = Field(min_length=1, description="System prompt for the runtime custom subagent")
-    task: str = Field(min_length=1, description="The concrete task the runtime custom subagent should perform")
-
-
-# Intent kinds that run_agent expands rather than emitting verbatim.
-_TEXT_INTENT = "text"
-# An incremental token slice from on_chat_model_stream; run_agent turns each into
-# a real text.delta and remembers it streamed so the matching _TEXT_INTENT (from
-# on_chat_model_end) closes the segment with one text.completed, no extra delta.
-_TEXT_STREAM_INTENT = "text.stream"
-
-
-def translate_stream_event(
-    ev: Mapping[str, object],
-) -> list[tuple[str, dict[str, object]]]:
-    """Pure map of one ``astream_events(version="v2")`` event to (kind, payload)
-    intents. run_agent assigns run_id/seq/message_ref and expands the ``text``
-    intent into text.delta + text.completed.
-
-    Emits only on tool starts/ends and final model messages; internal graph
-    nodes (LangGraph/model/tools/*Middleware) and intermediate tool-call turns
-    (empty content) produce nothing.
-    """
-    event = ev.get("event")
-    name_obj = ev.get("name")
-    name = name_obj if isinstance(name_obj, str) else ""
-    data_obj = ev.get("data")
-    data: Mapping[str, object] = (
-        cast("Mapping[str, object]", data_obj) if isinstance(data_obj, Mapping) else {}
-    )
-    run_id_obj = ev.get("run_id")
-    tool_id = run_id_obj if isinstance(run_id_obj, str) else ""
-    out: list[tuple[str, dict[str, object]]] = []
-
-    if event == "on_tool_start":
-        input_obj = data.get("input")
-        args: Mapping[str, object] = (
-            cast("Mapping[str, object]", input_obj)
-            if isinstance(input_obj, Mapping)
-            else {}
-        )
-        if name == _TODO_TOOL:
-            todos = args.get("todos")
-            out.append(("todo.updated", {"todos": todos if isinstance(todos, list) else []}))
-        elif name == _SUBAGENT_TOOL:
-            subagent_type = str(args.get("subagent_type") or "subagent")
-            out.append(
-                (
-                    "subagent.started",
-                    {
-                        "subagent_id": tool_id,
-                        "name": subagent_type,
-                        "description": str(args.get("description") or ""),
-                        "subagent_type": subagent_type,
-                        "source": subagent_source_for(subagent_type),
-                    },
-                )
-            )
-        elif name == _RUNTIME_SUBAGENT_TOOL:
-            runtime_name = str(args.get("name") or "runtime-subagent")
-            out.append(
-                (
-                    "subagent.started",
-                    {
-                        "subagent_id": tool_id,
-                        "name": runtime_name,
-                        "description": str(args.get("description") or ""),
-                        "subagent_type": runtime_name,
-                        "source": "runtime-custom",
-                    },
-                )
-            )
-        else:
-            out.append(("tool.invoked", {"tool_id": tool_id, "name": name, "args": dict(args)}))
-    elif event == "on_tool_end":
-        if name == _TODO_TOOL:
-            return out  # the list was already emitted on tool start
-        if name == _SUBAGENT_TOOL:
-            input_obj = data.get("input")
-            args: Mapping[str, object] = (
-                cast("Mapping[str, object]", input_obj)
-                if isinstance(input_obj, Mapping)
-                else {}
-            )
-            subagent_type = str(args.get("subagent_type") or "subagent")
-            out.append(
-                (
-                    "subagent.finished",
-                    {
-                        "subagent_id": tool_id,
-                        "name": subagent_type,
-                        "subagent_type": subagent_type,
-                        "source": subagent_source_for(subagent_type),
-                    },
-                )
-            )
-        elif name == _RUNTIME_SUBAGENT_TOOL:
-            input_obj = data.get("input")
-            args: Mapping[str, object] = (
-                cast("Mapping[str, object]", input_obj)
-                if isinstance(input_obj, Mapping)
-                else {}
-            )
-            runtime_name = str(args.get("name") or "runtime-subagent")
-            out.append(
-                (
-                    "subagent.finished",
-                    {
-                        "subagent_id": tool_id,
-                        "name": runtime_name,
-                        "subagent_type": runtime_name,
-                        "source": "runtime-custom",
-                    },
-                )
-            )
-        else:
-            out.append(
-                (
-                    "tool.returned",
-                    {"tool_id": tool_id, "name": name, "result": _result_text(data.get("output"))},
-                )
-            )
-    elif event == "on_chat_model_stream":
-        chunk = data.get("chunk")
-        if isinstance(chunk, AIMessageChunk) and not _is_tool_call_only_chunk(chunk):
-            reasoning = _reasoning_of(chunk)
-            if reasoning:
-                out.append(("thinking.delta", {"text": reasoning}))
-            text = _text_of(cast("object", chunk.content))  # pyright: ignore  # langchain Any field
-            if text:
-                out.append((_TEXT_STREAM_INTENT, {"text": text}))
-    elif event == "on_chat_model_end":
-        message = _as_ai_message(data.get("output"))
-        if message is not None:
-            reasoning = _reasoning_of(message)
-            if reasoning:
-                out.append(("thinking.delta", {"text": reasoning}))
-            text = _text_of(cast("object", message.content))  # pyright: ignore  # langchain Any field
-            # Intermediate turns carry tool_calls (and usually empty text); only
-            # a final answer (no tool_calls) becomes a user-visible message.
-            if text and not message.tool_calls:
-                out.append((_TEXT_INTENT, {"text": text}))
-    return out
-
-
-def _build_runtime_custom_subagent_tool(
-    model: BaseChatModel,
-    runtime_registry: RuntimeSubagentRegistry,
-) -> StructuredTool:
-    create_agent_fn = cast("Any", create_agent)
-    tool_cls = cast("Any", StructuredTool)
-
-    async def agent_runtime(
-        name: str,
-        description: str,
-        system_prompt: str,
-        task: str,
-    ) -> str:
-        spec = runtime_registry.get(name)
-        if spec is None:
-            spec = runtime_registry.register(name, description, system_prompt)
-
-        runner = create_agent_fn(
-            model,
-            system_prompt=spec.system_prompt,
-            tools=[],
-            name=spec.name,
-        )
-        result_obj: object = await runner.ainvoke(
-            {"messages": [{"role": "user", "content": task}]}
-        )
-        if isinstance(result_obj, Mapping):
-            result_map = cast("Mapping[str, object]", result_obj)
-            messages_obj = result_map.get("messages")
-        else:
-            messages_obj = None
-        if isinstance(messages_obj, list):
-            message_items = cast("list[object]", messages_obj)
-            for message_obj in reversed(message_items):
-                if isinstance(message_obj, AIMessage):
-                    text_attr = cast("str | None", message_obj.text)
-                    if text_attr:
-                        text = text_attr.rstrip()
-                    else:
-                        raw_content = getattr(message_obj, "content", "")
-                        text = _text_of(raw_content)
-                    if text:
-                        return text
-        return ""
-
-    def agent_runtime_sync(
-        name: str,
-        description: str,
-        system_prompt: str,
-        task: str,
-    ) -> str:
-        msg = "runtime custom subagent tool requires async execution"
-        raise RuntimeError(msg)
-
-    return tool_cls.from_function(
-        name=_RUNTIME_SUBAGENT_TOOL,
-        func=agent_runtime_sync,
-        coroutine=agent_runtime,
-        infer_schema=False,
-        args_schema=RuntimeSubagentToolInput,
-        description=(
-            "Create and run a runtime custom subagent. Use this when you need an ad-hoc"
-            " specialized helper that is not part of the built-in or config-defined"
-            " subagent set."
-        ),
-    )
-
 
 def _build_agent(model: BaseChatModel) -> object:
     # deepagents is an untyped boundary; keep the built-in subagent registry
@@ -330,7 +38,7 @@ def _build_agent(model: BaseChatModel) -> object:
     runtime_registry = RuntimeSubagentRegistry()
     return create_deep_agent(  # pyright: ignore[reportUnknownMemberType]
         model=model,
-        tools=[_build_runtime_custom_subagent_tool(model, runtime_registry)],
+        tools=[build_runtime_custom_subagent_tool(model, runtime_registry)],
         system_prompt=_SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
     )
@@ -398,7 +106,7 @@ async def drive_agent_events(
         async with asyncio.timeout(ASTREAM_TIMEOUT_S):
             async for ev in raw_events:
                 for kind, payload in translate_stream_event(ev):
-                    if kind == _TEXT_STREAM_INTENT:
+                    if kind == TEXT_STREAM_INTENT:
                         text = cast("str", payload["text"])
                         sub_id = routed_subagent(ev)
                         if sub_id is not None:
@@ -421,7 +129,7 @@ async def drive_agent_events(
                             seq=nxt(),
                             payload={"message_ref": ref_for_segment_body(), "text": text},
                         )
-                    elif kind == _TEXT_INTENT:
+                    elif kind == TEXT_INTENT:
                         sub_id = routed_subagent(ev)
                         if sub_id is not None:
                             message_ref = ref_for_segment_activity()

@@ -7,7 +7,7 @@ from typing import cast
 from deepagents import create_deep_agent  # pyright: ignore  # untyped third-party
 from langchain_core.language_models import BaseChatModel
 
-from kokoro_agent.event_translator import (
+from kokoro_agent.infrastructure.stream_translator import (
     TEXT_INTENT,
     TEXT_STREAM_INTENT,
     build_runtime_custom_subagent_tool,

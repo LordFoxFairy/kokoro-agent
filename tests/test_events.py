@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from kokoro_agent.events import AgentEvent, RunRequest
+from kokoro_agent.domain.events import AgentEvent
+from kokoro_agent.domain.run_request import RunRequest
 
 
 def test_run_request_requires_input() -> None:

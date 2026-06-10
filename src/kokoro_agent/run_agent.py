@@ -13,7 +13,8 @@ from kokoro_agent.event_translator import (
     build_runtime_custom_subagent_tool,
     translate_stream_event,
 )
-from kokoro_agent.events import AgentEvent, AgentKind, RunRequest
+from kokoro_agent.domain.events import AgentEvent, AgentKind
+from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.subagents import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,

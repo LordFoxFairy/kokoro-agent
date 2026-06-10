@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-ExecutionStyle = Literal["fast", "thinking"]
-
 from pydantic import BaseModel, ConfigDict
 
 AgentKind = Literal[
@@ -38,19 +36,6 @@ AgentKind = Literal[
 #   subagent.text.completed {"message_ref": str, "subagent_id": str, "text": str}
 #   run.completed      {"status": str}
 #   run.failed         {"error_kind": str, "message": str}
-
-
-class RunRequest(BaseModel):
-    """A run request authored by kokoro-session (stream ``kokoro:runs:requests``)."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    kind: Literal["run.request"]
-    run_id: str
-    session_id: str
-    conversation_id: str
-    input: str
-    execution_style: ExecutionStyle = "fast"
 
 
 class AgentEvent(BaseModel):

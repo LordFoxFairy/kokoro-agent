@@ -8,11 +8,10 @@ from deepagents import create_deep_agent  # pyright: ignore  # untyped third-par
 from langchain_core.language_models import BaseChatModel
 
 from kokoro_agent.event_translator import (
-    RuntimeSubagentToolInput as RuntimeSubagentToolInput,
     TEXT_INTENT,
     TEXT_STREAM_INTENT,
     build_runtime_custom_subagent_tool,
-    translate_stream_event as translate_stream_event,
+    translate_stream_event,
 )
 from kokoro_agent.events import AgentEvent, AgentKind, RunRequest
 from kokoro_agent.subagents import (

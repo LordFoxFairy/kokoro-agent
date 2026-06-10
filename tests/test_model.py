@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from kokoro_agent.infrastructure.local_fake_model import LocalFakeChatModel
-from kokoro_agent.infrastructure.model import (
+from kokoro_agent.infrastructure.chat_model import (
     DEFAULT_MODEL,
     LOCAL_FAKE_MODEL_FLAG,
     make_chat_model,

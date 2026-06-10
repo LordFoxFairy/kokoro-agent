@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from kokoro_agent.content_extractors import (
+from kokoro_agent.infrastructure.message_extractors import (
     as_ai_message,
     is_tool_call_only_chunk,
     reasoning_of,

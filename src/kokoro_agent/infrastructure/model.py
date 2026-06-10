@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
+from kokoro_agent.events import ExecutionStyle
 from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 LOCAL_FAKE_MODEL_FLAG = "KOKORO_LOCAL_FAKE_MODEL"
-ExecutionStyle = Literal["fast", "thinking"]
 
 
 @dataclass(frozen=True)

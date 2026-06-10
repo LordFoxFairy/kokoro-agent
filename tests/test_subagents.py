@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from kokoro_agent.subagents import (
+from kokoro_agent.infrastructure.subagent_registry import (
     CUSTOM_SUBAGENTS_ENV,
     BUILT_IN_SUBAGENTS,
     RuntimeSubagentRegistry,
@@ -64,7 +64,7 @@ def test_subagent_source_for_falls_back_to_runtime_custom() -> None:
 
 def test_materialize_runtime_subagents_includes_custom_specs() -> None:
     from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
-    from kokoro_agent.subagents import materialize_runtime_subagents
+    from kokoro_agent.infrastructure.subagent_registry import materialize_runtime_subagents
 
     runtime = materialize_runtime_subagents(
         make_local_fake_chat_model(),
@@ -82,7 +82,7 @@ def test_materialize_runtime_subagents_includes_custom_specs() -> None:
 
 def test_materialize_runtime_subagents_defaults_to_built_in_only() -> None:
     from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
-    from kokoro_agent.subagents import materialize_runtime_subagents
+    from kokoro_agent.infrastructure.subagent_registry import materialize_runtime_subagents
 
     runtime = materialize_runtime_subagents(make_local_fake_chat_model())
     assert [spec["name"] for spec in runtime] == ["researcher"]

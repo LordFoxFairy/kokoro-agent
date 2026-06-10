@@ -15,7 +15,10 @@ from kokoro_agent.infrastructure.message_extractors import (
     result_text,
     text_of,
 )
-from kokoro_agent.subagents import RuntimeSubagentRegistry, subagent_source_for
+from kokoro_agent.infrastructure.subagent_registry import (
+    RuntimeSubagentRegistry,
+    subagent_source_for,
+)
 
 # write_todos / task are mapped to dedicated event families; every other tool is
 # a generic tool.invoked/returned pair.

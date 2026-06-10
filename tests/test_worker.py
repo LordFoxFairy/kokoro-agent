@@ -13,7 +13,7 @@ from kokoro_agent.domain.events import AgentEvent
 from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.chat_model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
-from kokoro_agent.worker import REQUESTS_STREAM, events_stream, run_once
+from kokoro_agent.interfaces.worker import REQUESTS_STREAM, events_stream, run_once
 
 
 class _TextPayload(TypedDict):
@@ -160,8 +160,8 @@ async def test_run_once_resolves_model_from_request_execution_style(
             payload={"status": "completed"},
         )
 
-    monkeypatch.setattr("kokoro_agent.worker.make_chat_model", fake_make_chat_model)
-    monkeypatch.setattr("kokoro_agent.worker.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.interfaces.worker.make_chat_model", fake_make_chat_model)
+    monkeypatch.setattr("kokoro_agent.interfaces.worker.run_agent", fake_run_agent)
 
     await run_once(port, processed, None)
 

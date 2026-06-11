@@ -10,10 +10,8 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from pydantic import PrivateAttr
 
-# A credential-free, deterministic script that drives the real DeepAgents loop
-# offline: one CC-style write_todos call, then a final answer. GenericFakeChatModel
-# can't do this — it raises NotImplementedError on bind_tools, which deep agents
-# require — so we implement a minimal tool-calling chat model instead.
+# Deterministic offline script (write_todos call, then a final answer) that drives
+# the real DeepAgents loop, which GenericFakeChatModel can't (no bind_tools).
 _PLAN: list[dict[str, str]] = [
     {"content": "理解请求并规划", "status": "completed"},
     {"content": "用本地预览作答", "status": "in_progress"},
@@ -65,10 +63,8 @@ class LocalFakeChatModel(BaseChatModel):
         tool_choice: str | None = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
-        # Binding is ignored — the script is fixed — but the method must exist:
-        # deep agents call bind_tools, and the base class raises NotImplementedError.
-        # with_types only pins the declared output type (the script is fixed to
-        # AIMessage); it does not wrap or change execution behavior.
+        # Binding is ignored (script is fixed), but the method must exist: deep
+        # agents call bind_tools and the base class raises NotImplementedError.
         return self.with_types(output_type=AIMessage)
 
     def _generate(

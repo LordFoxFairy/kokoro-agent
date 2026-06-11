@@ -13,9 +13,8 @@ _CURSOR_WIDTH = 20
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
 
-# Concrete shapes of the redis-py stream responses we consume. xread's stub
-# return is a broad union (incl. list[list[Any]]) that erases entry shapes; this
-# alias documents the [(stream, [(id, fields)])] form we pin at that one call.
+# Pins the [(stream, [(id, fields)])] form, since xread's stub return is a broad
+# union (incl. list[list[Any]]) that erases the entry shapes we consume.
 _Fields = dict[bytes | str, bytes | str] | None
 _Entry = tuple[bytes | str | None, _Fields]
 _ReadResponse = list[tuple[bytes | str | None, list[_Entry]]]
@@ -145,8 +144,7 @@ class RedisStreamPort:
     ) -> AsyncIterator[StreamItem]:
         last = from_cursor if from_cursor is not None else "0-0"
         while True:
-            # redis-py types xread's response as a broad union (incl. list[list[Any]])
-            # that erases entry shapes; pin the documented [(stream, [(id, fields)])].
+            # Pin xread's broad-union stub return to the _ReadResponse form above.
             response = await cast(
                 "Awaitable[_ReadResponse | None]",
                 self._redis.xread({stream: last}, block=self._block_ms),

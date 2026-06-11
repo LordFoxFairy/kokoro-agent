@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from kokoro_agent.infrastructure.subagent_registry import (
     CUSTOM_SUBAGENTS_ENV,
@@ -43,6 +44,47 @@ def test_custom_subagent_name_collision_fails_loud() -> None:
                 )
             }
         )
+
+
+def test_custom_subagent_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        load_custom_subagents_from_env(
+            {CUSTOM_SUBAGENTS_ENV: '[{"name":"r","description":"d","system_prompt":"s","rogue":1}]'}
+        )
+
+
+def test_custom_subagent_rejects_non_string_field() -> None:
+    with pytest.raises(ValidationError):
+        load_custom_subagents_from_env(
+            {CUSTOM_SUBAGENTS_ENV: '[{"name":123,"description":"d","system_prompt":"s"}]'}
+        )
+
+
+def test_custom_subagent_rejects_non_array() -> None:
+    with pytest.raises(ValidationError):
+        load_custom_subagents_from_env({CUSTOM_SUBAGENTS_ENV: '{"name":"r"}'})
+
+
+def test_custom_subagent_rejects_missing_field() -> None:
+    with pytest.raises(ValidationError):
+        load_custom_subagents_from_env(
+            {CUSTOM_SUBAGENTS_ENV: '[{"name":"r","description":"d"}]'}
+        )
+
+
+def test_custom_subagent_rejects_blank_field() -> None:
+    with pytest.raises(ValidationError):
+        load_custom_subagents_from_env(
+            {CUSTOM_SUBAGENTS_ENV: '[{"name":"  ","description":"d","system_prompt":"s"}]'}
+        )
+
+
+def test_custom_subagent_strips_whitespace() -> None:
+    custom = load_custom_subagents_from_env(
+        {CUSTOM_SUBAGENTS_ENV: '[{"name":" reviewer ","description":" 审稿 ","system_prompt":" 检查 "}]'}
+    )
+    assert custom[0].name == "reviewer"
+    assert custom[0].description == "审稿"
 
 
 def test_subagent_source_for_marks_config_custom_subagents() -> None:

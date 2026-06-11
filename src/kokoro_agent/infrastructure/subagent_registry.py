@@ -2,18 +2,28 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Final
+from typing import Annotated, Final
 
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
+from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 
 from kokoro_agent.domain.subagent import RegisteredSubagent, SubagentSource
-from kokoro_agent.infrastructure.message_extractors import (
-    is_object_list,
-    is_str_object_mapping,
-)
 
 CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
+
+_NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class _CustomSubagentPayload(BaseModel):
+    # 外部不可信 env JSON：strict 拒非 str、extra=forbid 拒未知键（§5 strict 拒收）。
+    model_config = ConfigDict(strict=True, extra="forbid")
+    name: _NonEmpty
+    description: _NonEmpty
+    system_prompt: _NonEmpty
+
+
+_CUSTOM_PAYLOADS = TypeAdapter(list[_CustomSubagentPayload])
 
 
 class RuntimeSubagentRegistry:
@@ -63,34 +73,21 @@ def load_custom_subagents_from_env(env: dict[str, str] | None = None) -> list[Re
     if not raw:
         return []
 
-    parsed: object = json.loads(raw)
-    if not is_object_list(parsed):
-        msg = f"{CUSTOM_SUBAGENTS_ENV} must be a JSON array"
-        raise ValueError(msg)
-
+    payloads = _CUSTOM_PAYLOADS.validate_python(json.loads(raw))
     built_in_names = {spec.name for spec in BUILT_IN_SUBAGENTS}
     custom: list[RegisteredSubagent] = []
     seen_names: set[str] = set()
-    for item in parsed:
-        if not is_str_object_mapping(item):
-            msg = f"{CUSTOM_SUBAGENTS_ENV} items must be objects"
+    for payload in payloads:
+        # 重名/保留是跨条目约束，pydantic 管不到，留手工 fail-loud。
+        if payload.name in built_in_names or payload.name in seen_names:
+            msg = f"duplicate or reserved subagent name: {payload.name}"
             raise ValueError(msg)
-        payload = item
-        name = str(payload.get("name") or "").strip()
-        description = str(payload.get("description") or "").strip()
-        system_prompt = str(payload.get("system_prompt") or "").strip()
-        if not name or not description or not system_prompt:
-            msg = f"{CUSTOM_SUBAGENTS_ENV} items require name, description, and system_prompt"
-            raise ValueError(msg)
-        if name in built_in_names or name in seen_names:
-            msg = f"duplicate or reserved subagent name: {name}"
-            raise ValueError(msg)
-        seen_names.add(name)
+        seen_names.add(payload.name)
         custom.append(
             RegisteredSubagent(
-                name=name,
-                description=description,
-                system_prompt=system_prompt,
+                name=payload.name,
+                description=payload.description,
+                system_prompt=payload.system_prompt,
                 source="config-custom",
             )
         )

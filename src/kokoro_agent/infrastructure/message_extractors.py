@@ -1,12 +1,40 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TypeGuard
 
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 
 
-def text_of(content: object) -> str:
+def is_str_object_mapping(obj: object) -> TypeGuard[Mapping[str, object]]:
+    return isinstance(obj, Mapping)
+
+
+def is_object_list(obj: object) -> TypeGuard[list[object]]:
+    return isinstance(obj, list)
+
+
+def as_mapping(obj: object) -> Mapping[str, object]:
+    """Narrow an opaque value to a string-keyed mapping (else empty)."""
+    return obj if is_str_object_mapping(obj) else {}
+
+
+def message_content(message: BaseMessage) -> str | list[object]:
+    # langchain stubs content as `str | list[str | dict]` (bare dict -> partially
+    # unknown under strict); read via getattr (Any) and re-narrow to known shapes.
+    content: object = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    return content if is_object_list(content) else ""
+
+
+def _additional_kwargs(message: AIMessage) -> Mapping[str, object]:
+    # additional_kwargs is a bare dict in stubs; getattr (Any) + guard re-narrows.
+    extra: object = getattr(message, "additional_kwargs", None)
+    return extra if is_str_object_mapping(extra) else {}
+
+
+def text_of(content: str | list[object]) -> str:
     """Extract plain text from a message ``content``.
 
     Strings pass through. For list content (multi-modal / content blocks) only
@@ -15,20 +43,16 @@ def text_of(content: object) -> str:
     """
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        blocks = cast("list[object]", content)
-        parts: list[str] = []
-        for block in blocks:
-            if not isinstance(block, Mapping):
-                continue
-            typed_block = cast("Mapping[object, object]", block)
-            if typed_block.get("type") != "text":
-                continue
-            text = typed_block.get("text", "")
-            if isinstance(text, str):
-                parts.append(text)
-        return "".join(parts)
-    return ""
+    parts: list[str] = []
+    for block in content:
+        if not is_str_object_mapping(block):
+            continue
+        if block.get("type") != "text":
+            continue
+        text = block.get("text", "")
+        if isinstance(text, str):
+            parts.append(text)
+    return "".join(parts)
 
 
 def reasoning_of(message: AIMessage) -> str:
@@ -38,30 +62,28 @@ def reasoning_of(message: AIMessage) -> str:
     ``reasoning`` content blocks. Returns "" for models that don't surface
     reasoning (e.g. plain chat models) — thinking then simply doesn't appear.
     """
-    extra = cast("Mapping[str, object]", message.additional_kwargs or {})  # pyright: ignore  # langchain Any field
-    reasoning = extra.get("reasoning_content")
+    reasoning = _additional_kwargs(message).get("reasoning_content")
     if isinstance(reasoning, str) and reasoning:
         return reasoning
-    content = cast("object", message.content)  # pyright: ignore  # langchain Any field
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in cast("list[object]", content):
-            if not isinstance(block, Mapping):
-                continue
-            typed = cast("Mapping[object, object]", block)
-            kind = typed.get("type")
-            if kind not in ("thinking", "reasoning"):
-                continue
-            value = typed.get(kind) or typed.get("text")
-            if isinstance(value, str):
-                parts.append(value)
-        return "".join(parts)
-    return ""
+    content = message_content(message)
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not is_str_object_mapping(block):
+            continue
+        kind = block.get("type")
+        if kind not in ("thinking", "reasoning"):
+            continue
+        value = block.get(kind, None) or block.get("text")
+        if isinstance(value, str):
+            parts.append(value)
+    return "".join(parts)
 
 
 def result_text(output: object) -> str:
     """Best-effort textual result of a tool call (ToolMessage/Command/str)."""
-    content = getattr(output, "content", None)
+    content: object = getattr(output, "content", None)
     if isinstance(content, str):
         return content
     if content is not None:
@@ -75,4 +97,4 @@ def as_ai_message(output: object) -> AIMessage | None:
 
 def is_tool_call_only_chunk(chunk: AIMessageChunk) -> bool:
     """A chunk that carries only tool-call argument fragments, no answer text."""
-    return bool(chunk.tool_call_chunks) and not text_of(cast("object", chunk.content))  # pyright: ignore  # langchain Any field
+    return bool(chunk.tool_call_chunks) and not text_of(message_content(chunk))

@@ -3,22 +3,22 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
-if TYPE_CHECKING:
-    from redis.asyncio import Redis
+from redis.asyncio import Redis, from_url
 
 _CURSOR_WIDTH = 20
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
 
-# Redis async client methods are typed with sync/async overloads that pyright
-# resolves loosely; these aliases pin the concrete shapes we rely on.
-_Fields = dict[bytes, bytes]
-_Entry = tuple[bytes, _Fields]
-_ReadResponse = list[tuple[bytes, list[_Entry]]]
+# Concrete shapes of the redis-py stream responses we consume. xread's stub
+# return is a broad union (incl. list[list[Any]]) that erases entry shapes; this
+# alias documents the [(stream, [(id, fields)])] form we pin at that one call.
+_Fields = dict[bytes | str, bytes | str] | None
+_Entry = tuple[bytes | str | None, _Fields]
+_ReadResponse = list[tuple[bytes | str | None, list[_Entry]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,34 +118,26 @@ class RedisStreamPort:
     """
 
     def __init__(self, url: str = "redis://127.0.0.1:6379/0", block_ms: int = _BLOCK_MS) -> None:
-        from redis.asyncio import from_url
-
         self._redis: Redis = from_url(url)
         self._block_ms = block_ms
 
     async def aclose(self) -> None:
         await self._redis.aclose()
 
-    def _to_item(self, entry_id: bytes, fields: _Fields) -> StreamItem:
-        raw = fields.get(_REDIS_FIELD.encode())
+    def _to_item(self, entry_id: bytes | str | None, fields: _Fields) -> StreamItem:
+        raw = fields.get(_REDIS_FIELD.encode()) if fields is not None else None
         event: dict[str, object] = json.loads(_decode(raw)) if raw is not None else {}
         return StreamItem(cursor=_decode(entry_id), event=event)
 
     async def publish(self, stream: str, event: dict[str, object]) -> StreamItem:
         payload = json.dumps(event, ensure_ascii=False)
-        call = cast(
-            Awaitable[bytes],
-            self._redis.xadd(stream, {_REDIS_FIELD: payload}),
-        )
-        entry_id = await call
+        entry_id = await self._redis.xadd(stream, {_REDIS_FIELD: payload})
         return StreamItem(cursor=_decode(entry_id), event=dict(event))
 
     async def read_all(self, stream: str) -> list[StreamItem]:
-        call = cast(
-            Awaitable[Sequence[_Entry]],
-            self._redis.xrange(stream, min="-", max="+"),
-        )
-        entries = await call
+        entries = await self._redis.xrange(stream, min="-", max="+")
+        if not entries:
+            return []
         return [self._to_item(entry_id, fields) for entry_id, fields in entries]
 
     async def subscribe(
@@ -153,11 +145,12 @@ class RedisStreamPort:
     ) -> AsyncIterator[StreamItem]:
         last = from_cursor if from_cursor is not None else "0-0"
         while True:
-            call = cast(
-                Awaitable[_ReadResponse | None],
+            # redis-py types xread's response as a broad union (incl. list[list[Any]])
+            # that erases entry shapes; pin the documented [(stream, [(id, fields)])].
+            response = await cast(
+                "Awaitable[_ReadResponse | None]",
                 self._redis.xread({stream: last}, block=self._block_ms),
             )
-            response = await call
             if not response:
                 continue
             for _stream_name, entries in response:

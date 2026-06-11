@@ -2,23 +2,30 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from typing import cast
+from typing import Protocol
 
-from deepagents import create_deep_agent  # pyright: ignore  # untyped third-party
+from deepagents import create_deep_agent  # pyright: ignore[reportUnknownVariableType]  # deepagents create_deep_agent symbol is partially typed
 from langchain_core.language_models import BaseChatModel
 
+from kokoro_agent.infrastructure.message_extractors import as_mapping
 from kokoro_agent.infrastructure.stream_translator import (
     TEXT_INTENT,
     TEXT_STREAM_INTENT,
     build_runtime_custom_subagent_tool,
     translate_stream_event,
 )
-from kokoro_agent.domain.events import AgentEvent, AgentKind
+from kokoro_agent.domain.events import AgentEvent, is_agent_kind
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
 )
+
+
+class _StreamingAgent(Protocol):
+    def astream_events(
+        self, inp: dict[str, object], *, version: str
+    ) -> AsyncIterator[Mapping[str, object]]: ...
 
 ASTREAM_TIMEOUT_S = 120
 
@@ -30,18 +37,26 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _build_agent(model: BaseChatModel) -> object:
+def _build_agent(model: BaseChatModel) -> _StreamingAgent:
     # deepagents is an untyped boundary; keep the built-in subagent registry
     # explicit so richer task-path activity stays on the same resolved
     # provider/model rather than falling back to the SDK's default general-
     # purpose subagent path.
     runtime_registry = RuntimeSubagentRegistry()
-    return create_deep_agent(  # pyright: ignore[reportUnknownMemberType]
+    # create_deep_agent returns a CompiledStateGraph with irreducible Unknown
+    # generics; pin the astream_events slice we use at this one boundary.
+    agent: _StreamingAgent = create_deep_agent(  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
         model=model,
         tools=[build_runtime_custom_subagent_tool(model, runtime_registry)],
         system_prompt=_SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
     )
+    return agent
+
+
+def _str_field(payload: dict[str, object], key: str) -> str:
+    value = payload.get(key)
+    return value if isinstance(value, str) else ""
 
 
 async def drive_agent_events(
@@ -91,12 +106,7 @@ async def drive_agent_events(
         """The active sub-agent id when this model event belongs to it, else None."""
         if active_subagent is None:
             return None
-        metadata_obj = ev.get("metadata")
-        metadata: Mapping[str, object] = (
-            cast("Mapping[str, object]", metadata_obj)
-            if isinstance(metadata_obj, Mapping)
-            else {}
-        )
+        metadata = as_mapping(ev.get("metadata"))
         lc_agent_name_obj = metadata.get("lc_agent_name")
         lc_agent_name = lc_agent_name_obj if isinstance(lc_agent_name_obj, str) else ""
         return active_subagent[0] if lc_agent_name == active_subagent[1] else None
@@ -107,7 +117,7 @@ async def drive_agent_events(
             async for ev in raw_events:
                 for kind, payload in translate_stream_event(ev):
                     if kind == TEXT_STREAM_INTENT:
-                        text = cast("str", payload["text"])
+                        text = _str_field(payload, "text")
                         sub_id = routed_subagent(ev)
                         if sub_id is not None:
                             sub_streamed_text = (sub_streamed_text or "") + text
@@ -195,20 +205,21 @@ async def drive_agent_events(
                         event_payload = {"message_ref": ref_for_segment_activity(), **payload}
                         if kind == "subagent.started":
                             active_subagent = (
-                                cast("str", payload["subagent_id"]),
-                                cast("str", payload["name"]),
+                                _str_field(payload, "subagent_id"),
+                                _str_field(payload, "name"),
                             )
                         elif kind == "subagent.finished":
                             active_subagent = None
+                        if is_agent_kind(kind):
+                            yield AgentEvent(
+                                kind=kind,
+                                run_id=run_id,
+                                seq=nxt(),
+                                payload=event_payload,
+                            )
+                    elif is_agent_kind(kind):
                         yield AgentEvent(
-                            kind=cast("AgentKind", kind),
-                            run_id=run_id,
-                            seq=nxt(),
-                            payload=event_payload,
-                        )
-                    else:
-                        yield AgentEvent(
-                            kind=cast("AgentKind", kind),
+                            kind=kind,
                             run_id=run_id,
                             seq=nxt(),
                             payload=payload,
@@ -232,12 +243,9 @@ async def run_agent(
     events (thinking / text / tool.* / todo.updated / subagent.*), wrapped in
     run.started…run.completed (or run.failed)."""
     agent = _build_agent(model)
-    raw = cast(
-        "AsyncIterator[Mapping[str, object]]",
-        agent.astream_events(  # type: ignore[attr-defined]
-            {"messages": [{"role": "user", "content": req.input}]},
-            version="v2",
-        ),
+    raw = agent.astream_events(
+        {"messages": [{"role": "user", "content": req.input}]},
+        version="v2",
     )
     async for event in drive_agent_events(req.run_id, raw):
         yield event

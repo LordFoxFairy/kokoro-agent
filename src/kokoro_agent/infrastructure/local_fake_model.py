@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
@@ -67,7 +67,9 @@ class LocalFakeChatModel(BaseChatModel):
     ) -> Runnable[LanguageModelInput, AIMessage]:
         # Binding is ignored — the script is fixed — but the method must exist:
         # deep agents call bind_tools, and the base class raises NotImplementedError.
-        return cast("Runnable[LanguageModelInput, AIMessage]", self)
+        # with_types only pins the declared output type (the script is fixed to
+        # AIMessage); it does not wrap or change execution behavior.
+        return self.with_types(output_type=AIMessage)
 
     def _generate(
         self,

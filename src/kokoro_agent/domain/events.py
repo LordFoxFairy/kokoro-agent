@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeGuard, get_args
 
 from pydantic import BaseModel, ConfigDict
 
@@ -19,6 +19,12 @@ AgentKind = Literal[
     "run.completed",
     "run.failed",
 ]
+
+_AGENT_KINDS: frozenset[str] = frozenset(get_args(AgentKind))
+
+
+def is_agent_kind(kind: str) -> TypeGuard[AgentKind]:
+    return kind in _AGENT_KINDS
 
 # Per-kind ``payload`` shapes (the payload stays a loose dict here; strict
 # per-kind validation is kokoro-session's job at the Zod boundary). Documented

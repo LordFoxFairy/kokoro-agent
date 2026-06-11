@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Protocol
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]  # langchain create_agent symbol is partially typed
 from kokoro_agent.infrastructure.message_extractors import (
+    as_mapping,
     as_ai_message,
+    is_object_list,
     is_tool_call_only_chunk,
+    message_content,
     reasoning_of,
     result_text,
     text_of,
@@ -34,6 +38,10 @@ TEXT_INTENT = "text"
 TEXT_STREAM_INTENT = "text.stream"
 
 
+class _AgentRunner(Protocol):
+    async def ainvoke(self, inp: dict[str, object]) -> object: ...
+
+
 class RuntimeSubagentToolInput(BaseModel):
     name: str = Field(min_length=1, description="Runtime custom subagent name")
     description: str = Field(min_length=1, description="Short role or responsibility summary")
@@ -55,21 +63,13 @@ def translate_stream_event(
     event = ev.get("event")
     name_obj = ev.get("name")
     name = name_obj if isinstance(name_obj, str) else ""
-    data_obj = ev.get("data")
-    data: Mapping[str, object] = (
-        cast("Mapping[str, object]", data_obj) if isinstance(data_obj, Mapping) else {}
-    )
+    data = as_mapping(ev.get("data"))
     run_id_obj = ev.get("run_id")
     tool_id = run_id_obj if isinstance(run_id_obj, str) else ""
     out: list[tuple[str, dict[str, object]]] = []
 
     if event == "on_tool_start":
-        input_obj = data.get("input")
-        args: Mapping[str, object] = (
-            cast("Mapping[str, object]", input_obj)
-            if isinstance(input_obj, Mapping)
-            else {}
-        )
+        args = as_mapping(data.get("input"))
         if name == TODO_TOOL:
             todos = args.get("todos")
             out.append(("todo.updated", {"todos": todos if isinstance(todos, list) else []}))
@@ -107,12 +107,7 @@ def translate_stream_event(
         if name == TODO_TOOL:
             return out  # the list was already emitted on tool start
         if name == SUBAGENT_TOOL:
-            input_obj = data.get("input")
-            args: Mapping[str, object] = (
-                cast("Mapping[str, object]", input_obj)
-                if isinstance(input_obj, Mapping)
-                else {}
-            )
+            args = as_mapping(data.get("input"))
             subagent_type = str(args.get("subagent_type") or "subagent")
             out.append(
                 (
@@ -126,12 +121,7 @@ def translate_stream_event(
                 )
             )
         elif name == RUNTIME_SUBAGENT_TOOL:
-            input_obj = data.get("input")
-            args: Mapping[str, object] = (
-                cast("Mapping[str, object]", input_obj)
-                if isinstance(input_obj, Mapping)
-                else {}
-            )
+            args = as_mapping(data.get("input"))
             runtime_name = str(args.get("name") or "runtime-subagent")
             out.append(
                 (
@@ -157,7 +147,7 @@ def translate_stream_event(
             reasoning = reasoning_of(chunk)
             if reasoning:
                 out.append(("thinking.delta", {"text": reasoning}))
-            text = text_of(cast("object", chunk.content))  # pyright: ignore  # langchain Any field
+            text = text_of(message_content(chunk))
             if text:
                 out.append((TEXT_STREAM_INTENT, {"text": text}))
     elif event == "on_chat_model_end":
@@ -166,7 +156,7 @@ def translate_stream_event(
             reasoning = reasoning_of(message)
             if reasoning:
                 out.append(("thinking.delta", {"text": reasoning}))
-            text = text_of(cast("object", message.content))  # pyright: ignore  # langchain Any field
+            text = text_of(message_content(message))
             # Intermediate turns carry tool_calls (and usually empty text); only
             # a final answer (no tool_calls) becomes a user-visible message.
             if text and not message.tool_calls:
@@ -174,15 +164,20 @@ def translate_stream_event(
     return out
 
 
+def _make_runner(model: BaseChatModel, system_prompt: str, name: str) -> _AgentRunner:
+    # langchain create_agent returns a CompiledStateGraph whose generic params are
+    # irreducibly Unknown under strict; pin the ainvoke slice we use at this one
+    # boundary.
+    runner: _AgentRunner = create_agent(  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
+        model, system_prompt=system_prompt, tools=[], name=name
+    )
+    return runner
+
+
 def build_runtime_custom_subagent_tool(
     model: BaseChatModel,
     runtime_registry: RuntimeSubagentRegistry,
 ) -> StructuredTool:
-    from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
-
-    create_agent_fn = cast("Any", create_agent)
-    tool_cls = cast("Any", StructuredTool)
-
     async def agent_runtime(
         name: str,
         description: str,
@@ -193,30 +188,19 @@ def build_runtime_custom_subagent_tool(
         if spec is None:
             spec = runtime_registry.register(name, description, system_prompt)
 
-        runner = create_agent_fn(
-            model,
-            system_prompt=spec.system_prompt,
-            tools=[],
-            name=spec.name,
-        )
-        result_obj: object = await runner.ainvoke(
+        runner = _make_runner(model, spec.system_prompt, spec.name)
+        result_obj = await runner.ainvoke(
             {"messages": [{"role": "user", "content": task}]}
         )
-        if isinstance(result_obj, Mapping):
-            result_map = cast("Mapping[str, object]", result_obj)
-            messages_obj = result_map.get("messages")
-        else:
-            messages_obj = None
-        if isinstance(messages_obj, list):
-            message_items = cast("list[object]", messages_obj)
-            for message_obj in reversed(message_items):
+        messages_obj = as_mapping(result_obj).get("messages")
+        if is_object_list(messages_obj):
+            for message_obj in reversed(messages_obj):
                 if isinstance(message_obj, AIMessage):
-                    text_attr = cast("str | None", message_obj.text)
-                    if text_attr:
-                        text = text_attr.rstrip()
+                    text_value = str(message_obj.text)
+                    if text_value:
+                        text = text_value.rstrip()
                     else:
-                        raw_content = getattr(message_obj, "content", "")
-                        text = text_of(raw_content)
+                        text = text_of(message_content(message_obj))
                     if text:
                         return text
         return ""
@@ -230,7 +214,7 @@ def build_runtime_custom_subagent_tool(
         msg = "runtime custom subagent tool requires async execution"
         raise RuntimeError(msg)
 
-    return tool_cls.from_function(
+    return StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]  # langchain from_function classmethod is partially typed
         name=RUNTIME_SUBAGENT_TOOL,
         func=agent_runtime_sync,
         coroutine=agent_runtime,

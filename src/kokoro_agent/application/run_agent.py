@@ -59,6 +59,26 @@ def _str_field(payload: dict[str, object], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
+class _Segmenter:
+    """The open output segment: a fresh msg ref opens on first content or after the
+    previous segment completed, so tool→text→tool→text stays unmerged into one."""
+
+    def __init__(self) -> None:
+        self._counter = 0
+        self._active: str | None = None
+        self._completed = False
+
+    def current(self) -> str:
+        if self._active is None or self._completed:
+            self._counter += 1
+            self._active = f"msg_{self._counter:04d}"
+            self._completed = False
+        return self._active
+
+    def complete(self) -> None:
+        self._completed = True
+
+
 async def drive_agent_events(
     run_id: str, raw_events: AsyncIterator[Mapping[str, object]]
 ) -> AsyncIterator[AgentEvent]:
@@ -72,35 +92,12 @@ async def drive_agent_events(
         seq += 1
         return seq
 
-    ref = 0
-    active_message_ref: str | None = None
-    segment_completed = False
+    segment = _Segmenter()
     active_subagent: tuple[str, str] | None = None
     # Accumulated streamed text for the open parent / subagent segment. None means
     # no stream chunk has arrived yet -> on_chat_model_end takes the fallback path.
     streamed_text: str | None = None
     sub_streamed_text: str | None = None
-
-    def new_ref() -> str:
-        nonlocal ref
-        ref += 1
-        return f"msg_{ref:04d}"
-
-    def ref_for_segment_body() -> str:
-        nonlocal active_message_ref, segment_completed
-        if active_message_ref is None or segment_completed:
-            active_message_ref = new_ref()
-            segment_completed = False
-        return active_message_ref
-
-    def ref_for_segment_activity() -> str:
-        # 活动（工具/子智能体）与正文一样：上一段已落定后再来的活动，属于即将到来的
-        # 下一段，开新 ref——而不是挂回旧段（否则「工具→文本→工具→文本」会塌成一段）。
-        nonlocal active_message_ref, segment_completed
-        if active_message_ref is None or segment_completed:
-            active_message_ref = new_ref()
-            segment_completed = False
-        return active_message_ref
 
     def routed_subagent(ev: Mapping[str, object]) -> str | None:
         """The active sub-agent id when this model event belongs to it, else None."""
@@ -126,7 +123,7 @@ async def drive_agent_events(
                                 run_id=run_id,
                                 seq=nxt(),
                                 payload={
-                                    "message_ref": ref_for_segment_activity(),
+                                    "message_ref": segment.current(),
                                     "subagent_id": sub_id,
                                     "text": text,
                                 },
@@ -137,12 +134,12 @@ async def drive_agent_events(
                             kind="text.delta",
                             run_id=run_id,
                             seq=nxt(),
-                            payload={"message_ref": ref_for_segment_body(), "text": text},
+                            payload={"message_ref": segment.current(), "text": text},
                         )
                     elif kind == TEXT_INTENT:
                         sub_id = routed_subagent(ev)
                         if sub_id is not None:
-                            message_ref = ref_for_segment_activity()
+                            message_ref = segment.current()
                             if sub_streamed_text is not None:
                                 yield AgentEvent(
                                     kind="subagent.text.completed",
@@ -174,7 +171,7 @@ async def drive_agent_events(
                                 payload=subagent_body,
                             )
                             continue
-                        message_ref = ref_for_segment_body()
+                        message_ref = segment.current()
                         if streamed_text is not None:
                             yield AgentEvent(
                                 kind="text.completed",
@@ -183,18 +180,18 @@ async def drive_agent_events(
                                 payload={"message_ref": message_ref, "text": streamed_text},
                             )
                             streamed_text = None
-                            segment_completed = True
+                            segment.complete()
                             continue
                         body = {"message_ref": message_ref, "text": payload["text"]}
                         yield AgentEvent(kind="text.delta", run_id=run_id, seq=nxt(), payload=body)
                         yield AgentEvent(kind="text.completed", run_id=run_id, seq=nxt(), payload=body)
-                        segment_completed = True
+                        segment.complete()
                     elif kind == "thinking.delta":
                         yield AgentEvent(
                             kind="thinking.delta",
                             run_id=run_id,
                             seq=nxt(),
-                            payload={"message_ref": ref_for_segment_body(), "text": payload["text"]},
+                            payload={"message_ref": segment.current(), "text": payload["text"]},
                         )
                     elif kind in {
                         "tool.invoked",
@@ -202,7 +199,7 @@ async def drive_agent_events(
                         "subagent.started",
                         "subagent.finished",
                     }:
-                        event_payload = {"message_ref": ref_for_segment_activity(), **payload}
+                        event_payload = {"message_ref": segment.current(), **payload}
                         if kind == "subagent.started":
                             active_subagent = (
                                 _str_field(payload, "subagent_id"),

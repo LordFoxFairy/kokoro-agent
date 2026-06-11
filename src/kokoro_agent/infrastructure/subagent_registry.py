@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Final, cast
+from typing import Final
 
+from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
 
 from kokoro_agent.domain.subagent import RegisteredSubagent, SubagentSource
-
-if TYPE_CHECKING:
-    from deepagents.middleware.subagents import SubAgent
+from kokoro_agent.infrastructure.message_extractors import (
+    is_object_list,
+    is_str_object_mapping,
+)
 
 CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
 
@@ -62,20 +63,19 @@ def load_custom_subagents_from_env(env: dict[str, str] | None = None) -> list[Re
     if not raw:
         return []
 
-    parsed = json.loads(raw)
-    if not isinstance(parsed, list):
+    parsed: object = json.loads(raw)
+    if not is_object_list(parsed):
         msg = f"{CUSTOM_SUBAGENTS_ENV} must be a JSON array"
         raise ValueError(msg)
 
-    items = cast("list[object]", parsed)
     built_in_names = {spec.name for spec in BUILT_IN_SUBAGENTS}
     custom: list[RegisteredSubagent] = []
     seen_names: set[str] = set()
-    for item in items:
-        if not isinstance(item, Mapping):
+    for item in parsed:
+        if not is_str_object_mapping(item):
             msg = f"{CUSTOM_SUBAGENTS_ENV} items must be objects"
             raise ValueError(msg)
-        payload = cast("Mapping[str, object]", item)
+        payload = item
         name = str(payload.get("name") or "").strip()
         description = str(payload.get("description") or "").strip()
         system_prompt = str(payload.get("system_prompt") or "").strip()
@@ -112,8 +112,8 @@ def materialize_runtime_subagents(
     model: BaseChatModel,
     env: dict[str, str] | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
-) -> list["SubAgent"]:
-    runtime: list["SubAgent"] = []
+) -> list[SubAgent]:
+    runtime: list[SubAgent] = []
     for spec in runtime_subagent_specs(env, runtime_registry):
         runtime.append(
             {

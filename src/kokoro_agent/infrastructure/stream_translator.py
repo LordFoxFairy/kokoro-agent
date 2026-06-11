@@ -24,17 +24,15 @@ from kokoro_agent.infrastructure.subagent_registry import (
     subagent_source_for,
 )
 
-# write_todos / task are mapped to dedicated event families; every other tool is
-# a generic tool.invoked/returned pair.
+# These tools map to dedicated event families; every other tool is generic.
 TODO_TOOL = "write_todos"
 SUBAGENT_TOOL = "task"
 RUNTIME_SUBAGENT_TOOL = "agent"
 
 # Intent kinds that run_agent expands rather than emitting verbatim.
 TEXT_INTENT = "text"
-# An incremental token slice from on_chat_model_stream; run_agent turns each into
-# a real text.delta and remembers it streamed so the matching TEXT_INTENT (from
-# on_chat_model_end) closes the segment with one text.completed, no extra delta.
+# A streamed token slice; run_agent emits it as text.delta and remembers it
+# streamed, so the matching TEXT_INTENT closes with text.completed and no delta.
 TEXT_STREAM_INTENT = "text.stream"
 
 
@@ -157,17 +155,15 @@ def translate_stream_event(
             if reasoning:
                 out.append(("thinking.delta", {"text": reasoning}))
             text = text_of(message_content(message))
-            # Intermediate turns carry tool_calls (and usually empty text); only
-            # a final answer (no tool_calls) becomes a user-visible message.
+            # Only a final answer (no tool_calls) becomes a user-visible message.
             if text and not message.tool_calls:
                 out.append((TEXT_INTENT, {"text": text}))
     return out
 
 
 def _make_runner(model: BaseChatModel, system_prompt: str, name: str) -> _AgentRunner:
-    # langchain create_agent returns a CompiledStateGraph whose generic params are
-    # irreducibly Unknown under strict; pin the ainvoke slice we use at this one
-    # boundary.
+    # create_agent's CompiledStateGraph generics are irreducibly Unknown under
+    # strict; pin to the ainvoke slice we use at this boundary.
     runner: _AgentRunner = create_agent(  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
         model, system_prompt=system_prompt, tools=[], name=name
     )

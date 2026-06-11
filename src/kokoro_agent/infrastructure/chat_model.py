@@ -76,13 +76,7 @@ def _make_anthropic_chat_model(config: ExecutionConfig) -> BaseChatModel:
 
 
 def make_chat_model(execution_style: str = "fast") -> BaseChatModel:
-    """Build the configured chat model for the worker.
-
-    When ``KOKORO_LOCAL_FAKE_MODEL=1`` is set, return a deterministic local
-    fake model so the real Redis-backed three-repo chain can be exercised
-    without external provider credentials. Otherwise, resolve the runtime model
-    per request so fast/thinking can differ without a worker restart.
-    """
+    """Build the worker's chat model: a credential-free local fake when ``KOKORO_LOCAL_FAKE_MODEL=1``, else resolved per request so fast/thinking differ without a restart."""
     if os.environ.get(LOCAL_FAKE_MODEL_FLAG) == "1":
         return make_local_fake_chat_model()
 

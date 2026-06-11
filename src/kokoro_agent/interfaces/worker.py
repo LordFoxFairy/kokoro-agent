@@ -64,8 +64,7 @@ async def _serve(port: StreamPort) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    # 本地开发便利：把 .env（gitignored）载入进程环境，供 make_chat_model 读取
-    # KOKORO_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY。生产由真实环境注入，无 .env 时是空操作。
+    # 本地开发把 .env（gitignored）载入环境供 make_chat_model 读取；生产无 .env 时空操作。
     load_dotenv()
     port = make_stream_port()
     LOGGER.info("kokoro-agent worker starting on stream %s", REQUESTS_STREAM)

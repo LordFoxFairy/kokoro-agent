@@ -61,9 +61,9 @@ def test_generic_tool_start_and_end_pair() -> None:
     ]
 
 
-async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref() -> None:
+async def test_drive_agent_events_keeps_segment_activity_on_current_segment_id() -> None:
     # 同一段内：工具/子智能体先到（真实 ReAct 顺序），随后该段的思考+正文落定，
-    # 全部共享同一个 message_ref。
+    # 全部共享同一个 segment_id。
     events = [
         {
             "event": "on_tool_start",
@@ -102,7 +102,7 @@ async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref(
     ]
 
     out = [event async for event in drive_agent_events("run_1", _aiter(events))]
-    segment_ref = next(event.payload["message_ref"] for event in out if event.kind == "text.completed")
+    segment_ref = next(event.payload["segment_id"] for event in out if event.kind == "text.completed")
 
     for kind in (
         "thinking.delta",
@@ -113,7 +113,7 @@ async def test_drive_agent_events_keeps_segment_activity_on_current_message_ref(
         "subagent.finished",
     ):
         payload = next(event.payload for event in out if event.kind == kind)
-        assert payload["message_ref"] == segment_ref
+        assert payload["segment_id"] == segment_ref
 
 
 async def test_drive_agent_events_attaches_activity_to_the_following_segment() -> None:
@@ -138,10 +138,10 @@ async def test_drive_agent_events_attaches_activity_to_the_following_segment() -
     ]
 
     out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
-    completed_refs = [event.payload["message_ref"] for event in out if event.kind == "text.completed"]
-    tool_ref = next(event.payload["message_ref"] for event in out if event.kind == "tool.invoked")
+    completed_refs = [event.payload["segment_id"] for event in out if event.kind == "text.completed"]
+    tool_ref = next(event.payload["segment_id"] for event in out if event.kind == "tool.invoked")
 
-    assert completed_refs == ["msg_0001", "msg_0002"]
+    assert completed_refs == ["run_1:seg_0001", "run_1:seg_0002"]
     # 工具属于第二段（它后面那条消息），而不是第一段。
     assert tool_ref == completed_refs[1]
 
@@ -159,12 +159,12 @@ async def test_drive_agent_events_interleaved_tool_text_tool_text_groups_each_to
     ]
 
     out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
-    tool_refs = [event.payload["message_ref"] for event in out if event.kind == "tool.invoked"]
-    text_refs = [event.payload["message_ref"] for event in out if event.kind == "text.completed"]
+    tool_refs = [event.payload["segment_id"] for event in out if event.kind == "tool.invoked"]
+    text_refs = [event.payload["segment_id"] for event in out if event.kind == "text.completed"]
 
-    assert text_refs == ["msg_0001", "msg_0002"]
-    assert tool_refs == ["msg_0001", "msg_0002"]
-    # tool_b 与第二段同段（msg_0002），不是第一段。
+    assert text_refs == ["run_1:seg_0001", "run_1:seg_0002"]
+    assert tool_refs == ["run_1:seg_0001", "run_1:seg_0002"]
+    # tool_b 与第二段同段（run_1:seg_0002），不是第一段。
     assert tool_refs[1] == text_refs[1]
 
 
@@ -413,8 +413,8 @@ async def test_drive_agent_events_streams_incremental_deltas_then_single_complet
     assert [d.payload["text"] for d in deltas] == ["晴，", "适合", "出门。"]
     # One completed carrying the full accumulated text — not another delta.
     assert completed.payload["text"] == "晴，适合出门。"
-    # Every event in the segment shares one message_ref.
-    refs = {e.payload["message_ref"] for e in events if e.kind in ("text.delta", "text.completed")}
+    # Every event in the segment shares one segment_id.
+    refs = {e.payload["segment_id"] for e in events if e.kind in ("text.delta", "text.completed")}
     assert len(refs) == 1
 
 
@@ -428,8 +428,8 @@ async def test_drive_agent_events_streamed_then_fresh_segment_uses_new_ref() -> 
         {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第二")}},
     ]
     events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
-    completed_refs = [e.payload["message_ref"] for e in events if e.kind == "text.completed"]
-    assert completed_refs == ["msg_0001", "msg_0002"]
+    completed_refs = [e.payload["segment_id"] for e in events if e.kind == "text.completed"]
+    assert completed_refs == ["run_1:seg_0001", "run_1:seg_0002"]
 
 
 async def test_drive_agent_events_routes_streamed_subagent_chunks_into_subagent_stream() -> None:
@@ -475,7 +475,7 @@ async def test_drive_agent_events_routes_streamed_subagent_chunks_into_subagent_
     assert sub_completed[0].payload["text"] == "子结论"
     assert sub_completed[0].payload["subagent_id"] == "subagent_x"
     sub_refs = {
-        e.payload["message_ref"]
+        e.payload["segment_id"]
         for e in events
         if e.kind in ("subagent.text.delta", "subagent.text.completed")
     }
@@ -569,7 +569,7 @@ async def test_activity_stream_envelope_and_text_expansion() -> None:
     completed = next(e for e in events if e.kind == "text.completed")
     assert delta.payload == completed.payload
     assert delta.payload["text"] == "晴，适合。"
-    assert delta.payload["message_ref"] == completed.payload["message_ref"]
+    assert delta.payload["segment_id"] == completed.payload["segment_id"]
 
 
 async def test_stream_failure_yields_run_failed_not_completed() -> None:

@@ -51,7 +51,7 @@ def translate_stream_event(
     ev: Mapping[str, object],
 ) -> list[tuple[str, dict[str, object]]]:
     """Pure map of one ``astream_events(version="v2")`` event to (kind, payload)
-    intents. run_agent assigns run_id/seq/message_ref and expands the ``text``
+    intents. run_agent assigns run_id/seq/segment_id and expands the ``text``
     intent into text.delta + text.completed.
 
     Emits only on tool starts/ends and final model messages; internal graph

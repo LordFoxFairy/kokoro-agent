@@ -87,14 +87,14 @@ def test_text_delta_roundtrip() -> None:
         kind="text.delta",
         run_id="run_01",
         seq=2,
-        payload={"message_ref": "m1", "text": "hello"},
+        payload={"segment_id": "m1", "text": "hello"},
     )
     dumped = event.model_dump()
     assert dumped == {
         "kind": "text.delta",
         "run_id": "run_01",
         "seq": 2,
-        "payload": {"message_ref": "m1", "text": "hello"},
+        "payload": {"segment_id": "m1", "text": "hello"},
     }
     restored = AgentEvent.model_validate(dumped)
     assert restored == event
@@ -108,7 +108,7 @@ def test_agent_event_forbids_extra_fields() -> None:
             kind="text.delta",
             run_id="run_01",
             seq=2,
-            payload={"message_ref": "m1", "text": "hi"},
+            payload={"segment_id": "m1", "text": "hi"},
             event_id="evt_01",  # type: ignore[call-arg]
         )
 
@@ -120,7 +120,7 @@ def test_agent_event_strict_rejects_coerced_seq() -> None:
             kind="text.delta",
             run_id="run_01",
             seq="2",  # type: ignore[arg-type]
-            payload={"message_ref": "m1", "text": "hi"},
+            payload={"segment_id": "m1", "text": "hi"},
         )
 
 
@@ -129,20 +129,20 @@ def test_agent_event_strict_rejects_coerced_seq() -> None:
 @pytest.mark.parametrize(
     ("kind", "payload"),
     [
-        ("thinking.delta", {"message_ref": "m1", "text": "let me think"}),
+        ("thinking.delta", {"segment_id": "m1", "text": "let me think"}),
         (
             "tool.invoked",
-            {"message_ref": "m1", "tool_id": "t1", "name": "write_todos", "args": {"todos": []}},
+            {"segment_id": "m1", "tool_id": "t1", "name": "write_todos", "args": {"todos": []}},
         ),
         (
             "tool.returned",
-            {"message_ref": "m1", "tool_id": "t1", "name": "write_todos", "result": "ok"},
+            {"segment_id": "m1", "tool_id": "t1", "name": "write_todos", "result": "ok"},
         ),
         (
             "subagent.started",
-            {"message_ref": "m1", "subagent_id": "s1", "name": "researcher", "description": "dig"},
+            {"segment_id": "m1", "subagent_id": "s1", "name": "researcher", "description": "dig"},
         ),
-        ("subagent.finished", {"message_ref": "m1", "subagent_id": "s1", "name": "researcher"}),
+        ("subagent.finished", {"segment_id": "m1", "subagent_id": "s1", "name": "researcher"}),
     ],
 )
 def test_activity_kinds_accepted(kind: str, payload: dict[str, object]) -> None:
@@ -167,13 +167,13 @@ def test_todo_updated_roundtrip_preserves_statuses() -> None:
     assert restored.payload["todos"] == payload["todos"]
 
 
-def test_tool_and_subagent_events_preserve_message_ref() -> None:
+def test_tool_and_subagent_events_preserve_segment_id() -> None:
     tool_event = AgentEvent(
         kind="tool.invoked",
         run_id="run_01",
         seq=5,
         payload={
-            "message_ref": "msgref_01",
+            "segment_id": "msgref_01",
             "tool_id": "tool_01",
             "name": "get_weather",
             "args": {"city": "北京"},
@@ -184,12 +184,12 @@ def test_tool_and_subagent_events_preserve_message_ref() -> None:
         run_id="run_01",
         seq=6,
         payload={
-            "message_ref": "msgref_01",
+            "segment_id": "msgref_01",
             "subagent_id": "subagent_01",
             "name": "researcher",
             "description": "查资料",
         },
     )
 
-    assert tool_event.model_dump()["payload"]["message_ref"] == "msgref_01"
-    assert subagent_event.model_dump()["payload"]["message_ref"] == "msgref_01"
+    assert tool_event.model_dump()["payload"]["segment_id"] == "msgref_01"
+    assert subagent_event.model_dump()["payload"]["segment_id"] == "msgref_01"

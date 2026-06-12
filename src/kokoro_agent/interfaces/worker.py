@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from pydantic import ValidationError
 
+from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.chat_model import make_chat_model
 from kokoro_agent.infrastructure.stream_port import StreamPort, make_stream_port
@@ -39,7 +40,18 @@ async def _handle_request(
     processed.add(request.run_id)
 
     stream = events_stream(request.run_id)
-    resolved_model = model if model is not None else make_chat_model(request.execution_style)
+    try:
+        resolved_model = model if model is not None else make_chat_model(request.execution_style)
+    except Exception as error:  # noqa: BLE001 — boundary: bad model config -> terminal run.failed, loop stays alive
+        LOGGER.exception("model resolution failed for run_id=%s", request.run_id)
+        failed = AgentEvent(
+            kind="run.failed",
+            run_id=request.run_id,
+            seq=1,
+            payload={"error_kind": type(error).__name__, "message": str(error)},
+        )
+        await port.publish(stream, failed.model_dump())
+        return
     async for event in run_agent(request, resolved_model):
         await port.publish(stream, event.model_dump())
 

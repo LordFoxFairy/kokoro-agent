@@ -134,6 +134,37 @@ async def test_run_once_streams_with_local_fake_model(
 
 
 @pytest.mark.asyncio
+async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    port = MemoryStreamPort()
+    processed: set[str] = set()
+
+    def broken_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
+        raise ValueError("Invalid KOKORO_MODEL spec: 'plainstring'")
+
+    monkeypatch.setattr(
+        "kokoro_agent.interfaces.worker.make_chat_model", broken_make_chat_model
+    )
+
+    # 坏模型配置必须落终态 run.failed，而不是崩掉 worker 留下永远悬挂的 run。
+    await port.publish(REQUESTS_STREAM, _request("run_broken"))
+    await run_once(port, processed, None)
+
+    items = await port.read_all(events_stream("run_broken"))
+    assert [item.event["kind"] for item in items] == ["run.failed"]
+    payload = items[-1].event["payload"]
+    assert isinstance(payload, Mapping)
+    assert payload["error_kind"] == "ValueError"
+
+    # 循环存活：下一条请求（注入健康模型）照常处理到 run.completed。
+    await port.publish(REQUESTS_STREAM, _request("run_after"))
+    await run_once(port, processed, make_local_fake_chat_model())
+    after = await port.read_all(events_stream("run_after"))
+    assert [item.event["kind"] for item in after][-1] == "run.completed"
+
+
+@pytest.mark.asyncio
 async def test_run_once_resolves_model_from_request_execution_style(
     monkeypatch: MonkeyPatch,
 ) -> None:

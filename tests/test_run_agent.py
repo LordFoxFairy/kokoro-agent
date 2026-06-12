@@ -484,9 +484,8 @@ async def test_drive_agent_events_routes_streamed_subagent_chunks_into_subagent_
     assert "text.completed" not in [e.kind for e in events]
 
 
-def test_intermediate_tool_call_turn_emits_no_text() -> None:
-    # An intermediate model turn carries tool_calls (and here empty content);
-    # it must NOT surface as a user-visible message.
+def test_intermediate_tool_call_turn_with_empty_content_is_silent() -> None:
+    # 纯工具调度轮（空正文）不产生用户可见消息。
     msg = AIMessage(
         content="",
         tool_calls=[{"name": "get_weather", "args": {"city": "北京"}, "id": "c1", "type": "tool_call"}],
@@ -497,6 +496,66 @@ def test_intermediate_tool_call_turn_emits_no_text() -> None:
         "data": {"output": msg},
     }
     assert translate_stream_event(ev) == []
+
+
+def test_intermediate_narration_with_tool_calls_surfaces_as_text() -> None:
+    # 真实模型常把实质内容写在带 tool_calls 的中间轮——丢弃它等于丢答案。
+    msg = AIMessage(
+        content="先梳理 SQLite 的适用场景。",
+        tool_calls=[{"name": "write_todos", "args": {"todos": []}, "id": "c1", "type": "tool_call"}],
+    )
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_end",
+        "name": "ChatOpenAI",
+        "data": {"output": msg},
+    }
+    assert ("text", {"text": "先梳理 SQLite 的适用场景。"}) in translate_stream_event(ev)
+
+
+async def test_drive_agent_events_surfaces_intermediate_narration_as_its_own_segment() -> None:
+    # 叙述(带 tool_calls) → 工具 → 终答：叙述独立成段先落定，工具挂到下一段与终答同段。
+    raw = [
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {
+                "output": AIMessage(
+                    content="我先查一下天气。",
+                    tool_calls=[
+                        {"name": "get_weather", "args": {"city": "北京"}, "id": "c1", "type": "tool_call"}
+                    ],
+                )
+            },
+        },
+        {
+            "event": "on_tool_start",
+            "name": "get_weather",
+            "run_id": "tool_x",
+            "data": {"input": {"city": "北京"}},
+        },
+        {
+            "event": "on_tool_end",
+            "name": "get_weather",
+            "run_id": "tool_x",
+            "data": {"output": "晴"},
+        },
+        {
+            "event": "on_chat_model_end",
+            "name": "ChatOpenAI",
+            "data": {"output": AIMessage(content="北京晴，适合出门。")},
+        },
+    ]
+
+    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
+    kinds = [event.kind for event in out]
+    completed = [event for event in out if event.kind == "text.completed"]
+    tool_ref = next(event.payload["segment_id"] for event in out if event.kind == "tool.invoked")
+
+    # 叙述先于工具落定，自成 seg_0001；工具与终答同属 seg_0002。
+    assert [e.payload["text"] for e in completed] == ["我先查一下天气。", "北京晴，适合出门。"]
+    assert [e.payload["segment_id"] for e in completed] == ["run_1:seg_0001", "run_1:seg_0002"]
+    assert tool_ref == "run_1:seg_0002"
+    assert kinds.index("text.completed") < kinds.index("tool.invoked")
 
 
 def test_reasoning_content_surfaces_as_thinking() -> None:

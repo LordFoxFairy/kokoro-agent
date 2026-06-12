@@ -30,16 +30,16 @@ def is_agent_kind(kind: str) -> TypeGuard[AgentKind]:
 # per-kind validation is kokoro-session's job at the Zod boundary). Documented
 # so the DeepAgents emitter and the session normalizer share one contract:
 #   run.started        {}
-#   thinking.delta     {"message_ref": str, "text": str}        # reasoning stream
-#   text.delta         {"message_ref": str, "text": str}
-#   text.completed     {"message_ref": str, "text": str}
-#   tool.invoked       {"message_ref": str, "tool_id": str, "name": str, "args": dict[str, object]}
-#   tool.returned      {"message_ref": str, "tool_id": str, "name": str, "result": str}
+#   thinking.delta     {"segment_id": str, "text": str}        # reasoning stream
+#   text.delta         {"segment_id": str, "text": str}
+#   text.completed     {"segment_id": str, "text": str}
+#   tool.invoked       {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, object]}
+#   tool.returned      {"segment_id": str, "tool_id": str, "name": str, "result": str}
 #   todo.updated       {"todos": [{"content": str, "status": "pending"|"in_progress"|"completed"}]}
-#   subagent.started   {"message_ref": str, "subagent_id": str, "name": str, "description": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
-#   subagent.finished  {"message_ref": str, "subagent_id": str, "name": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
-#   subagent.text.delta {"message_ref": str, "subagent_id": str, "text": str}
-#   subagent.text.completed {"message_ref": str, "subagent_id": str, "text": str}
+#   subagent.started   {"segment_id": str, "subagent_id": str, "name": str, "description": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
+#   subagent.finished  {"segment_id": str, "subagent_id": str, "name": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
+#   subagent.text.delta {"segment_id": str, "subagent_id": str, "text": str}
+#   subagent.text.completed {"segment_id": str, "subagent_id": str, "text": str}
 #   run.completed      {"status": str}
 #   run.failed         {"error_kind": str, "message": str}
 

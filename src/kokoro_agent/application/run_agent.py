@@ -60,10 +60,12 @@ def _str_field(payload: dict[str, object], key: str) -> str:
 
 
 class _Segmenter:
-    """The open output segment: a fresh msg ref opens on first content or after the
-    previous segment completed, so tool→text→tool→text stays unmerged into one."""
+    """The open output segment: a fresh, globally-unique segment id opens on first
+    content or after the previous segment completed, so tool→text→tool→text stays
+    unmerged into one. The agent assigns the id; session transmits it verbatim."""
 
-    def __init__(self) -> None:
+    def __init__(self, run_id: str) -> None:
+        self._run_id = run_id
         self._counter = 0
         self._active: str | None = None
         self._completed = False
@@ -71,7 +73,7 @@ class _Segmenter:
     def current(self) -> str:
         if self._active is None or self._completed:
             self._counter += 1
-            self._active = f"msg_{self._counter:04d}"
+            self._active = f"{self._run_id}:seg_{self._counter:04d}"
             self._completed = False
         return self._active
 
@@ -92,7 +94,7 @@ async def drive_agent_events(
         seq += 1
         return seq
 
-    segment = _Segmenter()
+    segment = _Segmenter(run_id)
     active_subagent: tuple[str, str] | None = None
     # Accumulated streamed text for the open parent / subagent segment. None means
     # no stream chunk has arrived yet -> on_chat_model_end takes the fallback path.
@@ -123,7 +125,7 @@ async def drive_agent_events(
                                 run_id=run_id,
                                 seq=nxt(),
                                 payload={
-                                    "message_ref": segment.current(),
+                                    "segment_id": segment.current(),
                                     "subagent_id": sub_id,
                                     "text": text,
                                 },
@@ -134,19 +136,19 @@ async def drive_agent_events(
                             kind="text.delta",
                             run_id=run_id,
                             seq=nxt(),
-                            payload={"message_ref": segment.current(), "text": text},
+                            payload={"segment_id": segment.current(), "text": text},
                         )
                     elif kind == TEXT_INTENT:
                         sub_id = routed_subagent(ev)
                         if sub_id is not None:
-                            message_ref = segment.current()
+                            segment_id = segment.current()
                             if sub_streamed_text is not None:
                                 yield AgentEvent(
                                     kind="subagent.text.completed",
                                     run_id=run_id,
                                     seq=nxt(),
                                     payload={
-                                        "message_ref": message_ref,
+                                        "segment_id": segment_id,
                                         "subagent_id": sub_id,
                                         "text": sub_streamed_text,
                                     },
@@ -154,7 +156,7 @@ async def drive_agent_events(
                                 sub_streamed_text = None
                                 continue
                             subagent_body = {
-                                "message_ref": message_ref,
+                                "segment_id": segment_id,
                                 "subagent_id": sub_id,
                                 "text": payload["text"],
                             }
@@ -171,18 +173,18 @@ async def drive_agent_events(
                                 payload=subagent_body,
                             )
                             continue
-                        message_ref = segment.current()
+                        segment_id = segment.current()
                         if streamed_text is not None:
                             yield AgentEvent(
                                 kind="text.completed",
                                 run_id=run_id,
                                 seq=nxt(),
-                                payload={"message_ref": message_ref, "text": streamed_text},
+                                payload={"segment_id": segment_id, "text": streamed_text},
                             )
                             streamed_text = None
                             segment.complete()
                             continue
-                        body = {"message_ref": message_ref, "text": payload["text"]}
+                        body = {"segment_id": segment_id, "text": payload["text"]}
                         yield AgentEvent(kind="text.delta", run_id=run_id, seq=nxt(), payload=body)
                         yield AgentEvent(kind="text.completed", run_id=run_id, seq=nxt(), payload=body)
                         segment.complete()
@@ -191,7 +193,7 @@ async def drive_agent_events(
                             kind="thinking.delta",
                             run_id=run_id,
                             seq=nxt(),
-                            payload={"message_ref": segment.current(), "text": payload["text"]},
+                            payload={"segment_id": segment.current(), "text": payload["text"]},
                         )
                     elif kind in {
                         "tool.invoked",
@@ -199,7 +201,7 @@ async def drive_agent_events(
                         "subagent.started",
                         "subagent.finished",
                     }:
-                        event_payload = {"message_ref": segment.current(), **payload}
+                        event_payload = {"segment_id": segment.current(), **payload}
                         if kind == "subagent.started":
                             active_subagent = (
                                 _str_field(payload, "subagent_id"),

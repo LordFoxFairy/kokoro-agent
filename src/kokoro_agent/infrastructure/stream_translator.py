@@ -54,9 +54,9 @@ def translate_stream_event(
     intents. run_agent assigns run_id/seq/segment_id and expands the ``text``
     intent into text.delta + text.completed.
 
-    Emits only on tool starts/ends and final model messages; internal graph
-    nodes (LangGraph/model/tools/*Middleware) and intermediate tool-call turns
-    (empty content) produce nothing.
+    Emits on tool starts/ends and every model message that carries text —
+    including narration on intermediate tool-call turns; internal graph nodes
+    (LangGraph/model/tools/*Middleware) and empty tool-call turns produce nothing.
     """
     event = ev.get("event")
     name_obj = ev.get("name")
@@ -155,8 +155,8 @@ def translate_stream_event(
             if reasoning:
                 out.append(("thinking.delta", {"text": reasoning}))
             text = text_of(message_content(message))
-            # Only a final answer (no tool_calls) becomes a user-visible message.
-            if text and not message.tool_calls:
+            # 带 tool_calls 的中间轮叙述也要浮出——真实模型常把实质内容写在这里，丢弃即丢答案。
+            if text:
                 out.append((TEXT_INTENT, {"text": text}))
     return out
 

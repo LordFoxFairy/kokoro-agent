@@ -66,3 +66,17 @@ def test_make_chat_model_invalid_spec_fails_loud(
     monkeypatch.setenv("KOKORO_MODEL", "not-a-valid-provider-spec-xyz")
     with pytest.raises(Exception):  # noqa: B017, PT011 — fail-loud on any bad spec
         make_chat_model()
+
+
+@pytest.mark.parametrize(
+    "spec",
+    ["plainstring", "anthropic:", ":model", "bogus:model", ""],
+)
+def test_make_chat_model_rejects_malformed_spec(
+    monkeypatch: pytest.MonkeyPatch, spec: str
+) -> None:
+    # 坏 KOKORO_MODEL 必须显性 ValueError——worker 边界靠它落 run.failed。
+    monkeypatch.delenv(LOCAL_FAKE_MODEL_FLAG, raising=False)
+    monkeypatch.setenv("KOKORO_MODEL", spec)
+    with pytest.raises(ValueError):
+        make_chat_model()

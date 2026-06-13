@@ -505,6 +505,26 @@ def test_model_stream_chunk_surfaces_incremental_reasoning() -> None:
     ]
 
 
+def test_model_stream_chunk_empty_reasoning_emits_no_thinking_delta() -> None:
+    # 空 reasoning_content 绝不发 thinking.delta——否则前端冒空思考泡。
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_stream",
+        "name": "ChatOpenAI",
+        "data": {"chunk": AIMessageChunk(content="答", additional_kwargs={"reasoning_content": ""})},
+    }
+    assert translate_stream_event(ev) == [("text.stream", {"text": "答"})]
+
+
+def test_model_stream_chunk_reasoning_only_emits_no_text_stream() -> None:
+    # 有 reasoning 无正文：只发 thinking.delta，不发空 text.stream。
+    ev: Mapping[str, object] = {
+        "event": "on_chat_model_stream",
+        "name": "ChatOpenAI",
+        "data": {"chunk": AIMessageChunk(content="", additional_kwargs={"reasoning_content": "想"})},
+    }
+    assert translate_stream_event(ev) == [("thinking.delta", {"text": "想"})]
+
+
 async def test_drive_agent_events_streams_incremental_deltas_then_single_completed() -> None:
     # Real token streaming: several stream chunks, then the final end carries the
     # whole message. The driver must emit one delta per chunk (each incremental)

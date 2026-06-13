@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # 锁定依赖安装：uv.lock 用官方源锁定（UV_NO_CONFIG），CI 无本地镜像配置，直接走锁文件。
+      - run: uv sync --locked
+      - name: ruff
+        run: uv run ruff check src tests
+      - name: pyright
+        run: uv run pyright
+      - name: pytest
+        run: uv run pytest -q

@@ -149,9 +149,24 @@ def translate_stream_event(
                         "tool_id": tool_id,
                         "name": name,
                         "result": _truncated(result_text(data.get("output"))),
+                        "is_error": False,
                     },
                 )
             )
+    elif event == "on_tool_error":
+        # 工具抛异常发 on_tool_error（非 on_tool_end）：归一化成 tool.returned 带 is_error=True，
+        # 让 UI 把该工具显示为失败（红色）而非永远卡在「运行中」。运行随后通常仍以 run.failed 收尾。
+        out.append(
+            (
+                "tool.returned",
+                {
+                    "tool_id": tool_id,
+                    "name": name,
+                    "result": _truncated(str(data.get("error"))),
+                    "is_error": True,
+                },
+            )
+        )
     elif event == "on_chat_model_stream":
         chunk = data.get("chunk")
         if isinstance(chunk, AIMessageChunk) and not is_tool_call_only_chunk(chunk):

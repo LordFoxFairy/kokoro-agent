@@ -55,10 +55,41 @@ def test_generic_tool_start_and_end_pair() -> None:
         "run_id": "tw",
         "data": {"output": AIMessage(content="北京: sunny")},
     }
-    # tool result text is correlated by the same tool_id (event run_id).
+    # tool result text is correlated by the same tool_id (event run_id); is_error=False on success.
     assert translate_stream_event(end) == [
-        ("tool.returned", {"tool_id": "tw", "name": "get_weather", "result": "北京: sunny"})
+        ("tool.returned", {"tool_id": "tw", "name": "get_weather", "result": "北京: sunny", "is_error": False})
     ]
+
+
+def test_tool_error_maps_to_tool_returned_with_is_error() -> None:
+    # 抛异常的工具发 on_tool_error（非 on_tool_end）：归一化成 tool.returned 带 is_error=True + 错误文本，
+    # 让 UI 显示该工具失败（红色），而非永远卡在「运行中」。
+    ev: Mapping[str, object] = {
+        "event": "on_tool_error",
+        "name": "fetch_url",
+        "run_id": "te",
+        "data": {"error": ValueError("connection refused"), "input": {"url": "x"}},
+    }
+    assert translate_stream_event(ev) == [
+        (
+            "tool.returned",
+            {"tool_id": "te", "name": "fetch_url", "result": "connection refused", "is_error": True},
+        )
+    ]
+
+
+def test_tool_error_truncates_a_huge_error_message() -> None:
+    ev: Mapping[str, object] = {
+        "event": "on_tool_error",
+        "name": "x",
+        "run_id": "te",
+        "data": {"error": ValueError("e" * 20000)},
+    }
+    [(kind, payload)] = translate_stream_event(ev)
+    assert kind == "tool.returned"
+    assert payload["is_error"] is True
+    result = payload["result"]
+    assert isinstance(result, str) and len(result) <= 8100 and "截断" in result
 
 
 def test_tool_returned_result_is_truncated_for_the_event_stream() -> None:

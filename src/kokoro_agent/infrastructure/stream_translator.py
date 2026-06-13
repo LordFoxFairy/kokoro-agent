@@ -29,6 +29,9 @@ TODO_TOOL = "write_todos"
 SUBAGENT_TOOL = "task"
 RUNTIME_SUBAGENT_TOOL = "agent"
 
+# 事件载荷里工具结果的上限：防单条 redis 事件膨胀；模型在 graph 内仍拿全量结果。
+TOOL_RESULT_MAX_CHARS = 8_000
+
 # Intent kinds that run_agent expands rather than emitting verbatim.
 TEXT_INTENT = "text"
 # A streamed token slice; run_agent emits it as text.delta and remembers it
@@ -45,6 +48,12 @@ class RuntimeSubagentToolInput(BaseModel):
     description: str = Field(min_length=1, description="Short role or responsibility summary")
     system_prompt: str = Field(min_length=1, description="System prompt for the runtime custom subagent")
     task: str = Field(min_length=1, description="The concrete task the runtime custom subagent should perform")
+
+
+def _truncated(result: str) -> str:
+    if len(result) <= TOOL_RESULT_MAX_CHARS:
+        return result
+    return f"{result[:TOOL_RESULT_MAX_CHARS]}…（结果过长，事件流中已在 {TOOL_RESULT_MAX_CHARS} 字符处截断）"
 
 
 def translate_stream_event(
@@ -136,7 +145,11 @@ def translate_stream_event(
             out.append(
                 (
                     "tool.returned",
-                    {"tool_id": tool_id, "name": name, "result": result_text(data.get("output"))},
+                    {
+                        "tool_id": tool_id,
+                        "name": name,
+                        "result": _truncated(result_text(data.get("output"))),
+                    },
                 )
             )
     elif event == "on_chat_model_stream":

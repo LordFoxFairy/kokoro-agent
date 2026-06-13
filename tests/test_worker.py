@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import TypeGuard, TypedDict, cast
 
 import pytest
@@ -31,6 +32,14 @@ def _is_text_payload(value: object) -> TypeGuard[_TextPayload]:
 def _payload_text(value: object) -> str:
     assert _is_text_payload(value)
     return value["text"]
+
+
+def _payload_field(event: dict[str, object], key: str) -> str:
+    payload = event["payload"]
+    assert isinstance(payload, Mapping)
+    value = cast("Mapping[str, object]", payload).get(key)
+    assert isinstance(value, str)
+    return value
 
 
 def _fake_model(*replies: str) -> BaseChatModel:
@@ -70,6 +79,25 @@ async def test_run_once_streams_with_injected_model() -> None:
     # seq is monotonic from 1, no gaps.
     seqs = [item.event["seq"] for item in items]
     assert seqs == list(range(1, len(seqs) + 1))
+
+
+async def test_run_once_executes_the_built_in_now_tool() -> None:
+    # X1 最小闭环：注册的内置工具被真实 DeepAgents 循环执行，
+    # 并以通用 tool.invoked/tool.returned 事件浮出（结果是可解析的本地时间）。
+    port = MemoryStreamPort()
+    await port.publish(REQUESTS_STREAM, _request("run_tool"))
+
+    processed: set[str] = set()
+    await run_once(port, processed, make_local_fake_chat_model())
+
+    items = await port.read_all(events_stream("run_tool"))
+    kinds = [item.event["kind"] for item in items]
+    assert "tool.invoked" in kinds
+    invoked = next(item.event for item in items if item.event["kind"] == "tool.invoked")
+    returned = next(item.event for item in items if item.event["kind"] == "tool.returned")
+    assert _payload_field(invoked, "name") == "now"
+    assert _payload_field(returned, "name") == "now"
+    assert datetime.fromisoformat(_payload_field(returned, "result")).tzinfo is not None
 
 
 async def test_run_once_is_idempotent_per_run_id() -> None:

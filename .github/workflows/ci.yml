@@ -7,6 +7,19 @@ on:
 jobs:
   gates:
     runs-on: ubuntu-latest
+    # redis 集成测试(stream_port_redis)需真实 redis：提供服务容器，测试实跑而非跳过。
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      KOKORO_REDIS_URL: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

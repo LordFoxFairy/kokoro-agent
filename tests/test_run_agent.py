@@ -78,6 +78,77 @@ def test_tool_error_maps_to_tool_returned_with_is_error() -> None:
     ]
 
 
+def test_tool_error_on_subagent_tool_maps_to_subagent_finished_not_a_fake_tool() -> None:
+    # 子智能体工具(task/agent)失败发 on_tool_error：必须像 on_tool_end 一样按名分派成 subagent.finished
+    # （让卡 running 的子智能体步收尾），而非冒一条伪「task」红色工具行。
+    ev: Mapping[str, object] = {
+        "event": "on_tool_error",
+        "name": "task",
+        "run_id": "sa1",
+        "data": {"error": ValueError("subagent crashed"), "input": {"subagent_type": "researcher"}},
+    }
+    [(kind, payload)] = translate_stream_event(ev)
+    assert kind == "subagent.finished"
+    assert payload["subagent_id"] == "sa1"
+    assert payload["subagent_type"] == "researcher"
+
+
+def test_tool_error_on_runtime_subagent_tool_maps_to_subagent_finished() -> None:
+    ev: Mapping[str, object] = {
+        "event": "on_tool_error",
+        "name": "agent",
+        "run_id": "rt1",
+        "data": {"error": ValueError("boom"), "input": {"name": "helper"}},
+    }
+    [(kind, payload)] = translate_stream_event(ev)
+    assert kind == "subagent.finished"
+    assert payload["subagent_type"] == "helper"
+    assert payload["source"] == "runtime-custom"
+
+
+def test_tool_error_on_write_todos_is_silent() -> None:
+    ev: Mapping[str, object] = {
+        "event": "on_tool_error",
+        "name": "write_todos",
+        "run_id": "wt",
+        "data": {"error": ValueError("x"), "input": {}},
+    }
+    assert translate_stream_event(ev) == []
+
+
+def test_tool_error_with_empty_message_falls_back_to_exception_type_name() -> None:
+    # 无消息异常(如 CancelledError / 无参异常)str 化为空串：错误文本回落到类型名，绝不渲染空白红条。
+    ev: Mapping[str, object] = {
+        "event": "on_tool_error",
+        "name": "fetch_url",
+        "run_id": "te",
+        "data": {"error": RuntimeError()},
+    }
+    [(kind, payload)] = translate_stream_event(ev)
+    assert kind == "tool.returned" and payload["is_error"] is True
+    assert payload["result"] == "RuntimeError"
+
+
+async def test_drive_agent_events_yields_tool_returned_before_run_failed() -> None:
+    # 集成护栏:on_tool_error 经 drive 后真的 yield 出 tool.returned(is_error+segment_id),
+    # 且严格早于随后异常收尾的 run.failed（顺序由 langchain 架构保证，这里钉死防库升级回归）。
+    async def raw() -> AsyncIterator[Mapping[str, object]]:
+        yield {"event": "on_tool_start", "name": "fetch_url", "run_id": "te", "data": {"input": {"url": "x"}}}
+        yield {"event": "on_tool_error", "name": "fetch_url", "run_id": "te", "data": {"error": ValueError("refused")}}
+        raise RuntimeError("graph down")
+
+    events = [e async for e in drive_agent_events("run_1", raw())]
+    kinds = [e.kind for e in events]
+    assert "run.completed" not in kinds
+    assert kinds.index("tool.returned") < kinds.index("run.failed")
+    assert kinds[-1] == "run.failed"
+    returned = events[kinds.index("tool.returned")]
+    assert returned.payload["is_error"] is True
+    assert returned.payload["name"] == "fetch_url"
+    # run_agent 给 tool.returned 补了 segment_id。
+    assert isinstance(returned.payload.get("segment_id"), str) and returned.payload["segment_id"]
+
+
 def test_tool_error_truncates_a_huge_error_message() -> None:
     ev: Mapping[str, object] = {
         "event": "on_tool_error",

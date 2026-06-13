@@ -56,6 +56,31 @@ def _truncated(result: str) -> str:
     return f"{result[:TOOL_RESULT_MAX_CHARS]}…（结果过长，事件流中已在 {TOOL_RESULT_MAX_CHARS} 字符处截断）"
 
 
+def _subagent_finished(
+    name: str, tool_id: str, data: Mapping[str, object]
+) -> dict[str, object] | None:
+    """子智能体分派工具（task/agent）的 subagent.finished payload；普通工具返回 None。
+    on_tool_end 与 on_tool_error 共用，保证子智能体无论成功/失败都收尾、不被当通用工具。"""
+    args = as_mapping(data.get("input"))
+    if name == SUBAGENT_TOOL:
+        subagent_type = str(args.get("subagent_type") or "subagent")
+        return {
+            "subagent_id": tool_id,
+            "name": subagent_type,
+            "subagent_type": subagent_type,
+            "source": subagent_source_for(subagent_type),
+        }
+    if name == RUNTIME_SUBAGENT_TOOL:
+        runtime_name = str(args.get("name") or "runtime-subagent")
+        return {
+            "subagent_id": tool_id,
+            "name": runtime_name,
+            "subagent_type": runtime_name,
+            "source": "runtime-custom",
+        }
+    return None
+
+
 def translate_stream_event(
     ev: Mapping[str, object],
 ) -> list[tuple[str, dict[str, object]]]:
@@ -113,34 +138,9 @@ def translate_stream_event(
     elif event == "on_tool_end":
         if name == TODO_TOOL:
             return out  # the list was already emitted on tool start
-        if name == SUBAGENT_TOOL:
-            args = as_mapping(data.get("input"))
-            subagent_type = str(args.get("subagent_type") or "subagent")
-            out.append(
-                (
-                    "subagent.finished",
-                    {
-                        "subagent_id": tool_id,
-                        "name": subagent_type,
-                        "subagent_type": subagent_type,
-                        "source": subagent_source_for(subagent_type),
-                    },
-                )
-            )
-        elif name == RUNTIME_SUBAGENT_TOOL:
-            args = as_mapping(data.get("input"))
-            runtime_name = str(args.get("name") or "runtime-subagent")
-            out.append(
-                (
-                    "subagent.finished",
-                    {
-                        "subagent_id": tool_id,
-                        "name": runtime_name,
-                        "subagent_type": runtime_name,
-                        "source": "runtime-custom",
-                    },
-                )
-            )
+        finished = _subagent_finished(name, tool_id, data)
+        if finished is not None:
+            out.append(("subagent.finished", finished))
         else:
             out.append(
                 (
@@ -154,19 +154,29 @@ def translate_stream_event(
                 )
             )
     elif event == "on_tool_error":
-        # 工具抛异常发 on_tool_error（非 on_tool_end）：归一化成 tool.returned 带 is_error=True，
-        # 让 UI 把该工具显示为失败（红色）而非永远卡在「运行中」。运行随后通常仍以 run.failed 收尾。
-        out.append(
-            (
-                "tool.returned",
-                {
-                    "tool_id": tool_id,
-                    "name": name,
-                    "result": _truncated(str(data.get("error"))),
-                    "is_error": True,
-                },
+        # 工具抛异常发 on_tool_error（非 on_tool_end）。按名分派与 on_tool_end 对称：子智能体工具失败仍发
+        # subagent.finished（让卡 running 的子智能体步收尾，不冒伪红工具行），todo 静默，其余发
+        # tool.returned(is_error=True) 让 UI 显失败（红色）。运行随后通常仍以 run.failed 收尾。
+        if name == TODO_TOOL:
+            return out
+        finished = _subagent_finished(name, tool_id, data)
+        if finished is not None:
+            out.append(("subagent.finished", finished))
+        else:
+            error = data.get("error")
+            # 无消息异常（CancelledError / 无参异常）str 化为空串：回落到类型名，绝不渲染空白红条。
+            error_text = str(error) or type(error).__name__
+            out.append(
+                (
+                    "tool.returned",
+                    {
+                        "tool_id": tool_id,
+                        "name": name,
+                        "result": _truncated(error_text),
+                        "is_error": True,
+                    },
+                )
             )
-        )
     elif event == "on_chat_model_stream":
         chunk = data.get("chunk")
         if isinstance(chunk, AIMessageChunk) and not is_tool_call_only_chunk(chunk):

@@ -61,6 +61,22 @@ def test_generic_tool_start_and_end_pair() -> None:
     ]
 
 
+def test_tool_returned_result_is_truncated_for_the_event_stream() -> None:
+    # 事件载荷 >8000 字符截断：防单条 redis 事件膨胀；模型在 graph 内仍拿全量结果。
+    end: Mapping[str, object] = {
+        "event": "on_tool_end",
+        "name": "fetch_url",
+        "run_id": "tb",
+        "data": {"output": "x" * 20_000},
+    }
+    [(kind, payload)] = translate_stream_event(end)
+    assert kind == "tool.returned"
+    result = payload["result"]
+    assert isinstance(result, str)
+    assert len(result) <= 8_100
+    assert "截断" in result
+
+
 async def test_drive_agent_events_keeps_segment_activity_on_current_segment_id() -> None:
     # 同一段内：工具/子智能体先到（真实 ReAct 顺序），随后该段的思考+正文落定，
     # 全部共享同一个 segment_id。

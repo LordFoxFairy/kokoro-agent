@@ -7,6 +7,7 @@ from typing import Protocol
 from deepagents import create_deep_agent  # pyright: ignore[reportUnknownVariableType]  # deepagents create_deep_agent symbol is partially typed
 from langchain_core.language_models import BaseChatModel
 
+from kokoro_agent.infrastructure.builtin_tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.message_extractors import as_mapping
 from kokoro_agent.infrastructure.stream_translator import (
     TEXT_INTENT,
@@ -30,10 +31,11 @@ class _StreamingAgent(Protocol):
 ASTREAM_TIMEOUT_S = 120
 
 # DeepAgents ships write_todos (CC-style planning), task (subagents), file ops
-# and execute. We add no custom domain tools yet; the agent plans + answers.
+# and execute; Kokoro adds its built-in domain tools (now / fetch_url, see builtin_tools).
 _SYSTEM_PROMPT = (
     "你是 Kokoro，一个温和、克制的助手。遇到多步任务时，先用 write_todos 列出计划"
-    "并随进展更新；需要时调用可用工具，必要时用 task 委派子智能体。回答简洁、清晰。"
+    "并随进展更新；需要时调用可用工具（如 now 查当前时间、fetch_url 抓网页），"
+    "必要时用 task 委派子智能体。回答简洁、清晰。"
 )
 
 
@@ -47,7 +49,7 @@ def _build_agent(model: BaseChatModel) -> _StreamingAgent:
     # generics; pin the astream_events slice we use at this one boundary.
     agent: _StreamingAgent = create_deep_agent(  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
         model=model,
-        tools=[build_runtime_custom_subagent_tool(model, runtime_registry)],
+        tools=[build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS],
         system_prompt=_SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
     )

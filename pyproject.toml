@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "deepagents",
+  "httpx>=0.28.1",
   "langchain",
   "langchain-anthropic",
   "langchain-openai>=1.2.2",

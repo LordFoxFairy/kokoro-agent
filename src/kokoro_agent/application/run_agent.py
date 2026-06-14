@@ -17,6 +17,7 @@ from kokoro_agent.infrastructure.stream_translator import (
 )
 from kokoro_agent.domain.agent_event import AgentEvent, is_agent_kind
 from kokoro_agent.domain.run_request import PermissionMode, RunRequest
+from kokoro_agent.infrastructure.control import APPROVAL_TIMEOUT_S
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.permission import (
     blocked_tools,
@@ -109,6 +110,7 @@ async def drive_agent_events(
     run_id: str,
     raw_events: AsyncIterator[Mapping[str, object]],
     awaiting_tools: frozenset[str] = frozenset(),
+    timeout_s: float = ASTREAM_TIMEOUT_S,
 ) -> AsyncIterator[AgentEvent]:
     """Wrap a raw astream_events iterator in the AgentEvent contract: run.started
     first, mapped activity events with a monotonic ``seq``, run.completed on
@@ -138,7 +140,7 @@ async def drive_agent_events(
 
     yield AgentEvent(kind="run.started", run_id=run_id, seq=nxt(), payload={})
     try:
-        async with asyncio.timeout(ASTREAM_TIMEOUT_S):
+        async with asyncio.timeout(timeout_s):
             async for ev in raw_events:
                 for kind, payload in translate_stream_event(ev):
                     if kind == TEXT_STREAM_INTENT:
@@ -301,10 +303,14 @@ async def run_agent(
         if control_port is not None
         else frozenset[str]()
     )
+    # 交互式审批时给总超时加一个审批窗预算：人思考的等待不该吃掉工具执行预算（否则晚批准+执行撞 120s）。
+    timeout_s = ASTREAM_TIMEOUT_S + (
+        APPROVAL_TIMEOUT_S if control_port is not None else 0
+    )
     raw = agent.astream_events(
         {"messages": [{"role": "user", "content": req.input}]},
         version="v2",
         config=trace_config(req),
     )
-    async for event in drive_agent_events(req.run_id, raw, awaiting_tools):
+    async for event in drive_agent_events(req.run_id, raw, awaiting_tools, timeout_s):
         yield event

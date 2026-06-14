@@ -22,22 +22,27 @@ def events_stream(run_id: str) -> str:
     return f"kokoro:run:{run_id}:events"
 
 
-async def _handle_request(
+# 上限并发 run 数：每个 run 一个 asyncio task，所以一个待批(HITL)或慢 run 不再独占 worker、
+# 冻结其它会话。上限防失控的并行 LLM 调用打爆网关/内存。
+MAX_CONCURRENT_RUNS = 8
+
+
+def _run_id_of(raw: dict[str, object]) -> str | None:
+    rid = raw.get("run_id")
+    return rid if isinstance(rid, str) else None
+
+
+async def _run_request(
     port: StreamPort,
     raw: dict[str, object],
-    processed: set[str],
     model: BaseChatModel | None = None,
 ) -> None:
+    """Validate one run.request and stream its events (no dedup — callers own that)."""
     try:
         request = RunRequest.model_validate(raw)
     except ValidationError as error:
         LOGGER.warning("dropping malformed run.request: %s", error)
         return
-
-    if request.run_id in processed:
-        LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
-        return
-    processed.add(request.run_id)
 
     stream = events_stream(request.run_id)
     try:
@@ -57,6 +62,22 @@ async def _handle_request(
         await port.publish(stream, event.model_dump())
 
 
+async def _handle_request(
+    port: StreamPort,
+    raw: dict[str, object],
+    processed: set[str],
+    model: BaseChatModel | None = None,
+) -> None:
+    """Dedup-by-run_id then run (sequential helper used by run_once)."""
+    rid = _run_id_of(raw)
+    if rid is not None:
+        if rid in processed:
+            LOGGER.debug("skipping already-processed run_id=%s", rid)
+            return
+        processed.add(rid)
+    await _run_request(port, raw, model)
+
+
 async def run_once(
     port: StreamPort, processed: set[str], model: BaseChatModel | None = None
 ) -> None:
@@ -69,10 +90,32 @@ async def run_once(
         await _handle_request(port, item.event, processed, model)
 
 
-async def _serve(port: StreamPort) -> None:
+async def _run_guarded(
+    port: StreamPort, raw: dict[str, object], sem: asyncio.Semaphore
+) -> None:
+    # 单个 run task：信号量限并发；异常吞在此处，绝不让一个 run 崩溃带垮 _serve 主循环。
+    async with sem:
+        try:
+            await _run_request(port, raw)
+        except Exception:  # noqa: BLE001 — boundary: isolate a crashing run; the loop must survive
+            LOGGER.exception("run task crashed; worker loop continues")
+
+
+async def serve(port: StreamPort) -> None:
+    # 每个 run.request 起一个独立 task（不 await），所以待批/慢 run 不阻塞后续 run。
+    # 去重同步发生在 spawn 前，杜绝同 run_id 并发双跑。
     processed: set[str] = set()
+    sem = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
+    tasks: set[asyncio.Task[None]] = set()
     async for item in port.subscribe(REQUESTS_STREAM):
-        await _handle_request(port, item.event, processed)
+        rid = _run_id_of(item.event)
+        if rid is not None:
+            if rid in processed:
+                continue
+            processed.add(rid)
+        task = asyncio.create_task(_run_guarded(port, item.event, sem))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
 
 def main() -> None:
@@ -81,7 +124,7 @@ def main() -> None:
     load_dotenv()
     port = make_stream_port()
     LOGGER.info("kokoro-agent worker starting on stream %s", REQUESTS_STREAM)
-    asyncio.run(_serve(port))
+    asyncio.run(serve(port))
 
 
 if __name__ == "__main__":

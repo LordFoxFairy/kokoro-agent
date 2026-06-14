@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from datetime import datetime
 from typing import TypeGuard, TypedDict, cast
@@ -14,7 +15,13 @@ from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.chat_model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
-from kokoro_agent.interfaces.worker import REQUESTS_STREAM, events_stream, run_once
+from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.interfaces.worker import (
+    REQUESTS_STREAM,
+    events_stream,
+    run_once,
+    serve,
+)
 
 
 class _TextPayload(TypedDict):
@@ -227,3 +234,53 @@ async def test_run_once_resolves_model_from_request_execution_style(
     await run_once(port, processed, None)
 
     assert seen_styles == ["thinking"]
+
+
+@pytest.mark.asyncio
+async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # 一个待批(HITL)/慢 run 阻塞时,_serve 仍能并发跑完其它 run——修「awaiting 冻结全局」。
+    port = MemoryStreamPort()
+    release = asyncio.Event()
+
+    async def fake_run_agent(
+        request: RunRequest, model: BaseChatModel, control_port: object = None
+    ):
+        if request.run_id == "run_block":
+            await release.wait()
+        yield AgentEvent(kind="run.started", run_id=request.run_id, seq=1, payload={})
+        yield AgentEvent(
+            kind="run.completed",
+            run_id=request.run_id,
+            seq=2,
+            payload={"status": "completed"},
+        )
+
+    def fake_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
+        return make_local_fake_chat_model()
+
+    monkeypatch.setattr(
+        "kokoro_agent.interfaces.worker.make_chat_model", fake_make_chat_model
+    )
+    monkeypatch.setattr("kokoro_agent.interfaces.worker.run_agent", fake_run_agent)
+
+    async def completed(run_id: str) -> bool:
+        items = await port.read_all(events_stream(run_id))
+        return any(i.event.get("kind") == "run.completed" for i in items)
+
+    serve_task = asyncio.create_task(serve(port))
+    try:
+        await port.publish(REQUESTS_STREAM, _request("run_block"))
+        await port.publish(REQUESTS_STREAM, _request("run_fast"))
+        async with asyncio.timeout(2):
+            while not await completed("run_fast"):
+                await asyncio.sleep(0.01)
+        # run_block 仍卡着,但 run_fast 已跑完 → worker 不再串行冻结。
+        assert not await completed("run_block")
+        release.set()
+        async with asyncio.timeout(2):
+            while not await completed("run_block"):
+                await asyncio.sleep(0.01)
+    finally:
+        serve_task.cancel()

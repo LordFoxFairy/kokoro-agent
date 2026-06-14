@@ -30,6 +30,21 @@ KOKORO_STREAM_BACKEND=redis KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
 
 接真实模型：去掉 `KOKORO_LOCAL_FAKE_MODEL`，配 `.env`（`KOKORO_MODEL` 如 `anthropic:claude-...` + provider 凭据）。
 
+## 可观测性（Langfuse，opt-in）
+
+agent 的 LLM/工具/子代理执行可经 [Langfuse](https://langfuse.com) 链路追踪。**完全 opt-in**：
+不配置 env 即 tracing 关闭，行为零变化（离线/CI 不受影响）。
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-...
+export LANGFUSE_SECRET_KEY=sk-...
+export LANGFUSE_HOST=https://cloud.langfuse.com   # 自托管改成你的地址（默认 cloud）
+```
+
+配齐后，每个 run 的 trace 自动带：`session_id`（= 会话 id，归组多轮）、tag（执行风格 fast/thinking）、
+`kokoro_run_id` / `kokoro_conversation_id` 元数据。实现见 `infrastructure/observability.py` +
+`application/run_agent.py::trace_config`。
+
 ## 门禁
 
 ```bash

@@ -17,6 +17,7 @@ from kokoro_agent.infrastructure.stream_translator import (
 )
 from kokoro_agent.domain.agent_event import AgentEvent, is_agent_kind
 from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
@@ -25,7 +26,7 @@ from kokoro_agent.infrastructure.subagent_registry import (
 
 class _StreamingAgent(Protocol):
     def astream_events(
-        self, inp: dict[str, object], *, version: str
+        self, inp: dict[str, object], *, version: str, config: dict[str, object] | None
     ) -> AsyncIterator[Mapping[str, object]]: ...
 
 ASTREAM_TIMEOUT_S = 120
@@ -237,6 +238,23 @@ async def drive_agent_events(
         )
 
 
+def trace_config(req: RunRequest) -> dict[str, object] | None:
+    """Langfuse 已配置则返回带 CallbackHandler + 标签的 run 配置，否则 None（tracing 关）。
+    session_id 归组同一会话的多轮 run；run/conversation id 与执行风格入 trace 元数据。"""
+    handler = build_langfuse_handler()
+    if handler is None:
+        return None
+    return {
+        "callbacks": [handler],
+        "metadata": {
+            "langfuse_session_id": req.session_id,
+            "langfuse_tags": [req.execution_style],
+            "kokoro_run_id": req.run_id,
+            "kokoro_conversation_id": req.conversation_id,
+        },
+    }
+
+
 async def run_agent(
     req: RunRequest, model: BaseChatModel
 ) -> AsyncIterator[AgentEvent]:
@@ -247,6 +265,7 @@ async def run_agent(
     raw = agent.astream_events(
         {"messages": [{"role": "user", "content": req.input}]},
         version="v2",
+        config=trace_config(req),
     )
     async for event in drive_agent_events(req.run_id, raw):
         yield event

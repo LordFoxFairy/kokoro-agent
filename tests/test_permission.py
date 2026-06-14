@@ -4,7 +4,21 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure.permission import gate_tools, tool_allowed
+from kokoro_agent.infrastructure.permission import (
+    REQUIRES_APPROVAL,
+    blocked_tools,
+    gate_tools,
+    tool_allowed,
+)
+
+
+def test_blocked_tools_driven_by_requires_approval_config() -> None:
+    # 显式可配置的「需拦截确认」集驱动 default；auto 不拦；plan 只读再加严。
+    assert "fetch_url" in REQUIRES_APPROVAL
+    assert blocked_tools("auto") == frozenset()
+    assert blocked_tools("default") == REQUIRES_APPROVAL
+    assert blocked_tools("plan") >= REQUIRES_APPROVAL
+    assert "agent" in blocked_tools("plan")
 
 
 def test_run_request_defaults_permission_mode_auto() -> None:

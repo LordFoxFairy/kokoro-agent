@@ -6,17 +6,26 @@ from langchain_core.tools import StructuredTool
 
 from kokoro_agent.domain.run_request import PermissionMode
 
-# 各权限模式下被拦的 Kokoro 注入工具名（deepagents 内部工具门控见 HITL spec follow-up）。
-# auto 全放行；default 拦外部副作用（fetch_url）；plan 只读规划（再拦 runtime 子代理 "agent"）。
-_BLOCKED: dict[PermissionMode, frozenset[str]] = {
-    "auto": frozenset(),
-    "default": frozenset({"fetch_url"}),
-    "plan": frozenset({"fetch_url", "agent"}),
-}
+# 「需要拦截确认」的敏感工具集（显式可配置）：默认含外部网络工具 fetch_url。
+# 这是更常见的模型——默认 auto 全自动，但把个别工具设为需拦截确认。要拦更多工具，往这里加名字。
+# （deepagents 内部工具如 execute/write_file 的门控见 HITL spec follow-up。）
+REQUIRES_APPROVAL: frozenset[str] = frozenset({"fetch_url"})
+
+# plan（只读规划）额外拦截的执行类工具：运行时子代理 "agent"（避免规划态派活）。
+_PLAN_ONLY_BLOCKED: frozenset[str] = frozenset({"agent"})
+
+
+def blocked_tools(mode: PermissionMode) -> frozenset[str]:
+    """该权限模式下被拦的工具集：auto 不拦 / default 拦敏感集 / plan 只读再加严。"""
+    if mode == "auto":
+        return frozenset()
+    if mode == "plan":
+        return REQUIRES_APPROVAL | _PLAN_ONLY_BLOCKED
+    return REQUIRES_APPROVAL
 
 
 def tool_allowed(mode: PermissionMode, tool_name: str) -> bool:
-    return tool_name not in _BLOCKED[mode]
+    return tool_name not in blocked_tools(mode)
 
 
 def gate_tools(

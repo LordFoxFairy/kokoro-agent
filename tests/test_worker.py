@@ -284,3 +284,73 @@ async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
                 await asyncio.sleep(0.01)
     finally:
         serve_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_serve_cancels_a_run_on_control_cancel(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # 用户放弃 run → control 流发 cancel → worker 取消该 run（解阻塞内部待批门）并补发 cancelled 终态。
+    from kokoro_agent.infrastructure.control import control_stream
+
+    port = MemoryStreamPort()
+    hang = asyncio.Event()  # 永不 set：run 一直挂着,直到被 cancel
+
+    async def fake_run_agent(
+        request: RunRequest, model: BaseChatModel, control_port: object = None
+    ):
+        yield AgentEvent(kind="run.started", run_id=request.run_id, seq=1, payload={})
+        await hang.wait()
+        yield AgentEvent(
+            kind="run.completed",
+            run_id=request.run_id,
+            seq=2,
+            payload={"status": "completed"},
+        )
+
+    def fake_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
+        return make_local_fake_chat_model()
+
+    monkeypatch.setattr(
+        "kokoro_agent.interfaces.worker.make_chat_model", fake_make_chat_model
+    )
+    monkeypatch.setattr("kokoro_agent.interfaces.worker.run_agent", fake_run_agent)
+
+    async def has_kind(run_id: str, kind: str) -> bool:
+        items = await port.read_all(events_stream(run_id))
+        return any(i.event.get("kind") == kind for i in items)
+
+    async def cancelled(run_id: str) -> bool:
+        items = await port.read_all(events_stream(run_id))
+        for i in items:
+            if i.event.get("kind") == "run.completed":
+                payload = i.event.get("payload")
+                if not isinstance(payload, Mapping):
+                    continue
+                if cast("Mapping[str, object]", payload).get("status") == "cancelled":
+                    return True
+        return False
+
+    serve_task = asyncio.create_task(serve(port))
+    try:
+        await port.publish(REQUESTS_STREAM, _request("run_cancel"))
+        async with asyncio.timeout(2):
+            while not await has_kind("run_cancel", "run.started"):
+                await asyncio.sleep(0.01)
+        # run 正挂着；发 cancel。
+        await port.publish(
+            control_stream("run_cancel"), {"kind": "control", "decision": "cancel"}
+        )
+        async with asyncio.timeout(2):
+            while not await cancelled("run_cancel"):
+                await asyncio.sleep(0.01)
+        # 没有 completed 正常终态（被取消而非跑完）。
+        items = await port.read_all(events_stream("run_cancel"))
+        statuses = [
+            _payload_field(i.event, "status")
+            for i in items
+            if i.event.get("kind") == "run.completed"
+        ]
+        assert statuses == ["cancelled"]
+    finally:
+        serve_task.cancel()

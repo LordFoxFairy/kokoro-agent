@@ -35,7 +35,8 @@ async def await_decision(
     cursor: DecisionCursor | None = None,
     timeout_s: float = APPROVAL_TIMEOUT_S,
 ) -> ControlDecision:
-    """阻塞读 control 流的下一条决定（从游标之后）；超时回退 reject（绝不永久挂起）。"""
+    """阻塞读 control 流的下一条 approve/reject（从游标之后）；超时回退 reject（绝不永久挂起）。
+    cancel 决定在此被忽略（由 worker 的 cancel-watcher 直接取消整个 run task），不在门里消费。"""
     from_cursor = cursor.value if cursor is not None else None
     try:
         async with asyncio.timeout(timeout_s):
@@ -52,3 +53,10 @@ async def await_decision(
     except TimeoutError:
         return "reject"
     return "reject"
+
+
+async def wait_for_cancel(port: StreamPort, run_id: str) -> None:
+    """阻塞直到 control 流出现一条 cancel 决定（用户放弃该 run）。供 worker 取消 run task。"""
+    async for item in port.subscribe(control_stream(run_id)):
+        if item.event.get("decision") == "cancel":
+            return

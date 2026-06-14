@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from dotenv import load_dotenv
@@ -10,6 +11,7 @@ from pydantic import ValidationError
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.chat_model import make_chat_model
+from kokoro_agent.infrastructure.control import wait_for_cancel
 from kokoro_agent.infrastructure.stream_port import StreamPort, make_stream_port
 from kokoro_agent.application.run_agent import run_agent
 
@@ -93,12 +95,50 @@ async def run_once(
 async def _run_guarded(
     port: StreamPort, raw: dict[str, object], sem: asyncio.Semaphore
 ) -> None:
-    # 单个 run task：信号量限并发；异常吞在此处，绝不让一个 run 崩溃带垮 _serve 主循环。
+    # 单个 run task：信号量限并发；异常吞在此处，绝不让一个 run 崩溃带垮 serve 主循环。
     async with sem:
         try:
             await _run_request(port, raw)
         except Exception:  # noqa: BLE001 — boundary: isolate a crashing run; the loop must survive
             LOGGER.exception("run task crashed; worker loop continues")
+
+
+async def _cancel_on_signal(
+    port: StreamPort, run_id: str, run_task: asyncio.Task[None]
+) -> None:
+    # 守候该 run 的 control 流：一旦收到 cancel 就取消 run task（连同其内阻塞的待批门）。
+    await wait_for_cancel(port, run_id)
+    run_task.cancel()
+
+
+async def _run_with_cancel(
+    port: StreamPort, raw: dict[str, object], sem: asyncio.Semaphore
+) -> None:
+    """跑一个 run，并挂一个 cancel 守候：用户放弃时取消整个 run（解阻塞所有待批门），补发 cancelled 终态。"""
+    run_task = asyncio.create_task(_run_guarded(port, raw, sem))
+    run_id = _run_id_of(raw)
+    if run_id is None:
+        await run_task
+        return
+    canceller = asyncio.create_task(_cancel_on_signal(port, run_id, run_task))
+    try:
+        await run_task
+    except asyncio.CancelledError:
+        # 被 cancel 守候取消（非 serve 关停）：补发 cancelled 终态收口，让 relay/web 收束。
+        with contextlib.suppress(Exception):
+            await port.publish(
+                events_stream(run_id),
+                AgentEvent(
+                    kind="run.completed",
+                    run_id=run_id,
+                    seq=0,
+                    payload={"status": "cancelled"},
+                ).model_dump(),
+            )
+    finally:
+        canceller.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await canceller
 
 
 async def serve(port: StreamPort) -> None:
@@ -113,7 +153,7 @@ async def serve(port: StreamPort) -> None:
             if rid in processed:
                 continue
             processed.add(rid)
-        task = asyncio.create_task(_run_guarded(port, item.event, sem))
+        task = asyncio.create_task(_run_with_cancel(port, item.event, sem))
         tasks.add(task)
         task.add_done_callback(tasks.discard)
 

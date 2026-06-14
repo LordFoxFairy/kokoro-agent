@@ -3,7 +3,11 @@ from __future__ import annotations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
-from kokoro_agent.infrastructure.control import await_decision, control_stream
+from kokoro_agent.infrastructure.control import (
+    DecisionCursor,
+    await_decision,
+    control_stream,
+)
 from kokoro_agent.infrastructure.permission import gate_tools_interactive
 from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
 
@@ -57,6 +61,17 @@ async def test_interactive_gate_reject_returns_rejection() -> None:
     gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", port)
     result = await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     assert "拒绝" in result
+
+
+async def test_await_decision_advances_cursor_across_tools() -> None:
+    # 同 run 两个门控工具:第一个消费 approve(推进游标),第二个消费 reject——
+    # 不再误读第一个的遗留决定(跨工具越权放行的修复)。
+    port = MemoryStreamPort()
+    cursor = DecisionCursor()
+    await port.publish(control_stream("run_1"), {"decision": "approve"})
+    await port.publish(control_stream("run_1"), {"decision": "reject"})
+    assert await await_decision(port, "run_1", cursor, timeout_s=2) == "approve"
+    assert await await_decision(port, "run_1", cursor, timeout_s=2) == "reject"
 
 
 async def test_interactive_gate_auto_passes_through() -> None:

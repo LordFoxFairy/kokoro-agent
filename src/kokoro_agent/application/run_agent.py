@@ -18,7 +18,13 @@ from kokoro_agent.infrastructure.stream_translator import (
 from kokoro_agent.domain.agent_event import AgentEvent, is_agent_kind
 from kokoro_agent.domain.run_request import PermissionMode, RunRequest
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
-from kokoro_agent.infrastructure.permission import fs_permissions, gate_tools
+from kokoro_agent.infrastructure.permission import (
+    blocked_tools,
+    fs_permissions,
+    gate_tools,
+    gate_tools_interactive,
+)
+from kokoro_agent.infrastructure.stream_port import StreamPort
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
@@ -41,16 +47,23 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _build_agent(model: BaseChatModel, permission_mode: PermissionMode) -> _StreamingAgent:
+def _build_agent(
+    model: BaseChatModel,
+    permission_mode: PermissionMode,
+    run_id: str,
+    control_port: StreamPort | None,
+) -> _StreamingAgent:
     # deepagents is an untyped boundary; keep the built-in subagent registry
     # explicit so richer task-path activity stays on the same resolved
     # provider/model rather than falling back to the SDK's default general-
     # purpose subagent path.
     runtime_registry = RuntimeSubagentRegistry()
-    # 权限门：按档位包装注入工具（auto 直放行）。被拦工具返回拦截结果而非执行。
-    tools = gate_tools(
-        [build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS],
-        permission_mode,
+    injected = [build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS]
+    # 权限门：control 流可用时被门控工具阻塞等审批（交互式 HITL）；否则确定性拦截（降级）。
+    tools = (
+        gate_tools_interactive(injected, permission_mode, run_id, control_port)
+        if control_port is not None
+        else gate_tools(injected, permission_mode)
     )
     # create_deep_agent returns a CompiledStateGraph with irreducible Unknown
     # generics; pin the astream_events slice we use at this one boundary.
@@ -93,7 +106,9 @@ class _Segmenter:
 
 
 async def drive_agent_events(
-    run_id: str, raw_events: AsyncIterator[Mapping[str, object]]
+    run_id: str,
+    raw_events: AsyncIterator[Mapping[str, object]],
+    awaiting_tools: frozenset[str] = frozenset(),
 ) -> AsyncIterator[AgentEvent]:
     """Wrap a raw astream_events iterator in the AgentEvent contract: run.started
     first, mapped activity events with a monotonic ``seq``, run.completed on
@@ -227,6 +242,15 @@ async def drive_agent_events(
                                 seq=nxt(),
                                 payload=event_payload,
                             )
+                        # 门控工具：tool.invoked 后补 awaiting，前端据此弹批准/拒绝；
+                        # 工具协程随即在 control 流上阻塞等决定（见 gate_tools_interactive）。
+                        if kind == "tool.invoked" and _str_field(payload, "name") in awaiting_tools:
+                            yield AgentEvent(
+                                kind="tool.awaiting_approval",
+                                run_id=run_id,
+                                seq=nxt(),
+                                payload=event_payload,
+                            )
                     elif is_agent_kind(kind):
                         yield AgentEvent(
                             kind=kind,
@@ -264,16 +288,23 @@ def trace_config(req: RunRequest) -> dict[str, object] | None:
 
 
 async def run_agent(
-    req: RunRequest, model: BaseChatModel
+    req: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None
 ) -> AsyncIterator[AgentEvent]:
     """Run the real DeepAgents loop for one request and stream mapped activity
     events (thinking / text / tool.* / todo.updated / subagent.*), wrapped in
-    run.started…run.completed (or run.failed)."""
-    agent = _build_agent(model, req.permission_mode)
+    run.started…run.completed (or run.failed). control_port 接通时被门控工具走
+    交互式审批（暂停→control 决定→恢复），否则确定性拦截。"""
+    agent = _build_agent(model, req.permission_mode, req.run_id, control_port)
+    # 交互式审批可用时，被门控工具在 tool.invoked 后补 awaiting 让前端弹审批。
+    awaiting_tools = (
+        blocked_tools(req.permission_mode)
+        if control_port is not None
+        else frozenset[str]()
+    )
     raw = agent.astream_events(
         {"messages": [{"role": "user", "content": req.input}]},
         version="v2",
         config=trace_config(req),
     )
-    async for event in drive_agent_events(req.run_id, raw):
+    async for event in drive_agent_events(req.run_id, raw, awaiting_tools):
         yield event

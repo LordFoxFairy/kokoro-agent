@@ -52,7 +52,8 @@ async def _handle_request(
         )
         await port.publish(stream, failed.model_dump())
         return
-    async for event in run_agent(request, resolved_model):
+    # 同一 StreamPort 兼作 control 通道：被门控工具经它读 kokoro:run:<id>:control 等审批。
+    async for event in run_agent(request, resolved_model, control_port=port):
         await port.publish(stream, event.model_dump())
 
 

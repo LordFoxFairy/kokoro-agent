@@ -211,7 +211,9 @@ async def test_run_once_resolves_model_from_request_execution_style(
         seen_styles.append(execution_style)
         return make_local_fake_chat_model()
 
-    async def fake_run_agent(request: object, model: BaseChatModel):
+    async def fake_run_agent(
+        request: object, model: BaseChatModel, control_port: object = None
+    ):
         yield AgentEvent(
             kind="run.completed",
             run_id="run_01",

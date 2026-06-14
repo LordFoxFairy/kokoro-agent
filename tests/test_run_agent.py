@@ -61,6 +61,31 @@ def test_generic_tool_start_and_end_pair() -> None:
     ]
 
 
+def test_rejected_gated_tool_marks_tool_returned_rejected() -> None:
+    # 门控工具被拒绝走 on_tool_end（返回拒绝文案，不抛异常）：tool.returned 标记 rejected=True，
+    # 让 UI replay 安全地显「已拒绝」而非绿勾 done。文案单一来源 control.rejection_result。
+    from kokoro_agent.infrastructure.control import rejection_result
+
+    ev: Mapping[str, object] = {
+        "event": "on_tool_end",
+        "name": "fetch_url",
+        "run_id": "tr",
+        "data": {"output": AIMessage(content=rejection_result("fetch_url"))},
+    }
+    assert translate_stream_event(ev) == [
+        (
+            "tool.returned",
+            {
+                "tool_id": "tr",
+                "name": "fetch_url",
+                "result": rejection_result("fetch_url"),
+                "is_error": False,
+                "rejected": True,
+            },
+        )
+    ]
+
+
 def test_tool_error_maps_to_tool_returned_with_is_error() -> None:
     # 抛异常的工具发 on_tool_error（非 on_tool_end）：归一化成 tool.returned 带 is_error=True + 错误文本，
     # 让 UI 显示该工具失败（红色），而非永远卡在「运行中」。

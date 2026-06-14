@@ -15,6 +15,12 @@ def control_stream(run_id: str) -> str:
     return f"kokoro:run:{run_id}:control"
 
 
+def rejection_result(tool_name: str) -> str:
+    """门控工具被拒绝(用户点拒绝或审批超时回退)时回给模型的结果文案。
+    单一来源:门(返回它)与 translator(据此标记 tool.returned.rejected)共用,免脆弱的散字符串。"""
+    return f"用户拒绝了工具 {tool_name} 的调用。"
+
+
 class DecisionCursor:
     """同一 run 内顺序消费 control 决定：每读一条推进游标，下一个门控工具从其后等待，
     杜绝第二个工具误读第一个工具的遗留决定（跨工具越权放行）。"""

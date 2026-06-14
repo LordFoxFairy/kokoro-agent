@@ -38,7 +38,7 @@ def is_agent_kind(kind: str) -> TypeGuard[AgentKind]:
 #   text.completed           {"segment_id": str, "text": str}
 #   tool.invoked             {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, object]}
 #   tool.awaiting_approval   {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, object]}
-#   tool.returned            {"segment_id": str, "tool_id": str, "name": str, "result": str, "is_error": bool}
+#   tool.returned            {"segment_id": str, "tool_id": str, "name": str, "result": str, "is_error": bool, "rejected": bool}
 #   todo.updated             {"todos": [{"content": str, "status": "pending"|"in_progress"|"completed"}]}
 #   subagent.started         {"segment_id": str, "subagent_id": str, "name": str, "description": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
 #   subagent.finished        {"segment_id": str, "subagent_id": str, "name": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}

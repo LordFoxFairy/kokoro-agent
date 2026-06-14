@@ -6,6 +6,8 @@ from deepagents import FilesystemPermission
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.domain.run_request import PermissionMode
+from kokoro_agent.infrastructure.control import await_decision
+from kokoro_agent.infrastructure.stream_port import StreamPort
 
 # 「需要拦截确认」的敏感工具集（显式可配置）：默认含外部网络工具 fetch_url。
 # 这是更常见的模型——默认 auto 全自动，但把个别工具设为需拦截确认。要拦更多工具，往这里加名字。
@@ -45,6 +47,45 @@ def gate_tools(
     if mode == "auto":
         return list(tools)
     return [tool if tool_allowed(mode, tool.name) else _gate(tool, mode) for tool in tools]
+
+
+def gate_tools_interactive(
+    tools: Sequence[StructuredTool],
+    mode: PermissionMode,
+    run_id: str,
+    port: StreamPort,
+) -> list[StructuredTool]:
+    """交互式门控：被门控工具调用时阻塞等审批（control 流），approve 跑真工具 / reject 回拒绝。
+    translator 在 tool.invoked 后补 tool.awaiting_approval 让前端弹审批（见 drive_agent_events）。"""
+    if mode == "auto":
+        return list(tools)
+    return [
+        tool if tool_allowed(mode, tool.name) else _approval_gate(tool, run_id, port)
+        for tool in tools
+    ]
+
+
+def _approval_gate(tool: StructuredTool, run_id: str, port: StreamPort) -> StructuredTool:
+    async def gated_async(**kwargs: object) -> object:
+        decision = await await_decision(port, run_id)
+        if decision == "approve":
+            if tool.coroutine is not None:
+                return await tool.coroutine(**kwargs)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # langchain coroutine slot is partially typed
+            return tool.func(**kwargs)  # pyright: ignore[reportUnknownVariableType, reportOptionalCall, reportUnknownMemberType]
+        return f"用户拒绝了工具 {tool.name} 的调用。"
+
+    def gated_sync(**_kwargs: object) -> str:
+        msg = "approval-gated tool requires async execution"
+        raise RuntimeError(msg)
+
+    return StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]  # langchain from_function classmethod is partially typed
+        name=tool.name,
+        description=tool.description,
+        args_schema=tool.args_schema,
+        func=gated_sync,
+        coroutine=gated_async,
+        infer_schema=False,
+    )
 
 
 def _gate(tool: StructuredTool, mode: PermissionMode) -> StructuredTool:

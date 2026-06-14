@@ -16,8 +16,9 @@ from kokoro_agent.infrastructure.stream_translator import (
     translate_stream_event,
 )
 from kokoro_agent.domain.agent_event import AgentEvent, is_agent_kind
-from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.domain.run_request import PermissionMode, RunRequest
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
+from kokoro_agent.infrastructure.permission import gate_tools
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
@@ -40,17 +41,22 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _build_agent(model: BaseChatModel) -> _StreamingAgent:
+def _build_agent(model: BaseChatModel, permission_mode: PermissionMode) -> _StreamingAgent:
     # deepagents is an untyped boundary; keep the built-in subagent registry
     # explicit so richer task-path activity stays on the same resolved
     # provider/model rather than falling back to the SDK's default general-
     # purpose subagent path.
     runtime_registry = RuntimeSubagentRegistry()
+    # 权限门：按档位包装注入工具（auto 直放行）。被拦工具返回拦截结果而非执行。
+    tools = gate_tools(
+        [build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS],
+        permission_mode,
+    )
     # create_deep_agent returns a CompiledStateGraph with irreducible Unknown
     # generics; pin the astream_events slice we use at this one boundary.
     agent: _StreamingAgent = create_deep_agent(  # pyright: ignore[reportUnknownVariableType, reportAssignmentType]
         model=model,
-        tools=[build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS],
+        tools=tools,
         system_prompt=_SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
     )
@@ -261,7 +267,7 @@ async def run_agent(
     """Run the real DeepAgents loop for one request and stream mapped activity
     events (thinking / text / tool.* / todo.updated / subagent.*), wrapped in
     run.started…run.completed (or run.failed)."""
-    agent = _build_agent(model)
+    agent = _build_agent(model, req.permission_mode)
     raw = agent.astream_events(
         {"messages": [{"role": "user", "content": req.input}]},
         version="v2",

@@ -7,9 +7,22 @@ from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.permission import (
     REQUIRES_APPROVAL,
     blocked_tools,
+    fs_permissions,
     gate_tools,
     tool_allowed,
 )
+
+
+def test_fs_permissions_plan_read_only_else_unrestricted() -> None:
+    # deepagents 内部文件系统门控：plan 只读（拦 write、不拦 read）；auto/default 不限。
+    assert fs_permissions("auto") == []
+    assert fs_permissions("default") == []
+    rules = fs_permissions("plan")
+    assert len(rules) == 1
+    rule = rules[0]
+    assert rule.mode == "deny"
+    assert "write" in rule.operations
+    assert "read" not in rule.operations
 
 
 def test_blocked_tools_driven_by_requires_approval_config() -> None:

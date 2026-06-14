@@ -18,7 +18,7 @@ from kokoro_agent.infrastructure.stream_translator import (
 from kokoro_agent.domain.agent_event import AgentEvent, is_agent_kind
 from kokoro_agent.domain.run_request import PermissionMode, RunRequest
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
-from kokoro_agent.infrastructure.permission import gate_tools
+from kokoro_agent.infrastructure.permission import fs_permissions, gate_tools
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
@@ -59,6 +59,8 @@ def _build_agent(model: BaseChatModel, permission_mode: PermissionMode) -> _Stre
         tools=tools,
         system_prompt=_SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
+        # 内部文件系统工具门控：plan 只读（拦 write_file/edit_file）。
+        permissions=fs_permissions(permission_mode),
     )
     return agent
 

@@ -19,6 +19,7 @@ from kokoro_agent.infrastructure.message_extractors import (
     result_text,
     text_of,
 )
+from kokoro_agent.infrastructure.control import rejection_result
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     subagent_source_for,
@@ -142,17 +143,18 @@ def translate_stream_event(
         if finished is not None:
             out.append(("subagent.finished", finished))
         else:
-            out.append(
-                (
-                    "tool.returned",
-                    {
-                        "tool_id": tool_id,
-                        "name": name,
-                        "result": _truncated(result_text(data.get("output"))),
-                        "is_error": False,
-                    },
-                )
-            )
+            result = _truncated(result_text(data.get("output")))
+            payload: dict[str, object] = {
+                "tool_id": tool_id,
+                "name": name,
+                "result": result,
+                "is_error": False,
+            }
+            # 门控工具被拒绝走 on_tool_end(返回拒绝文案,不抛异常)：标记 rejected 让 UI 显
+            # 「已拒绝」而非绿勾 done。文案单一来源(control.rejection_result),非脆弱散字符串。
+            if result == rejection_result(name):
+                payload["rejected"] = True
+            out.append(("tool.returned", payload))
     elif event == "on_tool_error":
         # 工具抛异常发 on_tool_error（非 on_tool_end）。按名分派与 on_tool_end 对称：子智能体工具失败仍发
         # subagent.finished（让卡 running 的子智能体步收尾，不冒伪红工具行），todo 静默，其余发

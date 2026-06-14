@@ -6,7 +6,11 @@ from deepagents import FilesystemPermission
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.domain.run_request import PermissionMode
-from kokoro_agent.infrastructure.control import DecisionCursor, await_decision
+from kokoro_agent.infrastructure.control import (
+    DecisionCursor,
+    await_decision,
+    rejection_result,
+)
 from kokoro_agent.infrastructure.stream_port import StreamPort
 
 # 「需要拦截确认」的敏感工具集（显式可配置）：默认含外部网络工具 fetch_url。
@@ -78,7 +82,7 @@ def _approval_gate(
             if tool.coroutine is not None:
                 return await tool.coroutine(**kwargs)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]  # langchain coroutine slot is partially typed
             return tool.func(**kwargs)  # pyright: ignore[reportUnknownVariableType, reportOptionalCall, reportUnknownMemberType]
-        return f"用户拒绝了工具 {tool.name} 的调用。"
+        return rejection_result(tool.name)
 
     def gated_sync(**_kwargs: object) -> str:
         msg = "approval-gated tool requires async execution"

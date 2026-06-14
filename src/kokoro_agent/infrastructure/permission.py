@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from deepagents import FilesystemPermission
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.domain.run_request import PermissionMode
@@ -26,6 +27,15 @@ def blocked_tools(mode: PermissionMode) -> frozenset[str]:
 
 def tool_allowed(mode: PermissionMode, tool_name: str) -> bool:
     return tool_name not in blocked_tools(mode)
+
+
+def fs_permissions(mode: PermissionMode) -> list[FilesystemPermission]:
+    """deepagents 内部文件系统工具的门控（经 create_deep_agent(permissions=)）：
+    plan 只读——拦写操作 write_file/edit_file，读类(ls/read_file/glob/grep)放行；
+    auto/default 不限文件系统（default 只拦外部网络 fetch_url，见 blocked_tools）。"""
+    if mode == "plan":
+        return [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
+    return []
 
 
 def gate_tools(

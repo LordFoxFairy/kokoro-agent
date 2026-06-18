@@ -35,12 +35,14 @@ def _split_model_spec(spec: str) -> tuple[str, str]:
 
 
 def _validate_execution_style(execution_style: str) -> ExecutionStyle:
-    if execution_style == "fast":
-        return "fast"
-    if execution_style == "thinking":
-        return "thinking"
-    msg = f"Invalid execution_style: {execution_style!r}"
-    raise ValueError(msg)
+    match execution_style:
+        case "fast":
+            return "fast"
+        case "thinking":
+            return "thinking"
+        case _:
+            msg = f"Invalid execution_style: {execution_style!r}"
+            raise ValueError(msg)
 
 
 def resolve_execution_config(execution_style: str) -> ExecutionConfig:
@@ -97,9 +99,11 @@ def make_chat_model(execution_style: str = "fast") -> BaseChatModel:
         return make_local_fake_chat_model()
 
     config = resolve_execution_config(execution_style)
-    if config.provider == "openai":
-        return _make_openai_chat_model(config)
-    if config.provider == "anthropic":
-        return _make_anthropic_chat_model(config)
-    msg = f"Unsupported model provider: {config.provider!r}"
-    raise ValueError(msg)
+    match config.provider:
+        case "openai":
+            return _make_openai_chat_model(config)
+        case "anthropic":
+            return _make_anthropic_chat_model(config)
+        case _:
+            msg = f"Unsupported model provider: {config.provider!r}"
+            raise ValueError(msg)

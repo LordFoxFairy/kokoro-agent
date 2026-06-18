@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias, TypeGuard
 
 from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
 from kokoro_agent.infrastructure.transport.port import StreamItem
@@ -16,81 +16,104 @@ _BLOCK_MS = 1000
 _Fields = dict[bytes | str, bytes | str] | None
 _Entry = tuple[bytes | str | None, _Fields]
 _ReadResponse = list[tuple[bytes | str | None, list[_Entry]]]
+_ObjectMapping: TypeAlias = Mapping[object, object]
+_ObjectDict: TypeAlias = dict[object, object]
+_ObjectList: TypeAlias = list[object]
+_ObjectTuple: TypeAlias = tuple[object, ...]
+
+
+def _is_object_mapping(value: object) -> TypeGuard[_ObjectMapping]:
+    return isinstance(value, Mapping)
+
+
+def _is_object_dict(value: object) -> TypeGuard[_ObjectDict]:
+    return isinstance(value, dict)
+
+
+def _is_object_list(value: object) -> TypeGuard[_ObjectList]:
+    return isinstance(value, list)
+
+
+def _is_object_tuple(value: object) -> TypeGuard[_ObjectTuple]:
+    return isinstance(value, tuple)
 
 
 def _decode(value: bytes | str | None) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
+def _pair_parts(value: object) -> tuple[object, object] | None:
+    if _is_object_list(value):
+        if len(value) != 2:
+            return None
+        return value[0], value[1]
+    if _is_object_tuple(value):
+        if len(value) != 2:
+            return None
+        return value[0], value[1]
+    return None
+
+
 def _expect_pair(value: object, error: str) -> tuple[object, object]:
-    match value:
-        case [left, right]:
-            return left, right
-        case _:
-            raise ValueError(error)
+    pair = _pair_parts(value)
+    if pair is None:
+        raise ValueError(error)
+    return pair
 
 
 def _parse_fields(value: object) -> _Fields:
-    match value:
-        case None:
-            return None
-        case dict():
-            parsed: dict[bytes | str, bytes | str] = {}
-            for key, item in value.items():
-                if not isinstance(key, (bytes, str)) or not isinstance(item, (bytes, str)):
-                    raise ValueError("xread fields must use bytes/str keys and values")
-                parsed[key] = item
-            return parsed
-        case _:
-            raise ValueError("xread fields must be a dict or None")
+    if value is None:
+        return None
+    if not _is_object_dict(value):
+        raise ValueError("xread fields must be a dict or None")
+    parsed: dict[bytes | str, bytes | str] = {}
+    for key, item in value.items():
+        if not isinstance(key, (bytes, str)) or not isinstance(item, (bytes, str)):
+            raise ValueError("xread fields must use bytes/str keys and values")
+        parsed[key] = item
+    return parsed
 
 
 def _parse_entries(value: object) -> list[_Entry]:
-    match value:
-        case list():
-            entries: list[object] = list(value)
-        case _:
-            raise ValueError("xread entries must be a list")
+    if not _is_object_list(value):
+        raise ValueError("xread entries must be a list")
+    entries: list[object] = list(value)
     # RESP3 may wrap the entries in one extra list layer; unwrap that single layer.
-    match entries:
-        case [first, *rest] if isinstance(first, list):
-            if rest:
-                raise ValueError("xread RESP3 wrapper must contain exactly one entry list")
-            entries = list(first)
-        case _:
-            pass
+    if entries and _is_object_list(entries[0]):
+        if len(entries) != 1:
+            raise ValueError("xread RESP3 wrapper must contain exactly one entry list")
+        entries = list(entries[0])
     parsed: list[_Entry] = []
     for entry in entries:
         entry_id_obj, fields_obj = _expect_pair(entry, "xread item must be an (id, fields) pair")
-        match entry_id_obj:
-            case bytes() | str() | None as entry_id:
-                parsed.append((entry_id, _parse_fields(fields_obj)))
-            case _:
-                raise ValueError("xread id must be bytes, str, or None")
+        if entry_id_obj is not None and not isinstance(entry_id_obj, (bytes, str)):
+            raise ValueError("xread id must be bytes, str, or None")
+        entry_id: bytes | str | None = entry_id_obj
+        parsed.append((entry_id, _parse_fields(fields_obj)))
     return parsed
 
 
 def parse_xread_response(raw: object) -> _ReadResponse | None:
-    stream_entries: list[tuple[object, object]]
-    match raw:
-        case None:
-            return None
-        case Mapping():
-            stream_entries = list(raw.items())
-        case list():
-            stream_entries = [
-                _expect_pair(item, "xread stream entry must be a (stream, entries) pair")
-                for item in raw
-            ]
-        case _:
-            raise ValueError("xread response must be a list or mapping")
+    if raw is None:
+        return None
+
+    stream_entries: list[tuple[object, object]] = []
+    if _is_object_mapping(raw):
+        stream_entries = list(raw.items())
+    elif _is_object_list(raw):
+        stream_entries = [
+            _expect_pair(item, "xread stream entry must be a (stream, entries) pair")
+            for item in raw
+        ]
+    else:
+        raise ValueError("xread response must be a list or mapping")
+
     parsed: _ReadResponse = []
     for stream_name_obj, entries_obj in stream_entries:
-        match stream_name_obj:
-            case bytes() | str() | None as stream_name:
-                parsed.append((stream_name, _parse_entries(entries_obj)))
-            case _:
-                raise ValueError("xread stream name must be bytes, str, or None")
+        if stream_name_obj is not None and not isinstance(stream_name_obj, (bytes, str)):
+            raise ValueError("xread stream name must be bytes, str, or None")
+        stream_name: bytes | str | None = stream_name_obj
+        parsed.append((stream_name, _parse_entries(entries_obj)))
     return parsed
 
 

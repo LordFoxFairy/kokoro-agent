@@ -13,6 +13,7 @@ from kokoro_agent.infrastructure.stream_events import (
     TextFinal,
     TextStream,
     ThinkingDelta,
+    TodoItem,
     TodoUpdated,
     ToolInvoked,
     ToolReturned,
@@ -21,6 +22,63 @@ from kokoro_agent.infrastructure.stream_events import (
 )
 
 ASTREAM_TIMEOUT_S = 120
+
+
+# Single source for each AgentEvent payload shape: the driver assigns kind/run_id/seq,
+# these builders own the keys so no shape is hand-spelled twice across the stream loop.
+def _text_payload(segment_id: str, text: str) -> dict[str, JsonValue]:
+    return {"segment_id": segment_id, "text": text}
+
+
+def _subagent_text_payload(segment_id: str, subagent_id: str, text: str) -> dict[str, JsonValue]:
+    return {"segment_id": segment_id, "subagent_id": subagent_id, "text": text}
+
+
+def _todo_payload(todos: tuple[TodoItem, ...]) -> dict[str, JsonValue]:
+    return {"todos": [{"content": todo.content, "status": todo.status} for todo in todos]}
+
+
+def _tool_invoked_payload(segment_id: str, tool: ToolInvoked) -> dict[str, JsonValue]:
+    return {
+        "segment_id": segment_id,
+        "tool_id": tool.tool_id,
+        "name": tool.name,
+        "args": dict(tool.args),
+    }
+
+
+def _tool_returned_payload(segment_id: str, tool: ToolReturned) -> dict[str, JsonValue]:
+    payload: dict[str, JsonValue] = {
+        "segment_id": segment_id,
+        "tool_id": tool.tool_id,
+        "name": tool.name,
+        "result": tool.result,
+        "is_error": tool.is_error,
+    }
+    if tool.rejected:
+        payload["rejected"] = True
+    return payload
+
+
+def _subagent_started_payload(segment_id: str, sub: SubagentStarted) -> dict[str, JsonValue]:
+    return {
+        "segment_id": segment_id,
+        "subagent_id": sub.subagent_id,
+        "name": sub.name,
+        "description": sub.description,
+        "subagent_type": sub.subagent_type,
+        "source": sub.source,
+    }
+
+
+def _subagent_finished_payload(segment_id: str, sub: SubagentFinished) -> dict[str, JsonValue]:
+    return {
+        "segment_id": segment_id,
+        "subagent_id": sub.subagent_id,
+        "name": sub.name,
+        "subagent_type": sub.subagent_type,
+        "source": sub.source,
+    }
 
 
 class _Segmenter:
@@ -53,7 +111,7 @@ async def drive_agent_events(
 ) -> AsyncIterator[AgentEvent]:
     seq = 0
 
-    def nxt() -> int:
+    def next_seq() -> int:
         nonlocal seq
         seq += 1
         return seq
@@ -69,7 +127,7 @@ async def drive_agent_events(
         current_agent_name = read_header(event).lc_agent_name
         return active_subagent.subagent_id if current_agent_name == active_subagent.name else None
 
-    yield AgentEvent(kind="run.started", run_id=run_id, seq=nxt(), payload={})
+    yield AgentEvent(kind="run.started", run_id=run_id, seq=next_seq(), payload={})
     try:
         async with asyncio.timeout(timeout_s):
             async for raw_event in raw_events:
@@ -82,20 +140,16 @@ async def drive_agent_events(
                                 yield AgentEvent(
                                     kind="subagent.text.delta",
                                     run_id=run_id,
-                                    seq=nxt(),
-                                    payload={
-                                        "segment_id": segment.current(),
-                                        "subagent_id": subagent_id,
-                                        "text": text,
-                                    },
+                                    seq=next_seq(),
+                                    payload=_subagent_text_payload(segment.current(), subagent_id, text),
                                 )
                                 continue
                             streamed_text = (streamed_text or "") + text
                             yield AgentEvent(
                                 kind="text.delta",
                                 run_id=run_id,
-                                seq=nxt(),
-                                payload={"segment_id": segment.current(), "text": text},
+                                seq=next_seq(),
+                                payload=_text_payload(segment.current(), text),
                             )
 
                         case TextFinal(text=text):
@@ -106,30 +160,24 @@ async def drive_agent_events(
                                     yield AgentEvent(
                                         kind="subagent.text.completed",
                                         run_id=run_id,
-                                        seq=nxt(),
-                                        payload={
-                                            "segment_id": segment_id,
-                                            "subagent_id": subagent_id,
-                                            "text": streamed_subagent_text,
-                                        },
+                                        seq=next_seq(),
+                                        payload=_subagent_text_payload(
+                                            segment_id, subagent_id, streamed_subagent_text
+                                        ),
                                     )
                                     streamed_subagent_text = None
                                     continue
-                                payload: dict[str, JsonValue] = {
-                                    "segment_id": segment_id,
-                                    "subagent_id": subagent_id,
-                                    "text": text,
-                                }
+                                payload = _subagent_text_payload(segment_id, subagent_id, text)
                                 yield AgentEvent(
                                     kind="subagent.text.delta",
                                     run_id=run_id,
-                                    seq=nxt(),
+                                    seq=next_seq(),
                                     payload=payload,
                                 )
                                 yield AgentEvent(
                                     kind="subagent.text.completed",
                                     run_id=run_id,
-                                    seq=nxt(),
+                                    seq=next_seq(),
                                     payload=payload,
                                 )
                                 continue
@@ -139,23 +187,23 @@ async def drive_agent_events(
                                 yield AgentEvent(
                                     kind="text.completed",
                                     run_id=run_id,
-                                    seq=nxt(),
-                                    payload={"segment_id": segment_id, "text": streamed_text},
+                                    seq=next_seq(),
+                                    payload=_text_payload(segment_id, streamed_text),
                                 )
                                 streamed_text = None
                                 segment.complete()
                                 continue
-                            payload: dict[str, JsonValue] = {"segment_id": segment_id, "text": text}
+                            payload = _text_payload(segment_id, text)
                             yield AgentEvent(
                                 kind="text.delta",
                                 run_id=run_id,
-                                seq=nxt(),
+                                seq=next_seq(),
                                 payload=payload,
                             )
                             yield AgentEvent(
                                 kind="text.completed",
                                 run_id=run_id,
-                                seq=nxt(),
+                                seq=next_seq(),
                                 payload=payload,
                             )
                             segment.complete()
@@ -164,58 +212,40 @@ async def drive_agent_events(
                             yield AgentEvent(
                                 kind="thinking.delta",
                                 run_id=run_id,
-                                seq=nxt(),
-                                payload={"segment_id": segment.current(), "text": text},
+                                seq=next_seq(),
+                                payload=_text_payload(segment.current(), text),
                             )
 
                         case TodoUpdated(todos=todos):
                             yield AgentEvent(
                                 kind="todo.updated",
                                 run_id=run_id,
-                                seq=nxt(),
-                                payload={
-                                    "todos": [
-                                        {"content": todo.content, "status": todo.status} for todo in todos
-                                    ]
-                                },
+                                seq=next_seq(),
+                                payload=_todo_payload(todos),
                             )
 
-                        case ToolInvoked(tool_id=tool_id, name=name, args=args):
-                            payload: dict[str, JsonValue] = {
-                                "segment_id": segment.current(),
-                                "tool_id": tool_id,
-                                "name": name,
-                                "args": dict(args),
-                            }
+                        case ToolInvoked() as tool:
+                            payload = _tool_invoked_payload(segment.current(), tool)
                             yield AgentEvent(
                                 kind="tool.invoked",
                                 run_id=run_id,
-                                seq=nxt(),
+                                seq=next_seq(),
                                 payload=payload,
                             )
-                            if name in awaiting_tools:
+                            if tool.name in awaiting_tools:
                                 yield AgentEvent(
                                     kind="tool.awaiting_approval",
                                     run_id=run_id,
-                                    seq=nxt(),
+                                    seq=next_seq(),
                                     payload=payload,
                                 )
 
-                        case ToolReturned(tool_id=tool_id, name=name, result=result, is_error=is_error, rejected=rejected):
-                            payload: dict[str, JsonValue] = {
-                                "segment_id": segment.current(),
-                                "tool_id": tool_id,
-                                "name": name,
-                                "result": result,
-                                "is_error": is_error,
-                            }
-                            if rejected:
-                                payload["rejected"] = True
+                        case ToolReturned() as tool:
                             yield AgentEvent(
                                 kind="tool.returned",
                                 run_id=run_id,
-                                seq=nxt(),
-                                payload=payload,
+                                seq=next_seq(),
+                                payload=_tool_returned_payload(segment.current(), tool),
                             )
 
                         case SubagentStarted() as subagent:
@@ -223,15 +253,8 @@ async def drive_agent_events(
                             yield AgentEvent(
                                 kind="subagent.started",
                                 run_id=run_id,
-                                seq=nxt(),
-                                payload={
-                                    "segment_id": segment.current(),
-                                    "subagent_id": subagent.subagent_id,
-                                    "name": subagent.name,
-                                    "description": subagent.description,
-                                    "subagent_type": subagent.subagent_type,
-                                    "source": subagent.source,
-                                },
+                                seq=next_seq(),
+                                payload=_subagent_started_payload(segment.current(), subagent),
                             )
 
                         case SubagentFinished() as subagent:
@@ -239,23 +262,17 @@ async def drive_agent_events(
                             yield AgentEvent(
                                 kind="subagent.finished",
                                 run_id=run_id,
-                                seq=nxt(),
-                                payload={
-                                    "segment_id": segment.current(),
-                                    "subagent_id": subagent.subagent_id,
-                                    "name": subagent.name,
-                                    "subagent_type": subagent.subagent_type,
-                                    "source": subagent.source,
-                                },
+                                seq=next_seq(),
+                                payload=_subagent_finished_payload(segment.current(), subagent),
                             )
 
                         case _:
                             continue
-        yield AgentEvent(kind="run.completed", run_id=run_id, seq=nxt(), payload={"status": "completed"})
+        yield AgentEvent(kind="run.completed", run_id=run_id, seq=next_seq(), payload={"status": "completed"})
     except Exception as error:  # noqa: BLE001 — boundary: any failure -> run.failed
         yield AgentEvent(
             kind="run.failed",
             run_id=run_id,
-            seq=nxt(),
+            seq=next_seq(),
             payload={"error_kind": type(error).__name__, "message": str(error)},
         )

@@ -97,6 +97,46 @@ def test_parse_xread_response_rejects_malformed_shapes() -> None:
         parse_xread_response([("stream", ["bad-entry"])])
 
 
+# Characterisation net for parse_xread_response: pin the RESP2/RESP3 parsing
+# behaviour (no redis needed) so the planned stream_port split cannot silently
+# regress the response shapes a real redis server returns.
+def test_parse_xread_response_list_of_pairs_resp2() -> None:
+    raw = [(b"stream", [(b"1-0", {b"data": b"{}"})])]
+    assert parse_xread_response(raw) == [(b"stream", [(b"1-0", {b"data": b"{}"})])]
+
+
+def test_parse_xread_response_mapping_resp3() -> None:
+    raw = {b"stream": [(b"1-0", {b"data": b"{}"})]}
+    assert parse_xread_response(raw) == [(b"stream", [(b"1-0", {b"data": b"{}"})])]
+
+
+def test_parse_xread_response_unwraps_resp3_entry_wrapper() -> None:
+    # RESP3 can wrap the entries in one extra list layer; it is unwrapped.
+    raw = [(b"stream", [[(b"1-0", {b"data": b"{}"})]])]
+    assert parse_xread_response(raw) == [(b"stream", [(b"1-0", {b"data": b"{}"})])]
+
+
+def test_parse_xread_response_rejects_multi_list_resp3_wrapper() -> None:
+    raw = [(b"stream", [[(b"1-0", {b"data": b"{}"})], [(b"2-0", {b"data": b"{}"})]])]
+    with pytest.raises(ValueError):
+        parse_xread_response(raw)
+
+
+def test_parse_xread_response_preserves_none_id_and_fields() -> None:
+    raw = [(b"stream", [(None, None)])]
+    assert parse_xread_response(raw) == [(b"stream", [(None, None)])]
+
+
+def test_parse_xread_response_none_is_none() -> None:
+    assert parse_xread_response(None) is None
+
+
+def test_parse_xread_response_rejects_non_strlike_fields() -> None:
+    raw = [(b"stream", [(b"1-0", {b"data": 123})])]
+    with pytest.raises(ValueError):
+        parse_xread_response(raw)
+
+
 async def test_read_all_rejects_non_object_json(port: RedisStreamPort) -> None:
     stream = _stream()
     client = redis_asyncio.from_url(REDIS_URL)

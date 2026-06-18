@@ -40,3 +40,12 @@ asyncio_mode = "auto"
 include = ["src", "tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
+
+[tool.mypy]
+python_version = "3.11"
+
+# redis and langfuse ship no type stubs; mypy can't resolve them. They are real
+# runtime deps, so silence the missing-stub import error rather than the usage.
+[[tool.mypy.overrides]]
+module = ["redis.*", "langfuse.*"]
+ignore_missing_imports = true

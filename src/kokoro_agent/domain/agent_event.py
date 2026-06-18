@@ -1,3 +1,5 @@
+# DO NOT EDIT — generated from contract/events.yaml by contract/generate.py.
+# Run `python3 contract/generate.py` after changing the contract.
 from __future__ import annotations
 
 from typing import Literal, TypeGuard, get_args

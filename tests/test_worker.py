@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypeAlias
 
@@ -23,6 +23,7 @@ from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.chat_model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+from kokoro_agent.interfaces import worker
 from kokoro_agent.interfaces.worker import (
     MAX_PROCESSED_RUN_IDS,
     REQUESTS_STREAM,
@@ -419,3 +420,31 @@ async def test_run_once_same_conversation_remembers_prior_turn_without_transport
     completed = [item.event for item in items if item.event["kind"] == "text.completed"]
     assert completed, "expected a final text.completed on turn 2"
     assert _payload_field(completed[-1], "text") == "Nako"
+
+
+async def test_run_once_isolates_runtime_registry_across_runs(monkeypatch: MonkeyPatch) -> None:
+    # 运行时子智能体绑 run:run_1 注册的名字绝不能在 run_2 可见(进程级单例注册表会跨会话泄漏)。
+    captured: list[RuntimeSubagentRegistry] = []
+
+    async def fake_run_agent(
+        request: RunRequest,
+        model: BaseChatModel,
+        *,
+        control_port: StreamPort | None = None,
+        runtime_registry: RuntimeSubagentRegistry | None = None,
+        checkpointer: BaseCheckpointSaver[str] | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        assert runtime_registry is not None
+        captured.append(runtime_registry)
+        return
+        yield  # makes this an (empty) async generator
+
+    monkeypatch.setattr(worker, "run_agent", fake_run_agent)
+    port = MemoryStreamPort()
+    await port.publish(REQUESTS_STREAM, _request("run_iso_1"))
+    await port.publish(REQUESTS_STREAM, _request("run_iso_2"))
+    await run_once(port, ProcessedRunIds(), _fake_model("unused"))
+
+    assert len(captured) == 2
+    captured[0].register("leaked-from-run-1", "d", "s")
+    assert captured[1].get("leaked-from-run-1") is None

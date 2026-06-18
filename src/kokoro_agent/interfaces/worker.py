@@ -23,7 +23,6 @@ LOGGER = logging.getLogger(__name__)
 
 REQUESTS_STREAM = "kokoro:runs:requests"
 _CHECKPOINTER: BaseCheckpointSaver[str] = InMemorySaver()
-_RUNTIME_SUBAGENT_REGISTRY = RuntimeSubagentRegistry()
 
 MAX_CONCURRENT_RUNS = 8
 MAX_PROCESSED_RUN_IDS = 4096
@@ -87,7 +86,6 @@ async def _run_request(
     port: StreamPort,
     request: RunRequest,
     model: BaseChatModel | None = None,
-    runtime_registry: RuntimeSubagentRegistry | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> None:
     stream = events_stream(request.run_id)
@@ -98,6 +96,9 @@ async def _run_request(
         await _publish_run_failed(port, request.run_id, type(error).__name__, str(error))
         return
 
+    # Fresh registry per run: runtime-custom subagents are supplied in full on every
+    # tool call, so their lifecycle is run-scoped — never shared across runs/sessions.
+    runtime_registry = RuntimeSubagentRegistry()
     async for event in run_agent(
         request,
         resolved_model,
@@ -113,7 +114,6 @@ async def _handle_request(
     raw: JsonObject,
     processed: ProcessedRunIds,
     model: BaseChatModel | None = None,
-    runtime_registry: RuntimeSubagentRegistry | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> None:
     request = _parse_request(raw)
@@ -126,7 +126,7 @@ async def _handle_request(
         LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
         return
     processed.add(request.run_id)
-    await _run_request(port, request, model, runtime_registry, checkpointer)
+    await _run_request(port, request, model, checkpointer)
 
 
 async def run_once(
@@ -138,7 +138,6 @@ async def run_once(
             item.event,
             processed,
             model,
-            _RUNTIME_SUBAGENT_REGISTRY,
             _CHECKPOINTER,
         )
 
@@ -151,7 +150,6 @@ async def _run_guarded(
             await _run_request(
                 port,
                 request,
-                runtime_registry=_RUNTIME_SUBAGENT_REGISTRY,
                 checkpointer=_CHECKPOINTER,
             )
         except Exception:  # noqa: BLE001

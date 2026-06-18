@@ -12,21 +12,23 @@ def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
 
 
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def _coerce_json_value(value: object) -> JsonValue:
-    match value:
-        case None | bool() | int() | float() | str():
-            return value
-        case list():
-            return [_coerce_json_value(item) for item in value]
-        case dict():
-            result: JsonObject = {}
-            for key, item in value.items():
-                if not isinstance(key, str):
-                    raise ValueError("stream event object keys must be strings")
-                result[key] = _coerce_json_value(item)
-            return result
-        case _:
-            raise ValueError("stream event values must be JSON-serializable")
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if _is_object_list(value):
+        return [_coerce_json_value(item) for item in value]
+    if _is_object_dict(value):
+        result: JsonObject = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("stream event object keys must be strings")
+            result[key] = _coerce_json_value(item)
+        return result
+    raise ValueError("stream event values must be JSON-serializable")
 
 
 def validate_event(event: object) -> JsonObject:

@@ -49,15 +49,37 @@ def _parse_request(raw: JsonObject) -> RunRequest | None:
         return None
 
 
-def has_processed(processed: dict[str, None], run_id: str) -> bool:
-    return run_id in processed
+class ProcessedRunIds:
+    """Bounded, insertion-ordered set of handled run ids; evicts the oldest once
+    past the cap so a long-lived worker never grows without bound."""
+
+    def __init__(self, max_size: int = MAX_PROCESSED_RUN_IDS) -> None:
+        self._ids: dict[str, None] = {}
+        self._max_size = max_size
+
+    def __contains__(self, run_id: str) -> bool:
+        return run_id in self._ids
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+    def add(self, run_id: str) -> None:
+        self._ids[run_id] = None
+        if len(self._ids) > self._max_size:
+            oldest = next(iter(self._ids))
+            del self._ids[oldest]
 
 
-def mark_processed(processed: dict[str, None], run_id: str) -> None:
-    processed[run_id] = None
-    if len(processed) > MAX_PROCESSED_RUN_IDS:
-        oldest = next(iter(processed))
-        del processed[oldest]
+async def _publish_run_failed(
+    port: StreamPort, run_id: str, error_kind: str, message: str
+) -> None:
+    failed = AgentEvent(
+        kind="run.failed",
+        run_id=run_id,
+        seq=1,
+        payload={"error_kind": error_kind, "message": message},
+    )
+    await port.publish(events_stream(run_id), failed.model_dump())
 
 
 async def _run_request(
@@ -72,13 +94,7 @@ async def _run_request(
         resolved_model = model if model is not None else make_chat_model(request.execution_style)
     except Exception as error:  # noqa: BLE001
         LOGGER.exception("model resolution failed for run_id=%s", request.run_id)
-        failed = AgentEvent(
-            kind="run.failed",
-            run_id=request.run_id,
-            seq=1,
-            payload={"error_kind": type(error).__name__, "message": str(error)},
-        )
-        await port.publish(stream, failed.model_dump())
+        await _publish_run_failed(port, request.run_id, type(error).__name__, str(error))
         return
 
     async for event in run_agent(
@@ -94,7 +110,7 @@ async def _run_request(
 async def _handle_request(
     port: StreamPort,
     raw: JsonObject,
-    processed: dict[str, None],
+    processed: ProcessedRunIds,
     model: BaseChatModel | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
@@ -103,23 +119,17 @@ async def _handle_request(
     if request is None:
         run_id = _run_id_of(raw)
         if run_id is not None:
-            failed = AgentEvent(
-                kind="run.failed",
-                run_id=run_id,
-                seq=1,
-                payload={"error_kind": "ValidationError", "message": "invalid run.request"},
-            )
-            await port.publish(events_stream(run_id), failed.model_dump())
+            await _publish_run_failed(port, run_id, "ValidationError", "invalid run.request")
         return
-    if has_processed(processed, request.run_id):
+    if request.run_id in processed:
         LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
         return
-    mark_processed(processed, request.run_id)
+    processed.add(request.run_id)
     await _run_request(port, request, model, runtime_registry, checkpointer)
 
 
 async def run_once(
-    port: StreamPort, processed: dict[str, None], model: BaseChatModel | None = None
+    port: StreamPort, processed: ProcessedRunIds, model: BaseChatModel | None = None
 ) -> None:
     for item in await port.read_all(REQUESTS_STREAM):
         await _handle_request(
@@ -179,7 +189,7 @@ async def _run_with_cancel(
 
 
 async def serve(port: StreamPort) -> None:
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     sem = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
     tasks: set[asyncio.Task[None]] = set()
     async for item in port.subscribe(REQUESTS_STREAM):
@@ -187,17 +197,11 @@ async def serve(port: StreamPort) -> None:
         if request is None:
             run_id = _run_id_of(item.event)
             if run_id is not None:
-                failed = AgentEvent(
-                    kind="run.failed",
-                    run_id=run_id,
-                    seq=1,
-                    payload={"error_kind": "ValidationError", "message": "invalid run.request"},
-                )
-                await port.publish(events_stream(run_id), failed.model_dump())
+                await _publish_run_failed(port, run_id, "ValidationError", "invalid run.request")
             continue
-        if has_processed(processed, request.run_id):
+        if request.run_id in processed:
             continue
-        mark_processed(processed, request.run_id)
+        processed.add(request.run_id)
         task = asyncio.create_task(_run_with_cancel(port, request, sem))
         tasks.add(task)
         task.add_done_callback(tasks.discard)

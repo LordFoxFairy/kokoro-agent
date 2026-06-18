@@ -7,8 +7,8 @@ from .adapter import (
     read_tool_input,
     result_messages,
     result_text,
-    translate_stream_event,
 )
+from .translator import translate_stream_event
 from .contracts import MessagePartsContract, StreamIntentContract, TodoItemContract, message_parts_contract, stream_intent_contract
 from .events import (
     EventHeader,

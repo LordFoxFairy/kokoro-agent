@@ -25,9 +25,8 @@ from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_mo
 from kokoro_agent.interfaces.worker import (
     MAX_PROCESSED_RUN_IDS,
     REQUESTS_STREAM,
+    ProcessedRunIds,
     events_stream,
-    has_processed,
-    mark_processed,
     run_once,
     serve,
 )
@@ -66,19 +65,19 @@ def _request(run_id: str = "run_01") -> JsonObject:
 
 
 def test_processed_run_id_cache_is_bounded_fifo() -> None:
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     for i in range(MAX_PROCESSED_RUN_IDS + 1):
-        mark_processed(processed, f"run_{i}")
+        processed.add(f"run_{i}")
     assert len(processed) == MAX_PROCESSED_RUN_IDS
-    assert has_processed(processed, "run_0") is False
-    assert has_processed(processed, f"run_{MAX_PROCESSED_RUN_IDS}") is True
+    assert ("run_0" in processed) is False
+    assert (f"run_{MAX_PROCESSED_RUN_IDS}" in processed) is True
 
 
 async def test_run_once_streams_with_injected_model() -> None:
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request())
 
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     await run_once(port, processed, make_local_fake_chat_model())
 
     items = await port.read_all(events_stream("run_01"))
@@ -96,7 +95,7 @@ async def test_run_once_executes_the_built_in_now_tool() -> None:
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request("run_tool"))
 
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     await run_once(port, processed, make_local_fake_chat_model())
 
     items = await port.read_all(events_stream("run_tool"))
@@ -112,7 +111,7 @@ async def test_run_once_executes_the_built_in_now_tool() -> None:
 async def test_run_once_is_idempotent_per_run_id() -> None:
     port = MemoryStreamPort()
     model = make_local_fake_chat_model()
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
 
     await port.publish(REQUESTS_STREAM, _request())
     await run_once(port, processed, model)
@@ -138,12 +137,12 @@ async def test_run_once_rejects_malformed_request() -> None:
         },
     )
 
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     await run_once(port, processed, _fake_model("unused"))
 
     items = await port.read_all(events_stream("run_bad"))
     assert [item.event["kind"] for item in items] == ["run.failed"]
-    assert has_processed(processed, "run_bad") is False
+    assert ("run_bad" in processed) is False
 
 
 @pytest.mark.asyncio
@@ -156,7 +155,7 @@ async def test_run_once_streams_with_local_fake_model(
     monkeypatch.setenv(LOCAL_FAKE_MODEL_FLAG, "1")
     model = make_chat_model()
 
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     await run_once(port, processed, model)
 
     items = await port.read_all(events_stream("run_local_fake"))
@@ -175,7 +174,7 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
     monkeypatch: MonkeyPatch,
 ) -> None:
     port = MemoryStreamPort()
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
 
     def broken_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
         raise ValueError("Invalid KOKORO_MODEL spec: 'plainstring'")
@@ -204,7 +203,7 @@ async def test_run_once_resolves_model_from_request_execution_style(
     monkeypatch: MonkeyPatch,
 ) -> None:
     port = MemoryStreamPort()
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     seen_styles: list[str] = []
     await port.publish(
         REQUESTS_STREAM,
@@ -388,7 +387,7 @@ async def test_run_once_same_conversation_remembers_prior_turn_without_transport
     monkeypatch: MonkeyPatch,
 ) -> None:
     port = MemoryStreamPort()
-    processed: dict[str, None] = {}
+    processed = ProcessedRunIds()
     _MEMORY_PROBE_SEEN.clear()
 
     monkeypatch.setattr(

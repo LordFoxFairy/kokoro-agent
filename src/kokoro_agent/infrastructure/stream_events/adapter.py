@@ -143,16 +143,8 @@ def read_output(event: StreamEvent) -> BaseMessage | ToolScalar:
     match event:
         case {"data": {"output": BaseMessage() as output}}:
             return output
-        case {"data": {"output": str() as output}}:
+        case {"data": {"output": output}} if _is_tool_scalar(output):
             return output
-        case {"data": {"output": int() as output}}:
-            return output
-        case {"data": {"output": float() as output}}:
-            return output
-        case {"data": {"output": bool() as output}}:
-            return output
-        case {"data": {"output": None}}:
-            return None
         case _:
             return None
 
@@ -161,16 +153,8 @@ def read_error(event: StreamEvent) -> BaseException | ToolScalar:
     match event:
         case {"data": {"error": BaseException() as error}}:
             return error
-        case {"data": {"error": str() as error}}:
+        case {"data": {"error": error}} if _is_tool_scalar(error):
             return error
-        case {"data": {"error": int() as error}}:
-            return error
-        case {"data": {"error": float() as error}}:
-            return error
-        case {"data": {"error": bool() as error}}:
-            return error
-        case {"data": {"error": None}}:
-            return None
         case _:
             return None
 
@@ -286,25 +270,34 @@ def _subagent_finished(tool_id: str, name: str, tool_input: ToolInput) -> Subage
     return None
 
 
-def translate_stream_event(ev: StreamEvent) -> list[StreamIntent]:
-    header = read_header(ev)
-    tool_input = read_tool_input(ev)
+def _message_intents(parts: MessageParts, *, final: bool) -> list[StreamIntent]:
+    intents: list[StreamIntent] = []
+    if parts.reasoning:
+        intents.append(ThinkingDelta(parts.reasoning))
+    if parts.text:
+        intents.append(TextFinal(parts.text) if final else TextStream(parts.text))
+    return intents
+
+
+def translate_stream_event(event: StreamEvent) -> list[StreamIntent]:
+    header = read_header(event)
+    tool_input = read_tool_input(event)
 
     if header.event == "on_tool_start":
         if header.name == TODO_TOOL_NAME:
             return [TodoUpdated(tool_input.todos)]
-        subagent = _subagent_started(header.run_id, header.name, tool_input)
-        if subagent is not None:
-            return [subagent]
+        started = _subagent_started(header.run_id, header.name, tool_input)
+        if started is not None:
+            return [started]
         return [ToolInvoked(header.run_id, header.name, tool_input.args)]
 
     if header.event == "on_tool_end":
         if header.name == TODO_TOOL_NAME:
             return []
-        subagent = _subagent_finished(header.run_id, header.name, tool_input)
-        if subagent is not None:
-            return [subagent]
-        result = _truncated(result_text(read_output(ev)))
+        finished = _subagent_finished(header.run_id, header.name, tool_input)
+        if finished is not None:
+            return [finished]
+        result = _truncated(result_text(read_output(event)))
         return [
             ToolReturned(
                 tool_id=header.run_id,
@@ -318,10 +311,10 @@ def translate_stream_event(ev: StreamEvent) -> list[StreamIntent]:
     if header.event == "on_tool_error":
         if header.name == TODO_TOOL_NAME:
             return []
-        subagent = _subagent_finished(header.run_id, header.name, tool_input)
-        if subagent is not None:
-            return [subagent]
-        error = read_error(ev)
+        finished = _subagent_finished(header.run_id, header.name, tool_input)
+        if finished is not None:
+            return [finished]
+        error = read_error(event)
         error_text = str(error) or type(error).__name__
         return [
             ToolReturned(
@@ -333,27 +326,15 @@ def translate_stream_event(ev: StreamEvent) -> list[StreamIntent]:
         ]
 
     if header.event == "on_chat_model_stream":
-        chunk = read_chunk(ev)
+        chunk = read_chunk(event)
         if chunk is None:
             return []
-        parts = message_parts(chunk)
-        intents: list[StreamIntent] = []
-        if parts.reasoning:
-            intents.append(ThinkingDelta(parts.reasoning))
-        if parts.text:
-            intents.append(TextStream(parts.text))
-        return intents
+        return _message_intents(message_parts(chunk), final=False)
 
     if header.event == "on_chat_model_end":
-        output = read_output(ev)
+        output = read_output(event)
         if isinstance(output, AIMessage):
-            parts = message_parts(output)
-            intents: list[StreamIntent] = []
-            if parts.reasoning:
-                intents.append(ThinkingDelta(parts.reasoning))
-            if parts.text:
-                intents.append(TextFinal(parts.text))
-            return intents
+            return _message_intents(message_parts(output), final=True)
         return []
 
     return []

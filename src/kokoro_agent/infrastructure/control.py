@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
-from kokoro_agent.infrastructure.stream_port import StreamPort
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from kokoro_agent.infrastructure.stream_port import JsonObject, StreamPort
+
+LOGGER = logging.getLogger(__name__)
 
 ControlDecision = Literal["approve", "reject"]
+
+
+class ControlMessage(BaseModel):
+    """The control channel carries human approval decisions; parse every message
+    through this strict contract so a malformed payload is dropped explicitly
+    rather than silently classified as reject / non-cancel."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    kind: Literal["control"]
+    decision: Literal["approve", "reject", "cancel"]
 
 
 def control_stream(run_id: str) -> str:
@@ -14,6 +30,14 @@ def control_stream(run_id: str) -> str:
 def rejection_result(tool_name: str) -> str:
     """用户主动点击 reject 时回给模型的结果文案。"""
     return f"用户拒绝了工具 {tool_name} 的调用。"
+
+
+def _parse_control(event: JsonObject) -> ControlMessage | None:
+    try:
+        return ControlMessage.model_validate(event)
+    except ValidationError:
+        LOGGER.warning("dropping malformed control message: %s", event)
+        return None
 
 
 class DecisionCursor:
@@ -34,20 +58,21 @@ async def await_decision(
     收到 cancel 并直接取消整个 run task（连带解阻塞所有待批门）。"""
     from_cursor = cursor.value if cursor is not None else None
     async for item in port.subscribe(control_stream(run_id), from_cursor):
-        decision = item.event.get("decision")
-        if decision == "approve":
-            if cursor is not None:
-                cursor.value = item.cursor
-            return "approve"
-        if decision == "reject":
-            if cursor is not None:
-                cursor.value = item.cursor
-            return "reject"
+        message = _parse_control(item.event)
+        if message is None:
+            continue
+        decision = message.decision
+        if decision == "cancel":
+            continue
+        if cursor is not None:
+            cursor.value = item.cursor
+        return decision
     return "reject"
 
 
 async def wait_for_cancel(port: StreamPort, run_id: str) -> None:
     """阻塞直到 control 流出现一条 cancel 决定（用户放弃该 run）。供 worker 取消 run task。"""
     async for item in port.subscribe(control_stream(run_id)):
-        if item.event.get("decision") == "cancel":
+        message = _parse_control(item.event)
+        if message is not None and message.decision == "cancel":
             return

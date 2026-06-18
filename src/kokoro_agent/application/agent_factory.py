@@ -1,48 +1,25 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
-from typing import Literal, Protocol, TypedDict, cast
+from collections.abc import Sequence
 
-from deepagents import create_deep_agent  # pyright: ignore[reportUnknownVariableType]
 from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables.config import RunnableConfig
-from langchain_core.runnables.schema import StreamEvent
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.builtin_tools import BUILT_IN_TOOLS
-from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
-from kokoro_agent.infrastructure.transport import StreamPort
-from kokoro_agent.infrastructure.subagent_registry import (
-    RuntimeSubagentRegistry,
-    materialize_runtime_subagents,
-)
+from kokoro_agent.infrastructure.lc_adapter import EventStreamingAgent, make_deep_agent
 from kokoro_agent.infrastructure.permission import (
     fs_permissions,
     gate_tools,
     gate_tools_interactive,
 )
-
-
-class _UserMessage(TypedDict):
-    role: Literal["user"]
-    content: str
-
-
-class AgentInvokeInput(TypedDict):
-    messages: list[_UserMessage]
-
-
-class EventStreamingAgent(Protocol):
-    def astream_events(
-        self,
-        inp: AgentInvokeInput,
-        *,
-        version: str,
-        config: RunnableConfig | None,
-    ) -> AsyncIterator[StreamEvent]: ...
-
+from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
+from kokoro_agent.infrastructure.subagent_registry import (
+    RuntimeSubagentRegistry,
+    materialize_runtime_subagents,
+)
+from kokoro_agent.infrastructure.transport import StreamPort
 
 SYSTEM_PROMPT = (
     "你是 Kokoro，一个温和、克制的助手。遇到多步任务时，先用 write_todos 列出计划"
@@ -84,14 +61,11 @@ def build_agent(
 ) -> EventStreamingAgent:
     base_tools = build_base_tools(model, runtime_registry)
     tools = gate_tools_for_run(base_tools, permission_mode, run_id, control_port)
-    return cast(
-        "EventStreamingAgent",
-        create_deep_agent(
-            model=model,
-            tools=tools,
-            system_prompt=SYSTEM_PROMPT,
-            subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
-            checkpointer=checkpointer,
-            permissions=fs_permissions(permission_mode),
-        ),
+    return make_deep_agent(
+        model=model,
+        tools=tools,
+        system_prompt=SYSTEM_PROMPT,
+        subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
+        checkpointer=checkpointer,
+        permissions=fs_permissions(permission_mode),
     )

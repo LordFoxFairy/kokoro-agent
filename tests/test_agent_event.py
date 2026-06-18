@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
@@ -9,12 +9,14 @@ from kokoro_agent.domain.run_request import RunRequest
 
 def test_run_request_requires_input() -> None:
     with pytest.raises(ValidationError):
-        RunRequest(
-            kind="run.request",
-            run_id="run_01",
-            session_id="ses_01",
-            conversation_id="conv_01",
-        )  # type: ignore[call-arg]
+        RunRequest.model_validate(
+            {
+                "kind": "run.request",
+                "run_id": "run_01",
+                "session_id": "ses_01",
+                "conversation_id": "conv_01",
+            }
+        )
 
 
 def test_run_request_defaults_execution_style_fast() -> None:
@@ -30,55 +32,65 @@ def test_run_request_defaults_execution_style_fast() -> None:
 
 def test_run_request_forbids_extra_fields() -> None:
     with pytest.raises(ValidationError):
-        RunRequest(
-            kind="run.request",
-            run_id="run_01",
-            session_id="ses_01",
-            conversation_id="conv_01",
-            input="hello",
-            owner_id="kokoro-agent",  # type: ignore[call-arg]
+        RunRequest.model_validate(
+            {
+                "kind": "run.request",
+                "run_id": "run_01",
+                "session_id": "ses_01",
+                "conversation_id": "conv_01",
+                "input": "hello",
+                "owner_id": "kokoro-agent",
+            }
         )
 
 
 def test_run_request_rejects_unknown_execution_style() -> None:
     with pytest.raises(ValidationError):
-        RunRequest(
-            kind="run.request",
-            run_id="run_01",
-            session_id="ses_01",
-            conversation_id="conv_01",
-            input="hello",
-            execution_style="default",  # type: ignore[arg-type]
+        RunRequest.model_validate(
+            {
+                "kind": "run.request",
+                "run_id": "run_01",
+                "session_id": "ses_01",
+                "conversation_id": "conv_01",
+                "input": "hello",
+                "execution_style": "default",
+            }
         )
 
 
 def test_run_request_strict_rejects_coerced_input() -> None:
     with pytest.raises(ValidationError):
-        RunRequest(
-            kind="run.request",
-            run_id="run_01",
-            session_id="ses_01",
-            conversation_id="conv_01",
-            input=123,  # type: ignore[arg-type]
+        RunRequest.model_validate(
+            {
+                "kind": "run.request",
+                "run_id": "run_01",
+                "session_id": "ses_01",
+                "conversation_id": "conv_01",
+                "input": 123,
+            }
         )
 
 
 def test_agent_event_requires_seq() -> None:
     with pytest.raises(ValidationError):
-        AgentEvent(
-            kind="run.started",
-            run_id="run_01",
-            payload={},
-        )  # type: ignore[call-arg]
+        AgentEvent.model_validate(
+            {
+                "kind": "run.started",
+                "run_id": "run_01",
+                "payload": {},
+            }
+        )
 
 
 def test_agent_event_rejects_unknown_kind() -> None:
     with pytest.raises(ValidationError):
-        AgentEvent(
-            kind="session.created",  # type: ignore[arg-type]
-            run_id="run_01",
-            seq=1,
-            payload={},
+        AgentEvent.model_validate(
+            {
+                "kind": "session.created",
+                "run_id": "run_01",
+                "seq": 1,
+                "payload": {},
+            }
         )
 
 
@@ -101,31 +113,46 @@ def test_text_delta_roundtrip() -> None:
 
 
 def test_agent_event_forbids_extra_fields() -> None:
-    # extra=forbid: a stray key (e.g. a leaked envelope field) must be rejected,
-    # not silently absorbed — the agent never assigns event_id/cursor/owner_id.
     with pytest.raises(ValidationError):
-        AgentEvent(
-            kind="text.delta",
-            run_id="run_01",
-            seq=2,
-            payload={"segment_id": "m1", "text": "hi"},
-            event_id="evt_01",  # type: ignore[call-arg]
+        AgentEvent.model_validate(
+            {
+                "kind": "text.delta",
+                "run_id": "run_01",
+                "seq": 2,
+                "payload": {"segment_id": "m1", "text": "hi"},
+                "event_id": "evt_01",
+            }
         )
 
 
 def test_agent_event_strict_rejects_coerced_seq() -> None:
-    # strict mode: seq is a monotonic int; a numeric string must NOT coerce.
     with pytest.raises(ValidationError):
-        AgentEvent(
-            kind="text.delta",
-            run_id="run_01",
-            seq="2",  # type: ignore[arg-type]
-            payload={"segment_id": "m1", "text": "hi"},
+        AgentEvent.model_validate(
+            {
+                "kind": "text.delta",
+                "run_id": "run_01",
+                "seq": "2",
+                "payload": {"segment_id": "m1", "text": "hi"},
+            }
         )
 
 
-# Activity event families added for the agent-activity goal: every new kind must
-# be accepted with its documented payload (thinking/tool/todo/subagent).
+def test_agent_event_rejects_non_json_payload_values() -> None:
+    with pytest.raises(ValidationError):
+        AgentEvent.model_validate(
+            {
+                "kind": "text.delta",
+                "run_id": "run_01",
+                "seq": 2,
+                "payload": {
+                    "segment_id": "m1",
+                    "text": "hi",
+                    "meta": complex(1, 2),
+                },
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("kind", "payload"),
     [
@@ -145,16 +172,16 @@ def test_agent_event_strict_rejects_coerced_seq() -> None:
         ("subagent.finished", {"segment_id": "m1", "subagent_id": "s1", "name": "researcher"}),
     ],
 )
-def test_activity_kinds_accepted(kind: str, payload: dict[str, object]) -> None:
-    event = AgentEvent(kind=kind, run_id="run_01", seq=3, payload=payload)  # type: ignore[arg-type]
+def test_activity_kinds_accepted(kind: str, payload: dict[str, JsonValue]) -> None:
+    event = AgentEvent.model_validate(
+        {"kind": kind, "run_id": "run_01", "seq": 3, "payload": payload}
+    )
     assert event.kind == kind
     assert AgentEvent.model_validate(event.model_dump()) == event
 
 
 def test_todo_updated_roundtrip_preserves_statuses() -> None:
-    # CC-style todo: the ordered list with per-item status is the whole point —
-    # it must survive dump/validate unchanged so the web checklist renders truthfully.
-    payload: dict[str, object] = {
+    payload: dict[str, JsonValue] = {
         "todos": [
             {"content": "扫描上下文", "status": "completed"},
             {"content": "写契约", "status": "in_progress"},

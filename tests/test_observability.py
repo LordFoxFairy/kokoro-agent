@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from kokoro_agent.application.run_agent import trace_config
@@ -28,10 +26,9 @@ def test_langfuse_unconfigured_when_only_one_key(monkeypatch: pytest.MonkeyPatch
 
 
 def test_build_handler_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 配置齐全：构造单例客户端 + 返回 handler；mock 掉 langfuse 以免触网/起后台线程。
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    sentinel = object()
+    sentinel = "handler-sentinel"
     init_calls: list[int] = []
     monkeypatch.setattr(observability, "Langfuse", lambda: init_calls.append(1))
     monkeypatch.setattr(observability, "CallbackHandler", lambda: sentinel)
@@ -61,16 +58,18 @@ def test_trace_config_none_when_unconfigured(monkeypatch: pytest.MonkeyPatch) ->
 def test_trace_config_tags_run_metadata_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handler = object()
+    handler = "handler-sentinel"
     monkeypatch.setattr(
         "kokoro_agent.application.run_agent.build_langfuse_handler", lambda: handler
     )
-    config: Any = trace_config(_req())
+    config = trace_config(_req())
 
     assert config is not None
+    assert "callbacks" in config
     assert config["callbacks"] == [handler]
-    meta = config["metadata"]
-    assert meta["langfuse_session_id"] == "ses_1"
-    assert meta["langfuse_tags"] == ["thinking"]
-    assert meta["kokoro_run_id"] == "run_1"
-    assert meta["kokoro_conversation_id"] == "conv_1"
+    assert "metadata" in config
+    metadata = config["metadata"]
+    assert metadata["langfuse_session_id"] == "ses_1"
+    assert metadata["langfuse_tags"] == ["thinking"]
+    assert metadata["kokoro_run_id"] == "run_1"
+    assert metadata["kokoro_conversation_id"] == "conv_1"

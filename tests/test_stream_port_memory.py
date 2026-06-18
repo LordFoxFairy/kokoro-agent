@@ -3,7 +3,14 @@ from __future__ import annotations
 import asyncio
 from typing import cast
 
-from kokoro_agent.infrastructure.stream_port import MemoryStreamPort, StreamItem
+import pytest
+
+from kokoro_agent.infrastructure.stream_port import (
+    JsonObject,
+    MemoryStreamPort,
+    StreamItem,
+    validate_event,
+)
 
 STREAM = "kokoro:test:stream"
 
@@ -18,7 +25,6 @@ async def test_publish_then_read_all_preserves_order_and_unique_cursors() -> Non
 
     cursors = [item.cursor for item in items]
     assert len(set(cursors)) == 3
-    # cursors are monotonically increasing zero-padded strings
     assert cursors == sorted(cursors)
 
 
@@ -68,7 +74,6 @@ async def test_subscribe_from_cursor_skips_earlier() -> None:
     await port.publish(STREAM, {"seq": 2})
     await task
 
-    # cursor of seq=0 is skipped; we start after it
     assert received == [1, 2]
 
 
@@ -93,3 +98,26 @@ async def test_memory_port_allows_custom_cursor_width() -> None:
     await port.publish(STREAM, {"seq": 1})
     item = (await port.read_all(STREAM))[0]
     assert item.cursor == "000000"
+
+
+def test_validate_event_rejects_non_object_top_level_payloads() -> None:
+    with pytest.raises(ValueError):
+        validate_event([])
+    with pytest.raises(ValueError):
+        validate_event("bad")
+
+
+def test_validate_event_rejects_non_json_nested_values() -> None:
+    with pytest.raises(ValueError):
+        validate_event({"payload": {"x": complex(1, 2)}})
+
+
+async def test_memory_port_round_trips_nested_json_object() -> None:
+    port = MemoryStreamPort()
+    payload: JsonObject = {
+        "kind": "run.request",
+        "payload": {"items": [1, True, None], "text": "你好"},
+    }
+    await port.publish(STREAM, payload)
+    items = await port.read_all(STREAM)
+    assert items[0].event == payload

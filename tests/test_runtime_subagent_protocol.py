@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from kokoro_agent.infrastructure import stream_translator
-from kokoro_agent.infrastructure.stream_translator import (
-    build_runtime_custom_subagent_tool,
-)
-from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
+from kokoro_agent.infrastructure import runtime_subagent_tool
+from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
+from kokoro_agent.infrastructure.subagent_registry import CUSTOM_SUBAGENTS_ENV, RuntimeSubagentRegistry
 
 
 def test_runtime_registry_registers_runtime_custom_source() -> None:
@@ -32,37 +30,44 @@ def test_runtime_registry_rejects_duplicate_runtime_name() -> None:
         registry.register("temp-reviewer", "重复", "bad")
 
 
-# --- agent_runtime 协程执行路径(StructuredTool.coroutine + .func)---
-
-
 class _FakeRunner:
-    def __init__(self, messages: list[Any]) -> None:
-        self._messages = messages
+    def __init__(self, result: object) -> None:
+        self._result = result
 
-    async def ainvoke(self, _input: dict[str, Any]) -> dict[str, Any]:
-        return {"messages": self._messages}
+    async def ainvoke(self, _input: dict[str, list[dict[str, str]]]) -> object:
+        return self._result
+
+
+def _message_result(*messages: BaseMessage) -> dict[str, object]:
+    return {"messages": list(messages)}
 
 
 def _patch_runner(
-    monkeypatch: pytest.MonkeyPatch, messages: list[Any]
+    monkeypatch: pytest.MonkeyPatch, result: object
 ) -> list[str]:
-    """替换 _make_runner，返回返回值受控的 fake；回收每次构建用的 system_prompt。"""
     seen_prompts: list[str] = []
 
-    def fake_make_runner(_model: Any, system_prompt: str, _name: str) -> _FakeRunner:
+    def fake_make_runner(_model: BaseChatModel, system_prompt: str, _name: str) -> _FakeRunner:
         seen_prompts.append(system_prompt)
-        return _FakeRunner(messages)
+        return _FakeRunner(result)
 
-    monkeypatch.setattr(stream_translator, "_make_runner", fake_make_runner)
+    monkeypatch.setattr(runtime_subagent_tool, "_make_runner", fake_make_runner)
     return seen_prompts
+
+
+def test_runtime_result_messages_rejects_non_mapping_result() -> None:
+    assert runtime_subagent_tool._runtime_result_messages(["not", "mapping"]) == []
 
 
 async def test_agent_runtime_registers_new_name_and_returns_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = RuntimeSubagentRegistry()
-    _patch_runner(monkeypatch, [HumanMessage(content="任务"), AIMessage(content="结论 A")])
-    tool = build_runtime_custom_subagent_tool(model=object(), runtime_registry=registry)  # pyright: ignore[reportArgumentType]
+    _patch_runner(
+        monkeypatch,
+        _message_result(HumanMessage(content="任务"), AIMessage(content="结论 A")),
+    )
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
 
     assert tool.coroutine is not None
     result = await tool.coroutine(
@@ -79,28 +84,87 @@ async def test_agent_runtime_reuses_existing_spec_not_call_args(
 ) -> None:
     registry = RuntimeSubagentRegistry()
     registry.register("reviewer", "原描述", "原始 system prompt")
-    prompts = _patch_runner(monkeypatch, [AIMessage(content="结论 B")])
-    tool = build_runtime_custom_subagent_tool(model=object(), runtime_registry=registry)  # pyright: ignore[reportArgumentType]
+    prompts = _patch_runner(monkeypatch, _message_result(AIMessage(content="结论 B")))
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
 
     assert tool.coroutine is not None
     await tool.coroutine(
         name="reviewer",
-        description="新描述",
-        system_prompt="篡改的 prompt",
+        description="原描述",
+        system_prompt="原始 system prompt",
         task="复查",
     )
 
-    # 同名命中既有 spec：runner 用已注册的 prompt，不用本次调用参数。
     assert prompts == ["原始 system prompt"]
     assert len(registry.specs()) == 1
+
+
+async def test_agent_runtime_normalizes_name_and_reuses_existing_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = RuntimeSubagentRegistry()
+    registry.register("reviewer", "原描述", "原始 system prompt")
+    prompts = _patch_runner(monkeypatch, _message_result(AIMessage(content="结论 C")))
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
+
+    assert tool.coroutine is not None
+    result = await tool.coroutine(
+        name=" reviewer ",
+        description=" 原描述 ",
+        system_prompt=" 原始 system prompt ",
+        task=" 复查 ",
+    )
+
+    assert result == "结论 C"
+    assert prompts == ["原始 system prompt"]
+    assert len(registry.specs()) == 1
+
+
+async def test_agent_runtime_rejects_conflicting_definition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = RuntimeSubagentRegistry()
+    registry.register("reviewer", "原描述", "原始 system prompt")
+    _patch_runner(monkeypatch, _message_result(AIMessage(content="结论 B")))
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
+
+    assert tool.coroutine is not None
+    with pytest.raises(ValueError, match="conflicting runtime subagent definition"):
+        await tool.coroutine(
+            name="reviewer",
+            description="新描述",
+            system_prompt="篡改的 prompt",
+            task="复查",
+        )
+
+
+async def test_agent_runtime_rejects_env_duplicate_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        CUSTOM_SUBAGENTS_ENV,
+        '[{"name":"reviewer","description":"审稿","system_prompt":"检查内容质量"}]',
+    )
+    registry = RuntimeSubagentRegistry()
+    _patch_runner(monkeypatch, _message_result(AIMessage(content="结论 B")))
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
+
+    assert tool.coroutine is not None
+    with pytest.raises(ValueError, match="duplicate or reserved subagent name"):
+        await tool.coroutine(
+            name="reviewer",
+            description="新描述",
+            system_prompt="新 prompt",
+            task="复查",
+        )
 
 
 async def test_agent_runtime_returns_empty_string_when_no_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = RuntimeSubagentRegistry()
-    _patch_runner(monkeypatch, [AIMessage(content="")])
-    tool = build_runtime_custom_subagent_tool(model=object(), runtime_registry=registry)  # pyright: ignore[reportArgumentType]
+    _patch_runner(monkeypatch, _message_result(AIMessage(content="")))
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
 
     assert tool.coroutine is not None
     result = await tool.coroutine(
@@ -114,8 +178,8 @@ async def test_agent_runtime_returns_empty_string_when_no_ai_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = RuntimeSubagentRegistry()
-    _patch_runner(monkeypatch, [HumanMessage(content="只有用户消息")])
-    tool = build_runtime_custom_subagent_tool(model=object(), runtime_registry=registry)  # pyright: ignore[reportArgumentType]
+    _patch_runner(monkeypatch, _message_result(HumanMessage(content="只有用户消息")))
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
 
     assert tool.coroutine is not None
     result = await tool.coroutine(
@@ -127,7 +191,7 @@ async def test_agent_runtime_returns_empty_string_when_no_ai_message(
 
 def test_agent_runtime_sync_path_raises_runtime_error() -> None:
     registry = RuntimeSubagentRegistry()
-    tool = build_runtime_custom_subagent_tool(model=object(), runtime_registry=registry)  # pyright: ignore[reportArgumentType]
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
 
     assert tool.func is not None
     with pytest.raises(RuntimeError, match="requires async execution"):

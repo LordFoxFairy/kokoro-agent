@@ -24,27 +24,25 @@ def _tool(name: str = "fetch_url") -> StructuredTool:
         return f"ran {name} {x}"
 
     return StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]
-        name=name, description=name, func=_sync, coroutine=_run,
-        args_schema=_Args, infer_schema=False,
+        name=name,
+        description=name,
+        func=_sync,
+        coroutine=_run,
+        args_schema=_Args,
+        infer_schema=False,
     )
 
 
 async def test_await_decision_approve() -> None:
     port = MemoryStreamPort()
     await port.publish(control_stream("run_1"), {"decision": "approve"})
-    assert await await_decision(port, "run_1", timeout_s=2) == "approve"
+    assert await await_decision(port, "run_1") == "approve"
 
 
 async def test_await_decision_reject() -> None:
     port = MemoryStreamPort()
     await port.publish(control_stream("run_1"), {"decision": "reject"})
-    assert await await_decision(port, "run_1", timeout_s=2) == "reject"
-
-
-async def test_await_decision_timeout_defaults_reject() -> None:
-    # 无决定到来：超时回退 reject，绝不永久挂起。
-    port = MemoryStreamPort()
-    assert await await_decision(port, "run_1", timeout_s=0.05) == "reject"
+    assert await await_decision(port, "run_1") == "reject"
 
 
 async def test_interactive_gate_approve_runs_real_tool() -> None:
@@ -70,8 +68,8 @@ async def test_await_decision_advances_cursor_across_tools() -> None:
     cursor = DecisionCursor()
     await port.publish(control_stream("run_1"), {"decision": "approve"})
     await port.publish(control_stream("run_1"), {"decision": "reject"})
-    assert await await_decision(port, "run_1", cursor, timeout_s=2) == "approve"
-    assert await await_decision(port, "run_1", cursor, timeout_s=2) == "reject"
+    assert await await_decision(port, "run_1", cursor) == "approve"
+    assert await await_decision(port, "run_1", cursor) == "reject"
 
 
 async def test_interactive_gate_auto_passes_through() -> None:

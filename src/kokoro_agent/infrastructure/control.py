@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Literal
 
 from kokoro_agent.infrastructure.stream_port import StreamPort
 
 ControlDecision = Literal["approve", "reject"]
-
-# 待批超时：无决定则回退 reject（安全默认），且在 astream 总超时之内。
-APPROVAL_TIMEOUT_S = 90
 
 
 def control_stream(run_id: str) -> str:
@@ -16,8 +12,7 @@ def control_stream(run_id: str) -> str:
 
 
 def rejection_result(tool_name: str) -> str:
-    """门控工具被拒绝(用户点拒绝或审批超时回退)时回给模型的结果文案。
-    单一来源:门(返回它)与 translator(据此标记 tool.returned.rejected)共用,免脆弱的散字符串。"""
+    """用户主动点击 reject 时回给模型的结果文案。"""
     return f"用户拒绝了工具 {tool_name} 的调用。"
 
 
@@ -33,25 +28,21 @@ async def await_decision(
     port: StreamPort,
     run_id: str,
     cursor: DecisionCursor | None = None,
-    timeout_s: float = APPROVAL_TIMEOUT_S,
 ) -> ControlDecision:
-    """阻塞读 control 流的下一条 approve/reject（从游标之后）；超时回退 reject（绝不永久挂起）。
-    cancel 决定在此被忽略（由 worker 的 cancel-watcher 直接取消整个 run task），不在门里消费。"""
+    """阻塞读 control 流的下一条 approve/reject（从游标之后）。
+    不做超时自动回退：审批工具就该一直等用户决定；用户放弃整轮时由 worker 的 cancel-watcher
+    收到 cancel 并直接取消整个 run task（连带解阻塞所有待批门）。"""
     from_cursor = cursor.value if cursor is not None else None
-    try:
-        async with asyncio.timeout(timeout_s):
-            async for item in port.subscribe(control_stream(run_id), from_cursor):
-                decision = item.event.get("decision")
-                if decision == "approve":
-                    if cursor is not None:
-                        cursor.value = item.cursor
-                    return "approve"
-                if decision == "reject":
-                    if cursor is not None:
-                        cursor.value = item.cursor
-                    return "reject"
-    except TimeoutError:
-        return "reject"
+    async for item in port.subscribe(control_stream(run_id), from_cursor):
+        decision = item.event.get("decision")
+        if decision == "approve":
+            if cursor is not None:
+                cursor.value = item.cursor
+            return "approve"
+        if decision == "reject":
+            if cursor is not None:
+                cursor.value = item.cursor
+            return "reject"
     return "reject"
 
 

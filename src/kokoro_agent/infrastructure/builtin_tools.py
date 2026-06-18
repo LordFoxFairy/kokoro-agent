@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from langchain_core.tools import StructuredTool
 
-# deepagents 内置文件/规划/执行工具 + 本仓事件路由名（task/agent 由 stream_translator 按名分发），撞名即事件族错乱。
+# deepagents 内置文件/规划/执行工具 + 本仓事件路由名（task/agent 由 stream_events.translate_stream_event 按名分发），撞名即事件族错乱。
 RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "write_todos",

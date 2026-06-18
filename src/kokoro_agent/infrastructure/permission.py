@@ -12,7 +12,7 @@ from kokoro_agent.infrastructure.control import (
     rejection_result,
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
-from kokoro_agent.infrastructure.lc_adapter import (
+from kokoro_agent.infrastructure.agent_adapter import (
     FilesystemPermission,
     tool_coroutine,
     tool_func,

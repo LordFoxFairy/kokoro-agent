@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING, TypeAlias, TypeGuard
 
 from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
-from kokoro_agent.infrastructure.transport.port import StreamItem
+from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis

@@ -13,7 +13,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.builtin_tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
-from kokoro_agent.infrastructure.stream_port import StreamPort
+from kokoro_agent.infrastructure.transport import StreamPort
 from kokoro_agent.infrastructure.subagent_registry import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,

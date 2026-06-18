@@ -5,7 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from kokoro_agent.infrastructure.stream_port import JsonObject, StreamPort
+from kokoro_agent.infrastructure.json_types import JsonObject
+from kokoro_agent.infrastructure.transport import StreamPort
 
 LOGGER = logging.getLogger(__name__)
 

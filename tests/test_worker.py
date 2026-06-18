@@ -15,7 +15,8 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from kokoro_agent.infrastructure.stream_port import JsonObject, JsonValue, MemoryStreamPort, StreamPort
+from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
+from kokoro_agent.infrastructure.transport import MemoryStreamPort, StreamPort
 from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
 
 from kokoro_agent.domain.agent_event import AgentEvent

@@ -8,7 +8,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.builtin_tools import BUILT_IN_TOOLS
-from kokoro_agent.infrastructure.lc_adapter import EventStreamingAgent, make_deep_agent
+from kokoro_agent.infrastructure.agent_adapter import EventStreamingAgent, make_deep_agent
 from kokoro_agent.infrastructure.permission import (
     fs_permissions,
     gate_tools,

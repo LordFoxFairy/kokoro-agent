@@ -23,11 +23,13 @@ from kokoro_agent.infrastructure.transport import StreamPort
 def blocked_tools(mode: PermissionMode) -> frozenset[str]:
     """该权限模式下被拦的工具集：auto 不拦 / default 拦敏感集 / plan 只读再加严。"""
     policy = approval_policy()
-    if mode == "auto":
-        return frozenset()
-    if mode == "plan":
-        return policy.requires_approval_tools | policy.plan_only_blocked_tools
-    return policy.requires_approval_tools
+    match mode:
+        case "auto":
+            return frozenset()
+        case "plan":
+            return policy.requires_approval_tools | policy.plan_only_blocked_tools
+        case _:
+            return policy.requires_approval_tools
 
 
 def tool_allowed(mode: PermissionMode, tool_name: str) -> bool:

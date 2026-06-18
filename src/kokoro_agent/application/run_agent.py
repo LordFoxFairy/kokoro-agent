@@ -7,9 +7,10 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.application.agent_event_driver import ASTREAM_TIMEOUT_S, drive_agent_events
-from kokoro_agent.application.agent_factory import AgentInvokeInput, build_agent
+from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.infrastructure.lc_adapter import AgentInvokeInput
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.permission import blocked_tools
 from kokoro_agent.infrastructure.transport import StreamPort

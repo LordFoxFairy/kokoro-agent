@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
-from typing import cast
+from collections.abc import Sequence
 
-from deepagents import FilesystemPermission
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.domain.run_request import PermissionMode
@@ -14,6 +12,11 @@ from kokoro_agent.infrastructure.control import (
     rejection_result,
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
+from kokoro_agent.infrastructure.lc_adapter import (
+    FilesystemPermission,
+    tool_coroutine,
+    tool_func,
+)
 from kokoro_agent.infrastructure.transport import StreamPort
 
 
@@ -80,11 +83,11 @@ def _approval_gate(
         if decision != "approve":
             return rejection_result(tool.name)
 
-        if tool.coroutine is not None:
-            coroutine = cast("Callable[..., Awaitable[str]]", tool.coroutine)
+        coroutine = tool_coroutine(tool)
+        if coroutine is not None:
             return await coroutine(**kwargs)
 
-        func = cast("Callable[..., str] | None", tool.func)
+        func = tool_func(tool)
         if func is None:
             msg = f"tool {tool.name} has no callable execution path"
             raise RuntimeError(msg)

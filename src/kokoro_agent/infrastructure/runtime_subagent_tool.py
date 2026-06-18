@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Protocol, TypeGuard
+from typing import Annotated, TypeGuard
 
-from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, StringConstraints
 
+from kokoro_agent.infrastructure.lc_adapter import AsyncRunner, make_subagent_runner
 from kokoro_agent.infrastructure.stream_events import RUNTIME_SUBAGENT_TOOL_NAME, message_parts, result_messages
 from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry, load_custom_subagents_from_env
 
@@ -16,12 +16,14 @@ _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 _RunnerResult = Mapping[str, object]
 
 
-class _AsyncRunner(Protocol):
-    async def ainvoke(self, input: dict[str, list[dict[str, str]]]) -> object: ...
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
 
 
 def _is_runner_result(value: object) -> TypeGuard[_RunnerResult]:
-    return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
+    if not _is_object_mapping(value):
+        return False
+    return all(isinstance(key, str) for key in value)
 
 
 def _runtime_result_messages(result: object) -> list[BaseMessage]:
@@ -37,10 +39,8 @@ class RuntimeSubagentToolInput(BaseModel):
     task: _NonEmpty = Field(description="The concrete task the runtime custom subagent should perform")
 
 
-def _make_runner(
-    model: BaseChatModel, system_prompt: str, name: str
-) -> _AsyncRunner:  # pyright: ignore[reportUnknownParameterType]
-    return create_agent(model, system_prompt=system_prompt, tools=[], name=name)  # pyright: ignore[reportUnknownVariableType]
+def _make_runner(model: BaseChatModel, system_prompt: str, name: str) -> AsyncRunner:
+    return make_subagent_runner(model, system_prompt=system_prompt, name=name)
 
 
 def _runtime_messages(task: str) -> dict[str, list[dict[str, str]]]:

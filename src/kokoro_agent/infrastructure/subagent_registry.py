@@ -15,15 +15,34 @@ CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class _CustomSubagentPayload(BaseModel):
-    # 外部不可信 env JSON：strict 拒非 str、extra=forbid 拒未知键（§5 strict 拒收）。
+class _SubagentDefinition(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     name: _NonEmpty
     description: _NonEmpty
     system_prompt: _NonEmpty
 
 
-_CUSTOM_PAYLOADS = TypeAdapter(list[_CustomSubagentPayload])
+_CUSTOM_PAYLOADS = TypeAdapter(list[_SubagentDefinition])
+
+
+def _normalize_subagent_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        msg = "subagent name must not be blank"
+        raise ValueError(msg)
+    return normalized
+
+
+def _normalize_definition(
+    name: str,
+    description: str,
+    system_prompt: str,
+) -> _SubagentDefinition:
+    return _SubagentDefinition(
+        name=name,
+        description=description,
+        system_prompt=system_prompt,
+    )
 
 
 class RuntimeSubagentRegistry:
@@ -31,24 +50,22 @@ class RuntimeSubagentRegistry:
         self._subagents: dict[str, RegisteredSubagent] = {}
 
     def register(self, name: str, description: str, system_prompt: str) -> RegisteredSubagent:
-        candidate = name.strip()
-        if not candidate or not description.strip() or not system_prompt.strip():
-            msg = "runtime subagents require name, description, and system_prompt"
-            raise ValueError(msg)
+        definition = _normalize_definition(name, description, system_prompt)
+        candidate = definition.name
         if candidate in {spec.name for spec in BUILT_IN_SUBAGENTS} or candidate in self._subagents:
             msg = f"duplicate or reserved subagent name: {candidate}"
             raise ValueError(msg)
         spec = RegisteredSubagent(
             name=candidate,
-            description=description.strip(),
-            system_prompt=system_prompt.strip(),
+            description=definition.description,
+            system_prompt=definition.system_prompt,
             source="runtime-custom",
         )
         self._subagents[candidate] = spec
         return spec
 
     def get(self, name: str) -> RegisteredSubagent | None:
-        return self._subagents.get(name)
+        return self._subagents.get(_normalize_subagent_name(name))
 
     def specs(self) -> list[RegisteredSubagent]:
         return list(self._subagents.values())
@@ -78,7 +95,6 @@ def load_custom_subagents_from_env(env: dict[str, str] | None = None) -> list[Re
     custom: list[RegisteredSubagent] = []
     seen_names: set[str] = set()
     for payload in payloads:
-        # 重名/保留是跨条目约束，pydantic 管不到，留手工 fail-loud。
         if payload.name in built_in_names or payload.name in seen_names:
             msg = f"duplicate or reserved subagent name: {payload.name}"
             raise ValueError(msg)
@@ -94,15 +110,27 @@ def load_custom_subagents_from_env(env: dict[str, str] | None = None) -> list[Re
     return custom
 
 
+def _validate_unique_catalog(specs: list[RegisteredSubagent]) -> list[RegisteredSubagent]:
+    seen: set[str] = set()
+    for spec in specs:
+        if spec.name in seen:
+            msg = f"duplicate or reserved subagent name: {spec.name}"
+            raise ValueError(msg)
+        seen.add(spec.name)
+    return specs
+
+
 def runtime_subagent_specs(
     env: dict[str, str] | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
 ) -> list[RegisteredSubagent]:
-    return [
-        *BUILT_IN_SUBAGENTS,
-        *load_custom_subagents_from_env(env),
-        *(runtime_registry.specs() if runtime_registry is not None else []),
-    ]
+    return _validate_unique_catalog(
+        [
+            *BUILT_IN_SUBAGENTS,
+            *load_custom_subagents_from_env(env),
+            *(runtime_registry.specs() if runtime_registry is not None else []),
+        ]
+    )
 
 
 def materialize_runtime_subagents(
@@ -129,7 +157,9 @@ def subagent_source_for(
     env: dict[str, str] | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
 ) -> SubagentSource:
+    normalized_name = _normalize_subagent_name(name)
     for spec in runtime_subagent_specs(env, runtime_registry):
-        if spec.name == name:
+        if spec.name == normalized_name:
             return spec.source
-    return "runtime-custom"
+    msg = f"unknown subagent name: {normalized_name}"
+    raise ValueError(msg)

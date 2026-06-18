@@ -1,14 +1,45 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import TypedDict
 
-import pytest
-from _pytest.monkeypatch import MonkeyPatch
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage
+from langchain_core.runnables.schema import EventData, StandardStreamEvent, StreamEvent
+from pydantic import JsonValue
 
-from kokoro_agent.infrastructure.stream_translator import translate_stream_event
-from kokoro_agent.application.run_agent import drive_agent_events
-from kokoro_agent.infrastructure.subagent_registry import CUSTOM_SUBAGENTS_ENV
+from kokoro_agent.infrastructure.stream_events import stream_intent_contract, translate_stream_event
+
+
+class EventSeed(TypedDict, total=False):
+    event: str
+    name: str
+    run_id: str
+    data: EventData
+    metadata: dict[str, str]
+
+
+def _event(
+    event: str,
+    name: str,
+    run_id: str,
+    data: EventData,
+    metadata: dict[str, str] | None = None,
+) -> StandardStreamEvent:
+    return {
+        "event": event,
+        "name": name,
+        "run_id": run_id,
+        "data": data,
+        "metadata": dict(metadata or {}),
+        "tags": [],
+        "parent_ids": [],
+    }
+
+
+def _tuples(ev: StreamEvent) -> list[tuple[str, dict[str, JsonValue]]]:
+    return [
+        (contract.kind, contract.payload.model_dump(exclude_defaults=True))
+        for contract in map(stream_intent_contract, translate_stream_event(ev))
+    ]
 
 
 # --- pure mapper: one astream_events(v2) event -> (kind, payload) intents -----
@@ -19,60 +50,51 @@ def test_write_todos_start_maps_to_todo_updated() -> None:
         {"content": "查天气", "status": "in_progress"},
         {"content": "作答", "status": "pending"},
     ]
-    ev: Mapping[str, object] = {
-        "event": "on_tool_start",
-        "name": "write_todos",
-        "run_id": "t1",
-        "data": {"input": {"todos": todos}},
-    }
-    assert translate_stream_event(ev) == [("todo.updated", {"todos": todos})]
+    ev = _event(
+        "on_tool_start",
+        "write_todos",
+        "t1",
+        {"input": {"todos": todos}},
+    )
+    assert _tuples(ev) == [("todo.updated", {"todos": todos})]
 
 
 def test_write_todos_end_is_silent() -> None:
-    # The list is emitted on start; the end carries the same list -> no duplicate.
-    ev: Mapping[str, object] = {
-        "event": "on_tool_end",
-        "name": "write_todos",
-        "run_id": "t1",
-        "data": {"output": "ok"},
-    }
-    assert translate_stream_event(ev) == []
+    ev = _event("on_tool_end", "write_todos", "t1", {"output": "ok"})
+    assert _tuples(ev) == []
 
 
 def test_generic_tool_start_and_end_pair() -> None:
-    start: Mapping[str, object] = {
-        "event": "on_tool_start",
-        "name": "get_weather",
-        "run_id": "tw",
-        "data": {"input": {"city": "北京"}},
-    }
-    assert translate_stream_event(start) == [
+    start = _event(
+        "on_tool_start",
+        "get_weather",
+        "tw",
+        {"input": {"city": "北京"}},
+    )
+    assert _tuples(start) == [
         ("tool.invoked", {"tool_id": "tw", "name": "get_weather", "args": {"city": "北京"}})
     ]
-    end: Mapping[str, object] = {
-        "event": "on_tool_end",
-        "name": "get_weather",
-        "run_id": "tw",
-        "data": {"output": AIMessage(content="北京: sunny")},
-    }
-    # tool result text is correlated by the same tool_id (event run_id); is_error=False on success.
-    assert translate_stream_event(end) == [
+    end = _event(
+        "on_tool_end",
+        "get_weather",
+        "tw",
+        {"output": AIMessage(content="北京: sunny")},
+    )
+    assert _tuples(end) == [
         ("tool.returned", {"tool_id": "tw", "name": "get_weather", "result": "北京: sunny", "is_error": False})
     ]
 
 
 def test_rejected_gated_tool_marks_tool_returned_rejected() -> None:
-    # 门控工具被拒绝走 on_tool_end（返回拒绝文案，不抛异常）：tool.returned 标记 rejected=True，
-    # 让 UI replay 安全地显「已拒绝」而非绿勾 done。文案单一来源 control.rejection_result。
     from kokoro_agent.infrastructure.control import rejection_result
 
-    ev: Mapping[str, object] = {
-        "event": "on_tool_end",
-        "name": "fetch_url",
-        "run_id": "tr",
-        "data": {"output": AIMessage(content=rejection_result("fetch_url"))},
-    }
-    assert translate_stream_event(ev) == [
+    ev = _event(
+        "on_tool_end",
+        "fetch_url",
+        "tr",
+        {"output": AIMessage(content=rejection_result("fetch_url"))},
+    )
+    assert _tuples(ev) == [
         (
             "tool.returned",
             {
@@ -87,15 +109,13 @@ def test_rejected_gated_tool_marks_tool_returned_rejected() -> None:
 
 
 def test_tool_error_maps_to_tool_returned_with_is_error() -> None:
-    # 抛异常的工具发 on_tool_error（非 on_tool_end）：归一化成 tool.returned 带 is_error=True + 错误文本，
-    # 让 UI 显示该工具失败（红色），而非永远卡在「运行中」。
-    ev: Mapping[str, object] = {
-        "event": "on_tool_error",
-        "name": "fetch_url",
-        "run_id": "te",
-        "data": {"error": ValueError("connection refused"), "input": {"url": "x"}},
-    }
-    assert translate_stream_event(ev) == [
+    ev = _event(
+        "on_tool_error",
+        "fetch_url",
+        "te",
+        {"error": ValueError("connection refused"), "input": {"url": "x"}},
+    )
+    assert _tuples(ev) == [
         (
             "tool.returned",
             {"tool_id": "te", "name": "fetch_url", "result": "connection refused", "is_error": True},
@@ -104,700 +124,48 @@ def test_tool_error_maps_to_tool_returned_with_is_error() -> None:
 
 
 def test_tool_error_on_subagent_tool_maps_to_subagent_finished_not_a_fake_tool() -> None:
-    # 子智能体工具(task/agent)失败发 on_tool_error：必须像 on_tool_end 一样按名分派成 subagent.finished
-    # （让卡 running 的子智能体步收尾），而非冒一条伪「task」红色工具行。
-    ev: Mapping[str, object] = {
-        "event": "on_tool_error",
-        "name": "task",
-        "run_id": "sa1",
-        "data": {"error": ValueError("subagent crashed"), "input": {"subagent_type": "researcher"}},
-    }
-    [(kind, payload)] = translate_stream_event(ev)
+    ev = _event(
+        "on_tool_error",
+        "task",
+        "sa1",
+        {"error": ValueError("subagent crashed"), "input": {"subagent_type": "researcher"}},
+    )
+    [(kind, payload)] = _tuples(ev)
     assert kind == "subagent.finished"
-    assert payload["subagent_id"] == "sa1"
-    assert payload["subagent_type"] == "researcher"
+    assert payload.get("subagent_id") == "sa1"
+    assert payload.get("subagent_type") == "researcher"
 
 
 def test_tool_error_on_runtime_subagent_tool_maps_to_subagent_finished() -> None:
-    ev: Mapping[str, object] = {
-        "event": "on_tool_error",
-        "name": "agent",
-        "run_id": "rt1",
-        "data": {"error": ValueError("boom"), "input": {"name": "helper"}},
-    }
-    [(kind, payload)] = translate_stream_event(ev)
+    ev = _event(
+        "on_tool_error",
+        "agent",
+        "rt1",
+        {"error": ValueError("boom"), "input": {"name": "helper"}},
+    )
+    [(kind, payload)] = _tuples(ev)
     assert kind == "subagent.finished"
-    assert payload["subagent_type"] == "helper"
-    assert payload["source"] == "runtime-custom"
+    assert payload.get("subagent_type") == "helper"
+    assert payload.get("source") == "runtime-custom"
 
 
 def test_tool_error_on_write_todos_is_silent() -> None:
-    ev: Mapping[str, object] = {
-        "event": "on_tool_error",
-        "name": "write_todos",
-        "run_id": "wt",
-        "data": {"error": ValueError("x"), "input": {}},
-    }
-    assert translate_stream_event(ev) == []
+    ev = _event(
+        "on_tool_error",
+        "write_todos",
+        "wt",
+        {"error": ValueError("x"), "input": {}},
+    )
+    assert _tuples(ev) == []
 
 
 def test_tool_error_with_empty_message_falls_back_to_exception_type_name() -> None:
-    # 无消息异常(如 CancelledError / 无参异常)str 化为空串：错误文本回落到类型名，绝不渲染空白红条。
-    ev: Mapping[str, object] = {
-        "event": "on_tool_error",
-        "name": "fetch_url",
-        "run_id": "te",
-        "data": {"error": RuntimeError()},
-    }
-    [(kind, payload)] = translate_stream_event(ev)
-    assert kind == "tool.returned" and payload["is_error"] is True
-    assert payload["result"] == "RuntimeError"
-
-
-async def test_drive_agent_events_yields_tool_returned_before_run_failed() -> None:
-    # 集成护栏:on_tool_error 经 drive 后真的 yield 出 tool.returned(is_error+segment_id),
-    # 且严格早于随后异常收尾的 run.failed（顺序由 langchain 架构保证，这里钉死防库升级回归）。
-    async def raw() -> AsyncIterator[Mapping[str, object]]:
-        yield {"event": "on_tool_start", "name": "fetch_url", "run_id": "te", "data": {"input": {"url": "x"}}}
-        yield {"event": "on_tool_error", "name": "fetch_url", "run_id": "te", "data": {"error": ValueError("refused")}}
-        raise RuntimeError("graph down")
-
-    events = [e async for e in drive_agent_events("run_1", raw())]
-    kinds = [e.kind for e in events]
-    assert "run.completed" not in kinds
-    assert kinds.index("tool.returned") < kinds.index("run.failed")
-    assert kinds[-1] == "run.failed"
-    returned = events[kinds.index("tool.returned")]
-    assert returned.payload["is_error"] is True
-    assert returned.payload["name"] == "fetch_url"
-    # run_agent 给 tool.returned 补了 segment_id。
-    assert isinstance(returned.payload.get("segment_id"), str) and returned.payload["segment_id"]
-
-
-def test_tool_error_truncates_a_huge_error_message() -> None:
-    ev: Mapping[str, object] = {
-        "event": "on_tool_error",
-        "name": "x",
-        "run_id": "te",
-        "data": {"error": ValueError("e" * 20000)},
-    }
-    [(kind, payload)] = translate_stream_event(ev)
-    assert kind == "tool.returned"
-    assert payload["is_error"] is True
-    result = payload["result"]
-    assert isinstance(result, str) and len(result) <= 8100 and "截断" in result
-
-
-def test_tool_returned_result_is_truncated_for_the_event_stream() -> None:
-    # 事件载荷 >8000 字符截断：防单条 redis 事件膨胀；模型在 graph 内仍拿全量结果。
-    end: Mapping[str, object] = {
-        "event": "on_tool_end",
-        "name": "fetch_url",
-        "run_id": "tb",
-        "data": {"output": "x" * 20_000},
-    }
-    [(kind, payload)] = translate_stream_event(end)
-    assert kind == "tool.returned"
-    result = payload["result"]
-    assert isinstance(result, str)
-    assert len(result) <= 8_100
-    assert "截断" in result
-
-
-async def test_drive_agent_events_keeps_segment_activity_on_current_segment_id() -> None:
-    # 同一段内：工具/子智能体先到（真实 ReAct 顺序），随后该段的思考+正文落定，
-    # 全部共享同一个 segment_id。
-    events = [
-        {
-            "event": "on_tool_start",
-            "name": "get_weather",
-            "run_id": "tool_x",
-            "data": {"input": {"city": "北京"}},
-        },
-        {
-            "event": "on_tool_end",
-            "name": "get_weather",
-            "run_id": "tool_x",
-            "data": {"output": "晴"},
-        },
-        {
-            "event": "on_tool_start",
-            "name": "task",
-            "run_id": "subagent_x",
-            "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
-        },
-        {
-            "event": "on_tool_end",
-            "name": "task",
-            "run_id": "subagent_x",
-            "data": {"output": "done"},
-        },
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {
-                "output": AIMessage(
-                    content="第一段",
-                    additional_kwargs={"reasoning_content": "先想一下"},
-                )
-            },
-        },
-    ]
-
-    out = [event async for event in drive_agent_events("run_1", _aiter(events))]
-    segment_ref = next(event.payload["segment_id"] for event in out if event.kind == "text.completed")
-
-    for kind in (
-        "thinking.delta",
-        "text.delta",
-        "tool.invoked",
-        "tool.returned",
-        "subagent.started",
-        "subagent.finished",
-    ):
-        payload = next(event.payload for event in out if event.kind == kind)
-        assert payload["segment_id"] == segment_ref
-
-
-async def test_drive_agent_events_attaches_activity_to_the_following_segment() -> None:
-    # 工具出现在上一段「已落定」之后，属于即将到来的下一段，不再挂回旧段。
-    raw = [
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {"output": AIMessage(content="第一段")},
-        },
-        {
-            "event": "on_tool_start",
-            "name": "get_weather",
-            "run_id": "tool_x",
-            "data": {"input": {"city": "北京"}},
-        },
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {"output": AIMessage(content="第二段")},
-        },
-    ]
-
-    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
-    completed_refs = [event.payload["segment_id"] for event in out if event.kind == "text.completed"]
-    tool_ref = next(event.payload["segment_id"] for event in out if event.kind == "tool.invoked")
-
-    assert completed_refs == ["run_1:seg_0001", "run_1:seg_0002"]
-    # 工具属于第二段（它后面那条消息），而不是第一段。
-    assert tool_ref == completed_refs[1]
-
-
-async def test_drive_agent_events_interleaved_tool_text_tool_text_groups_each_tool_with_following_text() -> None:
-    # 真实交错流：工具1 → 文本1 → 工具2 → 文本2。
-    # 每个工具属于它「后面」那条消息，分成两段、各挂各的工具，绝不塌缩成一段。
-    raw = [
-        {"event": "on_tool_start", "name": "tool_a", "run_id": "ta", "data": {"input": {"q": "a"}}},
-        {"event": "on_tool_end", "name": "tool_a", "run_id": "ta", "data": {"output": "ra"}},
-        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第一段")}},
-        {"event": "on_tool_start", "name": "tool_b", "run_id": "tb", "data": {"input": {"q": "b"}}},
-        {"event": "on_tool_end", "name": "tool_b", "run_id": "tb", "data": {"output": "rb"}},
-        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第二段")}},
-    ]
-
-    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
-    tool_refs = [event.payload["segment_id"] for event in out if event.kind == "tool.invoked"]
-    text_refs = [event.payload["segment_id"] for event in out if event.kind == "text.completed"]
-
-    assert text_refs == ["run_1:seg_0001", "run_1:seg_0002"]
-    assert tool_refs == ["run_1:seg_0001", "run_1:seg_0002"]
-    # tool_b 与第二段同段（run_1:seg_0002），不是第一段。
-    assert tool_refs[1] == text_refs[1]
-
-
-def test_task_tool_maps_to_subagent_lifecycle() -> None:
-    start: Mapping[str, object] = {
-        "event": "on_tool_start",
-        "name": "task",
-        "run_id": "sa1",
-        "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
-    }
-    assert translate_stream_event(start) == [
-        (
-            "subagent.started",
-            {
-                "subagent_id": "sa1",
-                "name": "researcher",
-                "description": "查资料",
-                "subagent_type": "researcher",
-                "source": "built-in",
-            },
-        )
-    ]
-    end: Mapping[str, object] = {
-        "event": "on_tool_end",
-        "name": "task",
-        "run_id": "sa1",
-        "data": {"input": {"subagent_type": "researcher"}, "output": "done"},
-    }
-    assert translate_stream_event(end) == [
-        (
-            "subagent.finished",
-            {
-                "subagent_id": "sa1",
-                "name": "researcher",
-                "subagent_type": "researcher",
-                "source": "built-in",
-            },
-        )
-    ]
-
-
-def test_task_tool_marks_env_registered_subagent_as_custom(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(
-        CUSTOM_SUBAGENTS_ENV,
-        '[{"name":"reviewer","description":"审稿","system_prompt":"检查内容质量"}]',
+    ev = _event(
+        "on_tool_error",
+        "fetch_url",
+        "te",
+        {"error": RuntimeError()},
     )
-    start: Mapping[str, object] = {
-        "event": "on_tool_start",
-        "name": "task",
-        "run_id": "sa2",
-        "data": {"input": {"subagent_type": "reviewer", "description": "审稿"}},
-    }
-
-    assert translate_stream_event(start) == [
-        (
-            "subagent.started",
-            {
-                "subagent_id": "sa2",
-                "name": "reviewer",
-                "description": "审稿",
-                "subagent_type": "reviewer",
-                "source": "config-custom",
-            },
-        )
-    ]
-
-
-async def test_drive_agent_events_routes_subagent_text_into_nested_subagent_stream() -> None:
-    raw = [
-        {
-            "event": "on_tool_start",
-            "name": "task",
-            "run_id": "subagent_x",
-            "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
-        },
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "metadata": {"lc_agent_name": "researcher"},
-            "data": {"output": AIMessage(content="子智能体结论")},
-        },
-        {
-            "event": "on_tool_end",
-            "name": "task",
-            "run_id": "subagent_x",
-            "data": {"input": {"subagent_type": "researcher"}, "output": "done"},
-        },
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {"output": AIMessage(content="主助手总结")},
-        },
-    ]
-
-    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
-    kinds = [event.kind for event in out]
-    assert "subagent.text.delta" in kinds
-    assert "subagent.text.completed" in kinds
-    assert kinds.count("text.completed") == 1
-
-    sub_delta = next(event for event in out if event.kind == "subagent.text.delta")
-    sub_done = next(event for event in out if event.kind == "subagent.text.completed")
-    final_done = [event for event in out if event.kind == "text.completed"][0]
-
-    assert sub_delta.payload["subagent_id"] == "subagent_x"
-    assert sub_done.payload["text"] == "子智能体结论"
-    assert final_done.payload["text"] == "主助手总结"
-
-
-def test_runtime_agent_tool_maps_to_runtime_custom_lifecycle() -> None:
-    start: Mapping[str, object] = {
-        "event": "on_tool_start",
-        "name": "agent",
-        "run_id": "sa3",
-        "data": {
-            "input": {
-                "name": "runtime-reviewer",
-                "description": "运行时审稿",
-                "system_prompt": "检查一致性",
-                "task": "核查 1+1=2",
-            }
-        },
-    }
-    end: Mapping[str, object] = {
-        "event": "on_tool_end",
-        "name": "agent",
-        "run_id": "sa3",
-        "data": {
-            "input": {
-                "name": "runtime-reviewer",
-                "description": "运行时审稿",
-                "system_prompt": "检查一致性",
-                "task": "核查 1+1=2",
-            },
-            "output": "done",
-        },
-    }
-
-    assert translate_stream_event(start) == [
-        (
-            "subagent.started",
-            {
-                "subagent_id": "sa3",
-                "name": "runtime-reviewer",
-                "description": "运行时审稿",
-                "subagent_type": "runtime-reviewer",
-                "source": "runtime-custom",
-            },
-        )
-    ]
-    assert translate_stream_event(end) == [
-        (
-            "subagent.finished",
-            {
-                "subagent_id": "sa3",
-                "name": "runtime-reviewer",
-                "subagent_type": "runtime-reviewer",
-                "source": "runtime-custom",
-            },
-        )
-    ]
-
-
-
-def test_final_model_message_becomes_text_intent() -> None:
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_end",
-        "name": "ChatOpenAI",
-        "data": {"output": AIMessage(content="适合出门。")},
-    }
-    assert translate_stream_event(ev) == [("text", {"text": "适合出门。"})]
-
-
-def test_model_stream_chunk_becomes_text_stream_intent() -> None:
-    # A streamed token chunk carries only its incremental slice of the answer.
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_stream",
-        "name": "ChatOpenAI",
-        "data": {"chunk": AIMessageChunk(content="适合")},
-    }
-    assert translate_stream_event(ev) == [("text.stream", {"text": "适合"})]
-
-
-def test_empty_model_stream_chunk_is_silent() -> None:
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_stream",
-        "name": "ChatOpenAI",
-        "data": {"chunk": AIMessageChunk(content="")},
-    }
-    assert translate_stream_event(ev) == []
-
-
-def test_tool_call_only_stream_chunk_is_silent() -> None:
-    # Tool-call argument chunks carry no user-visible text; they must not leak.
-    chunk = AIMessageChunk(
-        content="",
-        tool_call_chunks=[
-            {"name": "get_weather", "args": '{"ci', "id": "c1", "index": 0, "type": "tool_call_chunk"}
-        ],
-    )
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_stream",
-        "name": "ChatOpenAI",
-        "data": {"chunk": chunk},
-    }
-    assert translate_stream_event(ev) == []
-
-
-def test_model_stream_chunk_surfaces_incremental_reasoning() -> None:
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_stream",
-        "name": "ChatOpenAI",
-        "data": {"chunk": AIMessageChunk(content="答", additional_kwargs={"reasoning_content": "想"})},
-    }
-    assert translate_stream_event(ev) == [
-        ("thinking.delta", {"text": "想"}),
-        ("text.stream", {"text": "答"}),
-    ]
-
-
-def test_model_stream_chunk_empty_reasoning_emits_no_thinking_delta() -> None:
-    # 空 reasoning_content 绝不发 thinking.delta——否则前端冒空思考泡。
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_stream",
-        "name": "ChatOpenAI",
-        "data": {"chunk": AIMessageChunk(content="答", additional_kwargs={"reasoning_content": ""})},
-    }
-    assert translate_stream_event(ev) == [("text.stream", {"text": "答"})]
-
-
-def test_model_stream_chunk_reasoning_only_emits_no_text_stream() -> None:
-    # 有 reasoning 无正文：只发 thinking.delta，不发空 text.stream。
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_stream",
-        "name": "ChatOpenAI",
-        "data": {"chunk": AIMessageChunk(content="", additional_kwargs={"reasoning_content": "想"})},
-    }
-    assert translate_stream_event(ev) == [("thinking.delta", {"text": "想"})]
-
-
-async def test_drive_agent_events_streams_incremental_deltas_then_single_completed() -> None:
-    # Real token streaming: several stream chunks, then the final end carries the
-    # whole message. The driver must emit one delta per chunk (each incremental)
-    # and exactly one completed with the full accumulated text — all on one ref.
-    raw: list[Mapping[str, object]] = [
-        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="晴，")}},
-        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="适合")}},
-        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="出门。")}},
-        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="晴，适合出门。")}},
-    ]
-    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
-    kinds = [e.kind for e in events]
-    assert kinds == [
-        "run.started",
-        "text.delta",
-        "text.delta",
-        "text.delta",
-        "text.completed",
-        "run.completed",
-    ]
-    deltas = [e for e in events if e.kind == "text.delta"]
-    completed = next(e for e in events if e.kind == "text.completed")
-    # Each delta is the incremental slice, not the cumulative buffer.
-    assert [d.payload["text"] for d in deltas] == ["晴，", "适合", "出门。"]
-    # One completed carrying the full accumulated text — not another delta.
-    assert completed.payload["text"] == "晴，适合出门。"
-    # Every event in the segment shares one segment_id.
-    refs = {e.payload["segment_id"] for e in events if e.kind in ("text.delta", "text.completed")}
-    assert len(refs) == 1
-
-
-async def test_drive_agent_events_streamed_then_fresh_segment_uses_new_ref() -> None:
-    # After a streamed segment completes, a new streamed segment must get a new
-    # ref (the streamed completed closes the segment just like the fallback path).
-    raw: list[Mapping[str, object]] = [
-        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="第一")}},
-        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第一")}},
-        {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": AIMessageChunk(content="第二")}},
-        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="第二")}},
-    ]
-    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
-    completed_refs = [e.payload["segment_id"] for e in events if e.kind == "text.completed"]
-    assert completed_refs == ["run_1:seg_0001", "run_1:seg_0002"]
-
-
-async def test_drive_agent_events_routes_streamed_subagent_chunks_into_subagent_stream() -> None:
-    # A streaming sub-agent's chunks must route to subagent.text.delta, and the
-    # sub-agent's end must produce one subagent.text.completed with the full text.
-    raw: list[Mapping[str, object]] = [
-        {
-            "event": "on_tool_start",
-            "name": "task",
-            "run_id": "subagent_x",
-            "data": {"input": {"subagent_type": "researcher", "description": "查资料"}},
-        },
-        {
-            "event": "on_chat_model_stream",
-            "name": "ChatOpenAI",
-            "metadata": {"lc_agent_name": "researcher"},
-            "data": {"chunk": AIMessageChunk(content="子")},
-        },
-        {
-            "event": "on_chat_model_stream",
-            "name": "ChatOpenAI",
-            "metadata": {"lc_agent_name": "researcher"},
-            "data": {"chunk": AIMessageChunk(content="结论")},
-        },
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "metadata": {"lc_agent_name": "researcher"},
-            "data": {"output": AIMessage(content="子结论")},
-        },
-        {
-            "event": "on_tool_end",
-            "name": "task",
-            "run_id": "subagent_x",
-            "data": {"input": {"subagent_type": "researcher"}, "output": "done"},
-        },
-    ]
-    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
-    sub_deltas = [e for e in events if e.kind == "subagent.text.delta"]
-    sub_completed = [e for e in events if e.kind == "subagent.text.completed"]
-    assert [d.payload["text"] for d in sub_deltas] == ["子", "结论"]
-    assert len(sub_completed) == 1
-    assert sub_completed[0].payload["text"] == "子结论"
-    assert sub_completed[0].payload["subagent_id"] == "subagent_x"
-    sub_refs = {
-        e.payload["segment_id"]
-        for e in events
-        if e.kind in ("subagent.text.delta", "subagent.text.completed")
-    }
-    assert len(sub_refs) == 1
-    # The parent thread never gets a text.delta/completed for a sub-agent segment.
-    assert "text.completed" not in [e.kind for e in events]
-
-
-def test_intermediate_tool_call_turn_with_empty_content_is_silent() -> None:
-    # 纯工具调度轮（空正文）不产生用户可见消息。
-    msg = AIMessage(
-        content="",
-        tool_calls=[{"name": "get_weather", "args": {"city": "北京"}, "id": "c1", "type": "tool_call"}],
-    )
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_end",
-        "name": "ChatOpenAI",
-        "data": {"output": msg},
-    }
-    assert translate_stream_event(ev) == []
-
-
-def test_intermediate_narration_with_tool_calls_surfaces_as_text() -> None:
-    # 真实模型常把实质内容写在带 tool_calls 的中间轮——丢弃它等于丢答案。
-    msg = AIMessage(
-        content="先梳理 SQLite 的适用场景。",
-        tool_calls=[{"name": "write_todos", "args": {"todos": []}, "id": "c1", "type": "tool_call"}],
-    )
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_end",
-        "name": "ChatOpenAI",
-        "data": {"output": msg},
-    }
-    assert ("text", {"text": "先梳理 SQLite 的适用场景。"}) in translate_stream_event(ev)
-
-
-async def test_drive_agent_events_surfaces_intermediate_narration_as_its_own_segment() -> None:
-    # 叙述(带 tool_calls) → 工具 → 终答：叙述独立成段先落定，工具挂到下一段与终答同段。
-    raw = [
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {
-                "output": AIMessage(
-                    content="我先查一下天气。",
-                    tool_calls=[
-                        {"name": "get_weather", "args": {"city": "北京"}, "id": "c1", "type": "tool_call"}
-                    ],
-                )
-            },
-        },
-        {
-            "event": "on_tool_start",
-            "name": "get_weather",
-            "run_id": "tool_x",
-            "data": {"input": {"city": "北京"}},
-        },
-        {
-            "event": "on_tool_end",
-            "name": "get_weather",
-            "run_id": "tool_x",
-            "data": {"output": "晴"},
-        },
-        {
-            "event": "on_chat_model_end",
-            "name": "ChatOpenAI",
-            "data": {"output": AIMessage(content="北京晴，适合出门。")},
-        },
-    ]
-
-    out = [event async for event in drive_agent_events("run_1", _aiter(raw))]
-    kinds = [event.kind for event in out]
-    completed = [event for event in out if event.kind == "text.completed"]
-    tool_ref = next(event.payload["segment_id"] for event in out if event.kind == "tool.invoked")
-
-    # 叙述先于工具落定，自成 seg_0001；工具与终答同属 seg_0002。
-    assert [e.payload["text"] for e in completed] == ["我先查一下天气。", "北京晴，适合出门。"]
-    assert [e.payload["segment_id"] for e in completed] == ["run_1:seg_0001", "run_1:seg_0002"]
-    assert tool_ref == "run_1:seg_0002"
-    assert kinds.index("text.completed") < kinds.index("tool.invoked")
-
-
-def test_reasoning_content_surfaces_as_thinking() -> None:
-    # Reasoning models expose reasoning_content; it must precede the answer text.
-    msg = AIMessage(content="答案", additional_kwargs={"reasoning_content": "我在推理"})
-    ev: Mapping[str, object] = {
-        "event": "on_chat_model_end",
-        "name": "ChatOpenAI",
-        "data": {"output": msg},
-    }
-    assert translate_stream_event(ev) == [
-        ("thinking.delta", {"text": "我在推理"}),
-        ("text", {"text": "答案"}),
-    ]
-
-
-@pytest.mark.parametrize(
-    "ev",
-    [
-        {"event": "on_chain_start", "name": "LangGraph", "data": {}},
-        {"event": "on_chain_stream", "name": "TodoListMiddleware.after_model", "data": {}},
-        {"event": "on_chat_model_start", "name": "ChatOpenAI", "data": {}},
-        {"event": "on_chain_end", "name": "tools", "data": {}},
-    ],
-)
-def test_internal_graph_nodes_are_skipped(ev: Mapping[str, object]) -> None:
-    assert translate_stream_event(ev) == []
-
-
-# --- envelope: run.started ... run.completed | run.failed ---------------------
-
-
-async def _aiter(items: Sequence[Mapping[str, object]]) -> AsyncIterator[Mapping[str, object]]:
-    for item in items:
-        yield item
-
-
-async def _boom() -> AsyncIterator[Mapping[str, object]]:
-    raise RuntimeError("model down")
-    yield {}  # pragma: no cover — marks this an async generator
-
-
-async def test_empty_stream_is_started_then_completed() -> None:
-    events = [e async for e in drive_agent_events("run_1", _aiter([]))]
-    assert [e.kind for e in events] == ["run.started", "run.completed"]
-    assert [e.seq for e in events] == [1, 2]
-    assert events[-1].payload == {"status": "completed"}
-
-
-async def test_activity_stream_envelope_and_text_expansion() -> None:
-    todos = [{"content": "查天气", "status": "in_progress"}]
-    raw: list[Mapping[str, object]] = [
-        {"event": "on_tool_start", "name": "write_todos", "run_id": "t", "data": {"input": {"todos": todos}}},
-        {"event": "on_chat_model_end", "name": "ChatOpenAI", "data": {"output": AIMessage(content="晴，适合。")}},
-    ]
-    events = [e async for e in drive_agent_events("run_1", _aiter(raw))]
-    kinds = [e.kind for e in events]
-    assert kinds == [
-        "run.started",
-        "todo.updated",
-        "text.delta",
-        "text.completed",
-        "run.completed",
-    ]
-    # seq strictly increasing from 1, unique.
-    seqs = [e.seq for e in events]
-    assert seqs == sorted(seqs) and seqs[0] == 1 and len(set(seqs)) == len(seqs)
-    # text.delta and text.completed are the same logical message (shared ref + text).
-    delta = next(e for e in events if e.kind == "text.delta")
-    completed = next(e for e in events if e.kind == "text.completed")
-    assert delta.payload == completed.payload
-    assert delta.payload["text"] == "晴，适合。"
-    assert delta.payload["segment_id"] == completed.payload["segment_id"]
-
-
-async def test_stream_failure_yields_run_failed_not_completed() -> None:
-    events = [e async for e in drive_agent_events("run_1", _boom())]
-    assert events[0].kind == "run.started"
-    assert events[-1].kind == "run.failed"
-    assert events[-1].payload["error_kind"] == "RuntimeError"
-    assert "model down" in str(events[-1].payload["message"])
-    assert "run.completed" not in [e.kind for e in events]
+    [(kind, payload)] = _tuples(ev)
+    assert kind == "tool.returned" and payload.get("is_error") is True
+    assert payload.get("result") == "RuntimeError"

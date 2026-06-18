@@ -4,14 +4,17 @@ import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 
 redis_asyncio = pytest.importorskip("redis.asyncio")
 
 from kokoro_agent.infrastructure.stream_port import (  # noqa: E402
+    JsonObject,
     RedisStreamPort,
     StreamItem,
+    parse_xread_response,
 )
 
 REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -85,3 +88,35 @@ async def test_redis_port_allows_custom_block_ms() -> None:
         assert items[0].event["seq"] == 1
     finally:
         await port.aclose()
+
+
+def test_parse_xread_response_rejects_malformed_shapes() -> None:
+    with pytest.raises(ValueError):
+        parse_xread_response(["bad"])
+    with pytest.raises(ValueError):
+        parse_xread_response([("stream", ["bad-entry"])])
+
+
+async def test_read_all_rejects_non_object_json(port: RedisStreamPort) -> None:
+    stream = _stream()
+    client = redis_asyncio.from_url(REDIS_URL)
+    try:
+        await client.xadd(stream, {"data": "[]"})
+        with pytest.raises(ValueError):
+            await port.read_all(stream)
+    finally:
+        await client.aclose()
+
+
+async def test_redis_port_round_trips_nested_json_object(port: RedisStreamPort) -> None:
+    stream = _stream()
+    payload: JsonObject = cast(
+        "JsonObject",
+        {
+            "kind": "run.request",
+            "payload": {"items": [1, True, None], "text": "你好"},
+        },
+    )
+    await port.publish(stream, payload)
+    items = await port.read_all(stream)
+    assert items[0].event == payload

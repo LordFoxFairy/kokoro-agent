@@ -1,1 +1,1 @@
-"""Infrastructure adapters for kokoro-agent (transport, etc.)."""
+"""Infrastructure adapters and stream event package for kokoro-agent."""

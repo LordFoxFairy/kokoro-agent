@@ -1,50 +1,49 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from typing import TypeGuard, TypedDict, cast
+from typing import Any, TypeAlias
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
-from langchain_core.language_models import BaseChatModel
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from kokoro_agent.infrastructure.stream_port import JsonObject, JsonValue, MemoryStreamPort, StreamPort
+from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
 
 from kokoro_agent.domain.agent_event import AgentEvent
-from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
-from kokoro_agent.infrastructure.chat_model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
-from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
 from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.infrastructure.chat_model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
+from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
 from kokoro_agent.interfaces.worker import (
+    MAX_PROCESSED_RUN_IDS,
     REQUESTS_STREAM,
     events_stream,
+    has_processed,
+    mark_processed,
     run_once,
     serve,
 )
 
 
-class _TextPayload(TypedDict):
-    text: str
+def _payload_text(value: JsonValue) -> str:
+    assert isinstance(value, Mapping)
+    text = value.get("text")
+    assert isinstance(text, str)
+    return text
 
 
-def _is_text_payload(value: object) -> TypeGuard[_TextPayload]:
-    if not isinstance(value, Mapping):
-        return False
-
-    text = cast("Mapping[str, object]", value).get("text")
-    return isinstance(text, str)
-
-
-def _payload_text(value: object) -> str:
-    assert _is_text_payload(value)
-    return value["text"]
-
-
-def _payload_field(event: dict[str, object], key: str) -> str:
+def _payload_field(event: Mapping[str, JsonValue], key: str) -> str:
     payload = event["payload"]
     assert isinstance(payload, Mapping)
-    value = cast("Mapping[str, object]", payload).get(key)
+    value = payload.get(key)
     assert isinstance(value, str)
     return value
 
@@ -55,46 +54,49 @@ def _fake_model(*replies: str) -> BaseChatModel:
     )
 
 
-def _request(run_id: str = "run_01") -> dict[str, object]:
-    return {
-        "kind": "run.request",
-        "run_id": run_id,
-        "session_id": "ses_01",
-        "conversation_id": "conv_01",
-        "input": "hello kokoro",
-    }
+def _request(run_id: str = "run_01") -> JsonObject:
+    request = RunRequest(
+        kind="run.request",
+        run_id=run_id,
+        session_id="ses_01",
+        conversation_id="conv_01",
+        input="hello kokoro",
+    )
+    return request.model_dump()
+
+
+def test_processed_run_id_cache_is_bounded_fifo() -> None:
+    processed: dict[str, None] = {}
+    for i in range(MAX_PROCESSED_RUN_IDS + 1):
+        mark_processed(processed, f"run_{i}")
+    assert len(processed) == MAX_PROCESSED_RUN_IDS
+    assert has_processed(processed, "run_0") is False
+    assert has_processed(processed, f"run_{MAX_PROCESSED_RUN_IDS}") is True
 
 
 async def test_run_once_streams_with_injected_model() -> None:
-    # The worker drives the real DeepAgents loop; the scripted local-fake model
-    # makes that hermetic. Assert the WORKER's plumbing (request → run_agent →
-    # ordered events on the run's stream), not specific model wording.
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request())
 
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
     await run_once(port, processed, make_local_fake_chat_model())
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
     assert kinds[0] == "run.started"
     assert kinds[-1] == "run.completed"
-    # the deep-agent activity surfaces: a CC-style todo and a final answer.
     assert "todo.updated" in kinds
     assert "text.completed" in kinds
 
-    # seq is monotonic from 1, no gaps.
     seqs = [item.event["seq"] for item in items]
     assert seqs == list(range(1, len(seqs) + 1))
 
 
 async def test_run_once_executes_the_built_in_now_tool() -> None:
-    # X1 最小闭环：注册的内置工具被真实 DeepAgents 循环执行，
-    # 并以通用 tool.invoked/tool.returned 事件浮出（结果是可解析的本地时间）。
     port = MemoryStreamPort()
     await port.publish(REQUESTS_STREAM, _request("run_tool"))
 
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
     await run_once(port, processed, make_local_fake_chat_model())
 
     items = await port.read_all(events_stream("run_tool"))
@@ -110,23 +112,22 @@ async def test_run_once_executes_the_built_in_now_tool() -> None:
 async def test_run_once_is_idempotent_per_run_id() -> None:
     port = MemoryStreamPort()
     model = make_local_fake_chat_model()
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
 
     await port.publish(REQUESTS_STREAM, _request())
     await run_once(port, processed, model)
-    await port.publish(REQUESTS_STREAM, _request())  # duplicate run_id
+    await port.publish(REQUESTS_STREAM, _request())
     await run_once(port, processed, model)
 
     items = await port.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
     assert kinds[0] == "run.started"
     assert kinds[-1] == "run.completed"
-    assert kinds.count("run.started") == 1  # processed exactly once
+    assert kinds.count("run.started") == 1
 
 
 async def test_run_once_rejects_malformed_request() -> None:
     port = MemoryStreamPort()
-    # missing required "input"
     await port.publish(
         REQUESTS_STREAM,
         {
@@ -137,11 +138,12 @@ async def test_run_once_rejects_malformed_request() -> None:
         },
     )
 
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
     await run_once(port, processed, _fake_model("unused"))
 
-    # malformed request produces no events and does not crash the loop
-    assert await port.read_all(events_stream("run_bad")) == []
+    items = await port.read_all(events_stream("run_bad"))
+    assert [item.event["kind"] for item in items] == ["run.failed"]
+    assert has_processed(processed, "run_bad") is False
 
 
 @pytest.mark.asyncio
@@ -154,14 +156,14 @@ async def test_run_once_streams_with_local_fake_model(
     monkeypatch.setenv(LOCAL_FAKE_MODEL_FLAG, "1")
     model = make_chat_model()
 
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
     await run_once(port, processed, model)
 
     items = await port.read_all(events_stream("run_local_fake"))
     kinds = [item.event["kind"] for item in items]
     assert kinds[0] == "run.started"
     assert kinds[-1] == "run.completed"
-    assert "todo.updated" in kinds  # CC-style planning surfaces
+    assert "todo.updated" in kinds
     assert "text.completed" in kinds
 
     completed = next(item for item in items if item.event["kind"] == "text.completed")
@@ -173,7 +175,7 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
     monkeypatch: MonkeyPatch,
 ) -> None:
     port = MemoryStreamPort()
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
 
     def broken_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
         raise ValueError("Invalid KOKORO_MODEL spec: 'plainstring'")
@@ -182,7 +184,6 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
         "kokoro_agent.interfaces.worker.make_chat_model", broken_make_chat_model
     )
 
-    # 坏模型配置必须落终态 run.failed，而不是崩掉 worker 留下永远悬挂的 run。
     await port.publish(REQUESTS_STREAM, _request("run_broken"))
     await run_once(port, processed, None)
 
@@ -192,7 +193,6 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
     assert isinstance(payload, Mapping)
     assert payload["error_kind"] == "ValueError"
 
-    # 循环存活：下一条请求（注入健康模型）照常处理到 run.completed。
     await port.publish(REQUESTS_STREAM, _request("run_after"))
     await run_once(port, processed, make_local_fake_chat_model())
     after = await port.read_all(events_stream("run_after"))
@@ -204,14 +204,11 @@ async def test_run_once_resolves_model_from_request_execution_style(
     monkeypatch: MonkeyPatch,
 ) -> None:
     port = MemoryStreamPort()
-    processed: set[str] = set()
+    processed: dict[str, None] = {}
     seen_styles: list[str] = []
     await port.publish(
         REQUESTS_STREAM,
-        {
-            **_request(),
-            "execution_style": "thinking",
-        },
+        {**_request(), "execution_style": "thinking"},
     )
 
     def fake_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
@@ -219,7 +216,7 @@ async def test_run_once_resolves_model_from_request_execution_style(
         return make_local_fake_chat_model()
 
     async def fake_run_agent(
-        request: object, model: BaseChatModel, control_port: object = None
+        request: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
     ):
         yield AgentEvent(
             kind="run.completed",
@@ -240,12 +237,11 @@ async def test_run_once_resolves_model_from_request_execution_style(
 async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    # 一个待批(HITL)/慢 run 阻塞时,_serve 仍能并发跑完其它 run——修「awaiting 冻结全局」。
     port = MemoryStreamPort()
     release = asyncio.Event()
 
     async def fake_run_agent(
-        request: RunRequest, model: BaseChatModel, control_port: object = None
+        request: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
     ):
         if request.run_id == "run_block":
             await release.wait()
@@ -276,7 +272,6 @@ async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
         async with asyncio.timeout(2):
             while not await completed("run_fast"):
                 await asyncio.sleep(0.01)
-        # run_block 仍卡着,但 run_fast 已跑完 → worker 不再串行冻结。
         assert not await completed("run_block")
         release.set()
         async with asyncio.timeout(2):
@@ -290,14 +285,13 @@ async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
 async def test_serve_cancels_a_run_on_control_cancel(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    # 用户放弃 run → control 流发 cancel → worker 取消该 run（解阻塞内部待批门）并补发 cancelled 终态。
     from kokoro_agent.infrastructure.control import control_stream
 
     port = MemoryStreamPort()
-    hang = asyncio.Event()  # 永不 set：run 一直挂着,直到被 cancel
+    hang = asyncio.Event()
 
     async def fake_run_agent(
-        request: RunRequest, model: BaseChatModel, control_port: object = None
+        request: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
     ):
         yield AgentEvent(kind="run.started", run_id=request.run_id, seq=1, payload={})
         await hang.wait()
@@ -327,7 +321,7 @@ async def test_serve_cancels_a_run_on_control_cancel(
                 payload = i.event.get("payload")
                 if not isinstance(payload, Mapping):
                     continue
-                if cast("Mapping[str, object]", payload).get("status") == "cancelled":
+                if payload.get("status") == "cancelled":
                     return True
         return False
 
@@ -337,14 +331,12 @@ async def test_serve_cancels_a_run_on_control_cancel(
         async with asyncio.timeout(2):
             while not await has_kind("run_cancel", "run.started"):
                 await asyncio.sleep(0.01)
-        # run 正挂着；发 cancel。
         await port.publish(
             control_stream("run_cancel"), {"kind": "control", "decision": "cancel"}
         )
         async with asyncio.timeout(2):
             while not await cancelled("run_cancel"):
                 await asyncio.sleep(0.01)
-        # 没有 completed 正常终态（被取消而非跑完）。
         items = await port.read_all(events_stream("run_cancel"))
         statuses = [
             _payload_field(i.event, "status")
@@ -354,3 +346,76 @@ async def test_serve_cancels_a_run_on_control_cancel(
         assert statuses == ["cancelled"]
     finally:
         serve_task.cancel()
+
+
+_MEMORY_PROBE_SEEN: list[list[str]] = []
+_ToolLike: TypeAlias = dict[str, Any] | type | Callable[..., Any] | BaseTool
+
+
+class _MemoryProbeModel(BaseChatModel):
+    @property
+    def _llm_type(self) -> str:
+        return "memory-probe"
+
+    def bind_tools(
+        self,
+        tools: Sequence[_ToolLike],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        return self.with_types(output_type=AIMessage)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        contents = [str(message.text) for message in messages]
+        _MEMORY_PROBE_SEEN.append(contents)
+        last = str(contents[-1]) if contents else ""
+        if "我叫什么" in last:
+            remembered = any("我的名字是 Nako" in str(item) for item in contents[:-1])
+            reply = "Nako" if remembered else "我不知道"
+        else:
+            reply = "记住了"
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=reply))])
+
+
+async def test_run_once_same_conversation_remembers_prior_turn_without_transport_replay(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    port = MemoryStreamPort()
+    processed: dict[str, None] = {}
+    _MEMORY_PROBE_SEEN.clear()
+
+    monkeypatch.setattr(
+        "kokoro_agent.interfaces.worker.make_chat_model", lambda execution_style="fast": _MemoryProbeModel()
+    )
+
+    await port.publish(
+        REQUESTS_STREAM,
+            {
+                **_request("run_mem_1"),
+                "conversation_id": "conv_mem",
+                "input": "记住：我的名字是 Nako",
+            },
+    )
+    await run_once(port, processed, None)
+
+    await port.publish(
+        REQUESTS_STREAM,
+            {
+                **_request("run_mem_2"),
+                "conversation_id": "conv_mem",
+                "input": "我叫什么？",
+            },
+    )
+    await run_once(port, processed, None)
+
+    items = await port.read_all(events_stream("run_mem_2"))
+    completed = [item.event for item in items if item.event["kind"] == "text.completed"]
+    assert completed, "expected a final text.completed on turn 2"
+    assert _payload_field(completed[-1], "text") == "Nako"

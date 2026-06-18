@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, TypeGuard, get_args
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 AgentKind = Literal[
     "run.started",
@@ -29,15 +29,16 @@ _AGENT_KINDS: frozenset[str] = frozenset(get_args(AgentKind))
 def is_agent_kind(kind: str) -> TypeGuard[AgentKind]:
     return kind in _AGENT_KINDS
 
-# Per-kind ``payload`` shapes (the payload stays a loose dict here; strict
-# per-kind validation is kokoro-session's job at the Zod boundary). Documented
-# so the DeepAgents emitter and the session normalizer share one contract:
+# Per-kind ``payload`` shapes (the domain boundary constrains payloads to
+# strict JSON-like values; per-kind required keys still belong to the
+# downstream Zod boundary). Documented so the DeepAgents emitter and the
+# session normalizer share one contract:
 #   run.started              {}
 #   thinking.delta           {"segment_id": str, "text": str}
 #   text.delta               {"segment_id": str, "text": str}
 #   text.completed           {"segment_id": str, "text": str}
-#   tool.invoked             {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, object]}
-#   tool.awaiting_approval   {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, object]}
+#   tool.invoked             {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, JsonValue]}
+#   tool.awaiting_approval   {"segment_id": str, "tool_id": str, "name": str, "args": dict[str, JsonValue]}
 #   tool.returned            {"segment_id": str, "tool_id": str, "name": str, "result": str, "is_error": bool, "rejected": bool}
 #   todo.updated             {"todos": [{"content": str, "status": "pending"|"in_progress"|"completed"}]}
 #   subagent.started         {"segment_id": str, "subagent_id": str, "name": str, "description": str, "subagent_type": str, "source": "built-in"|"config-custom"|"runtime-custom"}
@@ -61,4 +62,4 @@ class AgentEvent(BaseModel):
     kind: AgentKind
     run_id: str
     seq: int
-    payload: dict[str, object]
+    payload: dict[str, JsonValue]

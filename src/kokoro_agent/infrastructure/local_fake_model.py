@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, TypeAlias
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
 # Deterministic offline script (write_todos call, then a final answer) that drives
@@ -20,6 +21,8 @@ _FINAL_TEXT = (
     "本地预览：DeepAgents 活动流已接通（思考 / 工具 / todo / 子智能体）。"
     "配置真实模型（KOKORO_MODEL + 凭证）后，这里会是真实的多步回答。"
 )
+
+_ToolLike: TypeAlias = dict[str, Any] | type | Callable[..., Any] | BaseTool
 
 
 def _script() -> list[AIMessage]:
@@ -65,7 +68,7 @@ class LocalFakeChatModel(BaseChatModel):
 
     def bind_tools(
         self,
-        tools: Sequence[Any],
+        tools: Sequence[_ToolLike],
         *,
         tool_choice: str | None = None,
         **kwargs: Any,

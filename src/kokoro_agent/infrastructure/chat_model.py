@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
@@ -25,15 +26,26 @@ class ExecutionConfig:
 
 def _split_model_spec(spec: str) -> tuple[str, str]:
     provider, sep, model_name = spec.partition(":")
+    provider = provider.strip().lower()
+    model_name = model_name.strip()
     if not provider or not sep or not model_name:
         msg = f"Invalid KOKORO_MODEL spec: {spec!r}"
         raise ValueError(msg)
     return provider, model_name
 
 
+def _validate_execution_style(execution_style: str) -> ExecutionStyle:
+    if execution_style == "fast":
+        return "fast"
+    if execution_style == "thinking":
+        return "thinking"
+    msg = f"Invalid execution_style: {execution_style!r}"
+    raise ValueError(msg)
+
+
 def resolve_execution_config(execution_style: str) -> ExecutionConfig:
-    style: ExecutionStyle = "thinking" if execution_style == "thinking" else "fast"
     provider, model_name = _split_model_spec(os.environ.get("KOKORO_MODEL", DEFAULT_MODEL))
+    style = _validate_execution_style(execution_style)
     return ExecutionConfig(
         style=style,
         provider=provider,
@@ -53,6 +65,10 @@ def _make_openai_chat_model(config: ExecutionConfig) -> BaseChatModel:
     )
 
 
+def _anthropic_effort(style: ExecutionStyle) -> Literal["medium", "low"]:
+    return "medium" if style == "thinking" else "low"
+
+
 def _make_anthropic_chat_model(config: ExecutionConfig) -> BaseChatModel:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
@@ -63,7 +79,7 @@ def _make_anthropic_chat_model(config: ExecutionConfig) -> BaseChatModel:
             api_key=SecretStr(api_key),
             base_url=os.environ.get("ANTHROPIC_BASE_URL"),
             disable_streaming=config.disable_streaming,
-            effort="high" if config.style == "thinking" else None,
+            effort=_anthropic_effort(config.style),
         )
     return ChatAnthropic(
         model_name=config.model_name,
@@ -71,7 +87,7 @@ def _make_anthropic_chat_model(config: ExecutionConfig) -> BaseChatModel:
         stop=None,
         base_url=os.environ.get("ANTHROPIC_BASE_URL"),
         disable_streaming=config.disable_streaming,
-        effort="high" if config.style == "thinking" else None,
+        effort=_anthropic_effort(config.style),
     )
 
 

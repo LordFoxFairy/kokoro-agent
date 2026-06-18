@@ -13,7 +13,8 @@ from kokoro_agent.infrastructure.control import (
     await_decision,
     rejection_result,
 )
-from kokoro_agent.infrastructure.stream_port import JsonValue, StreamPort
+from kokoro_agent.infrastructure.json_types import JsonValue
+from kokoro_agent.infrastructure.transport import StreamPort
 
 
 def blocked_tools(mode: PermissionMode) -> frozenset[str]:

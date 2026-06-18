@@ -9,7 +9,7 @@ from kokoro_agent.infrastructure.control import (
     control_stream,
 )
 from kokoro_agent.infrastructure.permission import gate_tools_interactive
-from kokoro_agent.infrastructure.stream_port import MemoryStreamPort
+from kokoro_agent.infrastructure.transport import MemoryStreamPort
 
 
 class _Args(BaseModel):

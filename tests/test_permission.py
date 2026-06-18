@@ -16,7 +16,8 @@ from kokoro_agent.infrastructure.permission import (
     gate_tools_interactive,
     tool_allowed,
 )
-from kokoro_agent.infrastructure.stream_port import JsonValue, MemoryStreamPort
+from kokoro_agent.infrastructure.json_types import JsonValue
+from kokoro_agent.infrastructure.transport import MemoryStreamPort
 
 
 def test_fs_permissions_plan_read_only_else_unrestricted() -> None:

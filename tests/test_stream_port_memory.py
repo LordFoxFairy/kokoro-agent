@@ -5,12 +5,8 @@ from typing import cast
 
 import pytest
 
-from kokoro_agent.infrastructure.stream_port import (
-    JsonObject,
-    MemoryStreamPort,
-    StreamItem,
-    validate_event,
-)
+from kokoro_agent.infrastructure.json_types import JsonObject, validate_event
+from kokoro_agent.infrastructure.transport import MemoryStreamPort, StreamItem
 
 STREAM = "kokoro:test:stream"
 

@@ -101,58 +101,60 @@ def translate_stream_event(event: StreamEvent) -> list[StreamIntent]:
     header = read_header(event)
     tool_input = read_tool_input(event)
 
-    if header.event == "on_tool_start":
-        if header.name == TODO_TOOL_NAME:
-            return [TodoUpdated(tool_input.todos)]
-        started = _subagent_started(header.run_id, header.name, tool_input)
-        if started is not None:
-            return [started]
-        return [ToolInvoked(header.run_id, header.name, tool_input.args)]
+    match header.event:
+        case "on_tool_start":
+            if header.name == TODO_TOOL_NAME:
+                return [TodoUpdated(tool_input.todos)]
+            started = _subagent_started(header.run_id, header.name, tool_input)
+            if started is not None:
+                return [started]
+            return [ToolInvoked(header.run_id, header.name, tool_input.args)]
 
-    if header.event == "on_tool_end":
-        if header.name == TODO_TOOL_NAME:
+        case "on_tool_end":
+            if header.name == TODO_TOOL_NAME:
+                return []
+            finished = _subagent_finished(header.run_id, header.name, tool_input)
+            if finished is not None:
+                return [finished]
+            result = _truncated(result_text(read_output(event)))
+            return [
+                ToolReturned(
+                    tool_id=header.run_id,
+                    name=header.name,
+                    result=result,
+                    is_error=False,
+                    rejected=result == rejection_result(header.name),
+                )
+            ]
+
+        case "on_tool_error":
+            if header.name == TODO_TOOL_NAME:
+                return []
+            finished = _subagent_finished(header.run_id, header.name, tool_input)
+            if finished is not None:
+                return [finished]
+            error = read_error(event)
+            error_text = str(error) or type(error).__name__
+            return [
+                ToolReturned(
+                    tool_id=header.run_id,
+                    name=header.name,
+                    result=_truncated(error_text),
+                    is_error=True,
+                )
+            ]
+
+        case "on_chat_model_stream":
+            chunk = read_chunk(event)
+            if chunk is None:
+                return []
+            return _message_intents(message_parts(chunk), final=False)
+
+        case "on_chat_model_end":
+            output = read_ai_message(event)
+            if output is not None:
+                return _message_intents(message_parts(output), final=True)
             return []
-        finished = _subagent_finished(header.run_id, header.name, tool_input)
-        if finished is not None:
-            return [finished]
-        result = _truncated(result_text(read_output(event)))
-        return [
-            ToolReturned(
-                tool_id=header.run_id,
-                name=header.name,
-                result=result,
-                is_error=False,
-                rejected=result == rejection_result(header.name),
-            )
-        ]
 
-    if header.event == "on_tool_error":
-        if header.name == TODO_TOOL_NAME:
+        case _:
             return []
-        finished = _subagent_finished(header.run_id, header.name, tool_input)
-        if finished is not None:
-            return [finished]
-        error = read_error(event)
-        error_text = str(error) or type(error).__name__
-        return [
-            ToolReturned(
-                tool_id=header.run_id,
-                name=header.name,
-                result=_truncated(error_text),
-                is_error=True,
-            )
-        ]
-
-    if header.event == "on_chat_model_stream":
-        chunk = read_chunk(event)
-        if chunk is None:
-            return []
-        return _message_intents(message_parts(chunk), final=False)
-
-    if header.event == "on_chat_model_end":
-        output = read_ai_message(event)
-        if output is not None:
-            return _message_intents(message_parts(output), final=True)
-        return []
-
-    return []

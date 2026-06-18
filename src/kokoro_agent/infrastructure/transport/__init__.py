@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 
-from kokoro_agent.infrastructure.transport.memory import MemoryStreamPort
+from kokoro_agent.infrastructure.transport.memory_port import MemoryStreamPort
 from kokoro_agent.infrastructure.transport.port import StreamItem, StreamPort
-from kokoro_agent.infrastructure.transport.redis import RedisStreamPort, parse_xread_response
+from kokoro_agent.infrastructure.transport.redis_port import RedisStreamPort, parse_xread_response
 
 
 def make_stream_port() -> StreamPort:

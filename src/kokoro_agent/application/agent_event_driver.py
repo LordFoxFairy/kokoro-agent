@@ -39,13 +39,7 @@ async def drive_agent_events(
     awaiting_tools: frozenset[str] = frozenset(),
     timeout_s: float = ASTREAM_TIMEOUT_S,
 ) -> AsyncIterator[AgentEvent]:
-    """新增一个自定义 event 的配方（新工具走通用 tool.* 无需新 kind；新「语义/流程」才需要）：
-    ① contract/events.yaml 加 kind 并 `python3 contract/generate.py` 重生成 agent_event.py；
-    ② domain/stream_intent.py 加意图 dataclass 并入 StreamIntent 联合；
-    ③ stream_events/translator.py 加 match 分支产出该意图；
-    ④ application/event_payloads.py 加该 kind 的 payload builder；
-    ⑤ 在下方 match 里 `yield emitter.emit("新.kind", 该_payload(...))`。
-    """
+    """以 run.started 开头、必有终态（run.completed/failed）收口，保证对外事件流自洽。"""
     emitter = RunEmitter(run_id)
     active_subagent: SubagentStarted | None = None
     streamed_text: str | None = None

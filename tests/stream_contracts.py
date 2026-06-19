@@ -21,7 +21,7 @@ from kokoro_agent.domain.stream_intent import (
     ToolReturned,
     ToolScalar,
 )
-from kokoro_agent.infrastructure.stream_events.events import EventHeader, MessageParts, ToolInput
+from kokoro_agent.infrastructure.stream_events.parsed_event import EventHeader, MessageParts, ToolInput
 
 
 class _Contract(BaseModel):

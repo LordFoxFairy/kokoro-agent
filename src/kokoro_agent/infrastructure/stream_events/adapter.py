@@ -11,7 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from kokoro_agent.domain.stream_intent import TodoItem, ToolScalar
-from kokoro_agent.infrastructure.stream_events.events import EventHeader, MessageParts, ToolInput
+from kokoro_agent.infrastructure.stream_events.parsed_event import EventHeader, MessageParts, ToolInput
 
 
 class RawToolInput(TypedDict, total=False):

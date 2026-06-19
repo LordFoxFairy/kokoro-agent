@@ -6,24 +6,24 @@ from collections.abc import Iterable
 
 from langchain_core.tools import StructuredTool
 
+from kokoro_agent.infrastructure.tool_names import (
+    RUNTIME_SUBAGENT_TOOL_NAME,
+    SUBAGENT_TOOL_NAME,
+    TODO_TOOL_NAME,
+)
 from kokoro_agent.infrastructure.tools.clock import now
 from kokoro_agent.infrastructure.tools.fetch import FETCH_MAX_CHARS, fetch_url
 
-# deepagents 内置文件/规划/执行工具 + 本仓事件路由名（task/agent 由 stream_events.translate_stream_event 按名分发），撞名即事件族错乱。
-RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "write_todos",
-        "ls",
-        "read_file",
-        "write_file",
-        "edit_file",
-        "glob",
-        "grep",
-        "execute",
-        "task",  # kokoro 路由名：子智能体
-        "agent",  # kokoro 路由名：运行时自定义子智能体
-    }
+# deepagents 内置文件/执行工具（其契约名，非本仓所有）。
+_DEEPAGENTS_BUILTIN_TOOLS: frozenset[str] = frozenset(
+    {"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
 )
+# 撞名即事件族错乱：deepagents 内置 + 本仓路由名（write_todos/task/agent 由 translator 按名分发）。
+RESERVED_TOOL_NAMES: frozenset[str] = _DEEPAGENTS_BUILTIN_TOOLS | {
+    TODO_TOOL_NAME,
+    SUBAGENT_TOOL_NAME,
+    RUNTIME_SUBAGENT_TOOL_NAME,
+}
 
 
 def assert_tool_names_allowed(names: Iterable[str]) -> None:

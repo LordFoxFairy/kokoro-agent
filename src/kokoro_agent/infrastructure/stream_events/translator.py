@@ -26,15 +26,15 @@ from kokoro_agent.domain.stream_intent import (
     ToolInvoked,
     ToolReturned,
 )
-from kokoro_agent.infrastructure.stream_events.events import (
+from kokoro_agent.infrastructure.stream_events.parsed_event import MessageParts, ToolInput
+from kokoro_agent.infrastructure.subagent import subagent_source_for
+from kokoro_agent.infrastructure.tool_names import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
     TODO_TOOL_NAME,
-    TOOL_RESULT_MAX_CHARS,
-    MessageParts,
-    ToolInput,
 )
-from kokoro_agent.infrastructure.subagent import subagent_source_for
+
+TOOL_RESULT_MAX_CHARS = 8_000
 
 
 def _truncated(result: str) -> str:

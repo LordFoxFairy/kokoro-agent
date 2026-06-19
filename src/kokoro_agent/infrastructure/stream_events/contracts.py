@@ -24,37 +24,33 @@ from kokoro_agent.domain.stream_intent import (
 from kokoro_agent.infrastructure.stream_events.events import EventHeader, MessageParts, ToolInput
 
 
-class TodoItemContract(BaseModel):
+class _Contract(BaseModel):
+    """所有事件契约的公共严格配置：strict + extra=forbid + frozen。"""
+
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
+
+class TodoItemContract(_Contract):
     content: str
     status: TodoStatus
 
 
-class MessagePartsContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class MessagePartsContract(_Contract):
     text: str
     reasoning: str
 
 
-class TodoUpdatedPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class TodoUpdatedPayloadContract(_Contract):
     todos: list[TodoItemContract]
 
 
-class ToolInvokedPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class ToolInvokedPayloadContract(_Contract):
     tool_id: str
     name: str
     args: dict[str, ToolScalar]
 
 
-class ToolReturnedPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class ToolReturnedPayloadContract(_Contract):
     tool_id: str
     name: str
     result: str
@@ -62,9 +58,7 @@ class ToolReturnedPayloadContract(BaseModel):
     rejected: bool = False
 
 
-class SubagentStartedPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class SubagentStartedPayloadContract(_Contract):
     subagent_id: str
     name: str
     description: str
@@ -72,79 +66,57 @@ class SubagentStartedPayloadContract(BaseModel):
     source: SubagentSource
 
 
-class SubagentFinishedPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class SubagentFinishedPayloadContract(_Contract):
     subagent_id: str
     name: str
     subagent_type: str
     source: SubagentSource
 
 
-class ThinkingDeltaPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class ThinkingDeltaPayloadContract(_Contract):
     text: str
 
 
-class TextPayloadContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class TextPayloadContract(_Contract):
     text: str
 
 
-class TodoUpdatedContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class TodoUpdatedContract(_Contract):
     kind: Literal["todo.updated"] = "todo.updated"
     payload: TodoUpdatedPayloadContract
 
 
-class ToolInvokedContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class ToolInvokedContract(_Contract):
     kind: Literal["tool.invoked"] = "tool.invoked"
     payload: ToolInvokedPayloadContract
 
 
-class ToolReturnedContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class ToolReturnedContract(_Contract):
     kind: Literal["tool.returned"] = "tool.returned"
     payload: ToolReturnedPayloadContract
 
 
-class SubagentStartedContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class SubagentStartedContract(_Contract):
     kind: Literal["subagent.started"] = "subagent.started"
     payload: SubagentStartedPayloadContract
 
 
-class SubagentFinishedContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class SubagentFinishedContract(_Contract):
     kind: Literal["subagent.finished"] = "subagent.finished"
     payload: SubagentFinishedPayloadContract
 
 
-class ThinkingDeltaContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class ThinkingDeltaContract(_Contract):
     kind: Literal["thinking.delta"] = "thinking.delta"
     payload: ThinkingDeltaPayloadContract
 
 
-class TextStreamContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class TextStreamContract(_Contract):
     kind: Literal["text.stream"] = "text.stream"
     payload: TextPayloadContract
 
 
-class TextFinalContract(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
+class TextFinalContract(_Contract):
     kind: Literal["text"] = "text"
     payload: TextPayloadContract
 

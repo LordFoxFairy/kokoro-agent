@@ -13,22 +13,24 @@ from kokoro_agent.infrastructure.stream_events.adapter import (
     read_tool_input,
     result_text,
 )
-from kokoro_agent.infrastructure.stream_events.events import (
-    RUNTIME_SUBAGENT_TOOL_NAME,
-    SUBAGENT_TOOL_NAME,
-    TODO_TOOL_NAME,
-    TOOL_RESULT_MAX_CHARS,
-    MessageParts,
+from kokoro_agent.domain.stream_intent import (
     StreamIntent,
     SubagentFinished,
     SubagentStarted,
     TextFinal,
     TextStream,
     ThinkingDelta,
-    ToolInput,
+    TodoUpdated,
     ToolInvoked,
     ToolReturned,
-    TodoUpdated,
+)
+from kokoro_agent.infrastructure.stream_events.events import (
+    RUNTIME_SUBAGENT_TOOL_NAME,
+    SUBAGENT_TOOL_NAME,
+    TODO_TOOL_NAME,
+    TOOL_RESULT_MAX_CHARS,
+    MessageParts,
+    ToolInput,
 )
 from kokoro_agent.infrastructure.subagent_registry import subagent_source_for
 

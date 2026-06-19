@@ -8,13 +8,8 @@ from langchain_core.runnables.schema import StreamEvent
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
-from kokoro_agent.infrastructure.stream_events.events import (
-    EventHeader,
-    MessageParts,
-    TodoItem,
-    ToolInput,
-    ToolScalar,
-)
+from kokoro_agent.domain.stream_intent import TodoItem, ToolScalar
+from kokoro_agent.infrastructure.stream_events.events import EventHeader, MessageParts, ToolInput
 
 
 class RawToolInput(TypedDict, total=False):

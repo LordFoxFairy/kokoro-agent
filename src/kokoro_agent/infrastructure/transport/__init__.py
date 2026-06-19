@@ -1,3 +1,5 @@
+"""传输层入口：按 KOKORO_STREAM_BACKEND 选择内存/Redis 事件流后端。"""
+
 from __future__ import annotations
 
 import os

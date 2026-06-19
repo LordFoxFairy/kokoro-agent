@@ -1,14 +1,15 @@
+"""Redis Streams 传输实现：XREAD/XRANGE 的线格式在此防御性解析（兼容 RESP2/3）。"""
+
 from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Mapping
-from typing import TYPE_CHECKING, TypeAlias, TypeGuard
+from typing import TypeAlias, TypeGuard
+
+from redis.asyncio import Redis, from_url
 
 from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
 from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem
-
-if TYPE_CHECKING:
-    from redis.asyncio import Redis
 
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
@@ -16,6 +17,8 @@ _BLOCK_MS = 1000
 _Fields = dict[bytes | str, bytes | str] | None
 _Entry = tuple[bytes | str | None, _Fields]
 _ReadResponse = list[tuple[bytes | str | None, list[_Entry]]]
+# redis-py 无类型存根，XREAD/XRANGE 回来的是 bytes/嵌套 list/tuple 的松散结构；
+# 这里以 object 为边界逐层收窄，挡住 RESP2/3 协议差异，绝不让未校验数据进内层。
 _ObjectMapping: TypeAlias = Mapping[object, object]
 _ObjectDict: TypeAlias = dict[object, object]
 _ObjectList: TypeAlias = list[object]
@@ -78,7 +81,7 @@ def _parse_entries(value: object) -> list[_Entry]:
     if not _is_object_list(value):
         raise ValueError("xread entries must be a list")
     entries: list[object] = list(value)
-    # RESP3 may wrap the entries in one extra list layer; unwrap that single layer.
+    # RESP3 可能把条目多包一层 list；若如此则解开这单层包装。
     if entries and _is_object_list(entries[0]):
         if len(entries) != 1:
             raise ValueError("xread RESP3 wrapper must contain exactly one entry list")
@@ -119,8 +122,6 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
 
 class RedisStreamPort:
     def __init__(self, url: str = "redis://127.0.0.1:6379/0", block_ms: int = _BLOCK_MS) -> None:
-        from redis.asyncio import from_url
-
         self._redis: Redis = from_url(url)
         self._block_ms = block_ms
 

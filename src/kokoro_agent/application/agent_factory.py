@@ -1,3 +1,5 @@
+"""装配层：把模型/工具/子代理/权限组装成一个可流式的 agent。"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

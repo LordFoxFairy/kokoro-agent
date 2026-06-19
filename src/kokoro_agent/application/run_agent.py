@@ -13,7 +13,7 @@ from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.agent_adapter import AgentInvokeInput
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.permission import blocked_tools
-from kokoro_agent.infrastructure.transport import StreamPort
+from kokoro_agent.infrastructure.transport import StreamProtocol
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 
@@ -43,7 +43,7 @@ def _user_message(input_text: str) -> AgentInvokeInput:
 async def run_agent(
     req: RunRequest,
     model: BaseChatModel,
-    control_port: StreamPort | None = None,
+    control_port: StreamProtocol | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> AsyncIterator[AgentEvent]:

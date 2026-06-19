@@ -16,7 +16,7 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
-from kokoro_agent.infrastructure.transport import MemoryStream, StreamPort
+from kokoro_agent.infrastructure.transport import MemoryStream, StreamProtocol
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 from kokoro_agent.domain.agent_event import AgentEvent
@@ -217,7 +217,7 @@ async def test_run_once_resolves_model_from_request_execution_style(
         return make_local_fake_chat_model()
 
     async def fake_run_agent(
-        request: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
+        request: RunRequest, model: BaseChatModel, control_port: StreamProtocol | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
     ):
         yield AgentEvent(
             kind="run.completed",
@@ -242,7 +242,7 @@ async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
     release = asyncio.Event()
 
     async def fake_run_agent(
-        request: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
+        request: RunRequest, model: BaseChatModel, control_port: StreamProtocol | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
     ):
         if request.run_id == "run_block":
             await release.wait()
@@ -292,7 +292,7 @@ async def test_serve_cancels_a_run_on_control_cancel(
     hang = asyncio.Event()
 
     async def fake_run_agent(
-        request: RunRequest, model: BaseChatModel, control_port: StreamPort | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
+        request: RunRequest, model: BaseChatModel, control_port: StreamProtocol | None = None, runtime_registry: RuntimeSubagentRegistry | None = None, checkpointer: BaseCheckpointSaver[str] | None = None
     ):
         yield AgentEvent(kind="run.started", run_id=request.run_id, seq=1, payload={})
         await hang.wait()
@@ -430,7 +430,7 @@ async def test_run_once_isolates_runtime_registry_across_runs(monkeypatch: Monke
         request: RunRequest,
         model: BaseChatModel,
         *,
-        control_port: StreamPort | None = None,
+        control_port: StreamProtocol | None = None,
         runtime_registry: RuntimeSubagentRegistry | None = None,
         checkpointer: BaseCheckpointSaver[str] | None = None,
     ) -> AsyncIterator[AgentEvent]:

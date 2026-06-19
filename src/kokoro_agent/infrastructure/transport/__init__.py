@@ -6,10 +6,10 @@ import os
 
 from kokoro_agent.infrastructure.transport.memory_stream import MemoryStream
 from kokoro_agent.infrastructure.transport.redis_stream import RedisStream, parse_xread_response
-from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem, StreamPort
+from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem, StreamProtocol
 
 
-def make_stream_port() -> StreamPort:
+def make_stream() -> StreamProtocol:
     backend = os.environ.get("KOKORO_STREAM_BACKEND", "memory").lower()
     if backend == "redis":
         url = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -23,7 +23,7 @@ __all__ = [
     "MemoryStream",
     "RedisStream",
     "StreamItem",
-    "StreamPort",
-    "make_stream_port",
+    "StreamProtocol",
+    "make_stream",
     "parse_xread_response",
 ]

@@ -18,7 +18,7 @@ class StreamItem:
 
 
 @runtime_checkable
-class StreamPort(Protocol):
+class StreamProtocol(Protocol):
     async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem: ...
 
     async def read_all(self, stream: str) -> list[StreamItem]: ...

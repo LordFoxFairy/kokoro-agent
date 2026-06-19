@@ -14,14 +14,14 @@ from kokoro_agent.infrastructure.control import (
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.permission.rules import tool_allowed
-from kokoro_agent.infrastructure.transport import StreamPort
+from kokoro_agent.infrastructure.transport import StreamProtocol
 
 
 def gate_tools_interactive(
     tools: Sequence[StructuredTool],
     mode: PermissionMode,
     run_id: str,
-    port: StreamPort,
+    port: StreamProtocol,
 ) -> list[StructuredTool]:
     """交互式门控：被门控工具调用时阻塞等审批（control 流），approve 跑真工具 / reject 回拒绝。
     translator 在 tool.invoked 后补 tool.awaiting_approval 让前端弹审批（见 drive_agent_events）。"""
@@ -40,7 +40,7 @@ def gate_tools_interactive(
 def _approval_gate(
     tool: StructuredTool,
     run_id: str,
-    port: StreamPort,
+    port: StreamProtocol,
     cursor: DecisionCursor,
 ) -> StructuredTool:
     async def gated_async(**kwargs: JsonValue) -> str:

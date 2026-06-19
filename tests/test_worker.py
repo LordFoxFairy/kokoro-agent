@@ -21,8 +21,8 @@ from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistr
 
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure.chat_model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
-from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
+from kokoro_agent.infrastructure.model import make_local_fake_chat_model
 from kokoro_agent.interfaces import worker
 from kokoro_agent.interfaces.worker import (
     MAX_PROCESSED_RUN_IDS,

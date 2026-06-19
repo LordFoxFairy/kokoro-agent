@@ -45,22 +45,24 @@ def _approval_gate(
     cursor: DecisionCursor,
 ) -> StructuredTool:
     async def gated_async(**kwargs: JsonValue) -> str:
-        decision = await await_decision(bus, run_id, cursor)
-        if decision == "cancel":
+        message = await await_decision(bus, run_id, cursor)
+        if message.decision == "cancel":
             # run 级取消独占终止：放弃本次调用让 run_task.cancel 接管，不冒出误导性的工具拒绝结果。
             raise asyncio.CancelledError
-        if decision == "reject":
+        if message.decision == "reject":
             return rejection_result(tool.name)
 
+        # approve：带 args 则用用户在审批暂停时编辑后的参数整体替换，否则用模型原参数。
+        effective: dict[str, JsonValue] = dict(message.args) if message.args is not None else kwargs
         coroutine = tool.coroutine
         if coroutine is not None:
-            return await coroutine(**kwargs)
+            return await coroutine(**effective)
 
         func = tool.func
         if func is None:
             msg = f"tool {tool.name} has no callable execution path"
             raise RuntimeError(msg)
-        return func(**kwargs)
+        return func(**effective)
 
     # 纯异步包装：审批需阻塞等 control 流，无意义的 sync 路径交给 langchain 原生 NotImplementedError。
     return StructuredTool(

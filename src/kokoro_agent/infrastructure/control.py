@@ -22,6 +22,8 @@ class ControlMessage(BaseModel):
 
     kind: Literal["control"]
     decision: ControlDecision
+    # 仅 approve 有意义：用户在审批暂停时编辑后的工具参数，整体替换模型原参数。
+    args: JsonObject | None = None
 
 
 def control_stream(run_id: str) -> str:
@@ -52,8 +54,8 @@ async def await_decision(
     bus: StreamProtocol,
     run_id: str,
     cursor: DecisionCursor | None = None,
-) -> ControlDecision:
-    """阻塞读取 control 流的下一条决定（approve/reject/cancel，从游标之后）。
+) -> ControlMessage:
+    """阻塞读取 control 流的下一条决定（含可选编辑后 args，从游标之后）。
     无超时自动回退：审批需持续等待用户决定。cancel 原样返回给调用方，由其决定终止流程，
     不在此静默吞掉。"""
     from_cursor = cursor.value if cursor is not None else None
@@ -63,9 +65,9 @@ async def await_decision(
             continue
         if cursor is not None:
             cursor.value = item.cursor
-        return message.decision
+        return message
     # 流意外终止（连接断开）→ fail-closed：默认拒绝，不静默放行。
-    return "reject"
+    return ControlMessage(kind="control", decision="reject")
 
 
 async def wait_for_cancel(bus: StreamProtocol, run_id: str) -> None:

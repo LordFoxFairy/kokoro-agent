@@ -1,3 +1,5 @@
+"""deepagents / langchain 反腐层：第三方 Agent SDK 的构造器在此收口为强类型协议。"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
@@ -6,7 +8,7 @@ from typing import Any, Literal, Protocol, TypedDict
 import deepagents
 import langchain.agents
 
-# deepagents exports FilesystemPermission at runtime but omits it from its typed surface.
+# deepagents 运行时导出 FilesystemPermission，但其类型表面省略了它。
 from deepagents.middleware.filesystem import FilesystemPermission  # type: ignore[attr-defined]
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
@@ -15,9 +17,8 @@ from langchain_core.runnables.schema import StreamEvent
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-# The agent SDK is a real, under-typed boundary: reach its constructors through an
-# Any view of the package so their results flow into the typed protocols below
-# without a cast or a per-call ignore.
+# Agent SDK 是真实但弱类型的边界：通过包的 Any 视图拿到其构造器，
+# 使结果直接流入下方强类型协议，无需 cast、也无需逐调用 ignore。
 _deepagents: Any = deepagents
 _langchain_agents: Any = langchain.agents
 _build_deep_agent = _deepagents.create_deep_agent

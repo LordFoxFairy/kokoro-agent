@@ -4,12 +4,10 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict
 
-from kokoro_agent.infrastructure.stream_events.events import (
-    EventHeader,
-    MessageParts,
+from kokoro_agent.domain.registered_subagent import SubagentSource
+from kokoro_agent.domain.stream_intent import (
     StreamIntent,
     SubagentFinished,
-    SubagentSource,
     SubagentStarted,
     TextFinal,
     TextStream,
@@ -17,11 +15,11 @@ from kokoro_agent.infrastructure.stream_events.events import (
     TodoItem,
     TodoStatus,
     TodoUpdated,
-    ToolInput,
     ToolInvoked,
     ToolReturned,
     ToolScalar,
 )
+from kokoro_agent.infrastructure.stream_events.events import EventHeader, MessageParts, ToolInput
 
 
 class TodoItemContract(BaseModel):

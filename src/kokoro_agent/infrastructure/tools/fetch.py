@@ -1,32 +1,11 @@
-"""Kokoro 内置域工具注册表：deepagents 之外、随 worker 出厂的真实工具。"""
-
 from __future__ import annotations
 
 import asyncio
 import ipaddress
 import socket
-from collections.abc import Iterable
-from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from langchain_core.tools import StructuredTool
-
-# deepagents 内置文件/规划/执行工具 + 本仓事件路由名（task/agent 由 stream_events.translate_stream_event 按名分发），撞名即事件族错乱。
-RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "write_todos",
-        "ls",
-        "read_file",
-        "write_file",
-        "edit_file",
-        "glob",
-        "grep",
-        "execute",
-        "task",  # kokoro 路由名：子智能体
-        "agent",  # kokoro 路由名：运行时自定义子智能体
-    }
-)
 
 FETCH_TIMEOUT_S = 10  # per-read 超时（两次字节读取之间）
 FETCH_DEADLINE_S = 15  # 整体墙钟封顶，必须 > FETCH_TIMEOUT_S
@@ -39,22 +18,6 @@ _PRIVATE_NETS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
 )
-
-
-def assert_tool_names_allowed(names: Iterable[str]) -> None:
-    seen: set[str] = set()
-    for name in names:
-        if name in RESERVED_TOOL_NAMES:
-            msg = f"tool name {name!r} collides with a reserved deepagents/router name"
-            raise ValueError(msg)
-        if name in seen:
-            msg = f"duplicate tool name {name!r}"
-            raise ValueError(msg)
-        seen.add(name)
-
-
-def now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def make_http_client() -> httpx.AsyncClient:
@@ -133,19 +96,3 @@ async def fetch_url(url: str) -> str:
     except httpx.HTTPError as error:
         # 工具错误以文本返回：模型可见、可改道，agent 循环不死。
         return f"抓取失败：{type(error).__name__}: {error}"
-
-
-BUILT_IN_TOOLS: list[StructuredTool] = [
-    StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]  # langchain from_function classmethod is partially typed
-        func=now,
-        name="now",
-        description="获取当前本地日期时间（ISO-8601，含时区）。涉及“今天/现在/几点”等时间问题时使用。",
-    ),
-    StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]  # langchain from_function classmethod is partially typed
-        coroutine=fetch_url,
-        name="fetch_url",
-        description=f"抓取一个 http/https 网页并返回其文本内容（最长 {FETCH_MAX_CHARS} 字符，拒绝内网地址）。需要查看网页实际内容时使用。",
-    ),
-]
-
-assert_tool_names_allowed(tool.name for tool in BUILT_IN_TOOLS)

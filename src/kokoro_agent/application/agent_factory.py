@@ -19,7 +19,7 @@ from kokoro_agent.infrastructure.subagent import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
 )
-from kokoro_agent.infrastructure.transport import StreamPort
+from kokoro_agent.infrastructure.transport import StreamProtocol
 
 SYSTEM_PROMPT = (
     "你是 Kokoro，一个温和、克制的助手。遇到多步任务时，先用 write_todos 列出计划"
@@ -42,7 +42,7 @@ def gate_tools_for_run(
     tools: Sequence[StructuredTool],
     permission_mode: PermissionMode,
     run_id: str,
-    control_port: StreamPort | None,
+    control_port: StreamProtocol | None,
 ) -> list[StructuredTool]:
     return (
         gate_tools_interactive(tools, permission_mode, run_id, control_port)
@@ -55,7 +55,7 @@ def build_agent(
     model: BaseChatModel,
     permission_mode: PermissionMode,
     run_id: str,
-    control_port: StreamPort | None,
+    control_port: StreamProtocol | None,
     runtime_registry: RuntimeSubagentRegistry,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> EventStreamingAgent:

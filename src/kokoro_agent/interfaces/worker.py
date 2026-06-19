@@ -16,7 +16,7 @@ from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.control import wait_for_cancel
 from kokoro_agent.infrastructure.json_types import JsonObject
-from kokoro_agent.infrastructure.transport import StreamPort, make_stream_port
+from kokoro_agent.infrastructure.transport import StreamProtocol, make_stream
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 LOGGER = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class ProcessedRunIds:
 
 
 async def _publish_run_failed(
-    port: StreamPort, run_id: str, error_kind: str, message: str
+    port: StreamProtocol, run_id: str, error_kind: str, message: str
 ) -> None:
     failed = AgentEvent(
         kind="run.failed",
@@ -83,7 +83,7 @@ async def _publish_run_failed(
 
 
 async def _run_request(
-    port: StreamPort,
+    port: StreamProtocol,
     request: RunRequest,
     model: BaseChatModel | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
@@ -110,7 +110,7 @@ async def _run_request(
 
 
 async def _handle_request(
-    port: StreamPort,
+    port: StreamProtocol,
     raw: JsonObject,
     processed: ProcessedRunIds,
     model: BaseChatModel | None = None,
@@ -130,7 +130,7 @@ async def _handle_request(
 
 
 async def run_once(
-    port: StreamPort, processed: ProcessedRunIds, model: BaseChatModel | None = None
+    port: StreamProtocol, processed: ProcessedRunIds, model: BaseChatModel | None = None
 ) -> None:
     for item in await port.read_all(REQUESTS_STREAM):
         await _handle_request(
@@ -143,7 +143,7 @@ async def run_once(
 
 
 async def _run_guarded(
-    port: StreamPort, request: RunRequest, sem: asyncio.Semaphore
+    port: StreamProtocol, request: RunRequest, sem: asyncio.Semaphore
 ) -> None:
     async with sem:
         try:
@@ -157,14 +157,14 @@ async def _run_guarded(
 
 
 async def _cancel_on_signal(
-    port: StreamPort, run_id: str, run_task: asyncio.Task[None]
+    port: StreamProtocol, run_id: str, run_task: asyncio.Task[None]
 ) -> None:
     await wait_for_cancel(port, run_id)
     run_task.cancel()
 
 
 async def _run_with_cancel(
-    port: StreamPort, request: RunRequest, sem: asyncio.Semaphore
+    port: StreamProtocol, request: RunRequest, sem: asyncio.Semaphore
 ) -> None:
     run_task = asyncio.create_task(_run_guarded(port, request, sem))
     canceller = asyncio.create_task(_cancel_on_signal(port, request.run_id, run_task))
@@ -187,7 +187,7 @@ async def _run_with_cancel(
             await canceller
 
 
-async def serve(port: StreamPort) -> None:
+async def serve(port: StreamProtocol) -> None:
     processed = ProcessedRunIds()
     sem = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
     tasks: set[asyncio.Task[None]] = set()
@@ -209,7 +209,7 @@ async def serve(port: StreamPort) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
-    port = make_stream_port()
+    port = make_stream()
     LOGGER.info("kokoro-agent worker starting on stream %s", REQUESTS_STREAM)
     asyncio.run(serve(port))
 

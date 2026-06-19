@@ -39,21 +39,21 @@ def _tool(name: str = "fetch_url") -> StructuredTool:
 async def test_await_decision_approve() -> None:
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "approve"})
-    assert await await_decision(bus, "run_1") == "approve"
+    assert (await await_decision(bus, "run_1")).decision == "approve"
 
 
 async def test_await_decision_reject() -> None:
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
-    assert await await_decision(bus, "run_1") == "reject"
+    assert (await await_decision(bus, "run_1")).decision == "reject"
 
 
 async def test_await_decision_cancel_propagates_to_caller() -> None:
     # cancel 是一等决定:必须原样返回给调用方,而非被静默吞掉后阻塞等下一条。
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "cancel"})
-    decision = await asyncio.wait_for(await_decision(bus, "run_1"), timeout=1.0)
-    assert decision == "cancel"
+    message = await asyncio.wait_for(await_decision(bus, "run_1"), timeout=1.0)
+    assert message.decision == "cancel"
 
 
 async def test_await_decision_cancel_advances_cursor() -> None:
@@ -64,8 +64,8 @@ async def test_await_decision_cancel_advances_cursor() -> None:
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
     first = await asyncio.wait_for(await_decision(bus, "run_1", cursor), timeout=1.0)
     second = await asyncio.wait_for(await_decision(bus, "run_1", cursor), timeout=1.0)
-    assert first == "cancel"
-    assert second == "reject"
+    assert first.decision == "cancel"
+    assert second.decision == "reject"
 
 
 async def test_await_decision_skips_message_with_unexpected_fields() -> None:
@@ -75,7 +75,7 @@ async def test_await_decision_skips_message_with_unexpected_fields() -> None:
         control_stream("run_1"), {"kind": "control", "decision": "approve", "injected": "x"}
     )
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
-    assert await await_decision(bus, "run_1") == "reject"
+    assert (await await_decision(bus, "run_1")).decision == "reject"
 
 
 async def test_interactive_gate_approve_runs_real_tool() -> None:
@@ -84,6 +84,18 @@ async def test_interactive_gate_approve_runs_real_tool() -> None:
     gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
     result = await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     assert result == "ran fetch_url http://example.com"
+
+
+async def test_interactive_gate_approve_with_edited_args_runs_with_them() -> None:
+    # HITL 暂停时用户编辑参数:approve 带 args → 工具用编辑后的参数执行,而非模型原参数。
+    bus = MemoryStream()
+    await bus.publish(
+        control_stream("run_1"),
+        {"kind": "control", "decision": "approve", "args": {"x": "edited://by-user"}},
+    )
+    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
+    result = await gated[0].ainvoke({"x": "http://original"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert result == "ran fetch_url edited://by-user"
 
 
 async def test_interactive_gate_reject_returns_rejection() -> None:
@@ -111,8 +123,8 @@ async def test_await_decision_advances_cursor_across_tools() -> None:
     cursor = DecisionCursor()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "approve"})
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
-    assert await await_decision(bus, "run_1", cursor) == "approve"
-    assert await await_decision(bus, "run_1", cursor) == "reject"
+    assert (await await_decision(bus, "run_1", cursor)).decision == "approve"
+    assert (await await_decision(bus, "run_1", cursor)).decision == "reject"
 
 
 async def test_interactive_gate_auto_passes_through() -> None:

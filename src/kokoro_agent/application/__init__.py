@@ -1,1 +1,1 @@
-"""Application layer: orchestrates a run from request to event stream."""
+"""应用层：把一次 run 从请求编排到事件流输出。"""

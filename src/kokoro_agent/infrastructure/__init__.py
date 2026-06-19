@@ -1,1 +1,1 @@
-"""Infrastructure adapters and stream event package for kokoro-agent."""
+"""基础设施层：kokoro-agent 的外部集成与流事件子系统。"""

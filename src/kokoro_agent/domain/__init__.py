@@ -1,1 +1,1 @@
-"""Domain layer: pure execution-side contracts (events, run request, subagents)."""
+"""领域层：执行侧的纯契约（事件、运行请求、子代理）。"""

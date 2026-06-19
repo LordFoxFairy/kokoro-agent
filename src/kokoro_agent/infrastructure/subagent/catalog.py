@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Annotated, Final
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 
-from kokoro_agent.domain.registered_subagent import RegisteredSubagent
+from kokoro_agent.domain.registered_subagent import RegisteredSubagent, SubagentSource
 
 CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
 
@@ -50,27 +51,53 @@ BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
 )
 
 
-def load_custom_subagents_from_env(env: dict[str, str] | None = None) -> list[RegisteredSubagent]:
-    source = env if env is not None else dict(os.environ)
+class SubagentCatalog(Mapping[str, RegisteredSubagent]):
+    """按 name 索引的不可变子代理目录：唯一性校验在构建处一次性收口。"""
+
+    __slots__ = ("_by_name",)
+
+    def __init__(self, specs: Iterable[RegisteredSubagent]) -> None:
+        by_name: dict[str, RegisteredSubagent] = {}
+        for spec in specs:
+            if spec.name in by_name:
+                msg = f"duplicate or reserved subagent name: {spec.name}"
+                raise ValueError(msg)
+            by_name[spec.name] = spec
+        self._by_name = by_name
+
+    def __getitem__(self, name: str) -> RegisteredSubagent:
+        return self._by_name[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._by_name)
+
+    def __len__(self) -> int:
+        return len(self._by_name)
+
+    def source_for(self, name: str) -> SubagentSource:
+        spec = self._by_name.get(normalize_subagent_name(name))
+        if spec is None:
+            msg = f"unknown subagent name: {name.strip()}"
+            raise ValueError(msg)
+        return spec.source
+
+
+def load_custom_subagents_from_env(env: Mapping[str, str] | None = None) -> list[RegisteredSubagent]:
+    source = env if env is not None else os.environ
     raw = source.get(CUSTOM_SUBAGENTS_ENV)
     if not raw:
         return []
 
     payloads = _CUSTOM_PAYLOADS.validate_python(json.loads(raw))
-    built_in_names = {spec.name for spec in BUILT_IN_SUBAGENTS}
-    custom: list[RegisteredSubagent] = []
-    seen_names: set[str] = set()
-    for payload in payloads:
-        if payload.name in built_in_names or payload.name in seen_names:
-            msg = f"duplicate or reserved subagent name: {payload.name}"
-            raise ValueError(msg)
-        seen_names.add(payload.name)
-        custom.append(
-            RegisteredSubagent(
-                name=payload.name,
-                description=payload.description,
-                system_prompt=payload.system_prompt,
-                source="config-custom",
-            )
+    custom = [
+        RegisteredSubagent(
+            name=payload.name,
+            description=payload.description,
+            system_prompt=payload.system_prompt,
+            source="config-custom",
         )
+        for payload in payloads
+    ]
+    # 借目录构建的唯一性校验拦截内部重名与内建保留名冲突，避免本处再造一份。
+    SubagentCatalog((*BUILT_IN_SUBAGENTS, *custom))
     return custom

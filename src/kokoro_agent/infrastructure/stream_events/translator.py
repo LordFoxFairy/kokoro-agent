@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from langchain_core.runnables.schema import StreamEvent
 
 from kokoro_agent.infrastructure.control import rejection_result
@@ -27,7 +29,13 @@ from kokoro_agent.domain.stream_intent import (
     ToolReturned,
 )
 from kokoro_agent.infrastructure.stream_events.parsed_event import MessageParts, ToolInput
-from kokoro_agent.infrastructure.subagent import subagent_source_for
+from kokoro_agent.domain.registered_subagent import SubagentSource
+from kokoro_agent.infrastructure.subagent import (
+    BUILT_IN_SUBAGENTS,
+    CUSTOM_SUBAGENTS_ENV,
+    SubagentCatalog,
+    load_custom_subagents_from_env,
+)
 from kokoro_agent.infrastructure.constants import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
@@ -35,6 +43,24 @@ from kokoro_agent.infrastructure.constants import (
 )
 
 TOOL_RESULT_MAX_CHARS = 8_000
+
+# 单槽缓存：env 载荷未变则逐事件复用同一份不可变目录，env 变更即替换，免每事件重建+校验。
+_cached_catalog: tuple[str | None, SubagentCatalog] | None = None
+
+
+def _env_catalog() -> SubagentCatalog:
+    global _cached_catalog
+    raw = os.environ.get(CUSTOM_SUBAGENTS_ENV)
+    if _cached_catalog is None or _cached_catalog[0] != raw:
+        _cached_catalog = (
+            raw,
+            SubagentCatalog((*BUILT_IN_SUBAGENTS, *load_custom_subagents_from_env())),
+        )
+    return _cached_catalog[1]
+
+
+def _source_for(subagent_type: str) -> SubagentSource:
+    return _env_catalog().source_for(subagent_type)
 
 
 def _truncated(result: str) -> str:
@@ -51,7 +77,7 @@ def _subagent_started(tool_id: str, name: str, tool_input: ToolInput) -> Subagen
             name=subagent_type,
             description=tool_input.description,
             subagent_type=subagent_type,
-            source=subagent_source_for(subagent_type),
+            source=_source_for(subagent_type),
         )
     if name == RUNTIME_SUBAGENT_TOOL_NAME:
         runtime_name = tool_input.name or "runtime-subagent"
@@ -79,7 +105,7 @@ def _subagent_finished(tool_id: str, name: str, tool_input: ToolInput) -> Subage
             subagent_id=tool_id,
             name=subagent_type,
             subagent_type=subagent_type,
-            source=subagent_source_for(subagent_type),
+            source=_source_for(subagent_type),
         )
     if name == RUNTIME_SUBAGENT_TOOL_NAME:
         runtime_name = tool_input.name or "runtime-subagent"

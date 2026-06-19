@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from kokoro_agent.infrastructure.constants import (
     RUNTIME_SUBAGENT_TOOL_NAME,
@@ -38,16 +39,27 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
         seen.add(name)
 
 
+# 直接构造而非 from_function：后者的 classmethod 仅部分类型化，pyright strict 会判 Unknown。
+class _NowArgs(BaseModel):
+    pass
+
+
+class _FetchUrlArgs(BaseModel):
+    url: str = Field(description="目标 http/https URL")
+
+
 BUILT_IN_TOOLS: list[StructuredTool] = [
-    StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]  # langchain from_function classmethod is partially typed
-        func=now,
+    StructuredTool(
         name="now",
         description="获取当前本地日期时间（ISO-8601，含时区）。涉及“今天/现在/几点”等时间问题时使用。",
+        args_schema=_NowArgs,
+        func=now,
     ),
-    StructuredTool.from_function(  # pyright: ignore[reportUnknownMemberType]  # langchain from_function classmethod is partially typed
-        coroutine=fetch_url,
+    StructuredTool(
         name="fetch_url",
         description=f"抓取一个 http/https 网页并返回其文本内容（最长 {FETCH_MAX_CHARS} 字符，拒绝内网地址）。需要查看网页实际内容时使用。",
+        args_schema=_FetchUrlArgs,
+        coroutine=fetch_url,
     ),
 ]
 

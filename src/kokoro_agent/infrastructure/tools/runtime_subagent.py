@@ -8,7 +8,7 @@ from typing import Annotated, TypeGuard
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
 from kokoro_agent.infrastructure.stream_events import message_parts, result_messages
@@ -16,12 +16,11 @@ from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-# deepagents runner 返回的是含 BaseMessage 的进程内对象（非 JSON），故在此以 object 边界收口。
+# deepagents runner 结果是进程内不透明对象（非 JSON），值类型在此真实收口为 object。
 _RunnerResult = Mapping[str, object]
 
 
-# 两段式 TypeGuard：先把 object 收窄到键值均为 object 的 Mapping（避免 pyright 把内容判为 Unknown），
-# 再校验键全为 str，方能安全交给 result_messages。
+# 两段收窄：先到 object-keyed Mapping 避免 pyright 判 Unknown，再断言键全为 str。
 def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
@@ -39,6 +38,9 @@ def _runtime_result_messages(result: object) -> list[BaseMessage]:
 
 
 class RuntimeSubagentToolInput(BaseModel):
+    # LLM 外部边界：拒收未知字段、禁止隐式类型转换。
+    model_config = ConfigDict(strict=True, extra="forbid")
+
     name: _NonEmpty = Field(description="运行时自定义子代理的名称")
     description: _NonEmpty = Field(description="角色或职责的简短描述")
     system_prompt: _NonEmpty = Field(description="该运行时自定义子代理的系统提示词")

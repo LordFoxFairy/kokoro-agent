@@ -3,11 +3,43 @@ from __future__ import annotations
 import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from pydantic import ValidationError
 
 from kokoro_agent.infrastructure.model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.tools import runtime_subagent
-from kokoro_agent.infrastructure.tools.runtime_subagent import build_runtime_custom_subagent_tool
+from kokoro_agent.infrastructure.tools.runtime_subagent import (
+    RuntimeSubagentToolInput,
+    build_runtime_custom_subagent_tool,
+)
 from kokoro_agent.infrastructure.subagent import CUSTOM_SUBAGENTS_ENV, RuntimeSubagentRegistry
+
+
+def _valid_input_fields() -> dict[str, str]:
+    return {
+        "name": "reviewer",
+        "description": "审稿",
+        "system_prompt": "检查一致性",
+        "task": "复查",
+    }
+
+
+def test_tool_input_rejects_unknown_field() -> None:
+    # LLM 边界：未知字段必须被拒（extra='forbid'），不得静默吞下。
+    payload = {**_valid_input_fields(), "injected": "x"}
+    with pytest.raises(ValidationError):
+        RuntimeSubagentToolInput.model_validate(payload)
+
+
+def test_tool_input_rejects_non_string_value() -> None:
+    # strict 模式：类型不符不得隐式转换（lax 会把 bytes 解码为 str）。
+    payload = {**_valid_input_fields(), "name": b"reviewer"}
+    with pytest.raises(ValidationError):
+        RuntimeSubagentToolInput.model_validate(payload)
+
+
+def test_tool_input_accepts_well_formed_payload() -> None:
+    parsed = RuntimeSubagentToolInput.model_validate(_valid_input_fields())
+    assert parsed.name == "reviewer"
 
 
 def test_runtime_registry_registers_runtime_custom_source() -> None:
@@ -55,8 +87,20 @@ def _patch_runner(
     return seen_prompts
 
 
-def test_runtime_result_messages_rejects_non_mapping_result() -> None:
-    assert runtime_subagent._runtime_result_messages(["not", "mapping"]) == []
+async def test_agent_runtime_returns_empty_for_non_mapping_runner_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # runner 返回非 Mapping（不透明对象边界），工具须降级为空串而非崩溃。
+    registry = RuntimeSubagentRegistry()
+    _patch_runner(monkeypatch, ["not", "mapping"])
+    tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
+
+    assert tool.coroutine is not None
+    result = await tool.coroutine(
+        name="reviewer", description="审稿", system_prompt="检查", task="复查"
+    )
+
+    assert result == ""
 
 
 async def test_agent_runtime_registers_new_name_and_returns_text(
@@ -195,6 +239,6 @@ def test_runtime_subagent_tool_is_async_only() -> None:
 
     assert tool.func is None
     with pytest.raises(NotImplementedError):
-        tool.invoke(
+        tool.run(
             {"name": "reviewer", "description": "审稿", "system_prompt": "检查", "task": "复查"}
         )

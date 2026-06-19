@@ -35,16 +35,15 @@ def tool_invoked_payload(segment_id: str, tool: ToolInvoked) -> dict[str, JsonVa
 
 
 def tool_returned_payload(segment_id: str, tool: ToolReturned) -> dict[str, JsonValue]:
-    payload: dict[str, JsonValue] = {
+    # rejected 始终随载荷输出，对齐 agent_event 契约的 tool.returned 形状。
+    return {
         "segment_id": segment_id,
         "tool_id": tool.tool_id,
         "name": tool.name,
         "result": tool.result,
         "is_error": tool.is_error,
+        "rejected": tool.rejected,
     }
-    if tool.rejected:
-        payload["rejected"] = True
-    return payload
 
 
 def subagent_started_payload(segment_id: str, sub: SubagentStarted) -> dict[str, JsonValue]:

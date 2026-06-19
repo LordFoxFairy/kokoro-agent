@@ -1,3 +1,5 @@
+"""流事件子系统：把 LangChain 事件翻译为领域 StreamIntent 并提供契约镜像。"""
+
 from .adapter import (
     message_parts,
     read_chunk,

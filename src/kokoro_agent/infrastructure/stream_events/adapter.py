@@ -1,3 +1,5 @@
+"""LangChain StreamEvent 边界适配器：把未类型化事件读成强类型值对象。"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -153,8 +155,7 @@ def read_ai_message(event: StreamEvent) -> AIMessage | None:
 
 
 def _reasoning_override(message: BaseMessage) -> str | None:
-    # langchain types additional_kwargs as a bare dict; the boundary's unknown
-    # value type is contained to this single access.
+    # langchain 把 additional_kwargs 标成裸 dict；未知值类型的边界仅收口在这一处访问。
     value = message.additional_kwargs.get("reasoning_content")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     return value if isinstance(value, str) and value else None
 

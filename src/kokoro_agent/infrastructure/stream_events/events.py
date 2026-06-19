@@ -1,3 +1,5 @@
+"""流事件的基础设施值对象与工具名常量（解析层内部使用）。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

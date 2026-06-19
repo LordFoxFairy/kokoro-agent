@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
@@ -43,6 +45,26 @@ async def test_await_decision_reject() -> None:
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
     assert await await_decision(bus, "run_1") == "reject"
+
+
+async def test_await_decision_cancel_propagates_to_caller() -> None:
+    # cancel 是一等决定:必须原样返回给调用方,而非被静默吞掉后阻塞等下一条。
+    bus = MemoryStream()
+    await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "cancel"})
+    decision = await asyncio.wait_for(await_decision(bus, "run_1"), timeout=1.0)
+    assert decision == "cancel"
+
+
+async def test_await_decision_cancel_advances_cursor() -> None:
+    # cancel 也是一条被消费的决定:推进游标,下一个门控工具不重读它。
+    bus = MemoryStream()
+    cursor = DecisionCursor()
+    await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "cancel"})
+    await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
+    first = await asyncio.wait_for(await_decision(bus, "run_1", cursor), timeout=1.0)
+    second = await asyncio.wait_for(await_decision(bus, "run_1", cursor), timeout=1.0)
+    assert first == "cancel"
+    assert second == "reject"
 
 
 async def test_await_decision_skips_message_with_unexpected_fields() -> None:

@@ -1,3 +1,5 @@
+"""传输契约：事件流端口协议与流条目（后端无关的抽象）。"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping

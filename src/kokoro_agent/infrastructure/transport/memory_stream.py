@@ -1,3 +1,5 @@
+"""内存事件流：单进程默认后端，发布即深拷贝隔离，订阅靠 asyncio.Event 唤醒。"""
+
 from __future__ import annotations
 
 import asyncio

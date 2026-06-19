@@ -1,3 +1,5 @@
+"""按权限/执行风格构建 worker 的聊天模型（含离线假模型短路）。"""
+
 from __future__ import annotations
 
 import os
@@ -62,9 +64,8 @@ def _make_anthropic_chat_model(settings: ChatModelSettings, style: ExecutionStyl
 
 
 def make_chat_model(execution_style: str = "fast") -> BaseChatModel:
-    """Build the worker's chat model: a credential-free local fake when
-    ``KOKORO_LOCAL_FAKE_MODEL=1``, else resolved per request from the
-    environment so fast/thinking differ without a restart."""
+    """构建 worker 的聊天模型：``KOKORO_LOCAL_FAKE_MODEL=1`` 时用免凭证的本地假模型，
+    否则每请求从环境变量解析，使 fast/thinking 无需重启即可切换。"""
     if os.environ.get(LOCAL_FAKE_MODEL_FLAG) == "1":
         return make_local_fake_chat_model()
     settings = ChatModelSettings.from_env()

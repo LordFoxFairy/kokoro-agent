@@ -1,3 +1,5 @@
+"""聊天模型的进程级稳定参数：启动时从环境变量读一次。"""
+
 from __future__ import annotations
 
 import os
@@ -19,10 +21,10 @@ def _split_model_spec(spec: str) -> tuple[str, str]:
 
 
 class ChatModelSettings(BaseModel):
-    """Process-stable chat-model parameters, read once from the environment.
+    """进程级稳定的聊天模型参数，从环境变量读取一次。
 
-    execution_style (fast/thinking) is per-request and stays a make_chat_model
-    argument, not part of these settings.
+    execution_style（fast/thinking）是每请求维度的，仍作为 make_chat_model
+    的入参，不归入这份设置。
     """
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")

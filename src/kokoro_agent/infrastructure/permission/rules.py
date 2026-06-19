@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from kokoro_agent.domain.run_request import PermissionMode
-from kokoro_agent.infrastructure.agent_adapter import FilesystemPermission
+from kokoro_agent.infrastructure.agent_builder import FilesystemPermission
 from kokoro_agent.infrastructure.permission.policy import approval_policy
 
 

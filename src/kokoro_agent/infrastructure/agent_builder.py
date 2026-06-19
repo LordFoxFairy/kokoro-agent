@@ -1,4 +1,4 @@
-"""deepagents / langchain 反腐层：第三方 Agent SDK 的构造器在此收口为强类型协议。"""
+"""构造层：把 langchain / deepagents 的 agent 与 runner 构造成强类型协议。"""
 
 from __future__ import annotations
 

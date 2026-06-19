@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, StringConstraints
 
-from kokoro_agent.infrastructure.agent_adapter import AsyncRunner, make_subagent_runner
+from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
 from kokoro_agent.infrastructure.stream_events import RUNTIME_SUBAGENT_TOOL_NAME, message_parts, result_messages
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
 

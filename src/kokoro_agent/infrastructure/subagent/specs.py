@@ -1,3 +1,5 @@
+"""子代理规格汇编：合并内建/配置/运行时来源并物化为 deepagents SubAgent。"""
+
 from __future__ import annotations
 
 from deepagents.middleware.subagents import SubAgent

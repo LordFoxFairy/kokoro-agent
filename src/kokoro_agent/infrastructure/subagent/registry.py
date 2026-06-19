@@ -1,3 +1,5 @@
+"""运行时子代理注册表：进程内登记模型临时创建的子代理。"""
+
 from __future__ import annotations
 
 from kokoro_agent.domain.registered_subagent import RegisteredSubagent

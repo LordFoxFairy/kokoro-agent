@@ -8,7 +8,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from kokoro_agent.application.agent_event_driver import ASTREAM_TIMEOUT_S, drive_agent_events
+from kokoro_agent.application.agent_event_driver import drive_agent_events
 from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.application.event_stream import StreamProtocol
 from kokoro_agent.domain.agent_event import AgentEvent
@@ -70,5 +70,5 @@ async def run_agent(
         version="v2",
         config=config,
     )
-    async for event in drive_agent_events(req.run_id, raw_events, awaiting_tools, ASTREAM_TIMEOUT_S):
+    async for event in drive_agent_events(req.run_id, raw_events, awaiting_tools):
         yield event

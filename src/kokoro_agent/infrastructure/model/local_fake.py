@@ -1,18 +1,18 @@
+"""离线确定性假聊天模型：无需凭证即可驱动真实 DeepAgents 循环。"""
+
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any, TypeAlias
+from collections.abc import Sequence
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
-from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
-# Deterministic offline script (write_todos call, then a final answer) that drives
-# the real DeepAgents loop, which GenericFakeChatModel can't (no bind_tools).
+# 离线确定性脚本（先 write_todos，再给最终答案），驱动真实 DeepAgents 循环；
+# GenericFakeChatModel 没有 bind_tools，做不到这点。
 _PLAN: list[dict[str, str]] = [
     {"content": "理解请求并规划", "status": "completed"},
     {"content": "用本地预览作答", "status": "in_progress"},
@@ -21,8 +21,6 @@ _FINAL_TEXT = (
     "本地预览：DeepAgents 活动流已接通（思考 / 工具 / todo / 子智能体）。"
     "配置真实模型（KOKORO_MODEL + 凭证）后，这里会是真实的多步回答。"
 )
-
-_ToolLike: TypeAlias = dict[str, Any] | type | Callable[..., Any] | BaseTool
 
 
 def _script() -> list[AIMessage]:
@@ -50,13 +48,11 @@ def _script() -> list[AIMessage]:
 
 
 class LocalFakeChatModel(BaseChatModel):
-    """Deterministic, credential-free chat model that supports tool-calling.
+    """支持工具调用的确定性、免凭证假模型。
 
-    Lets the real DeepAgents loop run offline: returns a fixed script (a
-    ``write_todos`` tool call, then a final answer). ``bind_tools`` is accepted
-    and ignored (the script is fixed). The cursor resets on the first model call
-    of a run (no prior ``AIMessage`` in the input), so a long-lived worker reusing
-    one instance still works across runs.
+    让真实 DeepAgents 循环离线可跑：返回固定脚本（先一个 ``write_todos`` 工具调用，
+    再给最终答案）。``bind_tools`` 被接受但忽略（脚本固定）。游标在一轮的首个模型调用
+    （输入里尚无 ``AIMessage``）时归零，因此长驻 worker 复用同一实例也能跨轮正常工作。
     """
 
     _cursor: int = PrivateAttr(default=0)
@@ -68,13 +64,12 @@ class LocalFakeChatModel(BaseChatModel):
 
     def bind_tools(
         self,
-        tools: Sequence[_ToolLike],
+        tools: Sequence[object],
         *,
         tool_choice: str | None = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> Runnable[LanguageModelInput, AIMessage]:
-        # Binding is ignored (script is fixed), but the method must exist: deep
-        # agents call bind_tools and the base class raises NotImplementedError.
+        # 忽略绑定（脚本固定），但方法必须存在：deep agents 会调 bind_tools，否则基类抛 NotImplementedError。
         return self.with_types(output_type=AIMessage)
 
     def _generate(
@@ -82,15 +77,15 @@ class LocalFakeChatModel(BaseChatModel):
         messages: list[BaseMessage],
         stop: list[str] | None = None,
         run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> ChatResult:
         if not any(isinstance(message, AIMessage) for message in messages):
-            self._cursor = 0  # first call of a fresh run → restart the script
+            self._cursor = 0  # 一轮的首个调用 → 重启脚本
         if self._cursor < len(self._turns):
             reply = self._turns[self._cursor]
             self._cursor += 1
         else:
-            reply = AIMessage(content="")  # terminate any extra loop turn
+            reply = AIMessage(content="")  # 多出的循环轮次直接终止
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
 

@@ -1,3 +1,5 @@
+"""领域层：Agent 运行时产出的语义意图，与具体传输/框架解耦。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,6 +7,7 @@ from typing import Literal, TypeAlias
 
 from kokoro_agent.domain.registered_subagent import SubagentSource
 
+# 工具参数标量：仅允许 JSON 原生标量，复杂值在边界处已被拍平。
 ToolScalar: TypeAlias = str | int | float | bool | None
 TodoStatus: TypeAlias = Literal["pending", "in_progress", "completed"]
 
@@ -68,6 +71,7 @@ class TextFinal:
     text: str
 
 
+# 上游消费的意图联合体：翻译层对每个流事件只产出其中之一。
 StreamIntent: TypeAlias = (
     TodoUpdated
     | ToolInvoked

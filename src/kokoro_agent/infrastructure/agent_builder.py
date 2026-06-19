@@ -17,8 +17,8 @@ from langchain_core.runnables.schema import StreamEvent
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-# Agent SDK 是真实但弱类型的边界：通过包的 Any 视图拿到其构造器，
-# 使结果直接流入下方强类型协议，无需 cast、也无需逐调用 ignore。
+# deepagents/langchain.agents 对外缺少完整类型声明；经包的 Any 视图取得构造函数，
+# 使结果直接流入下方强类型 Protocol，免去 cast 与逐调用 type: ignore。
 _deepagents: Any = deepagents
 _langchain_agents: Any = langchain.agents
 _build_deep_agent = _deepagents.create_deep_agent
@@ -54,7 +54,8 @@ class EventStreamingAgent(Protocol):
 
 
 class AsyncRunner(Protocol):
-    async def ainvoke(self, input: dict[str, list[dict[str, str]]]) -> object: ...
+    # 返回 object：runner 结果是进程内不透明对象，由调用方按需收窄。
+    async def ainvoke(self, payload: dict[str, list[dict[str, str]]]) -> object: ...
 
 
 def make_deep_agent(

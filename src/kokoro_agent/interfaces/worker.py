@@ -53,8 +53,7 @@ def _parse_request(raw: JsonObject) -> RunRequest | None:
 
 
 class ProcessedRunIds:
-    """有界、按插入序的已处理 run id 集合：超过上限即逐出最旧的，
-    使长驻 worker 的内存不会无限增长。"""
+    """有界、按插入序的已处理 run id 集合：超过上限即逐出最旧项，限制长驻 worker 的内存增长。"""
 
     def __init__(self, max_size: int = MAX_PROCESSED_RUN_IDS) -> None:
         self._ids: dict[str, None] = {}
@@ -112,6 +111,23 @@ async def _run_request(
         await bus.publish(stream, event.model_dump())
 
 
+async def _admit_request(
+    bus: StreamProtocol, raw: JsonObject, processed: ProcessedRunIds
+) -> RunRequest | None:
+    """校验并去重一条 run.request：非法发布 run.failed，已处理跳过，否则登记并返回待执行请求。"""
+    request = _parse_request(raw)
+    if request is None:
+        run_id = _run_id_of(raw)
+        if run_id is not None:
+            await _publish_run_failed(bus, run_id, "ValidationError", "invalid run.request")
+        return None
+    if request.run_id in processed:
+        LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
+        return None
+    processed.add(request.run_id)
+    return request
+
+
 async def _handle_request(
     bus: StreamProtocol,
     raw: JsonObject,
@@ -119,17 +135,9 @@ async def _handle_request(
     model: BaseChatModel | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> None:
-    request = _parse_request(raw)
-    if request is None:
-        run_id = _run_id_of(raw)
-        if run_id is not None:
-            await _publish_run_failed(bus, run_id, "ValidationError", "invalid run.request")
-        return
-    if request.run_id in processed:
-        LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
-        return
-    processed.add(request.run_id)
-    await _run_request(bus, request, model, checkpointer)
+    request = await _admit_request(bus, raw, processed)
+    if request is not None:
+        await _run_request(bus, request, model, checkpointer)
 
 
 async def run_once(
@@ -195,15 +203,9 @@ async def serve(bus: StreamProtocol) -> None:
     sem = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
     tasks: set[asyncio.Task[None]] = set()
     async for item in bus.subscribe(REQUESTS_STREAM):
-        request = _parse_request(item.event)
+        request = await _admit_request(bus, item.event, processed)
         if request is None:
-            run_id = _run_id_of(item.event)
-            if run_id is not None:
-                await _publish_run_failed(bus, run_id, "ValidationError", "invalid run.request")
             continue
-        if request.run_id in processed:
-            continue
-        processed.add(request.run_id)
         task = asyncio.create_task(_run_with_cancel(bus, request, sem))
         tasks.add(task)
         task.add_done_callback(tasks.discard)

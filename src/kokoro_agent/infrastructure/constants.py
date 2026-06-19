@@ -1,4 +1,4 @@
-"""基础设施层 leaf：tools 与 stream_events 共享的工具名身份（零依赖，单一真理源）。"""
+"""DeepAgents 与事件路由共用的工具名常量。"""
 
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 from langchain_core.tools import StructuredTool
 
-from kokoro_agent.infrastructure.tool_names import (
+from kokoro_agent.infrastructure.constants import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
     TODO_TOOL_NAME,
@@ -18,7 +18,7 @@ from kokoro_agent.infrastructure.tools.fetch import FETCH_MAX_CHARS, fetch_url
 _DEEPAGENTS_BUILTIN_TOOLS: frozenset[str] = frozenset(
     {"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
 )
-# 撞名即事件族错乱：deepagents 内置 + 本仓路由名（write_todos/task/agent 由 translator 按名分发）。
+# 保留名集合：工具名与之冲突会破坏 translator 的事件分发（deepagents 内置 + 本仓路由名 write_todos/task/agent）。
 RESERVED_TOOL_NAMES: frozenset[str] = _DEEPAGENTS_BUILTIN_TOOLS | {
     TODO_TOOL_NAME,
     SUBAGENT_TOOL_NAME,

@@ -27,7 +27,7 @@ from kokoro_agent.domain.stream_intent import (
     ToolScalar,
 )
 from .parsed_event import EventHeader, MessageParts, ToolInput
-from kokoro_agent.infrastructure.tool_names import (
+from kokoro_agent.infrastructure.constants import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
     TODO_TOOL_NAME,

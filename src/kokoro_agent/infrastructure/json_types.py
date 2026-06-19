@@ -1,45 +1,20 @@
+"""基础设施层：流事件 JSON 载荷的边界校验与深拷贝。"""
+
 from __future__ import annotations
 
 import copy
-from typing import TypeAlias, TypeGuard
+from typing import TypeAlias
 
-JsonScalar: TypeAlias = str | int | float | bool | None
-JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+from pydantic import JsonValue, TypeAdapter
+
 JsonObject: TypeAlias = dict[str, JsonValue]
 
-
-def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(value, dict)
-
-
-def _is_object_list(value: object) -> TypeGuard[list[object]]:
-    return isinstance(value, list)
-
-
-def _coerce_json_value(value: object) -> JsonValue:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if _is_object_list(value):
-        return [_coerce_json_value(item) for item in value]
-    if _is_object_dict(value):
-        result: JsonObject = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ValueError("stream event object keys must be strings")
-            result[key] = _coerce_json_value(item)
-        return result
-    raise ValueError("stream event values must be JSON-serializable")
+# 边界洗净器：外部 JSON 在此一次性校验为强类型，非法输入直接抛 ValidationError（ValueError 子类）。
+_EVENT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 def validate_event(event: object) -> JsonObject:
-    if not _is_object_dict(event):
-        raise ValueError("stream event must be a JSON object")
-    result: JsonObject = {}
-    for key, item in event.items():
-        if not isinstance(key, str):
-            raise ValueError("stream event keys must be strings")
-        result[key] = _coerce_json_value(item)
-    return result
+    return _EVENT_ADAPTER.validate_python(event)
 
 
 def clone_event(event: JsonObject) -> JsonObject:

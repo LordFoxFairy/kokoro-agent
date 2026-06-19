@@ -1,3 +1,5 @@
+"""运行层：装配 agent 并跑 astream_events，逐条吐出 AgentEvent。"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

@@ -1,3 +1,5 @@
+"""事件驱动层：把 StreamIntent 流编排为对外的 AgentEvent 序列（分段/审批/超时收口）。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -24,8 +26,8 @@ from kokoro_agent.infrastructure.stream_events import (
 ASTREAM_TIMEOUT_S = 120
 
 
-# Single source for each AgentEvent payload shape: the driver assigns kind/run_id/seq,
-# these builders own the keys so no shape is hand-spelled twice across the stream loop.
+# 每种 AgentEvent 载荷形状的单一来源：driver 负责 kind/run_id/seq，
+# 这些构造器独占键名，使同一形状不在流循环里被手写两遍。
 def _text_payload(segment_id: str, text: str) -> dict[str, JsonValue]:
     return {"segment_id": segment_id, "text": text}
 
@@ -82,9 +84,8 @@ def _subagent_finished_payload(segment_id: str, sub: SubagentFinished) -> dict[s
 
 
 class _Segmenter:
-    """The open output segment: a fresh, globally-unique segment id opens on first
-    content or after the previous segment completed, so tool→text→tool→text stays
-    unmerged into one. The agent assigns the id; session transmits it verbatim."""
+    """当前输出分段：首段内容或上一段结束后都会开一个全局唯一的新 segment id，
+    使 tool→text→tool→text 不被并成一段。id 由 agent 分配，session 原样透传。"""
 
     def __init__(self, run_id: str) -> None:
         self._run_id = run_id
@@ -269,7 +270,7 @@ async def drive_agent_events(
                         case _:
                             continue
         yield AgentEvent(kind="run.completed", run_id=run_id, seq=next_seq(), payload={"status": "completed"})
-    except Exception as error:  # noqa: BLE001 — boundary: any failure -> run.failed
+    except Exception as error:  # noqa: BLE001 — 边界：任何失败都收口成 run.failed
         yield AgentEvent(
             kind="run.failed",
             run_id=run_id,

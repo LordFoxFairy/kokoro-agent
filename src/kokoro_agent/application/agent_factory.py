@@ -9,7 +9,6 @@ from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.agent_builder import EventStreamingAgent, make_deep_agent
 from kokoro_agent.infrastructure.permission import (
-    fs_permissions,
     gate_tools,
     gate_tools_interactive,
 )
@@ -47,5 +46,7 @@ def build_agent(
         system_prompt=SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
         checkpointer=checkpointer,
-        permissions=fs_permissions(permission_mode),
+        # 当前不按档位限制文件系统：plan=交互审批(外部敏感工具暂停等批准)而非只读;
+        # FS 写工具属 deepagents 中间件、FilesystemPermission 仅 allow/deny 无法审批化。
+        permissions=[],
     )

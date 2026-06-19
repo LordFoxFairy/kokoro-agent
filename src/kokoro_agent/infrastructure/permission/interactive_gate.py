@@ -1,3 +1,5 @@
+"""交互门控：被拦工具运行时阻塞等待 control 流的人工审批决定。"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

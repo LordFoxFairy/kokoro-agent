@@ -1,3 +1,5 @@
+"""运行时自定义子代理工具：模型按需临时创建并运行一个专用子代理。"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -13,9 +15,12 @@ from kokoro_agent.infrastructure.stream_events import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# deepagents runner 返回的是含 BaseMessage 的进程内对象（非 JSON），故在此以 object 边界收口。
 _RunnerResult = Mapping[str, object]
 
 
+# 两段式 TypeGuard：先把 object 收窄到键值均为 object 的 Mapping（避免 pyright 把内容判为 Unknown），
+# 再校验键全为 str，方能安全交给 result_messages。
 def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
@@ -33,10 +38,10 @@ def _runtime_result_messages(result: object) -> list[BaseMessage]:
 
 
 class RuntimeSubagentToolInput(BaseModel):
-    name: _NonEmpty = Field(description="Runtime custom subagent name")
-    description: _NonEmpty = Field(description="Short role or responsibility summary")
-    system_prompt: _NonEmpty = Field(description="System prompt for the runtime custom subagent")
-    task: _NonEmpty = Field(description="The concrete task the runtime custom subagent should perform")
+    name: _NonEmpty = Field(description="运行时自定义子代理的名称")
+    description: _NonEmpty = Field(description="角色或职责的简短描述")
+    system_prompt: _NonEmpty = Field(description="该运行时自定义子代理的系统提示词")
+    task: _NonEmpty = Field(description="要交给该运行时自定义子代理执行的具体任务")
 
 
 def _make_runner(model: BaseChatModel, system_prompt: str, name: str) -> AsyncRunner:
@@ -101,9 +106,8 @@ def build_runtime_custom_subagent_tool(
     return StructuredTool(
         name=RUNTIME_SUBAGENT_TOOL_NAME,
         description=(
-            "Create and run a runtime custom subagent. Use this when you need an ad-hoc"
-            " specialized helper that is not part of the built-in or config-defined"
-            " subagent set."
+            "创建并运行一个运行时自定义子代理。当你需要一个临时的、专门的助手，"
+            "且它不属于内建或配置定义的子代理集合时使用。"
         ),
         args_schema=RuntimeSubagentToolInput,
         func=agent_runtime_sync,

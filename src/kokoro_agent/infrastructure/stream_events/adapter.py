@@ -147,8 +147,11 @@ def read_ai_message(event: StreamEvent) -> AIMessage | None:
 
 
 def _reasoning_override(message: BaseMessage) -> str | None:
-    # langchain 将 additional_kwargs 声明为无类型 dict；未知值类型的边界仅在此处收口。
-    value = message.additional_kwargs.get("reasoning_content")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    # langchain 将 additional_kwargs 声明为无类型 dict；getattr 把未知值类型收口到 object 边界。
+    kwargs: object = getattr(message, "additional_kwargs", None)
+    if not _is_object_mapping(kwargs):
+        return None
+    value = kwargs.get("reasoning_content")
     return value if isinstance(value, str) and value else None
 
 

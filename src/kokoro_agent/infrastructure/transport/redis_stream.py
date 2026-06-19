@@ -14,9 +14,9 @@ from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, valid
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
 
-_Fields = dict[bytes | str, bytes | str] | None
-_Entry = tuple[bytes | str | None, _Fields]
-_ReadResponse = list[tuple[bytes | str | None, list[_Entry]]]
+_Fields: TypeAlias = dict[bytes | str, bytes | str] | None
+_Entry: TypeAlias = tuple[bytes | str | None, _Fields]
+_ReadResponse: TypeAlias = list[tuple[bytes | str | None, list[_Entry]]]
 # redis-py 无类型存根，XREAD/XRANGE 返回 bytes/嵌套 list/tuple 的松散结构；
 # 以 object 为边界逐层收窄，屏蔽 RESP2/3 协议差异，未校验数据不进入内层。
 _ObjectMapping: TypeAlias = Mapping[object, object]

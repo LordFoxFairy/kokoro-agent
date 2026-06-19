@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
 from typing import runtime_checkable
 
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 from typing_extensions import Protocol
 
 
-@dataclass(frozen=True, slots=True)
-class StreamItem:
+class StreamItem(BaseModel):
+    # JSON 边界构造期即校验，frozen 保持原 dataclass 的不可变语义。
+    model_config = ConfigDict(strict=True, frozen=True)
+
     cursor: str
     event: dict[str, JsonValue]
 

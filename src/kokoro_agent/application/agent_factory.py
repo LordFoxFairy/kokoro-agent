@@ -14,7 +14,7 @@ from kokoro_agent.infrastructure.permission import (
     gate_tools,
     gate_tools_interactive,
 )
-from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
+from kokoro_agent.infrastructure.tools.runtime_subagent import build_runtime_custom_subagent_tool
 from kokoro_agent.infrastructure.subagent import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,

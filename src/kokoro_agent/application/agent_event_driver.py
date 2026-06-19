@@ -16,8 +16,9 @@ from kokoro_agent.application.event_payloads import (
     tool_invoked_payload,
     tool_returned_payload,
 )
+from kokoro_agent.application.run_emitter import RunEmitter
 from kokoro_agent.domain.agent_event import AgentEvent
-from kokoro_agent.infrastructure.stream_events import (
+from kokoro_agent.domain.stream_intent import (
     SubagentFinished,
     SubagentStarted,
     TextFinal,
@@ -26,32 +27,10 @@ from kokoro_agent.infrastructure.stream_events import (
     TodoUpdated,
     ToolInvoked,
     ToolReturned,
-    read_header,
-    translate_stream_event,
 )
+from kokoro_agent.infrastructure.stream_events import read_header, translate_stream_event
 
 ASTREAM_TIMEOUT_S = 120
-
-
-class _Segmenter:
-    """当前输出分段：首段内容或上一段结束后都会开一个全局唯一的新 segment id，
-    使 tool→text→tool→text 不被并成一段。id 由 agent 分配，session 原样透传。"""
-
-    def __init__(self, run_id: str) -> None:
-        self._run_id = run_id
-        self._counter = 0
-        self._active: str | None = None
-        self._completed = False
-
-    def current(self) -> str:
-        if self._active is None or self._completed:
-            self._counter += 1
-            self._active = f"{self._run_id}:seg_{self._counter:04d}"
-            self._completed = False
-        return self._active
-
-    def complete(self) -> None:
-        self._completed = True
 
 
 async def drive_agent_events(
@@ -60,14 +39,14 @@ async def drive_agent_events(
     awaiting_tools: frozenset[str] = frozenset(),
     timeout_s: float = ASTREAM_TIMEOUT_S,
 ) -> AsyncIterator[AgentEvent]:
-    seq = 0
-
-    def next_seq() -> int:
-        nonlocal seq
-        seq += 1
-        return seq
-
-    segment = _Segmenter(run_id)
+    """新增一个自定义 event 的配方（新工具走通用 tool.* 无需新 kind；新「语义/流程」才需要）：
+    ① contract/events.yaml 加 kind 并 `python3 contract/generate.py` 重生成 agent_event.py；
+    ② domain/stream_intent.py 加意图 dataclass 并入 StreamIntent 联合；
+    ③ stream_events/translator.py 加 match 分支产出该意图；
+    ④ application/event_payloads.py 加该 kind 的 payload builder；
+    ⑤ 在下方 match 里 `yield emitter.emit("新.kind", 该_payload(...))`。
+    """
+    emitter = RunEmitter(run_id)
     active_subagent: SubagentStarted | None = None
     streamed_text: str | None = None
     streamed_subagent_text: str | None = None
@@ -78,7 +57,7 @@ async def drive_agent_events(
         current_agent_name = read_header(event).lc_agent_name
         return active_subagent.subagent_id if current_agent_name == active_subagent.name else None
 
-    yield AgentEvent(kind="run.started", run_id=run_id, seq=next_seq(), payload={})
+    yield emitter.emit("run.started", {})
     try:
         async with asyncio.timeout(timeout_s):
             async for raw_event in raw_events:
@@ -88,142 +67,81 @@ async def drive_agent_events(
                             subagent_id = routed_subagent(raw_event)
                             if subagent_id is not None:
                                 streamed_subagent_text = (streamed_subagent_text or "") + text
-                                yield AgentEvent(
-                                    kind="subagent.text.delta",
-                                    run_id=run_id,
-                                    seq=next_seq(),
-                                    payload=subagent_text_payload(segment.current(), subagent_id, text),
+                                yield emitter.emit(
+                                    "subagent.text.delta",
+                                    subagent_text_payload(emitter.segment(), subagent_id, text),
                                 )
                                 continue
                             streamed_text = (streamed_text or "") + text
-                            yield AgentEvent(
-                                kind="text.delta",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=text_payload(segment.current(), text),
-                            )
+                            yield emitter.emit("text.delta", text_payload(emitter.segment(), text))
 
                         case TextFinal(text=text):
                             subagent_id = routed_subagent(raw_event)
                             if subagent_id is not None:
-                                segment_id = segment.current()
+                                segment_id = emitter.segment()
                                 if streamed_subagent_text is not None:
-                                    yield AgentEvent(
-                                        kind="subagent.text.completed",
-                                        run_id=run_id,
-                                        seq=next_seq(),
-                                        payload=subagent_text_payload(
+                                    yield emitter.emit(
+                                        "subagent.text.completed",
+                                        subagent_text_payload(
                                             segment_id, subagent_id, streamed_subagent_text
                                         ),
                                     )
                                     streamed_subagent_text = None
                                     continue
                                 payload = subagent_text_payload(segment_id, subagent_id, text)
-                                yield AgentEvent(
-                                    kind="subagent.text.delta",
-                                    run_id=run_id,
-                                    seq=next_seq(),
-                                    payload=payload,
-                                )
-                                yield AgentEvent(
-                                    kind="subagent.text.completed",
-                                    run_id=run_id,
-                                    seq=next_seq(),
-                                    payload=payload,
-                                )
+                                yield emitter.emit("subagent.text.delta", payload)
+                                yield emitter.emit("subagent.text.completed", payload)
                                 continue
 
-                            segment_id = segment.current()
+                            segment_id = emitter.segment()
                             if streamed_text is not None:
-                                yield AgentEvent(
-                                    kind="text.completed",
-                                    run_id=run_id,
-                                    seq=next_seq(),
-                                    payload=text_payload(segment_id, streamed_text),
+                                yield emitter.emit(
+                                    "text.completed", text_payload(segment_id, streamed_text)
                                 )
                                 streamed_text = None
-                                segment.complete()
+                                emitter.complete_segment()
                                 continue
                             payload = text_payload(segment_id, text)
-                            yield AgentEvent(
-                                kind="text.delta",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=payload,
-                            )
-                            yield AgentEvent(
-                                kind="text.completed",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=payload,
-                            )
-                            segment.complete()
+                            yield emitter.emit("text.delta", payload)
+                            yield emitter.emit("text.completed", payload)
+                            emitter.complete_segment()
 
                         case ThinkingDelta(text=text):
-                            yield AgentEvent(
-                                kind="thinking.delta",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=text_payload(segment.current(), text),
-                            )
+                            yield emitter.emit("thinking.delta", text_payload(emitter.segment(), text))
 
                         case TodoUpdated(todos=todos):
-                            yield AgentEvent(
-                                kind="todo.updated",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=todo_payload(todos),
-                            )
+                            yield emitter.emit("todo.updated", todo_payload(todos))
 
                         case ToolInvoked() as tool:
-                            payload = tool_invoked_payload(segment.current(), tool)
-                            yield AgentEvent(
-                                kind="tool.invoked",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=payload,
-                            )
+                            payload = tool_invoked_payload(emitter.segment(), tool)
+                            yield emitter.emit("tool.invoked", payload)
                             if tool.name in awaiting_tools:
-                                yield AgentEvent(
-                                    kind="tool.awaiting_approval",
-                                    run_id=run_id,
-                                    seq=next_seq(),
-                                    payload=payload,
-                                )
+                                yield emitter.emit("tool.awaiting_approval", payload)
 
                         case ToolReturned() as tool:
-                            yield AgentEvent(
-                                kind="tool.returned",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=tool_returned_payload(segment.current(), tool),
+                            yield emitter.emit(
+                                "tool.returned", tool_returned_payload(emitter.segment(), tool)
                             )
 
                         case SubagentStarted() as subagent:
                             active_subagent = subagent
-                            yield AgentEvent(
-                                kind="subagent.started",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=subagent_started_payload(segment.current(), subagent),
+                            yield emitter.emit(
+                                "subagent.started",
+                                subagent_started_payload(emitter.segment(), subagent),
                             )
 
                         case SubagentFinished() as subagent:
                             active_subagent = None
-                            yield AgentEvent(
-                                kind="subagent.finished",
-                                run_id=run_id,
-                                seq=next_seq(),
-                                payload=subagent_finished_payload(segment.current(), subagent),
+                            yield emitter.emit(
+                                "subagent.finished",
+                                subagent_finished_payload(emitter.segment(), subagent),
                             )
 
                         case _:
                             continue
-        yield AgentEvent(kind="run.completed", run_id=run_id, seq=next_seq(), payload={"status": "completed"})
+        yield emitter.emit("run.completed", {"status": "completed"})
     except Exception as error:  # noqa: BLE001 — 边界：任何失败都收口成 run.failed
-        yield AgentEvent(
-            kind="run.failed",
-            run_id=run_id,
-            seq=next_seq(),
-            payload={"error_kind": type(error).__name__, "message": str(error)},
+        yield emitter.emit(
+            "run.failed",
+            {"error_kind": type(error).__name__, "message": str(error)},
         )

@@ -120,7 +120,7 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
     return parsed
 
 
-class RedisStreamPort:
+class RedisStream:
     def __init__(self, url: str = "redis://127.0.0.1:6379/0", block_ms: int = _BLOCK_MS) -> None:
         self._redis: Redis = from_url(url)
         self._block_ms = block_ms

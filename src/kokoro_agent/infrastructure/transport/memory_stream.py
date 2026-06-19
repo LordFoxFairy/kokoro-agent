@@ -11,7 +11,7 @@ from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem
 _CURSOR_WIDTH = 20
 
 
-class MemoryStreamPort:
+class MemoryStream:
     def __init__(self, cursor_width: int = _CURSOR_WIDTH) -> None:
         self._streams: dict[str, list[StreamItem]] = {}
         self._counters: dict[str, int] = {}

@@ -16,7 +16,7 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
-from kokoro_agent.infrastructure.transport import MemoryStreamPort, StreamPort
+from kokoro_agent.infrastructure.transport import MemoryStream, StreamPort
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 from kokoro_agent.domain.agent_event import AgentEvent
@@ -76,7 +76,7 @@ def test_processed_run_id_cache_is_bounded_fifo() -> None:
 
 
 async def test_run_once_streams_with_injected_model() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     await port.publish(REQUESTS_STREAM, _request())
 
     processed = ProcessedRunIds()
@@ -94,7 +94,7 @@ async def test_run_once_streams_with_injected_model() -> None:
 
 
 async def test_run_once_executes_the_built_in_now_tool() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     await port.publish(REQUESTS_STREAM, _request("run_tool"))
 
     processed = ProcessedRunIds()
@@ -111,7 +111,7 @@ async def test_run_once_executes_the_built_in_now_tool() -> None:
 
 
 async def test_run_once_is_idempotent_per_run_id() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     model = make_local_fake_chat_model()
     processed = ProcessedRunIds()
 
@@ -128,7 +128,7 @@ async def test_run_once_is_idempotent_per_run_id() -> None:
 
 
 async def test_run_once_rejects_malformed_request() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     await port.publish(
         REQUESTS_STREAM,
         {
@@ -151,7 +151,7 @@ async def test_run_once_rejects_malformed_request() -> None:
 async def test_run_once_streams_with_local_fake_model(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     await port.publish(REQUESTS_STREAM, _request("run_local_fake"))
 
     monkeypatch.setenv(LOCAL_FAKE_MODEL_FLAG, "1")
@@ -175,7 +175,7 @@ async def test_run_once_streams_with_local_fake_model(
 async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     processed = ProcessedRunIds()
 
     def broken_make_chat_model(execution_style: str = "fast") -> BaseChatModel:
@@ -204,7 +204,7 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
 async def test_run_once_resolves_model_from_request_execution_style(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     processed = ProcessedRunIds()
     seen_styles: list[str] = []
     await port.publish(
@@ -238,7 +238,7 @@ async def test_run_once_resolves_model_from_request_execution_style(
 async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     release = asyncio.Event()
 
     async def fake_run_agent(
@@ -288,7 +288,7 @@ async def test_serve_cancels_a_run_on_control_cancel(
 ) -> None:
     from kokoro_agent.infrastructure.control import control_stream
 
-    port = MemoryStreamPort()
+    port = MemoryStream()
     hang = asyncio.Event()
 
     async def fake_run_agent(
@@ -388,7 +388,7 @@ class _MemoryProbeModel(BaseChatModel):
 async def test_run_once_same_conversation_remembers_prior_turn_without_transport_replay(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     processed = ProcessedRunIds()
     _MEMORY_PROBE_SEEN.clear()
 
@@ -440,7 +440,7 @@ async def test_run_once_isolates_runtime_registry_across_runs(monkeypatch: Monke
         yield  # makes this an (empty) async generator
 
     monkeypatch.setattr(worker, "run_agent", fake_run_agent)
-    port = MemoryStreamPort()
+    port = MemoryStream()
     await port.publish(REQUESTS_STREAM, _request("run_iso_1"))
     await port.publish(REQUESTS_STREAM, _request("run_iso_2"))
     await run_once(port, ProcessedRunIds(), _fake_model("unused"))

@@ -12,7 +12,7 @@ redis_asyncio = pytest.importorskip("redis.asyncio")
 
 from kokoro_agent.infrastructure.json_types import JsonObject  # noqa: E402
 from kokoro_agent.infrastructure.transport import (  # noqa: E402
-    RedisStreamPort,
+    RedisStream,
     StreamItem,
     parse_xread_response,
 )
@@ -32,10 +32,10 @@ async def _redis_available() -> bool:
 
 
 @pytest.fixture
-async def port() -> AsyncIterator[RedisStreamPort]:
+async def port() -> AsyncIterator[RedisStream]:
     if not await _redis_available():
         pytest.skip(f"no redis reachable at {REDIS_URL}")
-    p = RedisStreamPort(REDIS_URL)
+    p = RedisStream(REDIS_URL)
     yield p
     await p.aclose()
 
@@ -44,7 +44,7 @@ def _stream() -> str:
     return f"kokoro:test:{uuid.uuid4().hex}"
 
 
-async def test_publish_then_read_all_preserves_order(port: RedisStreamPort) -> None:
+async def test_publish_then_read_all_preserves_order(port: RedisStream) -> None:
     stream = _stream()
     for i in range(3):
         await port.publish(stream, {"seq": i})
@@ -55,7 +55,7 @@ async def test_publish_then_read_all_preserves_order(port: RedisStreamPort) -> N
     assert len(set(cursors)) == 3
 
 
-async def test_subscribe_from_cursor_skips_earlier(port: RedisStreamPort) -> None:
+async def test_subscribe_from_cursor_skips_earlier(port: RedisStream) -> None:
     stream = _stream()
     await port.publish(stream, {"seq": 0})
     await port.publish(stream, {"seq": 1})
@@ -81,7 +81,7 @@ async def test_subscribe_from_cursor_skips_earlier(port: RedisStreamPort) -> Non
 
 async def test_redis_port_allows_custom_block_ms() -> None:
     stream = _stream()
-    port = RedisStreamPort(REDIS_URL, block_ms=25)
+    port = RedisStream(REDIS_URL, block_ms=25)
     try:
         await port.publish(stream, {"seq": 1})
         items = await port.read_all(stream)
@@ -137,7 +137,7 @@ def test_parse_xread_response_rejects_non_strlike_fields() -> None:
         parse_xread_response(raw)
 
 
-async def test_read_all_rejects_non_object_json(port: RedisStreamPort) -> None:
+async def test_read_all_rejects_non_object_json(port: RedisStream) -> None:
     stream = _stream()
     client = redis_asyncio.from_url(REDIS_URL)
     try:
@@ -148,7 +148,7 @@ async def test_read_all_rejects_non_object_json(port: RedisStreamPort) -> None:
         await client.aclose()
 
 
-async def test_redis_port_round_trips_nested_json_object(port: RedisStreamPort) -> None:
+async def test_redis_port_round_trips_nested_json_object(port: RedisStream) -> None:
     stream = _stream()
     payload: JsonObject = cast(
         "JsonObject",

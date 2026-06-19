@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, Literal, Protocol, TypedDict
 
 import deepagents
 import langchain.agents
 
-# deepagents 运行时导出 FilesystemPermission，但其类型表面省略了它。
+# mypy resolves a stale deepagents lacking this re-exported symbol; pyright (venv) sees it fine.
 from deepagents.middleware.filesystem import FilesystemPermission  # type: ignore[attr-defined]
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
@@ -17,8 +17,8 @@ from langchain_core.runnables.schema import StreamEvent
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-# deepagents/langchain.agents 对外缺少完整类型声明；经包的 Any 视图取得构造函数，
-# 使结果直接流入下方强类型 Protocol，免去 cast 与逐调用 type: ignore。
+# 框架返回的 CompiledStateGraph 结构上不匹配下方窄 Protocol（astream_events/ainvoke 签名更宽），
+# 经包的 Any 视图取构造函数，使结果直接收敛到强类型 Protocol，免去逐调用的类型抑制。
 _deepagents: Any = deepagents
 _langchain_agents: Any = langchain.agents
 _build_deep_agent = _deepagents.create_deep_agent
@@ -54,8 +54,8 @@ class EventStreamingAgent(Protocol):
 
 
 class AsyncRunner(Protocol):
-    # 返回 object：runner 结果是进程内不透明对象，由调用方按需收窄。
-    async def ainvoke(self, payload: dict[str, list[dict[str, str]]]) -> object: ...
+    # runner 结果是字符串键的进程内图状态（值为 BaseMessage 等不透明对象），由调用方按需收窄。
+    async def ainvoke(self, payload: dict[str, list[dict[str, str]]]) -> Mapping[str, object]: ...
 
 
 def make_deep_agent(

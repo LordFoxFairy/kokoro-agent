@@ -12,16 +12,16 @@ from kokoro_agent.infrastructure.json_types import JsonObject
 
 LOGGER = logging.getLogger(__name__)
 
-ControlDecision = Literal["approve", "reject"]
+ControlDecision = Literal["approve", "reject", "cancel"]
 
 
 class ControlMessage(BaseModel):
-    """control 通道的人工审批消息契约；畸形载荷显式丢弃，不被误判为 reject 或非 cancel 决定。"""
+    """control 通道的人工审批消息契约；畸形载荷显式丢弃，不被误判为任一决定。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
     kind: Literal["control"]
-    decision: Literal["approve", "reject", "cancel"]
+    decision: ControlDecision
 
 
 def control_stream(run_id: str) -> str:
@@ -53,20 +53,17 @@ async def await_decision(
     run_id: str,
     cursor: DecisionCursor | None = None,
 ) -> ControlDecision:
-    """阻塞读取 control 流的下一条 approve/reject（从游标之后）。
-    无超时自动回退：审批需持续等待用户决定；用户取消整轮时由 worker 的 cancel-watcher
-    处理 cancel 并取消整个 run task，连带解除所有挂起审批的阻塞。"""
+    """阻塞读取 control 流的下一条决定（approve/reject/cancel，从游标之后）。
+    无超时自动回退：审批需持续等待用户决定。cancel 原样返回给调用方，由其决定终止流程，
+    不在此静默吞掉。"""
     from_cursor = cursor.value if cursor is not None else None
     async for item in bus.subscribe(control_stream(run_id), from_cursor):
         message = _parse_control(item.event)
         if message is None:
             continue
-        decision = message.decision
-        if decision == "cancel":
-            continue
         if cursor is not None:
             cursor.value = item.cursor
-        return decision
+        return message.decision
     # 流意外终止（连接断开）→ fail-closed：默认拒绝，不静默放行。
     return "reject"
 

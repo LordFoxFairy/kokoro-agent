@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from kokoro_agent.domain.run_request import ExecutionStyle
-from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+from kokoro_agent.infrastructure.model.local_fake import make_local_fake_chat_model
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 LOCAL_FAKE_MODEL_FLAG = "KOKORO_LOCAL_FAKE_MODEL"

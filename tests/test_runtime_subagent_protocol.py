@@ -5,7 +5,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from kokoro_agent.infrastructure import runtime_subagent_tool
-from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+from kokoro_agent.infrastructure.model import make_local_fake_chat_model
 from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
 from kokoro_agent.infrastructure.subagent_registry import CUSTOM_SUBAGENTS_ENV, RuntimeSubagentRegistry
 

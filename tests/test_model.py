@@ -4,12 +4,12 @@ import pytest
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
-from kokoro_agent.infrastructure.chat_model import (
+from kokoro_agent.infrastructure.model import (
     DEFAULT_MODEL,
     LOCAL_FAKE_MODEL_FLAG,
     make_chat_model,
 )
-from kokoro_agent.infrastructure.local_fake_model import LocalFakeChatModel
+from kokoro_agent.infrastructure.model import LocalFakeChatModel
 
 
 def test_make_chat_model_reads_default_anthropic_spec(monkeypatch: pytest.MonkeyPatch) -> None:

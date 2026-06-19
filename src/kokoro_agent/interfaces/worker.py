@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from kokoro_agent.application.run_agent import run_agent
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure.chat_model import make_chat_model
+from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.control import wait_for_cancel
 from kokoro_agent.infrastructure.json_types import JsonObject
 from kokoro_agent.infrastructure.transport import StreamPort, make_stream_port

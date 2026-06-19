@@ -113,7 +113,7 @@ def test_subagent_source_for_unknown_name_fails_loud() -> None:
 
 
 def test_materialize_runtime_subagents_includes_custom_specs() -> None:
-    from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+    from kokoro_agent.infrastructure.model import make_local_fake_chat_model
 
     runtime = materialize_runtime_subagents(
         make_local_fake_chat_model(),
@@ -130,7 +130,7 @@ def test_materialize_runtime_subagents_includes_custom_specs() -> None:
 
 
 def test_materialize_runtime_subagents_defaults_to_built_in_only() -> None:
-    from kokoro_agent.infrastructure.local_fake_model import make_local_fake_chat_model
+    from kokoro_agent.infrastructure.model import make_local_fake_chat_model
 
     runtime = materialize_runtime_subagents(make_local_fake_chat_model())
     assert [spec["name"] for spec in runtime] == ["researcher"]

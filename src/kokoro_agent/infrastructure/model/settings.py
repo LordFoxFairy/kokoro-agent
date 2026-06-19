@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 
 
-def _split_model_spec(spec: str) -> tuple[str, str]:
+def _split_model_spec(spec: str) -> tuple[Literal["openai", "anthropic"], str]:
     provider, sep, model_name = spec.partition(":")
     provider = provider.strip().lower()
     model_name = model_name.strip()
     if not provider or not sep or not model_name:
         msg = f"Invalid KOKORO_MODEL spec: {spec!r}"
         raise ValueError(msg)
-    return provider, model_name
+    if provider == "openai":
+        return "openai", model_name
+    if provider == "anthropic":
+        return "anthropic", model_name
+    msg = f"Unsupported model provider: {provider!r}"
+    raise ValueError(msg)
 
 
 class ChatModelSettings(BaseModel):
@@ -29,7 +35,7 @@ class ChatModelSettings(BaseModel):
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    provider: str
+    provider: Literal["openai", "anthropic"]
     model_name: str
     disable_streaming: bool
     openai_api_key: SecretStr | None

@@ -8,10 +8,9 @@ from kokoro_agent.domain.agent_event import AgentEvent, AgentKind
 
 
 class RunEmitter:
-    """一次 run 的发射状态：seq 单调自增、segment 唯一分配，emit 出对外 AgentEvent。
+    """一次 run 的发射状态：seq 单调自增、segment 唯一分配，并构造对外 AgentEvent。
 
-    tool→text→tool→text 不并段——首段或上一段 complete 后，segment() 开一个全局唯一的新 segment id。
-    kind 受 AgentKind 字面量约束，非契约枚举值在类型层即被拒。
+    segment() 在首段或上一段 complete 后开启新的全局唯一 segment id，使 tool 与 text 交替输出时不被并入同一段。
     """
 
     def __init__(self, run_id: str) -> None:

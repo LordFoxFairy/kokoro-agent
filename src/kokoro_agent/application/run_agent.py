@@ -61,7 +61,6 @@ async def run_agent(
     awaiting_tools = (
         blocked_tools(req.permission_mode) if control_bus is not None else frozenset[str]()
     )
-    timeout_s = ASTREAM_TIMEOUT_S
     config = agent_config(req)
     tracing = trace_config(req)
     if tracing is not None:
@@ -71,5 +70,5 @@ async def run_agent(
         version="v2",
         config=config,
     )
-    async for event in drive_agent_events(req.run_id, raw_events, awaiting_tools, timeout_s):
+    async for event in drive_agent_events(req.run_id, raw_events, awaiting_tools, ASTREAM_TIMEOUT_S):
         yield event

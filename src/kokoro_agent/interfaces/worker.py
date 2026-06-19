@@ -99,8 +99,8 @@ async def _run_request(
         await _publish_run_failed(bus, request.run_id, type(error).__name__, str(error))
         return
 
-    # 每个 run 一个全新 registry：运行时自定义子代理在每次工具调用时都被完整提供，
-    # 故其生命周期是 run 级的——绝不跨 run/session 共享。
+    # 每个 run 新建 registry：运行时自定义子代理在每次工具调用时完整提供，
+    # 生命周期为 run 级，不跨 run/session 共享。
     runtime_registry = RuntimeSubagentRegistry()
     async for event in run_agent(
         request,

@@ -7,7 +7,7 @@ from typing import Literal, TypeAlias
 
 from kokoro_agent.domain.registered_subagent import SubagentSource
 
-# 工具参数标量：仅允许 JSON 原生标量，复杂值在边界处已被拍平。
+# 工具参数标量：仅允许 JSON 原生标量，复杂值在边界处已扁平化。
 ToolScalar: TypeAlias = str | int | float | bool | None
 TodoStatus: TypeAlias = Literal["pending", "in_progress", "completed"]
 

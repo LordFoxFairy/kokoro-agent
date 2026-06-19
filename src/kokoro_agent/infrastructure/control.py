@@ -14,9 +14,8 @@ ControlDecision = Literal["approve", "reject"]
 
 
 class ControlMessage(BaseModel):
-    """The control channel carries human approval decisions; parse every message
-    through this strict contract so a malformed payload is dropped explicitly
-    rather than silently classified as reject / non-cancel."""
+    """control 通道承载人工审批决定：每条消息都过这份严格契约，
+    畸形载荷被显式丢弃，而非被静默当作 reject / 非 cancel 误判。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 

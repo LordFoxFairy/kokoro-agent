@@ -38,10 +38,10 @@ class ChatModelSettings(BaseModel):
     provider: Literal["openai", "anthropic"]
     model_name: str
     disable_streaming: bool
-    openai_api_key: SecretStr | None
-    openai_base_url: str | None
-    anthropic_api_key: SecretStr | None
-    anthropic_base_url: str | None
+    openai_api_key: SecretStr | None = None
+    openai_base_url: str | None = None
+    anthropic_api_key: SecretStr | None = None
+    anthropic_base_url: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> ChatModelSettings:

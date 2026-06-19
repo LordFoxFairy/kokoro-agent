@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
 # 离线确定性脚本（先 write_todos，再给最终答案），驱动真实 DeepAgents 循环；
@@ -64,10 +66,10 @@ class LocalFakeChatModel(BaseChatModel):
 
     def bind_tools(
         self,
-        tools: Sequence[object],
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
         *,
         tool_choice: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
         # 接受但忽略绑定（脚本固定）；deepagents 会调用 bind_tools，缺失则基类抛 NotImplementedError。
         return self.with_types(output_type=AIMessage)

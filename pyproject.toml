@@ -43,9 +43,10 @@ pythonVersion = "3.11"
 
 [tool.mypy]
 python_version = "3.11"
+# 让 mypy 对着项目 venv 解析导入，否则回退到陈旧全局包、误报 typed 依赖的符号缺失。
+python_executable = ".venv/bin/python"
 
-# redis and langfuse ship no type stubs; mypy can't resolve them. They are real
-# runtime deps, so silence the missing-stub import error rather than the usage.
+# 这些是真实运行时依赖，但 mypy 解析不到其类型(无 stub / stub 未装)；静默缺 stub 的 import 错误而非用法。
 [[tool.mypy.overrides]]
-module = ["redis.*", "langfuse.*"]
+module = ["redis.*", "langfuse.*", "yaml"]
 ignore_missing_imports = true

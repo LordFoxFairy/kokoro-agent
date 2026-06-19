@@ -1,3 +1,5 @@
+"""权限规则：按权限档位推导被拦工具集与文件系统门控。"""
+
 from __future__ import annotations
 
 from kokoro_agent.domain.run_request import PermissionMode

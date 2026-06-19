@@ -1,3 +1,5 @@
+"""静态门控：被拦工具替换为返回拦截文案的桩，不真正执行。"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

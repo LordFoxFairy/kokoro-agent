@@ -1,15 +1,15 @@
 """流事件子系统：把 LangChain 事件翻译为领域 StreamIntent。"""
 
-from .adapter import (
+from .header import read_header
+from .message import (
     message_parts,
     read_chunk,
     read_error,
-    read_header,
     read_output,
-    read_tool_input,
     result_messages,
     result_text,
 )
+from .tool_input import read_tool_input
 from .translator import translate_stream_event
 from kokoro_agent.domain.registered_subagent import SubagentSource
 from kokoro_agent.domain.stream_intent import (

@@ -1,3 +1,5 @@
+"""Worker 入口：消费请求流，每个 run.request 并发跑一轮并把事件发布回事件流。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -50,8 +52,8 @@ def _parse_request(raw: JsonObject) -> RunRequest | None:
 
 
 class ProcessedRunIds:
-    """Bounded, insertion-ordered set of handled run ids; evicts the oldest once
-    past the cap so a long-lived worker never grows without bound."""
+    """有界、按插入序的已处理 run id 集合：超过上限即逐出最旧的，
+    使长驻 worker 的内存不会无限增长。"""
 
     def __init__(self, max_size: int = MAX_PROCESSED_RUN_IDS) -> None:
         self._ids: dict[str, None] = {}
@@ -96,8 +98,8 @@ async def _run_request(
         await _publish_run_failed(port, request.run_id, type(error).__name__, str(error))
         return
 
-    # Fresh registry per run: runtime-custom subagents are supplied in full on every
-    # tool call, so their lifecycle is run-scoped — never shared across runs/sessions.
+    # 每个 run 一个全新 registry：运行时自定义子代理在每次工具调用时都被完整提供，
+    # 故其生命周期是 run 级的——绝不跨 run/session 共享。
     runtime_registry = RuntimeSubagentRegistry()
     async for event in run_agent(
         request,

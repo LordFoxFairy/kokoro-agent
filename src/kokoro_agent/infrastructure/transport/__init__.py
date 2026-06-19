@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 
+from kokoro_agent.application.event_stream import StreamProtocol
 from kokoro_agent.infrastructure.transport.memory_stream import MemoryStream
 from kokoro_agent.infrastructure.transport.redis_stream import RedisStream, parse_xread_response
-from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem, StreamProtocol
 
 
 def make_stream() -> StreamProtocol:
@@ -22,8 +22,6 @@ def make_stream() -> StreamProtocol:
 __all__ = [
     "MemoryStream",
     "RedisStream",
-    "StreamItem",
-    "StreamProtocol",
     "make_stream",
     "parse_xread_response",
 ]

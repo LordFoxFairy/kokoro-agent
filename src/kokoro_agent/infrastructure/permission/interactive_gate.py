@@ -14,14 +14,14 @@ from kokoro_agent.infrastructure.control import (
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.permission.rules import tool_allowed
-from kokoro_agent.infrastructure.transport import StreamProtocol
+from kokoro_agent.application.event_stream import StreamProtocol
 
 
 def gate_tools_interactive(
     tools: Sequence[StructuredTool],
     mode: PermissionMode,
     run_id: str,
-    port: StreamProtocol,
+    bus: StreamProtocol,
 ) -> list[StructuredTool]:
     """交互式门控：被门控工具调用时阻塞等审批（control 流），approve 跑真工具 / reject 回拒绝。
     translator 在 tool.invoked 后补 tool.awaiting_approval 让前端弹审批（见 drive_agent_events）。"""
@@ -32,7 +32,7 @@ def gate_tools_interactive(
     return [
         tool
         if tool_allowed(mode, tool.name)
-        else _approval_gate(tool, run_id, port, cursor)
+        else _approval_gate(tool, run_id, bus, cursor)
         for tool in tools
     ]
 
@@ -40,11 +40,11 @@ def gate_tools_interactive(
 def _approval_gate(
     tool: StructuredTool,
     run_id: str,
-    port: StreamProtocol,
+    bus: StreamProtocol,
     cursor: DecisionCursor,
 ) -> StructuredTool:
     async def gated_async(**kwargs: JsonValue) -> str:
-        decision = await await_decision(port, run_id, cursor)
+        decision = await await_decision(bus, run_id, cursor)
         if decision != "approve":
             return rejection_result(tool.name)
 
@@ -58,14 +58,10 @@ def _approval_gate(
             raise RuntimeError(msg)
         return func(**kwargs)
 
-    def gated_sync(**_kwargs: JsonValue) -> str:
-        msg = "approval-gated tool requires async execution"
-        raise RuntimeError(msg)
-
+    # 纯异步包装：审批需阻塞等 control 流，无意义的 sync 路径交给 langchain 原生 NotImplementedError。
     return StructuredTool(
         name=tool.name,
         description=tool.description,
         args_schema=tool.args_schema,
-        func=gated_sync,
         coroutine=gated_async,
     )

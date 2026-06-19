@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping
 
+from kokoro_agent.application.event_stream import StreamItem
 from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
-from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem
 
 _CURSOR_WIDTH = 20
 

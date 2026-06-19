@@ -10,12 +10,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.application.agent_event_driver import ASTREAM_TIMEOUT_S, drive_agent_events
 from kokoro_agent.application.agent_factory import build_agent
+from kokoro_agent.application.event_stream import StreamProtocol
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.agent_builder import AgentInvokeInput
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.permission import blocked_tools
-from kokoro_agent.infrastructure.transport import StreamProtocol
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 
@@ -45,7 +45,7 @@ def _user_message(input_text: str) -> AgentInvokeInput:
 async def run_agent(
     req: RunRequest,
     model: BaseChatModel,
-    control_port: StreamProtocol | None = None,
+    control_bus: StreamProtocol | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> AsyncIterator[AgentEvent]:
@@ -54,12 +54,12 @@ async def run_agent(
         model,
         req.permission_mode,
         req.run_id,
-        control_port,
+        control_bus,
         registry,
         checkpointer=checkpointer,
     )
     awaiting_tools = (
-        blocked_tools(req.permission_mode) if control_port is not None else frozenset[str]()
+        blocked_tools(req.permission_mode) if control_bus is not None else frozenset[str]()
     )
     timeout_s = ASTREAM_TIMEOUT_S
     config = agent_config(req)

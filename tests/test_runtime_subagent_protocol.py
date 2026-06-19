@@ -4,9 +4,9 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from kokoro_agent.infrastructure import runtime_subagent_tool
 from kokoro_agent.infrastructure.model import make_local_fake_chat_model
-from kokoro_agent.infrastructure.runtime_subagent_tool import build_runtime_custom_subagent_tool
+from kokoro_agent.infrastructure.tools import runtime_subagent
+from kokoro_agent.infrastructure.tools.runtime_subagent import build_runtime_custom_subagent_tool
 from kokoro_agent.infrastructure.subagent import CUSTOM_SUBAGENTS_ENV, RuntimeSubagentRegistry
 
 
@@ -51,12 +51,12 @@ def _patch_runner(
         seen_prompts.append(system_prompt)
         return _FakeRunner(result)
 
-    monkeypatch.setattr(runtime_subagent_tool, "_make_runner", fake_make_runner)
+    monkeypatch.setattr(runtime_subagent, "_make_runner", fake_make_runner)
     return seen_prompts
 
 
 def test_runtime_result_messages_rejects_non_mapping_result() -> None:
-    assert runtime_subagent_tool._runtime_result_messages(["not", "mapping"]) == []
+    assert runtime_subagent._runtime_result_messages(["not", "mapping"]) == []
 
 
 async def test_agent_runtime_registers_new_name_and_returns_text(

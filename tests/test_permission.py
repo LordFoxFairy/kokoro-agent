@@ -129,20 +129,16 @@ def test_permission_gate_wrappers_expose_narrow_sync_signatures() -> None:
     assert hints["return"] is str
 
 
-async def test_interactive_gate_wrappers_expose_narrow_sync_signature() -> None:
-    port = MemoryStream()
-    blocked = gate_tools_interactive([_make("fetch_url")], "plan", "run_1", port)[0]
-    blocked_sync = blocked.func
+async def test_interactive_gate_wrapper_is_async_only_with_narrow_signature() -> None:
+    bus = MemoryStream()
+    blocked = gate_tools_interactive([_make("fetch_url")], "plan", "run_1", bus)[0]
     blocked_async = blocked.coroutine
-    assert blocked_sync is not None
+    assert blocked.func is None
     assert blocked_async is not None
-    params = signature(blocked_sync).parameters
-    sync_hints = get_type_hints(blocked_sync)
+    params = signature(blocked_async).parameters
     async_hints = get_type_hints(blocked_async)
-    assert set(params) == {"_kwargs"}
-    assert params["_kwargs"].kind is Parameter.VAR_KEYWORD
-    assert "JsonValue" in str(sync_hints["_kwargs"])
-    assert sync_hints["return"] is str
+    assert set(params) == {"kwargs"}
+    assert params["kwargs"].kind is Parameter.VAR_KEYWORD
     assert "JsonValue" in str(async_hints["kwargs"])
     assert async_hints["return"] is str
 

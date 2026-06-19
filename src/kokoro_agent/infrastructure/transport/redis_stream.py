@@ -8,8 +8,8 @@ from typing import TypeAlias, TypeGuard
 
 from redis.asyncio import Redis, from_url
 
+from kokoro_agent.application.event_stream import StreamItem
 from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
-from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem
 
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000

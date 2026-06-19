@@ -12,13 +12,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 
+from kokoro_agent.application.event_stream import StreamProtocol
 from kokoro_agent.application.run_agent import run_agent
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.control import wait_for_cancel
 from kokoro_agent.infrastructure.json_types import JsonObject
-from kokoro_agent.infrastructure.transport import StreamProtocol, make_stream
+from kokoro_agent.infrastructure.transport import make_stream
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 LOGGER = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class ProcessedRunIds:
 
 
 async def _publish_run_failed(
-    port: StreamProtocol, run_id: str, error_kind: str, message: str
+    bus: StreamProtocol, run_id: str, error_kind: str, message: str
 ) -> None:
     failed = AgentEvent(
         kind="run.failed",
@@ -81,11 +82,11 @@ async def _publish_run_failed(
         seq=1,
         payload={"error_kind": error_kind, "message": message},
     )
-    await port.publish(events_stream(run_id), failed.model_dump())
+    await bus.publish(events_stream(run_id), failed.model_dump())
 
 
 async def _run_request(
-    port: StreamProtocol,
+    bus: StreamProtocol,
     request: RunRequest,
     model: BaseChatModel | None = None,
     checkpointer: BaseCheckpointSaver[str] | None = None,
@@ -95,7 +96,7 @@ async def _run_request(
         resolved_model = model if model is not None else make_chat_model(request.execution_style)
     except Exception as error:  # noqa: BLE001
         LOGGER.exception("model resolution failed for run_id=%s", request.run_id)
-        await _publish_run_failed(port, request.run_id, type(error).__name__, str(error))
+        await _publish_run_failed(bus, request.run_id, type(error).__name__, str(error))
         return
 
     # 每个 run 一个全新 registry：运行时自定义子代理在每次工具调用时都被完整提供，
@@ -104,15 +105,15 @@ async def _run_request(
     async for event in run_agent(
         request,
         resolved_model,
-        control_port=port,
+        control_bus=bus,
         runtime_registry=runtime_registry,
         checkpointer=checkpointer,
     ):
-        await port.publish(stream, event.model_dump())
+        await bus.publish(stream, event.model_dump())
 
 
 async def _handle_request(
-    port: StreamProtocol,
+    bus: StreamProtocol,
     raw: JsonObject,
     processed: ProcessedRunIds,
     model: BaseChatModel | None = None,
@@ -122,21 +123,21 @@ async def _handle_request(
     if request is None:
         run_id = _run_id_of(raw)
         if run_id is not None:
-            await _publish_run_failed(port, run_id, "ValidationError", "invalid run.request")
+            await _publish_run_failed(bus, run_id, "ValidationError", "invalid run.request")
         return
     if request.run_id in processed:
         LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
         return
     processed.add(request.run_id)
-    await _run_request(port, request, model, checkpointer)
+    await _run_request(bus, request, model, checkpointer)
 
 
 async def run_once(
-    port: StreamProtocol, processed: ProcessedRunIds, model: BaseChatModel | None = None
+    bus: StreamProtocol, processed: ProcessedRunIds, model: BaseChatModel | None = None
 ) -> None:
-    for item in await port.read_all(REQUESTS_STREAM):
+    for item in await bus.read_all(REQUESTS_STREAM):
         await _handle_request(
-            port,
+            bus,
             item.event,
             processed,
             model,
@@ -145,12 +146,12 @@ async def run_once(
 
 
 async def _run_guarded(
-    port: StreamProtocol, request: RunRequest, sem: asyncio.Semaphore
+    bus: StreamProtocol, request: RunRequest, sem: asyncio.Semaphore
 ) -> None:
     async with sem:
         try:
             await _run_request(
-                port,
+                bus,
                 request,
                 checkpointer=_CHECKPOINTER,
             )
@@ -159,22 +160,22 @@ async def _run_guarded(
 
 
 async def _cancel_on_signal(
-    port: StreamProtocol, run_id: str, run_task: asyncio.Task[None]
+    bus: StreamProtocol, run_id: str, run_task: asyncio.Task[None]
 ) -> None:
-    await wait_for_cancel(port, run_id)
+    await wait_for_cancel(bus, run_id)
     run_task.cancel()
 
 
 async def _run_with_cancel(
-    port: StreamProtocol, request: RunRequest, sem: asyncio.Semaphore
+    bus: StreamProtocol, request: RunRequest, sem: asyncio.Semaphore
 ) -> None:
-    run_task = asyncio.create_task(_run_guarded(port, request, sem))
-    canceller = asyncio.create_task(_cancel_on_signal(port, request.run_id, run_task))
+    run_task = asyncio.create_task(_run_guarded(bus, request, sem))
+    canceller = asyncio.create_task(_cancel_on_signal(bus, request.run_id, run_task))
     try:
         await run_task
     except asyncio.CancelledError:
         with contextlib.suppress(Exception):
-            await port.publish(
+            await bus.publish(
                 events_stream(request.run_id),
                 AgentEvent(
                     kind="run.completed",
@@ -189,21 +190,21 @@ async def _run_with_cancel(
             await canceller
 
 
-async def serve(port: StreamProtocol) -> None:
+async def serve(bus: StreamProtocol) -> None:
     processed = ProcessedRunIds()
     sem = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
     tasks: set[asyncio.Task[None]] = set()
-    async for item in port.subscribe(REQUESTS_STREAM):
+    async for item in bus.subscribe(REQUESTS_STREAM):
         request = _parse_request(item.event)
         if request is None:
             run_id = _run_id_of(item.event)
             if run_id is not None:
-                await _publish_run_failed(port, run_id, "ValidationError", "invalid run.request")
+                await _publish_run_failed(bus, run_id, "ValidationError", "invalid run.request")
             continue
         if request.run_id in processed:
             continue
         processed.add(request.run_id)
-        task = asyncio.create_task(_run_with_cancel(port, request, sem))
+        task = asyncio.create_task(_run_with_cancel(bus, request, sem))
         tasks.add(task)
         task.add_done_callback(tasks.discard)
 
@@ -211,9 +212,9 @@ async def serve(port: StreamProtocol) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
-    port = make_stream()
+    bus = make_stream()
     LOGGER.info("kokoro-agent worker starting on stream %s", REQUESTS_STREAM)
-    asyncio.run(serve(port))
+    asyncio.run(serve(bus))
 
 
 if __name__ == "__main__":

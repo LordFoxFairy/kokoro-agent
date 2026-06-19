@@ -1,4 +1,4 @@
-"""传输契约：事件流端口协议与流条目（后端无关的抽象）。"""
+"""应用层抽象：与后端无关的事件流契约（实现见 infrastructure/transport）。"""
 
 from __future__ import annotations
 
@@ -6,15 +6,14 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import runtime_checkable
 
+from pydantic import JsonValue
 from typing_extensions import Protocol
-
-from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
 
 
 @dataclass(frozen=True, slots=True)
 class StreamItem:
     cursor: str
-    event: JsonObject
+    event: dict[str, JsonValue]
 
 
 @runtime_checkable

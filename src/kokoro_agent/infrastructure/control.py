@@ -5,8 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from kokoro_agent.application.event_stream import StreamProtocol
 from kokoro_agent.infrastructure.json_types import JsonObject
-from kokoro_agent.infrastructure.transport import StreamProtocol
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class DecisionCursor:
 
 
 async def await_decision(
-    port: StreamProtocol,
+    bus: StreamProtocol,
     run_id: str,
     cursor: DecisionCursor | None = None,
 ) -> ControlDecision:
@@ -57,7 +57,7 @@ async def await_decision(
     不做超时自动回退：审批工具就该一直等用户决定；用户放弃整轮时由 worker 的 cancel-watcher
     收到 cancel 并直接取消整个 run task（连带解阻塞所有待批门）。"""
     from_cursor = cursor.value if cursor is not None else None
-    async for item in port.subscribe(control_stream(run_id), from_cursor):
+    async for item in bus.subscribe(control_stream(run_id), from_cursor):
         message = _parse_control(item.event)
         if message is None:
             continue
@@ -70,9 +70,9 @@ async def await_decision(
     return "reject"
 
 
-async def wait_for_cancel(port: StreamProtocol, run_id: str) -> None:
+async def wait_for_cancel(bus: StreamProtocol, run_id: str) -> None:
     """阻塞直到 control 流出现一条 cancel 决定（用户放弃该 run）。供 worker 取消 run task。"""
-    async for item in port.subscribe(control_stream(run_id)):
+    async for item in bus.subscribe(control_stream(run_id)):
         message = _parse_control(item.event)
         if message is not None and message.decision == "cancel":
             return

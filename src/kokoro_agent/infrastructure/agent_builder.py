@@ -9,7 +9,7 @@ import deepagents
 import langchain.agents
 
 # mypy resolves a stale deepagents lacking this re-exported symbol; pyright (venv) sees it fine.
-from deepagents.middleware.filesystem import FilesystemPermission  # type: ignore[attr-defined]
+from deepagents.middleware.filesystem import FilesystemPermission
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables.config import RunnableConfig

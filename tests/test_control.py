@@ -1,18 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Mapping
 
 import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
+from kokoro_agent.application.event_stream import StreamItem
+from kokoro_agent.domain.control import ControlChannelClosed
 from kokoro_agent.infrastructure.control import (
     DecisionCursor,
     await_decision,
     control_stream,
 )
+from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.permission import gate_tools_interactive
 from kokoro_agent.infrastructure.transport import MemoryStream
+
+
+class _ClosedStream:
+    """control 流意外终止的最小桩：subscribe 立即耗尽（连接断开），不阻塞等待。"""
+
+    async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem:
+        raise NotImplementedError
+
+    async def read_all(self, stream: str) -> list[StreamItem]:
+        return []
+
+    async def subscribe(
+        self, stream: str, from_cursor: str | None = None
+    ) -> AsyncIterator[StreamItem]:
+        return
+        yield  # 空 async generator：标记类型但永不产出
 
 
 class _Args(BaseModel):
@@ -66,6 +86,20 @@ async def test_await_decision_cancel_advances_cursor() -> None:
     second = await asyncio.wait_for(await_decision(bus, "run_1", cursor), timeout=1.0)
     assert first.decision == "cancel"
     assert second.decision == "reject"
+
+
+async def test_await_decision_raises_on_closed_channel() -> None:
+    # H3:control 流意外终止(连接断开)绝不能伪造一条 reject 回灌模型——
+    # 那会让被门控工具收到误导性的"用户拒绝"结果。改为 fail-loud 抛专用异常,由 run 级取消接管。
+    with pytest.raises(ControlChannelClosed):
+        await await_decision(_ClosedStream(), "run_1")
+
+
+async def test_interactive_gate_closed_channel_aborts_via_cancellederror() -> None:
+    # 流终止经门控应转成 CancelledError(让 run_task.cancel 接管),而非 rejection_result。
+    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", _ClosedStream())
+    with pytest.raises(asyncio.CancelledError):
+        await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
 async def test_await_decision_skips_message_with_unexpected_fields() -> None:

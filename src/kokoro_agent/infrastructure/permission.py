@@ -12,11 +12,7 @@ from kokoro_agent.infrastructure.control import (
     rejection_result,
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
-from kokoro_agent.infrastructure.agent_adapter import (
-    FilesystemPermission,
-    tool_coroutine,
-    tool_func,
-)
+from kokoro_agent.infrastructure.agent_adapter import FilesystemPermission
 from kokoro_agent.infrastructure.transport import StreamPort
 
 
@@ -85,11 +81,11 @@ def _approval_gate(
         if decision != "approve":
             return rejection_result(tool.name)
 
-        coroutine = tool_coroutine(tool)
+        coroutine = tool.coroutine
         if coroutine is not None:
             return await coroutine(**kwargs)
 
-        func = tool_func(tool)
+        func = tool.func
         if func is None:
             msg = f"tool {tool.name} has no callable execution path"
             raise RuntimeError(msg)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal, Protocol, TypedDict
 
 import deepagents
@@ -30,8 +30,6 @@ __all__ = [
     "FilesystemPermission",
     "make_deep_agent",
     "make_subagent_runner",
-    "tool_coroutine",
-    "tool_func",
 ]
 
 
@@ -81,11 +79,3 @@ def make_deep_agent(
 def make_subagent_runner(model: BaseChatModel, *, system_prompt: str, name: str) -> AsyncRunner:
     runner: AsyncRunner = _build_subagent(model, system_prompt=system_prompt, tools=[], name=name)
     return runner
-
-
-def tool_coroutine(tool: StructuredTool) -> Callable[..., Awaitable[str]] | None:
-    return tool.coroutine
-
-
-def tool_func(tool: StructuredTool) -> Callable[..., str] | None:
-    return tool.func

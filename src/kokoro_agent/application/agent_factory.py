@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.domain.run_request import PermissionMode
@@ -30,29 +27,6 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_base_tools(
-    model: BaseChatModel,
-    runtime_registry: RuntimeSubagentRegistry,
-) -> tuple[StructuredTool, ...]:
-    return (
-        build_runtime_custom_subagent_tool(model, runtime_registry),
-        *BUILT_IN_TOOLS,
-    )
-
-
-def gate_tools_for_run(
-    tools: Sequence[StructuredTool],
-    permission_mode: PermissionMode,
-    run_id: str,
-    control_bus: StreamProtocol | None,
-) -> list[StructuredTool]:
-    return (
-        gate_tools_interactive(tools, permission_mode, run_id, control_bus)
-        if control_bus is not None
-        else gate_tools(tools, permission_mode)
-    )
-
-
 def build_agent(
     model: BaseChatModel,
     permission_mode: PermissionMode,
@@ -61,8 +35,12 @@ def build_agent(
     runtime_registry: RuntimeSubagentRegistry,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> EventStreamingAgent:
-    base_tools = build_base_tools(model, runtime_registry)
-    tools = gate_tools_for_run(base_tools, permission_mode, run_id, control_bus)
+    base_tools = (build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS)
+    tools = (
+        gate_tools_interactive(base_tools, permission_mode, run_id, control_bus)
+        if control_bus is not None
+        else gate_tools(base_tools, permission_mode)
+    )
     return make_deep_agent(
         model=model,
         tools=tools,

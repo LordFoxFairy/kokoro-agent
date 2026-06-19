@@ -140,7 +140,7 @@ async def drive_agent_events(
                         case _:
                             continue
         yield emitter.emit("run.completed", {"status": "completed"})
-    except Exception as error:  # noqa: BLE001 — 边界：任何失败都收口成 run.failed
+    except Exception as error:  # noqa: BLE001 — 顶层兜底：所有异常都转为 run.failed
         yield emitter.emit(
             "run.failed",
             {"error_kind": type(error).__name__, "message": str(error)},

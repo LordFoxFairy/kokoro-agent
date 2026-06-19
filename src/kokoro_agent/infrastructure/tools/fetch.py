@@ -37,7 +37,7 @@ def _resolve_ips(host: str) -> list[str]:
 
 def _ip_is_internal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     # 只拦真正危险的内部目标：环回 / 链路本地（含云 metadata 169.254.169.254）/ 未指定 / RFC1918。
-    # 不拦 198.18.0.0/15 等基准段——TUN 代理把公网域名映射到该段，宽泛 is_private/is_reserved 会废掉抓取。
+    # 不拦 198.18.0.0/15 等基准段：TUN 代理可能将公网域名映射至此，宽泛的 is_private/is_reserved 会误拦合法请求。
     if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
         return True
     return any(ip in net for net in _PRIVATE_NETS)
@@ -93,8 +93,8 @@ async def fetch_url(url: str) -> str:
         async with asyncio.timeout(FETCH_DEADLINE_S):
             return await _fetch_guarded(url)
     except TimeoutError:
-        # 慢速 drip：墙钟封顶以文本返回，不饿死整轮 run。TimeoutError 不是 HTTPError，须先于它捕获。
+        # 墙钟超时以文本返回，避免阻塞整轮 run；TimeoutError 非 HTTPError，须先于其捕获。
         return f"抓取失败：超过 {FETCH_DEADLINE_S}s 墙钟超时"
     except httpx.HTTPError as error:
-        # 工具错误以文本返回：模型可见、可改道，agent 循环不死。
+        # 工具错误以文本返回：模型可见并可改道，不中断 agent 循环。
         return f"抓取失败：{type(error).__name__}: {error}"

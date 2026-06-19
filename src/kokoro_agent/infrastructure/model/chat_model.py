@@ -43,6 +43,7 @@ def _make_openai_chat_model(settings: ChatModelSettings, style: ExecutionStyle) 
 
 def _make_anthropic_chat_model(settings: ChatModelSettings, style: ExecutionStyle) -> BaseChatModel:
     effort = _anthropic_effort(style)
+    # ChatAnthropic 拒绝 api_key=None（不同于 ChatOpenAI），无 key 时须省略该参数以回退到环境变量。
     if settings.anthropic_api_key is not None:
         return ChatAnthropic(
             model_name=settings.model_name,
@@ -75,6 +76,3 @@ def make_chat_model(execution_style: str = "fast") -> BaseChatModel:
             return _make_openai_chat_model(settings, style)
         case "anthropic":
             return _make_anthropic_chat_model(settings, style)
-        case _:
-            msg = f"Unsupported model provider: {settings.provider!r}"
-            raise ValueError(msg)

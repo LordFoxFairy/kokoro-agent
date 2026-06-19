@@ -16,8 +16,7 @@ ControlDecision = Literal["approve", "reject"]
 
 
 class ControlMessage(BaseModel):
-    """control 通道承载人工审批决定：每条消息都过这份严格契约，
-    畸形载荷被显式丢弃，而非被静默当作 reject / 非 cancel 误判。"""
+    """control 通道的人工审批消息契约；畸形载荷显式丢弃，不被误判为 reject 或非 cancel 决定。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -43,8 +42,7 @@ def _parse_control(event: JsonObject) -> ControlMessage | None:
 
 
 class DecisionCursor:
-    """同一 run 内顺序消费 control 决定：每读一条推进游标，下一个门控工具从其后等待，
-    杜绝第二个工具误读第一个工具的遗留决定（跨工具越权放行）。"""
+    """同一 run 内顺序消费 control 决定：每读一条推进游标，下一个门控工具从其后等待，避免后续工具误读前一工具的残留决定。"""
 
     def __init__(self) -> None:
         self.value: str | None = None
@@ -55,9 +53,9 @@ async def await_decision(
     run_id: str,
     cursor: DecisionCursor | None = None,
 ) -> ControlDecision:
-    """阻塞读 control 流的下一条 approve/reject（从游标之后）。
-    不做超时自动回退：审批工具就该一直等用户决定；用户放弃整轮时由 worker 的 cancel-watcher
-    收到 cancel 并直接取消整个 run task（连带解阻塞所有待批门）。"""
+    """阻塞读取 control 流的下一条 approve/reject（从游标之后）。
+    无超时自动回退：审批需持续等待用户决定；用户取消整轮时由 worker 的 cancel-watcher
+    处理 cancel 并取消整个 run task，连带解除所有挂起审批的阻塞。"""
     from_cursor = cursor.value if cursor is not None else None
     async for item in bus.subscribe(control_stream(run_id), from_cursor):
         message = _parse_control(item.event)
@@ -69,7 +67,7 @@ async def await_decision(
         if cursor is not None:
             cursor.value = item.cursor
         return decision
-    # 流意外终止（连接断开）→ fail-closed：默认拒绝，绝不静默放行。
+    # 流意外终止（连接断开）→ fail-closed：默认拒绝，不静默放行。
     return "reject"
 
 

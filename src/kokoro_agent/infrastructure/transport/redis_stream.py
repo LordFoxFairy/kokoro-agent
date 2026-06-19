@@ -17,8 +17,8 @@ _BLOCK_MS = 1000
 _Fields = dict[bytes | str, bytes | str] | None
 _Entry = tuple[bytes | str | None, _Fields]
 _ReadResponse = list[tuple[bytes | str | None, list[_Entry]]]
-# redis-py 无类型存根，XREAD/XRANGE 回来的是 bytes/嵌套 list/tuple 的松散结构；
-# 这里以 object 为边界逐层收窄，挡住 RESP2/3 协议差异，绝不让未校验数据进内层。
+# redis-py 无类型存根，XREAD/XRANGE 返回 bytes/嵌套 list/tuple 的松散结构；
+# 以 object 为边界逐层收窄，屏蔽 RESP2/3 协议差异，未校验数据不进入内层。
 _ObjectMapping: TypeAlias = Mapping[object, object]
 _ObjectDict: TypeAlias = dict[object, object]
 _ObjectList: TypeAlias = list[object]
@@ -161,4 +161,4 @@ class RedisStream:
                 for entry_id, fields in entries:
                     item = self._to_item(entry_id, fields)
                     last = item.cursor
-                    yield StreamItem(cursor=item.cursor, event=clone_event(item.event))
+                    yield item

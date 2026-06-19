@@ -71,6 +71,10 @@ def read_header(event: StreamEvent) -> EventHeader:
             return EventHeader("", "", "", "")
 
 
+def _str_or_empty(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
 def read_tool_input(event: StreamEvent) -> ToolInput:
     match event:
         case {"data": {"input": raw_input}}:
@@ -96,21 +100,9 @@ def read_tool_input(event: StreamEvent) -> ToolInput:
         case _:
             pass
 
-    match typed_input.get("subagent_type"):
-        case str() as subagent_type:
-            parsed_subagent_type = subagent_type
-        case _:
-            parsed_subagent_type = ""
-    match typed_input.get("description"):
-        case str() as description:
-            parsed_description = description
-        case _:
-            parsed_description = ""
-    match typed_input.get("name"):
-        case str() as name:
-            parsed_name = name
-        case _:
-            parsed_name = ""
+    parsed_subagent_type = _str_or_empty(typed_input.get("subagent_type"))
+    parsed_description = _str_or_empty(typed_input.get("description"))
+    parsed_name = _str_or_empty(typed_input.get("name"))
 
     return ToolInput(
         args=scalar_args,
@@ -155,7 +147,7 @@ def read_ai_message(event: StreamEvent) -> AIMessage | None:
 
 
 def _reasoning_override(message: BaseMessage) -> str | None:
-    # langchain 把 additional_kwargs 标成裸 dict；未知值类型的边界仅收口在这一处访问。
+    # langchain 将 additional_kwargs 声明为无类型 dict；未知值类型的边界仅在此处收口。
     value = message.additional_kwargs.get("reasoning_content")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     return value if isinstance(value, str) and value else None
 

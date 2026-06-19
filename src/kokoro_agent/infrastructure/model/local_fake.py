@@ -69,7 +69,7 @@ class LocalFakeChatModel(BaseChatModel):
         tool_choice: str | None = None,
         **kwargs: object,
     ) -> Runnable[LanguageModelInput, AIMessage]:
-        # 忽略绑定（脚本固定），但方法必须存在：deep agents 会调 bind_tools，否则基类抛 NotImplementedError。
+        # 接受但忽略绑定（脚本固定）；deepagents 会调用 bind_tools，缺失则基类抛 NotImplementedError。
         return self.with_types(output_type=AIMessage)
 
     def _generate(

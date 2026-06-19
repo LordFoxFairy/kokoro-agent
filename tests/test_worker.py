@@ -17,7 +17,7 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
 from kokoro_agent.infrastructure.transport import MemoryStreamPort, StreamPort
-from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
+from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest

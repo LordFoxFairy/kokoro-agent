@@ -17,7 +17,7 @@ from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.control import wait_for_cancel
 from kokoro_agent.infrastructure.json_types import JsonObject
 from kokoro_agent.infrastructure.transport import StreamPort, make_stream_port
-from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
+from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 LOGGER = logging.getLogger(__name__)
 

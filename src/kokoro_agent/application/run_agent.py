@@ -14,7 +14,7 @@ from kokoro_agent.infrastructure.agent_adapter import AgentInvokeInput
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.permission import blocked_tools
 from kokoro_agent.infrastructure.transport import StreamPort
-from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry
+from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 
 def trace_config(req: RunRequest) -> RunnableConfig | None:

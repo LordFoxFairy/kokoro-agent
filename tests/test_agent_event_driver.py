@@ -13,7 +13,7 @@ from pydantic import JsonValue
 from kokoro_agent.application.agent_event_driver import drive_agent_events
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.infrastructure.stream_events import stream_intent_contract, translate_stream_event
-from kokoro_agent.infrastructure.subagent_registry import CUSTOM_SUBAGENTS_ENV
+from kokoro_agent.infrastructure.subagent import CUSTOM_SUBAGENTS_ENV
 
 
 class EventSeed(TypedDict):

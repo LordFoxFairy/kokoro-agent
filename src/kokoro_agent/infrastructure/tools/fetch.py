@@ -36,8 +36,7 @@ def _resolve_ips(host: str) -> list[str]:
 
 
 def _ip_is_internal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    # 只拦真正危险的内部目标：环回 / 链路本地（含云 metadata 169.254.169.254）/ 未指定 / RFC1918。
-    # 不拦 198.18.0.0/15 等基准段：TUN 代理可能将公网域名映射至此，宽泛的 is_private/is_reserved 会误拦合法请求。
+    # 只拦真正危险目标（环回/链路本地含云 metadata/未指定/RFC1918），放过基准段免误伤 TUN 代理映射。
     if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
         return True
     return any(ip in net for net in _PRIVATE_NETS)

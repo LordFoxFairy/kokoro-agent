@@ -6,15 +6,14 @@ import httpx
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-from kokoro_agent.infrastructure import builtin_tools
-from kokoro_agent.infrastructure.builtin_tools import (
+from kokoro_agent.infrastructure.tools import (
     BUILT_IN_TOOLS,
-    FETCH_MAX_CHARS,
     RESERVED_TOOL_NAMES,
     assert_tool_names_allowed,
-    fetch_url,
-    now,
+    fetch,
 )
+from kokoro_agent.infrastructure.tools.clock import now
+from kokoro_agent.infrastructure.tools.fetch import FETCH_MAX_CHARS, fetch_url
 
 # 公网 IP，让 _host_is_blocked 放行（真实 DNS 不参与测试）。
 _PUBLIC_IP = "93.184.216.34"
@@ -29,8 +28,8 @@ def _client_with(handler: httpx.MockTransport) -> httpx.AsyncClient:
 
 
 def _serve(monkeypatch: MonkeyPatch, handler: httpx.MockTransport) -> None:
-    monkeypatch.setattr(builtin_tools, "make_http_client", lambda: _client_with(handler))
-    monkeypatch.setattr(builtin_tools, "_resolve_ips", _public_resolver)
+    monkeypatch.setattr(fetch, "make_http_client", lambda: _client_with(handler))
+    monkeypatch.setattr(fetch, "_resolve_ips", _public_resolver)
 
 
 # --- registry guard -----------------------------------------------------------
@@ -98,8 +97,8 @@ async def test_fetch_url_blocks_a_direct_private_host(monkeypatch: MonkeyPatch) 
     def loopback(_host: str) -> list[str]:
         return ["127.0.0.1"]
 
-    monkeypatch.setattr(builtin_tools, "make_http_client", lambda: _client_with(httpx.MockTransport(handler)))
-    monkeypatch.setattr(builtin_tools, "_resolve_ips", loopback)
+    monkeypatch.setattr(fetch, "make_http_client", lambda: _client_with(httpx.MockTransport(handler)))
+    monkeypatch.setattr(fetch, "_resolve_ips", loopback)
 
     result = await fetch_url("http://router.local/")
     assert result.startswith("抓取失败：拒绝访问")
@@ -120,8 +119,8 @@ async def test_fetch_url_blocks_a_redirect_to_a_private_host(monkeypatch: Monkey
         # 重定向旁路核心：每跳都要按解析出的 IP 复校验。
         return [_PUBLIC_IP] if host == "public.test" else ["169.254.169.254"]
 
-    monkeypatch.setattr(builtin_tools, "make_http_client", lambda: _client_with(httpx.MockTransport(handler)))
-    monkeypatch.setattr(builtin_tools, "_resolve_ips", split_resolver)
+    monkeypatch.setattr(fetch, "make_http_client", lambda: _client_with(httpx.MockTransport(handler)))
+    monkeypatch.setattr(fetch, "_resolve_ips", split_resolver)
 
     result = await fetch_url("http://public.test/")
     assert result.startswith("抓取失败：拒绝访问")
@@ -149,9 +148,9 @@ async def test_fetch_url_blocks_by_resolved_ip_class(
     def resolver(_host: str) -> list[str]:
         return [resolved_ip]
 
-    monkeypatch.setattr(builtin_tools, "_resolve_ips", resolver)
+    monkeypatch.setattr(fetch, "_resolve_ips", resolver)
     monkeypatch.setattr(
-        builtin_tools, "make_http_client",
+        fetch, "make_http_client",
         lambda: _client_with(httpx.MockTransport(lambda _r: httpx.Response(200, text="OK"))),
     )
     result = await fetch_url("http://host.test/")
@@ -214,7 +213,7 @@ async def test_fetch_url_wall_clock_deadline_returns_text(monkeypatch: MonkeyPat
         return httpx.Response(200, text="too late")
 
     _serve(monkeypatch, httpx.MockTransport(slow))
-    monkeypatch.setattr(builtin_tools, "FETCH_DEADLINE_S", 0.05)
+    monkeypatch.setattr(fetch, "FETCH_DEADLINE_S", 0.05)
     result = await fetch_url("https://example.com")
     # 慢速 drip：墙钟封顶以文本返回，不挂起、不抛异常打死整轮 run。
     assert result.startswith("抓取失败：超过")

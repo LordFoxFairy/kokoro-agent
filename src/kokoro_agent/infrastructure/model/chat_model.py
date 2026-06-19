@@ -1,37 +1,17 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
 
 from kokoro_agent.domain.run_request import ExecutionStyle
 from kokoro_agent.infrastructure.model.local_fake import make_local_fake_chat_model
+from kokoro_agent.infrastructure.model.settings import ChatModelSettings
 
-DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 LOCAL_FAKE_MODEL_FLAG = "KOKORO_LOCAL_FAKE_MODEL"
-
-
-@dataclass(frozen=True)
-class ExecutionConfig:
-    style: ExecutionStyle
-    provider: str
-    model_name: str
-    disable_streaming: bool
-
-
-def _split_model_spec(spec: str) -> tuple[str, str]:
-    provider, sep, model_name = spec.partition(":")
-    provider = provider.strip().lower()
-    model_name = model_name.strip()
-    if not provider or not sep or not model_name:
-        msg = f"Invalid KOKORO_MODEL spec: {spec!r}"
-        raise ValueError(msg)
-    return provider, model_name
 
 
 def _validate_execution_style(execution_style: str) -> ExecutionStyle:
@@ -45,65 +25,55 @@ def _validate_execution_style(execution_style: str) -> ExecutionStyle:
             raise ValueError(msg)
 
 
-def resolve_execution_config(execution_style: str) -> ExecutionConfig:
-    provider, model_name = _split_model_spec(os.environ.get("KOKORO_MODEL", DEFAULT_MODEL))
-    style = _validate_execution_style(execution_style)
-    return ExecutionConfig(
-        style=style,
-        provider=provider,
-        model_name=model_name,
-        disable_streaming=os.environ.get("KOKORO_DISABLE_STREAMING") == "1",
-    )
-
-
-def _make_openai_chat_model(config: ExecutionConfig) -> BaseChatModel:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    return ChatOpenAI(
-        model=config.model_name,
-        api_key=SecretStr(api_key) if api_key else None,
-        base_url=os.environ.get("OPENAI_BASE_URL"),
-        disable_streaming=config.disable_streaming,
-        reasoning_effort="high" if config.style == "thinking" else None,
-    )
-
-
 def _anthropic_effort(style: ExecutionStyle) -> Literal["medium", "low"]:
     return "medium" if style == "thinking" else "low"
 
 
-def _make_anthropic_chat_model(config: ExecutionConfig) -> BaseChatModel:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
+def _make_openai_chat_model(settings: ChatModelSettings, style: ExecutionStyle) -> BaseChatModel:
+    return ChatOpenAI(
+        model=settings.model_name,
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        disable_streaming=settings.disable_streaming,
+        reasoning_effort="high" if style == "thinking" else None,
+    )
+
+
+def _make_anthropic_chat_model(settings: ChatModelSettings, style: ExecutionStyle) -> BaseChatModel:
+    effort = _anthropic_effort(style)
+    if settings.anthropic_api_key is not None:
         return ChatAnthropic(
-            model_name=config.model_name,
+            model_name=settings.model_name,
             timeout=None,
             stop=None,
-            api_key=SecretStr(api_key),
-            base_url=os.environ.get("ANTHROPIC_BASE_URL"),
-            disable_streaming=config.disable_streaming,
-            effort=_anthropic_effort(config.style),
+            api_key=settings.anthropic_api_key,
+            base_url=settings.anthropic_base_url,
+            disable_streaming=settings.disable_streaming,
+            effort=effort,
         )
     return ChatAnthropic(
-        model_name=config.model_name,
+        model_name=settings.model_name,
         timeout=None,
         stop=None,
-        base_url=os.environ.get("ANTHROPIC_BASE_URL"),
-        disable_streaming=config.disable_streaming,
-        effort=_anthropic_effort(config.style),
+        base_url=settings.anthropic_base_url,
+        disable_streaming=settings.disable_streaming,
+        effort=effort,
     )
 
 
 def make_chat_model(execution_style: str = "fast") -> BaseChatModel:
-    """Build the worker's chat model: a credential-free local fake when ``KOKORO_LOCAL_FAKE_MODEL=1``, else resolved per request so fast/thinking differ without a restart."""
+    """Build the worker's chat model: a credential-free local fake when
+    ``KOKORO_LOCAL_FAKE_MODEL=1``, else resolved per request from the
+    environment so fast/thinking differ without a restart."""
     if os.environ.get(LOCAL_FAKE_MODEL_FLAG) == "1":
         return make_local_fake_chat_model()
-
-    config = resolve_execution_config(execution_style)
-    match config.provider:
+    settings = ChatModelSettings.from_env()
+    style = _validate_execution_style(execution_style)
+    match settings.provider:
         case "openai":
-            return _make_openai_chat_model(config)
+            return _make_openai_chat_model(settings, style)
         case "anthropic":
-            return _make_anthropic_chat_model(config)
+            return _make_anthropic_chat_model(settings, style)
         case _:
-            msg = f"Unsupported model provider: {config.provider!r}"
+            msg = f"Unsupported model provider: {settings.provider!r}"
             raise ValueError(msg)

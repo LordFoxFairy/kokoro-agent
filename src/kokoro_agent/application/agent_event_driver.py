@@ -1,8 +1,7 @@
-"""事件驱动层：把 StreamIntent 流编排为对外的 AgentEvent 序列（分段/审批/超时收口）。"""
+"""事件驱动层：把 StreamIntent 流编排为对外的 AgentEvent 序列（分段/审批/终态收口）。"""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 
 from langchain_core.runnables.schema import StreamEvent
@@ -30,16 +29,16 @@ from kokoro_agent.domain.stream_intent import (
 )
 from kokoro_agent.infrastructure.stream_events import read_header, translate_stream_event
 
-ASTREAM_TIMEOUT_S = 120
-
 
 async def drive_agent_events(
     run_id: str,
     raw_events: AsyncIterator[StreamEvent],
     awaiting_tools: frozenset[str] = frozenset(),
-    timeout_s: float = ASTREAM_TIMEOUT_S,
 ) -> AsyncIterator[AgentEvent]:
-    """以 run.started 开头、必有终态（run.completed/failed）收口，保证对外事件流自洽。"""
+    """以 run.started 开头、必有终态（run.completed/failed）收口，保证对外事件流自洽。
+
+    不设 run 级墙钟超时：HITL 审批需无限等待用户操作；放弃由用户 cancel 收口。
+    """
     emitter = RunEmitter(run_id)
     active_subagent: SubagentStarted | None = None
     streamed_text: str | None = None
@@ -53,88 +52,90 @@ async def drive_agent_events(
 
     yield emitter.emit("run.started", {})
     try:
-        async with asyncio.timeout(timeout_s):
-            async for raw_event in raw_events:
-                for intent in translate_stream_event(raw_event):
-                    match intent:
-                        case TextStream(text=text):
-                            subagent_id = routed_subagent(raw_event)
-                            if subagent_id is not None:
-                                streamed_subagent_text = (streamed_subagent_text or "") + text
-                                yield emitter.emit(
-                                    "subagent.text.delta",
-                                    subagent_text_payload(emitter.segment(), subagent_id, text),
-                                )
-                                continue
-                            streamed_text = (streamed_text or "") + text
-                            yield emitter.emit("text.delta", text_payload(emitter.segment(), text))
-
-                        case TextFinal(text=text):
-                            subagent_id = routed_subagent(raw_event)
-                            if subagent_id is not None:
-                                segment_id = emitter.segment()
-                                if streamed_subagent_text is not None:
-                                    yield emitter.emit(
-                                        "subagent.text.completed",
-                                        subagent_text_payload(
-                                            segment_id, subagent_id, streamed_subagent_text
-                                        ),
-                                    )
-                                    streamed_subagent_text = None
-                                    continue
-                                payload = subagent_text_payload(segment_id, subagent_id, text)
-                                yield emitter.emit("subagent.text.delta", payload)
-                                yield emitter.emit("subagent.text.completed", payload)
-                                continue
-
-                            segment_id = emitter.segment()
-                            if streamed_text is not None:
-                                yield emitter.emit(
-                                    "text.completed", text_payload(segment_id, streamed_text)
-                                )
-                                streamed_text = None
-                                emitter.complete_segment()
-                                continue
-                            payload = text_payload(segment_id, text)
-                            yield emitter.emit("text.delta", payload)
-                            yield emitter.emit("text.completed", payload)
-                            emitter.complete_segment()
-
-                        case ThinkingDelta(text=text):
-                            yield emitter.emit("thinking.delta", text_payload(emitter.segment(), text))
-
-                        case TodoUpdated(todos=todos):
-                            yield emitter.emit("todo.updated", todo_payload(todos))
-
-                        case ToolInvoked() as tool:
-                            payload = tool_invoked_payload(emitter.segment(), tool)
-                            yield emitter.emit("tool.invoked", payload)
-                            if tool.name in awaiting_tools:
-                                yield emitter.emit("tool.awaiting_approval", payload)
-
-                        case ToolReturned() as tool:
+        async for raw_event in raw_events:
+            for intent in translate_stream_event(raw_event):
+                match intent:
+                    case TextStream(text=text):
+                        subagent_id = routed_subagent(raw_event)
+                        if subagent_id is not None:
+                            streamed_subagent_text = (streamed_subagent_text or "") + text
                             yield emitter.emit(
-                                "tool.returned", tool_returned_payload(emitter.segment(), tool)
+                                "subagent.text.delta",
+                                subagent_text_payload(emitter.segment(), subagent_id, text),
                             )
-
-                        case SubagentStarted() as subagent:
-                            active_subagent = subagent
-                            yield emitter.emit(
-                                "subagent.started",
-                                subagent_started_payload(emitter.segment(), subagent),
-                            )
-
-                        case SubagentFinished() as subagent:
-                            active_subagent = None
-                            yield emitter.emit(
-                                "subagent.finished",
-                                subagent_finished_payload(emitter.segment(), subagent),
-                            )
-
-                        case _:
                             continue
+                        streamed_text = (streamed_text or "") + text
+                        yield emitter.emit("text.delta", text_payload(emitter.segment(), text))
+
+                    case TextFinal(text=text):
+                        subagent_id = routed_subagent(raw_event)
+                        if subagent_id is not None:
+                            segment_id = emitter.segment()
+                            if streamed_subagent_text is not None:
+                                yield emitter.emit(
+                                    "subagent.text.completed",
+                                    subagent_text_payload(
+                                        segment_id, subagent_id, streamed_subagent_text
+                                    ),
+                                )
+                                streamed_subagent_text = None
+                                continue
+                            payload = subagent_text_payload(segment_id, subagent_id, text)
+                            yield emitter.emit("subagent.text.delta", payload)
+                            yield emitter.emit("subagent.text.completed", payload)
+                            continue
+
+                        segment_id = emitter.segment()
+                        if streamed_text is not None:
+                            yield emitter.emit(
+                                "text.completed", text_payload(segment_id, streamed_text)
+                            )
+                            streamed_text = None
+                            emitter.complete_segment()
+                            continue
+                        payload = text_payload(segment_id, text)
+                        yield emitter.emit("text.delta", payload)
+                        yield emitter.emit("text.completed", payload)
+                        emitter.complete_segment()
+
+                    case ThinkingDelta(text=text):
+                        yield emitter.emit("thinking.delta", text_payload(emitter.segment(), text))
+
+                    case TodoUpdated(todos=todos):
+                        yield emitter.emit("todo.updated", todo_payload(todos))
+
+                    case ToolInvoked() as tool:
+                        payload = tool_invoked_payload(emitter.segment(), tool)
+                        yield emitter.emit("tool.invoked", payload)
+                        if tool.name in awaiting_tools:
+                            yield emitter.emit("tool.awaiting_approval", payload)
+
+                    case ToolReturned() as tool:
+                        yield emitter.emit(
+                            "tool.returned", tool_returned_payload(emitter.segment(), tool)
+                        )
+
+                    case SubagentStarted() as subagent:
+                        active_subagent = subagent
+                        yield emitter.emit(
+                            "subagent.started",
+                            subagent_started_payload(emitter.segment(), subagent),
+                        )
+
+                    case SubagentFinished() as subagent:
+                        active_subagent = None
+                        yield emitter.emit(
+                            "subagent.finished",
+                            subagent_finished_payload(emitter.segment(), subagent),
+                        )
+
+                    case _:
+                        continue
         yield emitter.emit("run.completed", {"status": "completed"})
-    except Exception as error:  # noqa: BLE001 — 顶层兜底：所有异常都转为 run.failed
+    except TimeoutError:
+        # 模型/IO 级超时显式以 timeout 状态收口，不混同用户拒绝或一般失败。
+        yield emitter.emit("run.completed", {"status": "timeout"})
+    except Exception as error:  # noqa: BLE001 — 顶层兜底：其余异常转为 run.failed
         yield emitter.emit(
             "run.failed",
             {"error_kind": type(error).__name__, "message": str(error)},

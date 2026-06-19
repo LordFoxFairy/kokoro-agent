@@ -680,6 +680,20 @@ async def test_empty_stream_is_started_then_completed() -> None:
     assert events[-1].payload == {"status": "completed"}
 
 
+async def _timeout_then_die() -> AsyncIterator[StreamEvent]:
+    raise TimeoutError("model client timed out")
+    yield _event({})  # pragma: no cover — marks this an async generator
+
+
+async def test_timeout_yields_distinct_timeout_status_not_failed() -> None:
+    # 模型/IO 级 TimeoutError 以 run.completed{status:timeout} 显式收口，不混同 run.failed 或拒绝。
+    events = [e async for e in drive_agent_events("run_1", _timeout_then_die())]
+    kinds = [e.kind for e in events]
+    assert kinds == ["run.started", "run.completed"]
+    assert "run.failed" not in kinds
+    assert events[-1].payload == {"status": "timeout"}
+
+
 async def test_activity_stream_envelope_and_text_expansion() -> None:
     todos = [{"content": "查天气", "status": "in_progress"}]
     raw: list[EventSeed] = [

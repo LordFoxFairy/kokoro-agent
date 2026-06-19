@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_adapter import AsyncRunner, make_subagent_runner
 from kokoro_agent.infrastructure.stream_events import RUNTIME_SUBAGENT_TOOL_NAME, message_parts, result_messages
-from kokoro_agent.infrastructure.subagent_registry import RuntimeSubagentRegistry, load_custom_subagents_from_env
+from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 _RunnerResult = Mapping[str, object]

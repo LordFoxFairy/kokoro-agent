@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from kokoro_agent.infrastructure.subagent_registry import (
+from kokoro_agent.infrastructure.subagent import (
     BUILT_IN_SUBAGENTS,
     CUSTOM_SUBAGENTS_ENV,
     RuntimeSubagentRegistry,

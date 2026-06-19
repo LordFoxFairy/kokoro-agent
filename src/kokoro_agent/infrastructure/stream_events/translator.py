@@ -32,7 +32,7 @@ from kokoro_agent.infrastructure.stream_events.events import (
     MessageParts,
     ToolInput,
 )
-from kokoro_agent.infrastructure.subagent_registry import subagent_source_for
+from kokoro_agent.infrastructure.subagent import subagent_source_for
 
 
 def _truncated(result: str) -> str:

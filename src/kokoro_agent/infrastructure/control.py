@@ -1,3 +1,5 @@
+"""control 通道：人工审批/取消决定的解析、游标顺序消费与阻塞等待。"""
+
 from __future__ import annotations
 
 import logging
@@ -67,6 +69,7 @@ async def await_decision(
         if cursor is not None:
             cursor.value = item.cursor
         return decision
+    # 流意外终止（连接断开）→ fail-closed：默认拒绝，绝不静默放行。
     return "reject"
 
 

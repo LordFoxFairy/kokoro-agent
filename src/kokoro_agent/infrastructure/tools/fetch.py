@@ -1,3 +1,5 @@
+"""内置工具：抓取 http/https 网页文本，带 SSRF 防护（拒绝内网/保留地址）。"""
+
 from __future__ import annotations
 
 import asyncio

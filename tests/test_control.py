@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
@@ -91,6 +92,16 @@ async def test_interactive_gate_reject_returns_rejection() -> None:
     gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
     result = await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     assert "拒绝" in result
+
+
+async def test_interactive_gate_cancel_aborts_via_cancellederror() -> None:
+    # cancel 不是"工具被拒":run 级取消独占终止,门控抛 CancelledError 让 run_task.cancel 接管,
+    # 而非回 rejection_result 在取消竞态里冒出误导性的工具拒绝结果。
+    bus = MemoryStream()
+    await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "cancel"})
+    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
+    with pytest.raises(asyncio.CancelledError):
+        await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
 async def test_await_decision_advances_cursor_across_tools() -> None:

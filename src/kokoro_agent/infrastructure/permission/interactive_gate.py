@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 
 from langchain_core.tools import StructuredTool
@@ -45,7 +46,10 @@ def _approval_gate(
 ) -> StructuredTool:
     async def gated_async(**kwargs: JsonValue) -> str:
         decision = await await_decision(bus, run_id, cursor)
-        if decision != "approve":
+        if decision == "cancel":
+            # run 级取消独占终止：放弃本次调用让 run_task.cancel 接管，不冒出误导性的工具拒绝结果。
+            raise asyncio.CancelledError
+        if decision == "reject":
             return rejection_result(tool.name)
 
         coroutine = tool.coroutine

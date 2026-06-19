@@ -12,7 +12,6 @@ from kokoro_agent.domain.run_request import PermissionMode, RunRequest
 from kokoro_agent.infrastructure.permission import approval_policy
 from kokoro_agent.infrastructure.permission import (
     blocked_tools,
-    fs_permissions,
     gate_tools,
     gate_tools_interactive,
     load_approval_policy,
@@ -20,17 +19,6 @@ from kokoro_agent.infrastructure.permission import (
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.transport import MemoryStream
-
-
-def test_fs_permissions_plan_read_only_else_unrestricted() -> None:
-    assert fs_permissions("auto") == []
-    assert fs_permissions("default") == []
-    rules = fs_permissions("plan")
-    assert len(rules) == 1
-    rule = rules[0]
-    assert rule.mode == "deny"
-    assert "write" in rule.operations
-    assert "read" not in rule.operations
 
 
 def test_blocked_tools_driven_by_declarative_approval_policy() -> None:

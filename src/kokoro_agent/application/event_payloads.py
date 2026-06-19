@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import JsonValue
 
-from kokoro_agent.infrastructure.stream_events import (
+from kokoro_agent.domain.stream_intent import (
     SubagentFinished,
     SubagentStarted,
     TodoItem,

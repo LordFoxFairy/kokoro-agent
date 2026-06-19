@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
 from kokoro_agent.infrastructure.stream_events import message_parts, result_messages
 from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
-from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
+from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 # deepagents runner 结果是进程内不透明对象（非 JSON），值类型在此真实收口为 object。
@@ -65,31 +65,9 @@ def build_runtime_custom_subagent_tool(
         system_prompt: str,
         task: str,
     ) -> str:
-        normalized_name = name.strip()
-        normalized_description = description.strip()
-        normalized_system_prompt = system_prompt.strip()
-        normalized_task = task.strip()
-
-        if normalized_name in {spec.name for spec in load_custom_subagents_from_env()}:
-            msg = f"duplicate or reserved subagent name: {normalized_name}"
-            raise ValueError(msg)
-
-        spec = runtime_registry.get(normalized_name)
-        if spec is not None and (
-            spec.description != normalized_description
-            or spec.system_prompt != normalized_system_prompt
-        ):
-            msg = f"conflicting runtime subagent definition: {normalized_name}"
-            raise ValueError(msg)
-        if spec is None:
-            spec = runtime_registry.register(
-                normalized_name,
-                normalized_description,
-                normalized_system_prompt,
-            )
-
+        spec = runtime_registry.register_or_get(name, description, system_prompt)
         runner = _make_runner(model, spec.system_prompt, spec.name)
-        result_obj = await runner.ainvoke(_runtime_messages(normalized_task))
+        result_obj = await runner.ainvoke(_runtime_messages(task.strip()))
         for message in reversed(_runtime_result_messages(result_obj)):
             if isinstance(message, AIMessage):
                 text = message_parts(message).text.rstrip()

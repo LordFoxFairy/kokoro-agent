@@ -11,7 +11,8 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
-from kokoro_agent.infrastructure.stream_events import RUNTIME_SUBAGENT_TOOL_NAME, message_parts, result_messages
+from kokoro_agent.infrastructure.stream_events import message_parts, result_messages
+from kokoro_agent.infrastructure.tool_names import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -94,15 +95,7 @@ def build_runtime_custom_subagent_tool(
                     return text
         return ""
 
-    def agent_runtime_sync(
-        name: str,
-        description: str,
-        system_prompt: str,
-        task: str,
-    ) -> str:
-        msg = "runtime custom subagent tool requires async execution"
-        raise RuntimeError(msg)
-
+    # 纯异步工具：只给 coroutine、不给 func，sync 调用由 langchain 原生 NotImplementedError 拒绝。
     return StructuredTool(
         name=RUNTIME_SUBAGENT_TOOL_NAME,
         description=(
@@ -110,6 +103,5 @@ def build_runtime_custom_subagent_tool(
             "且它不属于内建或配置定义的子代理集合时使用。"
         ),
         args_schema=RuntimeSubagentToolInput,
-        func=agent_runtime_sync,
         coroutine=agent_runtime,
     )

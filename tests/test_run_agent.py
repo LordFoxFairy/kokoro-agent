@@ -6,7 +6,8 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables.schema import EventData, StandardStreamEvent, StreamEvent
 from pydantic import JsonValue
 
-from kokoro_agent.infrastructure.stream_events import stream_intent_contract, translate_stream_event
+from kokoro_agent.infrastructure.stream_events import translate_stream_event
+from stream_contracts import stream_intent_contract
 
 
 class EventSeed(TypedDict, total=False):

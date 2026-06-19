@@ -189,12 +189,12 @@ async def test_agent_runtime_returns_empty_string_when_no_ai_message(
     assert result == ""
 
 
-def test_agent_runtime_sync_path_raises_runtime_error() -> None:
+def test_runtime_subagent_tool_is_async_only() -> None:
     registry = RuntimeSubagentRegistry()
     tool = build_runtime_custom_subagent_tool(model=make_local_fake_chat_model(), runtime_registry=registry)
 
-    assert tool.func is not None
-    with pytest.raises(RuntimeError, match="requires async execution"):
-        tool.func(
-            name="reviewer", description="审稿", system_prompt="检查", task="复查"
+    assert tool.func is None
+    with pytest.raises(NotImplementedError):
+        tool.invoke(
+            {"name": "reviewer", "description": "审稿", "system_prompt": "检查", "task": "复查"}
         )

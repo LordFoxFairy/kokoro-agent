@@ -1,15 +1,10 @@
-"""流事件的基础设施值对象与工具名常量（解析层内部使用）。"""
+"""LangChain 防腐层 DTO：从未类型化 StreamEvent 解析出的强类型值对象。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from kokoro_agent.domain.stream_intent import TodoItem, ToolScalar
-
-TODO_TOOL_NAME = "write_todos"
-SUBAGENT_TOOL_NAME = "task"
-RUNTIME_SUBAGENT_TOOL_NAME = "agent"
-TOOL_RESULT_MAX_CHARS = 8_000
 
 
 @dataclass(slots=True, frozen=True)

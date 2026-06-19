@@ -1,4 +1,4 @@
-"""流事件子系统：把 LangChain 事件翻译为领域 StreamIntent 并提供契约镜像。"""
+"""流事件子系统：把 LangChain 事件翻译为领域 StreamIntent。"""
 
 from .adapter import (
     message_parts,
@@ -11,7 +11,6 @@ from .adapter import (
     result_text,
 )
 from .translator import translate_stream_event
-from .contracts import MessagePartsContract, StreamIntentContract, TodoItemContract, message_parts_contract, stream_intent_contract
 from kokoro_agent.domain.registered_subagent import SubagentSource
 from kokoro_agent.domain.stream_intent import (
     StreamIntent,
@@ -27,23 +26,19 @@ from kokoro_agent.domain.stream_intent import (
     ToolReturned,
     ToolScalar,
 )
-from .events import (
-    EventHeader,
-    MessageParts,
+from .parsed_event import EventHeader, MessageParts, ToolInput
+from kokoro_agent.infrastructure.tool_names import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
     TODO_TOOL_NAME,
-    ToolInput,
 )
 
 __all__ = [
     "EventHeader",
     "MessageParts",
-    "MessagePartsContract",
     "RUNTIME_SUBAGENT_TOOL_NAME",
     "SUBAGENT_TOOL_NAME",
     "StreamIntent",
-    "StreamIntentContract",
     "SubagentFinished",
     "SubagentSource",
     "SubagentStarted",
@@ -52,7 +47,6 @@ __all__ = [
     "TextStream",
     "ThinkingDelta",
     "TodoItem",
-    "TodoItemContract",
     "TodoStatus",
     "TodoUpdated",
     "ToolInput",
@@ -60,7 +54,6 @@ __all__ = [
     "ToolReturned",
     "ToolScalar",
     "message_parts",
-    "message_parts_contract",
     "read_chunk",
     "read_error",
     "read_header",
@@ -68,6 +61,5 @@ __all__ = [
     "read_tool_input",
     "result_messages",
     "result_text",
-    "stream_intent_contract",
     "translate_stream_event",
 ]

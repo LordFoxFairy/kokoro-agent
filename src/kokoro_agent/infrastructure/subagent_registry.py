@@ -8,7 +8,7 @@ from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 
-from kokoro_agent.domain.subagent import RegisteredSubagent, SubagentSource
+from kokoro_agent.domain.registered_subagent import RegisteredSubagent, SubagentSource
 
 CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
 

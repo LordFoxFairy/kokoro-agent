@@ -1,3 +1,5 @@
+"""StreamIntent 的 Pydantic 镜像契约：仅供测试断言事件载荷形状。"""
+
 from __future__ import annotations
 
 from typing import Literal, TypeAlias

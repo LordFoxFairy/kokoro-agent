@@ -1,3 +1,5 @@
+"""翻译层：把单个 LangChain StreamEvent 分发为零或多个领域 StreamIntent。"""
+
 from __future__ import annotations
 
 from langchain_core.runnables.schema import StreamEvent

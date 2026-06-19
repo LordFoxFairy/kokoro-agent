@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 
 from langchain_core.tools import StructuredTool
 
+from kokoro_agent.application.control_results import rejection_result
+from kokoro_agent.domain.control import ControlChannelClosed
 from kokoro_agent.domain.run_request import PermissionMode
-from kokoro_agent.infrastructure.control import (
-    DecisionCursor,
-    await_decision,
-    rejection_result,
-)
+from kokoro_agent.infrastructure.control import DecisionCursor, await_decision
 from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.permission.rules import tool_allowed
 from kokoro_agent.application.event_stream import StreamProtocol
+
+LOGGER = logging.getLogger(__name__)
 
 
 def gate_tools_interactive(
@@ -45,7 +46,13 @@ def _approval_gate(
     cursor: DecisionCursor,
 ) -> StructuredTool:
     async def gated_async(**kwargs: JsonValue) -> str:
-        message = await await_decision(bus, run_id, cursor)
+        try:
+            message = await await_decision(bus, run_id, cursor)
+        except ControlChannelClosed as closed:
+            # control 流断开是基础设施故障而非用户取消:显式 WARNING 留痕(fail-loud),
+            # 再放弃本次调用让 run 级取消接管,绝不伪造拒绝结果回灌模型。
+            LOGGER.warning("control channel closed for run_id=%s; abandoning gated tool %s", run_id, tool.name)
+            raise asyncio.CancelledError from closed
         if message.decision == "cancel":
             # run 级取消独占终止：放弃本次调用让 run_task.cancel 接管，不冒出误导性的工具拒绝结果。
             raise asyncio.CancelledError

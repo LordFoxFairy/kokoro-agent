@@ -1,38 +1,20 @@
-"""control 通道：人工审批/取消决定的解析、游标顺序消费与阻塞等待。"""
+"""control 通道 IO 协调：流地址、游标顺序消费与阻塞等待（契约见 domain.control）。"""
 
 from __future__ import annotations
 
 import logging
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 
 from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.domain.control import ControlChannelClosed, ControlMessage
 from kokoro_agent.infrastructure.json_types import JsonObject
 
 LOGGER = logging.getLogger(__name__)
 
-ControlDecision = Literal["approve", "reject", "cancel"]
-
-
-class ControlMessage(BaseModel):
-    """control 通道的人工审批消息契约；畸形载荷显式丢弃，不被误判为任一决定。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    kind: Literal["control"]
-    decision: ControlDecision
-    # 仅 approve 有意义：用户在审批暂停时编辑后的工具参数，整体替换模型原参数。
-    args: JsonObject | None = None
-
 
 def control_stream(run_id: str) -> str:
     return f"kokoro:run:{run_id}:control"
-
-
-def rejection_result(tool_name: str) -> str:
-    """用户主动点击 reject 时回给模型的结果文案。"""
-    return f"用户拒绝了工具 {tool_name} 的调用。"
 
 
 def _parse_control(event: JsonObject) -> ControlMessage | None:
@@ -57,7 +39,7 @@ async def await_decision(
 ) -> ControlMessage:
     """阻塞读取 control 流的下一条决定（含可选编辑后 args，从游标之后）。
     无超时自动回退：审批需持续等待用户决定。cancel 原样返回给调用方，由其决定终止流程，
-    不在此静默吞掉。"""
+    不在此静默吞掉。流意外终止抛 ControlChannelClosed，绝不伪造 reject。"""
     from_cursor = cursor.value if cursor is not None else None
     async for item in bus.subscribe(control_stream(run_id), from_cursor):
         message = _parse_control(item.event)
@@ -66,8 +48,7 @@ async def await_decision(
         if cursor is not None:
             cursor.value = item.cursor
         return message
-    # 流意外终止（连接断开）→ fail-closed：默认拒绝，不静默放行。
-    return ControlMessage(kind="control", decision="reject")
+    raise ControlChannelClosed(run_id)
 
 
 async def wait_for_cancel(bus: StreamProtocol, run_id: str) -> None:

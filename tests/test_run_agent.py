@@ -87,7 +87,7 @@ def test_generic_tool_start_and_end_pair() -> None:
 
 
 def test_rejected_gated_tool_marks_tool_returned_rejected() -> None:
-    from kokoro_agent.infrastructure.control import rejection_result
+    from kokoro_agent.application.control_results import rejection_result
 
     ev = _event(
         "on_tool_end",

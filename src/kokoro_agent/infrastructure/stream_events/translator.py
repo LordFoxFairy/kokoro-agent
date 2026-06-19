@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.runnables.schema import StreamEvent
 
-from kokoro_agent.infrastructure.control import rejection_result
+from kokoro_agent.application.control_results import rejection_result
 from kokoro_agent.infrastructure.stream_events.adapter import (
     message_parts,
     read_ai_message,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 from langchain_core.runnables.schema import StreamEvent
 
@@ -16,6 +16,8 @@ from kokoro_agent.application.event_payloads import (
     tool_returned_payload,
 )
 from kokoro_agent.application.run_emitter import RunEmitter
+from kokoro_agent.application.subagent_router import SubagentRouter
+from kokoro_agent.application.text_accumulator import TextAccumulator
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.stream_intent import (
     SubagentFinished,
@@ -27,7 +29,53 @@ from kokoro_agent.domain.stream_intent import (
     ToolInvoked,
     ToolReturned,
 )
-from kokoro_agent.infrastructure.stream_events import read_header, translate_stream_event
+from kokoro_agent.infrastructure.stream_events import translate_stream_event
+
+
+def _terminal_event(emitter: RunEmitter, error: BaseException | None) -> AgentEvent:
+    """终态收口：正常完成/超时归 run.completed，其余异常归 run.failed。"""
+    if error is None:
+        return emitter.emit("run.completed", {"status": "completed"})
+    if isinstance(error, TimeoutError):
+        # 模型/IO 级超时显式以 timeout 状态收口，不混同用户拒绝或一般失败。
+        return emitter.emit("run.completed", {"status": "timeout"})
+    return emitter.emit(
+        "run.failed",
+        {"error_kind": type(error).__name__, "message": str(error)},
+    )
+
+
+def _emit_subagent_text(
+    emitter: RunEmitter, accumulator: TextAccumulator, subagent_id: str, final_text: str
+) -> Iterator[AgentEvent]:
+    """子智能体终答落定：流式累积过则只补 completed，否则合成 delta+completed。"""
+    segment_id = emitter.segment()
+    accumulated = accumulator.take()
+    if accumulated is not None:
+        yield emitter.emit(
+            "subagent.text.completed",
+            subagent_text_payload(segment_id, subagent_id, accumulated),
+        )
+        return
+    payload = subagent_text_payload(segment_id, subagent_id, final_text)
+    yield emitter.emit("subagent.text.delta", payload)
+    yield emitter.emit("subagent.text.completed", payload)
+
+
+def _emit_main_text(
+    emitter: RunEmitter, accumulator: TextAccumulator, final_text: str
+) -> Iterator[AgentEvent]:
+    """主链路终答落定：与子智能体同形,额外在段尾 complete_segment 关闭当前段。"""
+    segment_id = emitter.segment()
+    accumulated = accumulator.take()
+    if accumulated is not None:
+        yield emitter.emit("text.completed", text_payload(segment_id, accumulated))
+        emitter.complete_segment()
+        return
+    payload = text_payload(segment_id, final_text)
+    yield emitter.emit("text.delta", payload)
+    yield emitter.emit("text.completed", payload)
+    emitter.complete_segment()
 
 
 async def drive_agent_events(
@@ -40,15 +88,9 @@ async def drive_agent_events(
     不设 run 级墙钟超时：HITL 审批需无限等待用户操作；放弃由用户 cancel 收口。
     """
     emitter = RunEmitter(run_id)
-    active_subagent: SubagentStarted | None = None
-    streamed_text: str | None = None
-    streamed_subagent_text: str | None = None
-
-    def routed_subagent(event: StreamEvent) -> str | None:
-        if active_subagent is None:
-            return None
-        current_agent_name = read_header(event).lc_agent_name
-        return active_subagent.subagent_id if current_agent_name == active_subagent.name else None
+    router = SubagentRouter()
+    main_text = TextAccumulator()
+    subagent_text = TextAccumulator()
 
     yield emitter.emit("run.started", {})
     try:
@@ -56,47 +98,29 @@ async def drive_agent_events(
             for intent in translate_stream_event(raw_event):
                 match intent:
                     case TextStream(text=text):
-                        subagent_id = routed_subagent(raw_event)
+                        subagent_id = router.route(raw_event)
                         if subagent_id is not None:
-                            streamed_subagent_text = (streamed_subagent_text or "") + text
                             yield emitter.emit(
                                 "subagent.text.delta",
-                                subagent_text_payload(emitter.segment(), subagent_id, text),
+                                subagent_text_payload(
+                                    emitter.segment(), subagent_id, subagent_text.append(text)
+                                ),
                             )
                             continue
-                        streamed_text = (streamed_text or "") + text
-                        yield emitter.emit("text.delta", text_payload(emitter.segment(), text))
+                        yield emitter.emit(
+                            "text.delta", text_payload(emitter.segment(), main_text.append(text))
+                        )
 
                     case TextFinal(text=text):
-                        subagent_id = routed_subagent(raw_event)
+                        subagent_id = router.route(raw_event)
                         if subagent_id is not None:
-                            segment_id = emitter.segment()
-                            if streamed_subagent_text is not None:
-                                yield emitter.emit(
-                                    "subagent.text.completed",
-                                    subagent_text_payload(
-                                        segment_id, subagent_id, streamed_subagent_text
-                                    ),
-                                )
-                                streamed_subagent_text = None
-                                continue
-                            payload = subagent_text_payload(segment_id, subagent_id, text)
-                            yield emitter.emit("subagent.text.delta", payload)
-                            yield emitter.emit("subagent.text.completed", payload)
+                            for event in _emit_subagent_text(
+                                emitter, subagent_text, subagent_id, text
+                            ):
+                                yield event
                             continue
-
-                        segment_id = emitter.segment()
-                        if streamed_text is not None:
-                            yield emitter.emit(
-                                "text.completed", text_payload(segment_id, streamed_text)
-                            )
-                            streamed_text = None
-                            emitter.complete_segment()
-                            continue
-                        payload = text_payload(segment_id, text)
-                        yield emitter.emit("text.delta", payload)
-                        yield emitter.emit("text.completed", payload)
-                        emitter.complete_segment()
+                        for event in _emit_main_text(emitter, main_text, text):
+                            yield event
 
                     case ThinkingDelta(text=text):
                         yield emitter.emit("thinking.delta", text_payload(emitter.segment(), text))
@@ -116,14 +140,14 @@ async def drive_agent_events(
                         )
 
                     case SubagentStarted() as subagent:
-                        active_subagent = subagent
+                        router.started(subagent)
                         yield emitter.emit(
                             "subagent.started",
                             subagent_started_payload(emitter.segment(), subagent),
                         )
 
                     case SubagentFinished() as subagent:
-                        active_subagent = None
+                        router.finished()
                         yield emitter.emit(
                             "subagent.finished",
                             subagent_finished_payload(emitter.segment(), subagent),
@@ -131,12 +155,6 @@ async def drive_agent_events(
 
                     case _:
                         continue
-        yield emitter.emit("run.completed", {"status": "completed"})
-    except TimeoutError:
-        # 模型/IO 级超时显式以 timeout 状态收口，不混同用户拒绝或一般失败。
-        yield emitter.emit("run.completed", {"status": "timeout"})
-    except Exception as error:  # noqa: BLE001 — 顶层兜底：其余异常转为 run.failed
-        yield emitter.emit(
-            "run.failed",
-            {"error_kind": type(error).__name__, "message": str(error)},
-        )
+        yield _terminal_event(emitter, None)
+    except Exception as error:  # noqa: BLE001 — 顶层兜底：超时/其余异常统一经 _terminal_event 收口
+        yield _terminal_event(emitter, error)

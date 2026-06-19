@@ -6,13 +6,13 @@ from typing import cast
 import pytest
 
 from kokoro_agent.infrastructure.json_types import JsonObject, validate_event
-from kokoro_agent.infrastructure.transport import MemoryStreamPort, StreamItem
+from kokoro_agent.infrastructure.transport import MemoryStream, StreamItem
 
 STREAM = "kokoro:test:stream"
 
 
 async def test_publish_then_read_all_preserves_order_and_unique_cursors() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     for i in range(3):
         await port.publish(STREAM, {"seq": i})
 
@@ -25,12 +25,12 @@ async def test_publish_then_read_all_preserves_order_and_unique_cursors() -> Non
 
 
 async def test_read_all_empty_stream_returns_empty() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     assert await port.read_all("nope") == []
 
 
 async def test_subscribe_yields_published_items() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     received: list[StreamItem] = []
 
     async def consume() -> None:
@@ -50,7 +50,7 @@ async def test_subscribe_yields_published_items() -> None:
 
 
 async def test_subscribe_from_cursor_skips_earlier() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     await port.publish(STREAM, {"seq": 0})
     await port.publish(STREAM, {"seq": 1})
     existing = await port.read_all(STREAM)
@@ -74,7 +74,7 @@ async def test_subscribe_from_cursor_skips_earlier() -> None:
 
 
 async def test_subscribe_blocks_without_busy_wait() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
 
     async def consume() -> StreamItem:
         async for item in port.subscribe(STREAM):
@@ -90,7 +90,7 @@ async def test_subscribe_blocks_without_busy_wait() -> None:
 
 
 async def test_memory_port_allows_custom_cursor_width() -> None:
-    port = MemoryStreamPort(cursor_width=6)
+    port = MemoryStream(cursor_width=6)
     await port.publish(STREAM, {"seq": 1})
     item = (await port.read_all(STREAM))[0]
     assert item.cursor == "000000"
@@ -109,7 +109,7 @@ def test_validate_event_rejects_non_json_nested_values() -> None:
 
 
 async def test_memory_port_round_trips_nested_json_object() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     payload: JsonObject = {
         "kind": "run.request",
         "payload": {"items": [1, True, None], "text": "你好"},

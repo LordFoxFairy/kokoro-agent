@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
-from kokoro_agent.infrastructure.transport.memory_stream import MemoryStreamPort
-from kokoro_agent.infrastructure.transport.redis_stream import RedisStreamPort, parse_xread_response
+from kokoro_agent.infrastructure.transport.memory_stream import MemoryStream
+from kokoro_agent.infrastructure.transport.redis_stream import RedisStream, parse_xread_response
 from kokoro_agent.infrastructure.transport.stream_protocol import StreamItem, StreamPort
 
 
@@ -13,15 +13,15 @@ def make_stream_port() -> StreamPort:
     backend = os.environ.get("KOKORO_STREAM_BACKEND", "memory").lower()
     if backend == "redis":
         url = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
-        return RedisStreamPort(url)
+        return RedisStream(url)
     if backend == "memory":
-        return MemoryStreamPort()
+        return MemoryStream()
     raise ValueError(f"unknown KOKORO_STREAM_BACKEND: {backend!r}")
 
 
 __all__ = [
-    "MemoryStreamPort",
-    "RedisStreamPort",
+    "MemoryStream",
+    "RedisStream",
     "StreamItem",
     "StreamPort",
     "make_stream_port",

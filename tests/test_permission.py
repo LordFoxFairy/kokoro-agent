@@ -17,7 +17,7 @@ from kokoro_agent.infrastructure.permission import (
     tool_allowed,
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
-from kokoro_agent.infrastructure.transport import MemoryStreamPort
+from kokoro_agent.infrastructure.transport import MemoryStream
 
 
 def test_fs_permissions_plan_read_only_else_unrestricted() -> None:
@@ -130,7 +130,7 @@ def test_permission_gate_wrappers_expose_narrow_sync_signatures() -> None:
 
 
 async def test_interactive_gate_wrappers_expose_narrow_sync_signature() -> None:
-    port = MemoryStreamPort()
+    port = MemoryStream()
     blocked = gate_tools_interactive([_make("fetch_url")], "plan", "run_1", port)[0]
     blocked_sync = blocked.func
     blocked_async = blocked.coroutine

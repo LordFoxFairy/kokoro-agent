@@ -24,15 +24,26 @@ from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.model import make_local_fake_chat_model
-from kokoro_agent.interfaces import worker
-from kokoro_agent.interfaces.worker import (
+from kokoro_agent.application import run_supervisor
+from kokoro_agent.application.request_admission import (
     MAX_PROCESSED_RUN_IDS,
-    REQUESTS_STREAM,
     ProcessedRunIds,
+    RequestAdmission,
+)
+from kokoro_agent.application.run_supervisor import (
+    REQUESTS_STREAM,
+    RunSupervisor,
     events_stream,
     run_once,
-    serve,
 )
+
+
+def _admission(processed: ProcessedRunIds | None = None) -> RequestAdmission:
+    return RequestAdmission(events_stream, processed)
+
+
+async def _serve(bus: StreamProtocol) -> None:
+    await RunSupervisor(_admission()).serve(bus)
 
 
 def _payload_text(value: JsonValue) -> str:
@@ -81,7 +92,7 @@ async def test_run_once_streams_with_injected_model() -> None:
     await bus.publish(REQUESTS_STREAM, _request())
 
     processed = ProcessedRunIds()
-    await run_once(bus, processed, make_local_fake_chat_model())
+    await run_once(bus, _admission(processed), make_local_fake_chat_model())
 
     items = await bus.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
@@ -99,7 +110,7 @@ async def test_run_once_executes_the_built_in_now_tool() -> None:
     await bus.publish(REQUESTS_STREAM, _request("run_tool"))
 
     processed = ProcessedRunIds()
-    await run_once(bus, processed, make_local_fake_chat_model())
+    await run_once(bus, _admission(processed), make_local_fake_chat_model())
 
     items = await bus.read_all(events_stream("run_tool"))
     kinds = [item.event["kind"] for item in items]
@@ -117,9 +128,9 @@ async def test_run_once_is_idempotent_per_run_id() -> None:
     processed = ProcessedRunIds()
 
     await bus.publish(REQUESTS_STREAM, _request())
-    await run_once(bus, processed, model)
+    await run_once(bus, _admission(processed), model)
     await bus.publish(REQUESTS_STREAM, _request())
-    await run_once(bus, processed, model)
+    await run_once(bus, _admission(processed), model)
 
     items = await bus.read_all(events_stream("run_01"))
     kinds = [item.event["kind"] for item in items]
@@ -141,7 +152,7 @@ async def test_run_once_rejects_malformed_request() -> None:
     )
 
     processed = ProcessedRunIds()
-    await run_once(bus, processed, _fake_model("unused"))
+    await run_once(bus, _admission(processed), _fake_model("unused"))
 
     items = await bus.read_all(events_stream("run_bad"))
     assert [item.event["kind"] for item in items] == ["run.failed"]
@@ -159,7 +170,7 @@ async def test_run_once_streams_with_local_fake_model(
     model = make_chat_model()
 
     processed = ProcessedRunIds()
-    await run_once(bus, processed, model)
+    await run_once(bus, _admission(processed), model)
 
     items = await bus.read_all(events_stream("run_local_fake"))
     kinds = [item.event["kind"] for item in items]
@@ -183,11 +194,11 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
         raise ValueError("Invalid KOKORO_MODEL spec: 'plainstring'")
 
     monkeypatch.setattr(
-        "kokoro_agent.interfaces.worker.make_chat_model", broken_make_chat_model
+        "kokoro_agent.application.run_supervisor.make_chat_model", broken_make_chat_model
     )
 
     await bus.publish(REQUESTS_STREAM, _request("run_broken"))
-    await run_once(bus, processed, None)
+    await run_once(bus, _admission(processed), None)
 
     items = await bus.read_all(events_stream("run_broken"))
     assert [item.event["kind"] for item in items] == ["run.failed"]
@@ -196,7 +207,7 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
     assert payload["error_kind"] == "ValueError"
 
     await bus.publish(REQUESTS_STREAM, _request("run_after"))
-    await run_once(bus, processed, make_local_fake_chat_model())
+    await run_once(bus, _admission(processed), make_local_fake_chat_model())
     after = await bus.read_all(events_stream("run_after"))
     assert [item.event["kind"] for item in after][-1] == "run.completed"
 
@@ -227,10 +238,10 @@ async def test_run_once_resolves_model_from_request_execution_style(
             payload={"status": "completed"},
         )
 
-    monkeypatch.setattr("kokoro_agent.interfaces.worker.make_chat_model", fake_make_chat_model)
-    monkeypatch.setattr("kokoro_agent.interfaces.worker.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.application.run_supervisor.make_chat_model", fake_make_chat_model)
+    monkeypatch.setattr("kokoro_agent.application.run_supervisor.run_agent", fake_run_agent)
 
-    await run_once(bus, processed, None)
+    await run_once(bus, _admission(processed), None)
 
     assert seen_styles == ["thinking"]
 
@@ -259,15 +270,15 @@ async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
         return make_local_fake_chat_model()
 
     monkeypatch.setattr(
-        "kokoro_agent.interfaces.worker.make_chat_model", fake_make_chat_model
+        "kokoro_agent.application.run_supervisor.make_chat_model", fake_make_chat_model
     )
-    monkeypatch.setattr("kokoro_agent.interfaces.worker.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.application.run_supervisor.run_agent", fake_run_agent)
 
     async def completed(run_id: str) -> bool:
         items = await bus.read_all(events_stream(run_id))
         return any(i.event.get("kind") == "run.completed" for i in items)
 
-    serve_task = asyncio.create_task(serve(bus))
+    serve_task = asyncio.create_task(_serve(bus))
     try:
         await bus.publish(REQUESTS_STREAM, _request("run_block"))
         await bus.publish(REQUESTS_STREAM, _request("run_fast"))
@@ -308,9 +319,9 @@ async def test_serve_cancels_a_run_on_control_cancel(
         return make_local_fake_chat_model()
 
     monkeypatch.setattr(
-        "kokoro_agent.interfaces.worker.make_chat_model", fake_make_chat_model
+        "kokoro_agent.application.run_supervisor.make_chat_model", fake_make_chat_model
     )
-    monkeypatch.setattr("kokoro_agent.interfaces.worker.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.application.run_supervisor.run_agent", fake_run_agent)
 
     async def has_kind(run_id: str, kind: str) -> bool:
         items = await bus.read_all(events_stream(run_id))
@@ -327,7 +338,7 @@ async def test_serve_cancels_a_run_on_control_cancel(
                     return True
         return False
 
-    serve_task = asyncio.create_task(serve(bus))
+    serve_task = asyncio.create_task(_serve(bus))
     try:
         await bus.publish(REQUESTS_STREAM, _request("run_cancel"))
         async with asyncio.timeout(2):
@@ -394,7 +405,7 @@ async def test_run_once_same_conversation_remembers_prior_turn_without_transport
     _MEMORY_PROBE_SEEN.clear()
 
     monkeypatch.setattr(
-        "kokoro_agent.interfaces.worker.make_chat_model", lambda execution_style="fast": _MemoryProbeModel()
+        "kokoro_agent.application.run_supervisor.make_chat_model", lambda execution_style="fast": _MemoryProbeModel()
     )
 
     await bus.publish(
@@ -405,7 +416,7 @@ async def test_run_once_same_conversation_remembers_prior_turn_without_transport
                 "input": "记住：我的名字是 Nako",
             },
     )
-    await run_once(bus, processed, None)
+    await run_once(bus, _admission(processed), None)
 
     await bus.publish(
         REQUESTS_STREAM,
@@ -415,7 +426,7 @@ async def test_run_once_same_conversation_remembers_prior_turn_without_transport
                 "input": "我叫什么？",
             },
     )
-    await run_once(bus, processed, None)
+    await run_once(bus, _admission(processed), None)
 
     items = await bus.read_all(events_stream("run_mem_2"))
     completed = [item.event for item in items if item.event["kind"] == "text.completed"]
@@ -440,11 +451,11 @@ async def test_run_once_isolates_runtime_registry_across_runs(monkeypatch: Monke
         return
         yield  # makes this an (empty) async generator
 
-    monkeypatch.setattr(worker, "run_agent", fake_run_agent)
+    monkeypatch.setattr(run_supervisor, "run_agent", fake_run_agent)
     bus = MemoryStream()
     await bus.publish(REQUESTS_STREAM, _request("run_iso_1"))
     await bus.publish(REQUESTS_STREAM, _request("run_iso_2"))
-    await run_once(bus, ProcessedRunIds(), _fake_model("unused"))
+    await run_once(bus, _admission(), _fake_model("unused"))
 
     assert len(captured) == 2
     captured[0].register("leaked-from-run-1", "d", "s")

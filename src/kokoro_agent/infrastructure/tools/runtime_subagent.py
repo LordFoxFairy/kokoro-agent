@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
 from kokoro_agent.infrastructure.stream_events import message_parts, result_messages
-from kokoro_agent.infrastructure.tool_names import RUNTIME_SUBAGENT_TOOL_NAME
+from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry, load_custom_subagents_from_env
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

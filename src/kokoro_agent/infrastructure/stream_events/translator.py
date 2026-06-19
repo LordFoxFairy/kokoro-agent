@@ -28,7 +28,7 @@ from kokoro_agent.domain.stream_intent import (
 )
 from kokoro_agent.infrastructure.stream_events.parsed_event import MessageParts, ToolInput
 from kokoro_agent.infrastructure.subagent import subagent_source_for
-from kokoro_agent.infrastructure.tool_names import (
+from kokoro_agent.infrastructure.constants import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
     TODO_TOOL_NAME,

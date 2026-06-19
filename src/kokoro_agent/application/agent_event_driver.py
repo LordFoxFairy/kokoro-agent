@@ -6,8 +6,16 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from langchain_core.runnables.schema import StreamEvent
-from pydantic import JsonValue
 
+from kokoro_agent.application.event_payloads import (
+    subagent_finished_payload,
+    subagent_started_payload,
+    subagent_text_payload,
+    text_payload,
+    todo_payload,
+    tool_invoked_payload,
+    tool_returned_payload,
+)
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.infrastructure.stream_events import (
     SubagentFinished,
@@ -15,7 +23,6 @@ from kokoro_agent.infrastructure.stream_events import (
     TextFinal,
     TextStream,
     ThinkingDelta,
-    TodoItem,
     TodoUpdated,
     ToolInvoked,
     ToolReturned,
@@ -24,63 +31,6 @@ from kokoro_agent.infrastructure.stream_events import (
 )
 
 ASTREAM_TIMEOUT_S = 120
-
-
-# 每种 AgentEvent 载荷形状的单一来源：driver 负责 kind/run_id/seq，
-# 这些构造器独占键名，使同一形状不在流循环里被手写两遍。
-def _text_payload(segment_id: str, text: str) -> dict[str, JsonValue]:
-    return {"segment_id": segment_id, "text": text}
-
-
-def _subagent_text_payload(segment_id: str, subagent_id: str, text: str) -> dict[str, JsonValue]:
-    return {"segment_id": segment_id, "subagent_id": subagent_id, "text": text}
-
-
-def _todo_payload(todos: tuple[TodoItem, ...]) -> dict[str, JsonValue]:
-    return {"todos": [{"content": todo.content, "status": todo.status} for todo in todos]}
-
-
-def _tool_invoked_payload(segment_id: str, tool: ToolInvoked) -> dict[str, JsonValue]:
-    return {
-        "segment_id": segment_id,
-        "tool_id": tool.tool_id,
-        "name": tool.name,
-        "args": dict(tool.args),
-    }
-
-
-def _tool_returned_payload(segment_id: str, tool: ToolReturned) -> dict[str, JsonValue]:
-    payload: dict[str, JsonValue] = {
-        "segment_id": segment_id,
-        "tool_id": tool.tool_id,
-        "name": tool.name,
-        "result": tool.result,
-        "is_error": tool.is_error,
-    }
-    if tool.rejected:
-        payload["rejected"] = True
-    return payload
-
-
-def _subagent_started_payload(segment_id: str, sub: SubagentStarted) -> dict[str, JsonValue]:
-    return {
-        "segment_id": segment_id,
-        "subagent_id": sub.subagent_id,
-        "name": sub.name,
-        "description": sub.description,
-        "subagent_type": sub.subagent_type,
-        "source": sub.source,
-    }
-
-
-def _subagent_finished_payload(segment_id: str, sub: SubagentFinished) -> dict[str, JsonValue]:
-    return {
-        "segment_id": segment_id,
-        "subagent_id": sub.subagent_id,
-        "name": sub.name,
-        "subagent_type": sub.subagent_type,
-        "source": sub.source,
-    }
 
 
 class _Segmenter:
@@ -142,7 +92,7 @@ async def drive_agent_events(
                                     kind="subagent.text.delta",
                                     run_id=run_id,
                                     seq=next_seq(),
-                                    payload=_subagent_text_payload(segment.current(), subagent_id, text),
+                                    payload=subagent_text_payload(segment.current(), subagent_id, text),
                                 )
                                 continue
                             streamed_text = (streamed_text or "") + text
@@ -150,7 +100,7 @@ async def drive_agent_events(
                                 kind="text.delta",
                                 run_id=run_id,
                                 seq=next_seq(),
-                                payload=_text_payload(segment.current(), text),
+                                payload=text_payload(segment.current(), text),
                             )
 
                         case TextFinal(text=text):
@@ -162,13 +112,13 @@ async def drive_agent_events(
                                         kind="subagent.text.completed",
                                         run_id=run_id,
                                         seq=next_seq(),
-                                        payload=_subagent_text_payload(
+                                        payload=subagent_text_payload(
                                             segment_id, subagent_id, streamed_subagent_text
                                         ),
                                     )
                                     streamed_subagent_text = None
                                     continue
-                                payload = _subagent_text_payload(segment_id, subagent_id, text)
+                                payload = subagent_text_payload(segment_id, subagent_id, text)
                                 yield AgentEvent(
                                     kind="subagent.text.delta",
                                     run_id=run_id,
@@ -189,12 +139,12 @@ async def drive_agent_events(
                                     kind="text.completed",
                                     run_id=run_id,
                                     seq=next_seq(),
-                                    payload=_text_payload(segment_id, streamed_text),
+                                    payload=text_payload(segment_id, streamed_text),
                                 )
                                 streamed_text = None
                                 segment.complete()
                                 continue
-                            payload = _text_payload(segment_id, text)
+                            payload = text_payload(segment_id, text)
                             yield AgentEvent(
                                 kind="text.delta",
                                 run_id=run_id,
@@ -214,7 +164,7 @@ async def drive_agent_events(
                                 kind="thinking.delta",
                                 run_id=run_id,
                                 seq=next_seq(),
-                                payload=_text_payload(segment.current(), text),
+                                payload=text_payload(segment.current(), text),
                             )
 
                         case TodoUpdated(todos=todos):
@@ -222,11 +172,11 @@ async def drive_agent_events(
                                 kind="todo.updated",
                                 run_id=run_id,
                                 seq=next_seq(),
-                                payload=_todo_payload(todos),
+                                payload=todo_payload(todos),
                             )
 
                         case ToolInvoked() as tool:
-                            payload = _tool_invoked_payload(segment.current(), tool)
+                            payload = tool_invoked_payload(segment.current(), tool)
                             yield AgentEvent(
                                 kind="tool.invoked",
                                 run_id=run_id,
@@ -246,7 +196,7 @@ async def drive_agent_events(
                                 kind="tool.returned",
                                 run_id=run_id,
                                 seq=next_seq(),
-                                payload=_tool_returned_payload(segment.current(), tool),
+                                payload=tool_returned_payload(segment.current(), tool),
                             )
 
                         case SubagentStarted() as subagent:
@@ -255,7 +205,7 @@ async def drive_agent_events(
                                 kind="subagent.started",
                                 run_id=run_id,
                                 seq=next_seq(),
-                                payload=_subagent_started_payload(segment.current(), subagent),
+                                payload=subagent_started_payload(segment.current(), subagent),
                             )
 
                         case SubagentFinished() as subagent:
@@ -264,7 +214,7 @@ async def drive_agent_events(
                                 kind="subagent.finished",
                                 run_id=run_id,
                                 seq=next_seq(),
-                                payload=_subagent_finished_payload(segment.current(), subagent),
+                                payload=subagent_finished_payload(segment.current(), subagent),
                             )
 
                         case _:

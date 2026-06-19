@@ -8,7 +8,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure.approval_policy import approval_policy
+from kokoro_agent.infrastructure.permission import approval_policy
 from kokoro_agent.infrastructure.permission import (
     blocked_tools,
     fs_permissions,

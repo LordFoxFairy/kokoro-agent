@@ -38,4 +38,6 @@ def load_approval_policy(path: Path) -> ApprovalPolicy:
 
 @lru_cache(maxsize=1)
 def approval_policy() -> ApprovalPolicy:
-    return load_approval_policy(Path(__file__).with_name("approval_policy.yaml"))
+    # Config lives at the package root: kokoro_agent/config/approval_policy.yaml.
+    path = Path(__file__).resolve().parents[2] / "config" / "approval_policy.yaml"
+    return load_approval_policy(path)

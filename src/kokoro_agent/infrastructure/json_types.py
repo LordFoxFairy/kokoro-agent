@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import copy
-from typing import TypeAlias
 
 from pydantic import JsonValue, TypeAdapter
 
-JsonObject: TypeAlias = dict[str, JsonValue]
+from kokoro_agent.domain.json_payload import JsonObject
+
+__all__ = ["JsonValue", "clone_event", "validate_event"]
 
 # 边界洗净器：外部 JSON 在此一次性校验为强类型，非法输入直接抛 ValidationError（ValueError 子类）。
 _EVENT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)

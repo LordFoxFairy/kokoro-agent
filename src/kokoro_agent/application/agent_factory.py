@@ -6,8 +6,9 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.domain.run_request import PermissionMode
+from kokoro_agent.application.agent_ports import EventStreamingAgent
 from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
-from kokoro_agent.infrastructure.agent_builder import EventStreamingAgent, make_deep_agent
+from kokoro_agent.infrastructure.agent_builder import make_deep_agent
 from kokoro_agent.infrastructure.permission import (
     gate_tools,
     gate_tools_interactive,

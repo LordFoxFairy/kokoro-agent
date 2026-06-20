@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypeAlias
@@ -15,7 +16,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.event_stream import StreamItem, StreamProtocol
 from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
 from kokoro_agent.infrastructure.transport import MemoryStream
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
@@ -460,3 +461,111 @@ async def test_run_once_isolates_runtime_registry_across_runs(monkeypatch: Monke
     assert len(captured) == 2
     captured[0].register("leaked-from-run-1", "d", "s")
     assert captured[1].get("leaked-from-run-1") is None
+
+
+class _GatedFetchModel(BaseChatModel):
+    """脚本模型：总调一次 gated 工具 fetch_url(default 档位需审批)——驱动 H3 断连路径。"""
+
+    @property
+    def _llm_type(self) -> str:
+        return "h3-gated-fetch"
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        return self.with_types(output_type=AIMessage)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: object,
+    ) -> ChatResult:
+        call = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "fetch_url", "args": {"url": "http://example.com"}, "id": "h3f", "type": "tool_call"}
+            ],
+        )
+        return ChatResult(generations=[ChatGeneration(message=call)])
+
+
+async def _drained() -> AsyncIterator[StreamItem]:
+    return
+    yield  # pragma: no cover — 空 async generator：模拟 control 连接断开后立即耗尽
+
+
+class _ClosedControlBus:
+    """events 走真实 MemoryStream；control 流 subscribe 立即耗尽（模拟连接断开）。"""
+
+    def __init__(self) -> None:
+        self._mem = MemoryStream()
+
+    async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem:
+        return await self._mem.publish(stream, event)
+
+    async def read_all(self, stream: str) -> list[StreamItem]:
+        return await self._mem.read_all(stream)
+
+    def subscribe(
+        self, stream: str, from_cursor: str | None = None
+    ) -> AsyncIterator[StreamItem]:
+        if stream.endswith(":control"):
+            return _drained()
+        return self._mem.subscribe(stream, from_cursor)
+
+
+def _is_fake_rejection(event: Mapping[str, JsonValue]) -> bool:
+    if event.get("kind") != "tool.returned":
+        return False
+    payload = event.get("payload")
+    return isinstance(payload, Mapping) and payload.get("rejected") is True
+
+
+async def test_serve_closed_control_channel_aborts_gated_run_as_cancelled(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # H3 端到端（worker 级）：被门控工具等审批时 control 流意外断开(连接断开)，绝不伪造一条
+    # "用户拒绝"回灌模型；改 fail-loud 经 CancelledError 让 run 级取消接管，run 以 cancelled 收口。
+    bus = _ClosedControlBus()
+    monkeypatch.setattr(
+        "kokoro_agent.application.run_supervisor.make_chat_model",
+        lambda execution_style="fast": _GatedFetchModel(),
+    )
+
+    async def terminal_status(run_id: str) -> str | None:
+        for item in await bus.read_all(events_stream(run_id)):
+            if item.event.get("kind") == "run.completed":
+                payload = item.event.get("payload")
+                if isinstance(payload, Mapping):
+                    status = payload.get("status")
+                    return status if isinstance(status, str) else None
+        return None
+
+    serve_task = asyncio.create_task(_serve(bus))
+    try:
+        request = RunRequest(
+            kind="run.request",
+            run_id="run_h3",
+            session_id="ses_01",
+            conversation_id="conv_01",
+            input="抓个网页",
+            permission_mode="default",
+        )
+        await bus.publish(REQUESTS_STREAM, request.model_dump())
+        async with asyncio.timeout(5):
+            while await terminal_status("run_h3") is None:
+                await asyncio.sleep(0.01)
+    finally:
+        serve_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await serve_task
+
+    items = await bus.read_all(events_stream("run_h3"))
+    assert await terminal_status("run_h3") == "cancelled"
+    assert not any(_is_fake_rejection(item.event) for item in items)

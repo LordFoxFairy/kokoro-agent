@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
-from typing import Any, Literal, Protocol, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 
 import deepagents
 import langchain.agents
@@ -12,10 +12,10 @@ import langchain.agents
 from deepagents.middleware.filesystem import FilesystemPermission
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables.config import RunnableConfig
-from langchain_core.runnables.schema import StreamEvent
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
+
+from kokoro_agent.application.agent_ports import EventStreamingAgent
 
 # 框架返回的 CompiledStateGraph 结构上不匹配下方窄 Protocol（astream_events/ainvoke 签名更宽），
 # 经包的 Any 视图取构造函数，使结果直接收敛到强类型 Protocol，免去逐调用的类型抑制。
@@ -25,32 +25,11 @@ _build_deep_agent = _deepagents.create_deep_agent
 _build_subagent = _langchain_agents.create_agent
 
 __all__ = [
-    "AgentInvokeInput",
     "AsyncRunner",
-    "EventStreamingAgent",
     "FilesystemPermission",
     "make_deep_agent",
     "make_subagent_runner",
 ]
-
-
-class _UserMessage(TypedDict):
-    role: Literal["user"]
-    content: str
-
-
-class AgentInvokeInput(TypedDict):
-    messages: list[_UserMessage]
-
-
-class EventStreamingAgent(Protocol):
-    def astream_events(
-        self,
-        inp: AgentInvokeInput,
-        *,
-        version: str,
-        config: RunnableConfig | None,
-    ) -> AsyncIterator[StreamEvent]: ...
 
 
 class AsyncRunner(Protocol):

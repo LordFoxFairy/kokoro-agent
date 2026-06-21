@@ -17,7 +17,8 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from kokoro_agent.application.event_stream import StreamItem, StreamProtocol
-from kokoro_agent.infrastructure.json_types import JsonObject, JsonValue
+from kokoro_agent.domain.json_payload import JsonObject
+from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.transport import MemoryStream
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
@@ -472,7 +473,7 @@ class _GatedFetchModel(BaseChatModel):
 
     def bind_tools(
         self,
-        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        tools: Sequence[_ToolLike],
         *,
         tool_choice: str | None = None,
         **kwargs: Any,
@@ -484,7 +485,7 @@ class _GatedFetchModel(BaseChatModel):
         messages: list[BaseMessage],
         stop: list[str] | None = None,
         run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> ChatResult:
         call = AIMessage(
             content="",

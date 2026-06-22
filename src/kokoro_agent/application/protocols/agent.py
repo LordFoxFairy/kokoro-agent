@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Protocol, TypedDict
+from typing import Protocol
 
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.runnables.schema import StreamEvent
 
 
-class AgentInvokeInput(TypedDict):
-    # langgraph/deepagents 图入参形状：messages 直接用 LangChain message，不自建影子类型。
-    messages: list[BaseMessage]
-
-
 class EventStreamingAgent(Protocol):
+    # inp 是 langgraph 图的 partial state 更新（messages 用 LangChain message）；
+    # 与 AsyncRunner.ainvoke 同形，不另立命名信封。
     def astream_events(
         self,
-        inp: AgentInvokeInput,
+        inp: dict[str, list[BaseMessage]],
         *,
         version: str,
         config: RunnableConfig | None,

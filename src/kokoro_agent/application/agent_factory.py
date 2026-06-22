@@ -6,7 +6,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.domain.run_request import PermissionMode
-from kokoro_agent.application.agent_ports import EventStreamingAgent
+from kokoro_agent.application.protocols.agent import EventStreamingAgent
 from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.agent_builder import make_deep_agent
 from kokoro_agent.infrastructure.permission import (
@@ -18,7 +18,7 @@ from kokoro_agent.infrastructure.subagent import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
 )
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.application.prompts import SYSTEM_PROMPT
 
 

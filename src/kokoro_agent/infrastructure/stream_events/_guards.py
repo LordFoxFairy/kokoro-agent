@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeAlias, TypeGuard
 
-from kokoro_agent.domain.stream_intent import ToolScalar
+from kokoro_agent.domain.run_event import ToolScalar
 
 ObjectMapping: TypeAlias = Mapping[object, object]
 ObjectList: TypeAlias = list[object]

@@ -1,4 +1,4 @@
-"""StreamIntent 的 Pydantic 镜像契约：仅供测试断言事件载荷形状。"""
+"""RunEvent 的 Pydantic 镜像契约：仅供测试断言事件载荷形状。"""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.domain.registered_subagent import SubagentSource
-from kokoro_agent.domain.stream_intent import (
-    StreamIntent,
+from kokoro_agent.domain.run_event import (
+    RunEvent,
     SubagentFinished,
     SubagentStarted,
     TextFinal,
@@ -141,7 +141,7 @@ def message_parts_contract(parts: MessageParts) -> MessagePartsContract:
     return MessagePartsContract(text=parts.text, reasoning=parts.reasoning)
 
 
-def stream_intent_contract(intent: StreamIntent) -> StreamIntentContract:
+def stream_intent_contract(intent: RunEvent) -> StreamIntentContract:
     match intent:
         case TodoUpdated(todos=todos):
             return TodoUpdatedContract(
@@ -212,7 +212,7 @@ __all__ = [
     "EventHeader",
     "MessageParts",
     "MessagePartsContract",
-    "StreamIntent",
+    "RunEvent",
     "StreamIntentContract",
     "SubagentFinished",
     "SubagentFinishedContract",

@@ -1,4 +1,4 @@
-"""领域层：Agent 运行时产出的语义意图，与具体传输/框架解耦。"""
+"""领域层：Agent 运行时产出的执行事件 RunEvent 族，与具体传输/框架解耦。"""
 
 from __future__ import annotations
 
@@ -71,8 +71,8 @@ class TextFinal:
     text: str
 
 
-# 上游消费的意图联合体：翻译层对每个流事件只产出其中之一。
-StreamIntent: TypeAlias = (
+# 上游消费的执行事件联合体：翻译层对每个流事件只产出其中之一。
+RunEvent: TypeAlias = (
     TodoUpdated
     | ToolInvoked
     | ToolReturned

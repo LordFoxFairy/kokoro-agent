@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kokoro_agent.domain.stream_intent import TodoItem, ToolScalar
+from kokoro_agent.domain.run_event import TodoItem, ToolScalar
 
 
 @dataclass(slots=True, frozen=True)

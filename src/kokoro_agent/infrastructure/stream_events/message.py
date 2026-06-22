@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables.schema import StreamEvent
 
-from kokoro_agent.domain.stream_intent import ToolScalar
+from kokoro_agent.domain.run_event import ToolScalar
 from kokoro_agent.infrastructure.stream_events._guards import is_object_list, is_object_mapping, is_tool_scalar
 from kokoro_agent.infrastructure.stream_events.parsed_event import MessageParts
 

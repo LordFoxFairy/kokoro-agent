@@ -5,14 +5,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.application.events.agent_event_driver import drive_agent_events
 from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.application.protocols.stream import StreamProtocol
-from kokoro_agent.application.protocols.agent import AgentInvokeInput
 from kokoro_agent.application.events.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
@@ -39,7 +38,7 @@ def agent_config(req: RunRequest) -> RunnableConfig:
     return {"configurable": {"thread_id": req.conversation_id}}
 
 
-def _user_message(input_text: str) -> AgentInvokeInput:
+def _user_message(input_text: str) -> dict[str, list[BaseMessage]]:
     return {"messages": [HumanMessage(content=input_text)]}
 
 

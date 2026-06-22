@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kokoro_agent.domain.agent_event import AgentEvent
+from kokoro_agent.application.events.agent_event import AgentEvent
 
 
 def run_failed_event(run_id: str, error_kind: str, message: str) -> AgentEvent:

@@ -11,9 +11,9 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 from kokoro_agent.application.protocols.stream import StreamProtocol
-from kokoro_agent.application.request_admission import RequestAdmission
-from kokoro_agent.application.run_agent import run_agent
-from kokoro_agent.application.run_terminal_events import run_cancelled_event, run_failed_event
+from kokoro_agent.application.run.request_admission import RequestAdmission
+from kokoro_agent.application.run.run_agent import run_agent
+from kokoro_agent.application.run.run_terminal_events import run_cancelled_event, run_failed_event
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.control import wait_for_cancel
 from kokoro_agent.infrastructure.model import make_chat_model

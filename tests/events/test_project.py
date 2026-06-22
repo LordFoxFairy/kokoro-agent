@@ -1,5 +1,5 @@
 from langchain_core.messages import AIMessage, AIMessageChunk
-from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
+from langchain_core.runnables.schema import EventData, StandardStreamEvent, StreamEvent
 
 from kokoro_agent.events.attribution import SubagentAttribution
 from kokoro_agent.events.project import TOOL_RESULT_MAX_CHARS, project
@@ -10,7 +10,7 @@ def _ev(
     *,
     name: str = "model",
     run_id: str = "run-1",
-    data: dict[str, object] | None = None,
+    data: EventData | None = None,
     metadata: dict[str, str] | None = None,
 ) -> StreamEvent:
     seed: StandardStreamEvent = {
@@ -181,7 +181,7 @@ def test_tool_error_is_error_true() -> None:
         "on_tool_error",
         name="search",
         run_id="t-err",
-        data={"input": {}, "error": "boom"},
+        data={"input": {}, "error": Exception("boom")},
     )
     out = project(ev, SubagentAttribution())
     assert [e.kind for e in out] == ["tool.returned"]

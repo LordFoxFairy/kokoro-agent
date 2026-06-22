@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-
+from kokoro_agent.domain.json_payload import JsonObject
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.wire.run_request import RunCancel, RunResume, parse_inbound
 
 
 def test_parse_run_request() -> None:
-    raw = {
+    raw: JsonObject = {
         "kind": "run.request",
         "run_id": "r1",
         "session_id": "s1",
@@ -22,7 +21,7 @@ def test_parse_run_request() -> None:
 
 
 def test_parse_run_resume_approve() -> None:
-    raw = {
+    raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r2",
         "decision": {"type": "approve"},
@@ -33,7 +32,7 @@ def test_parse_run_resume_approve() -> None:
 
 
 def test_parse_run_resume_edit() -> None:
-    raw = {
+    raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r3",
         "decision": {
@@ -47,7 +46,7 @@ def test_parse_run_resume_edit() -> None:
 
 
 def test_parse_run_resume_reject() -> None:
-    raw = {
+    raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r4",
         "decision": {"type": "reject", "message": "nope"},
@@ -58,25 +57,25 @@ def test_parse_run_resume_reject() -> None:
 
 
 def test_parse_run_cancel() -> None:
-    raw = {"kind": "run.cancel", "run_id": "r5"}
+    raw: JsonObject = {"kind": "run.cancel", "run_id": "r5"}
     result = parse_inbound(raw)
     assert isinstance(result, RunCancel)
     assert result.run_id == "r5"
 
 
 def test_unknown_kind_returns_none() -> None:
-    raw = {"kind": "run.unknown", "run_id": "r6"}
+    raw: JsonObject = {"kind": "run.unknown", "run_id": "r6"}
     assert parse_inbound(raw) is None
 
 
 def test_malformed_returns_none() -> None:
     # run.request 缺少必填 run_id
-    raw = {"kind": "run.request", "session_id": "s1", "conversation_id": "c1", "input": "hi"}
+    raw: JsonObject = {"kind": "run.request", "session_id": "s1", "conversation_id": "c1", "input": "hi"}
     assert parse_inbound(raw) is None
 
 
 def test_extra_fields_forbidden() -> None:
-    raw = {
+    raw: JsonObject = {
         "kind": "run.request",
         "run_id": "r7",
         "session_id": "s7",

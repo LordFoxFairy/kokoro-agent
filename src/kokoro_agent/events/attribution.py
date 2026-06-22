@@ -1,14 +1,6 @@
 """子代理归属：将 StreamEvent 映射到发出它的子代理 id。"""
 
-from typing import TypedDict
-
-
-class EventMetadata(TypedDict, total=False):
-    agent_name: str
-
-
-class StreamEvent(TypedDict, total=False):
-    metadata: EventMetadata
+from langchain_core.runnables.schema import StreamEvent
 
 
 class SubagentAttribution:
@@ -26,10 +18,8 @@ class SubagentAttribution:
 
     def active_id(self, event: StreamEvent) -> str | None:
         # agent_name 是 spec §9.3 在子代理启动时注入 metadata 的键
-        metadata = event.get("metadata")
-        if metadata is None:
-            return None
+        metadata = event.get("metadata") or {}
         name = metadata.get("agent_name")
-        if name is None:
+        if not isinstance(name, str):
             return None
         return self._active.get(name)

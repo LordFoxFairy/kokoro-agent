@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from pydantic import ValidationError
 
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.application.run_terminal_events import run_failed_event
 from kokoro_agent.domain.json_payload import JsonObject
 from kokoro_agent.domain.run_request import RunRequest

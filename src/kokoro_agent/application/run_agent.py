@@ -10,8 +10,8 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.application.events.agent_event_driver import drive_agent_events
 from kokoro_agent.application.agent_factory import build_agent
-from kokoro_agent.application.event_stream import StreamProtocol
-from kokoro_agent.application.agent_ports import AgentInvokeInput
+from kokoro_agent.application.protocols.stream import StreamProtocol
+from kokoro_agent.application.protocols.agent import AgentInvokeInput
 from kokoro_agent.application.events.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.observability import build_langfuse_handler

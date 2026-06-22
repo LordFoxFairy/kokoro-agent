@@ -10,7 +10,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.application.request_admission import RequestAdmission
 from kokoro_agent.application.run_agent import run_agent
 from kokoro_agent.application.run_terminal_events import run_cancelled_event, run_failed_event

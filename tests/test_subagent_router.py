@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langchain_core.runnables.schema import StreamEvent
 
-from kokoro_agent.application.subagent_router import SubagentRouter
+from kokoro_agent.application.events.subagent_router import SubagentRouter
 from kokoro_agent.domain.stream_intent import SubagentStarted
 
 

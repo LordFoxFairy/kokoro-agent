@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterator
 
 from langchain_core.runnables.schema import StreamEvent
 
-from kokoro_agent.application.event_payloads import (
+from kokoro_agent.application.events.event_payloads import (
     subagent_finished_payload,
     subagent_started_payload,
     subagent_text_payload,
@@ -15,9 +15,9 @@ from kokoro_agent.application.event_payloads import (
     tool_invoked_payload,
     tool_returned_payload,
 )
-from kokoro_agent.application.run_emitter import RunEmitter
-from kokoro_agent.application.subagent_router import SubagentRouter
-from kokoro_agent.application.text_accumulator import TextAccumulator
+from kokoro_agent.application.events.run_emitter import RunEmitter
+from kokoro_agent.application.events.subagent_router import SubagentRouter
+from kokoro_agent.application.events.text_accumulator import TextAccumulator
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.domain.stream_intent import (
     SubagentFinished,

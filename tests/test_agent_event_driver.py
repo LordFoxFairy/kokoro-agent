@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.runnables.schema import EventData, StreamEvent
 from pydantic import JsonValue
 
-from kokoro_agent.application.agent_event_driver import drive_agent_events
+from kokoro_agent.application.events.agent_event_driver import drive_agent_events
 from kokoro_agent.domain.agent_event import AgentEvent
 from kokoro_agent.infrastructure.stream_events import translate_stream_event
 from kokoro_agent.infrastructure.subagent import CUSTOM_SUBAGENTS_ENV

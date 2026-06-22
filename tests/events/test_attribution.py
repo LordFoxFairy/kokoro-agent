@@ -1,12 +1,26 @@
-from kokoro_agent.events.attribution import EventMetadata, StreamEvent, SubagentAttribution
+from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
+
+from kokoro_agent.events.attribution import SubagentAttribution
+
+
+def _base(metadata: dict[str, str]) -> StreamEvent:
+    ev: StandardStreamEvent = {
+        "event": "on_chat_model_stream",
+        "run_id": "run-1",
+        "parent_ids": [],
+        "name": "model",
+        "data": {},
+        "metadata": metadata,
+    }
+    return ev
 
 
 def _ev(agent_name: str) -> StreamEvent:
-    return {"metadata": EventMetadata(agent_name=agent_name)}
+    return _base({"agent_name": agent_name})
 
 
 def _ev_no_name() -> StreamEvent:
-    return {"metadata": EventMetadata()}
+    return _base({})
 
 
 def test_concurrent_subagents_do_not_cross() -> None:

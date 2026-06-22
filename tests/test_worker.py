@@ -16,23 +16,23 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from kokoro_agent.application.event_stream import StreamItem, StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamItem, StreamProtocol
 from kokoro_agent.domain.json_payload import JsonObject
 from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.transport import MemoryStream
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
-from kokoro_agent.domain.agent_event import AgentEvent
+from kokoro_agent.application.events.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.model import make_local_fake_chat_model
-from kokoro_agent.application import run_supervisor
-from kokoro_agent.application.request_admission import (
+from kokoro_agent.application.run import run_supervisor
+from kokoro_agent.application.run.request_admission import (
     MAX_PROCESSED_RUN_IDS,
     ProcessedRunIds,
     RequestAdmission,
 )
-from kokoro_agent.application.run_supervisor import (
+from kokoro_agent.application.run.run_supervisor import (
     REQUESTS_STREAM,
     RunSupervisor,
     events_stream,
@@ -196,7 +196,7 @@ async def test_model_resolution_failure_emits_run_failed_and_loop_survives(
         raise ValueError("Invalid KOKORO_MODEL spec: 'plainstring'")
 
     monkeypatch.setattr(
-        "kokoro_agent.application.run_supervisor.make_chat_model", broken_make_chat_model
+        "kokoro_agent.application.run.run_supervisor.make_chat_model", broken_make_chat_model
     )
 
     await bus.publish(REQUESTS_STREAM, _request("run_broken"))
@@ -240,8 +240,8 @@ async def test_run_once_resolves_model_from_request_execution_style(
             payload={"status": "completed"},
         )
 
-    monkeypatch.setattr("kokoro_agent.application.run_supervisor.make_chat_model", fake_make_chat_model)
-    monkeypatch.setattr("kokoro_agent.application.run_supervisor.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.application.run.run_supervisor.make_chat_model", fake_make_chat_model)
+    monkeypatch.setattr("kokoro_agent.application.run.run_supervisor.run_agent", fake_run_agent)
 
     await run_once(bus, _admission(processed), None)
 
@@ -272,9 +272,9 @@ async def test_serve_runs_concurrently_a_blocked_run_does_not_freeze_others(
         return make_local_fake_chat_model()
 
     monkeypatch.setattr(
-        "kokoro_agent.application.run_supervisor.make_chat_model", fake_make_chat_model
+        "kokoro_agent.application.run.run_supervisor.make_chat_model", fake_make_chat_model
     )
-    monkeypatch.setattr("kokoro_agent.application.run_supervisor.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.application.run.run_supervisor.run_agent", fake_run_agent)
 
     async def completed(run_id: str) -> bool:
         items = await bus.read_all(events_stream(run_id))
@@ -321,9 +321,9 @@ async def test_serve_cancels_a_run_on_control_cancel(
         return make_local_fake_chat_model()
 
     monkeypatch.setattr(
-        "kokoro_agent.application.run_supervisor.make_chat_model", fake_make_chat_model
+        "kokoro_agent.application.run.run_supervisor.make_chat_model", fake_make_chat_model
     )
-    monkeypatch.setattr("kokoro_agent.application.run_supervisor.run_agent", fake_run_agent)
+    monkeypatch.setattr("kokoro_agent.application.run.run_supervisor.run_agent", fake_run_agent)
 
     async def has_kind(run_id: str, kind: str) -> bool:
         items = await bus.read_all(events_stream(run_id))
@@ -407,7 +407,7 @@ async def test_run_once_same_conversation_remembers_prior_turn_without_transport
     _MEMORY_PROBE_SEEN.clear()
 
     monkeypatch.setattr(
-        "kokoro_agent.application.run_supervisor.make_chat_model", lambda execution_style="fast": _MemoryProbeModel()
+        "kokoro_agent.application.run.run_supervisor.make_chat_model", lambda execution_style="fast": _MemoryProbeModel()
     )
 
     await bus.publish(
@@ -535,7 +535,7 @@ async def test_serve_closed_control_channel_aborts_gated_run_as_cancelled(
     # "用户拒绝"回灌模型；改 fail-loud 经 CancelledError 让 run 级取消接管，run 以 cancelled 收口。
     bus = _ClosedControlBus()
     monkeypatch.setattr(
-        "kokoro_agent.application.run_supervisor.make_chat_model",
+        "kokoro_agent.application.run.run_supervisor.make_chat_model",
         lambda execution_style="fast": _GatedFetchModel(),
     )
 

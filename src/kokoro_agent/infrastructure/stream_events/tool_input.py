@@ -6,7 +6,7 @@ from langchain_core.runnables.schema import StreamEvent
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
-from kokoro_agent.domain.stream_intent import TodoItem, ToolScalar
+from kokoro_agent.domain.run_event import TodoItem, ToolScalar
 from kokoro_agent.infrastructure.stream_events._guards import is_object_mapping, is_tool_scalar
 from kokoro_agent.infrastructure.stream_events.parsed_event import ToolInput
 

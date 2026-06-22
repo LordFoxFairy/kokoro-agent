@@ -14,7 +14,7 @@ from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.control import DecisionCursor, await_decision
 from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.permission.rules import tool_allowed
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamProtocol
 
 LOGGER = logging.getLogger(__name__)
 

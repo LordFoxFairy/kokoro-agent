@@ -1,4 +1,4 @@
-"""流事件子系统：把 LangChain 事件翻译为领域 StreamIntent。"""
+"""流事件子系统：把 LangChain 事件翻译为领域 RunEvent。"""
 
 from .header import read_header
 from .message import (
@@ -12,8 +12,8 @@ from .message import (
 from .tool_input import read_tool_input
 from .translator import translate_stream_event
 from kokoro_agent.domain.registered_subagent import SubagentSource
-from kokoro_agent.domain.stream_intent import (
-    StreamIntent,
+from kokoro_agent.domain.run_event import (
+    RunEvent,
     SubagentFinished,
     SubagentStarted,
     TextFinal,
@@ -38,7 +38,7 @@ __all__ = [
     "MessageParts",
     "RUNTIME_SUBAGENT_TOOL_NAME",
     "SUBAGENT_TOOL_NAME",
-    "StreamIntent",
+    "RunEvent",
     "SubagentFinished",
     "SubagentSource",
     "SubagentStarted",

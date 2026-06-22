@@ -7,7 +7,7 @@ import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
-from kokoro_agent.application.event_stream import StreamItem
+from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.domain.control import ControlChannelClosed
 from kokoro_agent.infrastructure.control import (
     DecisionCursor,

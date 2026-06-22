@@ -46,8 +46,8 @@ def _todos_from(typed_input: RawToolInput) -> tuple[TodoItem, ...]:
     return tuple(todos)
 
 
-def _str_or_empty(value: object) -> str:
-    return value if isinstance(value, str) else ""
+def _empty_tool_input() -> ToolInput:
+    return ToolInput(args={}, todos=(), subagent_type="", description="", name="")
 
 
 def read_tool_input(event: StreamEvent) -> ToolInput:
@@ -57,14 +57,14 @@ def read_tool_input(event: StreamEvent) -> ToolInput:
             try:
                 typed_input = _RAW_TOOL_INPUT.validate_python(raw_input_obj)
             except ValidationError:
-                return ToolInput({}, (), "", "", "")
+                return _empty_tool_input()
         case _:
-            return ToolInput({}, (), "", "", "")
+            return _empty_tool_input()
 
     return ToolInput(
         args=_scalar_args_from(raw_input_obj),
         todos=_todos_from(typed_input),
-        subagent_type=_str_or_empty(typed_input.get("subagent_type")),
-        description=_str_or_empty(typed_input.get("description")),
-        name=_str_or_empty(typed_input.get("name")),
+        subagent_type=typed_input.get("subagent_type", ""),
+        description=typed_input.get("description", ""),
+        name=typed_input.get("name", ""),
     )

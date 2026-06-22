@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Annotated, TypeGuard
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -51,8 +51,8 @@ def _make_runner(model: BaseChatModel, system_prompt: str, name: str) -> AsyncRu
     return make_subagent_runner(model, system_prompt=system_prompt, name=name)
 
 
-def _runtime_messages(task: str) -> dict[str, list[dict[str, str]]]:
-    return {"messages": [{"role": "user", "content": task}]}
+def _runtime_messages(task: str) -> dict[str, list[BaseMessage]]:
+    return {"messages": [HumanMessage(content=task)]}
 
 
 def build_runtime_custom_subagent_tool(

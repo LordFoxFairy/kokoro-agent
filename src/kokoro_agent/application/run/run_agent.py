@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -39,7 +40,7 @@ def agent_config(req: RunRequest) -> RunnableConfig:
 
 
 def _user_message(input_text: str) -> AgentInvokeInput:
-    return {"messages": [{"role": "user", "content": input_text}]}
+    return {"messages": [HumanMessage(content=input_text)]}
 
 
 async def run_agent(

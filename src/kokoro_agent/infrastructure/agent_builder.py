@@ -12,6 +12,7 @@ import langchain.agents
 from deepagents.middleware.filesystem import FilesystemPermission
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -33,8 +34,9 @@ __all__ = [
 
 
 class AsyncRunner(Protocol):
-    # runner 结果是字符串键的进程内图状态（值为 BaseMessage 等不透明对象），由调用方按需收窄。
-    async def ainvoke(self, payload: dict[str, list[dict[str, str]]]) -> Mapping[str, object]: ...
+    # 入参是 langgraph 图状态（messages 用 LangChain message）；结果是字符串键的进程内
+    # 图状态（值为 BaseMessage 等不透明对象），由调用方按需收窄。
+    async def ainvoke(self, payload: dict[str, list[BaseMessage]]) -> Mapping[str, object]: ...
 
 
 def make_deep_agent(

@@ -123,7 +123,7 @@ def test_make_chat_model_rejects_invalid_execution_style(
     monkeypatch.setenv("KOKORO_MODEL", DEFAULT_MODEL)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy-key-not-used")
     with pytest.raises(ValueError, match="Invalid execution_style"):
-        make_chat_model("plan")
+        make_chat_model("default")
 
 
 @pytest.mark.parametrize(

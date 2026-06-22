@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict
 
 # 执行风格：fast 直接作答 / thinking 显式推理。
 ExecutionStyle = Literal["fast", "thinking"]
-# 权限档位（Claude-Code 式）：auto 全放行 / default 拦外部副作用 / plan 只读规划。
-PermissionMode = Literal["auto", "default", "plan"]
+# 权限档位（Claude-Code 式）：auto 全放行 / default 拦外部副作用。
+PermissionMode = Literal["auto", "default"]
 
 
 class RunRequest(BaseModel):

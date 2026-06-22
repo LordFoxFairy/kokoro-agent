@@ -1,4 +1,2 @@
 requires_approval_tools:
   - fetch_url
-plan_only_blocked_tools:
-  - agent

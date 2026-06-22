@@ -7,16 +7,16 @@ import os
 from langchain_core.runnables.schema import StreamEvent
 
 from kokoro_agent.application.control_results import rejection_result
-from kokoro_agent.infrastructure.stream_events.adapter import (
+from kokoro_agent.infrastructure.stream_events.header import read_header
+from kokoro_agent.infrastructure.stream_events.message import (
     message_parts,
     read_ai_message,
     read_chunk,
     read_error,
-    read_header,
     read_output,
-    read_tool_input,
     result_text,
 )
+from kokoro_agent.infrastructure.stream_events.tool_input import read_tool_input
 from kokoro_agent.domain.run_event import (
     RunEvent,
     SubagentFinished,

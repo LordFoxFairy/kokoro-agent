@@ -42,7 +42,7 @@ def build_agent(
         system_prompt=SYSTEM_PROMPT,
         subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
         checkpointer=checkpointer,
-        # 当前不按档位限制文件系统：plan=交互审批(外部敏感工具暂停等批准)而非只读;
+        # 当前不按档位限制文件系统：default 仅对外部敏感工具交互审批，不限制 FS;
         # FS 写工具属 deepagents 中间件、FilesystemPermission 仅 allow/deny 无法审批化。
         permissions=[],
     )

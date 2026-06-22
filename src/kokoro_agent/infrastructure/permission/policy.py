@@ -15,13 +15,11 @@ _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 class _ApprovalPolicyPayload(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     requires_approval_tools: list[_NonEmpty]
-    plan_only_blocked_tools: list[_NonEmpty]
 
 
 class ApprovalPolicy(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
     requires_approval_tools: frozenset[str]
-    plan_only_blocked_tools: frozenset[str]
 
 
 def load_approval_policy(path: Path) -> ApprovalPolicy:
@@ -29,7 +27,6 @@ def load_approval_policy(path: Path) -> ApprovalPolicy:
     payload = _ApprovalPolicyPayload.model_validate(raw)
     return ApprovalPolicy(
         requires_approval_tools=frozenset(payload.requires_approval_tools),
-        plan_only_blocked_tools=frozenset(payload.plan_only_blocked_tools),
     )
 
 

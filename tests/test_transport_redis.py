@@ -10,7 +10,7 @@ import pytest
 
 redis_asyncio = pytest.importorskip("redis.asyncio")
 
-from kokoro_agent.application.event_stream import StreamItem  # noqa: E402
+from kokoro_agent.application.protocols.stream import StreamItem  # noqa: E402
 from kokoro_agent.domain.json_payload import JsonObject  # noqa: E402
 from kokoro_agent.infrastructure.transport import RedisStream, parse_xread_response  # noqa: E402
 

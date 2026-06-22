@@ -7,8 +7,8 @@ import logging
 
 from dotenv import load_dotenv
 
-from kokoro_agent.application.request_admission import RequestAdmission
-from kokoro_agent.application.run_supervisor import (
+from kokoro_agent.application.run.request_admission import RequestAdmission
+from kokoro_agent.application.run.run_supervisor import (
     REQUESTS_STREAM,
     RunSupervisor,
     events_stream,

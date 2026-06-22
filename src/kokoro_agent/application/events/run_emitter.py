@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import JsonValue
 
-from kokoro_agent.domain.agent_event import AgentEvent, AgentKind
+from kokoro_agent.application.events.agent_event import AgentEvent, AgentKind
 
 
 class RunEmitter:

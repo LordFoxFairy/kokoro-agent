@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.infrastructure.transport.memory_stream import MemoryStream
 from kokoro_agent.infrastructure.transport.redis_stream import RedisStream, parse_xread_response
 

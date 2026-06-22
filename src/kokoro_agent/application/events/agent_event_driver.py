@@ -1,4 +1,4 @@
-"""事件驱动层：把 StreamIntent 流编排为对外的 AgentEvent 序列（分段/审批/终态收口）。"""
+"""事件驱动层：把 RunEvent 流编排为对外的 AgentEvent 序列（分段/审批/终态收口）。"""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from kokoro_agent.application.events.event_payloads import (
 from kokoro_agent.application.events.run_emitter import RunEmitter
 from kokoro_agent.application.events.subagent_router import SubagentRouter
 from kokoro_agent.application.events.text_accumulator import TextAccumulator
-from kokoro_agent.domain.agent_event import AgentEvent
-from kokoro_agent.domain.stream_intent import (
+from kokoro_agent.application.events.agent_event import AgentEvent
+from kokoro_agent.domain.run_event import (
     SubagentFinished,
     SubagentStarted,
     TextFinal,

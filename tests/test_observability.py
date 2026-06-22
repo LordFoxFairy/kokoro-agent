@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from kokoro_agent.application.run_agent import trace_config
+from kokoro_agent.application.run.run_agent import trace_config
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure import observability
 
@@ -51,7 +51,7 @@ def _req() -> RunRequest:
 
 
 def test_trace_config_none_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("kokoro_agent.application.run_agent.build_langfuse_handler", lambda: None)
+    monkeypatch.setattr("kokoro_agent.application.run.run_agent.build_langfuse_handler", lambda: None)
     assert trace_config(_req()) is None
 
 
@@ -60,7 +60,7 @@ def test_trace_config_tags_run_metadata_when_configured(
 ) -> None:
     handler = "handler-sentinel"
     monkeypatch.setattr(
-        "kokoro_agent.application.run_agent.build_langfuse_handler", lambda: handler
+        "kokoro_agent.application.run.run_agent.build_langfuse_handler", lambda: handler
     )
     config = trace_config(_req())
 

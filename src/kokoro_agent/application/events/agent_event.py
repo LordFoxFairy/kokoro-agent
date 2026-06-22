@@ -29,10 +29,9 @@ _AGENT_KINDS: frozenset[str] = frozenset(get_args(AgentKind))
 def is_agent_kind(kind: str) -> TypeGuard[AgentKind]:
     return kind in _AGENT_KINDS
 
-# Per-kind ``payload`` shapes (the domain boundary constrains payloads to
-# strict JSON-like values; per-kind required keys still belong to the
-# downstream Zod boundary). Documented so the DeepAgents emitter and the
-# session normalizer share one contract:
+# Per-kind ``payload`` shapes (the payload stays a loose dict here; strict
+# per-kind validation is kokoro-session's job at the Zod boundary). Documented
+# so the DeepAgents emitter and the session normalizer share one contract:
 #   run.started              {}
 #   thinking.delta           {"segment_id": str, "text": str}
 #   text.delta               {"segment_id": str, "text": str}

@@ -6,7 +6,7 @@ import logging
 
 from pydantic import ValidationError
 
-from kokoro_agent.application.event_stream import StreamProtocol
+from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.domain.control import ControlChannelClosed, ControlMessage
 from kokoro_agent.domain.json_payload import JsonObject
 

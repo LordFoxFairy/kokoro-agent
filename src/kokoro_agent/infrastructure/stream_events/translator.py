@@ -1,4 +1,4 @@
-"""翻译层：把单个 LangChain StreamEvent 分发为零或多个领域 StreamIntent。"""
+"""翻译层：把单个 LangChain StreamEvent 分发为零或多个领域 RunEvent。"""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from kokoro_agent.infrastructure.stream_events.adapter import (
     read_tool_input,
     result_text,
 )
-from kokoro_agent.domain.stream_intent import (
-    StreamIntent,
+from kokoro_agent.domain.run_event import (
+    RunEvent,
     SubagentFinished,
     SubagentStarted,
     TextFinal,
@@ -118,8 +118,8 @@ def _subagent_finished(tool_id: str, name: str, tool_input: ToolInput) -> Subage
     return None
 
 
-def _message_intents(parts: MessageParts, *, final: bool) -> list[StreamIntent]:
-    intents: list[StreamIntent] = []
+def _message_intents(parts: MessageParts, *, final: bool) -> list[RunEvent]:
+    intents: list[RunEvent] = []
     if parts.reasoning:
         intents.append(ThinkingDelta(parts.reasoning))
     if parts.text:
@@ -127,7 +127,7 @@ def _message_intents(parts: MessageParts, *, final: bool) -> list[StreamIntent]:
     return intents
 
 
-def translate_stream_event(event: StreamEvent) -> list[StreamIntent]:
+def translate_stream_event(event: StreamEvent) -> list[RunEvent]:
     header = read_header(event)
     tool_input = read_tool_input(event)
 

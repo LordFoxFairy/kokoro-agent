@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from kokoro_agent.application.event_stream import StreamItem
+from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.domain.json_payload import JsonObject
 from kokoro_agent.infrastructure.json_types import validate_event
 from kokoro_agent.infrastructure.transport import MemoryStream

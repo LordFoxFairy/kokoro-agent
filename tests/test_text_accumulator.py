@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kokoro_agent.application.text_accumulator import TextAccumulator
+from kokoro_agent.application.events.text_accumulator import TextAccumulator
 
 
 def test_fresh_accumulator_is_not_started_and_takes_none() -> None:

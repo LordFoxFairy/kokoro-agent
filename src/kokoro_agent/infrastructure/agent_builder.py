@@ -10,9 +10,10 @@ import langchain.agents
 
 # mypy resolves a stale deepagents lacking this re-exported symbol; pyright (venv) sees it fine.
 from deepagents.middleware.filesystem import FilesystemPermission
-from deepagents.middleware.subagents import SubAgent
+from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
+from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -29,6 +30,7 @@ __all__ = [
     "AsyncRunner",
     "FilesystemPermission",
     "make_deep_agent",
+    "make_subagent_runnable",
     "make_subagent_runner",
 ]
 
@@ -44,7 +46,7 @@ def make_deep_agent(
     model: BaseChatModel,
     tools: Sequence[StructuredTool],
     system_prompt: str,
-    subagents: Sequence[SubAgent],
+    subagents: Sequence[SubAgent | CompiledSubAgent],
     checkpointer: BaseCheckpointSaver[str] | None,
     permissions: Sequence[FilesystemPermission],
 ) -> EventStreamingAgent:
@@ -62,3 +64,12 @@ def make_deep_agent(
 def make_subagent_runner(model: BaseChatModel, *, system_prompt: str, name: str) -> AsyncRunner:
     runner: AsyncRunner = _build_subagent(model, system_prompt=system_prompt, tools=[], name=name)
     return runner
+
+
+def make_subagent_runnable(
+    model: BaseChatModel, *, system_prompt: str, name: str
+) -> Runnable[dict[str, list[BaseMessage]], Mapping[str, object]]:
+    runnable: Runnable[dict[str, list[BaseMessage]], Mapping[str, object]] = _build_subagent(
+        model, system_prompt=system_prompt, tools=[], name=name
+    )
+    return runnable

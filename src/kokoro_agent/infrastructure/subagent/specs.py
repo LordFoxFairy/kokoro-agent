@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from deepagents.middleware.subagents import SubAgent
+from deepagents.middleware.subagents import CompiledSubAgent
 from langchain_core.language_models import BaseChatModel
 
 from kokoro_agent.domain.registered_subagent import RegisteredSubagent, SubagentSource
+from kokoro_agent.infrastructure.agent_builder import make_subagent_runnable
 from kokoro_agent.infrastructure.subagent.catalog import (
     BUILT_IN_SUBAGENTS,
     SubagentCatalog,
@@ -34,14 +35,15 @@ def materialize_runtime_subagents(
     model: BaseChatModel,
     env: dict[str, str] | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
-) -> list[SubAgent]:
+) -> list[CompiledSubAgent]:
+    # 预编译子代理并注入我们自己的 agent_name：attribution 据此归属、代码零 lc_。
     return [
         {
             "name": spec.name,
             "description": spec.description,
-            "system_prompt": spec.system_prompt,
-            "model": model,
-            "tools": [],
+            "runnable": make_subagent_runnable(
+                model, system_prompt=spec.system_prompt, name=spec.name
+            ).with_config({"metadata": {"agent_name": spec.name}}),
         }
         for spec in _catalog(env, runtime_registry).values()
     ]

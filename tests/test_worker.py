@@ -22,7 +22,7 @@ from kokoro_agent.infrastructure.json_types import JsonValue
 from kokoro_agent.infrastructure.transport import MemoryStream
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
-from kokoro_agent.domain.agent_event import AgentEvent
+from kokoro_agent.application.events.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.model import LOCAL_FAKE_MODEL_FLAG, make_chat_model
 from kokoro_agent.infrastructure.model import make_local_fake_chat_model

@@ -12,7 +12,7 @@ from kokoro_agent.application.events.agent_event_driver import drive_agent_event
 from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.application.event_stream import StreamProtocol
 from kokoro_agent.application.agent_ports import AgentInvokeInput
-from kokoro_agent.domain.agent_event import AgentEvent
+from kokoro_agent.application.events.agent_event import AgentEvent
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.observability import build_langfuse_handler
 from kokoro_agent.infrastructure.permission import blocked_tools

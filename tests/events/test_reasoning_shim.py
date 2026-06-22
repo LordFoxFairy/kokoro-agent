@@ -28,3 +28,14 @@ def test_no_reasoning_returns_empty_string() -> None:
     text, reasoning = message_text_and_reasoning(msg)
     assert text == "plain"
     assert reasoning == ""
+
+
+def test_reasoning_block_empty_string() -> None:
+    """空串 reasoning block 不追加，reasoning 位仍为空串。"""
+    msg = AIMessage(content=[
+        {"type": "text", "text": "answer"},
+        {"type": "reasoning", "reasoning": ""},
+    ])
+    text, reasoning = message_text_and_reasoning(msg)
+    assert text == "answer"
+    assert reasoning == ""

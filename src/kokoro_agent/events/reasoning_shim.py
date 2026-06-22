@@ -1,5 +1,7 @@
 """AIMessage 中 text 与 reasoning 的提取；唯一保留的 provider 补丁是裸消息兜底。"""
 
+from collections.abc import Mapping
+
 from langchain_core.messages import BaseMessage
 from langchain_core.messages.content import ReasoningContentBlock
 
@@ -25,10 +27,11 @@ def message_text_and_reasoning(msg: BaseMessage) -> tuple[str, str]:
 
     # 裸消息兜底：仅当 content_blocks 未给出 reasoning 时才读 additional_kwargs
     if not reasoning:
-        # additional_kwargs 的静态类型是裸 dict；显式标注消除 pyright Unknown 链
-        kwargs: dict[str, object] = msg.additional_kwargs  # type: ignore[assignment]
-        fallback = kwargs.get("reasoning_content")
-        if isinstance(fallback, str) and fallback:
-            reasoning = fallback
+        # langchain 将 additional_kwargs 声明为无类型 dict；getattr 把未知值收口到 object 边界
+        kwargs: object = getattr(msg, "additional_kwargs", None)
+        if isinstance(kwargs, Mapping):
+            fallback = kwargs.get("reasoning_content")
+            if isinstance(fallback, str) and fallback:
+                reasoning = fallback
 
     return text, reasoning

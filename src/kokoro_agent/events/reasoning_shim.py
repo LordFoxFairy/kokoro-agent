@@ -1,9 +1,15 @@
 """AIMessage 中 text 与 reasoning 的提取；唯一保留的 provider 补丁是裸消息兜底。"""
 
 from collections.abc import Mapping
+from typing import TypeGuard
 
 from langchain_core.messages import BaseMessage
 from langchain_core.messages.content import ReasoningContentBlock
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    # 把未类型化值收口到 Mapping[object, object]，避免裸 isinstance 收窄成 Unknown
+    return isinstance(value, Mapping)
 
 
 def message_text_and_reasoning(msg: BaseMessage) -> tuple[str, str]:
@@ -29,7 +35,7 @@ def message_text_and_reasoning(msg: BaseMessage) -> tuple[str, str]:
     if not reasoning:
         # langchain 将 additional_kwargs 声明为无类型 dict；getattr 把未知值收口到 object 边界
         kwargs: object = getattr(msg, "additional_kwargs", None)
-        if isinstance(kwargs, Mapping):
+        if _is_object_mapping(kwargs):
             fallback = kwargs.get("reasoning_content")
             if isinstance(fallback, str) and fallback:
                 reasoning = fallback

@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Literal, Protocol, TypedDict
+from typing import Protocol, TypedDict
 
+from langchain_core.messages import BaseMessage
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.runnables.schema import StreamEvent
 
 
-class _UserMessage(TypedDict):
-    role: Literal["user"]
-    content: str
-
-
 class AgentInvokeInput(TypedDict):
-    messages: list[_UserMessage]
+    # langgraph/deepagents 图入参形状：messages 直接用 LangChain message，不自建影子类型。
+    messages: list[BaseMessage]
 
 
 class EventStreamingAgent(Protocol):

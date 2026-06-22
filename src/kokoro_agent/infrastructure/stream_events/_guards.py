@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypeAlias, TypeGuard
+from typing import TypeGuard
 
 from kokoro_agent.domain.run_event import ToolScalar
 
-ObjectMapping: TypeAlias = Mapping[object, object]
-ObjectList: TypeAlias = list[object]
 
-
-def is_object_mapping(value: object) -> TypeGuard[ObjectMapping]:
+def is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
-def is_object_list(value: object) -> TypeGuard[ObjectList]:
+def is_object_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
 
 

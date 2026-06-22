@@ -97,7 +97,7 @@ async def test_await_decision_raises_on_closed_channel() -> None:
 
 async def test_interactive_gate_closed_channel_aborts_via_cancellederror() -> None:
     # 流终止经门控应转成 CancelledError(让 run_task.cancel 接管),而非 rejection_result。
-    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", _ClosedStream())
+    gated = gate_tools_interactive([_tool("fetch_url")], "default", "run_1", _ClosedStream())
     with pytest.raises(asyncio.CancelledError):
         await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
@@ -115,7 +115,7 @@ async def test_await_decision_skips_message_with_unexpected_fields() -> None:
 async def test_interactive_gate_approve_runs_real_tool() -> None:
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "approve"})
-    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
+    gated = gate_tools_interactive([_tool("fetch_url")], "default", "run_1", bus)
     result = await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     assert result == "ran fetch_url http://example.com"
 
@@ -127,7 +127,7 @@ async def test_interactive_gate_approve_with_edited_args_runs_with_them() -> Non
         control_stream("run_1"),
         {"kind": "control", "decision": "approve", "args": {"x": "edited://by-user"}},
     )
-    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
+    gated = gate_tools_interactive([_tool("fetch_url")], "default", "run_1", bus)
     result = await gated[0].ainvoke({"x": "http://original"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     assert result == "ran fetch_url edited://by-user"
 
@@ -135,7 +135,7 @@ async def test_interactive_gate_approve_with_edited_args_runs_with_them() -> Non
 async def test_interactive_gate_reject_returns_rejection() -> None:
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "reject"})
-    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
+    gated = gate_tools_interactive([_tool("fetch_url")], "default", "run_1", bus)
     result = await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     assert "拒绝" in result
 
@@ -145,7 +145,7 @@ async def test_interactive_gate_cancel_aborts_via_cancellederror() -> None:
     # 而非回 rejection_result 在取消竞态里冒出误导性的工具拒绝结果。
     bus = MemoryStream()
     await bus.publish(control_stream("run_1"), {"kind": "control", "decision": "cancel"})
-    gated = gate_tools_interactive([_tool("fetch_url")], "plan", "run_1", bus)
+    gated = gate_tools_interactive([_tool("fetch_url")], "default", "run_1", bus)
     with pytest.raises(asyncio.CancelledError):
         await gated[0].ainvoke({"x": "http://example.com"})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 

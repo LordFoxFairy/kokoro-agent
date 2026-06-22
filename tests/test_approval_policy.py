@@ -18,7 +18,6 @@ def test_load_approval_policy_from_yaml_file() -> None:
 
     assert policy == ApprovalPolicy(
         requires_approval_tools=frozenset({"fetch_url"}),
-        plan_only_blocked_tools=frozenset({"agent"}),
     )
 
 

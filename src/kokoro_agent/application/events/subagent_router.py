@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.runnables.schema import StreamEvent
 
-from kokoro_agent.domain.stream_intent import SubagentStarted
+from kokoro_agent.domain.run_event import SubagentStarted
 from kokoro_agent.infrastructure.stream_events import read_header
 
 

@@ -14,7 +14,7 @@ from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.interfaces.envelope import AgentEvent
 from kokoro_agent.application.projection.attribution import SubagentAttribution
 from kokoro_agent.application.projection.awaiting import awaiting_approval_events
-from kokoro_agent.application.projection.transformer import project
+from kokoro_agent.application.projection.transformer import project, usage_delta
 
 __all__ = ["InvokableAgent", "events_stream", "invoke_once"]
 
@@ -44,39 +44,43 @@ async def invoke_once(
         if metadata is not None:
             config["metadata"] = metadata
     attribution = SubagentAttribution()
-    await _publish(bus, stream, run_id, "run.started", {})
+    usage_total: dict[str, JsonValue] = {}
+    await _emit(bus, stream, run_id, "agent_status", {"status": "started"})
     try:
         # interrupt 前最后一次 on_chat_model_* 的 run_id 即 awaiting 的 segment_id。
         segment_id = ""
         async for event in agent.astream_events(payload, version="v2", config=config):
             if str(event["event"]).startswith("on_chat_model_"):
                 segment_id = event["run_id"]
+            for key, value in usage_delta(event).items():
+                prev = usage_total.get(key, 0)
+                usage_total[key] = (prev if isinstance(prev, int) else 0) + value
             for ev in project(event, attribution, run_id):
                 await bus.publish(stream, ev.model_dump())
         snapshot = await agent.aget_state(config)
         if _first_interrupt_value(snapshot) is not None:
-            # interrupt 暂停退出：逐 pending tool_call 发审批信号后返回，不发 run.completed。
+            # interrupt 暂停退出：发 awaiting_approval 状态后返回，不发 agent_done。
             for ev in _awaiting_events(snapshot, interrupt_on_names, segment_id, run_id):
                 await bus.publish(stream, ev.model_dump())
             return False
-        await _publish(bus, stream, run_id, "run.completed", {"status": "completed"})
+        await _emit(bus, stream, run_id, "agent_done", {"status": "completed", "usage": usage_total})
         return True
-    except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
-        await _publish(
+    except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
+        await _emit(
             bus,
             stream,
             run_id,
-            "run.failed",
+            "agent_error",
             {"error_kind": type(error).__name__, "message": str(error)},
         )
         return True
 
 
-async def _publish(
-    bus: StreamProtocol, stream: str, run_id: str, kind: str, payload: dict[str, JsonValue]
+async def _emit(
+    bus: StreamProtocol, stream: str, run_id: str, event: str, data: dict[str, JsonValue]
 ) -> None:
-    event = AgentEvent.model_validate({"kind": kind, "run_id": run_id, "payload": payload})
-    await bus.publish(stream, event.model_dump())
+    envelope = AgentEvent.model_validate({"event": event, "request_id": run_id, "data": data})
+    await bus.publish(stream, envelope.model_dump())
 
 
 def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
@@ -121,7 +125,7 @@ def _awaiting_events(
         action_requests,
         interrupt_on_names,
         segment_id=segment_id,
-        run_id=run_id,
+        request_id=run_id,
     )
 
 

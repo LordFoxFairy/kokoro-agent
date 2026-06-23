@@ -111,8 +111,8 @@ def _request(run_id: str, conversation_id: str = "c1") -> RunRequest:
     return RunRequest.model_validate(_request_item(run_id, conversation_id).event)
 
 
-def _kinds(published: list[tuple[str, dict[str, JsonValue]]]) -> list[JsonValue]:
-    return [event["kind"] for _, event in published]
+def _events(published: list[tuple[str, dict[str, JsonValue]]]) -> list[JsonValue]:
+    return [event["event"] for _, event in published]
 
 
 def _is_obj_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
@@ -154,9 +154,9 @@ async def test_request_dispatches_initial_invoke() -> None:
     await sup.dispatch(bus, _request("r1"))
     await _drain(sup)
 
-    kinds = _kinds(bus.published)
-    assert kinds[0] == "run.started"
-    assert kinds[-1] == "run.completed"
+    events = _events(bus.published)
+    assert events[0] == "agent_status"
+    assert events[-1] == "agent_done"
     assert len(agent.seen_payloads) == 1
     initial = agent.seen_payloads[0]
     assert _is_obj_mapping(initial)
@@ -291,8 +291,8 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
 
     last = bus.published[-1]
     assert last[0] == events_stream("r5")
-    assert last[1]["kind"] == "run.completed"
-    assert last[1]["payload"] == {"status": "cancelled"}
+    assert last[1]["event"] == "agent_done"
+    assert last[1]["data"] == {"status": "cancelled"}
 
 
 # cancel 未知/已结束 run → 仍补发 cancelled 终态。
@@ -303,8 +303,8 @@ async def test_cancel_unknown_run_still_emits_cancelled() -> None:
     cancel = _inbound({"kind": "run.cancel", "run_id": "gone"})
     await sup.dispatch(bus, cancel)
     last = bus.published[-1]
-    assert last[1]["kind"] == "run.completed"
-    assert last[1]["payload"] == {"status": "cancelled"}
+    assert last[1]["event"] == "agent_done"
+    assert last[1]["data"] == {"status": "cancelled"}
 
 
 # agent_builder 抛异常 → run.failed{error_kind,message}。
@@ -317,8 +317,8 @@ async def test_builder_failure_emits_run_failed() -> None:
     await sup.dispatch(bus, _request("r6"))
     await _drain(sup)
     last = bus.published[-1]
-    assert last[1]["kind"] == "run.failed"
-    assert last[1]["payload"] == {"error_kind": "ValueError", "message": "bad model"}
+    assert last[1]["event"] == "agent_error"
+    assert last[1]["data"] == {"error_kind": "ValueError", "message": "bad model"}
 
 
 # serve 订阅循环 → 对每条 request 派发。
@@ -329,7 +329,7 @@ async def test_serve_dispatches_subscribed_requests() -> None:
     await sup.serve(bus)
     await _drain(sup)
     assert REQUESTS_STREAM == "kokoro:runs:requests"
-    assert _kinds(bus.published)[0] == "run.started"
+    assert _events(bus.published)[0] == "agent_status"
 
 
 # supervisor 调 invoke_once 时传了 trace kwarg（langfuse 未配时为 None 也不崩）。
@@ -381,15 +381,12 @@ async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
     cancel = _inbound({"kind": "run.cancel", "run_id": "rc1"})
     await sup.dispatch(bus, cancel)
 
-    completed_events = [
-        e for _, e in bus.published
-        if e.get("kind") == "run.completed"
-    ]
+    done_events = [e for _, e in bus.published if e.get("event") == "agent_done"]
     # 只允许自然完成那条，不补发 cancelled。
-    assert len(completed_events) == 1
-    payload = completed_events[0].get("payload")
-    assert isinstance(payload, dict)
-    assert payload.get("status") == "completed"
+    assert len(done_events) == 1
+    data = done_events[0].get("data")
+    assert isinstance(data, dict)
+    assert data.get("status") == "completed"
 
 
 # T6-②: 暂停态(invoke_once 返回 False)cancel → 补发 cancelled。
@@ -408,10 +405,10 @@ async def test_cancel_after_pause_emits_cancelled() -> None:
     await sup.dispatch(bus, cancel)
 
     last = bus.published[-1]
-    assert last[1].get("kind") == "run.completed"
-    payload = last[1].get("payload")
-    assert isinstance(payload, dict)
-    assert payload.get("status") == "cancelled"
+    assert last[1].get("event") == "agent_done"
+    data = last[1].get("data")
+    assert isinstance(data, dict)
+    assert data.get("status") == "cancelled"
 
 
 # T6-③: 运行中 cancel(task 未完成,CancelledError) → 补发 cancelled。
@@ -431,10 +428,10 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
     await _drain(sup)
 
     last = bus.published[-1]
-    assert last[1].get("kind") == "run.completed"
-    payload = last[1].get("payload")
-    assert isinstance(payload, dict)
-    assert payload.get("status") == "cancelled"
+    assert last[1].get("event") == "agent_done"
+    data = last[1].get("data")
+    assert isinstance(data, dict)
+    assert data.get("status") == "cancelled"
 
 
 # T6-④: 暂停态 cancel(发 cancelled)后再来 resume → 被 _terminal 挡，不再发终态。

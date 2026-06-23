@@ -7,27 +7,21 @@ from pathlib import Path
 from typing import Annotated
 
 import yaml
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class _ApprovalPolicyPayload(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    requires_approval_tools: list[_NonEmpty]
-
-
 class ApprovalPolicy(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-    requires_approval_tools: frozenset[str]
+    # Field(strict=False)：只在此字段允许 list → frozenset 的 yaml 解析 coercion；
+    # 元素类型 _NonEmpty 由 pydantic 在字段级校验空工具名。
+    requires_approval_tools: Annotated[frozenset[_NonEmpty], Field(strict=False)]
 
 
 def load_approval_policy(path: Path) -> ApprovalPolicy:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    payload = _ApprovalPolicyPayload.model_validate(raw)
-    return ApprovalPolicy(
-        requires_approval_tools=frozenset(payload.requires_approval_tools),
-    )
+    return ApprovalPolicy.model_validate(raw)
 
 
 @lru_cache(maxsize=1)

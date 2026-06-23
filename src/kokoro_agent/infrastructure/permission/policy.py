@@ -14,8 +14,7 @@ _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 
 class ApprovalPolicy(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-    # Field(strict=False)：只在此字段允许 list → frozenset 的 yaml 解析 coercion；
-    # 元素类型 _NonEmpty 由 pydantic 在字段级校验空工具名。
+    # strict=False 允许 yaml list→frozenset coercion，元素由 _NonEmpty 校验空串。
     requires_approval_tools: Annotated[frozenset[_NonEmpty], Field(strict=False)]
 
 

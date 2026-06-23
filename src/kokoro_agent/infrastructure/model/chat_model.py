@@ -31,64 +31,28 @@ def _anthropic_effort(style: ExecutionStyle) -> Literal["medium", "low"]:
 
 
 def _build_openai_model(settings: ChatModelSettings, style: ExecutionStyle) -> BaseChatModel:
-    # openai 推理参数名为 reasoning_effort；api_key=None 在 openai 端不触发 ValidationError 可安全传入。
+    # openai 接受 api_key=None / base_url=None，无需按 None 分支——实测不触发 ValidationError。
     reasoning_effort: str | None = "high" if style == "thinking" else None
-    model_spec = f"openai:{settings.model_name}"
-    if settings.openai_api_key is not None and settings.openai_base_url is not None:
-        result = init_chat_model(
-            model_spec,
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-            disable_streaming=settings.disable_streaming,
-            reasoning_effort=reasoning_effort,
-        )
-    elif settings.openai_api_key is not None:
-        result = init_chat_model(
-            model_spec,
-            api_key=settings.openai_api_key,
-            disable_streaming=settings.disable_streaming,
-            reasoning_effort=reasoning_effort,
-        )
-    elif settings.openai_base_url is not None:
-        result = init_chat_model(
-            model_spec,
-            base_url=settings.openai_base_url,
-            disable_streaming=settings.disable_streaming,
-            reasoning_effort=reasoning_effort,
-        )
-    else:
-        result = init_chat_model(
-            model_spec,
-            disable_streaming=settings.disable_streaming,
-            reasoning_effort=reasoning_effort,
-        )
+    result = init_chat_model(
+        f"openai:{settings.model_name}",
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        disable_streaming=settings.disable_streaming,
+        reasoning_effort=reasoning_effort,
+    )
     assert isinstance(result, BaseChatModel)
     return result
 
 
 def _build_anthropic_model(settings: ChatModelSettings, style: ExecutionStyle) -> BaseChatModel:
     # anthropic 推理参数名为 effort（非 reasoning_effort），混用会静默失效。
-    # api_key=None 被 ChatAnthropic pydantic 拒绝，须省略以回退到环境变量。
+    # api_key=None 被 ChatAnthropic pydantic 拒绝，须省略以回退环境变量；base_url=None 则可安全传入。
     effort = _anthropic_effort(style)
     model_spec = f"anthropic:{settings.model_name}"
-    if settings.anthropic_api_key is not None and settings.anthropic_base_url is not None:
+    if settings.anthropic_api_key is not None:
         result = init_chat_model(
             model_spec,
             api_key=settings.anthropic_api_key,
-            base_url=settings.anthropic_base_url,
-            disable_streaming=settings.disable_streaming,
-            effort=effort,
-        )
-    elif settings.anthropic_api_key is not None:
-        result = init_chat_model(
-            model_spec,
-            api_key=settings.anthropic_api_key,
-            disable_streaming=settings.disable_streaming,
-            effort=effort,
-        )
-    elif settings.anthropic_base_url is not None:
-        result = init_chat_model(
-            model_spec,
             base_url=settings.anthropic_base_url,
             disable_streaming=settings.disable_streaming,
             effort=effort,
@@ -96,6 +60,7 @@ def _build_anthropic_model(settings: ChatModelSettings, style: ExecutionStyle) -
     else:
         result = init_chat_model(
             model_spec,
+            base_url=settings.anthropic_base_url,
             disable_streaming=settings.disable_streaming,
             effort=effort,
         )

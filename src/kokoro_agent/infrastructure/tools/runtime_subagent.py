@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
+from kokoro_agent.infrastructure.agent_builder import make_subagent_runnable
 from kokoro_agent.application.projection.reasoning_shim import message_text_and_reasoning
 from kokoro_agent.application.projection.result_messages import result_messages
 from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
@@ -48,10 +48,6 @@ class RuntimeSubagentToolInput(BaseModel):
     task: _NonEmpty = Field(description="要交给该运行时自定义子代理执行的具体任务")
 
 
-def _make_runner(model: BaseChatModel, system_prompt: str, name: str) -> AsyncRunner:
-    return make_subagent_runner(model, system_prompt=system_prompt, name=name)
-
-
 def _runtime_messages(task: str) -> dict[str, list[BaseMessage]]:
     return {"messages": [HumanMessage(content=task)]}
 
@@ -67,7 +63,7 @@ def build_runtime_custom_subagent_tool(
         task: str,
     ) -> str:
         spec = runtime_registry.register_or_get(name, description, system_prompt)
-        runner = _make_runner(model, spec.system_prompt, spec.name)
+        runner = make_subagent_runnable(model, system_prompt=spec.system_prompt, name=spec.name)
         result_obj = await runner.ainvoke(_runtime_messages(task.strip()))
         for message in reversed(_runtime_result_messages(result_obj)):
             if isinstance(message, AIMessage):

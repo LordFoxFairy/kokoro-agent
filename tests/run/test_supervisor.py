@@ -5,7 +5,10 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeGuard
 
+import pytest
+
 from langchain_core.messages import HumanMessage
+from langchain_core.runnables.config import RunnableConfig
 from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
 from langgraph.types import Command
 from pydantic import JsonValue
@@ -65,7 +68,7 @@ class _FakeAgent:
     block: asyncio.Event | None = None
 
     async def astream_events(
-        self, payload: object, *, version: str, config: dict[str, JsonValue]
+        self, payload: object, *, version: str, config: RunnableConfig
     ) -> AsyncIterator[StreamEvent]:
         self.seen_payloads.append(payload)
         if self.block is not None:
@@ -73,7 +76,7 @@ class _FakeAgent:
         for event in self.events:
             yield event
 
-    async def aget_state(self, config: dict[str, JsonValue]) -> _FakeState:
+    async def aget_state(self, config: RunnableConfig) -> _FakeState:
         return self.state
 
 
@@ -327,3 +330,34 @@ async def test_serve_dispatches_subscribed_requests() -> None:
     await _drain(sup)
     assert REQUESTS_STREAM == "kokoro:runs:requests"
     assert _kinds(bus.published)[0] == "run.started"
+
+
+# supervisor 调 invoke_once 时传了 trace kwarg（langfuse 未配时为 None 也不崩）。
+@pytest.mark.asyncio
+async def test_supervisor_passes_trace_to_invoke_once() -> None:
+    from unittest.mock import patch
+
+    captured: list[dict[str, object]] = []
+
+    async def spy_invoke(*args: object, **kwargs: object) -> None:
+        captured.append({"args": args, "kwargs": kwargs})
+
+    with patch("kokoro_agent.run.supervisor.invoke_once", spy_invoke):
+        request = RunRequest(
+            kind="run.request",
+            run_id="r1",
+            conversation_id="c1",
+            session_id="s1",
+            input="hello",
+        )
+        supervisor = RunSupervisor(agent_builder=lambda req: _FakeAgent())
+        bus = _FakeBus()
+        await supervisor.dispatch(bus, request)
+        for task in list(supervisor.tasks.values()):
+            await task
+
+    assert len(captured) == 1
+    # trace kwarg 被传入（None or RunnableConfig，langfuse 未配 → None）
+    kwargs = captured[0]["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert "trace" in kwargs

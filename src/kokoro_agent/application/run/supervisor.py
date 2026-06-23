@@ -16,12 +16,12 @@ from langgraph.types import Command
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamProtocol
-from kokoro_agent.events.agent_event import AgentEvent
+from kokoro_agent.interfaces.envelope import AgentEvent
 from kokoro_agent.infrastructure.observability import trace_config
 from kokoro_agent.infrastructure.permission import build_interrupt_on
-from kokoro_agent.run.admission import ProcessedRunIds
-from kokoro_agent.run.invoke import InvokableAgent, events_stream, invoke_once
-from kokoro_agent.wire.run_request import (
+from kokoro_agent.application.run.admission import ProcessedRunIds
+from kokoro_agent.application.run.invoke import InvokableAgent, events_stream, invoke_once
+from kokoro_agent.interfaces.inbound import (
     InboundMessage,
     ResumeDecision,
     RunCancel,

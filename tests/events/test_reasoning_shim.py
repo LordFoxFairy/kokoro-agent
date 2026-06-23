@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage
 
-from kokoro_agent.events.reasoning_shim import message_text_and_reasoning
+from kokoro_agent.application.projection.reasoning_shim import message_text_and_reasoning
 
 
 def test_native_reasoning_block() -> None:

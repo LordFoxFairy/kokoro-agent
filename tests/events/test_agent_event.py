@@ -1,4 +1,4 @@
-from kokoro_agent.events.agent_event import AgentEvent, is_agent_kind
+from kokoro_agent.interfaces.envelope import AgentEvent, is_agent_kind
 
 
 def test_agent_event_has_no_seq_and_strict():

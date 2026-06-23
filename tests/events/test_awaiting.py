@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from kokoro_agent.events.awaiting import awaiting_approval_events
+from kokoro_agent.application.projection.awaiting import awaiting_approval_events
 
 
 def _ai(tool_calls: list[dict[str, object]]) -> AIMessage:

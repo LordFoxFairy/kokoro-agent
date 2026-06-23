@@ -15,9 +15,9 @@ from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.run.invoke import events_stream
-from kokoro_agent.run.supervisor import REQUESTS_STREAM, RunSupervisor
-from kokoro_agent.wire.run_request import InboundMessage, parse_inbound
+from kokoro_agent.application.run.invoke import events_stream
+from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
+from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
 
 class _FakeBus:
@@ -342,7 +342,7 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
     async def spy_invoke(*args: object, **kwargs: object) -> None:
         captured.append({"args": args, "kwargs": kwargs})
 
-    with patch("kokoro_agent.run.supervisor.invoke_once", spy_invoke):
+    with patch("kokoro_agent.application.run.supervisor.invoke_once", spy_invoke):
         request = RunRequest(
             kind="run.request",
             run_id="r1",

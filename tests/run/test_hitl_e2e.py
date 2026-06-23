@@ -20,9 +20,9 @@ from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.run.invoke import events_stream
-from kokoro_agent.run.supervisor import RunSupervisor
-from kokoro_agent.wire.run_request import InboundMessage, parse_inbound
+from kokoro_agent.application.run.invoke import events_stream
+from kokoro_agent.application.run.supervisor import RunSupervisor
+from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
 # 与 approval_policy.yaml 的 requires_approval_tools 同名：确保 supervisor 计算的
 # interrupt_on_names 真命中本工具，端到端验证同源对齐而非旁路。

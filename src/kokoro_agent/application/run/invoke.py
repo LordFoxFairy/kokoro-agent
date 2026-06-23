@@ -11,10 +11,10 @@ from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.application.protocols.stream import StreamProtocol
-from kokoro_agent.events.agent_event import AgentEvent
-from kokoro_agent.events.attribution import SubagentAttribution
-from kokoro_agent.events.awaiting import awaiting_approval_events
-from kokoro_agent.events.project import project
+from kokoro_agent.interfaces.envelope import AgentEvent
+from kokoro_agent.application.projection.attribution import SubagentAttribution
+from kokoro_agent.application.projection.awaiting import awaiting_approval_events
+from kokoro_agent.application.projection.transformer import project
 
 __all__ = ["InvokableAgent", "events_stream", "invoke_once"]
 

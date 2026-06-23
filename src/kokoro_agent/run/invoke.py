@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeGuard
 
+from langchain_core.messages import BaseMessage
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.events.agent_event import AgentEvent
 from kokoro_agent.events.attribution import SubagentAttribution
+from kokoro_agent.events.awaiting import awaiting_approval_events
 from kokoro_agent.events.project import project
 
 __all__ = ["InvokableAgent", "events_stream", "invoke_once"]
@@ -26,20 +28,25 @@ async def invoke_once(
     run_id: str,
     conversation_id: str,
     payload: object,
+    interrupt_on_names: frozenset[str] = frozenset(),
 ) -> None:
     stream = events_stream(run_id)
     config: dict[str, JsonValue] = {"configurable": {"thread_id": conversation_id}}
     attribution = SubagentAttribution()
     await _publish(bus, stream, run_id, "run.started", {})
     try:
+        # interrupt 前最后一次 on_chat_model_* 的 run_id 即 awaiting 的 segment_id。
+        segment_id = ""
         async for event in agent.astream_events(payload, version="v2", config=config):
+            if str(event["event"]).startswith("on_chat_model_"):
+                segment_id = event["run_id"]
             for ev in project(event, attribution, run_id):
                 await bus.publish(stream, ev.model_dump())
         snapshot = await agent.aget_state(config)
-        approval = _awaiting_approval_payload(snapshot)
-        if approval is not None:
-            # interrupt 暂停退出：发审批信号后返回，不发 run.completed（run 留在 checkpoint）。
-            await _publish(bus, stream, run_id, "tool.awaiting_approval", approval)
+        if _first_interrupt_value(snapshot) is not None:
+            # interrupt 暂停退出：逐 pending tool_call 发审批信号后返回，不发 run.completed。
+            for ev in _awaiting_events(snapshot, interrupt_on_names, segment_id, run_id):
+                await bus.publish(stream, ev.model_dump())
             return
         await _publish(bus, stream, run_id, "run.completed", {"status": "completed"})
     except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
@@ -87,47 +94,29 @@ def _is_object_sequence(value: object) -> TypeGuard[tuple[object, ...] | list[ob
     return isinstance(value, (list, tuple))
 
 
-def _awaiting_approval_payload(snapshot: object) -> dict[str, JsonValue] | None:
+def _awaiting_events(
+    snapshot: object, interrupt_on_names: frozenset[str], segment_id: str, run_id: str
+) -> list[AgentEvent]:
     value = _first_interrupt_value(snapshot)
     if value is None:
-        return None
+        return []
     requests: object = value.get("action_requests")
-    if not _is_object_list(requests) or not requests:
-        return None
-    request = requests[0]
-    if not _is_object_mapping(request):
-        return None
-    return {
-        "name": _str(request.get("name")),
-        "args": _json_mapping(request.get("args")),
-        "description": _str(request.get("description")),
-        "allowed_decisions": _allowed_decisions(value),
-    }
+    action_requests = requests if _is_object_list(requests) else []
+    return awaiting_approval_events(
+        _snapshot_messages(snapshot),
+        action_requests,
+        interrupt_on_names,
+        segment_id=segment_id,
+        run_id=run_id,
+    )
 
 
-def _allowed_decisions(value: Mapping[object, object]) -> list[JsonValue]:
-    configs: object = value.get("review_configs")
-    if not _is_object_list(configs) or not configs:
+def _snapshot_messages(snapshot: object) -> list[BaseMessage]:
+    # StateSnapshot.values 松类型 dict[str, Any]：经 object 边界收窄 messages 为 BaseMessage 序列。
+    values: object = getattr(snapshot, "values", None)
+    if not _is_object_mapping(values):
         return []
-    config = configs[0]
-    if not _is_object_mapping(config):
+    raw: object = values.get("messages")
+    if not _is_object_list(raw):
         return []
-    decisions: object = config.get("allowed_decisions")
-    if not _is_object_list(decisions):
-        return []
-    return [d for d in decisions if isinstance(d, str)]
-
-
-def _str(value: object) -> str:
-    return value if isinstance(value, str) else ""
-
-
-def _json_mapping(value: object) -> dict[str, JsonValue]:
-    # interrupt action_requests[].args 是工具入参字典，逐键收窄为 JSON 标量。
-    if not _is_object_mapping(value):
-        return {}
-    args: dict[str, JsonValue] = {}
-    for key, item in value.items():
-        if isinstance(key, str) and (item is None or isinstance(item, (str, int, float, bool))):
-            args[key] = item
-    return args
+    return [m for m in raw if isinstance(m, BaseMessage)]

@@ -1,8 +1,8 @@
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.runnables.schema import EventData, StandardStreamEvent, StreamEvent
 
-from kokoro_agent.events.attribution import SubagentAttribution
-from kokoro_agent.events.project import TOOL_RESULT_MAX_CHARS, project
+from kokoro_agent.application.projection.attribution import SubagentAttribution
+from kokoro_agent.application.projection.transformer import TOOL_RESULT_MAX_CHARS, project
 
 
 def _ev(

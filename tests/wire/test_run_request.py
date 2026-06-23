@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from kokoro_agent.domain.json_payload import JsonObject
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.wire.run_request import RunCancel, RunResume, parse_inbound
+from kokoro_agent.interfaces.inbound import RunCancel, RunResume, parse_inbound
 
 
 def test_parse_run_request() -> None:

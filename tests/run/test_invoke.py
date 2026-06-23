@@ -9,7 +9,7 @@ from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamItem, StreamProtocol
-from kokoro_agent.run.invoke import events_stream, invoke_once
+from kokoro_agent.application.run.invoke import events_stream, invoke_once
 
 
 class _FakeBus:

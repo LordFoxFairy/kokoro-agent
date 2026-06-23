@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.messages.tool import ToolCall
 from pydantic import JsonValue
 
-from kokoro_agent.events.agent_event import AgentEvent
+from kokoro_agent.interfaces.envelope import AgentEvent
 
 
 def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:

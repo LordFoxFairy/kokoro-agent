@@ -11,8 +11,8 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
-from kokoro_agent.events.reasoning_shim import message_text_and_reasoning
-from kokoro_agent.events.result_messages import result_messages
+from kokoro_agent.application.projection.reasoning_shim import message_text_and_reasoning
+from kokoro_agent.application.projection.result_messages import result_messages
 from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 

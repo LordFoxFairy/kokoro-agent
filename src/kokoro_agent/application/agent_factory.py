@@ -15,7 +15,7 @@ from kokoro_agent.infrastructure.subagent import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
 )
-from kokoro_agent.application.prompts import SYSTEM_PROMPT
+from kokoro_agent.domain.prompts import SYSTEM_PROMPT
 
 
 def build_agent(

@@ -12,9 +12,9 @@ from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 from kokoro_agent.infrastructure.transport import make_stream
-from kokoro_agent.run.invoke import InvokableAgent
-from kokoro_agent.run.supervisor import REQUESTS_STREAM, RunSupervisor
-from kokoro_agent.wire.run_request import RunRequest
+from kokoro_agent.application.run.invoke import InvokableAgent
+from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
+from kokoro_agent.interfaces.inbound import RunRequest
 
 LOGGER = logging.getLogger(__name__)
 

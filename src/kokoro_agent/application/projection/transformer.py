@@ -7,9 +7,9 @@ from langchain_core.messages import BaseMessage
 from langchain_core.runnables.schema import StreamEvent
 from pydantic import JsonValue
 
-from kokoro_agent.events.agent_event import AgentEvent
-from kokoro_agent.events.attribution import SubagentAttribution
-from kokoro_agent.events.reasoning_shim import message_text_and_reasoning
+from kokoro_agent.interfaces.envelope import AgentEvent
+from kokoro_agent.application.projection.attribution import SubagentAttribution
+from kokoro_agent.application.projection.reasoning_shim import message_text_and_reasoning
 from kokoro_agent.infrastructure.constants import (
     RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,

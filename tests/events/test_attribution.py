@@ -1,6 +1,6 @@
 from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
 
-from kokoro_agent.events.attribution import SubagentAttribution
+from kokoro_agent.application.projection.attribution import SubagentAttribution
 
 
 def _base(metadata: dict[str, str]) -> StreamEvent:

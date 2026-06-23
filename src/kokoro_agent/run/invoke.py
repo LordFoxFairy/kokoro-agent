@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import TypeGuard
 
 from langchain_core.messages import BaseMessage
+from langchain_core.runnables.config import RunnableConfig
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.agent import InvokableAgent
@@ -29,9 +30,18 @@ async def invoke_once(
     conversation_id: str,
     payload: object,
     interrupt_on_names: frozenset[str] = frozenset(),
+    trace: RunnableConfig | None = None,
 ) -> None:
     stream = events_stream(run_id)
-    config: dict[str, JsonValue] = {"configurable": {"thread_id": conversation_id}}
+    config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
+    if trace is not None:
+        # 合并 Langfuse handler 与元数据：仅在字段存在时写入，避免覆盖已有 configurable。
+        callbacks = trace.get("callbacks")
+        metadata = trace.get("metadata")
+        if callbacks is not None:
+            config["callbacks"] = callbacks
+        if metadata is not None:
+            config["metadata"] = metadata
     attribution = SubagentAttribution()
     await _publish(bus, stream, run_id, "run.started", {})
     try:

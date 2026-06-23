@@ -6,19 +6,15 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from kokoro_agent.domain.run_request import PermissionMode
-from kokoro_agent.application.protocols.agent import EventStreamingAgent
+from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.agent_builder import make_deep_agent
-from kokoro_agent.infrastructure.permission import (
-    gate_tools,
-    gate_tools_interactive,
-)
+from kokoro_agent.infrastructure.permission import gate_tools
 from kokoro_agent.infrastructure.tools.runtime_subagent import build_runtime_custom_subagent_tool
 from kokoro_agent.infrastructure.subagent import (
     RuntimeSubagentRegistry,
     materialize_runtime_subagents,
 )
-from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.application.prompts import SYSTEM_PROMPT
 
 
@@ -26,16 +22,12 @@ def build_agent(
     model: BaseChatModel,
     permission_mode: PermissionMode,
     run_id: str,
-    control_bus: StreamProtocol | None,
     runtime_registry: RuntimeSubagentRegistry,
     checkpointer: BaseCheckpointSaver[str] | None = None,
-) -> EventStreamingAgent:
+) -> InvokableAgent:
     base_tools = (build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS)
-    tools = (
-        gate_tools_interactive(base_tools, permission_mode, run_id, control_bus)
-        if control_bus is not None
-        else gate_tools(base_tools, permission_mode)
-    )
+    # 静态门控：default 档拦外部副作用工具；interrupt_on 接线留 R-approval。
+    tools = gate_tools(base_tools, permission_mode)
     return make_deep_agent(
         model=model,
         tools=tools,

@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
-from langchain_core.messages import BaseMessage
-from langchain_core.runnables.config import RunnableConfig
 from langchain_core.runnables.schema import StreamEvent
+from pydantic import JsonValue
 
 
-class EventStreamingAgent(Protocol):
-    # inp 是 langgraph 图的 partial state 更新（messages 用 LangChain message）；
-    # 与 AsyncRunner.ainvoke 同形，不另立命名信封。
+@runtime_checkable
+class InvokableAgent(Protocol):
+    """编译后 langgraph 图的窄契约：仅 invoke 路径需要的两个方法。"""
+
     def astream_events(
-        self,
-        inp: dict[str, list[BaseMessage]],
-        *,
-        version: str,
-        config: RunnableConfig | None,
+        self, payload: object, *, version: str, config: dict[str, JsonValue]
     ) -> AsyncIterator[StreamEvent]: ...
+
+    async def aget_state(self, config: dict[str, JsonValue]) -> object: ...

@@ -13,12 +13,10 @@ from kokoro_agent.infrastructure.permission import approval_policy
 from kokoro_agent.infrastructure.permission import (
     blocked_tools,
     gate_tools,
-    gate_tools_interactive,
     load_approval_policy,
     tool_allowed,
 )
 from kokoro_agent.infrastructure.json_types import JsonValue
-from kokoro_agent.infrastructure.transport import MemoryStream
 
 
 def test_blocked_tools_driven_by_declarative_approval_policy() -> None:
@@ -134,20 +132,6 @@ def test_permission_gate_wrappers_expose_narrow_sync_signatures() -> None:
     assert "JsonValue" in str(hints["_args"])
     assert "JsonValue" in str(hints["_kwargs"])
     assert hints["return"] is str
-
-
-async def test_interactive_gate_wrapper_is_async_only_with_narrow_signature() -> None:
-    bus = MemoryStream()
-    blocked = gate_tools_interactive([_make("fetch_url")], "default", "run_1", bus)[0]
-    blocked_async = blocked.coroutine
-    assert blocked.func is None
-    assert blocked_async is not None
-    params = signature(blocked_async).parameters
-    async_hints = get_type_hints(blocked_async)
-    assert set(params) == {"kwargs"}
-    assert params["kwargs"].kind is Parameter.VAR_KEYWORD
-    assert "JsonValue" in str(async_hints["kwargs"])
-    assert async_hints["return"] is str
 
 
 async def test_gate_default_blocks_async_only_tool() -> None:

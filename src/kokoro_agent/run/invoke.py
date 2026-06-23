@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
-from typing import Protocol, TypeGuard, runtime_checkable
+from collections.abc import Mapping
+from typing import TypeGuard
 
-from langchain_core.runnables.schema import StreamEvent
 from pydantic import JsonValue
 
+from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.events.agent_event import AgentEvent
 from kokoro_agent.events.attribution import SubagentAttribution
 from kokoro_agent.events.project import project
 
-
-@runtime_checkable
-class InvokableAgent(Protocol):
-    """编译后 langgraph 图的窄契约：仅 invoke 路径需要的两个方法。"""
-
-    def astream_events(
-        self, payload: object, *, version: str, config: dict[str, JsonValue]
-    ) -> AsyncIterator[StreamEvent]: ...
-
-    async def aget_state(self, config: dict[str, JsonValue]) -> object: ...
+__all__ = ["InvokableAgent", "events_stream", "invoke_once"]
 
 
 def events_stream(run_id: str) -> str:

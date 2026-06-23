@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 
+from langchain_core.runnables.config import RunnableConfig
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+
+from kokoro_agent.domain.run_request import RunRequest
 
 # Langfuse 凭据所在 env；缺任一即视为未配置 → tracing 静默关闭（离线/CI/未接入零影响）。
 _REQUIRED_ENV = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
@@ -23,3 +26,19 @@ def build_langfuse_handler() -> CallbackHandler | None:
         return None
     Langfuse()
     return CallbackHandler()
+
+
+def trace_config(req: RunRequest) -> RunnableConfig | None:
+    """配置齐全时返回带 Langfuse handler 与 run 元数据的 config，否则 None（tracing 关）。"""
+    handler = build_langfuse_handler()
+    if handler is None:
+        return None
+    return {
+        "callbacks": [handler],
+        "metadata": {
+            "langfuse_session_id": req.session_id,
+            "langfuse_tags": [req.execution_style],
+            "kokoro_run_id": req.run_id,
+            "kokoro_conversation_id": req.conversation_id,
+        },
+    }

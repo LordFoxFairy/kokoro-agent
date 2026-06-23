@@ -1,4 +1,3 @@
-from kokoro_agent.infrastructure.permission.interactive_gate import gate_tools_interactive
 from kokoro_agent.infrastructure.permission.policy import (
     ApprovalPolicy,
     approval_policy,
@@ -15,7 +14,6 @@ __all__ = [
     "approval_policy",
     "blocked_tools",
     "gate_tools",
-    "gate_tools_interactive",
     "load_approval_policy",
     "tool_allowed",
 ]

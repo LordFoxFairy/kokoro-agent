@@ -17,7 +17,7 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from kokoro_agent.application.protocols.agent import EventStreamingAgent
+from kokoro_agent.application.protocols.agent import InvokableAgent
 
 # 框架返回的 CompiledStateGraph 结构上不匹配下方窄 Protocol（astream_events/ainvoke 签名更宽），
 # 经包的 Any 视图取构造函数，使结果直接收敛到强类型 Protocol，免去逐调用的类型抑制。
@@ -49,8 +49,8 @@ def make_deep_agent(
     subagents: Sequence[SubAgent | CompiledSubAgent],
     checkpointer: BaseCheckpointSaver[str] | None,
     permissions: Sequence[FilesystemPermission],
-) -> EventStreamingAgent:
-    agent: EventStreamingAgent = _build_deep_agent(
+) -> InvokableAgent:
+    agent: InvokableAgent = _build_deep_agent(
         model=model,
         tools=list(tools),
         system_prompt=system_prompt,

@@ -84,3 +84,104 @@ def test_extra_fields_forbidden() -> None:
         "unexpected_field": "boom",
     }
     assert parse_inbound(raw) is None
+
+
+# ── ResumeDecision 跨字段强校验测试 ──────────────────────────────────────────
+
+
+def test_edit_without_edited_action_returns_none() -> None:
+    # edit 型必须携带 edited_action；缺失应被 parse_inbound 收为 None。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r10",
+        "decision": {"type": "edit"},
+    }
+    assert parse_inbound(raw) is None
+
+
+def test_reject_without_message_returns_none() -> None:
+    # reject 型必须携带 message；缺失应被收为 None。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r11",
+        "decision": {"type": "reject"},
+    }
+    assert parse_inbound(raw) is None
+
+
+def test_respond_without_message_returns_none() -> None:
+    # respond 型必须携带 message；缺失应被收为 None。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r12",
+        "decision": {"type": "respond"},
+    }
+    assert parse_inbound(raw) is None
+
+
+def test_approve_with_edited_action_returns_none() -> None:
+    # approve 型不应携带 edited_action，多余字段视为非法。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r13",
+        "decision": {"type": "approve", "edited_action": {"name": "bash"}},
+    }
+    assert parse_inbound(raw) is None
+
+
+def test_approve_with_message_returns_none() -> None:
+    # approve 型不应携带 message，多余字段视为非法。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r14",
+        "decision": {"type": "approve", "message": "extra"},
+    }
+    assert parse_inbound(raw) is None
+
+
+def test_edit_with_edited_action_ok() -> None:
+    # edit 型携带 edited_action 时合法。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r15",
+        "decision": {"type": "edit", "edited_action": {"name": "bash", "args": {}}},
+    }
+    result = parse_inbound(raw)
+    assert isinstance(result, RunResume)
+    assert result.decision.edited_action == {"name": "bash", "args": {}}
+
+
+def test_reject_with_message_ok() -> None:
+    # reject 型携带 message 时合法。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r16",
+        "decision": {"type": "reject", "message": "not approved"},
+    }
+    result = parse_inbound(raw)
+    assert isinstance(result, RunResume)
+    assert result.decision.message == "not approved"
+
+
+def test_respond_with_message_ok() -> None:
+    # respond 型携带 message 时合法。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r17",
+        "decision": {"type": "respond", "message": "please clarify"},
+    }
+    result = parse_inbound(raw)
+    assert isinstance(result, RunResume)
+    assert result.decision.message == "please clarify"
+
+
+def test_approve_clean_ok() -> None:
+    # approve 型不携带任何可选字段时合法。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r18",
+        "decision": {"type": "approve"},
+    }
+    result = parse_inbound(raw)
+    assert isinstance(result, RunResume)
+    assert result.decision.type == "approve"

@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import pytest
+from langchain_core.runnables.config import RunnableConfig
 from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
 from pydantic import JsonValue
 
@@ -59,7 +60,7 @@ class _FakeAgent:
     seen_config: dict[str, object] = field(default_factory=lambda: {})
 
     async def astream_events(
-        self, payload: object, *, version: str, config: dict[str, JsonValue]
+        self, payload: object, *, version: str, config: RunnableConfig
     ) -> AsyncIterator[StreamEvent]:
         self.seen_config.update(config)
         if self.raise_on_stream is not None:
@@ -67,7 +68,7 @@ class _FakeAgent:
         for event in self.events:
             yield event
 
-    async def aget_state(self, config: dict[str, JsonValue]) -> _FakeState:
+    async def aget_state(self, config: RunnableConfig) -> _FakeState:
         return self.state
 
 
@@ -214,3 +215,35 @@ def _assert_protocol(bus: StreamProtocol) -> None:
 
 def test_fake_bus_is_stream_protocol() -> None:
     _assert_protocol(_FakeBus())
+
+
+@pytest.mark.asyncio
+async def test_trace_config_merged_into_astream_config() -> None:
+    """trace 非 None 时，astream 收到的 config 含 callbacks+metadata，且 configurable.thread_id 保留。"""
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class _DummyHandler(BaseCallbackHandler):
+        pass
+
+    handler = _DummyHandler()
+    trace: RunnableConfig = {
+        "callbacks": [handler],
+        "metadata": {"langfuse_session_id": "s1", "kokoro_run_id": "r1"},
+    }
+    bus = _FakeBus()
+    agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),))
+    await invoke_once(bus, agent, "r1", "c1", {"messages": []}, trace=trace)
+    assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
+    assert agent.seen_config.get("callbacks") == [handler]
+    assert agent.seen_config.get("metadata") == {"langfuse_session_id": "s1", "kokoro_run_id": "r1"}
+
+
+@pytest.mark.asyncio
+async def test_trace_none_config_only_configurable() -> None:
+    """trace=None 时，config 只含 configurable，不崩，无 callbacks/metadata。"""
+    bus = _FakeBus()
+    agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),))
+    await invoke_once(bus, agent, "r1", "c1", {"messages": []}, trace=None)
+    assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
+    assert "callbacks" not in agent.seen_config
+    assert "metadata" not in agent.seen_config

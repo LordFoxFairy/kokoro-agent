@@ -435,3 +435,51 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
     payload = last[1].get("payload")
     assert isinstance(payload, dict)
     assert payload.get("status") == "cancelled"
+
+
+# T6-④: 暂停态 cancel(发 cancelled)后再来 resume → 被 _terminal 挡，不再发终态。
+@pytest.mark.asyncio
+async def test_resume_after_cancel_blocked_by_terminal() -> None:
+    """cancel 发 cancelled 后登记 _terminal；stale resume 即使 checkpoint 仍有 pending
+    interrupt 也被 _terminal 挡在幂等护栏之前，不调 invoke_once、不再发终态。"""
+    agent = _FakeAgent(events=(_chat_event("done"),), state=_PENDING_STATE)
+    bus = _FakeBus()
+    sup = RunSupervisor(agent_builder=_builder(agent))
+    await sup.dispatch(bus, _request("rc4"))
+    await _drain(sup)
+
+    cancel = _inbound({"kind": "run.cancel", "run_id": "rc4"})
+    await sup.dispatch(bus, cancel)
+    before = len(bus.published)
+    agent.seen_payloads.clear()
+
+    resume = _inbound(
+        {"kind": "run.resume", "run_id": "rc4", "decision": {"type": "approve"}}
+    )
+    await sup.dispatch(bus, resume)
+    await _drain(sup)
+
+    assert len(agent.seen_payloads) == 0
+    assert len(bus.published) == before
+
+
+# T6-⑤: 自然完成后再来 resume → 同样被 _terminal 挡。
+@pytest.mark.asyncio
+async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
+    """自然完成(invoke_once 返回 True)登记 _terminal；后续 resume 被挡在 aget_state 之前，不调 invoke_once。"""
+    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    bus = _FakeBus()
+    sup = RunSupervisor(agent_builder=_builder(agent))
+    await sup.dispatch(bus, _request("rc5"))
+    await _drain(sup)
+    before = len(bus.published)
+    agent.seen_payloads.clear()
+
+    resume = _inbound(
+        {"kind": "run.resume", "run_id": "rc5", "decision": {"type": "approve"}}
+    )
+    await sup.dispatch(bus, resume)
+    await _drain(sup)
+
+    assert len(agent.seen_payloads) == 0
+    assert len(bus.published) == before

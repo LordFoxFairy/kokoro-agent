@@ -30,6 +30,26 @@ def test_no_reasoning_returns_empty_string() -> None:
     assert reasoning == ""
 
 
+def test_non_standard_thinking_block_merges_into_reasoning() -> None:
+    """non_standard.value.type==thinking（thinking 键）并入 reasoning。"""
+    msg = AIMessage(content=[
+        {"type": "text", "text": "answer"},
+        {"type": "non_standard", "value": {"type": "thinking", "thinking": "deep"}},
+    ])
+    text, reasoning = message_text_and_reasoning(msg)
+    assert text == "answer"
+    assert "deep" in reasoning
+
+
+def test_non_standard_thinking_block_text_key_merges_into_reasoning() -> None:
+    """non_standard.value.type==thinking（text 键变体）并入 reasoning。"""
+    msg = AIMessage(content=[
+        {"type": "non_standard", "value": {"type": "thinking", "text": "via-text"}},
+    ])
+    _, reasoning = message_text_and_reasoning(msg)
+    assert "via-text" in reasoning
+
+
 def test_reasoning_block_empty_string() -> None:
     """空串 reasoning block 不追加，reasoning 位仍为空串。"""
     msg = AIMessage(content=[

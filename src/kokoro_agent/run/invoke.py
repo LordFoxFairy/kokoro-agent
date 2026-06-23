@@ -114,7 +114,8 @@ def _awaiting_events(
     if value is None:
         return []
     requests: object = value.get("action_requests")
-    action_requests = requests if _is_object_list(requests) else []
+    # 与 _first_interrupt_value 一致收 list/tuple：真引擎若返 tuple 不被静默收成空。
+    action_requests = list(requests) if _is_object_sequence(requests) else []
     return awaiting_approval_events(
         _snapshot_messages(snapshot),
         action_requests,

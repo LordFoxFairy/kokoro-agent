@@ -20,19 +20,20 @@ from kokoro_agent.infrastructure.subagent.specs import subagent_source_for
 TOOL_RESULT_MAX_CHARS = 8_000
 
 
-def project(event: StreamEvent, attribution: SubagentAttribution) -> list[AgentEvent]:
-    run_id = event["run_id"]
+def project(event: StreamEvent, attribution: SubagentAttribution, run_id: str) -> list[AgentEvent]:
+    # 信封 run_id 恒为 kokoro run_id；event["run_id"] 是 LC 每-Runnable 随机 id，仅作 segment_id/tool_id。
+    native_id = event["run_id"]
     match event["event"]:
         case "on_chat_model_stream":
-            return _from_message(event, attribution, run_id, final=False)
+            return _from_message(event, attribution, run_id, native_id, final=False)
         case "on_chat_model_end":
-            return _from_message(event, attribution, run_id, final=True)
+            return _from_message(event, attribution, run_id, native_id, final=True)
         case "on_tool_start":
-            return _from_tool_start(event, attribution, run_id)
+            return _from_tool_start(event, attribution, run_id, native_id)
         case "on_tool_end":
-            return _from_tool_end(event, attribution, run_id, is_error=False)
+            return _from_tool_end(event, attribution, run_id, native_id, is_error=False)
         case "on_tool_error":
-            return _from_tool_end(event, attribution, run_id, is_error=True)
+            return _from_tool_end(event, attribution, run_id, native_id, is_error=True)
         case _:
             return []
 
@@ -52,7 +53,12 @@ def _data(event: StreamEvent) -> Mapping[object, object]:
 
 
 def _from_message(
-    event: StreamEvent, attribution: SubagentAttribution, run_id: str, *, final: bool
+    event: StreamEvent,
+    attribution: SubagentAttribution,
+    run_id: str,
+    native_id: str,
+    *,
+    final: bool,
 ) -> list[AgentEvent]:
     key = "output" if final else "chunk"
     message: object = _data(event).get(key)
@@ -62,18 +68,22 @@ def _from_message(
     subagent_id = attribution.active_id(event)
     events: list[AgentEvent] = []
     if reasoning:
-        events.append(_ev("thinking.delta", run_id, {"segment_id": run_id, "text": reasoning}))
+        events.append(_ev("thinking.delta", run_id, {"segment_id": native_id, "text": reasoning}))
     if text:
-        events.append(_text_event(run_id, subagent_id, text, final=final))
+        events.append(_text_event(run_id, native_id, subagent_id, text, final=final))
     return events
 
 
-def _text_event(run_id: str, subagent_id: str | None, text: str, *, final: bool) -> AgentEvent:
+def _text_event(
+    run_id: str, native_id: str, subagent_id: str | None, text: str, *, final: bool
+) -> AgentEvent:
     if subagent_id is not None:
         kind = "subagent.text.completed" if final else "subagent.text.delta"
-        return _ev(kind, run_id, {"segment_id": run_id, "subagent_id": subagent_id, "text": text})
+        return _ev(
+            kind, run_id, {"segment_id": native_id, "subagent_id": subagent_id, "text": text}
+        )
     kind = "text.completed" if final else "text.delta"
-    return _ev(kind, run_id, {"segment_id": run_id, "text": text})
+    return _ev(kind, run_id, {"segment_id": native_id, "text": text})
 
 
 def _tool_input(event: StreamEvent) -> Mapping[object, object]:
@@ -87,7 +97,7 @@ def _str_field(source: Mapping[object, object], key: str) -> str:
 
 
 def _from_tool_start(
-    event: StreamEvent, attribution: SubagentAttribution, run_id: str
+    event: StreamEvent, attribution: SubagentAttribution, run_id: str, native_id: str
 ) -> list[AgentEvent]:
     name = event["name"]
     tool_input = _tool_input(event)
@@ -96,14 +106,14 @@ def _from_tool_start(
     subagent = _subagent_identity(name, tool_input)
     if subagent is not None:
         sub_name, subagent_type, source = subagent
-        attribution.started(run_id, sub_name)
+        attribution.started(native_id, sub_name)
         return [
             _ev(
                 "subagent.started",
                 run_id,
                 {
-                    "segment_id": run_id,
-                    "subagent_id": run_id,
+                    "segment_id": native_id,
+                    "subagent_id": native_id,
                     "name": sub_name,
                     "description": _str_field(tool_input, "description"),
                     "subagent_type": subagent_type,
@@ -116,8 +126,8 @@ def _from_tool_start(
             "tool.invoked",
             run_id,
             {
-                "segment_id": run_id,
-                "tool_id": run_id,
+                "segment_id": native_id,
+                "tool_id": native_id,
                 "name": name,
                 "args": _scalar_args(tool_input),
             },
@@ -126,7 +136,12 @@ def _from_tool_start(
 
 
 def _from_tool_end(
-    event: StreamEvent, attribution: SubagentAttribution, run_id: str, *, is_error: bool
+    event: StreamEvent,
+    attribution: SubagentAttribution,
+    run_id: str,
+    native_id: str,
+    *,
+    is_error: bool,
 ) -> list[AgentEvent]:
     name = event["name"]
     tool_input = _tool_input(event)
@@ -141,8 +156,8 @@ def _from_tool_end(
                 "subagent.finished",
                 run_id,
                 {
-                    "segment_id": run_id,
-                    "subagent_id": run_id,
+                    "segment_id": native_id,
+                    "subagent_id": native_id,
                     "name": sub_name,
                     "subagent_type": subagent_type,
                     "source": source,
@@ -155,8 +170,8 @@ def _from_tool_end(
             "tool.returned",
             run_id,
             {
-                "segment_id": run_id,
-                "tool_id": run_id,
+                "segment_id": native_id,
+                "tool_id": native_id,
                 "name": name,
                 "result": result,
                 "is_error": is_error,

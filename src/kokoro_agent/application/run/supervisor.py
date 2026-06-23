@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable, Mapping
-from typing import TypeGuard
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -15,6 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from pydantic import JsonValue
 
+from kokoro_agent.application.protocols.agent import StateView
 from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.interfaces.envelope import AgentEvent
 from kokoro_agent.infrastructure.observability import trace_config
@@ -221,17 +221,6 @@ def _decision_dict(decision: ResumeDecision) -> dict[str, JsonValue]:
     return out
 
 
-def _is_seq(value: object) -> TypeGuard[tuple[object, ...] | list[object]]:
-    return isinstance(value, (list, tuple))
-
-
-def _has_pending_interrupt(snapshot: object) -> bool:
-    # StateSnapshot.tasks[].interrupts 松类型：经 object 边界 + isinstance 收窄。
-    tasks: object = getattr(snapshot, "tasks", None)
-    if not _is_seq(tasks):
-        return False
-    for task in tasks:
-        interrupts: object = getattr(task, "interrupts", None)
-        if _is_seq(interrupts) and interrupts:
-            return True
-    return False
+def _has_pending_interrupt(snapshot: StateView) -> bool:
+    # StateSnapshot.interrupts 是 typed tuple[Interrupt, ...]：非空即有待审批暂停。
+    return bool(snapshot.interrupts)

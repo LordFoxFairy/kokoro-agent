@@ -1,33 +1,39 @@
 """HITL 端到端：fake agent 真走 interrupt→resume，四档决策经 supervisor 全链路。
 
-每档：dispatch RunRequest → 收 tool.awaiting_approval(tool_id 对齐) →
-dispatch RunResume(对应决定) → fake 收 Command(resume) 续跑 → 收终态。
+每档：dispatch RunRequest → 收 awaiting_approval(tool_id 对齐) →
+dispatch RunResume(对应决定) → fake 收 Command(resume) 续跑出 tool_call_end → 收终态。
 fake 是真 fake（自带 interrupt/resume 状态机），非 mock。
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TypeGuard
+from typing import TypeGuard, TypeVar
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables.config import RunnableConfig
-from langchain_core.runnables.schema import StreamEvent
-from langgraph.types import Command
+from langgraph.types import Command, Interrupt
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamItem
-from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.application.run.invoke import events_stream
 from kokoro_agent.application.run.supervisor import RunSupervisor
+from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
 # 与 approval_policy.yaml 的 requires_approval_tools 同名：确保 supervisor 计算的
 # interrupt_on_names 真命中本工具，端到端验证同源对齐而非旁路。
 _TOOL_NAME = "fetch_url"
 _TOOL_ID = "call-A"
+
+_T = TypeVar("_T")
+
+
+async def _aiter(items: Sequence[_T]) -> AsyncIterator[_T]:
+    for item in items:
+        yield item
 
 
 class _FakeBus:
@@ -41,96 +47,113 @@ class _FakeBus:
     async def read_all(self, stream: str) -> list[StreamItem]:
         return []
 
-    async def subscribe(
-        self, stream: str, from_cursor: str | None = None
-    ) -> AsyncIterator[StreamItem]:
-        return
-        yield  # pragma: no cover - 使函数成为 async generator
+    def subscribe(self, stream: str, from_cursor: str | None = None) -> AsyncIterator[StreamItem]:
+        return _aiter([])
 
 
-@dataclass(frozen=True)
-class _FakeInterrupt:
-    value: Mapping[str, JsonValue]
+@dataclass
+class _ToolView:
+    output: object
+    tool_call_id: str = _TOOL_ID
+    tool_name: str = _TOOL_NAME
+    input: dict[str, object] | None = field(default_factory=lambda: {})
+    error: str | None = None
+    completed: bool = True
+    output_deltas: AsyncIterable[object] = field(default_factory=lambda: _aiter([]))
 
 
-@dataclass(frozen=True)
-class _FakeTask:
-    interrupts: tuple[_FakeInterrupt, ...] = ()
+@dataclass
+class _RunStream:
+    tools: Sequence[_ToolView] = ()
+    is_interrupted: bool = False
+
+    @property
+    def messages(self) -> AsyncIterator[object]:
+        return _aiter([])
+
+    @property
+    def tool_calls(self) -> AsyncIterator[_ToolView]:
+        return _aiter(self.tools)
+
+    @property
+    def subagents(self) -> AsyncIterator[object]:
+        return _aiter([])
+
+    @property
+    def custom(self) -> AsyncIterator[object]:
+        return _aiter([])
+
+    async def interrupted(self) -> bool:
+        return self.is_interrupted
+
+    async def __aenter__(self) -> "_RunStream":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
 
 
-@dataclass(frozen=True)
-class _FakeState:
-    tasks: tuple[_FakeTask, ...] = ()
+@dataclass
+class _State:
+    interrupts: tuple[Interrupt, ...] = ()
     values: Mapping[str, object] = field(default_factory=lambda: {})
-
-
-def _tool_end_event(result: str) -> StreamEvent:
-    return {
-        "event": "on_tool_end",
-        "name": _TOOL_NAME,
-        "run_id": _TOOL_ID,
-        "data": {"input": {}, "output": result},
-        "metadata": {},
-        "tags": [],
-        "parent_ids": [],
-    }
 
 
 @dataclass
 class _FakeHitlAgent:
-    """interrupt→resume 状态机：首轮暂停带 pending；resume 据决策发 tool 结果后转终态。"""
+    """interrupt→resume 状态机：首轮 interrupted 带 pending；resume 据决策发 tool_call_end 后转终态。"""
 
     args: Mapping[str, JsonValue] = field(default_factory=lambda: {"x": 1})
     resumed: bool = False
     seen_resume: object = None
 
     async def astream_events(
-        self, payload: object, *, version: str, config: RunnableConfig
-    ) -> AsyncIterator[StreamEvent]:
+        self,
+        payload: object,
+        *,
+        version: str,
+        config: RunnableConfig,
+        transformers: Sequence[object],
+    ) -> _RunStream:
         if isinstance(payload, Command):
             self.resumed = True
             self.seen_resume = payload.resume
-            for event in self._resume_events(payload.resume):
-                yield event
-            return
-        # 首轮 invoke：不发工具结果，直接暂停（astream 自然结束后 aget_state 暴露 pending）。
-        return
-        yield  # pragma: no cover
+            return _RunStream(tools=(_ToolView(output=self._result(payload.resume)),))
+        return _RunStream(is_interrupted=True)
 
-    def _resume_events(self, resume: object) -> list[StreamEvent]:
-        decision = _first_decision(resume)
-        dtype = _decision_type(decision)
-        if dtype == "reject":
-            # 拒绝：工具不真跑，发拒绝语义的 tool 结果。
-            return [_tool_end_event("rejected by human")]
-        if dtype == "respond":
-            # 合成结果：人工 message 直接作为工具输出。
-            return [_tool_end_event(f"synthetic: {_decision_message(decision)}")]
-        if dtype == "edit":
-            # 编辑：新 args 生效，工具据新参数真跑。
-            return [_tool_end_event(f"ran with {_edited_args(decision)}")]
-        # approve：工具据原 args 真跑出结果。
-        return [_tool_end_event(f"ran with {dict(self.args)}")]
-
-    async def aget_state(self, config: RunnableConfig) -> _FakeState:
+    async def aget_state(self, config: RunnableConfig) -> _State:
         if self.resumed:
-            return _FakeState()
-        value: dict[str, JsonValue] = {
-            "action_requests": [
-                {"name": _TOOL_NAME, "args": dict(self.args), "description": "do danger"}
-            ]
-        }
+            return _State()
         messages = [
             HumanMessage(content="go"),
             AIMessage(
                 content="",
+                id="seg",
                 tool_calls=[{"name": _TOOL_NAME, "args": dict(self.args), "id": _TOOL_ID}],
             ),
         ]
-        return _FakeState(
-            tasks=(_FakeTask(interrupts=(_FakeInterrupt(value=value),)),),
+        return _State(
+            interrupts=(Interrupt(value=self._interrupt_value()),),
             values={"messages": messages},
         )
+
+    def _interrupt_value(self) -> dict[str, JsonValue]:
+        return {
+            "action_requests": [
+                {"name": _TOOL_NAME, "args": dict(self.args), "description": "do danger"}
+            ]
+        }
+
+    def _result(self, resume: object) -> str:
+        decision = _first_decision(resume)
+        dtype = _decision_type(decision)
+        if dtype == "reject":
+            return "rejected by human"
+        if dtype == "respond":
+            return f"synthetic: {_decision_message(decision)}"
+        if dtype == "edit":
+            return f"ran with {_edited_args(decision)}"
+        return f"ran with {dict(self.args)}"
 
 
 def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
@@ -201,9 +224,7 @@ async def _drain(sup: RunSupervisor) -> None:
 
 def _events_of(bus: _FakeBus, run_id: str, event_name: str) -> list[dict[str, JsonValue]]:
     return [
-        e
-        for s, e in bus.published
-        if s == events_stream(run_id) and e.get("event") == event_name
+        e for s, e in bus.published if s == events_stream(run_id) and e.get("event") == event_name
     ]
 
 
@@ -274,10 +295,7 @@ async def test_edit_new_args_take_effect() -> None:
     sup = RunSupervisor(agent_builder=_builder(agent))
     await _run_until_awaiting(sup, bus, "re")
     await _resume(
-        sup,
-        bus,
-        "re",
-        {"type": "edit", "edited_action": {"name": _TOOL_NAME, "args": {"x": 99}}},
+        sup, bus, "re", {"type": "edit", "edited_action": {"name": _TOOL_NAME, "args": {"x": 99}}}
     )
 
     assert agent.seen_resume == {

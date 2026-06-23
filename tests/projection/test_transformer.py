@@ -298,3 +298,13 @@ def test_usage_delta_from_chat_model_end() -> None:
 def test_usage_delta_empty_for_non_end() -> None:
     ev = _ev("on_chat_model_stream", data={"chunk": AIMessageChunk(content="hi")})
     assert usage_delta(ev) == {}
+
+
+def test_dirty_content_block_skipped_not_crash() -> None:
+    # 携带 bytes 的非标准块被逐块洗净跳过,好块照常透传,不让一坏块塌掉整轮。
+    chunk = AIMessageChunk(
+        content=[{"type": "text", "text": "ok"}, {"type": "weird", "value": {"b": b"raw"}}]
+    )
+    out = project(_ev("on_chat_model_stream", data={"chunk": chunk}), SubagentAttribution(), KORO)
+    assert [e.event for e in out] == ["text_chunk"]
+    assert out[0].data["content"] == [{"type": "text", "text": "ok"}]

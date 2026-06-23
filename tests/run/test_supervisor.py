@@ -480,3 +480,23 @@ async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
 
     assert len(agent.seen_payloads) == 0
     assert len(bus.published) == before
+
+
+# T6-⑥: 构建失败发 agent_error 后再 cancel → 不补发第二终态(登记 _terminal)。
+@pytest.mark.asyncio
+async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
+    """构建失败发 agent_error 即登记 _terminal；后续 cancel 被终态闸挡,只有一条终态。"""
+    def build(request: RunRequest) -> _FakeAgent:
+        raise ValueError("bad model")
+
+    bus = _FakeBus()
+    sup = RunSupervisor(agent_builder=build)
+    await sup.dispatch(bus, _request("rbf"))
+    await _drain(sup)
+
+    cancel = _inbound({"kind": "run.cancel", "run_id": "rbf"})
+    await sup.dispatch(bus, cancel)
+
+    terminals = [e for _, e in bus.published if e.get("event") in ("agent_done", "agent_error")]
+    assert len(terminals) == 1
+    assert terminals[0].get("event") == "agent_error"

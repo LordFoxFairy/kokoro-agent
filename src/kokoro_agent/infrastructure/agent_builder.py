@@ -8,7 +8,7 @@ from typing import Any
 import deepagents
 import langchain.agents
 
-# mypy resolves a stale deepagents lacking this re-exported symbol; pyright (venv) sees it fine.
+# mypy 解析到过期 deepagents 缺此重导出符号；pyright(venv) 正常。
 from deepagents.middleware.filesystem import FilesystemPermission
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain.agents.middleware import InterruptOnConfig

@@ -21,12 +21,10 @@ from kokoro_agent.domain.prompts import SYSTEM_PROMPT
 def build_agent(
     model: BaseChatModel,
     permission_mode: PermissionMode,
-    run_id: str,
     runtime_registry: RuntimeSubagentRegistry,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> InvokableAgent:
-    base_tools = (build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS)
-    tools = base_tools
+    tools = (build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS)
     # default 档通过原生 interrupt_on 做工具级审批，auto 档空映射跳过。
     return make_deep_agent(
         model=model,

@@ -44,6 +44,7 @@ async def invoke_once(
         if metadata is not None:
             config["metadata"] = metadata
     attribution = SubagentAttribution()
+    # usage 按本次 invoke 段计量：HITL resume 是独立段，跨暂停累计待持久化后续接。
     usage_total: dict[str, JsonValue] = {}
     await _emit(bus, stream, run_id, "agent_status", {"status": "started"})
     try:

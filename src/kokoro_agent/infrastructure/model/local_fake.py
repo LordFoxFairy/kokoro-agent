@@ -79,7 +79,7 @@ class LocalFakeChatModel(BaseChatModel):
         messages: list[BaseMessage],
         stop: list[str] | None = None,
         run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> ChatResult:
         if not any(isinstance(message, AIMessage) for message in messages):
             self._cursor = 0  # 一轮的首个调用 → 重启脚本

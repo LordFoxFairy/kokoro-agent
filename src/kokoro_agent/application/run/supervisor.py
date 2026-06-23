@@ -98,8 +98,9 @@ class RunSupervisor:
             return
         try:
             agent = self._build(request)
-        except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
+        except Exception as error:  # noqa: BLE001 — 构建失败收口为 agent_error
             await self._emit_failed(bus, msg.run_id, error)
+            self._terminal.add(msg.run_id)
             return
         config: RunnableConfig = {"configurable": {"thread_id": request.conversation_id}}
         snapshot = await agent.aget_state(config)
@@ -138,7 +139,9 @@ class RunSupervisor:
     ) -> None:
         try:
             agent = self._build(request)
-        except Exception as error:  # noqa: BLE001 — model 解析等构建失败收口为 run.failed
+        except Exception as error:  # noqa: BLE001 — model 解析等构建失败收口为 agent_error
+            # 构建失败即终态：登记 _terminal 挡住后续 cancel/resume 补发第二个终态。
+            self._terminal.add(run_id)
             self._tasks[run_id] = asyncio.create_task(self._emit_failed(bus, run_id, error))
             self._tasks[run_id].add_done_callback(lambda _t: self._tasks.pop(run_id, None))
             return

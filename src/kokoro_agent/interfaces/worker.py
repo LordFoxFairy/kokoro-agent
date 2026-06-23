@@ -31,7 +31,6 @@ def main() -> None:
         return build_agent(
             model,
             request.permission_mode,
-            request.run_id,
             RuntimeSubagentRegistry(),
             checkpointer=saver,
         )

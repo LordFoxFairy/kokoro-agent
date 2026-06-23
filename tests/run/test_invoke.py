@@ -48,6 +48,7 @@ class _FakeTask:
 @dataclass(frozen=True)
 class _FakeState:
     tasks: tuple[_FakeTask, ...] = ()
+    values: Mapping[str, object] = field(default_factory=lambda: {})
 
 
 @dataclass
@@ -88,6 +89,12 @@ def _kinds(published: list[tuple[str, dict[str, JsonValue]]]) -> list[JsonValue]
     return [event["kind"] for _, event in published]
 
 
+def _payload_field(event: dict[str, JsonValue], key: str) -> JsonValue:
+    payload = event["payload"]
+    assert isinstance(payload, Mapping)
+    return payload[key]
+
+
 @pytest.mark.asyncio
 async def test_first_event_is_run_started() -> None:
     bus = _FakeBus()
@@ -118,33 +125,72 @@ async def test_projected_events_published_between_started_and_completed() -> Non
     assert agent.seen_config == {"configurable": {"thread_id": "c1"}}
 
 
+def _interrupt_state(
+    action_requests: list[dict[str, JsonValue]], tool_calls: list[dict[str, object]]
+) -> _FakeState:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    value: dict[str, JsonValue] = {"action_requests": list(action_requests)}
+    interrupt = _FakeInterrupt(value=value)
+    messages = [HumanMessage(content="go"), AIMessage(content="", tool_calls=tool_calls)]
+    return _FakeState(
+        tasks=(_FakeTask(interrupts=(interrupt,)),), values={"messages": messages}
+    )
+
+
 @pytest.mark.asyncio
 async def test_pending_interrupt_emits_awaiting_approval_no_completed() -> None:
-    interrupt = _FakeInterrupt(
-        value={
-            "action_requests": [
-                {"name": "danger", "args": {"x": 1}, "description": "do danger"}
-            ],
-            "review_configs": [
-                {"action_name": "danger", "allowed_decisions": ["approve", "edit", "reject"]}
-            ],
-        }
+    state = _interrupt_state(
+        action_requests=[{"name": "danger", "args": {"x": 1}, "description": "do danger"}],
+        tool_calls=[{"name": "danger", "args": {"x": 1}, "id": "call-A"}],
     )
-    state = _FakeState(tasks=(_FakeTask(interrupts=(interrupt,)),))
     bus = _FakeBus()
-    agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),), state=state)
-    await invoke_once(bus, agent, "r1", "c1", {"messages": []})
+    # 缓存的 on_chat_model_stream run_id（"seg-r1"）即 segment_id。
+    agent = _FakeAgent(events=(_chat_stream_event("seg-r1", "hi"),), state=state)
+    await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger"}))
     kinds = _kinds(bus.published)
     assert kinds[0] == "run.started"
     assert kinds[-1] == "tool.awaiting_approval"
     assert "run.completed" not in kinds
-    payload = bus.published[-1][1]["payload"]
-    assert payload == {
+    assert bus.published[-1][1]["payload"] == {
+        "segment_id": "seg-r1",
+        "tool_id": "call-A",
         "name": "danger",
         "args": {"x": 1},
-        "description": "do danger",
-        "allowed_decisions": ["approve", "edit", "reject"],
     }
+
+
+@pytest.mark.asyncio
+async def test_pending_interrupt_filters_auto_approved_and_aligns() -> None:
+    # 三个 tool_call，safe 未进 interrupt_on_names；action_requests 是命中同序子序列。
+    state = _interrupt_state(
+        action_requests=[
+            {"name": "danger1", "args": {"a": 1}, "description": ""},
+            {"name": "danger2", "args": {"c": 3}, "description": ""},
+        ],
+        tool_calls=[
+            {"name": "danger1", "args": {"a": 1}, "id": "call-1"},
+            {"name": "safe", "args": {"b": 2}, "id": "call-2"},
+            {"name": "danger2", "args": {"c": 3}, "id": "call-3"},
+        ],
+    )
+    bus = _FakeBus()
+    agent = _FakeAgent(events=(_chat_stream_event("seg-r1", "hi"),), state=state)
+    await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger1", "danger2"}))
+    awaiting = [e for _, e in bus.published if e["kind"] == "tool.awaiting_approval"]
+    assert [_payload_field(e, "tool_id") for e in awaiting] == ["call-1", "call-3"]
+    assert [_payload_field(e, "name") for e in awaiting] == ["danger1", "danger2"]
+    assert "run.completed" not in _kinds(bus.published)
+
+
+@pytest.mark.asyncio
+async def test_no_pending_interrupt_no_awaiting() -> None:
+    bus = _FakeBus()
+    agent = _FakeAgent(events=(_chat_stream_event("seg-r1", "hi"),))
+    await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger"}))
+    kinds = _kinds(bus.published)
+    assert "tool.awaiting_approval" not in kinds
+    assert kinds[-1] == "run.completed"
 
 
 @pytest.mark.asyncio

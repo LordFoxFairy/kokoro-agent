@@ -36,14 +36,14 @@ def materialize_runtime_subagents(
     env: dict[str, str] | None = None,
     runtime_registry: RuntimeSubagentRegistry | None = None,
 ) -> list[CompiledSubAgent]:
-    # 预编译子代理并注入我们自己的 agent_name：attribution 据此归属、代码零 lc_。
+    # 预编译子代理：deepagents 用 dict["name"] 作图归属，v3 ACL 取 trigger_call_id 结构化归属。
     return [
         {
             "name": spec.name,
             "description": spec.description,
             "runnable": make_subagent_runnable(
                 model, system_prompt=spec.system_prompt, name=spec.name
-            ).with_config({"metadata": {"agent_name": spec.name}}),
+            ),
         }
         for spec in _catalog(env, runtime_registry).values()
     ]

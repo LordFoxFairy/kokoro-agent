@@ -3,26 +3,29 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TypeGuard
+from typing import TypeGuard, TypeVar
 
 import pytest
-
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables.config import RunnableConfig
-from langchain_core.runnables.schema import StandardStreamEvent, StreamEvent
-from langgraph.types import Command
+from langgraph.types import Command, Interrupt
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamItem
-from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.application.run.invoke import events_stream
 from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
+from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
+
+_T = TypeVar("_T")
+
+
+async def _aiter(items: Sequence[_T]) -> AsyncIterator[_T]:
+    for item in items:
+        yield item
 
 
 class _FakeBus:
-    """记录 publish 的 (stream, event)；subscribe 喂入预置消息序列。"""
-
     def __init__(self, items: Sequence[StreamItem] = ()) -> None:
         self.published: list[tuple[str, dict[str, JsonValue]]] = []
         self._items = tuple(items)
@@ -34,64 +37,93 @@ class _FakeBus:
     async def read_all(self, stream: str) -> list[StreamItem]:
         return list(self._items)
 
-    async def subscribe(
-        self, stream: str, from_cursor: str | None = None
-    ) -> AsyncIterator[StreamItem]:
-        for item in self._items:
-            yield item
+    def subscribe(self, stream: str, from_cursor: str | None = None) -> AsyncIterator[StreamItem]:
+        return _aiter(self._items)
 
 
-@dataclass(frozen=True)
-class _FakeInterrupt:
-    value: Mapping[str, JsonValue]
+@dataclass
+class _Model:
+    blocks: Sequence[Mapping[str, object]]
+    output_message: AIMessage | None
+    namespace: list[str] = field(default_factory=lambda: [])
+    node: str | None = "model"
+
+    def __aiter__(self) -> AsyncIterator[Mapping[str, object]]:
+        return _aiter(self.blocks)
 
 
-@dataclass(frozen=True)
-class _FakeTask:
-    interrupts: tuple[_FakeInterrupt, ...] = ()
+@dataclass
+class _RunStream:
+    models: Sequence[_Model] = ()
+    is_interrupted: bool = False
+
+    @property
+    def messages(self) -> AsyncIterator[_Model]:
+        return _aiter(self.models)
+
+    @property
+    def tool_calls(self) -> AsyncIterator[object]:
+        return _aiter([])
+
+    @property
+    def subagents(self) -> AsyncIterator[object]:
+        return _aiter([])
+
+    @property
+    def custom(self) -> AsyncIterator[object]:
+        return _aiter([])
+
+    async def interrupted(self) -> bool:
+        return self.is_interrupted
+
+    async def __aenter__(self) -> "_RunStream":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
 
 
-@dataclass(frozen=True)
-class _FakeState:
-    tasks: tuple[_FakeTask, ...] = ()
-
-
-_PENDING_STATE = _FakeState(tasks=(_FakeTask(interrupts=(_FakeInterrupt(value={"x": 1}),)),))
-_EMPTY_STATE = _FakeState()
+@dataclass
+class _State:
+    interrupts: tuple[Interrupt, ...] = ()
+    values: Mapping[str, object] = field(default_factory=lambda: {})
 
 
 @dataclass
 class _FakeAgent:
-    events: Sequence[StreamEvent] = field(default_factory=tuple)
-    state: _FakeState = field(default_factory=_FakeState)
+    run: _RunStream = field(default_factory=_RunStream)
+    state: _State = field(default_factory=_State)
     seen_payloads: list[object] = field(default_factory=lambda: [])
     block: asyncio.Event | None = None
 
     async def astream_events(
-        self, payload: object, *, version: str, config: RunnableConfig
-    ) -> AsyncIterator[StreamEvent]:
+        self,
+        payload: object,
+        *,
+        version: str,
+        config: RunnableConfig,
+        transformers: Sequence[object],
+    ) -> _RunStream:
         self.seen_payloads.append(payload)
         if self.block is not None:
             await self.block.wait()
-        for event in self.events:
-            yield event
+        return self.run
 
-    async def aget_state(self, config: RunnableConfig) -> _FakeState:
+    async def aget_state(self, config: RunnableConfig) -> _State:
         return self.state
 
 
-def _chat_event(text: str) -> StandardStreamEvent:
-    from langchain_core.messages import AIMessageChunk
+def _text_run(text: str = "done") -> _RunStream:
+    return _RunStream(models=(_Model(blocks=(), output_message=AIMessage(content=text, id="seg")),))
 
-    return {
-        "event": "on_chat_model_stream",
-        "name": "model",
-        "run_id": "r",
-        "data": {"chunk": AIMessageChunk(content=text)},
-        "metadata": {},
-        "tags": [],
-        "parent_ids": [],
-    }
+
+def _interrupt_run() -> _RunStream:
+    # action_requests 空 + auto 档 interrupt_on_names 空 → awaiting 对齐 0==0，仅 invoke 返回 False（暂停）。
+    return _RunStream(is_interrupted=True)
+
+
+_PENDING_STATE = _State(interrupts=(Interrupt(value={"action_requests": []}),))
+_EMPTY_STATE = _State()
 
 
 def _request_item(run_id: str, conversation_id: str = "c1") -> StreamItem:
@@ -119,10 +151,6 @@ def _is_obj_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
-def _mapping_get(mapping: Mapping[object, object], key: str) -> object:
-    return mapping.get(key)
-
-
 def _is_obj_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
 
@@ -135,7 +163,6 @@ def _builder(agent: _FakeAgent) -> Callable[[RunRequest], _FakeAgent]:
 
 
 async def _drain(sup: RunSupervisor) -> None:
-    # 等待 supervisor spawn 的 invoke task 结束，再断言发布序列。
     for task in tuple(sup.tasks.values()):
         await task
 
@@ -148,7 +175,7 @@ def _inbound(raw: dict[str, JsonValue]) -> InboundMessage:
 
 # ① RunRequest → invoke_once 初始 payload（HumanMessage(input)）。
 async def test_request_dispatches_initial_invoke() -> None:
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r1"))
@@ -160,7 +187,7 @@ async def test_request_dispatches_initial_invoke() -> None:
     assert len(agent.seen_payloads) == 1
     initial = agent.seen_payloads[0]
     assert _is_obj_mapping(initial)
-    messages: object = _mapping_get(initial, "messages")
+    messages: object = initial.get("messages")
     assert _is_obj_list(messages)
     first: object = messages[0]
     assert isinstance(first, HumanMessage)
@@ -169,7 +196,7 @@ async def test_request_dispatches_initial_invoke() -> None:
 
 # ④ 重复 run_id → 去重跳过，不再二次 invoke。
 async def test_duplicate_run_id_skipped() -> None:
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("dup"))
@@ -183,16 +210,14 @@ async def test_duplicate_run_id_skipped() -> None:
 
 # ② resume：有 pending interrupt → invoke_once(Command(resume))。
 async def test_resume_with_pending_invokes_command() -> None:
-    agent = _FakeAgent(events=(_chat_event("done"),), state=_PENDING_STATE)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r2"))
     await _drain(sup)
     agent.seen_payloads.clear()
 
-    resume = _inbound(
-        {"kind": "run.resume", "run_id": "r2", "decision": {"type": "approve"}}
-    )
+    resume = _inbound({"kind": "run.resume", "run_id": "r2", "decision": {"type": "approve"}})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -204,7 +229,7 @@ async def test_resume_with_pending_invokes_command() -> None:
 
 # ② resume：无 pending → 不调 invoke_once（幂等护栏）。
 async def test_resume_without_pending_is_dropped() -> None:
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r3"))
@@ -212,9 +237,7 @@ async def test_resume_without_pending_is_dropped() -> None:
     before = len(bus.published)
     agent.seen_payloads.clear()
 
-    resume = _inbound(
-        {"kind": "run.resume", "run_id": "r3", "decision": {"type": "approve"}}
-    )
+    resume = _inbound({"kind": "run.resume", "run_id": "r3", "decision": {"type": "approve"}})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -224,7 +247,7 @@ async def test_resume_without_pending_is_dropped() -> None:
 
 # resume edit/reject decision dict 组装按 spec §9.1。
 async def test_resume_edit_and_reject_decision_shapes() -> None:
-    agent = _FakeAgent(events=(_chat_event("ok"),), state=_PENDING_STATE)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r4"))
@@ -248,11 +271,7 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
 
     agent.seen_payloads.clear()
     reject = _inbound(
-        {
-            "kind": "run.resume",
-            "run_id": "r4",
-            "decision": {"type": "reject", "message": "no"},
-        }
+        {"kind": "run.resume", "run_id": "r4", "decision": {"type": "reject", "message": "no"}}
     )
     await sup.dispatch(bus, reject)
     await _drain(sup)
@@ -263,26 +282,23 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
 
 # resume 未知 run_id → warn+drop，不调 invoke。
 async def test_resume_unknown_run_dropped() -> None:
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_PENDING_STATE)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
-    resume = _inbound(
-        {"kind": "run.resume", "run_id": "ghost", "decision": {"type": "approve"}}
-    )
+    resume = _inbound({"kind": "run.resume", "run_id": "ghost", "decision": {"type": "approve"}})
     await sup.dispatch(bus, resume)
     await _drain(sup)
     assert len(agent.seen_payloads) == 0
     assert bus.published == []
 
 
-# ③ cancel 运行中 → task.cancel + run.completed{status:cancelled}。
+# ③ cancel 运行中 → task.cancel + agent_done{status:cancelled}。
 async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
     gate = asyncio.Event()
-    agent = _FakeAgent(events=(_chat_event("x"),), state=_EMPTY_STATE, block=gate)
+    agent = _FakeAgent(run=_text_run("x"), state=_EMPTY_STATE, block=gate)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r5"))
-    # invoke task 已 spawn 并阻塞在 astream_events；让出一拍确保进入流。
     await asyncio.sleep(0)
 
     cancel = _inbound({"kind": "run.cancel", "run_id": "r5"})
@@ -297,7 +313,7 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
 
 # cancel 未知/已结束 run → 仍补发 cancelled 终态。
 async def test_cancel_unknown_run_still_emits_cancelled() -> None:
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     cancel = _inbound({"kind": "run.cancel", "run_id": "gone"})
@@ -307,7 +323,7 @@ async def test_cancel_unknown_run_still_emits_cancelled() -> None:
     assert last[1]["data"] == {"status": "cancelled"}
 
 
-# agent_builder 抛异常 → run.failed{error_kind,message}。
+# agent_builder 抛异常 → agent_error{error_kind,message}。
 async def test_builder_failure_emits_run_failed() -> None:
     def build(request: RunRequest) -> _FakeAgent:
         raise ValueError("bad model")
@@ -323,7 +339,7 @@ async def test_builder_failure_emits_run_failed() -> None:
 
 # serve 订阅循环 → 对每条 request 派发。
 async def test_serve_dispatches_subscribed_requests() -> None:
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus(items=(_request_item("sv1"),))
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.serve(bus)
@@ -339,16 +355,13 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
 
     captured: list[dict[str, object]] = []
 
-    async def spy_invoke(*args: object, **kwargs: object) -> None:
+    async def spy_invoke(*args: object, **kwargs: object) -> bool:
         captured.append({"args": args, "kwargs": kwargs})
+        return True
 
     with patch("kokoro_agent.application.run.supervisor.invoke_once", spy_invoke):
         request = RunRequest(
-            kind="run.request",
-            run_id="r1",
-            conversation_id="c1",
-            session_id="s1",
-            input="hello",
+            kind="run.request", run_id="r1", conversation_id="c1", session_id="s1", input="hello"
         )
         supervisor = RunSupervisor(agent_builder=lambda req: _FakeAgent())
         bus = _FakeBus()
@@ -357,32 +370,24 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
             await task
 
     assert len(captured) == 1
-    # trace kwarg 被传入（None or RunnableConfig，langfuse 未配 → None）
     kwargs = captured[0]["kwargs"]
     assert isinstance(kwargs, dict)
     assert "trace" in kwargs
 
 
-# Task-6: 终态单发保证测试 ─────────────────────────────────────────────
-
-
-# T6-①: run 自然完成后再发 cancel → 不双发 run.completed{cancelled}。
+# T6-①: run 自然完成后再发 cancel → 不双发终态。
 @pytest.mark.asyncio
 async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
-    """run 自然完成(invoke_once 返回 True) → _terminal 记录 run_id；
-    再 dispatch cancel → _on_cancel 检查 _terminal 跳过补发，只有自然那条终态。"""
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("rc1"))
     await _drain(sup)
 
-    # 此时 invoke_once 已返回 True，_terminal 应含 "rc1"。
     cancel = _inbound({"kind": "run.cancel", "run_id": "rc1"})
     await sup.dispatch(bus, cancel)
 
     done_events = [e for _, e in bus.published if e.get("event") == "agent_done"]
-    # 只允许自然完成那条，不补发 cancelled。
     assert len(done_events) == 1
     data = done_events[0].get("data")
     assert isinstance(data, dict)
@@ -392,10 +397,7 @@ async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
 # T6-②: 暂停态(invoke_once 返回 False)cancel → 补发 cancelled。
 @pytest.mark.asyncio
 async def test_cancel_after_pause_emits_cancelled() -> None:
-    """run invoke_once 因 interrupt 返回 False → _terminal 不记录；
-    cancel → _on_cancel 无 running task 且不在 _terminal → 补发 cancelled。"""
-    state = _FakeState(tasks=(_FakeTask(interrupts=(_FakeInterrupt(value={"x": 1}),)),))
-    agent = _FakeAgent(events=(), state=state)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("rc2"))
@@ -414,14 +416,12 @@ async def test_cancel_after_pause_emits_cancelled() -> None:
 # T6-③: 运行中 cancel(task 未完成,CancelledError) → 补发 cancelled。
 @pytest.mark.asyncio
 async def test_cancel_mid_run_emits_cancelled() -> None:
-    """task 被 cancel 时 invoke_once 抛 CancelledError 不返回 → 不入 _terminal；
-    _on_cancel 正常补发 cancelled。"""
     gate = asyncio.Event()
-    agent = _FakeAgent(events=(_chat_event("x"),), state=_EMPTY_STATE, block=gate)
+    agent = _FakeAgent(run=_text_run("x"), state=_EMPTY_STATE, block=gate)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("rc3"))
-    await asyncio.sleep(0)  # 让 task 开始阻塞在 block.wait()
+    await asyncio.sleep(0)
 
     cancel = _inbound({"kind": "run.cancel", "run_id": "rc3"})
     await sup.dispatch(bus, cancel)
@@ -434,12 +434,10 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
     assert data.get("status") == "cancelled"
 
 
-# T6-④: 暂停态 cancel(发 cancelled)后再来 resume → 被 _terminal 挡，不再发终态。
+# T6-④: 暂停态 cancel 后再来 resume → 被 _terminal 挡。
 @pytest.mark.asyncio
 async def test_resume_after_cancel_blocked_by_terminal() -> None:
-    """cancel 发 cancelled 后登记 _terminal；stale resume 即使 checkpoint 仍有 pending
-    interrupt 也被 _terminal 挡在幂等护栏之前，不调 invoke_once、不再发终态。"""
-    agent = _FakeAgent(events=(_chat_event("done"),), state=_PENDING_STATE)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("rc4"))
@@ -450,9 +448,7 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
     before = len(bus.published)
     agent.seen_payloads.clear()
 
-    resume = _inbound(
-        {"kind": "run.resume", "run_id": "rc4", "decision": {"type": "approve"}}
-    )
+    resume = _inbound({"kind": "run.resume", "run_id": "rc4", "decision": {"type": "approve"}})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -460,11 +456,10 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
     assert len(bus.published) == before
 
 
-# T6-⑤: 自然完成后再来 resume → 同样被 _terminal 挡。
+# T6-⑤: 自然完成后再来 resume → 被 _terminal 挡。
 @pytest.mark.asyncio
 async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
-    """自然完成(invoke_once 返回 True)登记 _terminal；后续 resume 被挡在 aget_state 之前，不调 invoke_once。"""
-    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("rc5"))
@@ -472,9 +467,7 @@ async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
     before = len(bus.published)
     agent.seen_payloads.clear()
 
-    resume = _inbound(
-        {"kind": "run.resume", "run_id": "rc5", "decision": {"type": "approve"}}
-    )
+    resume = _inbound({"kind": "run.resume", "run_id": "rc5", "decision": {"type": "approve"}})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -482,10 +475,9 @@ async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
     assert len(bus.published) == before
 
 
-# T6-⑥: 构建失败发 agent_error 后再 cancel → 不补发第二终态(登记 _terminal)。
+# T6-⑥: 构建失败发 agent_error 后再 cancel → 不补发第二终态。
 @pytest.mark.asyncio
 async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
-    """构建失败发 agent_error 即登记 _terminal；后续 cancel 被终态闸挡,只有一条终态。"""
     def build(request: RunRequest) -> _FakeAgent:
         raise ValueError("bad model")
 

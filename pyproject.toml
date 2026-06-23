@@ -40,6 +40,8 @@ asyncio_mode = "auto"
 include = ["src", "tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
+# langgraph 1.2 core 的 stream/pregel 子模块缺 pyright stub（py.typed 未覆盖）；仅关第三方 stub 提示，不削弱本仓代码检查。
+reportMissingTypeStubs = false
 
 [tool.mypy]
 python_version = "3.11"

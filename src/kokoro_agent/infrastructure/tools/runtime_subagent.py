@@ -11,7 +11,8 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_builder import AsyncRunner, make_subagent_runner
-from kokoro_agent.infrastructure.stream_events import message_parts, result_messages
+from kokoro_agent.events.reasoning_shim import message_text_and_reasoning
+from kokoro_agent.events.result_messages import result_messages
 from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
@@ -70,7 +71,7 @@ def build_runtime_custom_subagent_tool(
         result_obj = await runner.ainvoke(_runtime_messages(task.strip()))
         for message in reversed(_runtime_result_messages(result_obj)):
             if isinstance(message, AIMessage):
-                text = message_parts(message).text.rstrip()
+                text = message_text_and_reasoning(message)[0].rstrip()
                 if text:
                     return text
         return ""

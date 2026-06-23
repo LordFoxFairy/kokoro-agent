@@ -28,8 +28,14 @@ def awaiting_approval_events(
         return []
     # interrupt 命中子序列：按 interrupt_on 名集过滤 tool_calls，与 action_requests 同序对齐。
     pending = [tc for tc in last_ai.tool_calls if tc["name"] in interrupt_on_names]
+    # 长度不等即 wiring bug：fail-loud 抛错，绝不静默截断丢审批信号。
+    if len(pending) != len(action_requests):
+        raise ValueError(
+            f"awaiting 对齐失配: pending tool_calls={len(pending)} != "
+            f"action_requests={len(action_requests)} (names={sorted(interrupt_on_names)})"
+        )
     events: list[AgentEvent] = []
-    for tool_call, request in zip(pending, action_requests, strict=False):
+    for tool_call, request in zip(pending, action_requests, strict=True):
         events.append(_awaiting_event(tool_call, request, segment_id, run_id))
     return events
 

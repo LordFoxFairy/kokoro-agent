@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import TypeGuard
 
 from langchain_core.messages import HumanMessage
+from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
@@ -16,6 +17,7 @@ from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.events.agent_event import AgentEvent
+from kokoro_agent.infrastructure.observability import trace_config
 from kokoro_agent.run.admission import ProcessedRunIds
 from kokoro_agent.run.invoke import InvokableAgent, events_stream, invoke_once
 from kokoro_agent.wire.run_request import (
@@ -92,14 +94,15 @@ class RunSupervisor:
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._emit_failed(bus, msg.run_id, error)
             return
-        config: dict[str, JsonValue] = {"configurable": {"thread_id": request.conversation_id}}
+        config: RunnableConfig = {"configurable": {"thread_id": request.conversation_id}}
         snapshot = await agent.aget_state(config)
         # 幂等护栏（spec §9.1）：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
         if not _has_pending_interrupt(snapshot):
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
             return
         command: Command[object] = Command(resume={"decisions": [_decision_dict(msg.decision)]})
-        self._spawn_agent(bus, agent, msg.run_id, request.conversation_id, command)
+        trace = trace_config(request)
+        self._spawn_agent(bus, agent, msg.run_id, request.conversation_id, command, trace=trace)
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
         task = self._tasks.get(msg.run_id)
@@ -124,7 +127,8 @@ class RunSupervisor:
             self._tasks[run_id] = asyncio.create_task(self._emit_failed(bus, run_id, error))
             self._tasks[run_id].add_done_callback(lambda _t: self._tasks.pop(run_id, None))
             return
-        self._spawn_agent(bus, agent, run_id, conversation_id, payload)
+        trace = trace_config(request)
+        self._spawn_agent(bus, agent, run_id, conversation_id, payload, trace=trace)
 
     def _spawn_agent(
         self,
@@ -133,8 +137,11 @@ class RunSupervisor:
         run_id: str,
         conversation_id: str,
         payload: object,
+        trace: RunnableConfig | None = None,
     ) -> None:
-        task = asyncio.create_task(self._guarded(bus, agent, run_id, conversation_id, payload))
+        task = asyncio.create_task(
+            self._guarded(bus, agent, run_id, conversation_id, payload, trace)
+        )
         self._tasks[run_id] = task
         task.add_done_callback(lambda _t: self._tasks.pop(run_id, None))
 
@@ -145,10 +152,11 @@ class RunSupervisor:
         run_id: str,
         conversation_id: str,
         payload: object,
+        trace: RunnableConfig | None = None,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，故 resume 重新竞争额度。
         async with self._sem:
-            await invoke_once(bus, agent, run_id, conversation_id, payload)
+            await invoke_once(bus, agent, run_id, conversation_id, payload, trace=trace)
 
     async def _emit_cancelled(self, bus: StreamProtocol, run_id: str) -> None:
         # 契约无 run.cancelled kind：cancel 终态即 run.completed + status=cancelled。

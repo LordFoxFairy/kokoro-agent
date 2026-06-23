@@ -94,10 +94,10 @@ def test_parse_xread_response_rejects_malformed_shapes() -> None:
         parse_xread_response([("stream", ["bad-entry"])])
 
 
-# RESP2 + decode_responses=True: xread 返回 list[list[str, list[list[str, dict[str,str]]]]]
+# RESP2 + decode_responses=True: xread 返回 list[list[str, list[tuple[str, dict[str,str]]]]]
 def test_parse_xread_response_list_of_lists_resp2_str() -> None:
-    # spike F 确认的真实形状：外层 list，条目 list 非 tuple，str 键值；parse 后规范化为 tuple
-    raw = [["stream", [["1-0", {"data": "{}"}]]]]
+    # live redis 实测形状：外层 list、stream-entry 是 list、但内层条目是 tuple（非 list）
+    raw = [["stream", [("1-0", {"data": "{}"})]]]
     assert parse_xread_response(raw) == [("stream", [("1-0", {"data": "{}"})])]
 
 

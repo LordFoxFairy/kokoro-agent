@@ -87,6 +87,10 @@ class RunSupervisor:
         self._spawn(bus, request, request.run_id, request.conversation_id, payload)
 
     async def _on_resume(self, bus: StreamProtocol, msg: RunResume) -> None:
+        # 已终态权威闸：cancel/自然完成后 stale resume 即使 checkpoint 仍有 pending interrupt 也不续跑。
+        if msg.run_id in self._terminal:
+            LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
+            return
         request = self._runs.get(msg.run_id)
         if request is None:
             LOGGER.warning("dropping resume for unknown run_id=%s", msg.run_id)
@@ -117,6 +121,8 @@ class RunSupervisor:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         await self._emit_cancelled(bus, msg.run_id)
+        # cancelled 亦是终态：登记后挡住 stale resume / 重复 cancel 再发终态。
+        self._terminal.add(msg.run_id)
 
     def _spawn(
         self,

@@ -79,11 +79,11 @@ def _patch_runner(
 ) -> list[str]:
     seen_prompts: list[str] = []
 
-    def fake_make_runner(_model: BaseChatModel, system_prompt: str, _name: str) -> _FakeRunner:
+    def fake_make_runnable(_model: BaseChatModel, *, system_prompt: str, name: str) -> _FakeRunner:
         seen_prompts.append(system_prompt)
         return _FakeRunner(result)
 
-    monkeypatch.setattr(runtime_subagent, "_make_runner", fake_make_runner)
+    monkeypatch.setattr(runtime_subagent, "make_subagent_runnable", fake_make_runnable)
     return seen_prompts
 
 

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.runnables.schema import StreamEvent
 
 
-@runtime_checkable
 class InvokableAgent(Protocol):
-    """编译后 langgraph 图的窄契约：仅 invoke 路径需要的两个方法。"""
+    """编译后 langgraph 图的窄契约：钉住 invoke 实际用到的两方法，挡住 4 参私有泛型泄漏。"""
 
     def astream_events(
         self, payload: object, *, version: str, config: RunnableConfig

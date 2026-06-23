@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any
 
 import deepagents
 import langchain.agents
@@ -28,18 +28,10 @@ _build_deep_agent = _deepagents.create_deep_agent
 _build_subagent = _langchain_agents.create_agent
 
 __all__ = [
-    "AsyncRunner",
     "FilesystemPermission",
     "make_deep_agent",
     "make_subagent_runnable",
-    "make_subagent_runner",
 ]
-
-
-class AsyncRunner(Protocol):
-    # 入参是 langgraph 图状态（messages 用 LangChain message）；结果是字符串键的进程内
-    # 图状态（值为 BaseMessage 等不透明对象），由调用方按需收窄。
-    async def ainvoke(self, payload: dict[str, list[BaseMessage]]) -> Mapping[str, object]: ...
 
 
 def make_deep_agent(
@@ -62,11 +54,6 @@ def make_deep_agent(
         interrupt_on=interrupt_on,
     )
     return agent
-
-
-def make_subagent_runner(model: BaseChatModel, *, system_prompt: str, name: str) -> AsyncRunner:
-    runner: AsyncRunner = _build_subagent(model, system_prompt=system_prompt, tools=[], name=name)
-    return runner
 
 
 def make_subagent_runnable(

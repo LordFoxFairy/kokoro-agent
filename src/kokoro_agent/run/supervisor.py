@@ -18,6 +18,7 @@ from pydantic import JsonValue
 from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.events.agent_event import AgentEvent
 from kokoro_agent.infrastructure.observability import trace_config
+from kokoro_agent.infrastructure.permission import build_interrupt_on
 from kokoro_agent.run.admission import ProcessedRunIds
 from kokoro_agent.run.invoke import InvokableAgent, events_stream, invoke_once
 from kokoro_agent.wire.run_request import (
@@ -108,7 +109,10 @@ class RunSupervisor:
             return
         command: Command[object] = Command(resume={"decisions": [_decision_dict(msg.decision)]})
         trace = trace_config(request)
-        self._spawn_agent(bus, agent, msg.run_id, request.conversation_id, command, trace=trace)
+        names = _interrupt_on_names(request)
+        self._spawn_agent(
+            bus, agent, msg.run_id, request.conversation_id, command, names, trace=trace
+        )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
         # 已自然终态：invoke_once 返回 True 后记录，跳过补发避免双终态。
@@ -139,7 +143,8 @@ class RunSupervisor:
             self._tasks[run_id].add_done_callback(lambda _t: self._tasks.pop(run_id, None))
             return
         trace = trace_config(request)
-        self._spawn_agent(bus, agent, run_id, conversation_id, payload, trace=trace)
+        names = _interrupt_on_names(request)
+        self._spawn_agent(bus, agent, run_id, conversation_id, payload, names, trace=trace)
 
     def _spawn_agent(
         self,
@@ -148,10 +153,11 @@ class RunSupervisor:
         run_id: str,
         conversation_id: str,
         payload: object,
+        interrupt_on_names: frozenset[str],
         trace: RunnableConfig | None = None,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(bus, agent, run_id, conversation_id, payload, trace)
+            self._guarded(bus, agent, run_id, conversation_id, payload, interrupt_on_names, trace)
         )
         self._tasks[run_id] = task
         task.add_done_callback(lambda _t: self._tasks.pop(run_id, None))
@@ -163,11 +169,20 @@ class RunSupervisor:
         run_id: str,
         conversation_id: str,
         payload: object,
+        interrupt_on_names: frozenset[str],
         trace: RunnableConfig | None = None,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，故 resume 重新竞争额度。
         async with self._sem:
-            emitted = await invoke_once(bus, agent, run_id, conversation_id, payload, trace=trace)
+            emitted = await invoke_once(
+                bus,
+                agent,
+                run_id,
+                conversation_id,
+                payload,
+                interrupt_on_names=interrupt_on_names,
+                trace=trace,
+            )
         # asyncio 单线程：invoke_once return 与此行之间无 await，原子写入，无竞态窗口。
         if emitted:
             self._terminal.add(run_id)
@@ -187,6 +202,11 @@ class RunSupervisor:
     ) -> None:
         event = AgentEvent.model_validate({"kind": kind, "run_id": run_id, "payload": payload})
         await bus.publish(events_stream(run_id), event.model_dump())
+
+
+def _interrupt_on_names(request: RunRequest) -> frozenset[str]:
+    # 与建 agent 时传给 create_deep_agent 的 interrupt_on 同源：取其键集供 awaiting 子序列对齐。
+    return frozenset(build_interrupt_on(request.permission_mode))
 
 
 def _decision_dict(decision: ResumeDecision) -> dict[str, JsonValue]:

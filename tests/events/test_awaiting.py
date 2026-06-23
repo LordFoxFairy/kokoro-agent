@@ -1,3 +1,4 @@
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from kokoro_agent.events.awaiting import awaiting_approval_events
@@ -85,3 +86,20 @@ def test_args_narrowed_to_json_scalars() -> None:
         messages, action_requests, frozenset({"danger"}), segment_id="s", run_id="r5"
     )
     assert events[0].payload["args"] == {"ok": "v"}
+
+
+def test_length_mismatch_fails_loud() -> None:
+    # pending(2) 与 action_requests(1) 不等长=wiring bug，须抛而非静默截断。
+    messages = [
+        _ai(
+            [
+                {"name": "danger", "args": {"a": 1}, "id": "c1"},
+                {"name": "danger", "args": {"b": 2}, "id": "c2"},
+            ]
+        )
+    ]
+    action_requests = [{"name": "danger", "args": {"a": 1}, "description": ""}]
+    with pytest.raises(ValueError, match="awaiting 对齐失配"):
+        awaiting_approval_events(
+            messages, action_requests, frozenset({"danger"}), segment_id="s", run_id="r6"
+        )

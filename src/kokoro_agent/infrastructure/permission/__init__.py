@@ -1,3 +1,4 @@
+from kokoro_agent.infrastructure.permission.interrupt_config import build_interrupt_on
 from kokoro_agent.infrastructure.permission.policy import (
     ApprovalPolicy,
     approval_policy,
@@ -13,6 +14,7 @@ __all__ = [
     "ApprovalPolicy",
     "approval_policy",
     "blocked_tools",
+    "build_interrupt_on",
     "gate_tools",
     "load_approval_policy",
     "tool_allowed",

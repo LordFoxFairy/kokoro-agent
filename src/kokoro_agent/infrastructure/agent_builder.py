@@ -11,6 +11,7 @@ import langchain.agents
 # mypy resolves a stale deepagents lacking this re-exported symbol; pyright (venv) sees it fine.
 from deepagents.middleware.filesystem import FilesystemPermission
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
+from langchain.agents.middleware import InterruptOnConfig
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import Runnable
@@ -49,6 +50,7 @@ def make_deep_agent(
     subagents: Sequence[SubAgent | CompiledSubAgent],
     checkpointer: BaseCheckpointSaver[str] | None,
     permissions: Sequence[FilesystemPermission],
+    interrupt_on: dict[str, InterruptOnConfig],
 ) -> InvokableAgent:
     agent: InvokableAgent = _build_deep_agent(
         model=model,
@@ -57,6 +59,7 @@ def make_deep_agent(
         subagents=list(subagents),
         checkpointer=checkpointer,
         permissions=list(permissions),
+        interrupt_on=interrupt_on,
     )
     return agent
 

@@ -9,7 +9,7 @@ from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.agent_builder import make_deep_agent
-from kokoro_agent.infrastructure.permission import gate_tools
+from kokoro_agent.infrastructure.permission import build_interrupt_on
 from kokoro_agent.infrastructure.tools.runtime_subagent import build_runtime_custom_subagent_tool
 from kokoro_agent.infrastructure.subagent import (
     RuntimeSubagentRegistry,
@@ -26,8 +26,8 @@ def build_agent(
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> InvokableAgent:
     base_tools = (build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS)
-    # 静态门控：default 档拦外部副作用工具；interrupt_on 接线留 R-approval。
-    tools = gate_tools(base_tools, permission_mode)
+    tools = base_tools
+    # default 档通过原生 interrupt_on 做工具级审批，auto 档空映射跳过。
     return make_deep_agent(
         model=model,
         tools=tools,
@@ -37,4 +37,5 @@ def build_agent(
         # 当前不按档位限制文件系统：default 仅对外部敏感工具交互审批，不限制 FS;
         # FS 写工具属 deepagents 中间件、FilesystemPermission 仅 allow/deny 无法审批化。
         permissions=[],
+        interrupt_on=build_interrupt_on(permission_mode),
     )

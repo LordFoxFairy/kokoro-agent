@@ -1,4 +1,4 @@
-"""权限策略：从 config/approval_policy.yaml 加载需审批/计划态禁用的工具集。"""
+"""权限策略：从同目录 approval_policy.yaml 加载需审批的工具集。"""
 
 from __future__ import annotations
 
@@ -25,6 +25,4 @@ def load_approval_policy(path: Path) -> ApprovalPolicy:
 
 @lru_cache(maxsize=1)
 def approval_policy() -> ApprovalPolicy:
-    # 配置位于包根：kokoro_agent/config/approval_policy.yaml。
-    path = Path(__file__).resolve().parents[2] / "config" / "approval_policy.yaml"
-    return load_approval_policy(path)
+    return load_approval_policy(Path(__file__).resolve().parent / "approval_policy.yaml")

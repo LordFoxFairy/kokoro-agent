@@ -94,29 +94,16 @@ def test_parse_xread_response_rejects_malformed_shapes() -> None:
         parse_xread_response([("stream", ["bad-entry"])])
 
 
-# Characterisation net for parse_xread_response: pin the RESP2/RESP3 parsing
-# behaviour (no redis needed) so the planned stream_port split cannot silently
-# regress the response shapes a real redis server returns.
+# RESP2 + decode_responses=True: xread 返回 list[list[str, list[list[str, dict[str,str]]]]]
+def test_parse_xread_response_list_of_lists_resp2_str() -> None:
+    # spike F 确认的真实形状：外层 list，条目 list 非 tuple，str 键值；parse 后规范化为 tuple
+    raw = [["stream", [["1-0", {"data": "{}"}]]]]
+    assert parse_xread_response(raw) == [("stream", [("1-0", {"data": "{}"})])]
+
+
 def test_parse_xread_response_list_of_pairs_resp2() -> None:
     raw = [(b"stream", [(b"1-0", {b"data": b"{}"})])]
     assert parse_xread_response(raw) == [(b"stream", [(b"1-0", {b"data": b"{}"})])]
-
-
-def test_parse_xread_response_mapping_resp3() -> None:
-    raw = {b"stream": [(b"1-0", {b"data": b"{}"})]}
-    assert parse_xread_response(raw) == [(b"stream", [(b"1-0", {b"data": b"{}"})])]
-
-
-def test_parse_xread_response_unwraps_resp3_entry_wrapper() -> None:
-    # RESP3 can wrap the entries in one extra list layer; it is unwrapped.
-    raw = [(b"stream", [[(b"1-0", {b"data": b"{}"})]])]
-    assert parse_xread_response(raw) == [(b"stream", [(b"1-0", {b"data": b"{}"})])]
-
-
-def test_parse_xread_response_rejects_multi_list_resp3_wrapper() -> None:
-    raw = [(b"stream", [[(b"1-0", {b"data": b"{}"})], [(b"2-0", {b"data": b"{}"})]])]
-    with pytest.raises(ValueError):
-        parse_xread_response(raw)
 
 
 def test_parse_xread_response_preserves_none_id_and_fields() -> None:

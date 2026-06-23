@@ -1,4 +1,4 @@
-"""Redis Streams 传输实现：XREAD/XRANGE 的线格式在此防御性解析（兼容 RESP2/3）。"""
+"""Redis Streams 传输：固定 RESP2+decode_responses=True，xread 真实形状为 list[list]。"""
 
 from __future__ import annotations
 
@@ -17,16 +17,10 @@ _BLOCK_MS = 1000
 _Fields: TypeAlias = dict[bytes | str, bytes | str] | None
 _Entry: TypeAlias = tuple[bytes | str | None, _Fields]
 _ReadResponse: TypeAlias = list[tuple[bytes | str | None, list[_Entry]]]
-# redis-py 无类型存根，XREAD/XRANGE 返回 bytes/嵌套 list/tuple 的松散结构；
-# 以 object 为边界逐层收窄，屏蔽 RESP2/3 协议差异，未校验数据不进入内层。
-_ObjectMapping: TypeAlias = Mapping[object, object]
+# redis-py 无类型存根，保留松散 object 边界逐层收窄
 _ObjectDict: TypeAlias = dict[object, object]
 _ObjectList: TypeAlias = list[object]
 _ObjectTuple: TypeAlias = tuple[object, ...]
-
-
-def _is_object_mapping(value: object) -> TypeGuard[_ObjectMapping]:
-    return isinstance(value, Mapping)
 
 
 def _is_object_dict(value: object) -> TypeGuard[_ObjectDict]:
@@ -80,14 +74,8 @@ def _parse_fields(value: object) -> _Fields:
 def _parse_entries(value: object) -> list[_Entry]:
     if not _is_object_list(value):
         raise ValueError("xread entries must be a list")
-    entries: list[object] = list(value)
-    # RESP3 可能把条目多包一层 list；若如此则解开这单层包装。
-    if entries and _is_object_list(entries[0]):
-        if len(entries) != 1:
-            raise ValueError("xread RESP3 wrapper must contain exactly one entry list")
-        entries = list(entries[0])
     parsed: list[_Entry] = []
-    for entry in entries:
+    for entry in value:
         entry_id_obj, fields_obj = _expect_pair(entry, "xread item must be an (id, fields) pair")
         if entry_id_obj is not None and not isinstance(entry_id_obj, (bytes, str)):
             raise ValueError("xread id must be bytes, str, or None")
@@ -100,19 +88,14 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
     if raw is None:
         return None
 
-    stream_entries: list[tuple[object, object]] = []
-    if _is_object_mapping(raw):
-        stream_entries = list(raw.items())
-    elif _is_object_list(raw):
-        stream_entries = [
-            _expect_pair(item, "xread stream entry must be a (stream, entries) pair")
-            for item in raw
-        ]
-    else:
-        raise ValueError("xread response must be a list or mapping")
+    if not _is_object_list(raw):
+        raise ValueError("xread response must be a list")
 
     parsed: _ReadResponse = []
-    for stream_name_obj, entries_obj in stream_entries:
+    for item in raw:
+        stream_name_obj, entries_obj = _expect_pair(
+            item, "xread stream entry must be a (stream, entries) pair"
+        )
         if stream_name_obj is not None and not isinstance(stream_name_obj, (bytes, str)):
             raise ValueError("xread stream name must be bytes, str, or None")
         stream_name: bytes | str | None = stream_name_obj
@@ -122,14 +105,16 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
 
 class RedisStream:
     def __init__(self, url: str = "redis://127.0.0.1:6379/0", block_ms: int = _BLOCK_MS) -> None:
-        self._redis: Redis = from_url(url)
+        # 固定 RESP2+decode_responses：xread/xrange 全返回 str，无 bytes 解码开销
+        self._redis: Redis = from_url(url, protocol=2, decode_responses=True)
         self._block_ms = block_ms
 
     async def aclose(self) -> None:
         await self._redis.aclose()
 
     def _to_item(self, entry_id: bytes | str | None, fields: _Fields) -> StreamItem:
-        raw = fields.get(_REDIS_FIELD.encode()) if fields is not None else None
+        # decode_responses=True 下 key 是 str，直接用 _REDIS_FIELD 字符串查找
+        raw = fields.get(_REDIS_FIELD) if fields is not None else None
         payload: object = json.loads(_decode(raw)) if raw is not None else {}
         event = clone_event(validate_event(payload))
         return StreamItem(cursor=_decode(entry_id), event=event)

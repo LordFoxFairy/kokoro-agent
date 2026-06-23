@@ -33,7 +33,7 @@ async def invoke_once(
     await _publish(bus, stream, run_id, "run.started", {})
     try:
         async for event in agent.astream_events(payload, version="v2", config=config):
-            for ev in project(event, attribution):
+            for ev in project(event, attribution, run_id):
                 await bus.publish(stream, ev.model_dump())
         snapshot = await agent.aget_state(config)
         approval = _awaiting_approval_payload(snapshot)

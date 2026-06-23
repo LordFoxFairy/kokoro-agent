@@ -7,7 +7,7 @@ from typing import TypeGuard
 
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables.schema import StreamEvent
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.application.projection.attribution import SubagentAttribution
 from kokoro_agent.infrastructure.constants import (
@@ -20,8 +20,8 @@ from kokoro_agent.interfaces.envelope import AgentEvent
 
 TOOL_RESULT_MAX_CHARS = 8_000
 
-# content_blocks 原生即 list[dict]，经 JsonValue 校验洗成 wire 安全载荷后透传，零结构改写。
-_BLOCKS_ADAPTER: TypeAdapter[list[JsonValue]] = TypeAdapter(list[JsonValue])
+# content_blocks 原生即 list[dict]，逐块经 JsonValue 校验洗成 wire 安全载荷后透传，零结构改写。
+_BLOCK_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _USAGE_KEYS = ("input_tokens", "output_tokens", "total_tokens")
 
 
@@ -72,6 +72,17 @@ def _data(event: StreamEvent) -> Mapping[object, object]:
     return raw if _as_mapping(raw) else {}
 
 
+def _content_blocks(message: BaseMessage) -> list[JsonValue]:
+    out: list[JsonValue] = []
+    for block in message.content_blocks:
+        try:
+            out.append(_BLOCK_ADAPTER.validate_python(block))
+        except ValidationError:
+            # 非 JSON 块(如携带 bytes 的非标准多模态块)跳过,不让一坏块塌掉整轮。
+            continue
+    return out
+
+
 def _from_message(
     event: StreamEvent,
     attribution: SubagentAttribution,
@@ -83,7 +94,7 @@ def _from_message(
     message: object = _data(event).get("output" if final else "chunk")
     if not isinstance(message, BaseMessage):
         return []
-    content = _BLOCKS_ADAPTER.validate_python(message.content_blocks)
+    content = _content_blocks(message)
     if not content and not final:
         # 空增量块跳过；final 即使空内容也发，标记该 segment 结束。
         return []

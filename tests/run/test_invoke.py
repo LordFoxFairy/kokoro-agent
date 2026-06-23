@@ -86,43 +86,44 @@ def _chat_stream_event(run_id: str, text: str) -> StandardStreamEvent:
     }
 
 
-def _kinds(published: list[tuple[str, dict[str, JsonValue]]]) -> list[JsonValue]:
-    return [event["kind"] for _, event in published]
+def _events(published: list[tuple[str, dict[str, JsonValue]]]) -> list[JsonValue]:
+    return [event["event"] for _, event in published]
 
 
-def _payload_field(event: dict[str, JsonValue], key: str) -> JsonValue:
-    payload = event["payload"]
-    assert isinstance(payload, Mapping)
-    return payload[key]
+def _data(event: dict[str, JsonValue]) -> Mapping[str, JsonValue]:
+    data = event["data"]
+    assert isinstance(data, Mapping)
+    return data
 
 
 @pytest.mark.asyncio
-async def test_first_event_is_run_started() -> None:
+async def test_first_event_is_agent_status_started() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),))
     await invoke_once(bus, agent, "r1", "c1", {"messages": []})
-    assert bus.published[0] == (events_stream("r1"), {"kind": "run.started", "run_id": "r1", "payload": {}})
+    stream, first = bus.published[0]
+    assert stream == events_stream("r1")
+    assert first["event"] == "agent_status"
+    assert first["request_id"] == "r1"
+    assert _data(first) == {"status": "started"}
 
 
 @pytest.mark.asyncio
-async def test_normal_terminal_ends_with_run_completed() -> None:
+async def test_normal_terminal_ends_with_agent_done() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(events=(_chat_stream_event("r1", "hello"),))
     await invoke_once(bus, agent, "r1", "c1", {"messages": []})
-    assert _kinds(bus.published)[0] == "run.started"
-    assert _kinds(bus.published)[-1] == "run.completed"
-    last = bus.published[-1][1]
-    assert last["payload"] == {"status": "completed"}
-    assert "tool.awaiting_approval" not in _kinds(bus.published)
+    assert _events(bus.published)[0] == "agent_status"
+    assert _events(bus.published)[-1] == "agent_done"
+    assert _data(bus.published[-1][1]) == {"status": "completed", "usage": {}}
 
 
 @pytest.mark.asyncio
-async def test_projected_events_published_between_started_and_completed() -> None:
+async def test_projected_events_published_between_started_and_done() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),))
     await invoke_once(bus, agent, "r1", "c1", {"messages": []})
-    # project 真实投影 on_chat_model_stream → text.delta
-    assert _kinds(bus.published) == ["run.started", "text.delta", "run.completed"]
+    assert _events(bus.published) == ["agent_status", "text_chunk", "agent_done"]
     assert agent.seen_config == {"configurable": {"thread_id": "c1"}}
 
 
@@ -140,7 +141,7 @@ def _interrupt_state(
 
 
 @pytest.mark.asyncio
-async def test_pending_interrupt_emits_awaiting_approval_no_completed() -> None:
+async def test_pending_interrupt_emits_awaiting_status_no_done() -> None:
     state = _interrupt_state(
         action_requests=[{"name": "danger", "args": {"x": 1}, "description": "do danger"}],
         tool_calls=[{"name": "danger", "args": {"x": 1}, "id": "call-A"}],
@@ -149,15 +150,11 @@ async def test_pending_interrupt_emits_awaiting_approval_no_completed() -> None:
     # 缓存的 on_chat_model_stream run_id（"seg-r1"）即 segment_id。
     agent = _FakeAgent(events=(_chat_stream_event("seg-r1", "hi"),), state=state)
     await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger"}))
-    kinds = _kinds(bus.published)
-    assert kinds[0] == "run.started"
-    assert kinds[-1] == "tool.awaiting_approval"
-    assert "run.completed" not in kinds
-    assert bus.published[-1][1]["payload"] == {
+    assert "agent_done" not in _events(bus.published)
+    assert _data(bus.published[-1][1]) == {
+        "status": "awaiting_approval",
         "segment_id": "seg-r1",
-        "tool_id": "call-A",
-        "name": "danger",
-        "args": {"x": 1},
+        "pending": [{"tool_id": "call-A", "name": "danger", "args": {"x": 1}}],
     }
 
 
@@ -178,10 +175,15 @@ async def test_pending_interrupt_filters_auto_approved_and_aligns() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(events=(_chat_stream_event("seg-r1", "hi"),), state=state)
     await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger1", "danger2"}))
-    awaiting = [e for _, e in bus.published if e["kind"] == "tool.awaiting_approval"]
-    assert [_payload_field(e, "tool_id") for e in awaiting] == ["call-1", "call-3"]
-    assert [_payload_field(e, "name") for e in awaiting] == ["danger1", "danger2"]
-    assert "run.completed" not in _kinds(bus.published)
+    assert "agent_done" not in _events(bus.published)
+    assert _data(bus.published[-1][1]) == {
+        "status": "awaiting_approval",
+        "segment_id": "seg-r1",
+        "pending": [
+            {"tool_id": "call-1", "name": "danger1", "args": {"a": 1}},
+            {"tool_id": "call-3", "name": "danger2", "args": {"c": 3}},
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -189,19 +191,17 @@ async def test_no_pending_interrupt_no_awaiting() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(events=(_chat_stream_event("seg-r1", "hi"),))
     await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger"}))
-    kinds = _kinds(bus.published)
-    assert "tool.awaiting_approval" not in kinds
-    assert kinds[-1] == "run.completed"
+    assert all(_data(e).get("status") != "awaiting_approval" for _, e in bus.published)
+    assert _events(bus.published)[-1] == "agent_done"
 
 
 @pytest.mark.asyncio
-async def test_exception_emits_run_failed() -> None:
+async def test_exception_emits_agent_error() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(raise_on_stream=ValueError("boom"))
     await invoke_once(bus, agent, "r1", "c1", {"messages": []})
-    kinds = _kinds(bus.published)
-    assert kinds == ["run.started", "run.failed"]
-    assert bus.published[-1][1]["payload"] == {"error_kind": "ValueError", "message": "boom"}
+    assert _events(bus.published) == ["agent_status", "agent_error"]
+    assert _data(bus.published[-1][1]) == {"error_kind": "ValueError", "message": "boom"}
 
 
 def test_events_stream_format() -> None:
@@ -249,12 +249,9 @@ async def test_trace_none_config_only_configurable() -> None:
     assert "metadata" not in agent.seen_config
 
 
-# Task-6: invoke_once 返回值测试 ─────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_invoke_once_returns_true_on_normal_completion() -> None:
-    """正常完成(发 run.completed)分支返回 True：已发终态。"""
+    """正常完成(发 agent_done)分支返回 True：已发终态。"""
     bus = _FakeBus()
     agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),))
     result = await invoke_once(bus, agent, "r1", "c1", {"messages": []})

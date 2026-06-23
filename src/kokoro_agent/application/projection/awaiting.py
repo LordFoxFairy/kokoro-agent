@@ -21,7 +21,7 @@ def awaiting_approval_events(
     interrupt_on_names: frozenset[str],
     *,
     segment_id: str,
-    run_id: str,
+    request_id: str,
 ) -> list[AgentEvent]:
     last_ai = _last_ai_message(messages)
     if last_ai is None:
@@ -34,10 +34,29 @@ def awaiting_approval_events(
             f"awaiting 对齐失配: pending tool_calls={len(pending)} != "
             f"action_requests={len(action_requests)} (names={sorted(interrupt_on_names)})"
         )
-    events: list[AgentEvent] = []
-    for tool_call, request in zip(pending, action_requests, strict=True):
-        events.append(_awaiting_event(tool_call, request, segment_id, run_id))
-    return events
+    if not pending:
+        return []
+    items: list[JsonValue] = [
+        {
+            "tool_id": tool_call["id"] or "",
+            "name": tool_call["name"],
+            "args": _scalar_args(_request_args(request, tool_call)),
+        }
+        for tool_call, request in zip(pending, action_requests, strict=True)
+    ]
+    return [
+        AgentEvent.model_validate(
+            {
+                "event": "agent_status",
+                "request_id": request_id,
+                "data": {
+                    "status": "awaiting_approval",
+                    "segment_id": segment_id,
+                    "pending": items,
+                },
+            }
+        )
+    ]
 
 
 def _last_ai_message(messages: Sequence[BaseMessage]) -> AIMessage | None:
@@ -45,23 +64,6 @@ def _last_ai_message(messages: Sequence[BaseMessage]) -> AIMessage | None:
         if isinstance(message, AIMessage):
             return message
     return None
-
-
-def _awaiting_event(
-    tool_call: ToolCall, request: object, segment_id: str, run_id: str
-) -> AgentEvent:
-    return AgentEvent.model_validate(
-        {
-            "kind": "tool.awaiting_approval",
-            "run_id": run_id,
-            "payload": {
-                "segment_id": segment_id,
-                "tool_id": tool_call["id"] or "",
-                "name": tool_call["name"],
-                "args": _scalar_args(_request_args(request, tool_call)),
-            },
-        }
-    )
 
 
 def _request_args(request: object, tool_call: ToolCall) -> Mapping[object, object]:
@@ -75,7 +77,7 @@ def _request_args(request: object, tool_call: ToolCall) -> Mapping[object, objec
 
 
 def _scalar_args(source: Mapping[object, object]) -> dict[str, JsonValue]:
-    # 仅 JSON 原生标量进入 args，复杂值在边界丢弃（对齐 project._scalar_args）。
+    # 仅 JSON 原生标量进入 args，复杂值在边界丢弃（对齐 transformer._scalar_args）。
     args: dict[str, JsonValue] = {}
     for key, value in source.items():
         if isinstance(key, str) and (value is None or isinstance(value, (str, int, float, bool))):

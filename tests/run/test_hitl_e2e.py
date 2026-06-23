@@ -199,30 +199,35 @@ async def _drain(sup: RunSupervisor) -> None:
         await task
 
 
-def _events_of(bus: _FakeBus, run_id: str, kind: str) -> list[dict[str, JsonValue]]:
+def _events_of(bus: _FakeBus, run_id: str, event_name: str) -> list[dict[str, JsonValue]]:
     return [
         e
         for s, e in bus.published
-        if s == events_stream(run_id) and e.get("kind") == kind
+        if s == events_stream(run_id) and e.get("event") == event_name
     ]
 
 
-def _payload(event: dict[str, JsonValue]) -> Mapping[str, JsonValue]:
-    payload = event["payload"]
-    assert isinstance(payload, Mapping)
-    return payload
+def _data(event: dict[str, JsonValue]) -> Mapping[str, JsonValue]:
+    data = event["data"]
+    assert isinstance(data, Mapping)
+    return data
 
 
-async def _run_until_awaiting(
-    sup: RunSupervisor, bus: _FakeBus, run_id: str
-) -> dict[str, JsonValue]:
+async def _run_until_awaiting(sup: RunSupervisor, bus: _FakeBus, run_id: str) -> None:
     await sup.dispatch(bus, _request(run_id))
     await _drain(sup)
-    awaiting = _events_of(bus, run_id, "tool.awaiting_approval")
+    awaiting = [
+        e
+        for e in _events_of(bus, run_id, "agent_status")
+        if _data(e).get("status") == "awaiting_approval"
+    ]
     assert len(awaiting) == 1
-    assert _payload(awaiting[0])["tool_id"] == _TOOL_ID
-    assert "run.completed" not in [e.get("kind") for _, e in bus.published]
-    return awaiting[0]
+    pending: object = _data(awaiting[0]).get("pending")
+    assert _is_list(pending) and len(pending) == 1
+    first = pending[0]
+    assert _is_mapping(first)
+    assert first.get("tool_id") == _TOOL_ID
+    assert "agent_done" not in [e.get("event") for _, e in bus.published]
 
 
 async def _resume(
@@ -234,17 +239,17 @@ async def _resume(
 
 
 def _tool_result(bus: _FakeBus, run_id: str) -> str:
-    returned = _events_of(bus, run_id, "tool.returned")
+    returned = _events_of(bus, run_id, "tool_call_end")
     assert len(returned) == 1
-    result: object = _payload(returned[0]).get("result")
+    result: object = _data(returned[0]).get("result")
     assert isinstance(result, str)
     return result
 
 
 def _assert_completed(bus: _FakeBus, run_id: str) -> None:
-    completed = _events_of(bus, run_id, "run.completed")
-    assert len(completed) == 1
-    assert _payload(completed[0]).get("status") == "completed"
+    done = _events_of(bus, run_id, "agent_done")
+    assert len(done) == 1
+    assert _data(done[0]).get("status") == "completed"
 
 
 # ① approve → 工具据原 args 真跑出结果。

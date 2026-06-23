@@ -188,20 +188,20 @@ class RunSupervisor:
             self._terminal.add(run_id)
 
     async def _emit_cancelled(self, bus: StreamProtocol, run_id: str) -> None:
-        # 契约无 run.cancelled kind：cancel 终态即 run.completed + status=cancelled。
-        await self._publish(bus, run_id, "run.completed", {"status": "cancelled"})
+        # cancel 终态即 agent_done + status=cancelled（无独立 cancelled event 类型）。
+        await self._emit(bus, run_id, "agent_done", {"status": "cancelled"})
 
     async def _emit_failed(self, bus: StreamProtocol, run_id: str, error: Exception) -> None:
-        await self._publish(
-            bus, run_id, "run.failed", {"error_kind": type(error).__name__, "message": str(error)}
+        await self._emit(
+            bus, run_id, "agent_error", {"error_kind": type(error).__name__, "message": str(error)}
         )
 
     @staticmethod
-    async def _publish(
-        bus: StreamProtocol, run_id: str, kind: str, payload: dict[str, JsonValue]
+    async def _emit(
+        bus: StreamProtocol, run_id: str, event: str, data: dict[str, JsonValue]
     ) -> None:
-        event = AgentEvent.model_validate({"kind": kind, "run_id": run_id, "payload": payload})
-        await bus.publish(events_stream(run_id), event.model_dump())
+        envelope = AgentEvent.model_validate({"event": event, "request_id": run_id, "data": data})
+        await bus.publish(events_stream(run_id), envelope.model_dump())
 
 
 def _interrupt_on_names(request: RunRequest) -> frozenset[str]:

@@ -12,6 +12,17 @@ def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
+def _non_standard_thinking(value: object) -> str:
+    # non_standard 块的 value 松类型；收口到 Mapping 后提取 thinking/text 文本
+    if not _is_object_mapping(value) or value.get("type") != "thinking":
+        return ""
+    for key in ("thinking", "text"):
+        text = value.get(key)
+        if isinstance(text, str) and text:
+            return text
+    return ""
+
+
 def message_text_and_reasoning(msg: BaseMessage) -> tuple[str, str]:
     """提取 (text, reasoning)。
 
@@ -28,6 +39,12 @@ def message_text_and_reasoning(msg: BaseMessage) -> tuple[str, str]:
             value = r_block.get("reasoning", "")
             if value:
                 reasoning_parts.append(value)
+            continue
+        # provider 非标准块：non_standard.value.type==thinking（thinking 或 text 键）并入 reasoning
+        if block["type"] == "non_standard":
+            thinking = _non_standard_thinking(block.get("value"))
+            if thinking:
+                reasoning_parts.append(thinking)
 
     reasoning = "".join(reasoning_parts)
 

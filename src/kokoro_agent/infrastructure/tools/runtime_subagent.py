@@ -11,7 +11,6 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from kokoro_agent.infrastructure.agent_builder import make_subagent_runnable
-from kokoro_agent.application.projection.result_messages import result_messages
 from kokoro_agent.infrastructure.constants import RUNTIME_SUBAGENT_TOOL_NAME
 from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 
@@ -31,10 +30,17 @@ def _is_runner_result(value: object) -> TypeGuard[_RunnerResult]:
     return all(isinstance(key, str) for key in value)
 
 
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def _runtime_result_messages(result: object) -> list[BaseMessage]:
     if not _is_runner_result(result):
         return []
-    return result_messages(result)
+    raw: object = result.get("messages")
+    if not _is_object_list(raw):
+        return []
+    return [msg for msg in raw if isinstance(msg, BaseMessage)]
 
 
 class RuntimeSubagentToolInput(BaseModel):

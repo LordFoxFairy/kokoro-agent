@@ -13,7 +13,7 @@ from kokoro_agent.infrastructure.permission import (
 
 def test_load_approval_policy_from_yaml_file() -> None:
     policy = load_approval_policy(
-        Path("src/kokoro_agent/config/approval_policy.yaml")
+        Path("src/kokoro_agent/infrastructure/permission/approval_policy.yaml")
     )
 
     assert policy == ApprovalPolicy(

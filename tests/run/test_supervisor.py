@@ -361,3 +361,77 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
     kwargs = captured[0]["kwargs"]
     assert isinstance(kwargs, dict)
     assert "trace" in kwargs
+
+
+# Task-6: 终态单发保证测试 ─────────────────────────────────────────────
+
+
+# T6-①: run 自然完成后再发 cancel → 不双发 run.completed{cancelled}。
+@pytest.mark.asyncio
+async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
+    """run 自然完成(invoke_once 返回 True) → _terminal 记录 run_id；
+    再 dispatch cancel → _on_cancel 检查 _terminal 跳过补发，只有自然那条终态。"""
+    agent = _FakeAgent(events=(_chat_event("hi"),), state=_EMPTY_STATE)
+    bus = _FakeBus()
+    sup = RunSupervisor(agent_builder=_builder(agent))
+    await sup.dispatch(bus, _request("rc1"))
+    await _drain(sup)
+
+    # 此时 invoke_once 已返回 True，_terminal 应含 "rc1"。
+    cancel = _inbound({"kind": "run.cancel", "run_id": "rc1"})
+    await sup.dispatch(bus, cancel)
+
+    completed_events = [
+        e for _, e in bus.published
+        if e.get("kind") == "run.completed"
+    ]
+    # 只允许自然完成那条，不补发 cancelled。
+    assert len(completed_events) == 1
+    payload = completed_events[0].get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("status") == "completed"
+
+
+# T6-②: 暂停态(invoke_once 返回 False)cancel → 补发 cancelled。
+@pytest.mark.asyncio
+async def test_cancel_after_pause_emits_cancelled() -> None:
+    """run invoke_once 因 interrupt 返回 False → _terminal 不记录；
+    cancel → _on_cancel 无 running task 且不在 _terminal → 补发 cancelled。"""
+    state = _FakeState(tasks=(_FakeTask(interrupts=(_FakeInterrupt(value={"x": 1}),)),))
+    agent = _FakeAgent(events=(), state=state)
+    bus = _FakeBus()
+    sup = RunSupervisor(agent_builder=_builder(agent))
+    await sup.dispatch(bus, _request("rc2"))
+    await _drain(sup)
+
+    cancel = _inbound({"kind": "run.cancel", "run_id": "rc2"})
+    await sup.dispatch(bus, cancel)
+
+    last = bus.published[-1]
+    assert last[1].get("kind") == "run.completed"
+    payload = last[1].get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("status") == "cancelled"
+
+
+# T6-③: 运行中 cancel(task 未完成,CancelledError) → 补发 cancelled。
+@pytest.mark.asyncio
+async def test_cancel_mid_run_emits_cancelled() -> None:
+    """task 被 cancel 时 invoke_once 抛 CancelledError 不返回 → 不入 _terminal；
+    _on_cancel 正常补发 cancelled。"""
+    gate = asyncio.Event()
+    agent = _FakeAgent(events=(_chat_event("x"),), state=_EMPTY_STATE, block=gate)
+    bus = _FakeBus()
+    sup = RunSupervisor(agent_builder=_builder(agent))
+    await sup.dispatch(bus, _request("rc3"))
+    await asyncio.sleep(0)  # 让 task 开始阻塞在 block.wait()
+
+    cancel = _inbound({"kind": "run.cancel", "run_id": "rc3"})
+    await sup.dispatch(bus, cancel)
+    await _drain(sup)
+
+    last = bus.published[-1]
+    assert last[1].get("kind") == "run.completed"
+    payload = last[1].get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("status") == "cancelled"

@@ -31,7 +31,8 @@ async def invoke_once(
     payload: object,
     interrupt_on_names: frozenset[str] = frozenset(),
     trace: RunnableConfig | None = None,
-) -> None:
+) -> bool:
+    """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。"""
     stream = events_stream(run_id)
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
     if trace is not None:
@@ -57,8 +58,9 @@ async def invoke_once(
             # interrupt 暂停退出：逐 pending tool_call 发审批信号后返回，不发 run.completed。
             for ev in _awaiting_events(snapshot, interrupt_on_names, segment_id, run_id):
                 await bus.publish(stream, ev.model_dump())
-            return
+            return False
         await _publish(bus, stream, run_id, "run.completed", {"status": "completed"})
+        return True
     except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
         await _publish(
             bus,
@@ -67,6 +69,7 @@ async def invoke_once(
             "run.failed",
             {"error_kind": type(error).__name__, "message": str(error)},
         )
+        return True
 
 
 async def _publish(

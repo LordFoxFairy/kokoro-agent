@@ -247,3 +247,36 @@ async def test_trace_none_config_only_configurable() -> None:
     assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
     assert "callbacks" not in agent.seen_config
     assert "metadata" not in agent.seen_config
+
+
+# Task-6: invoke_once 返回值测试 ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_invoke_once_returns_true_on_normal_completion() -> None:
+    """正常完成(发 run.completed)分支返回 True：已发终态。"""
+    bus = _FakeBus()
+    agent = _FakeAgent(events=(_chat_stream_event("r1", "hi"),))
+    result = await invoke_once(bus, agent, "r1", "c1", {"messages": []})
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_invoke_once_returns_false_on_interrupt_pause() -> None:
+    """interrupt 暂停分支(发 awaiting 后 return)返回 False：未发终态。"""
+    from langchain_core.messages import AIMessage, HumanMessage as LCHumanMessage
+
+    value: dict[str, JsonValue] = {
+        "action_requests": [{"name": "tool", "args": {}, "description": ""}]
+    }
+    interrupt = _FakeInterrupt(value=value)
+    tool_calls: list[dict[str, object]] = [{"name": "tool", "args": {}, "id": "call-X"}]
+    messages = [LCHumanMessage(content="go"), AIMessage(content="", tool_calls=tool_calls)]
+    state = _FakeState(
+        tasks=(_FakeTask(interrupts=(interrupt,)),),
+        values={"messages": messages},
+    )
+    bus = _FakeBus()
+    agent = _FakeAgent(events=(_chat_stream_event("seg", "hi"),), state=state)
+    result = await invoke_once(bus, agent, "r2", "c2", {"messages": []}, frozenset({"tool"}))
+    assert result is False

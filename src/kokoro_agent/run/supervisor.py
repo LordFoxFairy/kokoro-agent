@@ -54,6 +54,8 @@ class RunSupervisor:
         # run_id→原 RunRequest：resume 据此取 conversation_id + 重建 agent（R1 占位，内存增长见 report）。
         self._runs: dict[str, RunRequest] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        # 已发终态的 run_id 集合：防止 cancel 在自然完成后重复补发 cancelled。
+        self._terminal: set[str] = set()
 
     @property
     def tasks(self) -> Mapping[str, asyncio.Task[None]]:
@@ -105,6 +107,9 @@ class RunSupervisor:
         self._spawn_agent(bus, agent, msg.run_id, request.conversation_id, command, trace=trace)
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
+        # 已自然终态：invoke_once 返回 True 后记录，跳过补发避免双终态。
+        if msg.run_id in self._terminal:
+            return
         task = self._tasks.get(msg.run_id)
         if task is not None and not task.done():
             # 运行中：被 cancel 的 invoke task 不自发终态，统一由此分支补发 cancelled。
@@ -156,7 +161,10 @@ class RunSupervisor:
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，故 resume 重新竞争额度。
         async with self._sem:
-            await invoke_once(bus, agent, run_id, conversation_id, payload, trace=trace)
+            emitted = await invoke_once(bus, agent, run_id, conversation_id, payload, trace=trace)
+        # asyncio 单线程：invoke_once return 与此行之间无 await，原子写入，无竞态窗口。
+        if emitted:
+            self._terminal.add(run_id)
 
     async def _emit_cancelled(self, bus: StreamProtocol, run_id: str) -> None:
         # 契约无 run.cancelled kind：cancel 终态即 run.completed + status=cancelled。

@@ -14,6 +14,8 @@ _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 _DEFAULT_APPROVAL_TOOLS = ("fetch_url",)
 _DEFAULT_CHECKPOINT_DB = "kokoro_checkpoints.db"
 _DEFAULT_RUN_STATE_DB = "kokoro_run_state.db"
+_DEFAULT_MONGO_URL = "mongodb://127.0.0.1:27017"
+_DEFAULT_MONGO_DB = "kokoro"
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -40,8 +42,24 @@ class StreamSettings(BaseModel):
         )
 
 
+class MongoSettings(BaseModel):
+    """共享 Mongo 连接：checkpointer 与 run_state 的 mongo 后端共用一处 url/db（多 pod GA）。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    url: str
+    db: str
+
+    @classmethod
+    def from_env(cls, source: Mapping[str, str]) -> MongoSettings:
+        return cls(
+            url=source.get("KOKORO_MONGO_URL", _DEFAULT_MONGO_URL),
+            db=source.get("KOKORO_MONGO_DB", _DEFAULT_MONGO_DB),
+        )
+
+
 class CheckpointSettings(BaseModel):
-    """图状态 checkpointer 后端：sqlite（默认，落盘跨重启续 pending interrupt）或 memory（易失）。"""
+    """图状态 checkpointer 后端：sqlite（默认，落盘）/ mongo（跨 pod）/ memory（易失）。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -57,7 +75,7 @@ class CheckpointSettings(BaseModel):
 
 
 class RunStateSettings(BaseModel):
-    """run 状态持久化后端：sqlite（默认，落盘跨重启去重 / 终态防重）或 memory（易失）。"""
+    """run 状态持久化后端：sqlite（默认，落盘）/ mongo（跨 pod 去重/终态认领）/ memory（易失）。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -113,6 +131,7 @@ class AppConfig(BaseModel):
     approval: ApprovalPolicy
     checkpoint: CheckpointSettings
     run_state: RunStateSettings
+    mongo: MongoSettings
     local_fake_model: bool
 
     @classmethod
@@ -125,6 +144,7 @@ class AppConfig(BaseModel):
             approval=_approval_from_env(source),
             checkpoint=CheckpointSettings.from_env(source),
             run_state=RunStateSettings.from_env(source),
+            mongo=MongoSettings.from_env(source),
             local_fake_model=source.get(LOCAL_FAKE_MODEL_FLAG) == "1",
         )
 
@@ -134,6 +154,7 @@ __all__ = [
     "ApprovalPolicy",
     "CheckpointSettings",
     "LOCAL_FAKE_MODEL_FLAG",
+    "MongoSettings",
     "ObservabilitySettings",
     "RunStateSettings",
     "StreamSettings",

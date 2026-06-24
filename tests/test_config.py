@@ -23,6 +23,16 @@ def test_empty_env_yields_defaults() -> None:
     assert config.checkpoint.db_path == "kokoro_checkpoints.db"
     assert config.run_state.backend == "sqlite"
     assert config.run_state.db_path == "kokoro_run_state.db"
+    assert config.mongo.url == "mongodb://127.0.0.1:27017"
+    assert config.mongo.db == "kokoro"
+
+
+def test_mongo_from_env() -> None:
+    config = AppConfig.from_env(
+        {"KOKORO_MONGO_URL": "mongodb://h:1", "KOKORO_MONGO_DB": "prod"}
+    )
+    assert config.mongo.url == "mongodb://h:1"
+    assert config.mongo.db == "prod"
 
 
 def test_run_state_from_env() -> None:

@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
 import aiosqlite
 import pytest
+from pymongo import AsyncMongoClient
+from pymongo.asynchronous.collection import AsyncCollection
 
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.run_state import (
     MemoryRunStateStore,
+    MongoRunStateStore,
     RunStateStore,
     SqliteRunStateStore,
     make_run_state_store,
 )
 from kokoro_agent.infrastructure.run_state.sqlite_store import SqliteRunStateStore as _SqliteStore
+
+_MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 
 _REQ = RunRequest(
     kind="run.request",
@@ -148,3 +155,48 @@ async def test_sqlite_persists_across_factory_reentry(
 
     assert got == _REQ2
     assert terminal is True
+
+
+# ---------------------------------------------------------------------------
+# mongo backend（需可达的 mongo；不可达即 skip，CI 无 mongo 优雅跳过）
+# ---------------------------------------------------------------------------
+
+
+async def _mongo_collection_or_skip() -> tuple[AsyncMongoClient[dict[str, object]], AsyncCollection[dict[str, object]]]:
+    # 每用例独立 collection（uuid），避免 mongo 跨运行残留串扰。
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(
+        _MONGO_URL, serverSelectionTimeoutMS=500
+    )
+    try:
+        await client.admin.command("ping")
+    except Exception:  # noqa: BLE001 — 网络/服务不可达统一视为 skip 条件
+        await client.close()
+        pytest.skip(f"no mongo reachable at {_MONGO_URL}")
+    return client, client["kokoro_test"][f"run_state_{uuid.uuid4().hex}"]
+
+
+async def test_mongo_full_behaviour() -> None:
+    client, coll = await _mongo_collection_or_skip()
+    try:
+        await _assert_full_behaviour(MongoRunStateStore(coll), _REQ)
+    finally:
+        await coll.drop()
+        await client.close()
+
+
+async def test_mongo_unregistered_mark_terminal() -> None:
+    client, coll = await _mongo_collection_or_skip()
+    try:
+        await _assert_unregistered_mark_terminal(MongoRunStateStore(coll))
+    finally:
+        await coll.drop()
+        await client.close()
+
+
+async def test_mongo_backend_yields_mongo_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = await _mongo_collection_or_skip()
+    await client.close()
+    monkeypatch.setenv("KOKORO_RUN_STATE_BACKEND", "mongo")
+    monkeypatch.setenv("KOKORO_MONGO_URL", _MONGO_URL)
+    async with make_run_state_store() as store:
+        assert isinstance(store, MongoRunStateStore)

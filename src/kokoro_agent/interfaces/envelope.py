@@ -32,7 +32,8 @@ class ToolStartData(TypedDict):
     segment_id: str
     tool_id: str
     name: str
-    args: dict[str, JsonValue]
+    # 模型生成的入参原样透传；JSON 安全由 AgentEvent 信封单一边界 model_validate 校验。
+    args: dict[str, object]
 
 
 class ToolEndData(TypedDict):
@@ -78,10 +79,16 @@ class CustomStatus(TypedDict):
     custom: JsonValue
 
 
+class PendingApproval(TypedDict):
+    tool_id: str
+    name: str
+    args: dict[str, object]
+
+
 class AwaitingStatus(TypedDict):
     status: Literal["awaiting_approval"]
     segment_id: str
-    pending: list[JsonValue]
+    pending: list[PendingApproval]
 
 
 class DoneData(TypedDict):

@@ -32,6 +32,10 @@ dev = [
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# 随包分发的非 .py 资源（提示词正文 + 审批策略），否则 wheel 会漏掉。
+[tool.setuptools.package-data]
+kokoro_agent = ["domain/prompts/*.md", "infrastructure/permission/*.yaml"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"

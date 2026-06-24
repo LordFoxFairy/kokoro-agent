@@ -8,6 +8,8 @@ import socket
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 FETCH_TIMEOUT_S = 10  # per-read 超时（两次字节读取之间）
 FETCH_DEADLINE_S = 15  # 整体墙钟封顶，必须 > FETCH_TIMEOUT_S
@@ -97,3 +99,17 @@ async def fetch_url(url: str) -> str:
     except httpx.HTTPError as error:
         # 工具错误以文本返回：模型可见并可改道，不中断 agent 循环。
         return f"抓取失败：{type(error).__name__}: {error}"
+
+
+# 直接构造而非 from_function：后者的 classmethod 仅部分类型化，pyright strict 会判 Unknown。
+class _FetchUrlArgs(BaseModel):
+    url: str = Field(description="目标 http/https URL")
+
+
+# 纯异步工具：只给 coroutine、不给 func，sync 调用由 langchain 原生 NotImplementedError 拒绝。
+FETCH_URL_TOOL = StructuredTool(
+    name="fetch_url",
+    description=f"抓取一个 http/https 网页并返回其文本内容（最长 {FETCH_MAX_CHARS} 字符，拒绝内网地址）。需要查看网页实际内容时使用。",
+    args_schema=_FetchUrlArgs,
+    coroutine=fetch_url,
+)

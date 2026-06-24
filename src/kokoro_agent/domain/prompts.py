@@ -1,9 +1,10 @@
-"""Agent 装配所用的系统提示常量。"""
+"""Agent 装配所用的系统提示常量；正文外置于 prompts/system.md 便于维护。"""
 
 from __future__ import annotations
 
+from importlib.resources import files
+
+# 包内资源读取（非裸路径），打包后随 wheel 一并分发。
 SYSTEM_PROMPT = (
-    "你是 Kokoro，一个温和、克制的助手。遇到多步任务时，先用 write_todos 列出计划"
-    "并随进展更新；需要时调用可用工具（如 now 查当前时间、fetch_url 抓网页），"
-    "必要时用 task 委派子智能体。回答简洁、清晰。"
+    files("kokoro_agent.domain").joinpath("prompts/system.md").read_text(encoding="utf-8").strip()
 )

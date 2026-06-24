@@ -216,11 +216,9 @@ async def test_pending_interrupt_emits_awaiting_no_done() -> None:
     result = await invoke_once(bus, agent, "r1", "c1", {"messages": []}, frozenset({"danger"}))
     assert result is False
     assert "agent_done" not in _events(bus.published)
-    assert _data(bus.published[-1][1]) == {
-        "status": "awaiting_approval",
-        "segment_id": "seg-1",
-        "pending": [{"tool_id": "call-A", "name": "danger", "args": {"x": 1}}],
-    }
+    last_event, last_data = bus.published[-1][1]["event"], _data(bus.published[-1][1])
+    assert last_event == "tool_call_awaiting"
+    assert last_data == {"segment_id": "seg-1", "tool_id": "call-A", "name": "danger", "args": {"x": 1}}
 
 
 @pytest.mark.asyncio

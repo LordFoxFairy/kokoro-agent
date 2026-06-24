@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from typing import runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, JsonValue
-from typing_extensions import Protocol
 
 
 class StreamItem(BaseModel):

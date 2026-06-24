@@ -15,6 +15,7 @@ from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.application.run.invoke import events_stream
 from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
 from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.infrastructure.run_state import MemoryRunStateStore
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
 _T = TypeVar("_T")
@@ -501,3 +502,26 @@ async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
     terminals = [e for _, e in bus.published if e.get("event") in ("agent_done", "agent_error")]
     assert len(terminals) == 1
     assert terminals[0].get("event") == "agent_error"
+
+
+# Layer 2: 全新 supervisor 实例(模拟重启/另一 pod)仅共享 store → 据持久化原 request 续接 resume。
+@pytest.mark.asyncio
+async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
+    store = MemoryRunStateStore()
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
+    bus = _FakeBus()
+    sup_a = RunSupervisor(agent_builder=_builder(agent), store=store)
+    await sup_a.dispatch(bus, _request("rx"))
+    await _drain(sup_a)
+
+    # sup_b 无 sup_a 的进程内 map，仅共享 store；resume 须靠 store.get_request 重建 agent。
+    sup_b = RunSupervisor(agent_builder=_builder(agent), store=store)
+    agent.seen_payloads.clear()
+    resume = _inbound({"kind": "run.resume", "run_id": "rx", "decision": {"type": "approve"}})
+    await sup_b.dispatch(bus, resume)
+    await _drain(sup_b)
+
+    assert len(agent.seen_payloads) == 1
+    payload = agent.seen_payloads[0]
+    assert isinstance(payload, Command)
+    assert payload.resume == {"decisions": [{"type": "approve"}]}

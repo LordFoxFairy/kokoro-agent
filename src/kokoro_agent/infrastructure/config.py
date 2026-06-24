@@ -13,6 +13,7 @@ from kokoro_agent.infrastructure.model.settings import LOCAL_FAKE_MODEL_FLAG, Ch
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 _DEFAULT_APPROVAL_TOOLS = ("fetch_url",)
 _DEFAULT_CHECKPOINT_DB = "kokoro_checkpoints.db"
+_DEFAULT_RUN_STATE_DB = "kokoro_run_state.db"
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -52,6 +53,22 @@ class CheckpointSettings(BaseModel):
         return cls(
             backend=source.get("KOKORO_CHECKPOINT_BACKEND", "sqlite").lower(),
             db_path=source.get("KOKORO_CHECKPOINT_DB", _DEFAULT_CHECKPOINT_DB),
+        )
+
+
+class RunStateSettings(BaseModel):
+    """run 状态持久化后端：sqlite（默认，落盘跨重启去重 / 终态防重）或 memory（易失）。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    backend: str
+    db_path: str
+
+    @classmethod
+    def from_env(cls, source: Mapping[str, str]) -> RunStateSettings:
+        return cls(
+            backend=source.get("KOKORO_RUN_STATE_BACKEND", "sqlite").lower(),
+            db_path=source.get("KOKORO_RUN_STATE_DB", _DEFAULT_RUN_STATE_DB),
         )
 
 
@@ -95,6 +112,7 @@ class AppConfig(BaseModel):
     observability: ObservabilitySettings
     approval: ApprovalPolicy
     checkpoint: CheckpointSettings
+    run_state: RunStateSettings
     local_fake_model: bool
 
     @classmethod
@@ -106,6 +124,7 @@ class AppConfig(BaseModel):
             observability=ObservabilitySettings.from_env(source),
             approval=_approval_from_env(source),
             checkpoint=CheckpointSettings.from_env(source),
+            run_state=RunStateSettings.from_env(source),
             local_fake_model=source.get(LOCAL_FAKE_MODEL_FLAG) == "1",
         )
 
@@ -116,5 +135,6 @@ __all__ = [
     "CheckpointSettings",
     "LOCAL_FAKE_MODEL_FLAG",
     "ObservabilitySettings",
+    "RunStateSettings",
     "StreamSettings",
 ]

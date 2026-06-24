@@ -21,6 +21,16 @@ def test_empty_env_yields_defaults() -> None:
     assert config.local_fake_model is False
     assert config.checkpoint.backend == "sqlite"
     assert config.checkpoint.db_path == "kokoro_checkpoints.db"
+    assert config.run_state.backend == "sqlite"
+    assert config.run_state.db_path == "kokoro_run_state.db"
+
+
+def test_run_state_from_env() -> None:
+    config = AppConfig.from_env(
+        {"KOKORO_RUN_STATE_BACKEND": "MEMORY", "KOKORO_RUN_STATE_DB": "/tmp/rs.db"}
+    )
+    assert config.run_state.backend == "memory"
+    assert config.run_state.db_path == "/tmp/rs.db"
 
 
 def test_checkpoint_from_env() -> None:

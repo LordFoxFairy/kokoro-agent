@@ -15,7 +15,21 @@ from kokoro_agent.infrastructure.constants import (
     SUBAGENT_TOOL_NAME,
 )
 from kokoro_agent.infrastructure.subagent.specs import subagent_source_for
-from kokoro_agent.interfaces.envelope import AgentEvent
+from kokoro_agent.interfaces.envelope import (
+    AgentEvent,
+    CustomStatus,
+    DoneData,
+    ErrorData,
+    EventData,
+    ExternalEvent,
+    StartedStatus,
+    SubagentFinishedStatus,
+    SubagentStartedStatus,
+    TextChunkData,
+    TodoUpdatedStatus,
+    ToolEndData,
+    ToolStartData,
+)
 
 TOOL_RESULT_MAX_CHARS = 8_000
 SUBAGENT_LAUNCH_NAMES = frozenset({SUBAGENT_TOOL_NAME, RUNTIME_SUBAGENT_TOOL_NAME})
@@ -24,8 +38,23 @@ _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _USAGE_KEYS = ("input_tokens", "output_tokens", "total_tokens")
 
 
-def _ev(event: str, request_id: str, data: dict[str, JsonValue]) -> AgentEvent:
+def _ev(event: ExternalEvent, request_id: str, data: EventData) -> AgentEvent:
     return AgentEvent.model_validate({"event": event, "request_id": request_id, "data": data})
+
+
+def run_started_event(request_id: str) -> AgentEvent:
+    data: StartedStatus = {"status": "started"}
+    return _ev("agent_status", request_id, data)
+
+
+def run_done_event(usage: dict[str, JsonValue], *, request_id: str) -> AgentEvent:
+    data: DoneData = {"status": "completed", "usage": usage}
+    return _ev("agent_done", request_id, data)
+
+
+def run_error_event(error: BaseException, *, request_id: str) -> AgentEvent:
+    data: ErrorData = {"error_kind": type(error).__name__, "message": str(error)}
+    return _ev("agent_error", request_id, data)
 
 
 def _wash(value: object) -> JsonValue | None:
@@ -76,74 +105,62 @@ def usage_delta(message: AIMessage | None) -> dict[str, int]:
 
 
 def todo_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
-    return _ev(
-        "agent_status",
-        request_id,
-        {"status": "todo_updated", "segment_id": tc.tool_call_id, "todos": _todos(tc.input)},
-    )
+    data: TodoUpdatedStatus = {
+        "status": "todo_updated",
+        "segment_id": tc.tool_call_id,
+        "todos": _todos(tc.input),
+    }
+    return _ev("agent_status", request_id, data)
 
 
 def tool_start_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
-    return _ev(
-        "tool_call_start",
-        request_id,
-        {
-            "segment_id": tc.tool_call_id,
-            "tool_id": tc.tool_call_id,
-            "name": tc.tool_name,
-            "args": _scalar_args(tc.input),
-        },
-    )
+    data: ToolStartData = {
+        "segment_id": tc.tool_call_id,
+        "tool_id": tc.tool_call_id,
+        "name": tc.tool_name,
+        "args": wash_args(tc.input),
+    }
+    return _ev("tool_call_start", request_id, data)
 
 
 def tool_end_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
-    is_error = tc.error is not None
-    return _ev(
-        "tool_call_end",
-        request_id,
-        {
-            "segment_id": tc.tool_call_id,
-            "tool_id": tc.tool_call_id,
-            "name": tc.tool_name,
-            "result": _truncate(_result_text(tc)),
-            "is_error": is_error,
-            # HITL reject 语义后续接入；自然返回恒 False。
-            "rejected": False,
-        },
-    )
+    data: ToolEndData = {
+        "segment_id": tc.tool_call_id,
+        "tool_id": tc.tool_call_id,
+        "name": tc.tool_name,
+        "result": _truncate(_result_text(tc)),
+        "is_error": tc.error is not None,
+        # HITL reject 语义后续接入；自然返回恒 False。
+        "rejected": False,
+    }
+    return _ev("tool_call_end", request_id, data)
 
 
 def subagent_started_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent:
     name = sub.name or "subagent"
-    return _ev(
-        "agent_status",
-        request_id,
-        {
-            "status": "subagent_started",
-            "segment_id": sub.trigger_call_id or "",
-            "subagent_id": sub.trigger_call_id or "",
-            "name": name,
-            "description": sub.task_input or "",
-            "subagent_type": name,
-            "source": _source_for(name),
-        },
-    )
+    data: SubagentStartedStatus = {
+        "status": "subagent_started",
+        "segment_id": sub.trigger_call_id or "",
+        "subagent_id": sub.trigger_call_id or "",
+        "name": name,
+        "description": sub.task_input or "",
+        "subagent_type": name,
+        "source": _source_for(name),
+    }
+    return _ev("agent_status", request_id, data)
 
 
 def subagent_finished_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent:
     name = sub.name or "subagent"
-    return _ev(
-        "agent_status",
-        request_id,
-        {
-            "status": "subagent_finished",
-            "segment_id": sub.trigger_call_id or "",
-            "subagent_id": sub.trigger_call_id or "",
-            "name": name,
-            "subagent_type": name,
-            "source": _source_for(name),
-        },
-    )
+    data: SubagentFinishedStatus = {
+        "status": "subagent_finished",
+        "segment_id": sub.trigger_call_id or "",
+        "subagent_id": sub.trigger_call_id or "",
+        "name": name,
+        "subagent_type": name,
+        "source": _source_for(name),
+    }
+    return _ev("agent_status", request_id, data)
 
 
 def custom_event(payload: object, *, request_id: str) -> AgentEvent | None:
@@ -151,13 +168,25 @@ def custom_event(payload: object, *, request_id: str) -> AgentEvent | None:
     washed = _wash(payload)
     if washed is None:
         return None
-    return _ev("agent_status", request_id, {"status": "custom", "custom": washed})
+    data: CustomStatus = {"status": "custom", "custom": washed}
+    return _ev("agent_status", request_id, data)
+
+
+def wash_args(tool_input: Mapping[str, object] | None) -> dict[str, JsonValue]:
+    # 整体 JSON wash：保留嵌套对象/数组/null，仅丢 bytes 等非 JSON 值（对外 args 边界）。
+    args: dict[str, JsonValue] = {}
+    for key, value in (tool_input or {}).items():
+        try:
+            args[key] = _JSON.validate_python(value)
+        except ValidationError:
+            continue
+    return args
 
 
 def _text_data(
     segment_id: str, content: list[JsonValue], subagent_id: str | None, *, final: bool
-) -> dict[str, JsonValue]:
-    data: dict[str, JsonValue] = {"segment_id": segment_id, "content": content, "final": final}
+) -> TextChunkData:
+    data: TextChunkData = {"segment_id": segment_id, "content": content, "final": final}
     if subagent_id is not None:
         data["subagent_id"] = subagent_id
     return data
@@ -169,15 +198,6 @@ def _source_for(name: str) -> SubagentSource:
         return subagent_source_for(name)
     except ValueError:
         return "runtime-custom"
-
-
-def _scalar_args(tool_input: Mapping[str, object] | None) -> dict[str, JsonValue]:
-    # 仅 JSON 原生标量进入 args，复杂值在边界丢弃。
-    args: dict[str, JsonValue] = {}
-    for key, value in (tool_input or {}).items():
-        if value is None or isinstance(value, (str, int, float, bool)):
-            args[key] = value
-    return args
 
 
 def _todos(tool_input: Mapping[str, object] | None) -> list[JsonValue]:

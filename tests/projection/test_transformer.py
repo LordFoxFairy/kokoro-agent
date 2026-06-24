@@ -8,6 +8,9 @@ from kokoro_agent.application.projection.transformer import (
     TOOL_RESULT_MAX_CHARS,
     custom_event,
     final_text_event,
+    run_done_event,
+    run_error_event,
+    run_started_event,
     stream_text_event,
     subagent_finished_event,
     subagent_started_event,
@@ -15,6 +18,7 @@ from kokoro_agent.application.projection.transformer import (
     tool_end_event,
     tool_start_event,
     usage_delta,
+    wash_args,
 )
 
 KORO = "kokoro-run"
@@ -198,3 +202,46 @@ def test_custom_event_passthrough() -> None:
 
 def test_custom_event_skips_dirty_payload() -> None:
     assert custom_event({"blob": b"raw"}, request_id=KORO) is None
+
+
+def test_tool_start_preserves_nested_args() -> None:
+    # wash_args 整体 JSON wash：嵌套对象/数组/null 全透传（旧 _scalar_args 会静默丢弃）。
+    tc = _FakeTool("c-1", "query", {"filters": {"k": "v"}, "ids": [1, 2], "n": None})
+    ev = tool_start_event(tc, request_id=KORO)
+    assert ev.data["args"] == {"filters": {"k": "v"}, "ids": [1, 2], "n": None}
+
+
+def test_tool_start_drops_non_json_args() -> None:
+    tc = _FakeTool("c-2", "query", {"blob": b"raw", "ok": "y"})
+    ev = tool_start_event(tc, request_id=KORO)
+    assert ev.data["args"] == {"ok": "y"}
+
+
+def test_run_started_event() -> None:
+    ev = run_started_event(KORO)
+    assert ev.event == "agent_status"
+    assert ev.request_id == KORO
+    assert ev.data == {"status": "started"}
+
+
+def test_run_done_event() -> None:
+    ev = run_done_event({"input_tokens": 3, "output_tokens": 5}, request_id=KORO)
+    assert ev.event == "agent_done"
+    assert ev.data == {"status": "completed", "usage": {"input_tokens": 3, "output_tokens": 5}}
+
+
+def test_run_error_event() -> None:
+    ev = run_error_event(ValueError("boom"), request_id=KORO)
+    assert ev.event == "agent_error"
+    assert ev.data == {"error_kind": "ValueError", "message": "boom"}
+
+
+def test_wash_args_none_and_empty() -> None:
+    assert wash_args(None) == {}
+    assert wash_args({}) == {}
+
+
+def test_wash_args_drops_nested_carrying_non_json() -> None:
+    # 顶层非 JSON 丢弃；含 bytes 的嵌套结构整体非 JSON → 整键丢弃；纯 JSON 邻键保留。
+    out = wash_args({"good": {"k": "v"}, "blob": b"x", "dirty": {"b": b"y"}, "arr": [1, b"z", 3]})
+    assert out == {"good": {"k": "v"}}

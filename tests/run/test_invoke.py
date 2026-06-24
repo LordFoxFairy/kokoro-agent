@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Interrupt
 from pydantic import JsonValue
@@ -95,12 +98,38 @@ class _State:
     interrupts: tuple[Interrupt, ...] = ()
 
 
+class _UsageFake(BaseChatModel):
+    # 吐 usage_metadata + model_name 的真 model：被调用时触发 on_llm_end，供 usage callback 聚合。
+    tokens: tuple[int, int, int] = (0, 0, 0)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        i, o, t = self.tokens
+        msg = AIMessage(
+            content="u",
+            usage_metadata={"input_tokens": i, "output_tokens": o, "total_tokens": t},
+            response_metadata={"model_name": "fake-model"},
+        )
+        return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    @property
+    def _llm_type(self) -> str:
+        return "usage-fake"
+
+
 @dataclass
 class _FakeAgent:
     run: _RunStream = field(default_factory=_RunStream)
     state: _State = field(default_factory=_State)
     raise_on_stream: Exception | None = None
     seen_config: dict[str, object] = field(default_factory=lambda: {})
+    # 每元素触发一次吐 usage 的 model 调用（在 invoke_once 的 usage callback 上下文内）。
+    model_usages: Sequence[tuple[int, int, int]] = ()
 
     async def astream_events(
         self,
@@ -113,6 +142,8 @@ class _FakeAgent:
         self.seen_config.update(config)
         if self.raise_on_stream is not None:
             raise self.raise_on_stream
+        for tokens in self.model_usages:
+            await _UsageFake(tokens=tokens).ainvoke("x")
         return self.run
 
     async def aget_state(self, config: RunnableConfig) -> _State:
@@ -179,19 +210,16 @@ async def test_text_and_reasoning_channels() -> None:
 
 @pytest.mark.asyncio
 async def test_usage_aggregated_into_done() -> None:
-    model = _Model(
-        text_deltas=("x",),
-        output_message=AIMessage(
-            content="x",
-            id="seg",
-            usage_metadata={"input_tokens": 3, "output_tokens": 5, "total_tokens": 8},
-        ),
-    )
+    # 两次 model 调用(主 + 模拟子代理)经 usage callback 跨调用聚合，扁平 total 进 agent_done。
     bus = _FakeBus()
-    await invoke_once(bus, _FakeAgent(run=_RunStream(models=(model,))), "r1", "c1", {"messages": []})
+    agent = _FakeAgent(
+        run=_RunStream(models=(_text_model("x"),)),
+        model_usages=((3, 5, 8), (1, 2, 3)),
+    )
+    await invoke_once(bus, agent, "r1", "c1", {"messages": []})
     assert _data(bus.published[-1][1]) == {
         "status": "completed",
-        "usage": {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8},
+        "usage": {"input_tokens": 4, "output_tokens": 7, "total_tokens": 11},
     }
 
 

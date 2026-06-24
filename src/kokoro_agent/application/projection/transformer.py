@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.agent import SubagentInfo, ToolCallInfo
@@ -29,8 +28,6 @@ from kokoro_agent.interfaces.envelope import (
 )
 
 SUBAGENT_LAUNCH_NAMES = frozenset({SUBAGENT_TOOL_NAME, RUNTIME_SUBAGENT_TOOL_NAME})
-
-_USAGE_KEYS = ("input_tokens", "output_tokens", "total_tokens")
 
 
 def _make_event(event: ExternalEvent, request_id: str, data: EventData) -> AgentEvent:
@@ -84,14 +81,6 @@ def _chunk_event(
     if subagent_id is not None:
         data["subagent_id"] = subagent_id
     return _make_event(event, request_id, data)
-
-
-def usage_delta(message: AIMessage | None) -> dict[str, int]:
-    # 守则C：从模型流终态消息抽 token 增量，供 invoke 聚合进 agent_done。
-    usage = message.usage_metadata if message is not None else None
-    if usage is None:
-        return {}
-    return {key: value for key in _USAGE_KEYS if isinstance(value := usage.get(key), int)}
 
 
 def todo_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:

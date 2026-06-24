@@ -7,7 +7,8 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
-from langchain_core.messages import BaseMessage
+from langchain_core.callbacks import get_usage_metadata_callback
+from langchain_core.messages import BaseMessage, UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 from langgraph.types import Interrupt
@@ -27,7 +28,6 @@ from kokoro_agent.application.projection.transformer import (
     todo_event,
     tool_end_event,
     tool_start_event,
-    usage_delta,
 )
 from kokoro_agent.application.protocols.agent import (
     AgentRunStream,
@@ -71,51 +71,64 @@ async def invoke_once(
     """
     stream = events_stream(run_id)
     config = _config(conversation_id, trace)
-    # usage 按本次 invoke 段计量：HITL resume 是独立段，跨暂停累计待持久化后续接。
-    usage_total: dict[str, JsonValue] = {}
     await _publish(bus, stream, run_started_event(run_id))
-    try:
-        run = await agent.astream_events(
-            payload, version="v3", config=config, transformers=[CustomTransformer]
-        )
-        queue: _EventQueue = asyncio.Queue()
-        async with run:
-            drainer = asyncio.create_task(_drain(bus, stream, queue))
-            await _consume_run(run, run_id, queue, usage_total, subagent_id=None)
-            await queue.put(None)
-            await drainer
-            if await run.interrupted():
-                snapshot = await agent.aget_state(config)
-                for ev in awaiting_approval_events(
-                    _messages(snapshot.values),
-                    _action_requests(snapshot.interrupts),
-                    interrupt_on_names,
-                    request_id=run_id,
-                ):
-                    await _publish(bus, stream, ev)
-                return False
-        if await claim_terminal():
-            await _publish(bus, stream, run_done_event(usage_total, request_id=run_id))
-        return True
-    except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
-        if await claim_terminal():
-            await _publish(bus, stream, run_error_event(error, request_id=run_id))
-        return True
+    # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token，与事件投影解耦；
+    # 每次 invoke_once 独立计量本段（HITL resume 是新一段）。
+    with get_usage_metadata_callback() as usage_cb:
+        try:
+            run = await agent.astream_events(
+                payload, version="v3", config=config, transformers=[CustomTransformer]
+            )
+            queue: _EventQueue = asyncio.Queue()
+            async with run:
+                drainer = asyncio.create_task(_drain(bus, stream, queue))
+                await _consume_run(run, run_id, queue, subagent_id=None)
+                await queue.put(None)
+                await drainer
+                if await run.interrupted():
+                    snapshot = await agent.aget_state(config)
+                    for ev in awaiting_approval_events(
+                        _messages(snapshot.values),
+                        _action_requests(snapshot.interrupts),
+                        interrupt_on_names,
+                        request_id=run_id,
+                    ):
+                        await _publish(bus, stream, ev)
+                    return False
+            if await claim_terminal():
+                usage = _sum_usage(usage_cb.usage_metadata)
+                await _publish(bus, stream, run_done_event(usage, request_id=run_id))
+            return True
+        except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
+            if await claim_terminal():
+                await _publish(bus, stream, run_error_event(error, request_id=run_id))
+            return True
+
+
+def _sum_usage(per_model: Mapping[str, UsageMetadata]) -> dict[str, JsonValue]:
+    # 原生 callback 按 model_name 分组；wire 用扁平 total，故跨 model 累加三键。
+    total: dict[str, JsonValue] = {}
+    for usage in per_model.values():
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int):
+                prev = total.get(key, 0)
+                total[key] = (prev if isinstance(prev, int) else 0) + value
+    return total
 
 
 async def _consume_run(
     run: AgentRunStream | SubagentRunStream,
     request_id: str,
     queue: _EventQueue,
-    usage_total: dict[str, JsonValue],
     *,
     subagent_id: str | None,
 ) -> None:
     # 四投影并发消费，共享 single-flight pump 推进全图；各投影把 AgentEvent 推 queue 由 drainer 保序发。
     await asyncio.gather(
-        _consume_messages(run.messages, request_id, queue, usage_total, subagent_id),
+        _consume_messages(run.messages, request_id, queue, subagent_id),
         _consume_tools(run.tool_calls, request_id, queue),
-        _consume_subagents(run.subagents, request_id, queue, usage_total),
+        _consume_subagents(run.subagents, request_id, queue),
         _consume_custom(run.custom, request_id, queue),
     )
 
@@ -124,7 +137,6 @@ async def _consume_messages(
     messages: AsyncIterable[ModelStream],
     request_id: str,
     queue: _EventQueue,
-    usage_total: dict[str, JsonValue],
     subagent_id: str | None,
 ) -> None:
     async for model in messages:
@@ -143,9 +155,6 @@ async def _consume_messages(
             ev = builder(full, segment_id=seg, request_id=request_id, subagent_id=subagent_id, final=True)
             if ev is not None:
                 await queue.put(ev)
-        for key, delta in usage_delta(final).items():
-            prev = usage_total.get(key, 0)
-            usage_total[key] = (prev if isinstance(prev, int) else 0) + delta
 
 
 async def _pump(
@@ -187,11 +196,10 @@ async def _consume_subagents(
     subagents: AsyncIterable[SubagentRunStream],
     request_id: str,
     queue: _EventQueue,
-    usage_total: dict[str, JsonValue],
 ) -> None:
     async for sub in subagents:
         await queue.put(subagent_started_event(sub, request_id=request_id))
-        await _consume_run(sub, request_id, queue, usage_total, subagent_id=sub.trigger_call_id)
+        await _consume_run(sub, request_id, queue, subagent_id=sub.trigger_call_id)
         await queue.put(subagent_finished_event(sub, request_id=request_id))
 
 

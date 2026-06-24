@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from langchain_core.messages import AIMessage
-
 from kokoro_agent.application.projection.transformer import (
     custom_event,
     reasoning_chunk_event,
@@ -16,7 +14,6 @@ from kokoro_agent.application.projection.transformer import (
     todo_event,
     tool_end_event,
     tool_start_event,
-    usage_delta,
 )
 
 KORO = "kokoro-run"
@@ -63,18 +60,6 @@ def test_reasoning_chunk_event() -> None:
     assert ev is not None
     assert ev.event == "reasoning_chunk"
     assert ev.data == {"segment_id": "s", "text": "think", "final": False}
-
-
-def test_usage_delta_from_message() -> None:
-    msg = AIMessage(
-        content="x", usage_metadata={"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
-    )
-    assert usage_delta(msg) == {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
-
-
-def test_usage_delta_empty_without_metadata() -> None:
-    assert usage_delta(AIMessage(content="x")) == {}
-    assert usage_delta(None) == {}
 
 
 def test_todo_event() -> None:

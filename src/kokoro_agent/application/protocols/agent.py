@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterable, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from langchain_core.messages import AIMessage
@@ -13,14 +13,19 @@ from langgraph.types import Interrupt
 
 @runtime_checkable
 class ModelStream(Protocol):
-    """单次模型调用的 v3 流（AsyncChatModelStream）：迭代得分块 dict，属性给终态与归属。"""
+    """单次模型调用的 v3 流（AsyncChatModelStream）：原生 .text/.reasoning projection 取文本/推理与归属。"""
 
     namespace: list[str]
     node: str | None
 
     @property
+    def message_id(self) -> str | None: ...
+    @property
+    def text(self) -> AsyncIterable[str]: ...
+    @property
+    def reasoning(self) -> AsyncIterable[str]: ...
+    @property
     def output_message(self) -> AIMessage | None: ...
-    def __aiter__(self) -> "AsyncIterator[Mapping[str, object]]": ...
 
 
 @runtime_checkable

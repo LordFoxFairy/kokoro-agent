@@ -23,7 +23,7 @@ from kokoro_agent.application.run.supervisor import RunSupervisor
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
-# 与 approval_policy.yaml 的 requires_approval_tools 同名：确保 supervisor 计算的
+# 与 AppConfig.approval 默认 requires_approval_tools 同名：确保 supervisor 计算的
 # interrupt_on_names 真命中本工具，端到端验证同源对齐而非旁路。
 _TOOL_NAME = "fetch_url"
 _TOOL_ID = "call-A"
@@ -237,17 +237,10 @@ def _data(event: dict[str, JsonValue]) -> Mapping[str, JsonValue]:
 async def _run_until_awaiting(sup: RunSupervisor, bus: _FakeBus, run_id: str) -> None:
     await sup.dispatch(bus, _request(run_id))
     await _drain(sup)
-    awaiting = [
-        e
-        for e in _events_of(bus, run_id, "agent_status")
-        if _data(e).get("status") == "awaiting_approval"
-    ]
+    # 逐工具顶层 tool_call_awaiting（不再是 agent_status{awaiting_approval} 打包 pending 数组）。
+    awaiting = _events_of(bus, run_id, "tool_call_awaiting")
     assert len(awaiting) == 1
-    pending: object = _data(awaiting[0]).get("pending")
-    assert _is_list(pending) and len(pending) == 1
-    first = pending[0]
-    assert _is_mapping(first)
-    assert first.get("tool_id") == _TOOL_ID
+    assert _data(awaiting[0]).get("tool_id") == _TOOL_ID
     assert "agent_done" not in [e.get("event") for _, e in bus.published]
 
 

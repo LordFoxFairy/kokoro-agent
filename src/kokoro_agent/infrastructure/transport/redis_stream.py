@@ -14,54 +14,49 @@ from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, valid
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
 
+# redis-py 无类型存根，xread/xrange 返回 object；逐层收窄到下列别名。
 _Fields: TypeAlias = dict[bytes | str, bytes | str] | None
 _Entry: TypeAlias = tuple[bytes | str | None, _Fields]
 _ReadResponse: TypeAlias = list[tuple[bytes | str | None, list[_Entry]]]
-# redis-py 无类型存根，保留松散 object 边界逐层收窄
-_ObjectDict: TypeAlias = dict[object, object]
-_ObjectList: TypeAlias = list[object]
-_ObjectTuple: TypeAlias = tuple[object, ...]
+_StrLike: TypeAlias = bytes | str
 
 
-def _is_object_dict(value: object) -> TypeGuard[_ObjectDict]:
+def _is_seq(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
+    # TypeGuard 把 redis-py 的 Unknown 容器收窄成 object 元素，纯 isinstance 无法做到。
+    return isinstance(value, (list, tuple))
+
+
+def _is_obj_dict(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
 
 
-def _is_object_list(value: object) -> TypeGuard[_ObjectList]:
-    return isinstance(value, list)
+def _decode(value: _StrLike) -> str:
+    return value.decode() if isinstance(value, bytes) else value
 
 
-def _is_object_tuple(value: object) -> TypeGuard[_ObjectTuple]:
-    return isinstance(value, tuple)
-
-
-def _decode(value: bytes | str | None) -> str:
-    return value.decode() if isinstance(value, bytes) else str(value)
-
-
-def _pair_parts(value: object) -> tuple[object, object] | None:
-    if _is_object_list(value):
-        if len(value) != 2:
-            return None
-        return value[0], value[1]
-    if _is_object_tuple(value):
-        if len(value) != 2:
-            return None
-        return value[0], value[1]
-    return None
+def _decode_cursor(value: _StrLike | None) -> str:
+    # entry_id 是 redis 流游标，绝不能落成字面 'None'；缺失即数据破坏，显性抛错。
+    if value is None:
+        raise ValueError("redis stream entry id must not be None")
+    return _decode(value)
 
 
 def _expect_pair(value: object, error: str) -> tuple[object, object]:
-    pair = _pair_parts(value)
-    if pair is None:
-        raise ValueError(error)
-    return pair
+    if _is_seq(value) and len(value) == 2:
+        return value[0], value[1]
+    raise ValueError(error)
+
+
+def _strlike_or_none(value: object, error: str) -> _StrLike | None:
+    if value is None or isinstance(value, (bytes, str)):
+        return value
+    raise ValueError(error)
 
 
 def _parse_fields(value: object) -> _Fields:
     if value is None:
         return None
-    if not _is_object_dict(value):
+    if not _is_obj_dict(value):
         raise ValueError("xread fields must be a dict or None")
     parsed: dict[bytes | str, bytes | str] = {}
     for key, item in value.items():
@@ -72,34 +67,36 @@ def _parse_fields(value: object) -> _Fields:
 
 
 def _parse_entries(value: object) -> list[_Entry]:
-    if not _is_object_list(value):
+    if not _is_seq(value):
         raise ValueError("xread entries must be a list")
     parsed: list[_Entry] = []
     for entry in value:
-        entry_id_obj, fields_obj = _expect_pair(entry, "xread item must be an (id, fields) pair")
-        if entry_id_obj is not None and not isinstance(entry_id_obj, (bytes, str)):
-            raise ValueError("xread id must be bytes, str, or None")
-        entry_id: bytes | str | None = entry_id_obj
-        parsed.append((entry_id, _parse_fields(fields_obj)))
+        entry_id, fields = _expect_pair(entry, "xread item must be an (id, fields) pair")
+        parsed.append(
+            (
+                _strlike_or_none(entry_id, "xread id must be bytes, str, or None"),
+                _parse_fields(fields),
+            )
+        )
     return parsed
 
 
 def parse_xread_response(raw: object) -> _ReadResponse | None:
     if raw is None:
         return None
-
-    if not _is_object_list(raw):
+    if not _is_seq(raw):
         raise ValueError("xread response must be a list")
-
     parsed: _ReadResponse = []
     for item in raw:
-        stream_name_obj, entries_obj = _expect_pair(
+        stream_name, entries = _expect_pair(
             item, "xread stream entry must be a (stream, entries) pair"
         )
-        if stream_name_obj is not None and not isinstance(stream_name_obj, (bytes, str)):
-            raise ValueError("xread stream name must be bytes, str, or None")
-        stream_name: bytes | str | None = stream_name_obj
-        parsed.append((stream_name, _parse_entries(entries_obj)))
+        parsed.append(
+            (
+                _strlike_or_none(stream_name, "xread stream name must be bytes, str, or None"),
+                _parse_entries(entries),
+            )
+        )
     return parsed
 
 
@@ -117,7 +114,7 @@ class RedisStream:
         raw = fields.get(_REDIS_FIELD) if fields is not None else None
         payload: object = json.loads(_decode(raw)) if raw is not None else {}
         event = clone_event(validate_event(payload))
-        return StreamItem(cursor=_decode(entry_id), event=event)
+        return StreamItem(cursor=_decode_cursor(entry_id), event=event)
 
     async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem:
         payload = clone_event(validate_event(dict(event)))
@@ -125,7 +122,7 @@ class RedisStream:
             stream,
             {_REDIS_FIELD: json.dumps(payload, ensure_ascii=False)},
         )
-        return StreamItem(cursor=_decode(entry_id), event=clone_event(payload))
+        return StreamItem(cursor=_decode_cursor(entry_id), event=clone_event(payload))
 
     async def read_all(self, stream: str) -> list[StreamItem]:
         entries = await self._redis.xrange(stream, min="-", max="+")

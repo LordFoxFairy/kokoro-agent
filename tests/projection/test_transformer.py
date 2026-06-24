@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from langchain_core.messages import AIMessage
-
 from kokoro_agent.application.projection.transformer import (
-    TOOL_RESULT_MAX_CHARS,
     custom_event,
-    final_text_event,
-    stream_text_event,
+    reasoning_chunk_event,
+    run_done_event,
+    run_error_event,
+    run_started_event,
     subagent_finished_event,
     subagent_started_event,
+    text_chunk_event,
     todo_event,
     tool_end_event,
     tool_start_event,
-    usage_delta,
 )
 
 KORO = "kokoro-run"
@@ -37,68 +36,30 @@ class _FakeSub:
     status: str = "completed"
 
 
-def _delta(text: str) -> dict[str, object]:
-    return {"event": "content-block-delta", "index": 0, "delta": {"type": "text-delta", "text": text}}
-
-
-def test_stream_text_event_passes_delta_through() -> None:
-    ev = stream_text_event(_delta("hi"), segment_id="seg-7", request_id=KORO, subagent_id=None)
+def test_text_chunk_event_delta() -> None:
+    ev = text_chunk_event("hi", segment_id="s", request_id=KORO, subagent_id=None, final=False)
     assert ev is not None
     assert ev.event == "text_chunk"
     assert ev.request_id == KORO
-    assert ev.data == {
-        "segment_id": "seg-7",
-        "content": [{"type": "text-delta", "text": "hi"}],
-        "final": False,
-    }
+    assert ev.data == {"segment_id": "s", "text": "hi", "final": False}
 
 
-def test_stream_text_event_tags_subagent() -> None:
-    ev = stream_text_event(_delta("x"), segment_id="seg-3", request_id=KORO, subagent_id="sub-9")
+def test_text_chunk_event_final_and_subagent() -> None:
+    ev = text_chunk_event("full", segment_id="s", request_id=KORO, subagent_id="sub-1", final=True)
     assert ev is not None
-    assert ev.data["subagent_id"] == "sub-9"
+    assert ev.data == {"segment_id": "s", "text": "full", "final": True, "subagent_id": "sub-1"}
 
 
-def test_stream_text_event_skips_non_delta_blocks() -> None:
-    assert stream_text_event(
-        {"event": "message-start", "id": "m1"}, segment_id="s", request_id=KORO, subagent_id=None
-    ) is None
+def test_text_chunk_event_empty_is_none() -> None:
+    # tool-only 段 output_message.text=""；空文本不发事件。
+    assert text_chunk_event("", segment_id="s", request_id=KORO, subagent_id=None, final=True) is None
 
 
-def test_stream_text_event_skips_tool_call_delta() -> None:
-    block = {"event": "content-block-delta", "delta": {"type": "tool_call_chunk", "args": "{}"}}
-    assert stream_text_event(block, segment_id="s", request_id=KORO, subagent_id=None) is None
-
-
-def test_final_text_event_from_content_blocks() -> None:
-    msg = AIMessage(content="final")
-    ev = final_text_event(msg, segment_id="seg-z", request_id=KORO, subagent_id=None)
+def test_reasoning_chunk_event() -> None:
+    ev = reasoning_chunk_event("think", segment_id="s", request_id=KORO, subagent_id=None, final=False)
     assert ev is not None
-    assert ev.data == {
-        "segment_id": "seg-z",
-        "content": [{"type": "text", "text": "final"}],
-        "final": True,
-    }
-
-
-def test_final_text_event_none_for_tool_only_message() -> None:
-    msg = AIMessage(
-        content="",
-        tool_calls=[{"name": "now", "args": {}, "id": "t1", "type": "tool_call"}],
-    )
-    assert final_text_event(msg, segment_id="s", request_id=KORO, subagent_id=None) is None
-
-
-def test_usage_delta_from_message() -> None:
-    msg = AIMessage(
-        content="x", usage_metadata={"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
-    )
-    assert usage_delta(msg) == {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
-
-
-def test_usage_delta_empty_without_metadata() -> None:
-    assert usage_delta(AIMessage(content="x")) == {}
-    assert usage_delta(None) == {}
+    assert ev.event == "reasoning_chunk"
+    assert ev.data == {"segment_id": "s", "text": "think", "final": False}
 
 
 def test_todo_event() -> None:
@@ -146,13 +107,11 @@ def test_tool_end_event_error() -> None:
     assert ev.data["rejected"] is False
 
 
-def test_tool_end_result_truncated() -> None:
-    huge = "x" * (TOOL_RESULT_MAX_CHARS + 100)
+def test_tool_end_result_not_truncated() -> None:
+    # 工具结果原样透传、绝不截断（不毁内容）。
+    huge = "x" * 20_000
     ev = tool_end_event(_FakeTool("t", "search", {}, output=huge), request_id=KORO)
-    result = ev.data["result"]
-    assert isinstance(result, str)
-    assert len(result) < len(huge)
-    assert result.startswith("x" * TOOL_RESULT_MAX_CHARS)
+    assert ev.data["result"] == huge
 
 
 def test_subagent_started_event_built_in() -> None:
@@ -196,5 +155,27 @@ def test_custom_event_passthrough() -> None:
     assert ev.data == {"status": "custom", "custom": {"kind": "billing", "amount": 7}}
 
 
-def test_custom_event_skips_dirty_payload() -> None:
-    assert custom_event({"blob": b"raw"}, request_id=KORO) is None
+def test_tool_start_preserves_args_verbatim() -> None:
+    # 模型入参原样透传：嵌套对象/数组/null 全保留，不做任何丢弃或转换。
+    tc = _FakeTool("c-1", "query", {"filters": {"k": "v"}, "ids": [1, 2], "n": None})
+    ev = tool_start_event(tc, request_id=KORO)
+    assert ev.data["args"] == {"filters": {"k": "v"}, "ids": [1, 2], "n": None}
+
+
+def test_run_started_event() -> None:
+    ev = run_started_event(KORO)
+    assert ev.event == "agent_status"
+    assert ev.request_id == KORO
+    assert ev.data == {"status": "started"}
+
+
+def test_run_done_event() -> None:
+    ev = run_done_event({"input_tokens": 3, "output_tokens": 5}, request_id=KORO)
+    assert ev.event == "agent_done"
+    assert ev.data == {"status": "completed", "usage": {"input_tokens": 3, "output_tokens": 5}}
+
+
+def test_run_error_event() -> None:
+    ev = run_error_event(ValueError("boom"), request_id=KORO)
+    assert ev.event == "agent_error"
+    assert ev.data == {"error_kind": "ValueError", "message": "boom"}

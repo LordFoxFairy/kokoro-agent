@@ -15,11 +15,12 @@ from langgraph.types import Command
 from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.agent import StateView
+from kokoro_agent.application.protocols.run_state import RunStateStore
 from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.interfaces.envelope import AgentEvent
 from kokoro_agent.infrastructure.observability import trace_config
 from kokoro_agent.infrastructure.permission import build_interrupt_on
-from kokoro_agent.application.run.admission import ProcessedRunIds
+from kokoro_agent.infrastructure.run_state import MemoryRunStateStore
 from kokoro_agent.application.run.invoke import InvokableAgent, events_stream, invoke_once
 from kokoro_agent.interfaces.inbound import (
     InboundMessage,
@@ -39,24 +40,21 @@ AgentBuilder = Callable[[RunRequest], InvokableAgent]
 
 
 class RunSupervisor:
-    """注入 agent_builder 构建 run 级 agent；进程内 map 关联 resume 到原 RunRequest。"""
+    """注入 agent_builder 构建 run 级 agent；RunStateStore 持久化去重 / 原 request / 终态认领。"""
 
     def __init__(
         self,
         agent_builder: AgentBuilder,
         checkpointer: BaseCheckpointSaver[str] | None = None,
+        store: RunStateStore | None = None,
         max_concurrent: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self._build = agent_builder
-        # R1 dev 占位：与 InMemorySaver 同 dev-only，真·无状态 wire 留 R-approval。
         self._checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
+        # 持久化 run 态：请求去重 / resume 重建用原 request / 终态原子认领（多 pod 共享靠它）。
+        self._store: RunStateStore = store if store is not None else MemoryRunStateStore()
         self._sem = asyncio.Semaphore(max_concurrent)
-        self._processed = ProcessedRunIds()
-        # run_id→原 RunRequest：resume 据此取 conversation_id + 重建 agent（R1 占位，内存增长见 report）。
-        self._runs: dict[str, RunRequest] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        # 已发终态的 run_id 集合：防止 cancel 在自然完成后重复补发 cancelled。
-        self._terminal: set[str] = set()
 
     @property
     def tasks(self) -> Mapping[str, asyncio.Task[None]]:
@@ -79,28 +77,28 @@ class RunSupervisor:
             await self._on_cancel(bus, msg)
 
     async def _on_request(self, bus: StreamProtocol, request: RunRequest) -> None:
-        if request.run_id in self._processed:
+        # 原子认领：多 pod 广播同一请求时仅首个认领者起 run，其余去重丢弃。
+        if not await self._store.try_register(request):
             LOGGER.debug("skipping already-processed run_id=%s", request.run_id)
             return
-        self._processed.add(request.run_id)
-        self._runs[request.run_id] = request
         payload = {"messages": [HumanMessage(content=request.input)]}
         self._spawn(bus, request, request.run_id, request.conversation_id, payload)
 
     async def _on_resume(self, bus: StreamProtocol, msg: RunResume) -> None:
         # 已终态权威闸：cancel/自然完成后 stale resume 即使 checkpoint 仍有 pending interrupt 也不续跑。
-        if msg.run_id in self._terminal:
+        if await self._store.is_terminal(msg.run_id):
             LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
             return
-        request = self._runs.get(msg.run_id)
+        request = await self._store.get_request(msg.run_id)
         if request is None:
             LOGGER.warning("dropping resume for unknown run_id=%s", msg.run_id)
             return
         try:
             agent = self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 agent_error
-            await self._emit_failed(bus, msg.run_id, error)
-            self._terminal.add(msg.run_id)
+            # claim-before-emit：认领成功才发终态，杜绝与并发 cancel 双终态。
+            if await self._store.try_mark_terminal(msg.run_id):
+                await self._emit_failed(bus, msg.run_id, error)
             return
         config: RunnableConfig = {"configurable": {"thread_id": request.conversation_id}}
         snapshot = await agent.aget_state(config)
@@ -116,8 +114,8 @@ class RunSupervisor:
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
-        # 已自然终态：invoke_once 返回 True 后记录，跳过补发避免双终态。
-        if msg.run_id in self._terminal:
+        # 原子认领终态：自然完成 / 重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
+        if not await self._store.try_mark_terminal(msg.run_id):
             return
         task = self._tasks.get(msg.run_id)
         if task is not None and not task.done():
@@ -126,8 +124,6 @@ class RunSupervisor:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         await self._emit_cancelled(bus, msg.run_id)
-        # cancelled 亦是终态：登记后挡住 stale resume / 重复 cancel 再发终态。
-        self._terminal.add(msg.run_id)
 
     def _spawn(
         self,
@@ -140,9 +136,8 @@ class RunSupervisor:
         try:
             agent = self._build(request)
         except Exception as error:  # noqa: BLE001 — model 解析等构建失败收口为 agent_error
-            # 构建失败即终态：登记 _terminal 挡住后续 cancel/resume 补发第二个终态。
-            self._terminal.add(run_id)
-            self._tasks[run_id] = asyncio.create_task(self._emit_failed(bus, run_id, error))
+            # 构建失败即终态：认领后发 agent_error，挡住后续 cancel/resume 补发第二个终态。
+            self._tasks[run_id] = asyncio.create_task(self._fail_terminal(bus, run_id, error))
             self._tasks[run_id].add_done_callback(lambda _t: self._tasks.pop(run_id, None))
             return
         trace = trace_config(request)
@@ -177,7 +172,8 @@ class RunSupervisor:
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，故 resume 重新竞争额度。
         async with self._sem:
-            emitted = await invoke_once(
+            # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
+            await invoke_once(
                 bus,
                 agent,
                 run_id,
@@ -185,10 +181,13 @@ class RunSupervisor:
                 payload,
                 interrupt_on_names=interrupt_on_names,
                 trace=trace,
+                claim_terminal=lambda: self._store.try_mark_terminal(run_id),
             )
-        # asyncio 单线程：invoke_once return 与此行之间无 await，原子写入，无竞态窗口。
-        if emitted:
-            self._terminal.add(run_id)
+
+    async def _fail_terminal(self, bus: StreamProtocol, run_id: str, error: Exception) -> None:
+        # 认领成功才发 agent_error，确保与并发 cancel 互斥为单一终态。
+        if await self._store.try_mark_terminal(run_id):
+            await self._emit_failed(bus, run_id, error)
 
     async def _emit_cancelled(self, bus: StreamProtocol, run_id: str) -> None:
         # cancel 终态即 agent_done + status=cancelled（无独立 cancelled event 类型）。
@@ -213,12 +212,8 @@ def _interrupt_on_names(request: RunRequest) -> frozenset[str]:
 
 
 def _decision_dict(decision: ResumeDecision) -> dict[str, JsonValue]:
-    out: dict[str, JsonValue] = {"type": decision.type}
-    if decision.type == "edit" and decision.edited_action is not None:
-        out["edited_action"] = decision.edited_action
-    if decision.type in ("reject", "respond") and decision.message is not None:
-        out["message"] = decision.message
-    return out
+    # 各 arm 恰好携带其字段，model_dump 直接得 langgraph resume 所需 decision dict。
+    return decision.model_dump()
 
 
 def _has_pending_interrupt(snapshot: StateView) -> bool:

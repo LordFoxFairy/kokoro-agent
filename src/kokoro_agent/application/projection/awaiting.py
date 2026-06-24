@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
 from langchain_core.messages import AIMessage, BaseMessage
-from pydantic import JsonValue
 
-from kokoro_agent.interfaces.envelope import AgentEvent
+from kokoro_agent.interfaces.envelope import AgentEvent, ToolStartData
 
 
 def awaiting_approval_events(
@@ -34,29 +32,19 @@ def awaiting_approval_events(
         )
     if not pending:
         return []
-    items: list[JsonValue] = [
-        {
+    # 逐工具发顶层 tool_call_awaiting，与 tool_call_start/end 同层同 granularity（不再打包 pending 数组）。
+    events: list[AgentEvent] = []
+    for tool_call, request in zip(pending, action_requests, strict=True):
+        data: ToolStartData = {
+            "segment_id": segment_id,
             "tool_id": tool_call["id"] or "",
             "name": request["name"],
-            "args": _scalar_args(request["args"]),
+            # 模型审批入参原样透传；JSON 安全由信封单一边界校验。
+            "args": dict(request["args"]),
         }
-        for tool_call, request in zip(pending, action_requests, strict=True)
-    ]
-    return [
-        AgentEvent.model_validate(
-            {
-                "event": "agent_status",
-                "request_id": request_id,
-                "data": {"status": "awaiting_approval", "segment_id": segment_id, "pending": items},
-            }
+        events.append(
+            AgentEvent.model_validate(
+                {"event": "tool_call_awaiting", "request_id": request_id, "data": data}
+            )
         )
-    ]
-
-
-def _scalar_args(args: dict[str, Any]) -> dict[str, JsonValue]:
-    # 仅 JSON 原生标量进入 args，复杂值在 wire 边界丢弃（对齐 transformer._scalar_args）。
-    return {
-        key: value
-        for key, value in args.items()
-        if value is None or isinstance(value, (str, int, float, bool))
-    }
+    return events

@@ -1,13 +1,14 @@
-"""一次 graph invoke：v3 typed projections 递归消费→保序 publish，遇 interrupt 暂停否则终态收口。"""
+"""一次 graph invoke 的生命周期编排：started → 投影消费 → interrupt 暂停 / 终态收口。"""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
-from langchain_core.messages import BaseMessage
+from langchain_core.callbacks import get_usage_metadata_callback
+from langchain_core.messages import BaseMessage, UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 from langgraph.types import Interrupt
@@ -15,35 +16,25 @@ from pydantic import JsonValue
 
 from kokoro_agent.application.projection.awaiting import awaiting_approval_events
 from kokoro_agent.application.projection.transformer import (
-    SUBAGENT_LAUNCH_NAMES,
-    custom_event,
-    final_text_event,
-    stream_text_event,
-    subagent_finished_event,
-    subagent_started_event,
-    todo_event,
-    tool_end_event,
-    tool_start_event,
-    usage_delta,
+    run_done_event,
+    run_error_event,
+    run_started_event,
 )
-from kokoro_agent.application.protocols.agent import (
-    AgentRunStream,
-    InvokableAgent,
-    ModelStream,
-    SubagentRunStream,
-    ToolCallView,
-)
+from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.application.protocols.stream import StreamProtocol
-from kokoro_agent.infrastructure.constants import TODO_TOOL_NAME
+from kokoro_agent.application.run.consumer import EventQueue, consume_run, drain
 from kokoro_agent.interfaces.envelope import AgentEvent
 
 __all__ = ["InvokableAgent", "events_stream", "invoke_once"]
 
-_EventQueue = asyncio.Queue["AgentEvent | None"]
-
 
 def events_stream(run_id: str) -> str:
     return f"kokoro:run:{run_id}:events"
+
+
+async def _always_claim() -> bool:
+    # 默认认领：直接调 invoke_once（如测试）无共享存储时终态总归本次发。
+    return True
 
 
 async def invoke_once(
@@ -54,140 +45,59 @@ async def invoke_once(
     payload: object,
     interrupt_on_names: frozenset[str] = frozenset(),
     trace: RunnableConfig | None = None,
+    claim_terminal: Callable[[], Awaitable[bool]] = _always_claim,
 ) -> bool:
-    """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。"""
+    """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
+
+    终态发射前先经 claim_terminal 原子认领：cancel 与自然完成共用同一认领 key，
+    多 pod 广播下恰好一个终态落地（认领失败者静默跳过，不重复发终态）。
+    """
     stream = events_stream(run_id)
     config = _config(conversation_id, trace)
-    # usage 按本次 invoke 段计量：HITL resume 是独立段，跨暂停累计待持久化后续接。
-    usage_total: dict[str, JsonValue] = {}
-    await _emit(bus, stream, run_id, "agent_status", {"status": "started"})
-    try:
-        run = await agent.astream_events(
-            payload, version="v3", config=config, transformers=[CustomTransformer]
-        )
-        queue: _EventQueue = asyncio.Queue()
-        async with run:
-            drainer = asyncio.create_task(_drain(bus, stream, queue))
-            await _consume_run(run, run_id, queue, usage_total, subagent_id=None)
-            await queue.put(None)
-            await drainer
-            if await run.interrupted():
-                snapshot = await agent.aget_state(config)
-                for ev in awaiting_approval_events(
-                    _messages(snapshot.values),
-                    _action_requests(snapshot.interrupts),
-                    interrupt_on_names,
-                    request_id=run_id,
-                ):
-                    await bus.publish(stream, ev.model_dump())
-                return False
-        await _emit(bus, stream, run_id, "agent_done", {"status": "completed", "usage": usage_total})
-        return True
-    except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
-        await _emit(
-            bus, stream, run_id, "agent_error",
-            {"error_kind": type(error).__name__, "message": str(error)},
-        )
-        return True
-
-
-async def _consume_run(
-    run: AgentRunStream | SubagentRunStream,
-    request_id: str,
-    queue: _EventQueue,
-    usage_total: dict[str, JsonValue],
-    *,
-    subagent_id: str | None,
-) -> None:
-    # 四投影并发消费，共享 single-flight pump 推进全图；各投影把 AgentEvent 推 queue 由 drainer 保序发。
-    await asyncio.gather(
-        _consume_messages(run.messages, request_id, queue, usage_total, subagent_id),
-        _consume_tools(run.tool_calls, request_id, queue),
-        _consume_subagents(run.subagents, request_id, queue, usage_total),
-        _consume_custom(run.custom, request_id, queue),
-    )
-
-
-async def _consume_messages(
-    messages: AsyncIterable[ModelStream],
-    request_id: str,
-    queue: _EventQueue,
-    usage_total: dict[str, JsonValue],
-    subagent_id: str | None,
-) -> None:
-    async for model in messages:
-        segment_id = ""
-        async for block in model:
-            ident = block.get("id")
-            if block.get("event") == "message-start" and isinstance(ident, str):
-                segment_id = ident
-            ev = stream_text_event(
-                block, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id
+    await _publish(bus, stream, run_started_event(run_id))
+    # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token，与事件投影解耦；
+    # 每次 invoke_once 独立计量本段（HITL resume 是新一段）。
+    with get_usage_metadata_callback() as usage_cb:
+        try:
+            run = await agent.astream_events(
+                payload, version="v3", config=config, transformers=[CustomTransformer]
             )
-            if ev is not None:
-                await queue.put(ev)
-        final = model.output_message
-        if final is not None and final.id is not None:
-            segment_id = final.id
-        final_ev = final_text_event(
-            final, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id
-        )
-        if final_ev is not None:
-            await queue.put(final_ev)
-        for key, delta in usage_delta(final).items():
-            prev = usage_total.get(key, 0)
-            usage_total[key] = (prev if isinstance(prev, int) else 0) + delta
+            queue: EventQueue = asyncio.Queue()
+            async with run:
+                drainer = asyncio.create_task(drain(bus, stream, queue))
+                await consume_run(run, run_id, queue, subagent_id=None)
+                await queue.put(None)
+                await drainer
+                if await run.interrupted():
+                    snapshot = await agent.aget_state(config)
+                    for ev in awaiting_approval_events(
+                        _messages(snapshot.values),
+                        _action_requests(snapshot.interrupts),
+                        interrupt_on_names,
+                        request_id=run_id,
+                    ):
+                        await _publish(bus, stream, ev)
+                    return False
+            if await claim_terminal():
+                usage = _sum_usage(usage_cb.usage_metadata)
+                await _publish(bus, stream, run_done_event(usage, request_id=run_id))
+            return True
+        except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
+            if await claim_terminal():
+                await _publish(bus, stream, run_error_event(error, request_id=run_id))
+            return True
 
 
-async def _consume_tools(
-    tool_calls: AsyncIterable[ToolCallView], request_id: str, queue: _EventQueue
-) -> None:
-    async for tc in tool_calls:
-        if tc.tool_name in SUBAGENT_LAUNCH_NAMES:
-            # 子代理启动工具由 run.subagents 投影处理，避免与 tool_call_* 双发。
-            await _drain_aiter(tc.output_deltas)
-            continue
-        if tc.tool_name == TODO_TOOL_NAME:
-            await queue.put(todo_event(tc, request_id=request_id))
-            await _drain_aiter(tc.output_deltas)
-            continue
-        await queue.put(tool_start_event(tc, request_id=request_id))
-        await _drain_aiter(tc.output_deltas)
-        await queue.put(tool_end_event(tc, request_id=request_id))
-
-
-async def _consume_subagents(
-    subagents: AsyncIterable[SubagentRunStream],
-    request_id: str,
-    queue: _EventQueue,
-    usage_total: dict[str, JsonValue],
-) -> None:
-    async for sub in subagents:
-        await queue.put(subagent_started_event(sub, request_id=request_id))
-        await _consume_run(sub, request_id, queue, usage_total, subagent_id=sub.trigger_call_id)
-        await queue.put(subagent_finished_event(sub, request_id=request_id))
-
-
-async def _consume_custom(
-    custom: AsyncIterable[object], request_id: str, queue: _EventQueue
-) -> None:
-    async for payload in custom:
-        ev = custom_event(payload, request_id=request_id)
-        if ev is not None:
-            await queue.put(ev)
-
-
-async def _drain(bus: StreamProtocol, stream: str, queue: _EventQueue) -> None:
-    while True:
-        ev = await queue.get()
-        if ev is None:
-            return
-        await bus.publish(stream, ev.model_dump())
-
-
-async def _drain_aiter(source: AsyncIterable[object]) -> None:
-    async for _ in source:
-        pass
+def _sum_usage(per_model: Mapping[str, UsageMetadata]) -> dict[str, JsonValue]:
+    # 原生 callback 按 model_name 分组；wire 用扁平 total，故跨 model 累加三键。
+    total: dict[str, JsonValue] = {}
+    for usage in per_model.values():
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int):
+                prev = total.get(key, 0)
+                total[key] = (prev if isinstance(prev, int) else 0) + value
+    return total
 
 
 def _config(conversation_id: str, trace: RunnableConfig | None) -> RunnableConfig:
@@ -202,11 +112,8 @@ def _config(conversation_id: str, trace: RunnableConfig | None) -> RunnableConfi
     return config
 
 
-async def _emit(
-    bus: StreamProtocol, stream: str, run_id: str, event: str, data: dict[str, JsonValue]
-) -> None:
-    envelope = AgentEvent.model_validate({"event": event, "request_id": run_id, "data": data})
-    await bus.publish(stream, envelope.model_dump())
+async def _publish(bus: StreamProtocol, stream: str, ev: AgentEvent) -> None:
+    await bus.publish(stream, ev.model_dump())
 
 
 def _action_requests(interrupts: tuple[Interrupt, ...]) -> list[ActionRequest]:

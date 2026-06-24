@@ -62,3 +62,19 @@
 - v3 ToolCallStream.tool_call_id = canonical AIMessage tool id（顺手解决 deferred 的 tool_id 关联 bug）。
 - 子代理递归：run.subagents→AsyncSubagentRunStream（.trigger_call_id=子代理id, .name, .task_input, .messages/.tool_calls/.subagents 递归）。
 - text_chunk 流式 delta type=text-delta，final type=text（web reducer 累积后 final 覆盖）。
+
+---
+
+## R-typed-payload（2026-06-24，方案 B TypedDict，wire 字节不变，agent-only）
+
+**Goal**：把 `data: dict[str,JsonValue]` 松散载荷在**构造点**收成 per-event TypedDict（CLAUDE.md §6：TypedDict 表字典结构 + Pydantic 守外边界）。AgentEvent 仍是 strict/forbid 外边界。零运行时新路径、wire 序列化字节不变。要求 100% 完美 + ≥3 轮交互评审。
+
+**纪律**：行为保持重构。现有 test_transformer 的全 `.data` 字典断言即 golden 安全网——重构后断言不改还绿 = wire 不变铁证。
+
+- [x] 1. `interfaces/envelope.py`：11 个 payload TypedDict + `EventData` union；`subagent_id` 用 `NotRequired`。**评审后 source 由 str 收窄为 `SubagentSource` Literal**（3 值闭合枚举，wire 不变，interfaces→domain 合法导入）。
+- [x] 2. `projection/transformer.py`：每 builder 局部强标注；`_ev` 形参 `EventData`。新增 `run_started_event/run_done_event/run_error_event`（内联事件 dict 收进投影层）。
+- [x] 3. `_scalar_args→wash_args`（公开、整体 JSON wash 保留嵌套/null，仅丢非 JSON）；awaiting 复用（删重复）。**唯一意向行为变更**：嵌套工具 args 静默丢弃→透传。自决保留（见下，args 是模型入参非大/敏感通道，结果走 tool_end 已有 _truncate）。
+- [x] 4. `run/invoke.py`：删内联事件 dict + `model_validate`，改调三 builder；`_emit`→薄 `_publish`；**interrupt 路径也走 `_publish`**（一致性）。
+- [x] 5. 测试：现有 golden 断言保持（wire 不变铁证）；+nested-args 透传(transformer+awaiting)、run_started/done/error、wash_args None/空/嵌套含 bytes 边界。
+- [x] 6. 门禁：**mypy0 / pyright0 / 206 passed / ruff clean**。
+- [x] 7. 三轮交互评审完成：#1 设计选型(方案 B)；#2 workflow 5-lens×对抗验证(10 raw→0 缺陷, 3 自决打磨)；#3 对抗终审(wire 不变成立 + 补 3 测试网漏洞)。lessons L2(别甩判断题)。

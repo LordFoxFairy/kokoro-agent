@@ -10,9 +10,9 @@ from langchain_core.language_models import BaseChatModel
 
 from kokoro_agent.domain.run_request import ExecutionStyle
 from kokoro_agent.infrastructure.model.local_fake import make_local_fake_chat_model
-from kokoro_agent.infrastructure.model.settings import ChatModelSettings
+from kokoro_agent.infrastructure.model.settings import LOCAL_FAKE_MODEL_FLAG, ChatModelSettings
 
-LOCAL_FAKE_MODEL_FLAG = "KOKORO_LOCAL_FAKE_MODEL"
+__all__ = ["LOCAL_FAKE_MODEL_FLAG", "make_chat_model"]
 
 
 def _validate_execution_style(execution_style: str) -> ExecutionStyle:
@@ -40,7 +40,6 @@ def _build_openai_model(settings: ChatModelSettings, style: ExecutionStyle) -> B
         disable_streaming=settings.disable_streaming,
         reasoning_effort=reasoning_effort,
     )
-    assert isinstance(result, BaseChatModel)
     return result
 
 
@@ -64,7 +63,6 @@ def _build_anthropic_model(settings: ChatModelSettings, style: ExecutionStyle) -
             disable_streaming=settings.disable_streaming,
             effort=effort,
         )
-    assert isinstance(result, BaseChatModel)
     return result
 
 

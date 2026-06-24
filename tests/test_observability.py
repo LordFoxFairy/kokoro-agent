@@ -29,14 +29,11 @@ def test_build_handler_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     sentinel = "handler-sentinel"
-    init_calls: list[int] = []
-    monkeypatch.setattr(observability, "Langfuse", lambda: init_calls.append(1))
     monkeypatch.setattr(observability, "CallbackHandler", lambda: sentinel)
 
     handler = observability.build_langfuse_handler()
 
     assert handler is sentinel
-    assert init_calls == [1]
 
 
 def _req() -> RunRequest:

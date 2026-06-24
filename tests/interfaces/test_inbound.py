@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from kokoro_agent.domain.json_payload import JsonObject
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.interfaces.inbound import RunCancel, RunResume, parse_inbound
+from kokoro_agent.interfaces.inbound import (
+    EditDecision,
+    RejectDecision,
+    RespondDecision,
+    RunCancel,
+    RunResume,
+    parse_inbound,
+)
 
 
 def test_parse_run_request() -> None:
@@ -42,6 +49,7 @@ def test_parse_run_resume_edit() -> None:
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
+    assert isinstance(result.decision, EditDecision)
     assert result.decision.edited_action == {"name": "bash", "args": {"cmd": "ls"}}
 
 
@@ -53,6 +61,7 @@ def test_parse_run_resume_reject() -> None:
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
+    assert isinstance(result.decision, RejectDecision)
     assert result.decision.message == "nope"
 
 
@@ -148,6 +157,7 @@ def test_edit_with_edited_action_ok() -> None:
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
+    assert isinstance(result.decision, EditDecision)
     assert result.decision.edited_action == {"name": "bash", "args": {}}
 
 
@@ -160,6 +170,7 @@ def test_reject_with_message_ok() -> None:
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
+    assert isinstance(result.decision, RejectDecision)
     assert result.decision.message == "not approved"
 
 
@@ -172,6 +183,7 @@ def test_respond_with_message_ok() -> None:
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
+    assert isinstance(result.decision, RespondDecision)
     assert result.decision.message == "please clarify"
 
 

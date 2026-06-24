@@ -54,7 +54,8 @@ class StartedStatus(TypedDict):
 class TodoUpdatedStatus(TypedDict):
     status: Literal["todo_updated"]
     segment_id: str
-    todos: list[JsonValue]
+    # deepagents write_todos 已按 args_schema 校验结构，原样透传；JSON 安全由信封单一边界校验。
+    todos: object
 
 
 class SubagentStartedStatus(TypedDict):
@@ -95,8 +96,9 @@ class AwaitingStatus(TypedDict):
 
 
 class DoneData(TypedDict):
-    status: Literal["completed"]
-    usage: dict[str, JsonValue]
+    # cancelled/timeout 也是终态（supervisor cancel 补发、超时）；契约如实声明，不只 completed。
+    status: Literal["completed", "cancelled", "timeout"]
+    usage: NotRequired[dict[str, JsonValue]]
 
 
 class ErrorData(TypedDict):

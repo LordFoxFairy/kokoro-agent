@@ -11,7 +11,7 @@ from typing_extensions import Protocol
 
 class StreamItem(BaseModel):
     # JSON 边界构造期即校验，frozen 保持原 dataclass 的不可变语义。
-    model_config = ConfigDict(strict=True, frozen=True)
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     cursor: str
     event: dict[str, JsonValue]

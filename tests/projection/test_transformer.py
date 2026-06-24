@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from langchain_core.messages import AIMessage
 
 from kokoro_agent.application.projection.transformer import (
-    TOOL_RESULT_MAX_CHARS,
     custom_event,
     reasoning_chunk_event,
     run_done_event,
@@ -123,13 +122,11 @@ def test_tool_end_event_error() -> None:
     assert ev.data["rejected"] is False
 
 
-def test_tool_end_result_truncated() -> None:
-    huge = "x" * (TOOL_RESULT_MAX_CHARS + 100)
+def test_tool_end_result_not_truncated() -> None:
+    # 工具结果原样透传、绝不截断（不毁内容）。
+    huge = "x" * 20_000
     ev = tool_end_event(_FakeTool("t", "search", {}, output=huge), request_id=KORO)
-    result = ev.data["result"]
-    assert isinstance(result, str)
-    assert len(result) < len(huge)
-    assert result.startswith("x" * TOOL_RESULT_MAX_CHARS)
+    assert ev.data["result"] == huge
 
 
 def test_subagent_started_event_built_in() -> None:

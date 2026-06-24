@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping
 
 from kokoro_agent.application.protocols.stream import StreamItem
-from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
+from kokoro_agent.infrastructure.json_types import JsonValue, validate_event
 
 _CURSOR_WIDTH = 20
 
@@ -29,16 +29,18 @@ class MemoryStream:
         seq = self._counters.get(stream, 0)
         self._counters[stream] = seq + 1
         cursor = str(seq).zfill(self._cursor_width)
-        payload = clone_event(validate_event(dict(event)))
+        # StreamItem(frozen+strict) 构造期对 dict[str, JsonValue] 深拷贝，跨 item 不共享嵌套引用，
+        # 故 validate_event 后无需再 clone_event：存量与返回各持独立副本。
+        payload = validate_event(dict(event))
         item = StreamItem(cursor=cursor, event=payload)
         self._streams.setdefault(stream, []).append(item)
         signal = self._signal_for(stream)
         signal.set()
-        return StreamItem(cursor=cursor, event=clone_event(payload))
+        return StreamItem(cursor=cursor, event=payload)
 
     async def read_all(self, stream: str) -> list[StreamItem]:
         return [
-            StreamItem(cursor=item.cursor, event=clone_event(item.event))
+            StreamItem(cursor=item.cursor, event=item.event)
             for item in self._streams.get(stream, ())
         ]
 
@@ -53,7 +55,7 @@ class MemoryStream:
                 index += 1
                 if from_cursor is not None and item.cursor <= from_cursor:
                     continue
-                yield StreamItem(cursor=item.cursor, event=clone_event(item.event))
+                yield StreamItem(cursor=item.cursor, event=item.event)
 
             signal = self._signal_for(stream)
             if index >= len(self._streams.get(stream, ())):

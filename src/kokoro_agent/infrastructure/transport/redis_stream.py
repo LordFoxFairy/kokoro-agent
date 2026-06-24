@@ -35,8 +35,15 @@ def _is_object_tuple(value: object) -> TypeGuard[_ObjectTuple]:
     return isinstance(value, tuple)
 
 
-def _decode(value: bytes | str | None) -> str:
-    return value.decode() if isinstance(value, bytes) else str(value)
+def _decode(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _decode_cursor(value: bytes | str | None) -> str:
+    # entry_id 是 redis 流游标，绝不能落成字面 'None'；缺失即数据破坏，显性抛错。
+    if value is None:
+        raise ValueError("redis stream entry id must not be None")
+    return _decode(value)
 
 
 def _pair_parts(value: object) -> tuple[object, object] | None:
@@ -117,7 +124,7 @@ class RedisStream:
         raw = fields.get(_REDIS_FIELD) if fields is not None else None
         payload: object = json.loads(_decode(raw)) if raw is not None else {}
         event = clone_event(validate_event(payload))
-        return StreamItem(cursor=_decode(entry_id), event=event)
+        return StreamItem(cursor=_decode_cursor(entry_id), event=event)
 
     async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem:
         payload = clone_event(validate_event(dict(event)))
@@ -125,7 +132,7 @@ class RedisStream:
             stream,
             {_REDIS_FIELD: json.dumps(payload, ensure_ascii=False)},
         )
-        return StreamItem(cursor=_decode(entry_id), event=clone_event(payload))
+        return StreamItem(cursor=_decode_cursor(entry_id), event=clone_event(payload))
 
     async def read_all(self, stream: str) -> list[StreamItem]:
         entries = await self._redis.xrange(stream, min="-", max="+")

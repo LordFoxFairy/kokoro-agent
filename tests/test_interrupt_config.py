@@ -18,7 +18,7 @@ def test_build_interrupt_on_default_contains_yaml_tools() -> None:
     result = build_interrupt_on("default")
     assert set(result.keys()) == policy.requires_approval_tools
     for config in result.values():
-        assert config["allowed_decisions"] == ["approve", "edit", "reject"]
+        assert config["allowed_decisions"] == ["approve", "edit", "reject", "respond"]
 
 
 def test_approval_policy_single_model_loads_yaml() -> None:

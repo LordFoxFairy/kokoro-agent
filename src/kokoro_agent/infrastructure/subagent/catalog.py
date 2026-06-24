@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Annotated, Final
@@ -88,7 +87,7 @@ def load_custom_subagents_from_env(env: Mapping[str, str] | None = None) -> list
     if not raw:
         return []
 
-    payloads = _CUSTOM_PAYLOADS.validate_python(json.loads(raw))
+    payloads = _CUSTOM_PAYLOADS.validate_json(raw)
     custom = [
         RegisteredSubagent(
             name=payload.name,

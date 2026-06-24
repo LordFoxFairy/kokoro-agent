@@ -43,13 +43,20 @@ class _FakeBus:
 
 @dataclass
 class _Model:
-    blocks: Sequence[Mapping[str, object]]
-    output_message: AIMessage | None
+    text_deltas: Sequence[str] = ()
+    reasoning_deltas: Sequence[str] = ()
+    output_message: AIMessage | None = None
+    message_id: str | None = "seg"
     namespace: list[str] = field(default_factory=lambda: [])
     node: str | None = "model"
 
-    def __aiter__(self) -> AsyncIterator[Mapping[str, object]]:
-        return _aiter(self.blocks)
+    @property
+    def text(self) -> AsyncIterator[str]:
+        return _aiter(self.text_deltas)
+
+    @property
+    def reasoning(self) -> AsyncIterator[str]:
+        return _aiter(self.reasoning_deltas)
 
 
 @dataclass
@@ -114,7 +121,9 @@ class _FakeAgent:
 
 
 def _text_run(text: str = "done") -> _RunStream:
-    return _RunStream(models=(_Model(blocks=(), output_message=AIMessage(content=text, id="seg")),))
+    return _RunStream(
+        models=(_Model(text_deltas=(text,), output_message=AIMessage(content=text, id="seg")),)
+    )
 
 
 def _interrupt_run() -> _RunStream:

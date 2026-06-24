@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import TypeGuard
 
 from langchain_core.messages import AIMessage
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import JsonValue
 
 from kokoro_agent.application.protocols.agent import SubagentInfo, ToolCallInfo
 from kokoro_agent.domain.registered_subagent import SubagentSource
@@ -17,6 +17,7 @@ from kokoro_agent.infrastructure.constants import (
 from kokoro_agent.infrastructure.subagent.specs import subagent_source_for
 from kokoro_agent.interfaces.envelope import (
     AgentEvent,
+    ChunkData,
     CustomStatus,
     DoneData,
     ErrorData,
@@ -25,7 +26,6 @@ from kokoro_agent.interfaces.envelope import (
     StartedStatus,
     SubagentFinishedStatus,
     SubagentStartedStatus,
-    TextChunkData,
     TodoUpdatedStatus,
     ToolEndData,
     ToolStartData,
@@ -34,66 +34,60 @@ from kokoro_agent.interfaces.envelope import (
 TOOL_RESULT_MAX_CHARS = 8_000
 SUBAGENT_LAUNCH_NAMES = frozenset({SUBAGENT_TOOL_NAME, RUNTIME_SUBAGENT_TOOL_NAME})
 
-_JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _USAGE_KEYS = ("input_tokens", "output_tokens", "total_tokens")
 
 
-def _ev(event: ExternalEvent, request_id: str, data: EventData) -> AgentEvent:
+def _make_event(event: ExternalEvent, request_id: str, data: EventData) -> AgentEvent:
     return AgentEvent.model_validate({"event": event, "request_id": request_id, "data": data})
 
 
 def run_started_event(request_id: str) -> AgentEvent:
     data: StartedStatus = {"status": "started"}
-    return _ev("agent_status", request_id, data)
+    return _make_event("agent_status", request_id, data)
 
 
 def run_done_event(usage: dict[str, JsonValue], *, request_id: str) -> AgentEvent:
     data: DoneData = {"status": "completed", "usage": usage}
-    return _ev("agent_done", request_id, data)
+    return _make_event("agent_done", request_id, data)
 
 
 def run_error_event(error: BaseException, *, request_id: str) -> AgentEvent:
     data: ErrorData = {"error_kind": type(error).__name__, "message": str(error)}
-    return _ev("agent_error", request_id, data)
+    return _make_event("agent_error", request_id, data)
 
 
-def _wash(value: object) -> JsonValue | None:
-    # 经 JsonValue 校验洗成 wire 安全载荷；非 JSON 块(如携带 bytes 的多模态块)返回 None 跳过。
-    try:
-        return _JSON.validate_python(value)
-    except ValidationError:
-        return None
-
-
-
-def stream_text_event(
-    block: Mapping[str, object], *, segment_id: str, request_id: str, subagent_id: str | None
+def text_chunk_event(
+    text: str, *, segment_id: str, request_id: str, subagent_id: str | None, final: bool
 ) -> AgentEvent | None:
-    # v3 模型流的增量分块：仅 content-block-delta 携带可显示增量；tool_call 块走 tool_call_* 不混入文本。
-    if block.get("event") != "content-block-delta":
-        return None
-    raw = block.get("delta")
-    if _is_tool_block(raw):
-        return None
-    delta = _wash(raw)
-    if delta is None:
-        return None
-    return _ev("text_chunk", request_id, _text_data(segment_id, [delta], subagent_id, final=False))
+    return _chunk_event(
+        "text_chunk", text, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id, final=final
+    )
 
 
-def final_text_event(
-    message: AIMessage | None, *, segment_id: str, request_id: str, subagent_id: str | None
+def reasoning_chunk_event(
+    text: str, *, segment_id: str, request_id: str, subagent_id: str | None, final: bool
 ) -> AgentEvent | None:
-    # 段终态：透传 output_message 规范多模态 content_blocks（剔除 tool_call 块）；无可显示内容则不发。
-    blocks = message.content_blocks if message is not None else []
-    content: list[JsonValue] = [
-        washed
-        for block in blocks
-        if not _is_tool_block(block) and (washed := _wash(block)) is not None
-    ]
-    if not content:
+    return _chunk_event(
+        "reasoning_chunk", text, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id, final=final
+    )
+
+
+def _chunk_event(
+    event: ExternalEvent,
+    text: str,
+    *,
+    segment_id: str,
+    request_id: str,
+    subagent_id: str | None,
+    final: bool,
+) -> AgentEvent | None:
+    # 空文本不发（tool-only 段 output_message.text=""；reasoning 无内容同理）。
+    if not text:
         return None
-    return _ev("text_chunk", request_id, _text_data(segment_id, content, subagent_id, final=True))
+    data: ChunkData = {"segment_id": segment_id, "text": text, "final": final}
+    if subagent_id is not None:
+        data["subagent_id"] = subagent_id
+    return _make_event(event, request_id, data)
 
 
 def usage_delta(message: AIMessage | None) -> dict[str, int]:
@@ -110,7 +104,7 @@ def todo_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
         "segment_id": tc.tool_call_id,
         "todos": _todos(tc.input),
     }
-    return _ev("agent_status", request_id, data)
+    return _make_event("agent_status", request_id, data)
 
 
 def tool_start_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
@@ -121,7 +115,7 @@ def tool_start_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
         # 模型生成的入参原样透传；JSON 安全由 AgentEvent 信封单一边界校验，不在此重复。
         "args": dict(tc.input or {}),
     }
-    return _ev("tool_call_start", request_id, data)
+    return _make_event("tool_call_start", request_id, data)
 
 
 def tool_end_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
@@ -134,7 +128,7 @@ def tool_end_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
         # HITL reject 语义后续接入；自然返回恒 False。
         "rejected": False,
     }
-    return _ev("tool_call_end", request_id, data)
+    return _make_event("tool_call_end", request_id, data)
 
 
 def subagent_started_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent:
@@ -148,7 +142,7 @@ def subagent_started_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent:
         "subagent_type": name,
         "source": _source_for(name),
     }
-    return _ev("agent_status", request_id, data)
+    return _make_event("agent_status", request_id, data)
 
 
 def subagent_finished_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent:
@@ -161,25 +155,13 @@ def subagent_finished_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent
         "subagent_type": name,
         "source": _source_for(name),
     }
-    return _ev("agent_status", request_id, data)
+    return _make_event("agent_status", request_id, data)
 
 
-def custom_event(payload: object, *, request_id: str) -> AgentEvent | None:
-    # 守则D：get_stream_writer() 派发的纯业务事件，洗净后挂 agent_status.data.custom 透传。
-    washed = _wash(payload)
-    if washed is None:
-        return None
-    data: CustomStatus = {"status": "custom", "custom": washed}
-    return _ev("agent_status", request_id, data)
-
-
-def _text_data(
-    segment_id: str, content: list[JsonValue], subagent_id: str | None, *, final: bool
-) -> TextChunkData:
-    data: TextChunkData = {"segment_id": segment_id, "content": content, "final": final}
-    if subagent_id is not None:
-        data["subagent_id"] = subagent_id
-    return data
+def custom_event(payload: object, *, request_id: str) -> AgentEvent:
+    # 守则D：get_stream_writer() 业务遥测原样挂 agent_status.data.custom；JSON 安全由信封单一边界校验。
+    data: CustomStatus = {"status": "custom", "custom": payload}
+    return _make_event("agent_status", request_id, data)
 
 
 def _source_for(name: str) -> SubagentSource:
@@ -211,11 +193,6 @@ def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
 
 def _is_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
-
-
-def _is_tool_block(block: object) -> bool:
-    # 内容块/增量中的工具调用类型（tool_call / tool_call_chunk）由 tool_call_* 事件承载，不进文本。
-    return _is_mapping(block) and isinstance(kind := block.get("type"), str) and "tool_call" in kind
 
 
 def _result_text(tc: ToolCallInfo) -> str:

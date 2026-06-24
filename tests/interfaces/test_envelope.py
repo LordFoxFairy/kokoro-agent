@@ -5,13 +5,32 @@ from kokoro_agent.interfaces.envelope import AgentEvent
 
 
 def test_envelope_shape_strict() -> None:
-    ev = AgentEvent(event="text_chunk", request_id="r1", timestamp=123, data={"content": []})
+    ev = AgentEvent(
+        event="text_chunk",
+        request_id="r1",
+        timestamp=123,
+        data={"segment_id": "s", "text": "hi", "final": False},
+    )
     assert ev.model_dump() == {
         "event": "text_chunk",
         "request_id": "r1",
         "timestamp": 123,
-        "data": {"content": []},
+        "data": {"segment_id": "s", "text": "hi", "final": False},
     }
+
+
+def test_text_chunk_carries_string_text() -> None:
+    ev = AgentEvent.model_validate(
+        {"event": "text_chunk", "request_id": "r", "data": {"segment_id": "s", "text": "hi", "final": False}}
+    )
+    assert ev.model_dump()["data"] == {"segment_id": "s", "text": "hi", "final": False}
+
+
+def test_reasoning_chunk_is_valid_event() -> None:
+    ev = AgentEvent.model_validate(
+        {"event": "reasoning_chunk", "request_id": "r", "data": {"segment_id": "s", "text": "t", "final": False}}
+    )
+    assert ev.event == "reasoning_chunk"
 
 
 def test_timestamp_autostamped_when_omitted() -> None:

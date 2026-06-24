@@ -7,13 +7,13 @@ from langchain_core.messages import AIMessage
 from kokoro_agent.application.projection.transformer import (
     TOOL_RESULT_MAX_CHARS,
     custom_event,
-    final_text_event,
+    reasoning_chunk_event,
     run_done_event,
     run_error_event,
     run_started_event,
-    stream_text_event,
     subagent_finished_event,
     subagent_started_event,
+    text_chunk_event,
     todo_event,
     tool_end_event,
     tool_start_event,
@@ -40,56 +40,30 @@ class _FakeSub:
     status: str = "completed"
 
 
-def _delta(text: str) -> dict[str, object]:
-    return {"event": "content-block-delta", "index": 0, "delta": {"type": "text-delta", "text": text}}
-
-
-def test_stream_text_event_passes_delta_through() -> None:
-    ev = stream_text_event(_delta("hi"), segment_id="seg-7", request_id=KORO, subagent_id=None)
+def test_text_chunk_event_delta() -> None:
+    ev = text_chunk_event("hi", segment_id="s", request_id=KORO, subagent_id=None, final=False)
     assert ev is not None
     assert ev.event == "text_chunk"
     assert ev.request_id == KORO
-    assert ev.data == {
-        "segment_id": "seg-7",
-        "content": [{"type": "text-delta", "text": "hi"}],
-        "final": False,
-    }
+    assert ev.data == {"segment_id": "s", "text": "hi", "final": False}
 
 
-def test_stream_text_event_tags_subagent() -> None:
-    ev = stream_text_event(_delta("x"), segment_id="seg-3", request_id=KORO, subagent_id="sub-9")
+def test_text_chunk_event_final_and_subagent() -> None:
+    ev = text_chunk_event("full", segment_id="s", request_id=KORO, subagent_id="sub-1", final=True)
     assert ev is not None
-    assert ev.data["subagent_id"] == "sub-9"
+    assert ev.data == {"segment_id": "s", "text": "full", "final": True, "subagent_id": "sub-1"}
 
 
-def test_stream_text_event_skips_non_delta_blocks() -> None:
-    assert stream_text_event(
-        {"event": "message-start", "id": "m1"}, segment_id="s", request_id=KORO, subagent_id=None
-    ) is None
+def test_text_chunk_event_empty_is_none() -> None:
+    # tool-only 段 output_message.text=""；空文本不发事件。
+    assert text_chunk_event("", segment_id="s", request_id=KORO, subagent_id=None, final=True) is None
 
 
-def test_stream_text_event_skips_tool_call_delta() -> None:
-    block = {"event": "content-block-delta", "delta": {"type": "tool_call_chunk", "args": "{}"}}
-    assert stream_text_event(block, segment_id="s", request_id=KORO, subagent_id=None) is None
-
-
-def test_final_text_event_from_content_blocks() -> None:
-    msg = AIMessage(content="final")
-    ev = final_text_event(msg, segment_id="seg-z", request_id=KORO, subagent_id=None)
+def test_reasoning_chunk_event() -> None:
+    ev = reasoning_chunk_event("think", segment_id="s", request_id=KORO, subagent_id=None, final=False)
     assert ev is not None
-    assert ev.data == {
-        "segment_id": "seg-z",
-        "content": [{"type": "text", "text": "final"}],
-        "final": True,
-    }
-
-
-def test_final_text_event_none_for_tool_only_message() -> None:
-    msg = AIMessage(
-        content="",
-        tool_calls=[{"name": "now", "args": {}, "id": "t1", "type": "tool_call"}],
-    )
-    assert final_text_event(msg, segment_id="s", request_id=KORO, subagent_id=None) is None
+    assert ev.event == "reasoning_chunk"
+    assert ev.data == {"segment_id": "s", "text": "think", "final": False}
 
 
 def test_usage_delta_from_message() -> None:
@@ -197,10 +171,6 @@ def test_custom_event_passthrough() -> None:
     assert ev is not None
     assert ev.event == "agent_status"
     assert ev.data == {"status": "custom", "custom": {"kind": "billing", "amount": 7}}
-
-
-def test_custom_event_skips_dirty_payload() -> None:
-    assert custom_event({"blob": b"raw"}, request_id=KORO) is None
 
 
 def test_tool_start_preserves_args_verbatim() -> None:

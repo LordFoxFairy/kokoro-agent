@@ -42,13 +42,20 @@ def _empty_ns() -> list[str]:
 
 @dataclass
 class _Model:
-    blocks: Sequence[Mapping[str, object]]
-    output_message: AIMessage | None
+    text_deltas: Sequence[str] = ()
+    reasoning_deltas: Sequence[str] = ()
+    output_message: AIMessage | None = None
+    message_id: str | None = "seg"
     namespace: list[str] = field(default_factory=_empty_ns)
     node: str | None = "model"
 
-    def __aiter__(self) -> AsyncIterator[Mapping[str, object]]:
-        return _aiter(self.blocks)
+    @property
+    def text(self) -> AsyncIterator[str]:
+        return _aiter(self.text_deltas)
+
+    @property
+    def reasoning(self) -> AsyncIterator[str]:
+        return _aiter(self.reasoning_deltas)
 
 
 @dataclass
@@ -113,7 +120,7 @@ class _FakeAgent:
 
 
 def _text_model(text: str, *, msg_id: str = "seg") -> _Model:
-    return _Model(blocks=(), output_message=AIMessage(content=text, id=msg_id))
+    return _Model(text_deltas=(text,), output_message=AIMessage(content=text, id=msg_id), message_id=msg_id)
 
 
 def _events(published: list[tuple[str, dict[str, JsonValue]]]) -> list[JsonValue]:
@@ -143,15 +150,34 @@ async def test_order_started_text_done() -> None:
     bus = _FakeBus()
     agent = _FakeAgent(run=_RunStream(models=(_text_model("hello"),)))
     await invoke_once(bus, agent, "r1", "c1", {"messages": []})
-    assert _events(bus.published) == ["agent_status", "text_chunk", "agent_done"]
+    events = _events(bus.published)
+    assert events[0] == "agent_status"
+    assert events[-1] == "agent_done"
+    assert "text_chunk" in events
     assert agent.seen_config == {"configurable": {"thread_id": "c1"}}
     assert _data(bus.published[-1][1]) == {"status": "completed", "usage": {}}
 
 
 @pytest.mark.asyncio
+async def test_text_and_reasoning_channels() -> None:
+    model = _Model(
+        text_deltas=("hel", "lo"),
+        reasoning_deltas=("think",),
+        output_message=AIMessage(content="hello", id="seg"),
+        message_id="seg",
+    )
+    bus = _FakeBus()
+    await invoke_once(bus, _FakeAgent(run=_RunStream(models=(model,))), "r1", "c1", {"messages": []})
+    by_event = [(e["event"], _data(e)) for _, e in bus.published]
+    assert ("reasoning_chunk", {"segment_id": "seg", "text": "think", "final": False}) in by_event
+    text_finals = [d for ev, d in by_event if ev == "text_chunk" and d.get("final")]
+    assert text_finals and text_finals[-1]["text"] == "hello"
+
+
+@pytest.mark.asyncio
 async def test_usage_aggregated_into_done() -> None:
     model = _Model(
-        blocks=(),
+        text_deltas=("x",),
         output_message=AIMessage(
             content="x",
             id="seg",

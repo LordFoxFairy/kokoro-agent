@@ -12,6 +12,7 @@ from kokoro_agent.infrastructure.model.settings import LOCAL_FAKE_MODEL_FLAG, Ch
 
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 _DEFAULT_APPROVAL_TOOLS = ("fetch_url",)
+_DEFAULT_CHECKPOINT_DB = "kokoro_checkpoints.db"
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -35,6 +36,22 @@ class StreamSettings(BaseModel):
         return cls(
             backend=source.get("KOKORO_STREAM_BACKEND", "memory").lower(),
             redis_url=source.get("KOKORO_REDIS_URL", _DEFAULT_REDIS_URL),
+        )
+
+
+class CheckpointSettings(BaseModel):
+    """图状态 checkpointer 后端：sqlite（默认，落盘跨重启续 pending interrupt）或 memory（易失）。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    backend: str
+    db_path: str
+
+    @classmethod
+    def from_env(cls, source: Mapping[str, str]) -> CheckpointSettings:
+        return cls(
+            backend=source.get("KOKORO_CHECKPOINT_BACKEND", "sqlite").lower(),
+            db_path=source.get("KOKORO_CHECKPOINT_DB", _DEFAULT_CHECKPOINT_DB),
         )
 
 
@@ -77,6 +94,7 @@ class AppConfig(BaseModel):
     stream: StreamSettings
     observability: ObservabilitySettings
     approval: ApprovalPolicy
+    checkpoint: CheckpointSettings
     local_fake_model: bool
 
     @classmethod
@@ -87,6 +105,7 @@ class AppConfig(BaseModel):
             stream=StreamSettings.from_env(source),
             observability=ObservabilitySettings.from_env(source),
             approval=_approval_from_env(source),
+            checkpoint=CheckpointSettings.from_env(source),
             local_fake_model=source.get(LOCAL_FAKE_MODEL_FLAG) == "1",
         )
 
@@ -94,6 +113,7 @@ class AppConfig(BaseModel):
 __all__ = [
     "AppConfig",
     "ApprovalPolicy",
+    "CheckpointSettings",
     "LOCAL_FAKE_MODEL_FLAG",
     "ObservabilitySettings",
     "StreamSettings",

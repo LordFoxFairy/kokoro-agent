@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Mapping
+from collections.abc import AsyncIterable, Callable, Mapping
 from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
@@ -17,13 +17,13 @@ from kokoro_agent.application.projection.awaiting import awaiting_approval_event
 from kokoro_agent.application.projection.transformer import (
     SUBAGENT_LAUNCH_NAMES,
     custom_event,
-    final_text_event,
+    reasoning_chunk_event,
     run_done_event,
     run_error_event,
     run_started_event,
-    stream_text_event,
     subagent_finished_event,
     subagent_started_event,
+    text_chunk_event,
     todo_event,
     tool_end_event,
     tool_start_event,
@@ -116,27 +116,40 @@ async def _consume_messages(
     subagent_id: str | None,
 ) -> None:
     async for model in messages:
-        segment_id = ""
-        async for block in model:
-            ident = block.get("id")
-            if block.get("event") == "message-start" and isinstance(ident, str):
-                segment_id = ident
-            ev = stream_text_event(
-                block, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id
-            )
-            if ev is not None:
-                await queue.put(ev)
+        # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全）。
+        segment_id = model.message_id or ""
+        await asyncio.gather(
+            _pump(model.text, text_chunk_event, segment_id, request_id, queue, subagent_id),
+            _pump(model.reasoning, reasoning_chunk_event, segment_id, request_id, queue, subagent_id),
+        )
         final = model.output_message
-        if final is not None and final.id is not None:
-            segment_id = final.id
-        final_ev = final_text_event(
-            final, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id
+        if final is None:
+            continue
+        # 文本段终态帧：用原生 message.text（已排除 tool 块），web reducer 以 final 覆盖累积。
+        seg = final.id or segment_id
+        final_ev = text_chunk_event(
+            final.text, segment_id=seg, request_id=request_id, subagent_id=subagent_id, final=True
         )
         if final_ev is not None:
             await queue.put(final_ev)
         for key, delta in usage_delta(final).items():
             prev = usage_total.get(key, 0)
             usage_total[key] = (prev if isinstance(prev, int) else 0) + delta
+
+
+async def _pump(
+    deltas: AsyncIterable[str],
+    builder: Callable[..., AgentEvent | None],
+    segment_id: str,
+    request_id: str,
+    queue: _EventQueue,
+    subagent_id: str | None,
+) -> None:
+    # 通道增量逐 delta 发（final=False）；text 终态帧由 output_message 在外补，reasoning 不发终态（web 纯续写）。
+    async for text in deltas:
+        ev = builder(text, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id, final=False)
+        if ev is not None:
+            await queue.put(ev)
 
 
 async def _consume_tools(
@@ -172,9 +185,7 @@ async def _consume_custom(
     custom: AsyncIterable[object], request_id: str, queue: _EventQueue
 ) -> None:
     async for payload in custom:
-        ev = custom_event(payload, request_id=request_id)
-        if ev is not None:
-            await queue.put(ev)
+        await queue.put(custom_event(payload, request_id=request_id))
 
 
 async def _drain(bus: StreamProtocol, stream: str, queue: _EventQueue) -> None:

@@ -12,6 +12,7 @@ from kokoro_agent.domain.registered_subagent import SubagentSource
 ExternalEvent = Literal[
     "agent_status",
     "text_chunk",
+    "reasoning_chunk",
     "tool_call_start",
     "tool_call_end",
     "agent_done",
@@ -21,9 +22,10 @@ ExternalEvent = Literal[
 
 # 每事件 data 的强类型形状（构造点静态查键/类型，运行时仍是同一 dict，wire 字节不变）。
 # AgentEvent 是 strict/forbid 的 Pydantic 外边界；这些 TypedDict 是其内部 data 载荷契约。
-class TextChunkData(TypedDict):
+class ChunkData(TypedDict):
+    # text_chunk 与 reasoning_chunk 共用同形载荷；仅 event 字段区分通道（原生 .text/.reasoning）。
     segment_id: str
-    content: list[JsonValue]
+    text: str
     final: bool
     subagent_id: NotRequired[str]
 
@@ -76,7 +78,8 @@ class SubagentFinishedStatus(TypedDict):
 
 class CustomStatus(TypedDict):
     status: Literal["custom"]
-    custom: JsonValue
+    # 任意用户业务遥测原样透传；JSON 安全由 AgentEvent 信封单一边界校验。
+    custom: object
 
 
 class PendingApproval(TypedDict):
@@ -102,7 +105,7 @@ class ErrorData(TypedDict):
 
 
 EventData = (
-    TextChunkData
+    ChunkData
     | ToolStartData
     | ToolEndData
     | StartedStatus

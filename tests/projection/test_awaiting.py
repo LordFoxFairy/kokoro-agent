@@ -24,13 +24,9 @@ def test_single_pending_aligns_tool_id_and_segment() -> None:
     )
     assert len(events) == 1
     ev = events[0]
-    assert ev.event == "agent_status"
+    assert ev.event == "tool_call_awaiting"
     assert ev.request_id == "r1"
-    assert ev.data == {
-        "status": "awaiting_approval",
-        "segment_id": "seg-1",
-        "pending": [{"tool_id": "call-A", "name": "danger", "args": {"x": 1}}],
-    }
+    assert ev.data == {"segment_id": "seg-1", "tool_id": "call-A", "name": "danger", "args": {"x": 1}}
 
 
 def test_filters_to_interrupt_subsequence_and_aligns_in_order() -> None:
@@ -50,15 +46,12 @@ def test_filters_to_interrupt_subsequence_and_aligns_in_order() -> None:
     events = awaiting_approval_events(
         messages, action_requests, frozenset({"danger1", "danger2"}), request_id="r2"
     )
-    assert len(events) == 1
-    assert events[0].data == {
-        "status": "awaiting_approval",
-        "segment_id": "seg-x",
-        "pending": [
-            {"tool_id": "call-1", "name": "danger1", "args": {"a": 1}},
-            {"tool_id": "call-3", "name": "danger2", "args": {"c": 3}},
-        ],
-    }
+    # 逐工具：2 个 pending → 2 条顶层 tool_call_awaiting，同序对齐。
+    assert [e.event for e in events] == ["tool_call_awaiting", "tool_call_awaiting"]
+    assert [e.data for e in events] == [
+        {"segment_id": "seg-x", "tool_id": "call-1", "name": "danger1", "args": {"a": 1}},
+        {"segment_id": "seg-x", "tool_id": "call-3", "name": "danger2", "args": {"c": 3}},
+    ]
 
 
 def test_no_pending_yields_empty() -> None:
@@ -82,9 +75,14 @@ def test_args_preserve_nested_structures() -> None:
     events = awaiting_approval_events(
         messages, [_ar("danger", nested)], frozenset({"danger"}), request_id="r5b"
     )
-    assert events[0].data["pending"] == [
-        {"tool_id": "c1", "name": "danger", "args": {"filters": {"k": "v"}, "ids": [1, 2], "n": None}}
-    ]
+    assert len(events) == 1
+    assert events[0].event == "tool_call_awaiting"
+    assert events[0].data == {
+        "segment_id": "s",
+        "tool_id": "c1",
+        "name": "danger",
+        "args": {"filters": {"k": "v"}, "ids": [1, 2], "n": None},
+    }
 
 
 def test_length_mismatch_fails_loud() -> None:

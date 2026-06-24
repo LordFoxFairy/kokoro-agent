@@ -14,6 +14,7 @@ ExternalEvent = Literal[
     "text_chunk",
     "reasoning_chunk",
     "tool_call_start",
+    "tool_call_awaiting",
     "tool_call_end",
     "agent_done",
     "agent_error",
@@ -31,6 +32,7 @@ class ChunkData(TypedDict):
 
 
 class ToolStartData(TypedDict):
+    # tool_call_start 与 tool_call_awaiting 共用同形载荷（同为逐工具、顶层、同 granularity）。
     segment_id: str
     tool_id: str
     name: str
@@ -83,18 +85,6 @@ class CustomStatus(TypedDict):
     custom: object
 
 
-class PendingApproval(TypedDict):
-    tool_id: str
-    name: str
-    args: dict[str, object]
-
-
-class AwaitingStatus(TypedDict):
-    status: Literal["awaiting_approval"]
-    segment_id: str
-    pending: list[PendingApproval]
-
-
 class DoneData(TypedDict):
     # cancelled/timeout 也是终态（supervisor cancel 补发、超时）；契约如实声明，不只 completed。
     status: Literal["completed", "cancelled", "timeout"]
@@ -115,7 +105,6 @@ EventData = (
     | SubagentStartedStatus
     | SubagentFinishedStatus
     | CustomStatus
-    | AwaitingStatus
     | DoneData
     | ErrorData
 )

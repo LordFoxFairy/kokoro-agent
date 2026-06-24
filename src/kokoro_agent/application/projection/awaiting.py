@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
 from langchain_core.messages import AIMessage, BaseMessage
 
-from kokoro_agent.interfaces.envelope import AgentEvent, AwaitingStatus, PendingApproval
+from kokoro_agent.interfaces.envelope import AgentEvent, ToolStartData
 
 
 def awaiting_approval_events(
@@ -32,22 +32,19 @@ def awaiting_approval_events(
         )
     if not pending:
         return []
-    items: list[PendingApproval] = [
-        {
+    # 逐工具发顶层 tool_call_awaiting，与 tool_call_start/end 同层同 granularity（不再打包 pending 数组）。
+    events: list[AgentEvent] = []
+    for tool_call, request in zip(pending, action_requests, strict=True):
+        data: ToolStartData = {
+            "segment_id": segment_id,
             "tool_id": tool_call["id"] or "",
             "name": request["name"],
             # 模型审批入参原样透传；JSON 安全由信封单一边界校验。
             "args": dict(request["args"]),
         }
-        for tool_call, request in zip(pending, action_requests, strict=True)
-    ]
-    data: AwaitingStatus = {
-        "status": "awaiting_approval",
-        "segment_id": segment_id,
-        "pending": items,
-    }
-    return [
-        AgentEvent.model_validate(
-            {"event": "agent_status", "request_id": request_id, "data": data}
+        events.append(
+            AgentEvent.model_validate(
+                {"event": "tool_call_awaiting", "request_id": request_id, "data": data}
+            )
         )
-    ]
+    return events

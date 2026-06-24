@@ -116,22 +116,21 @@ async def _consume_messages(
     subagent_id: str | None,
 ) -> None:
     async for model in messages:
-        # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全）。
+        # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全），各自累积全文。
         segment_id = model.message_id or ""
-        await asyncio.gather(
+        text_full, reasoning_full = await asyncio.gather(
             _pump(model.text, text_chunk_event, segment_id, request_id, queue, subagent_id),
             _pump(model.reasoning, reasoning_chunk_event, segment_id, request_id, queue, subagent_id),
         )
         final = model.output_message
-        if final is None:
-            continue
-        # 文本段终态帧：用原生 message.text（已排除 tool 块），web reducer 以 final 覆盖累积。
-        seg = final.id or segment_id
-        final_ev = text_chunk_event(
-            final.text, segment_id=seg, request_id=request_id, subagent_id=subagent_id, final=True
-        )
-        if final_ev is not None:
-            await queue.put(final_ev)
+        seg = final.id if (final is not None and final.id) else segment_id
+        # 两通道对称发终态帧（web 以 final 覆盖累积）。text 用原生 message.text（排除 tool 块），
+        # reasoning 无 message 访问器故用累积全文；空文本由 _chunk_event 吞掉。
+        text_final = final.text if final is not None else text_full
+        for builder, full in ((text_chunk_event, text_final), (reasoning_chunk_event, reasoning_full)):
+            ev = builder(full, segment_id=seg, request_id=request_id, subagent_id=subagent_id, final=True)
+            if ev is not None:
+                await queue.put(ev)
         for key, delta in usage_delta(final).items():
             prev = usage_total.get(key, 0)
             usage_total[key] = (prev if isinstance(prev, int) else 0) + delta
@@ -144,12 +143,15 @@ async def _pump(
     request_id: str,
     queue: _EventQueue,
     subagent_id: str | None,
-) -> None:
-    # 通道增量逐 delta 发（final=False）；text 终态帧由 output_message 在外补，reasoning 不发终态（web 纯续写）。
+) -> str:
+    # 通道增量逐 delta 发（final=False）并累积全文返回，供外层补对称的终态帧。
+    acc = ""
     async for text in deltas:
+        acc += text
         ev = builder(text, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id, final=False)
         if ev is not None:
             await queue.put(ev)
+    return acc
 
 
 async def _consume_tools(

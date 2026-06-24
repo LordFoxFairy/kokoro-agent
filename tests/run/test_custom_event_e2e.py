@@ -117,6 +117,31 @@ async def test_get_stream_writer_event_surfaces_as_agent_status_custom() -> None
     assert _custom_payload(customs[0]) == {"kind": "billing", "amount": 7, "unit": "credit"}
 
 
+@pytest.mark.asyncio
+async def test_text_chunk_carries_string_text_e2e() -> None:
+    # 分通道：真实 agent 的助手文本经原生 .text projection → text_chunk{text:str}，无旧 content 块数组。
+    agent = make_deep_agent(
+        model=_Scripted(),
+        tools=[emit_billing],
+        system_prompt="x",
+        subagents=[],
+        checkpointer=None,
+        permissions=[],
+        interrupt_on={},
+    )
+    bus = _Bus()
+    await invoke_once(bus, agent, "run-2", "conv-2", {"messages": [HumanMessage(content="hi")]})
+    text_finals = [
+        e["data"]
+        for e in bus.events
+        if e["event"] == "text_chunk" and isinstance(e["data"], Mapping) and e["data"].get("final")
+    ]
+    assert text_finals
+    last = text_finals[-1]
+    assert last.get("text") == "done"
+    assert "content" not in last
+
+
 def _status(event: dict[str, JsonValue]) -> object:
     data = event["data"]
     return data.get("status") if isinstance(data, Mapping) else None

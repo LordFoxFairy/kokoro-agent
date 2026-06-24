@@ -18,6 +18,9 @@ from kokoro_agent.application.projection.transformer import (
     SUBAGENT_LAUNCH_NAMES,
     custom_event,
     final_text_event,
+    run_done_event,
+    run_error_event,
+    run_started_event,
     stream_text_event,
     subagent_finished_event,
     subagent_started_event,
@@ -60,7 +63,7 @@ async def invoke_once(
     config = _config(conversation_id, trace)
     # usage 按本次 invoke 段计量：HITL resume 是独立段，跨暂停累计待持久化后续接。
     usage_total: dict[str, JsonValue] = {}
-    await _emit(bus, stream, run_id, "agent_status", {"status": "started"})
+    await _publish(bus, stream, run_started_event(run_id))
     try:
         run = await agent.astream_events(
             payload, version="v3", config=config, transformers=[CustomTransformer]
@@ -79,15 +82,12 @@ async def invoke_once(
                     interrupt_on_names,
                     request_id=run_id,
                 ):
-                    await bus.publish(stream, ev.model_dump())
+                    await _publish(bus, stream, ev)
                 return False
-        await _emit(bus, stream, run_id, "agent_done", {"status": "completed", "usage": usage_total})
+        await _publish(bus, stream, run_done_event(usage_total, request_id=run_id))
         return True
     except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
-        await _emit(
-            bus, stream, run_id, "agent_error",
-            {"error_kind": type(error).__name__, "message": str(error)},
-        )
+        await _publish(bus, stream, run_error_event(error, request_id=run_id))
         return True
 
 
@@ -202,11 +202,8 @@ def _config(conversation_id: str, trace: RunnableConfig | None) -> RunnableConfi
     return config
 
 
-async def _emit(
-    bus: StreamProtocol, stream: str, run_id: str, event: str, data: dict[str, JsonValue]
-) -> None:
-    envelope = AgentEvent.model_validate({"event": event, "request_id": run_id, "data": data})
-    await bus.publish(stream, envelope.model_dump())
+async def _publish(bus: StreamProtocol, stream: str, ev: AgentEvent) -> None:
+    await bus.publish(stream, ev.model_dump())
 
 
 def _action_requests(interrupts: tuple[Interrupt, ...]) -> list[ActionRequest]:

@@ -75,7 +75,8 @@ def test_no_ai_message_yields_empty() -> None:
     assert events == []
 
 
-def test_args_narrowed_to_json_scalars() -> None:
+def test_args_drops_non_json_values() -> None:
+    # wash_args：非 JSON 值（object()）在 wire 边界丢弃，标量保留。
     messages = [_ai([{"name": "danger", "args": {"ok": "v", "bad": object()}, "id": "c1"}], id="s")]
     action_requests = [_ar("danger", {"ok": "v", "bad": object()})]
     events = awaiting_approval_events(
@@ -86,6 +87,18 @@ def test_args_narrowed_to_json_scalars() -> None:
         "segment_id": "s",
         "pending": [{"tool_id": "c1", "name": "danger", "args": {"ok": "v"}}],
     }
+
+
+def test_args_preserve_nested_structures() -> None:
+    # 锁定 awaiting 走 wash_args（非旧 _scalar_args）：嵌套对象/数组/null 全透传。
+    nested: dict[str, object] = {"filters": {"k": "v"}, "ids": [1, 2], "n": None}
+    messages = [_ai([{"name": "danger", "args": nested, "id": "c1"}], id="s")]
+    events = awaiting_approval_events(
+        messages, [_ar("danger", nested)], frozenset({"danger"}), request_id="r5b"
+    )
+    assert events[0].data["pending"] == [
+        {"tool_id": "c1", "name": "danger", "args": {"filters": {"k": "v"}, "ids": [1, 2], "n": None}}
+    ]
 
 
 def test_length_mismatch_fails_loud() -> None:

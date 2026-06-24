@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
 from langchain_core.messages import AIMessage, BaseMessage
 from pydantic import JsonValue
 
-from kokoro_agent.interfaces.envelope import AgentEvent
+from kokoro_agent.application.projection.transformer import wash_args
+from kokoro_agent.interfaces.envelope import AgentEvent, AwaitingStatus
 
 
 def awaiting_approval_events(
@@ -38,25 +38,17 @@ def awaiting_approval_events(
         {
             "tool_id": tool_call["id"] or "",
             "name": request["name"],
-            "args": _scalar_args(request["args"]),
+            "args": wash_args(request["args"]),
         }
         for tool_call, request in zip(pending, action_requests, strict=True)
     ]
+    data: AwaitingStatus = {
+        "status": "awaiting_approval",
+        "segment_id": segment_id,
+        "pending": items,
+    }
     return [
         AgentEvent.model_validate(
-            {
-                "event": "agent_status",
-                "request_id": request_id,
-                "data": {"status": "awaiting_approval", "segment_id": segment_id, "pending": items},
-            }
+            {"event": "agent_status", "request_id": request_id, "data": data}
         )
     ]
-
-
-def _scalar_args(args: dict[str, Any]) -> dict[str, JsonValue]:
-    # 仅 JSON 原生标量进入 args，复杂值在 wire 边界丢弃（对齐 transformer._scalar_args）。
-    return {
-        key: value
-        for key, value in args.items()
-        if value is None or isinstance(value, (str, int, float, bool))
-    }

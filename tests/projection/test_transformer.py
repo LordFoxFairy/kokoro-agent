@@ -114,6 +114,36 @@ def test_tool_end_result_not_truncated() -> None:
     assert ev.data["result"] == huge
 
 
+def test_tool_end_event_rejected_authoritative() -> None:
+    # 机制B：rejected 由 supervisor 传入；is_error=False、result=理由，replay 安全区别于绿勾/error。
+    ev = tool_end_event(_FakeTool("t-rej", "danger", {}), request_id=KORO, rejected=True, reject_reason="no")
+    assert ev.data["rejected"] is True
+    assert ev.data["is_error"] is False
+    assert ev.data["result"] == "no"
+    assert ev.data["reject_reason"] == "no"
+
+
+def test_tool_end_event_not_rejected_omits_reason() -> None:
+    ev = tool_end_event(_FakeTool("t", "search", {}, output="ok"), request_id=KORO)
+    assert ev.data["rejected"] is False
+    assert "reject_reason" not in ev.data
+
+
+def test_tool_start_event_subagent_id() -> None:
+    ev = tool_start_event(_FakeTool("c-1", "search", {"q": "x"}), request_id=KORO, subagent_id="sub-7")
+    assert ev.data["subagent_id"] == "sub-7"
+
+
+def test_tool_start_event_toplevel_omits_subagent_id() -> None:
+    ev = tool_start_event(_FakeTool("c-1", "search", {}), request_id=KORO)
+    assert "subagent_id" not in ev.data
+
+
+def test_tool_end_event_subagent_id() -> None:
+    ev = tool_end_event(_FakeTool("c-9", "search", {}, output="r"), request_id=KORO, subagent_id="sub-3")
+    assert ev.data["subagent_id"] == "sub-3"
+
+
 def test_subagent_started_event_built_in() -> None:
     sub = _FakeSub(name="researcher", trigger_call_id="sub-x", task_input="查资料")
     ev = subagent_started_event(sub, request_id=KORO)

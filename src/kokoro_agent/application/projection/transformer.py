@@ -93,7 +93,7 @@ def todo_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
     return _make_event("agent_status", request_id, data)
 
 
-def tool_start_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
+def tool_start_event(tc: ToolCallInfo, *, request_id: str, subagent_id: str | None = None) -> AgentEvent:
     data: ToolStartData = {
         "segment_id": tc.tool_call_id,
         "tool_id": tc.tool_call_id,
@@ -101,20 +101,34 @@ def tool_start_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
         # 模型生成的入参原样透传；JSON 安全由 AgentEvent 信封单一边界校验，不在此重复。
         "args": dict(tc.input or {}),
     }
+    if subagent_id is not None:
+        data["subagent_id"] = subagent_id
     return _make_event("tool_call_start", request_id, data)
 
 
-def tool_end_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
+def tool_end_event(
+    tc: ToolCallInfo,
+    *,
+    request_id: str,
+    subagent_id: str | None = None,
+    rejected: bool = False,
+    reject_reason: str | None = None,
+) -> AgentEvent:
+    # rejected 权威来源是 supervisor（机制 B）：被拒工具 is_error=False、rejected=True、result=理由，
+    # replay 安全地区别于绿勾 done 与真实 error。
     data: ToolEndData = {
         "segment_id": tc.tool_call_id,
         "tool_id": tc.tool_call_id,
         "name": tc.tool_name,
         # 工具结果原样透传，绝不截断（deepagents/工具自身管大小；wire 不毁内容）。
-        "result": _result_text(tc),
-        "is_error": tc.error is not None,
-        # HITL reject 语义后续接入；自然返回恒 False。
-        "rejected": False,
+        "result": reject_reason if rejected and reject_reason else _result_text(tc),
+        "is_error": False if rejected else tc.error is not None,
+        "rejected": rejected,
     }
+    if rejected and reject_reason:
+        data["reject_reason"] = reject_reason
+    if subagent_id is not None:
+        data["subagent_id"] = subagent_id
     return _make_event("tool_call_end", request_id, data)
 
 

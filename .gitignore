@@ -12,3 +12,8 @@ coverage/
 docs/
 tmp/
 *.egg-info/
+# sqlite checkpointer 落盘文件（KOKORO_CHECKPOINT_DB）
+*.db
+*.db-shm
+*.db-wal
+*.sqlite

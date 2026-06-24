@@ -19,6 +19,16 @@ def test_empty_env_yields_defaults() -> None:
     assert config.observability.langfuse_configured is False
     assert config.approval.requires_approval_tools == frozenset({"fetch_url"})
     assert config.local_fake_model is False
+    assert config.checkpoint.backend == "sqlite"
+    assert config.checkpoint.db_path == "kokoro_checkpoints.db"
+
+
+def test_checkpoint_from_env() -> None:
+    config = AppConfig.from_env(
+        {"KOKORO_CHECKPOINT_BACKEND": "MEMORY", "KOKORO_CHECKPOINT_DB": "/tmp/x.db"}
+    )
+    assert config.checkpoint.backend == "memory"
+    assert config.checkpoint.db_path == "/tmp/x.db"
 
 
 def test_stream_redis_from_env() -> None:

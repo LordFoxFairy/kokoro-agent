@@ -2,17 +2,33 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
 import pytest
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
+from pymongo import AsyncMongoClient
 
 from kokoro_agent.infrastructure.checkpoint import make_checkpointer
 
 _CFG: RunnableConfig = {"configurable": {"thread_id": "t1", "checkpoint_ns": ""}}
 _META: CheckpointMetadata = {"source": "input", "step": 1, "parents": {}}
+_MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
+
+
+async def _skip_if_no_mongo() -> None:
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(
+        _MONGO_URL, serverSelectionTimeoutMS=500
+    )
+    try:
+        await client.admin.command("ping")
+    except Exception:  # noqa: BLE001 — 网络/服务不可达统一视为 skip 条件
+        pytest.skip(f"no mongo reachable at {_MONGO_URL}")
+    finally:
+        await client.close()
 
 
 async def test_memory_backend_yields_in_memory_saver(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,3 +60,21 @@ async def test_unknown_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ValueError, match="bogus"):
         async with make_checkpointer():
             pass
+
+
+async def test_mongo_persists_across_factory_reentry(monkeypatch: pytest.MonkeyPatch) -> None:
+    await _skip_if_no_mongo()
+    monkeypatch.setenv("KOKORO_CHECKPOINT_BACKEND", "mongo")
+    monkeypatch.setenv("KOKORO_MONGO_URL", _MONGO_URL)
+    monkeypatch.setenv("KOKORO_MONGO_DB", f"kokoro_test_ckpt_{uuid.uuid4().hex}")
+    checkpoint = empty_checkpoint()
+    checkpoint["channel_values"] = {"x": 42}
+    cfg: RunnableConfig = {"configurable": {"thread_id": "t1", "checkpoint_ns": "", "checkpoint_id": "c1"}}
+    # 写：首个工厂周期（模拟 pod A）。
+    async with make_checkpointer() as saver:
+        await saver.aput(cfg, checkpoint, _META, {})
+    # 读：全新工厂周期（模拟另一 pod）从同一 mongo db 续读，证明跨 pod 持久。
+    async with make_checkpointer() as saver:
+        got = await saver.aget(_CFG)
+    assert got is not None
+    assert got["channel_values"] == {"x": 42}

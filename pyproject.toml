@@ -11,6 +11,7 @@ dependencies = [
   "langchain-anthropic",
   "langchain-openai>=1.2.2",
   "langfuse>=4.7.1",
+  "langgraph-checkpoint-mongodb>=0.4.0",
   "langgraph-checkpoint-sqlite>=3.1.0",
   "pydantic>=2",
   "python-dotenv>=1.2.2",
@@ -55,4 +56,12 @@ python_executable = ".venv/bin/python"
 # 这些是真实运行时依赖，但 mypy 解析不到其类型(无 stub / stub 未装)；静默缺 stub 的 import 错误而非用法。
 [[tool.mypy.overrides]]
 module = ["redis.*", "langfuse.*"]
+ignore_missing_imports = true
+
+# numpy 2.5 的 .pyi 用 PEP 695 type 语句(py3.12+)，mypy 在 3.11 目标下解析报 syntax；
+# numpy 仅经 mongo checkpointer(langchain-mongodb) 传递引入、本仓不直接用，跳过跟随其源/stub。
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 ignore_missing_imports = true

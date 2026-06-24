@@ -32,3 +32,34 @@ source 收窄、interrupt 一致性三项上拍板。用户回"我又带你猜""
 **下次怎么避免**：交互评审 = 我出**带依据的结论**供用户复核/否决，不是把开放题推回去。
 能用"代码事实 + 既定约束 + goal 意图"推出的取舍，自己定并讲清理由；只有真属于产品/业务方向、
 我无依据可循的才问。问之前先自检：我是真没依据，还是在偷懒回避思考？
+
+## L3 (2026-06-24)：设计文档放 docs/superpowers/，不放 tasks/、不 commit
+
+**场景**：写分通道 spec，先往 `docs/superpowers/specs/` 写（被 gitignore），又自作主张移到 `tasks/`
+并 commit。用户怒："你又不是看不到"——`docs/superpowers/specs/` 里**本就躺着 v3 那批 spec/plan**。
+
+**我做错的**：(1) 没先 `ls docs/superpowers/specs/` 看兄弟文件就乱放；(2) 看到 docs/ 被 ignore，
+就擅自改去 tasks/ 还 commit——既破坏约定（tasks/ 只放 todo.md/lessons.md），又把本该本地的
+设计文档塞进版本库。
+
+**下次怎么避免**：本仓设计产物的家 = **`docs/superpowers/specs/`（spec）、`docs/superpowers/plans/`（plan）**，
+gitignore、**本地工作文档、不 commit**。写前先 `ls` 看既有兄弟、就地放进去。`tasks/` 仅
+`todo.md`/`lessons.md`。看到目录被 ignore，是"别 commit"的信号，不是"换地方"的信号。绝不为了让它
+被 track 而搬家。
+
+## L4 (2026-06-24)：AgentEvent 信封是唯一 JSON 边界，别在它前面再撒校验
+
+**场景**：tool_call_start 的 args 我加了 `wash_args`/`as_json_args` 在 transformer 里逐键/整盘
+validate JSON。用户连呼"为什么要丢弃""多此一举""毫无意义"。
+
+**我做错的**：`AgentEvent` 信封本身就是 `model_config(strict=True)` + `data: dict[str, JsonValue]`，
+`model_validate` 时**已经把整个 data（含 args）校验过一遍 JSON 安全**。我在它前面又 validate 一次
+args，纯属重复；而且"逐键 try/except 丢弃"还会静默吞掉键，把本来能跑的 args 搞得不一致。这是
+[[L1]] 同一个病的又一次发作——在框架/模型产出的结构化数据上撒手搓校验。
+
+**下次怎么避免**：**单一 strict 边界原则**——对外只有 `AgentEvent.model_validate` 这一道 JSON 关；
+它前面的投影层只管把框架/模型给的数据**原样透传**，类型如实标（langchain 给 `dict[str, object]`
+就标 `dict[str, object]`，别强转 `JsonValue` 逼出"转换/洗净"代码）。模型生成的 tool args 必是 JSON，
+真出现非 JSON 让信封那一关报错即可，不在前面静默丢。**例外**：`custom_event` 的 `_wash` 故意保留——
+那是 `get_stream_writer()` 的**任意用户业务遥测**（非模型结构化），洗不过 graceful-skip 比崩整个 run
+更合理，是经判断的取舍，不是漏删。

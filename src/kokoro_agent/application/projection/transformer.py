@@ -118,7 +118,8 @@ def tool_start_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
         "segment_id": tc.tool_call_id,
         "tool_id": tc.tool_call_id,
         "name": tc.tool_name,
-        "args": wash_args(tc.input),
+        # 模型生成的入参原样透传；JSON 安全由 AgentEvent 信封单一边界校验，不在此重复。
+        "args": dict(tc.input or {}),
     }
     return _ev("tool_call_start", request_id, data)
 
@@ -170,17 +171,6 @@ def custom_event(payload: object, *, request_id: str) -> AgentEvent | None:
         return None
     data: CustomStatus = {"status": "custom", "custom": washed}
     return _ev("agent_status", request_id, data)
-
-
-def wash_args(tool_input: Mapping[str, object] | None) -> dict[str, JsonValue]:
-    # 整体 JSON wash：保留嵌套对象/数组/null，仅丢 bytes 等非 JSON 值（对外 args 边界）。
-    args: dict[str, JsonValue] = {}
-    for key, value in (tool_input or {}).items():
-        try:
-            args[key] = _JSON.validate_python(value)
-        except ValidationError:
-            continue
-    return args
 
 
 def _text_data(

@@ -6,10 +6,8 @@ from collections.abc import Sequence
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
 from langchain_core.messages import AIMessage, BaseMessage
-from pydantic import JsonValue
 
-from kokoro_agent.application.projection.transformer import wash_args
-from kokoro_agent.interfaces.envelope import AgentEvent, AwaitingStatus
+from kokoro_agent.interfaces.envelope import AgentEvent, AwaitingStatus, PendingApproval
 
 
 def awaiting_approval_events(
@@ -34,11 +32,12 @@ def awaiting_approval_events(
         )
     if not pending:
         return []
-    items: list[JsonValue] = [
+    items: list[PendingApproval] = [
         {
             "tool_id": tool_call["id"] or "",
             "name": request["name"],
-            "args": wash_args(request["args"]),
+            # 模型审批入参原样透传；JSON 安全由信封单一边界校验。
+            "args": dict(request["args"]),
         }
         for tool_call, request in zip(pending, action_requests, strict=True)
     ]

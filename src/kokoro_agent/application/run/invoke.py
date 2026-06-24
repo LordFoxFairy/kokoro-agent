@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Callable, Mapping
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
@@ -49,6 +49,11 @@ def events_stream(run_id: str) -> str:
     return f"kokoro:run:{run_id}:events"
 
 
+async def _always_claim() -> bool:
+    # 默认认领：直接调 invoke_once（如测试）无共享存储时终态总归本次发。
+    return True
+
+
 async def invoke_once(
     bus: StreamProtocol,
     agent: InvokableAgent,
@@ -57,8 +62,13 @@ async def invoke_once(
     payload: object,
     interrupt_on_names: frozenset[str] = frozenset(),
     trace: RunnableConfig | None = None,
+    claim_terminal: Callable[[], Awaitable[bool]] = _always_claim,
 ) -> bool:
-    """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。"""
+    """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
+
+    终态发射前先经 claim_terminal 原子认领：cancel 与自然完成共用同一认领 key，
+    多 pod 广播下恰好一个终态落地（认领失败者静默跳过，不重复发终态）。
+    """
     stream = events_stream(run_id)
     config = _config(conversation_id, trace)
     # usage 按本次 invoke 段计量：HITL resume 是独立段，跨暂停累计待持久化后续接。
@@ -84,10 +94,12 @@ async def invoke_once(
                 ):
                     await _publish(bus, stream, ev)
                 return False
-        await _publish(bus, stream, run_done_event(usage_total, request_id=run_id))
+        if await claim_terminal():
+            await _publish(bus, stream, run_done_event(usage_total, request_id=run_id))
         return True
     except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
-        await _publish(bus, stream, run_error_event(error, request_id=run_id))
+        if await claim_terminal():
+            await _publish(bus, stream, run_error_event(error, request_id=run_id))
         return True
 
 

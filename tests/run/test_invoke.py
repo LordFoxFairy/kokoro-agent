@@ -170,8 +170,11 @@ async def test_text_and_reasoning_channels() -> None:
     await invoke_once(bus, _FakeAgent(run=_RunStream(models=(model,))), "r1", "c1", {"messages": []})
     by_event = [(e["event"], _data(e)) for _, e in bus.published]
     assert ("reasoning_chunk", {"segment_id": "seg", "text": "think", "final": False}) in by_event
+    # 两通道对称：text 与 reasoning 都发终态帧。
     text_finals = [d for ev, d in by_event if ev == "text_chunk" and d.get("final")]
+    reasoning_finals = [d for ev, d in by_event if ev == "reasoning_chunk" and d.get("final")]
     assert text_finals and text_finals[-1]["text"] == "hello"
+    assert reasoning_finals and reasoning_finals[-1]["text"] == "think"
 
 
 @pytest.mark.asyncio

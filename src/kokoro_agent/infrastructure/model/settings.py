@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
+LOCAL_FAKE_MODEL_FLAG = "KOKORO_LOCAL_FAKE_MODEL"
 
 
 def _split_model_spec(spec: str) -> tuple[Literal["openai", "anthropic"], str]:

@@ -23,7 +23,7 @@ from kokoro_agent.application.run.supervisor import RunSupervisor
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
-# 与 approval_policy.yaml 的 requires_approval_tools 同名：确保 supervisor 计算的
+# 与 AppConfig.approval 默认 requires_approval_tools 同名：确保 supervisor 计算的
 # interrupt_on_names 真命中本工具，端到端验证同源对齐而非旁路。
 _TOOL_NAME = "fetch_url"
 _TOOL_ID = "call-A"

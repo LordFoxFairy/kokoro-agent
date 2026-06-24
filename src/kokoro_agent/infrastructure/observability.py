@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 
 from langchain_core.runnables.config import RunnableConfig
-from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
 from kokoro_agent.domain.run_request import RunRequest
@@ -19,12 +18,11 @@ def langfuse_configured() -> bool:
 def build_langfuse_handler() -> CallbackHandler | None:
     """配置齐全时返回 Langfuse 的 LangChain CallbackHandler，否则 None（tracing 关）。
 
-    HOST 默认 Langfuse Cloud；自托管设 ``LANGFUSE_HOST``。Langfuse() 从 env 读
-    public/secret/host 并维护单例，CallbackHandler() 复用该客户端。
+    HOST 默认 Langfuse Cloud；自托管设 ``LANGFUSE_HOST``。CallbackHandler() 内部
+    get_client() 从 env 读 public/secret/host 并维护单例。
     """
     if not langfuse_configured():
         return None
-    Langfuse()
     return CallbackHandler()
 
 

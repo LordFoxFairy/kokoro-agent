@@ -72,7 +72,7 @@ def build_runtime_custom_subagent_tool(
         result_obj = await runner.ainvoke(_runtime_messages(task.strip()))
         for message in reversed(_runtime_result_messages(result_obj)):
             if isinstance(message, AIMessage):
-                text = str(message.text).rstrip()
+                text = message.text.rstrip()
                 if text:
                     return text
         return ""

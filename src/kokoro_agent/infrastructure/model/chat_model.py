@@ -40,7 +40,6 @@ def _build_openai_model(settings: ChatModelSettings, style: ExecutionStyle) -> B
         disable_streaming=settings.disable_streaming,
         reasoning_effort=reasoning_effort,
     )
-    assert isinstance(result, BaseChatModel)
     return result
 
 
@@ -64,7 +63,6 @@ def _build_anthropic_model(settings: ChatModelSettings, style: ExecutionStyle) -
             disable_streaming=settings.disable_streaming,
             effort=effort,
         )
-    assert isinstance(result, BaseChatModel)
     return result
 
 

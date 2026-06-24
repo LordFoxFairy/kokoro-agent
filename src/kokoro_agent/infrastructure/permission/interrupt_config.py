@@ -6,7 +6,7 @@ from langchain.agents.middleware.human_in_the_loop import DecisionType
 from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.permission.policy import approval_policy
 
-_APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject"]
+_APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject", "respond"]
 
 
 def build_interrupt_on(mode: PermissionMode) -> dict[str, InterruptOnConfig]:

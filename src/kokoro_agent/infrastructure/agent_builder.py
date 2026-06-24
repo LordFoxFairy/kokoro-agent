@@ -42,7 +42,7 @@ def make_deep_agent(
     subagents: Sequence[SubAgent | CompiledSubAgent],
     checkpointer: BaseCheckpointSaver[str] | None,
     permissions: Sequence[FilesystemPermission],
-    interrupt_on: dict[str, InterruptOnConfig],
+    interrupt_on: Mapping[str, bool | InterruptOnConfig],
 ) -> InvokableAgent:
     agent: InvokableAgent = _build_deep_agent(
         model=model,
@@ -51,7 +51,7 @@ def make_deep_agent(
         subagents=list(subagents),
         checkpointer=checkpointer,
         permissions=list(permissions),
-        interrupt_on=interrupt_on,
+        interrupt_on=dict(interrupt_on),
     )
     return agent
 

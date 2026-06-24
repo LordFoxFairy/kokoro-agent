@@ -31,7 +31,7 @@ def test_build_interrupt_on_default_contains_approval_tools() -> None:
     assert set(result.keys()) == policy.requires_approval_tools
     for config in result.values():
         # InterruptOnConfig 是 TypedDict（dict 子类），用下标访问而非属性。
-        assert set(config["allowed_decisions"]) == {"approve", "edit", "reject"}
+        assert set(config["allowed_decisions"]) == {"approve", "edit", "reject", "respond"}
 
 
 # 边界：畸形 policy 必须被 Pydantic strict/forbid 拦下，绝不静默放过脏配置。

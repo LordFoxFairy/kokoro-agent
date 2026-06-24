@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.domain.json_payload import JsonObject
 # 直接复用领域层契约，避免重复定义 run.request 结构。
@@ -13,30 +13,37 @@ from kokoro_agent.domain.run_request import RunRequest
 
 logger = logging.getLogger(__name__)
 
+# HITL 审批决策：按 type 判别联合，各型恰好携带其必需字段——结构即约束，无需手动交叉校验。
 
-class ResumeDecision(BaseModel):
-    """HITL 审批决策：操作类型与可选的编辑载荷/拒绝原因。"""
 
+class ApproveDecision(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
+    type: Literal["approve"]
 
-    type: Literal["approve", "edit", "reject", "respond"]
-    # 仅 edit 时携带，允许前端修改工具调用参数后重新下发。
-    edited_action: dict[str, JsonValue] | None = None
-    # 仅 reject/respond 时携带，传达人工说明文本。
-    message: str | None = None
 
-    @model_validator(mode="after")
-    def _check_fields_consistent(self) -> "ResumeDecision":
-        # edit 必须携带 edited_action，否则下游 langgraph 会 KeyError。
-        if self.type == "edit" and self.edited_action is None:
-            raise ValueError("edit 型决策必须提供 edited_action")
-        # reject/respond 必须携带 message，否则无法向用户传达说明。
-        if self.type in {"reject", "respond"} and self.message is None:
-            raise ValueError(f"{self.type} 型决策必须提供 message")
-        # approve 不应携带任何可选字段，多余数据视为非法调用方错误。
-        if self.type == "approve" and (self.edited_action is not None or self.message is not None):
-            raise ValueError("approve 型决策不得携带 edited_action 或 message")
-        return self
+class EditDecision(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    type: Literal["edit"]
+    # 前端修改工具调用参数后重新下发。
+    edited_action: dict[str, JsonValue]
+
+
+class RejectDecision(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    type: Literal["reject"]
+    message: str
+
+
+class RespondDecision(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    type: Literal["respond"]
+    message: str
+
+
+ResumeDecision = Annotated[
+    Union[ApproveDecision, EditDecision, RejectDecision, RespondDecision],
+    Field(discriminator="type"),
+]
 
 
 class RunResume(BaseModel):

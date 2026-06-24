@@ -213,12 +213,8 @@ def _interrupt_on_names(request: RunRequest) -> frozenset[str]:
 
 
 def _decision_dict(decision: ResumeDecision) -> dict[str, JsonValue]:
-    out: dict[str, JsonValue] = {"type": decision.type}
-    if decision.type == "edit" and decision.edited_action is not None:
-        out["edited_action"] = decision.edited_action
-    if decision.type in ("reject", "respond") and decision.message is not None:
-        out["message"] = decision.message
-    return out
+    # 各 arm 恰好携带其字段，model_dump 直接得 langgraph resume 所需 decision dict。
+    return decision.model_dump()
 
 
 def _has_pending_interrupt(snapshot: StateView) -> bool:

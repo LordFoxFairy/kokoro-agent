@@ -9,18 +9,27 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TypeGuard, TypeVar
+from typing import Any, TypeGuard, TypeVar
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain.agents.middleware import InterruptOnConfig
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable
 from langchain_core.runnables.config import RunnableConfig
+from langchain_core.tools import StructuredTool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command, Interrupt
-from pydantic import JsonValue
+from pydantic import BaseModel, Field, JsonValue, PrivateAttr
 
+from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.application.run.invoke import events_stream
 from kokoro_agent.application.run.supervisor import RunSupervisor
 from kokoro_agent.domain.run_request import RunRequest
+from kokoro_agent.infrastructure.agent_builder import make_deep_agent
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
 
 # 与 AppConfig.approval 默认 requires_approval_tools 同名：确保 supervisor 计算的
@@ -118,6 +127,11 @@ class _FakeHitlAgent:
         if isinstance(payload, Command):
             self.resumed = True
             self.seen_resume = payload.resume
+            dtype = _decision_type(_first_decision(payload.resume))
+            # 真 deepagents：reject/respond 生成 synthetic ToolMessage 跳过 tool 节点 → 工具不经 v3
+            # projection 浮现（仅 supervisor 据 snapshot 直发终态）；approve/edit 真跑工具、经 projection。
+            if dtype in ("reject", "respond"):
+                return _RunStream()
             return _RunStream(tools=(_ToolView(output=self._result(payload.resume)),))
         return _RunStream(is_interrupted=True)
 
@@ -145,13 +159,9 @@ class _FakeHitlAgent:
         }
 
     def _result(self, resume: object) -> str:
+        # 仅 approve/edit 经此（真跑工具）；reject/respond 不经 projection。
         decision = _first_decision(resume)
-        dtype = _decision_type(decision)
-        if dtype == "reject":
-            return "rejected by human"
-        if dtype == "respond":
-            return f"synthetic: {_decision_message(decision)}"
-        if dtype == "edit":
+        if _decision_type(decision) == "edit":
             return f"ran with {_edited_args(decision)}"
         return f"ran with {dict(self.args)}"
 
@@ -177,11 +187,6 @@ def _first_decision(resume: object) -> Mapping[object, object]:
 def _decision_type(decision: Mapping[object, object]) -> str:
     dtype: object = decision.get("type")
     return dtype if isinstance(dtype, str) else ""
-
-
-def _decision_message(decision: Mapping[object, object]) -> str:
-    message: object = decision.get("message")
-    return message if isinstance(message, str) else ""
 
 
 def _edited_args(decision: Mapping[object, object]) -> Mapping[object, object]:
@@ -328,5 +333,106 @@ async def test_respond_synthesizes_result() -> None:
     await _resume(sup, bus, "rs", {"type": "respond", "message": "use cache"})
 
     assert agent.seen_resume == {"decisions": [{"type": "respond", "message": "use cache"}]}
-    assert _tool_result(bus, "rs") == "synthetic: use cache"
+    # respond：工具不经 projection，supervisor 据 snapshot 直发 done 终态，result=合成回复（非 rejected）。
+    end = _data(_events_of(bus, "rs", "tool_call_end")[0])
+    assert end["result"] == "use cache"
+    assert end["rejected"] is False
+    assert end["is_error"] is False
     _assert_completed(bus, "rs")
+
+
+# --------------------------------------------------------------------------- #
+# 真 deepagents 回归：reject/respond 工具不经 v3 projection 浮现（probe 实证），
+# 故 supervisor 据 snapshot 直发终态。fake 曾把 reject 脚本成 projection 事件、掩盖此 bug。
+# --------------------------------------------------------------------------- #
+
+
+async def _real_fetch(url: str) -> str:
+    return f"fetched {url}"
+
+
+class _RealArgs(BaseModel):
+    url: str = Field(description="u")
+
+
+_real_tool = StructuredTool(
+    name=_TOOL_NAME, description="d", args_schema=_RealArgs, coroutine=_real_fetch
+)
+
+_REAL_SCRIPT: list[AIMessage] = [
+    AIMessage(
+        content="",
+        tool_calls=[{"name": _TOOL_NAME, "args": {"url": "x"}, "id": _TOOL_ID, "type": "tool_call"}],
+    ),
+    AIMessage(content="done"),
+]
+
+
+class _RealHitlModel(BaseChatModel):
+    _cursor: int = PrivateAttr(default=0)
+
+    @property
+    def _llm_type(self) -> str:
+        return "real-hitl"
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Runnable[LanguageModelInput, AIMessage]:
+        return self.with_types(output_type=AIMessage)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        msg = _REAL_SCRIPT[min(self._cursor, len(_REAL_SCRIPT) - 1)]
+        self._cursor += 1
+        return ChatResult(generations=[ChatGeneration(message=msg)])
+
+
+def _real_agent() -> InvokableAgent:
+    return make_deep_agent(
+        model=_RealHitlModel(),
+        tools=[_real_tool],
+        system_prompt="s",
+        subagents=[],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on={
+            _TOOL_NAME: InterruptOnConfig(allowed_decisions=["approve", "edit", "reject", "respond"])
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_deepagents_reject_emits_authoritative_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KOKORO_APPROVAL_TOOLS", _TOOL_NAME)
+    bus = _FakeBus()
+    agent = _real_agent()
+    sup = RunSupervisor(agent_builder=lambda _req: agent)
+    await _run_until_awaiting(sup, bus, "rr")
+    await _resume(sup, bus, "rr", {"type": "reject", "message": "no"})
+    ends = _events_of(bus, "rr", "tool_call_end")
+    assert len(ends) == 1, f"恰好一个权威终态(supervisor 直发，projection 不发): {ends}"
+    end = _data(ends[0])
+    assert end["rejected"] is True
+    assert end["is_error"] is False
+    assert end["reject_reason"] == "no"
+
+
+@pytest.mark.asyncio
+async def test_real_deepagents_respond_emits_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KOKORO_APPROVAL_TOOLS", _TOOL_NAME)
+    bus = _FakeBus()
+    agent = _real_agent()
+    sup = RunSupervisor(agent_builder=lambda _req: agent)
+    await _run_until_awaiting(sup, bus, "rs")
+    await _resume(sup, bus, "rs", {"type": "respond", "message": "use cache"})
+    ends = _events_of(bus, "rs", "tool_call_end")
+    assert len(ends) == 1
+    end = _data(ends[0])
+    assert end["rejected"] is False
+    assert end["is_error"] is False
+    assert end["result"] == "use cache"

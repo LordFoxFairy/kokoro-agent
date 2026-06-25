@@ -13,6 +13,7 @@ from kokoro_agent.application.projection.transformer import (
     text_chunk_event,
     todo_event,
     tool_end_event,
+    tool_resolution_event,
     tool_start_event,
 )
 
@@ -114,16 +115,30 @@ def test_tool_end_result_not_truncated() -> None:
     assert ev.data["result"] == huge
 
 
-def test_tool_end_event_rejected_authoritative() -> None:
-    # 机制B：rejected 由 supervisor 传入；is_error=False、result=理由，replay 安全区别于绿勾/error。
-    ev = tool_end_event(_FakeTool("t-rej", "danger", {}), request_id=KORO, rejected=True, reject_reason="no")
+def test_tool_resolution_event_reject() -> None:
+    # reject 工具不经 projection，由 supervisor 直发：is_error=False、rejected=True、result/reason=理由。
+    ev = tool_resolution_event(
+        tool_id="t-rej", segment_id="seg", name="danger", result="no",
+        request_id=KORO, rejected=True, reject_reason="no",
+    )
+    assert ev.event == "tool_call_end"
     assert ev.data["rejected"] is True
     assert ev.data["is_error"] is False
     assert ev.data["result"] == "no"
     assert ev.data["reject_reason"] == "no"
 
 
-def test_tool_end_event_not_rejected_omits_reason() -> None:
+def test_tool_resolution_event_respond() -> None:
+    # respond 工具不经 projection，由 supervisor 直发 done：rejected=False、result=合成回复。
+    ev = tool_resolution_event(
+        tool_id="t", segment_id="seg", name="x", result="use cache", request_id=KORO, rejected=False,
+    )
+    assert ev.data["rejected"] is False
+    assert ev.data["result"] == "use cache"
+    assert "reject_reason" not in ev.data
+
+
+def test_tool_end_event_projection_never_rejected() -> None:
     ev = tool_end_event(_FakeTool("t", "search", {}, output="ok"), request_id=KORO)
     assert ev.data["rejected"] is False
     assert "reject_reason" not in ev.data

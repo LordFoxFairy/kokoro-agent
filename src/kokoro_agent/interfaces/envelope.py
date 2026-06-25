@@ -51,6 +51,8 @@ class ToolEndData(TypedDict):
     rejected: bool
     # HITL 拒绝时携带拒绝理由（result 已是理由文本时仍显式给，replay 安全）。
     reject_reason: NotRequired[str]
+    # HITL respond：结果由人工答复而非工具执行（done 态 + 「已人工答复」provenance 标记）。
+    responded: NotRequired[bool]
     subagent_id: NotRequired[str]
 
 

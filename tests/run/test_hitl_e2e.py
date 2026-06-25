@@ -435,4 +435,5 @@ async def test_real_deepagents_respond_emits_done(monkeypatch: pytest.MonkeyPatc
     end = _data(ends[0])
     assert end["rejected"] is False
     assert end["is_error"] is False
+    assert end["responded"] is True
     assert end["result"] == "use cache"

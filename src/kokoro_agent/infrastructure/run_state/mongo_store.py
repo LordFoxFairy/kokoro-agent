@@ -17,11 +17,16 @@ class MongoRunStateStore:
 
     async def try_register(self, request: RunRequest) -> bool:
         # $setOnInsert + upsert：仅 _id 不存在时写入，upserted_id 非空即本次认领成功。
-        result = await self._coll.update_one(
-            {"_id": request.run_id},
-            {"$setOnInsert": {"request_json": request.model_dump_json(), "terminal": False}},
-            upsert=True,
-        )
+        # 并发 upsert 同一 _id 时输者可能抛 DuplicateKeyError（mongo 文档明载的 upsert 竞态）→
+        # 视为已被他人认领，与 try_mark_terminal 同一道防线。
+        try:
+            result = await self._coll.update_one(
+                {"_id": request.run_id},
+                {"$setOnInsert": {"request_json": request.model_dump_json(), "terminal": False}},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            return False
         return result.upserted_id is not None
 
     async def get_request(self, run_id: str) -> RunRequest | None:

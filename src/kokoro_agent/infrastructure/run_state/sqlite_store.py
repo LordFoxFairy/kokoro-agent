@@ -19,7 +19,10 @@ class SqliteRunStateStore:
         self._db = db
 
     async def setup(self) -> None:
-        # DDL 幂等：重启后续用同一文件无需手动建表。
+        # WAL + busy_timeout：跨进程共用同一文件时并发写互相等待而非立刻 SQLITE_BUSY 报错
+        # （原子认领须在真实争用下也成立）；DDL 幂等，重启续用同一文件无需手动建表。
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.execute(_DDL)
         await self._db.commit()
 

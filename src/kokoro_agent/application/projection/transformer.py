@@ -132,9 +132,11 @@ def tool_resolution_event(
     request_id: str,
     rejected: bool,
     reject_reason: str | None = None,
+    responded: bool = False,
 ) -> AgentEvent:
     # HITL reject/respond 生成 synthetic ToolMessage 跳过 tool 节点 → 工具不经 v3 projection 浮现；
     # 故由 resume 据 snapshot+decision 直发终态（与 tool_call_awaiting 同为快照直发，replay 安全）。
+    # respond=人工答复：done 态但带 responded 标记，让回看者知结果是人填非工具产出。
     data: ToolEndData = {
         "segment_id": segment_id,
         "tool_id": tool_id,
@@ -145,6 +147,8 @@ def tool_resolution_event(
     }
     if rejected and reject_reason:
         data["reject_reason"] = reject_reason
+    if responded:
+        data["responded"] = True
     return _make_event("tool_call_end", request_id, data)
 
 

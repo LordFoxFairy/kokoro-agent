@@ -129,11 +129,13 @@ def test_tool_resolution_event_reject() -> None:
 
 
 def test_tool_resolution_event_respond() -> None:
-    # respond 工具不经 projection，由 supervisor 直发 done：rejected=False、result=合成回复。
+    # respond 工具不经 projection，由 supervisor 直发 done + responded 标记（人工答复 provenance）。
     ev = tool_resolution_event(
-        tool_id="t", segment_id="seg", name="x", result="use cache", request_id=KORO, rejected=False,
+        tool_id="t", segment_id="seg", name="x", result="use cache",
+        request_id=KORO, rejected=False, responded=True,
     )
     assert ev.data["rejected"] is False
+    assert ev.data["responded"] is True
     assert ev.data["result"] == "use cache"
     assert "reject_reason" not in ev.data
 

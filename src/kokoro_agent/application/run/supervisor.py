@@ -232,9 +232,9 @@ def _resolutions(
     # reject/respond 的工具不经 v3 projection 浮现；据 pending 子序列（命中 interrupt_on 名集，与
     # awaiting 同源对齐）+ decision 直发 tool_call_end。reject→rejected/理由；respond→done/合成结果。
     if decision.type == "reject":
-        rejected, message = True, decision.message
+        rejected, responded, message = True, False, decision.message
     elif decision.type == "respond":
-        rejected, message = False, decision.message
+        rejected, responded, message = False, True, decision.message
     else:
         return []
     # langgraph 图状态 values 为 Any：messages 在此边界过滤为 typed AIMessage（同 invoke._messages）。
@@ -252,6 +252,7 @@ def _resolutions(
             request_id=run_id,
             rejected=rejected,
             reject_reason=message if rejected else None,
+            responded=responded,
         )
         for tc in last_ai.tool_calls
         if tc["name"] in names

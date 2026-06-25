@@ -106,29 +106,45 @@ def tool_start_event(tc: ToolCallInfo, *, request_id: str, subagent_id: str | No
     return _make_event("tool_call_start", request_id, data)
 
 
-def tool_end_event(
-    tc: ToolCallInfo,
-    *,
-    request_id: str,
-    subagent_id: str | None = None,
-    rejected: bool = False,
-    reject_reason: str | None = None,
-) -> AgentEvent:
-    # rejected 权威来源是 supervisor（机制 B）：被拒工具 is_error=False、rejected=True、result=理由，
-    # replay 安全地区别于绿勾 done 与真实 error。
+def tool_end_event(tc: ToolCallInfo, *, request_id: str, subagent_id: str | None = None) -> AgentEvent:
+    # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 恒 False；
+    # reject/respond 工具不经 projection（见 tool_resolution_event）。
     data: ToolEndData = {
         "segment_id": tc.tool_call_id,
         "tool_id": tc.tool_call_id,
         "name": tc.tool_name,
         # 工具结果原样透传，绝不截断（deepagents/工具自身管大小；wire 不毁内容）。
-        "result": reject_reason if rejected and reject_reason else _result_text(tc),
-        "is_error": False if rejected else tc.error is not None,
+        "result": _result_text(tc),
+        "is_error": tc.error is not None,
+        "rejected": False,
+    }
+    if subagent_id is not None:
+        data["subagent_id"] = subagent_id
+    return _make_event("tool_call_end", request_id, data)
+
+
+def tool_resolution_event(
+    *,
+    tool_id: str,
+    segment_id: str,
+    name: str,
+    result: str,
+    request_id: str,
+    rejected: bool,
+    reject_reason: str | None = None,
+) -> AgentEvent:
+    # HITL reject/respond 生成 synthetic ToolMessage 跳过 tool 节点 → 工具不经 v3 projection 浮现；
+    # 故由 resume 据 snapshot+decision 直发终态（与 tool_call_awaiting 同为快照直发，replay 安全）。
+    data: ToolEndData = {
+        "segment_id": segment_id,
+        "tool_id": tool_id,
+        "name": name,
+        "result": result,
+        "is_error": False,
         "rejected": rejected,
     }
     if rejected and reject_reason:
         data["reject_reason"] = reject_reason
-    if subagent_id is not None:
-        data["subagent_id"] = subagent_id
     return _make_event("tool_call_end", request_id, data)
 
 

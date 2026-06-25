@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from types import MappingProxyType
 from typing import Any
 
 from langchain.agents.middleware.human_in_the_loop import ActionRequest
@@ -38,10 +37,6 @@ async def _always_claim() -> bool:
     return True
 
 
-# 不可变空默认：非 resume 段无被拒工具（避免可变默认参数）。
-_NO_REJECTS: Mapping[str, str] = MappingProxyType({})
-
-
 async def invoke_once(
     bus: StreamProtocol,
     agent: InvokableAgent,
@@ -51,7 +46,6 @@ async def invoke_once(
     interrupt_on_names: frozenset[str] = frozenset(),
     trace: RunnableConfig | None = None,
     claim_terminal: Callable[[], Awaitable[bool]] = _always_claim,
-    rejected: Mapping[str, str] = _NO_REJECTS,
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
@@ -71,7 +65,7 @@ async def invoke_once(
             queue: EventQueue = asyncio.Queue()
             async with run:
                 drainer = asyncio.create_task(drain(bus, stream, queue))
-                await consume_run(run, run_id, queue, subagent_id=None, rejected=rejected)
+                await consume_run(run, run_id, queue, subagent_id=None)
                 await queue.put(None)
                 await drainer
                 if await run.interrupted():

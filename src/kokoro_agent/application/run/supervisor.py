@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable, Mapping
-from types import MappingProxyType
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -16,6 +15,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from pydantic import JsonValue
 
+from kokoro_agent.application.projection.transformer import tool_resolution_event
 from kokoro_agent.application.protocols.agent import StateView
 from kokoro_agent.application.protocols.run_state import RunStateStore
 from kokoro_agent.application.protocols.stream import StreamProtocol
@@ -39,9 +39,6 @@ REQUESTS_STREAM = "kokoro:runs:requests"
 MAX_CONCURRENT_RUNS = 8
 
 AgentBuilder = Callable[[RunRequest], InvokableAgent]
-
-# 非 resume / 非 reject 段无被拒工具（不可变空默认，避免可变默认参数）。
-_NO_REJECTS: Mapping[str, str] = MappingProxyType({})
 
 
 class RunSupervisor:
@@ -112,12 +109,14 @@ class RunSupervisor:
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
             return
         names = _interrupt_on_names(request)
-        # 机制B：reject 决策按 pending 工具关联，下沉给 invoke→projection 发权威 rejected（replay 安全）。
-        rejected = _reject_map(msg.decision, snapshot, names)
+        # reject/respond 工具不经 v3 projection（synthetic ToolMessage 跳过 tool 节点）→ 在 resume
+        # 据 snapshot+decision 直发终态（与 tool_call_awaiting 同为快照直发，replay 安全）。
+        for ev in _resolutions(msg.decision, snapshot, names, run_id=msg.run_id):
+            await self._emit_event(bus, msg.run_id, ev)
         command: Command[object] = Command(resume={"decisions": [_decision_dict(msg.decision)]})
         trace = trace_config(request)
         self._spawn_agent(
-            bus, agent, msg.run_id, request.conversation_id, command, names, trace=trace, rejected=rejected
+            bus, agent, msg.run_id, request.conversation_id, command, names, trace=trace
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
@@ -160,12 +159,9 @@ class RunSupervisor:
         payload: object,
         interrupt_on_names: frozenset[str],
         trace: RunnableConfig | None = None,
-        rejected: Mapping[str, str] = _NO_REJECTS,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(
-                bus, agent, run_id, conversation_id, payload, interrupt_on_names, trace, rejected
-            )
+            self._guarded(bus, agent, run_id, conversation_id, payload, interrupt_on_names, trace)
         )
         self._tasks[run_id] = task
         task.add_done_callback(lambda _t: self._tasks.pop(run_id, None))
@@ -179,7 +175,6 @@ class RunSupervisor:
         payload: object,
         interrupt_on_names: frozenset[str],
         trace: RunnableConfig | None = None,
-        rejected: Mapping[str, str] = _NO_REJECTS,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，故 resume 重新竞争额度。
         async with self._sem:
@@ -193,7 +188,6 @@ class RunSupervisor:
                 interrupt_on_names=interrupt_on_names,
                 trace=trace,
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
-                rejected=rejected,
             )
 
     async def _fail_terminal(self, bus: StreamProtocol, run_id: str, error: Exception) -> None:
@@ -217,6 +211,10 @@ class RunSupervisor:
         envelope = AgentEvent.model_validate({"event": event, "request_id": run_id, "data": data})
         await bus.publish(events_stream(run_id), envelope.model_dump())
 
+    @staticmethod
+    async def _emit_event(bus: StreamProtocol, run_id: str, ev: AgentEvent) -> None:
+        await bus.publish(events_stream(run_id), ev.model_dump())
+
 
 def _interrupt_on_names(request: RunRequest) -> frozenset[str]:
     # 与建 agent 时传给 create_deep_agent 的 interrupt_on 同源：取其键集供 awaiting 子序列对齐。
@@ -228,23 +226,36 @@ def _decision_dict(decision: ResumeDecision) -> dict[str, JsonValue]:
     return decision.model_dump()
 
 
-def _reject_map(
-    decision: ResumeDecision, snapshot: StateView, names: frozenset[str]
-) -> Mapping[str, str]:
-    # reject 决策关联到 pending 工具：单决策对应单 pending（langgraph 按序匹配），projection 据此发权威 rejected。
+def _resolutions(
+    decision: ResumeDecision, snapshot: StateView, names: frozenset[str], *, run_id: str
+) -> list[AgentEvent]:
+    # reject/respond 的工具不经 v3 projection 浮现；据 pending 子序列（命中 interrupt_on 名集，与
+    # awaiting 同源对齐）+ decision 直发 tool_call_end。reject→rejected/理由；respond→done/合成结果。
     if decision.type == "reject":
-        return {tool_id: decision.message for tool_id in _pending_tool_ids(snapshot, names)}
-    return _NO_REJECTS
-
-
-def _pending_tool_ids(snapshot: StateView, names: frozenset[str]) -> list[str]:
-    # 取触发 interrupt 的 AIMessage 中命中 interrupt_on 名集的工具 id（与 awaiting 投影同源对齐）。
+        rejected, message = True, decision.message
+    elif decision.type == "respond":
+        rejected, message = False, decision.message
+    else:
+        return []
     # langgraph 图状态 values 为 Any：messages 在此边界过滤为 typed AIMessage（同 invoke._messages）。
     raw: Any = snapshot.values.get("messages") or []
     last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
     if last_ai is None:
         return []
-    return [tc["id"] or "" for tc in last_ai.tool_calls if tc["name"] in names]
+    segment_id = last_ai.id or ""
+    return [
+        tool_resolution_event(
+            tool_id=tc["id"] or "",
+            segment_id=segment_id,
+            name=tc["name"],
+            result=message,
+            request_id=run_id,
+            rejected=rejected,
+            reject_reason=message if rejected else None,
+        )
+        for tc in last_ai.tool_calls
+        if tc["name"] in names
+    ]
 
 
 def _has_pending_interrupt(snapshot: StateView) -> bool:

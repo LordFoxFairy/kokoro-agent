@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -22,7 +21,7 @@ from kokoro_agent.application.projection.transformer import (
 )
 from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.application.protocols.stream import StreamProtocol
-from kokoro_agent.application.run.consumer import EventQueue, consume_run, drain
+from kokoro_agent.application.run.consumer import consume_and_drain_run
 from kokoro_agent.interfaces.envelope import AgentEvent
 
 __all__ = ["InvokableAgent", "events_stream", "invoke_once"]
@@ -62,12 +61,10 @@ async def invoke_once(
             run = await agent.astream_events(
                 payload, version="v3", config=config, transformers=[CustomTransformer]
             )
-            queue: EventQueue = asyncio.Queue()
             async with run:
-                drainer = asyncio.create_task(drain(bus, stream, queue))
-                await consume_run(run, run_id, queue, subagent_id=None)
-                await queue.put(None)
-                await drainer
+                # 微观本地消费层：一体化合流管道并发抽干 v3 四投影→保序单点 publish，
+                # try/finally 保证哨兵必达、drainer 不泄漏（见 consume_and_drain_run）。
+                await consume_and_drain_run(bus, stream, run, run_id)
                 if await run.interrupted():
                     snapshot = await agent.aget_state(config)
                     for ev in awaiting_approval_events(

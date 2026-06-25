@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
@@ -65,9 +66,12 @@ class _Model:
 class _RunStream:
     models: Sequence[_Model] = ()
     is_interrupted: bool = False
+    raise_on_messages: bool = False
 
     @property
     def messages(self) -> AsyncIterator[_Model]:
+        if self.raise_on_messages:
+            raise RuntimeError("boom")
         return _aiter(self.models)
 
     @property
@@ -304,3 +308,16 @@ async def test_trace_none_config_only_configurable() -> None:
     assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
     assert "callbacks" not in agent.seen_config
     assert "metadata" not in agent.seen_config
+
+
+@pytest.mark.asyncio
+async def test_invoke_once_consume_exception_no_drainer_leak() -> None:
+    # 异常防御端到端：投影消费抛错时 consume_and_drain_run 的 try/finally 保证哨兵必达、drainer 收束，
+    # invoke_once 不挂起（wait_for 超时=drainer 泄漏未收束）、顶层统一收口为 agent_error。
+    bus = _FakeBus()
+    agent = _FakeAgent(run=_RunStream(raise_on_messages=True))
+    result = await asyncio.wait_for(
+        invoke_once(bus, agent, "r1", "c1", {"messages": []}), timeout=2.0
+    )
+    assert result is True
+    assert _events(bus.published)[-1] == "agent_error"

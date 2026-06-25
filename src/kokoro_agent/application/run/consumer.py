@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterable, Callable
 
 from kokoro_agent.application.projection.transformer import (
@@ -26,9 +27,35 @@ from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.infrastructure.constants import TODO_TOOL_NAME
 from kokoro_agent.interfaces.envelope import AgentEvent
 
-__all__ = ["EventQueue", "consume_run", "drain"]
+__all__ = ["EventQueue", "consume_and_drain_run", "consume_run", "drain"]
+
+LOGGER = logging.getLogger(__name__)
 
 EventQueue = asyncio.Queue["AgentEvent | None"]
+
+
+async def consume_and_drain_run(
+    bus: StreamProtocol, stream: str, run: AgentRunStream, request_id: str
+) -> None:
+    """微观本地消费层的一体化合流管道：并发抽干 v3 四路 typed 投影 → 本地有序合流 → 单点 publish。
+
+    [双层队列·内部层] 与宏观分布式层（Redis Stream 总线 + claim_terminal 原子锁负责跨会话隔离/
+    防多 Pod 重复终态）相对：此层在单进程内收口一次 run 的流式输出。LangGraph v3 用 caller-driven
+    单点推进锁（single-flight pump）驱动全图，4 路 typed 投影必须并发消费——任一通道缓冲到 maxlen
+    会回压（backpressure）整图直至死锁；本地 asyncio.Queue 再把并发投影按入队序合流为一条 publish 流。
+
+    [异常防御] try/finally 保证 None 结束哨兵百分之百送达、drainer 必被 await 收束：无论上游投影或
+    大模型流如何崩溃/中止，后台 drain 协程绝不永久阻塞在 queue.get() 而泄漏；异常照常向上传播由
+    invoke_once 顶层收口为 agent_error。
+    """
+    queue: EventQueue = asyncio.Queue()
+    drainer = asyncio.create_task(drain(bus, stream, queue))
+    try:
+        await consume_run(run, request_id, queue, subagent_id=None)
+    finally:
+        # 哨兵必达：consume_run 即使抛出，drain 也收 None 而非永久阻塞 → 杜绝后台协程泄漏。
+        await queue.put(None)
+        await drainer
 
 
 async def consume_run(
@@ -52,12 +79,17 @@ async def consume_run(
 
 
 async def drain(bus: StreamProtocol, stream: str, queue: EventQueue) -> None:
-    # 单一消费者把并发投影推入的事件按入队序发布；None 哨兵收束。
+    # 微观本地消费层的单一发布者：按入队序把并发投影合流为一条有序 wire；None 哨兵收束。
+    # [局部容错] 单条事件写总线失败仅记日志并继续——一条坏事件不得中断整条 wire，更不得让 drainer
+    # 异常退出、使 consume_and_drain_run 的 await drainer 在哨兵前抛出而漏发后续事件。
     while True:
         ev = await queue.get()
         if ev is None:
             return
-        await bus.publish(stream, ev.model_dump())
+        try:
+            await bus.publish(stream, ev.model_dump())
+        except Exception:  # noqa: BLE001 — 局部容错：单事件发布失败隔离，不毁整条流
+            LOGGER.warning("dropping event on publish failure: event=%s", ev.event)
 
 
 async def _consume_messages(

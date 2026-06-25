@@ -68,7 +68,15 @@ class RunSupervisor:
             if msg is None:
                 LOGGER.warning("dropping unparseable inbound on %s", REQUESTS_STREAM)
                 continue
-            await self.dispatch(bus, msg)
+            # per-message 隔离：单条消息的 dispatch 失败（如 resume 路径内联 aget_state/_resolutions
+            # 抛错、坏 checkpoint/异形 snapshot）绝不冒泡杀死整个 serve 循环、令整个 worker 罢工；
+            # 失败收口为该 run 的 agent_error（claim 守护，不与正常终态双发），循环继续消费下一条。
+            # CancelledError 是 BaseException 不被捕获，SIGTERM/优雅停机照常生效。
+            try:
+                await self.dispatch(bus, msg)
+            except Exception as error:  # noqa: BLE001 — 单消息容错：隔离故障，不破坏长驻消费循环
+                LOGGER.exception("dispatch failed: kind=%s run_id=%s", type(msg).__name__, msg.run_id)
+                await self._fail_terminal(bus, msg.run_id, error)
 
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):

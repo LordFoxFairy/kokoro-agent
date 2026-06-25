@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Mapping
 from typing import TypeAlias, TypeGuard
 
 from redis.asyncio import Redis, from_url
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.infrastructure.json_types import JsonValue, clone_event, validate_event
 
+LOGGER = logging.getLogger(__name__)
+
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
+# 重连退避边界（秒）：宏观分布式层韧性——抖动快恢复，持续断线不 busy-loop 打爆 redis。
+_RECONNECT_BACKOFF_MIN = 0.1
+_RECONNECT_BACKOFF_MAX = 5.0
 
 # redis-py 无类型存根，xread/xrange 返回 object；逐层收窄到下列别名。
 _Fields: TypeAlias = dict[bytes | str, bytes | str] | None
@@ -134,8 +143,19 @@ class RedisStream:
         self, stream: str, from_cursor: str | None = None
     ) -> AsyncIterator[StreamItem]:
         last = from_cursor if from_cursor is not None else "0-0"
+        backoff = _RECONNECT_BACKOFF_MIN
         while True:
-            raw = await self._redis.xread({stream: last}, block=self._block_ms)
+            try:
+                raw = await self._redis.xread({stream: last}, block=self._block_ms)
+            except (RedisConnectionError, RedisTimeoutError) as error:
+                # 宏观分布式层韧性：redis 断线/抖动绝不冒泡杀死订阅流（否则上游 serve 退出、整个
+                # worker 罢工）。last 游标在生成器内跨重连存活 → 重连从断点续读、不重放整条流；
+                # 指数退避防 busy-loop。非瞬态 RedisError（如命令错误）仍上抛，不掩盖真 bug。
+                LOGGER.warning("redis xread on %s failed, reconnect in %.1fs: %s", stream, backoff, error)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)
+                continue
+            backoff = _RECONNECT_BACKOFF_MIN  # 成功读一次即重置退避
             response = parse_xread_response(raw)
             if not response:
                 continue

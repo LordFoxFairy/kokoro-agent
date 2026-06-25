@@ -38,6 +38,8 @@ class ToolStartData(TypedDict):
     name: str
     # 模型生成的入参原样透传；JSON 安全由 AgentEvent 信封单一边界 model_validate 校验。
     args: dict[str, object]
+    # 子代理内工具时带其归属 id；顶层工具省略。normalize 据此拆 subagent.tool.* 通道。
+    subagent_id: NotRequired[str]
 
 
 class ToolEndData(TypedDict):
@@ -47,6 +49,9 @@ class ToolEndData(TypedDict):
     result: str
     is_error: bool
     rejected: bool
+    # HITL 拒绝时携带拒绝理由（result 已是理由文本时仍显式给，replay 安全）。
+    reject_reason: NotRequired[str]
+    subagent_id: NotRequired[str]
 
 
 class StartedStatus(TypedDict):
@@ -77,6 +82,9 @@ class SubagentFinishedStatus(TypedDict):
     name: str
     subagent_type: str
     source: SubagentSource
+    # 子代理内部异常时为 True + 理由；正常完成省略（不再被吞成顶层 agent_error）。
+    failed: NotRequired[bool]
+    error: NotRequired[str]
 
 
 class CustomStatus(TypedDict):

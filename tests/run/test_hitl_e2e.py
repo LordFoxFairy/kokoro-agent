@@ -308,7 +308,13 @@ async def test_reject_does_not_run_tool() -> None:
     await _resume(sup, bus, "rr", {"type": "reject", "message": "no"})
 
     assert agent.seen_resume == {"decisions": [{"type": "reject", "message": "no"}]}
-    assert _tool_result(bus, "rr") == "rejected by human"
+    # 机制B replay 安全：被拒工具权威 rejected=True、is_error=False、result/reject_reason=理由，
+    # 重放不退化为绿勾 done 或真 error。
+    end = _data(_events_of(bus, "rr", "tool_call_end")[0])
+    assert end["rejected"] is True
+    assert end["is_error"] is False
+    assert end["result"] == "no"
+    assert end["reject_reason"] == "no"
     _assert_completed(bus, "rr")
 
 

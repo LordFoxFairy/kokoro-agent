@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, Callable, Mapping
+from types import MappingProxyType
 
 from kokoro_agent.application.projection.transformer import (
     SUBAGENT_LAUNCH_NAMES,
@@ -30,6 +31,9 @@ __all__ = ["EventQueue", "consume_run", "drain"]
 
 EventQueue = asyncio.Queue["AgentEvent | None"]
 
+# 被拒工具映射 tool_id→理由（机制B：supervisor resume 时按 pending 关联）；非 resume 段为空。
+_NO_REJECTS: Mapping[str, str] = MappingProxyType({})
+
 
 async def consume_run(
     run: AgentRunStream | SubagentRunStream,
@@ -37,11 +41,16 @@ async def consume_run(
     queue: EventQueue,
     *,
     subagent_id: str | None,
+    rejected: Mapping[str, str] = _NO_REJECTS,
 ) -> None:
-    # 四投影并发消费，共享 single-flight pump 推进全图；各投影把 AgentEvent 推 queue 由 drain 保序发。
+    # WHY 并发 + queue：messages/tool_calls/subagents/custom 是 langgraph v3 原生 typed 投影
+    # (AsyncGraphRunStream)——非本仓发明。框架按 caller-driven 单 single-flight pump(asyncio.Lock)
+    # 推进全图：并发迭代各通道即"驱动一次、分发各通道"，这才换来消费端零事件类型 isinstance 分支
+    # (取代旧 v1/v2 扁平流的 type-dispatch)。4 个并发生产者再经 queue→单 drain re-serialize 成一条
+    # 有序、单点 publish 的 wire(并发本就低、单 pump 已 pace；queue 只为合流保序不为吞吐)；None 收束。
     await asyncio.gather(
         _consume_messages(run.messages, request_id, queue, subagent_id),
-        _consume_tools(run.tool_calls, request_id, queue),
+        _consume_tools(run.tool_calls, request_id, queue, subagent_id, rejected),
         _consume_subagents(run.subagents, request_id, queue),
         _consume_custom(run.custom, request_id, queue),
     )
@@ -99,7 +108,11 @@ async def _pump(
 
 
 async def _consume_tools(
-    tool_calls: AsyncIterable[ToolCallView], request_id: str, queue: EventQueue
+    tool_calls: AsyncIterable[ToolCallView],
+    request_id: str,
+    queue: EventQueue,
+    subagent_id: str | None,
+    rejected: Mapping[str, str],
 ) -> None:
     async for tc in tool_calls:
         if tc.tool_name in SUBAGENT_LAUNCH_NAMES:
@@ -110,9 +123,18 @@ async def _consume_tools(
             await queue.put(todo_event(tc, request_id=request_id))
             await _drain_aiter(tc.output_deltas)
             continue
-        await queue.put(tool_start_event(tc, request_id=request_id))
+        await queue.put(tool_start_event(tc, request_id=request_id, subagent_id=subagent_id))
         await _drain_aiter(tc.output_deltas)
-        await queue.put(tool_end_event(tc, request_id=request_id))
+        reject_reason = rejected.get(tc.tool_call_id)
+        await queue.put(
+            tool_end_event(
+                tc,
+                request_id=request_id,
+                subagent_id=subagent_id,
+                rejected=reject_reason is not None,
+                reject_reason=reject_reason,
+            )
+        )
 
 
 async def _consume_subagents(

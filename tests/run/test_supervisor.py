@@ -132,7 +132,17 @@ def _interrupt_run() -> _RunStream:
     return _RunStream(is_interrupted=True)
 
 
+_GATED = "danger"
+_TID = "call-A"
+_PENDING_AI = AIMessage(content="", id="seg", tool_calls=[{"name": _GATED, "args": {}, "id": _TID}])
+# 简单 pending（auto 档 names 空 → awaiting 0==0）：暂停/取消类测试用，无需 env。
 _PENDING_STATE = _State(interrupts=(Interrupt(value={"action_requests": []}),))
+# 带门控工具的 pending：messages+action_request 各含 1 个 _GATED 工具，供 resume 决策按 tool_id 对齐。
+# 用此 state 的测试须 setenv(KOKORO_REQUIRES_APPROVAL_TOOLS=_GATED) 使 names={_GATED}、awaiting 1==1。
+_PENDING_TOOL_STATE = _State(
+    interrupts=(Interrupt(value={"action_requests": [{"name": _GATED, "args": {}, "description": "d"}]}),),
+    values={"messages": [_PENDING_AI]},
+)
 _EMPTY_STATE = _State()
 
 
@@ -145,6 +155,7 @@ def _request_item(run_id: str, conversation_id: str = "c1") -> StreamItem:
             "session_id": "s1",
             "conversation_id": conversation_id,
             "input": "hello",
+            "permission_mode": "default",
         },
     )
 
@@ -219,15 +230,16 @@ async def test_duplicate_run_id_skipped() -> None:
 
 
 # ② resume：有 pending interrupt → invoke_once(Command(resume))。
-async def test_resume_with_pending_invokes_command() -> None:
-    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
+async def test_resume_with_pending_invokes_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r2"))
     await _drain(sup)
     agent.seen_payloads.clear()
 
-    resume = _inbound({"kind": "run.resume", "run_id": "r2", "decision": {"type": "approve"}})
+    resume = _inbound({"kind": "run.resume", "run_id": "r2", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -247,7 +259,7 @@ async def test_resume_without_pending_is_dropped() -> None:
     before = len(bus.published)
     agent.seen_payloads.clear()
 
-    resume = _inbound({"kind": "run.resume", "run_id": "r3", "decision": {"type": "approve"}})
+    resume = _inbound({"kind": "run.resume", "run_id": "r3", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -256,8 +268,9 @@ async def test_resume_without_pending_is_dropped() -> None:
 
 
 # resume edit/reject decision dict 组装按 spec §9.1。
-async def test_resume_edit_and_reject_decision_shapes() -> None:
-    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
+async def test_resume_edit_and_reject_decision_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
     await sup.dispatch(bus, _request("r4"))
@@ -268,7 +281,7 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
         {
             "kind": "run.resume",
             "run_id": "r4",
-            "decision": {"type": "edit", "edited_action": {"name": "tool", "args": {}}},
+            "decisions": [{"type": "edit", "tool_id": _TID, "edited_action": {"name": "tool", "args": {}}}],
         }
     )
     await sup.dispatch(bus, edit)
@@ -281,7 +294,7 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
 
     agent.seen_payloads.clear()
     reject = _inbound(
-        {"kind": "run.resume", "run_id": "r4", "decision": {"type": "reject", "message": "no"}}
+        {"kind": "run.resume", "run_id": "r4", "decisions": [{"type": "reject", "tool_id": _TID, "message": "no"}]}
     )
     await sup.dispatch(bus, reject)
     await _drain(sup)
@@ -295,7 +308,7 @@ async def test_resume_unknown_run_dropped() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
     sup = RunSupervisor(agent_builder=_builder(agent))
-    resume = _inbound({"kind": "run.resume", "run_id": "ghost", "decision": {"type": "approve"}})
+    resume = _inbound({"kind": "run.resume", "run_id": "ghost", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
     assert len(agent.seen_payloads) == 0
@@ -458,7 +471,7 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
     before = len(bus.published)
     agent.seen_payloads.clear()
 
-    resume = _inbound({"kind": "run.resume", "run_id": "rc4", "decision": {"type": "approve"}})
+    resume = _inbound({"kind": "run.resume", "run_id": "rc4", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -477,7 +490,7 @@ async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
     before = len(bus.published)
     agent.seen_payloads.clear()
 
-    resume = _inbound({"kind": "run.resume", "run_id": "rc5", "decision": {"type": "approve"}})
+    resume = _inbound({"kind": "run.resume", "run_id": "rc5", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -506,9 +519,10 @@ async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
 
 # Layer 2: 全新 supervisor 实例(模拟重启/另一 pod)仅共享 store → 据持久化原 request 续接 resume。
 @pytest.mark.asyncio
-async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
+async def test_resume_on_fresh_supervisor_via_shared_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
     store = MemoryRunStateStore()
-    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
+    agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
     sup_a = RunSupervisor(agent_builder=_builder(agent), store=store)
     await sup_a.dispatch(bus, _request("rx"))
@@ -517,7 +531,7 @@ async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
     # sup_b 无 sup_a 的进程内 map，仅共享 store；resume 须靠 store.get_request 重建 agent。
     sup_b = RunSupervisor(agent_builder=_builder(agent), store=store)
     agent.seen_payloads.clear()
-    resume = _inbound({"kind": "run.resume", "run_id": "rx", "decision": {"type": "approve"}})
+    resume = _inbound({"kind": "run.resume", "run_id": "rx", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup_b.dispatch(bus, resume)
     await _drain(sup_b)
 
@@ -549,7 +563,7 @@ async def test_serve_isolates_dispatch_failure_no_worker_death() -> None:
     # 令整个 worker 罢工；收口为该 run 的 agent_error，循环正常收束。
     resume = StreamItem(
         cursor="0",
-        event={"kind": "run.resume", "run_id": "rx", "decision": {"type": "approve"}},
+        event={"kind": "run.resume", "run_id": "rx", "decisions": [{"type": "approve", "tool_id": _TID}]},
     )
     bus = _FakeBus(items=[resume])
     sup = RunSupervisor(agent_builder=_builder(_FakeAgent()), store=_BoomStore())

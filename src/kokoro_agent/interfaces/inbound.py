@@ -14,16 +14,20 @@ from kokoro_agent.domain.run_request import RunRequest
 logger = logging.getLogger(__name__)
 
 # HITL 审批决策：按 type 判别联合，各型恰好携带其必需字段——结构即约束，无需手动交叉校验。
+# tool_id 显式归属：同帧多个被门控工具时，前端逐工具决策、各自带 tool_id，supervisor 按 pending
+# 顺序重排后喂 langchain（其按序匹配 decisions↔interrupt），并支持「只拒其中一个」的部分审批。
 
 
 class ApproveDecision(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["approve"]
+    tool_id: str
 
 
 class EditDecision(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["edit"]
+    tool_id: str
     # 前端修改工具调用参数后重新下发。
     edited_action: dict[str, JsonValue]
 
@@ -31,12 +35,14 @@ class EditDecision(BaseModel):
 class RejectDecision(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["reject"]
+    tool_id: str
     message: str
 
 
 class RespondDecision(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["respond"]
+    tool_id: str
     message: str
 
 
@@ -47,13 +53,13 @@ ResumeDecision = Annotated[
 
 
 class RunResume(BaseModel):
-    """恢复暂停中的 run，携带人工审批决策。"""
+    """恢复暂停中的 run，携带逐工具人工审批决策（同帧多工具→多决策，与 awaiting 浮现一一对应）。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
     kind: Literal["run.resume"]
     run_id: str
-    decision: ResumeDecision
+    decisions: list[ResumeDecision]
 
 
 class RunCancel(BaseModel):

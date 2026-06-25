@@ -31,38 +31,42 @@ def test_parse_run_resume_approve() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r2",
-        "decision": {"type": "approve"},
+        "decisions": [{"type": "approve", "tool_id": "t1"}],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert result.decision.type == "approve"
+    assert result.decisions[0].type == "approve"
+    assert result.decisions[0].tool_id == "t1"
 
 
 def test_parse_run_resume_edit() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r3",
-        "decision": {
-            "type": "edit",
-            "edited_action": {"name": "bash", "args": {"cmd": "ls"}},
-        },
+        "decisions": [
+            {
+                "type": "edit",
+                "tool_id": "t1",
+                "edited_action": {"name": "bash", "args": {"cmd": "ls"}},
+            }
+        ],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert isinstance(result.decision, EditDecision)
-    assert result.decision.edited_action == {"name": "bash", "args": {"cmd": "ls"}}
+    assert isinstance(result.decisions[0], EditDecision)
+    assert result.decisions[0].edited_action == {"name": "bash", "args": {"cmd": "ls"}}
 
 
 def test_parse_run_resume_reject() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r4",
-        "decision": {"type": "reject", "message": "nope"},
+        "decisions": [{"type": "reject", "tool_id": "t1", "message": "nope"}],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert isinstance(result.decision, RejectDecision)
-    assert result.decision.message == "nope"
+    assert isinstance(result.decisions[0], RejectDecision)
+    assert result.decisions[0].message == "nope"
 
 
 def test_parse_run_cancel() -> None:
@@ -98,12 +102,22 @@ def test_extra_fields_forbidden() -> None:
 # ── ResumeDecision 跨字段强校验测试 ──────────────────────────────────────────
 
 
+def test_decision_without_tool_id_returns_none() -> None:
+    # 每个决策必须显式携带 tool_id（多工具归属）；缺失应被收为 None。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r9",
+        "decisions": [{"type": "approve"}],
+    }
+    assert parse_inbound(raw) is None
+
+
 def test_edit_without_edited_action_returns_none() -> None:
     # edit 型必须携带 edited_action；缺失应被 parse_inbound 收为 None。
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r10",
-        "decision": {"type": "edit"},
+        "decisions": [{"type": "edit", "tool_id": "t1"}],
     }
     assert parse_inbound(raw) is None
 
@@ -113,7 +127,7 @@ def test_reject_without_message_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r11",
-        "decision": {"type": "reject"},
+        "decisions": [{"type": "reject", "tool_id": "t1"}],
     }
     assert parse_inbound(raw) is None
 
@@ -123,7 +137,7 @@ def test_respond_without_message_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r12",
-        "decision": {"type": "respond"},
+        "decisions": [{"type": "respond", "tool_id": "t1"}],
     }
     assert parse_inbound(raw) is None
 
@@ -133,7 +147,7 @@ def test_approve_with_edited_action_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r13",
-        "decision": {"type": "approve", "edited_action": {"name": "bash"}},
+        "decisions": [{"type": "approve", "tool_id": "t1", "edited_action": {"name": "bash"}}],
     }
     assert parse_inbound(raw) is None
 
@@ -143,7 +157,7 @@ def test_approve_with_message_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r14",
-        "decision": {"type": "approve", "message": "extra"},
+        "decisions": [{"type": "approve", "tool_id": "t1", "message": "extra"}],
     }
     assert parse_inbound(raw) is None
 
@@ -153,12 +167,12 @@ def test_edit_with_edited_action_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r15",
-        "decision": {"type": "edit", "edited_action": {"name": "bash", "args": {}}},
+        "decisions": [{"type": "edit", "tool_id": "t1", "edited_action": {"name": "bash", "args": {}}}],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert isinstance(result.decision, EditDecision)
-    assert result.decision.edited_action == {"name": "bash", "args": {}}
+    assert isinstance(result.decisions[0], EditDecision)
+    assert result.decisions[0].edited_action == {"name": "bash", "args": {}}
 
 
 def test_reject_with_message_ok() -> None:
@@ -166,12 +180,12 @@ def test_reject_with_message_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r16",
-        "decision": {"type": "reject", "message": "not approved"},
+        "decisions": [{"type": "reject", "tool_id": "t1", "message": "not approved"}],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert isinstance(result.decision, RejectDecision)
-    assert result.decision.message == "not approved"
+    assert isinstance(result.decisions[0], RejectDecision)
+    assert result.decisions[0].message == "not approved"
 
 
 def test_respond_with_message_ok() -> None:
@@ -179,12 +193,12 @@ def test_respond_with_message_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r17",
-        "decision": {"type": "respond", "message": "please clarify"},
+        "decisions": [{"type": "respond", "tool_id": "t1", "message": "please clarify"}],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert isinstance(result.decision, RespondDecision)
-    assert result.decision.message == "please clarify"
+    assert isinstance(result.decisions[0], RespondDecision)
+    assert result.decisions[0].message == "please clarify"
 
 
 def test_approve_clean_ok() -> None:
@@ -192,8 +206,23 @@ def test_approve_clean_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r18",
-        "decision": {"type": "approve"},
+        "decisions": [{"type": "approve", "tool_id": "t1"}],
     }
     result = parse_inbound(raw)
     assert isinstance(result, RunResume)
-    assert result.decision.type == "approve"
+    assert result.decisions[0].type == "approve"
+
+
+def test_parse_run_resume_multi_decision() -> None:
+    # 同帧多工具→多决策：approve 一个、reject 另一个，各自带 tool_id。
+    raw: JsonObject = {
+        "kind": "run.resume",
+        "run_id": "r19",
+        "decisions": [
+            {"type": "approve", "tool_id": "a"},
+            {"type": "reject", "tool_id": "b", "message": "no"},
+        ],
+    }
+    result = parse_inbound(raw)
+    assert isinstance(result, RunResume)
+    assert [d.tool_id for d in result.decisions] == ["a", "b"]

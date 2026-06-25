@@ -190,6 +190,17 @@ async def test_drain_tolerates_publish_failure_and_stops_on_sentinel() -> None:
     assert bus.attempts == ["s"]
 
 
+async def test_tool_with_none_output_yields_empty_result_text() -> None:
+    # output 为 None 且无 error → 结果文本为空串（_result_text 的 None 分支）。
+    queue: EventQueue = asyncio.Queue()
+    tool = _FakeTool("c", "fetch_url", output=None, error=None)
+    await consume_run(_FakeRun(tools=(tool,)), "r", queue, subagent_id=None)
+    queue.get_nowait()  # tool_call_start
+    end = queue.get_nowait()
+    assert end is not None
+    assert end.model_dump()["data"]["result"] == ""
+
+
 def test_fake_tool_satisfies_toolcallview() -> None:
     # 结构契约自检：fakes 必须真的满足 protocol，否则测的是别的东西。
     assert isinstance(_FakeTool("x", "y"), ToolCallView)

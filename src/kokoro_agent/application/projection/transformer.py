@@ -156,6 +156,9 @@ def subagent_finished_event(sub: SubagentInfo, *, request_id: str) -> AgentEvent
         "subagent_type": name,
         "source": _source_for(name),
     }
+    # langgraph SubgraphStatus="failed" → 子代理内部异常：失败有归属，不再被吞成顶层 agent_error。
+    if sub.status == "failed":
+        data["failed"] = True
     return _make_event("agent_status", request_id, data)
 
 

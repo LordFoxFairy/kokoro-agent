@@ -178,6 +178,18 @@ def test_subagent_finished_event() -> None:
     }
 
 
+def test_subagent_finished_event_failed() -> None:
+    # langgraph status="failed" → 失败有归属，不再被吞成顶层 agent_error。
+    sub = _FakeSub(name="researcher", trigger_call_id="sub-x", status="failed")
+    ev = subagent_finished_event(sub, request_id=KORO)
+    assert ev.data["failed"] is True
+
+
+def test_subagent_finished_event_completed_omits_failed() -> None:
+    ev = subagent_finished_event(_FakeSub(name="r", trigger_call_id="s"), request_id=KORO)
+    assert "failed" not in ev.data
+
+
 def test_custom_event_passthrough() -> None:
     ev = custom_event({"kind": "billing", "amount": 7}, request_id=KORO)
     assert ev is not None

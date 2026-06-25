@@ -271,6 +271,8 @@ def _resolutions(
     decisions: list[ResumeDecision], pending: _Pending, *, run_id: str
 ) -> list[AgentEvent]:
     # reject/respond 工具不经 v3 projection 浮现 → 逐工具据 decision 直发 tool_call_end。
+    # decisions 已经 _align_decisions：每个 tool_id 必在 pending 内，故直接索引（缺失即 invariant
+    # 破裂，宁可 KeyError 冒泡被 serve 兜成 agent_error，也不静默发空 name 的终态事件）。
     name_by_id = dict(pending.tools)
     events: list[AgentEvent] = []
     for decision in decisions:
@@ -284,7 +286,7 @@ def _resolutions(
             tool_resolution_event(
                 tool_id=decision.tool_id,
                 segment_id=pending.segment_id,
-                name=name_by_id.get(decision.tool_id, ""),
+                name=name_by_id[decision.tool_id],
                 result=message,
                 request_id=run_id,
                 rejected=rejected,

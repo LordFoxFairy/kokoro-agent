@@ -525,3 +525,37 @@ async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
     payload = agent.seen_payloads[0]
     assert isinstance(payload, Command)
     assert payload.resume == {"decisions": [{"type": "approve"}]}
+
+
+class _BoomStore:
+    """resume 路径内联调用的 store：is_terminal 抛错，模拟坏 checkpoint/存储抖动让 dispatch 失败。"""
+
+    async def try_register(self, request: RunRequest) -> bool:
+        return True
+
+    async def get_request(self, run_id: str) -> RunRequest | None:
+        return None
+
+    async def try_mark_terminal(self, run_id: str) -> bool:
+        return True
+
+    async def is_terminal(self, run_id: str) -> bool:
+        raise RuntimeError("store boom")
+
+
+@pytest.mark.asyncio
+async def test_serve_isolates_dispatch_failure_no_worker_death() -> None:
+    # 单条消息 dispatch 失败（resume 内联 is_terminal/aget_state 抛错）绝不冒泡杀死 serve 循环、
+    # 令整个 worker 罢工；收口为该 run 的 agent_error，循环正常收束。
+    resume = StreamItem(
+        cursor="0",
+        event={"kind": "run.resume", "run_id": "rx", "decision": {"type": "approve"}},
+    )
+    bus = _FakeBus(items=[resume])
+    sup = RunSupervisor(agent_builder=_builder(_FakeAgent()), store=_BoomStore())
+    await sup.serve(bus)  # 必须正常返回，而非异常冒泡杀掉 worker
+    published = [e for _, e in bus.published]
+    assert [e["event"] for e in published] == ["agent_error"]
+    last = published[-1]["data"]
+    assert isinstance(last, Mapping)
+    assert last["error_kind"] == "RuntimeError"

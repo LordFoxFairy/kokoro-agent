@@ -144,3 +144,38 @@ async def test_redis_port_round_trips_nested_json_object(port: RedisStream) -> N
     await port.publish(stream, payload)
     items = await port.read_all(stream)
     assert items[0].event == payload
+
+
+@pytest.mark.asyncio
+async def test_subscribe_reconnects_on_transient_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 瞬态断线韧性：xread 抛 ConnectionError 一次后恢复，subscribe 退避重试、不冒泡杀订阅流、
+    # 从生成器内存活的游标续读（不重放整条流）。无需 live redis：经 from_url 注入假 client。
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def xread(self, streams: object, block: object) -> object:
+            self.calls += 1
+            if self.calls == 1:
+                raise RedisConnectionError("down")
+            return [("s", [("5-0", {"data": "{}"})])]
+
+        async def aclose(self) -> None:
+            return None
+
+    fake = _FakeRedis()
+
+    def _fake_from_url(*_a: object, **_k: object) -> _FakeRedis:
+        return fake
+
+    monkeypatch.setattr(
+        "kokoro_agent.infrastructure.transport.redis_stream.from_url", _fake_from_url
+    )
+    port = RedisStream(REDIS_URL)
+    agen = port.subscribe("s")
+    item = await asyncio.wait_for(anext(agen), timeout=2.0)
+    assert item.cursor == "5-0"
+    assert fake.calls == 2  # 第一次抛错、退避后第二次成功
+    await port.aclose()

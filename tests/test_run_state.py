@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -96,6 +97,15 @@ async def _assert_unregistered_mark_terminal(store: RunStateStore) -> None:
     assert await store.get_request("run-never-registered") is None
 
 
+async def _assert_concurrent_claim_single_winner(store: RunStateStore, req: RunRequest) -> None:
+    # 并发去重：N 个并发 try_register 恰一个 True（多 pod 广播请求时无双启）。
+    registered = await asyncio.gather(*(store.try_register(req) for _ in range(8)))
+    assert sum(registered) == 1
+    # 并发终态认领：N 个并发 try_mark_terminal 恰一个 True（终态事件恰发一次）。
+    terminals = await asyncio.gather(*(store.try_mark_terminal(req.run_id) for _ in range(8)))
+    assert sum(terminals) == 1
+
+
 # ---------------------------------------------------------------------------
 # memory backend 行为矩阵
 # ---------------------------------------------------------------------------
@@ -109,6 +119,10 @@ async def test_memory_full_behaviour() -> None:
 async def test_memory_unregistered_mark_terminal() -> None:
     store = MemoryRunStateStore()
     await _assert_unregistered_mark_terminal(store)
+
+
+async def test_memory_concurrent_claim_single_winner() -> None:
+    await _assert_concurrent_claim_single_winner(MemoryRunStateStore(), _REQ)
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +142,35 @@ async def test_sqlite_unregistered_mark_terminal(tmp_path: Path) -> None:
         store = _SqliteStore(db)
         await store.setup()
         await _assert_unregistered_mark_terminal(store)
+
+
+async def test_sqlite_concurrent_claim_single_winner(tmp_path: Path) -> None:
+    async with aiosqlite.connect(str(tmp_path / "test.db")) as db:
+        store = _SqliteStore(db)
+        await store.setup()
+        await _assert_concurrent_claim_single_winner(store, _REQ)
+
+
+async def test_sqlite_concurrent_terminal_across_connections_single_winner(
+    tmp_path: Path,
+) -> None:
+    # 两个连接（模拟两进程）争用同一文件并发认领终态：busy_timeout 下互等、恰一个 True，
+    # 而非一方撞 SQLITE_BUSY 抛错。
+    db_path = str(tmp_path / "race.db")
+    async with (
+        aiosqlite.connect(db_path) as conn_a,
+        aiosqlite.connect(db_path) as conn_b,
+    ):
+        store_a = _SqliteStore(conn_a)
+        store_b = _SqliteStore(conn_b)
+        await store_a.setup()
+        await store_b.setup()
+        await store_a.try_register(_REQ)
+        results = await asyncio.gather(
+            store_a.try_mark_terminal(_REQ.run_id),
+            store_b.try_mark_terminal(_REQ.run_id),
+        )
+    assert sum(results) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +231,16 @@ async def test_mongo_unregistered_mark_terminal() -> None:
     client, coll = await _mongo_collection_or_skip()
     try:
         await _assert_unregistered_mark_terminal(MongoRunStateStore(coll))
+    finally:
+        await coll.drop()
+        await client.close()
+
+
+async def test_mongo_concurrent_claim_single_winner() -> None:
+    # 跨 pod 真争用：并发 try_register 中输者可能撞 DuplicateKeyError，须被吞为 False、恰一个 True。
+    client, coll = await _mongo_collection_or_skip()
+    try:
+        await _assert_concurrent_claim_single_winner(MongoRunStateStore(coll), _REQ)
     finally:
         await coll.drop()
         await client.close()

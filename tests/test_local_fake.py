@@ -24,7 +24,8 @@ def test_sync_generate_exhausts_script_to_empty_message() -> None:
         result = model.invoke([HumanMessage(content="hi"), AIMessage(content="prev")])
         assert isinstance(result, AIMessage)
         last = result
-    assert last.content == ""
+    # .text（已知 str）而非 .content（str|list 部分未知，strict pyright 跨版本会判 partially unknown）。
+    assert last.text == ""
 
 
 def test_bind_tools_accepts_and_returns_runnable() -> None:

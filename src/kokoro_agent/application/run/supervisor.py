@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -117,11 +118,15 @@ class RunSupervisor:
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
             return
         names = _interrupt_on_names(request)
-        # reject/respond 工具不经 v3 projection（synthetic ToolMessage 跳过 tool 节点）→ 在 resume
-        # 据 snapshot+decision 直发终态（与 tool_call_awaiting 同为快照直发，replay 安全）。
-        for ev in _resolutions(msg.decision, snapshot, names, run_id=msg.run_id):
+        # 同帧多工具→多决策：按 tool_id 把 wire decisions 对齐到 pending 顺序（langgraph 按序匹配
+        # decisions↔interrupt，故必须重排），缺/多/重复/未知 tool_id 即 fail-loud（serve 兜为 agent_error）。
+        pending = _pending_tool_calls(snapshot, names)
+        ordered = _align_decisions(msg.decisions, pending)
+        # reject/respond 工具不经 v3 projection（synthetic ToolMessage 跳过 tool 节点）→ 逐工具据
+        # decision 直发终态（与 tool_call_awaiting 同为快照直发，replay 安全）。
+        for ev in _resolutions(ordered, pending, run_id=msg.run_id):
             await self._emit_event(bus, msg.run_id, ev)
-        command: Command[object] = Command(resume={"decisions": [_decision_dict(msg.decision)]})
+        command: Command[object] = Command(resume={"decisions": [_decision_dict(d) for d in ordered]})
         trace = trace_config(request)
         self._spawn_agent(
             bus, agent, msg.run_id, request.conversation_id, command, names, trace=trace
@@ -230,41 +235,66 @@ def _interrupt_on_names(request: RunRequest) -> frozenset[str]:
 
 
 def _decision_dict(decision: ResumeDecision) -> dict[str, JsonValue]:
-    # 各 arm 恰好携带其字段，model_dump 直接得 langgraph resume 所需 decision dict。
-    return decision.model_dump()
+    # langgraph Decision 按序匹配、不含 tool_id；剔除 wire 专用的 tool_id 再喂框架。
+    return decision.model_dump(exclude={"tool_id"})
 
 
-def _resolutions(
-    decision: ResumeDecision, snapshot: StateView, names: frozenset[str], *, run_id: str
-) -> list[AgentEvent]:
-    # reject/respond 的工具不经 v3 projection 浮现；据 pending 子序列（命中 interrupt_on 名集，与
-    # awaiting 同源对齐）+ decision 直发 tool_call_end。reject→rejected/理由；respond→done/合成结果。
-    if decision.type == "reject":
-        rejected, responded, message = True, False, decision.message
-    elif decision.type == "respond":
-        rejected, responded, message = False, True, decision.message
-    else:
-        return []
+@dataclass(frozen=True)
+class _Pending:
+    segment_id: str
+    tools: tuple[tuple[str, str], ...]  # (tool_id, name)，按 interrupt 顺序
+
+
+def _pending_tool_calls(snapshot: StateView, names: frozenset[str]) -> _Pending:
+    # 触发 interrupt 的 AIMessage 中命中 interrupt_on 的工具子序列（与 langgraph/awaiting 同序）。
     # langgraph 图状态 values 为 Any：messages 在此边界过滤为 typed AIMessage（同 invoke._messages）。
     raw: Any = snapshot.values.get("messages") or []
     last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
     if last_ai is None:
-        return []
-    segment_id = last_ai.id or ""
-    return [
-        tool_resolution_event(
-            tool_id=tc["id"] or "",
-            segment_id=segment_id,
-            name=tc["name"],
-            result=message,
-            request_id=run_id,
-            rejected=rejected,
-            reject_reason=message if rejected else None,
-            responded=responded,
+        return _Pending("", ())
+    tools = tuple((tc["id"] or "", tc["name"]) for tc in last_ai.tool_calls if tc["name"] in names)
+    return _Pending(last_ai.id or "", tools)
+
+
+def _align_decisions(decisions: list[ResumeDecision], pending: _Pending) -> list[ResumeDecision]:
+    # 按 tool_id 把 wire decisions 重排到 pending 顺序；逐工具一一对应，缺/多/重复/未知一律 fail-loud。
+    by_id: dict[str, ResumeDecision] = {d.tool_id: d for d in decisions}
+    if len(by_id) != len(decisions):
+        raise ValueError("resume decisions contain duplicate tool_id")
+    pending_ids = [tool_id for tool_id, _name in pending.tools]
+    if set(by_id) != set(pending_ids):
+        raise ValueError(f"resume decisions {sorted(by_id)} != pending tools {sorted(pending_ids)}")
+    return [by_id[tool_id] for tool_id in pending_ids]
+
+
+def _resolutions(
+    decisions: list[ResumeDecision], pending: _Pending, *, run_id: str
+) -> list[AgentEvent]:
+    # reject/respond 工具不经 v3 projection 浮现 → 逐工具据 decision 直发 tool_call_end。
+    # decisions 已经 _align_decisions：每个 tool_id 必在 pending 内，故直接索引（缺失即 invariant
+    # 破裂，宁可 KeyError 冒泡被 serve 兜成 agent_error，也不静默发空 name 的终态事件）。
+    name_by_id = dict(pending.tools)
+    events: list[AgentEvent] = []
+    for decision in decisions:
+        if decision.type == "reject":
+            rejected, responded, message = True, False, decision.message
+        elif decision.type == "respond":
+            rejected, responded, message = False, True, decision.message
+        else:
+            continue
+        events.append(
+            tool_resolution_event(
+                tool_id=decision.tool_id,
+                segment_id=pending.segment_id,
+                name=name_by_id[decision.tool_id],
+                result=message,
+                request_id=run_id,
+                rejected=rejected,
+                reject_reason=message if rejected else None,
+                responded=responded,
+            )
         )
-        for tc in last_ai.tool_calls
-        if tc["name"] in names
-    ]
+    return events
 
 
 def _has_pending_interrupt(snapshot: StateView) -> bool:

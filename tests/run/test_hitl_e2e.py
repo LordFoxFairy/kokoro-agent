@@ -252,7 +252,10 @@ async def _run_until_awaiting(sup: RunSupervisor, bus: _FakeBus, run_id: str) ->
 async def _resume(
     sup: RunSupervisor, bus: _FakeBus, run_id: str, decision: dict[str, JsonValue]
 ) -> None:
-    resume = _inbound({"kind": "run.resume", "run_id": run_id, "decision": decision})
+    # 单工具便捷封装：注入唯一 pending 的 tool_id + 包成 decisions 列表（多工具见 _resume_many）。
+    resume = _inbound(
+        {"kind": "run.resume", "run_id": run_id, "decisions": [{**decision, "tool_id": _TOOL_ID}]}
+    )
     await sup.dispatch(bus, resume)
     await _drain(sup)
 
@@ -437,3 +440,89 @@ async def test_real_deepagents_respond_emits_done(monkeypatch: pytest.MonkeyPatc
     assert end["is_error"] is False
     assert end["responded"] is True
     assert end["result"] == "use cache"
+
+
+# --------------------------------------------------------------------------- #
+# ① 真 deepagents 回归：同帧多个被门控工具 → resume 不再崩（旧单决策 wire 会触发 langchain
+# 「decisions 数≠工具数」ValueError）；逐工具决策、支持部分审批（批一个、拒一个）。
+# --------------------------------------------------------------------------- #
+
+_MULTI_SCRIPT: list[AIMessage] = [
+    AIMessage(
+        content="",
+        tool_calls=[
+            {"name": _TOOL_NAME, "args": {"url": "a"}, "id": "call-A", "type": "tool_call"},
+            {"name": _TOOL_NAME, "args": {"url": "b"}, "id": "call-B", "type": "tool_call"},
+        ],
+    ),
+    AIMessage(content="done"),
+]
+
+
+class _RealMultiModel(BaseChatModel):
+    _cursor: int = PrivateAttr(default=0)
+
+    @property
+    def _llm_type(self) -> str:
+        return "real-multi"
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Runnable[LanguageModelInput, AIMessage]:
+        return self.with_types(output_type=AIMessage)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        msg = _MULTI_SCRIPT[min(self._cursor, len(_MULTI_SCRIPT) - 1)]
+        self._cursor += 1
+        return ChatResult(generations=[ChatGeneration(message=msg)])
+
+
+def _real_multi_agent() -> InvokableAgent:
+    return make_deep_agent(
+        model=_RealMultiModel(),
+        tools=[_real_tool],
+        system_prompt="s",
+        subagents=[],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on={
+            _TOOL_NAME: InterruptOnConfig(allowed_decisions=["approve", "edit", "reject", "respond"])
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_deepagents_multi_tool_partial_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _TOOL_NAME)
+    bus = _FakeBus()
+    agent = _real_multi_agent()
+    sup = RunSupervisor(agent_builder=lambda _req: agent)
+    await sup.dispatch(bus, _request("rm"))
+    await _drain(sup)
+    awaiting_ids = sorted(str(_data(a).get("tool_id")) for a in _events_of(bus, "rm", "tool_call_awaiting"))
+    assert awaiting_ids == ["call-A", "call-B"]
+
+    # 部分审批：批准 call-A、拒绝 call-B —— 旧单决策 wire 在此必崩。
+    resume = _inbound(
+        {
+            "kind": "run.resume",
+            "run_id": "rm",
+            "decisions": [
+                {"type": "approve", "tool_id": "call-A"},
+                {"type": "reject", "tool_id": "call-B", "message": "no"},
+            ],
+        }
+    )
+    await sup.dispatch(bus, resume)
+    await _drain(sup)
+
+    assert _events_of(bus, "rm", "agent_error") == []  # 不崩
+    ends = {_data(e).get("tool_id"): _data(e) for e in _events_of(bus, "rm", "tool_call_end")}
+    assert ends["call-B"]["rejected"] is True  # 被拒工具权威 rejected
+    assert ends["call-A"]["rejected"] is False  # 批准工具真跑、非 rejected

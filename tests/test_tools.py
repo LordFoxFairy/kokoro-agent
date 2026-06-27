@@ -13,7 +13,11 @@ from kokoro_agent.infrastructure.tools import (
     fetch,
 )
 from kokoro_agent.infrastructure.tools.clock import now
-from kokoro_agent.infrastructure.tools.fetch import FETCH_MAX_CHARS, fetch_url
+from kokoro_agent.infrastructure.tools.fetch import (
+    FETCH_MAX_BYTES,
+    FETCH_MAX_CHARS,
+    fetch_url,
+)
 
 # 公网 IP，让 _host_is_blocked 放行（真实 DNS 不参与测试）。
 _PUBLIC_IP = "93.184.216.34"
@@ -160,6 +164,47 @@ async def test_fetch_url_blocks_by_resolved_ip_class(
         assert result == "OK"
 
 
+# --- fetch_url: SSRF 守卫 fail-closed 分支（解析失败/空/非法 IP/空 host/真实解析器）---------
+
+
+async def test_fetch_url_blocks_empty_host() -> None:
+    # 空 hostname（如 http:///path）→ host 收为 "" → fail closed，根本不解析、不发请求。
+    result = await fetch_url("http:///nowhere")
+    assert result.startswith("抓取失败：拒绝访问")
+
+
+async def test_fetch_url_fails_closed_on_dns_failure(monkeypatch: MonkeyPatch) -> None:
+    def boom(_host: str) -> list[str]:
+        raise OSError("dns down")
+
+    monkeypatch.setattr(fetch, "_resolve_ips", boom)
+    # 解析失败即拒（fail closed）：DNS 不可用绝不退化为放行。
+    assert (await fetch_url("http://anything.test/")).startswith("抓取失败：拒绝访问")
+
+
+async def test_fetch_url_fails_closed_on_empty_resolution(monkeypatch: MonkeyPatch) -> None:
+    def empty(_host: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(fetch, "_resolve_ips", empty)
+    assert (await fetch_url("http://anything.test/")).startswith("抓取失败：拒绝访问")
+
+
+async def test_fetch_url_fails_closed_on_unparseable_resolved_ip(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def garbage(_host: str) -> list[str]:
+        return ["not-an-ip"]
+
+    monkeypatch.setattr(fetch, "_resolve_ips", garbage)
+    assert (await fetch_url("http://anything.test/")).startswith("抓取失败：拒绝访问")
+
+
+async def test_fetch_url_real_resolver_blocks_localhost() -> None:
+    # 不打桩 _resolve_ips：走真实 getaddrinfo（覆盖 _resolve_ips 实体），localhost 解析为环回 → 拦截。
+    assert (await fetch_url("http://localhost/")).startswith("抓取失败：拒绝访问")
+
+
 async def test_fetch_url_allows_a_public_host(monkeypatch: MonkeyPatch) -> None:
     _serve(monkeypatch, httpx.MockTransport(lambda _r: httpx.Response(200, text="hello kokoro")))
     assert await fetch_url("https://example.com") == "hello kokoro"
@@ -202,6 +247,16 @@ async def test_fetch_url_byte_caps_a_huge_body(monkeypatch: MonkeyPatch) -> None
     _serve(monkeypatch, httpx.MockTransport(lambda _r: httpx.Response(200, text="x" * (FETCH_MAX_CHARS * 3))))
     result = await fetch_url("https://example.com")
     assert len(result) <= FETCH_MAX_CHARS + 50
+    assert "截断" in result
+
+
+async def test_fetch_url_byte_break_stops_at_byte_cap(monkeypatch: MonkeyPatch) -> None:
+    # 响应体 >= FETCH_MAX_BYTES：读到字节硬上限即 break（挡解压尖峰/超大体），不吞完整个流。
+    _serve(
+        monkeypatch,
+        httpx.MockTransport(lambda _r: httpx.Response(200, text="x" * (FETCH_MAX_BYTES + 5000))),
+    )
+    result = await fetch_url("https://example.com")
     assert "截断" in result
 
 

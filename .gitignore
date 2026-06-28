@@ -9,6 +9,7 @@ __pycache__/
 .claude/
 .jbeval/
 coverage/
+.coverage
 docs/
 tmp/
 *.egg-info/

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
+from pathlib import Path
 from typing import TypeVar
 
 import pytest
@@ -34,11 +35,14 @@ class _EmptyBus:
         return _aiter([])
 
 
-def test_main_assembles_and_returns_on_empty_stream(monkeypatch: pytest.MonkeyPatch) -> None:
-    # main → asyncio.run(_serve())：memory 后端 + 空请求流 → 装配完成、serve 的 async for 即收束、不挂起。
-    # load_dotenv 打桩为 no-op，免读到真实 .env 干扰；后端选 memory 免落盘。
+def test_main_assembles_and_returns_on_empty_stream(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # main → asyncio.run(_serve())：sqlite 临时 run_state + 空请求流 → 装配完成并收束。
+    # load_dotenv 打桩为 no-op，免读到真实 .env 干扰。
     monkeypatch.setenv("KOKORO_CHECKPOINT_BACKEND", "memory")
-    monkeypatch.setenv("KOKORO_RUN_STATE_BACKEND", "memory")
+    monkeypatch.setenv("KOKORO_RUN_STATE_BACKEND", "sqlite")
+    monkeypatch.setenv("KOKORO_RUN_STATE_DB", str(tmp_path / "run_state.db"))
     monkeypatch.setattr(worker, "make_stream", lambda: _EmptyBus())
     monkeypatch.setattr(worker, "load_dotenv", lambda: None)
     worker.main()

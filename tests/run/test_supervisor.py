@@ -11,12 +11,13 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Command, Interrupt
 from pydantic import JsonValue
 
+from kokoro_agent.application.protocols.run_state import RunStateStore
 from kokoro_agent.application.protocols.stream import StreamItem
 from kokoro_agent.application.run.invoke import events_stream
 from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
 from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure.run_state import MemoryRunStateStore
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
+from .fakes import FakeRunStateStore
 
 _T = TypeVar("_T")
 
@@ -183,6 +184,17 @@ def _builder(agent: _FakeAgent) -> Callable[[RunRequest], _FakeAgent]:
     return build
 
 
+def _supervisor(
+    agent_builder: Callable[[RunRequest], _FakeAgent],
+    *,
+    store: RunStateStore | None = None,
+) -> RunSupervisor:
+    return RunSupervisor(
+        agent_builder=agent_builder,
+        store=store if store is not None else FakeRunStateStore(),
+    )
+
+
 async def _drain(sup: RunSupervisor) -> None:
     for task in tuple(sup.tasks.values()):
         await task
@@ -198,7 +210,7 @@ def _inbound(raw: dict[str, JsonValue]) -> InboundMessage:
 async def test_request_dispatches_initial_invoke() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("r1"))
     await _drain(sup)
 
@@ -219,7 +231,7 @@ async def test_request_dispatches_initial_invoke() -> None:
 async def test_duplicate_run_id_skipped() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("dup"))
     await _drain(sup)
     first_count = len(bus.published)
@@ -234,7 +246,7 @@ async def test_resume_with_pending_invokes_command(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("r2"))
     await _drain(sup)
     agent.seen_payloads.clear()
@@ -253,7 +265,7 @@ async def test_resume_with_pending_invokes_command(monkeypatch: pytest.MonkeyPat
 async def test_resume_without_pending_is_dropped() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("r3"))
     await _drain(sup)
     before = len(bus.published)
@@ -272,7 +284,7 @@ async def test_resume_edit_and_reject_decision_shapes(monkeypatch: pytest.Monkey
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("r4"))
     await _drain(sup)
 
@@ -307,7 +319,7 @@ async def test_resume_edit_and_reject_decision_shapes(monkeypatch: pytest.Monkey
 async def test_resume_unknown_run_dropped() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     resume = _inbound({"kind": "run.resume", "run_id": "ghost", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
@@ -320,7 +332,7 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
     gate = asyncio.Event()
     agent = _FakeAgent(run=_text_run("x"), state=_EMPTY_STATE, block=gate)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("r5"))
     await asyncio.sleep(0)
 
@@ -338,7 +350,7 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
 async def test_cancel_unknown_run_still_emits_cancelled() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     cancel = _inbound({"kind": "run.cancel", "run_id": "gone"})
     await sup.dispatch(bus, cancel)
     last = bus.published[-1]
@@ -352,7 +364,7 @@ async def test_builder_failure_emits_run_failed() -> None:
         raise ValueError("bad model")
 
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=build)
+    sup = _supervisor(build)
     await sup.dispatch(bus, _request("r6"))
     await _drain(sup)
     last = bus.published[-1]
@@ -364,7 +376,7 @@ async def test_builder_failure_emits_run_failed() -> None:
 async def test_serve_dispatches_subscribed_requests() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus(items=(_request_item("sv1"),))
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.serve(bus)
     await _drain(sup)
     assert REQUESTS_STREAM == "kokoro:runs:requests"
@@ -386,7 +398,7 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
         request = RunRequest(
             kind="run.request", run_id="r1", conversation_id="c1", session_id="s1", input="hello"
         )
-        supervisor = RunSupervisor(agent_builder=lambda req: _FakeAgent())
+        supervisor = _supervisor(lambda req: _FakeAgent())
         bus = _FakeBus()
         await supervisor.dispatch(bus, request)
         for task in list(supervisor.tasks.values()):
@@ -403,7 +415,7 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
 async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("rc1"))
     await _drain(sup)
 
@@ -422,7 +434,7 @@ async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
 async def test_cancel_after_pause_emits_cancelled() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("rc2"))
     await _drain(sup)
 
@@ -442,7 +454,7 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
     gate = asyncio.Event()
     agent = _FakeAgent(run=_text_run("x"), state=_EMPTY_STATE, block=gate)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("rc3"))
     await asyncio.sleep(0)
 
@@ -462,7 +474,7 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
 async def test_resume_after_cancel_blocked_by_terminal() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("rc4"))
     await _drain(sup)
 
@@ -484,7 +496,7 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await sup.dispatch(bus, _request("rc5"))
     await _drain(sup)
     before = len(bus.published)
@@ -505,7 +517,7 @@ async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
         raise ValueError("bad model")
 
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=build)
+    sup = _supervisor(build)
     await sup.dispatch(bus, _request("rbf"))
     await _drain(sup)
 
@@ -521,15 +533,15 @@ async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
 @pytest.mark.asyncio
 async def test_resume_on_fresh_supervisor_via_shared_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
-    store = MemoryRunStateStore()
+    store = FakeRunStateStore()
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
-    sup_a = RunSupervisor(agent_builder=_builder(agent), store=store)
+    sup_a = _supervisor(_builder(agent), store=store)
     await sup_a.dispatch(bus, _request("rx"))
     await _drain(sup_a)
 
     # sup_b 无 sup_a 的进程内 map，仅共享 store；resume 须靠 store.get_request 重建 agent。
-    sup_b = RunSupervisor(agent_builder=_builder(agent), store=store)
+    sup_b = _supervisor(_builder(agent), store=store)
     agent.seen_payloads.clear()
     resume = _inbound({"kind": "run.resume", "run_id": "rx", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup_b.dispatch(bus, resume)
@@ -566,7 +578,7 @@ async def test_serve_isolates_dispatch_failure_no_worker_death() -> None:
         event={"kind": "run.resume", "run_id": "rx", "decisions": [{"type": "approve", "tool_id": _TID}]},
     )
     bus = _FakeBus(items=[resume])
-    sup = RunSupervisor(agent_builder=_builder(_FakeAgent()), store=_BoomStore())
+    sup = _supervisor(_builder(_FakeAgent()), store=_BoomStore())
     await sup.serve(bus)  # 必须正常返回，而非异常冒泡杀掉 worker
     published = [e for _, e in bus.published]
     assert [e["event"] for e in published] == ["agent_error"]

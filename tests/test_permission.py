@@ -16,15 +16,17 @@ def test_run_request_defaults_permission_mode_auto() -> None:
     assert req.permission_mode == "auto"
 
 
-def test_build_interrupt_on_auto_returns_empty() -> None:
+def test_build_interrupt_on_auto_keeps_ask_user_question() -> None:
     result = build_interrupt_on("auto")
-    assert result == {}
+    assert set(result.keys()) == {"ask_user_question"}
+    assert result["ask_user_question"]["allowed_decisions"] == ["reject", "respond"]
 
 
 def test_build_interrupt_on_default_contains_approval_tools() -> None:
     policy = AppConfig.from_env().approval
     result = build_interrupt_on("default")
-    assert set(result.keys()) == policy.requires_approval_tools
+    assert set(result.keys()) == {*policy.requires_approval_tools, "ask_user_question"}
+    assert result.pop("ask_user_question")["allowed_decisions"] == ["reject", "respond"]
     for config in result.values():
         # InterruptOnConfig 是 TypedDict（dict 子类），用下标访问而非属性。
         assert set(config["allowed_decisions"]) == {"approve", "edit", "reject", "respond"}

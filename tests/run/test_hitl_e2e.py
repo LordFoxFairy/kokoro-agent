@@ -31,10 +31,11 @@ from kokoro_agent.application.run.supervisor import RunSupervisor
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.agent_builder import make_deep_agent
 from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
+from .fakes import FakeRunStateStore
 
 # 与 AppConfig.approval 默认 requires_approval_tools 同名：确保 supervisor 计算的
 # interrupt_on_names 真命中本工具，端到端验证同源对齐而非旁路。
-_TOOL_NAME = "fetch_url"
+_TOOL_NAME = "web_fetch"
 _TOOL_ID = "call-A"
 
 _T = TypeVar("_T")
@@ -204,6 +205,12 @@ def _builder(agent: _FakeHitlAgent) -> Callable[[RunRequest], _FakeHitlAgent]:
     return build
 
 
+def _supervisor(
+    agent_builder: Callable[[RunRequest], InvokableAgent],
+) -> RunSupervisor:
+    return RunSupervisor(agent_builder=agent_builder, store=FakeRunStateStore())
+
+
 def _request(run_id: str) -> RunRequest:
     # permission_mode=default 让 supervisor 计算非空 interrupt_on_names。
     return RunRequest(
@@ -279,7 +286,7 @@ def _assert_completed(bus: _FakeBus, run_id: str) -> None:
 async def test_approve_tool_actually_runs() -> None:
     agent = _FakeHitlAgent()
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await _run_until_awaiting(sup, bus, "ra")
     await _resume(sup, bus, "ra", {"type": "approve"})
 
@@ -293,7 +300,7 @@ async def test_approve_tool_actually_runs() -> None:
 async def test_edit_new_args_take_effect() -> None:
     agent = _FakeHitlAgent()
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await _run_until_awaiting(sup, bus, "re")
     await _resume(
         sup, bus, "re", {"type": "edit", "edited_action": {"name": _TOOL_NAME, "args": {"x": 99}}}
@@ -311,7 +318,7 @@ async def test_edit_new_args_take_effect() -> None:
 async def test_reject_does_not_run_tool() -> None:
     agent = _FakeHitlAgent()
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await _run_until_awaiting(sup, bus, "rr")
     await _resume(sup, bus, "rr", {"type": "reject", "message": "no"})
 
@@ -331,7 +338,7 @@ async def test_reject_does_not_run_tool() -> None:
 async def test_respond_synthesizes_result() -> None:
     agent = _FakeHitlAgent()
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(_builder(agent))
     await _run_until_awaiting(sup, bus, "rs")
     await _resume(sup, bus, "rs", {"type": "respond", "message": "use cache"})
 
@@ -350,8 +357,8 @@ async def test_respond_synthesizes_result() -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def _real_fetch(url: str) -> str:
-    return f"fetched {url}"
+async def _real_web_fetch(url: str) -> str:
+    return f"web_fetched {url}"
 
 
 class _RealArgs(BaseModel):
@@ -359,7 +366,7 @@ class _RealArgs(BaseModel):
 
 
 _real_tool = StructuredTool(
-    name=_TOOL_NAME, description="d", args_schema=_RealArgs, coroutine=_real_fetch
+    name=_TOOL_NAME, description="d", args_schema=_RealArgs, coroutine=_real_web_fetch
 )
 
 _REAL_SCRIPT: list[AIMessage] = [
@@ -414,7 +421,7 @@ async def test_real_deepagents_reject_emits_authoritative_rejected(
     monkeypatch.setenv("KOKORO_APPROVAL_TOOLS", _TOOL_NAME)
     bus = _FakeBus()
     agent = _real_agent()
-    sup = RunSupervisor(agent_builder=lambda _req: agent)
+    sup = _supervisor(lambda _req: agent)
     await _run_until_awaiting(sup, bus, "rr")
     await _resume(sup, bus, "rr", {"type": "reject", "message": "no"})
     ends = _events_of(bus, "rr", "tool_call_end")
@@ -430,7 +437,7 @@ async def test_real_deepagents_respond_emits_done(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("KOKORO_APPROVAL_TOOLS", _TOOL_NAME)
     bus = _FakeBus()
     agent = _real_agent()
-    sup = RunSupervisor(agent_builder=lambda _req: agent)
+    sup = _supervisor(lambda _req: agent)
     await _run_until_awaiting(sup, bus, "rs")
     await _resume(sup, bus, "rs", {"type": "respond", "message": "use cache"})
     ends = _events_of(bus, "rs", "tool_call_end")
@@ -502,7 +509,7 @@ async def test_real_deepagents_multi_tool_partial_approval(
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _TOOL_NAME)
     bus = _FakeBus()
     agent = _real_multi_agent()
-    sup = RunSupervisor(agent_builder=lambda _req: agent)
+    sup = _supervisor(lambda _req: agent)
     await sup.dispatch(bus, _request("rm"))
     await _drain(sup)
     awaiting_ids = sorted(str(_data(a).get("tool_id")) for a in _events_of(bus, "rm", "tool_call_awaiting"))

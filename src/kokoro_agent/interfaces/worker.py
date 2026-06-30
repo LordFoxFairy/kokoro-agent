@@ -11,7 +11,6 @@ from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.infrastructure.checkpoint import make_checkpointer
 from kokoro_agent.infrastructure.model import make_chat_model
 from kokoro_agent.infrastructure.run_state import make_run_state_store
-from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 from kokoro_agent.infrastructure.transport import make_stream
 from kokoro_agent.application.run.invoke import InvokableAgent
 from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
@@ -30,7 +29,6 @@ async def _serve() -> None:
             return build_agent(
                 model,
                 request.permission_mode,
-                RuntimeSubagentRegistry(),
                 checkpointer=saver,
             )
 

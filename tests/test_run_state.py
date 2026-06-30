@@ -14,7 +14,6 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from kokoro_agent.domain.run_request import RunRequest
 from kokoro_agent.infrastructure.run_state import (
-    MemoryRunStateStore,
     MongoRunStateStore,
     RunStateStore,
     SqliteRunStateStore,
@@ -46,12 +45,6 @@ _REQ2 = RunRequest(
 # ---------------------------------------------------------------------------
 
 
-async def test_memory_backend_yields_memory_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KOKORO_RUN_STATE_BACKEND", "memory")
-    async with make_run_state_store() as store:
-        assert isinstance(store, MemoryRunStateStore)
-
-
 async def test_sqlite_backend_yields_sqlite_store(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -63,7 +56,7 @@ async def test_sqlite_backend_yields_sqlite_store(
 
 async def test_unknown_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KOKORO_RUN_STATE_BACKEND", "bogus")
-    with pytest.raises(ValueError, match="bogus"):
+    with pytest.raises(ValueError, match="unsupported KOKORO_RUN_STATE_BACKEND"):
         async with make_run_state_store():
             pass
 
@@ -104,25 +97,6 @@ async def _assert_concurrent_claim_single_winner(store: RunStateStore, req: RunR
     # 并发终态认领：N 个并发 try_mark_terminal 恰一个 True（终态事件恰发一次）。
     terminals = await asyncio.gather(*(store.try_mark_terminal(req.run_id) for _ in range(8)))
     assert sum(terminals) == 1
-
-
-# ---------------------------------------------------------------------------
-# memory backend 行为矩阵
-# ---------------------------------------------------------------------------
-
-
-async def test_memory_full_behaviour() -> None:
-    store = MemoryRunStateStore()
-    await _assert_full_behaviour(store, _REQ)
-
-
-async def test_memory_unregistered_mark_terminal() -> None:
-    store = MemoryRunStateStore()
-    await _assert_unregistered_mark_terminal(store)
-
-
-async def test_memory_concurrent_claim_single_winner() -> None:
-    await _assert_concurrent_claim_single_winner(MemoryRunStateStore(), _REQ)
 
 
 # ---------------------------------------------------------------------------

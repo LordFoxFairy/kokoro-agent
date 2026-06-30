@@ -38,11 +38,11 @@ def _script() -> list[AIMessage]:
                 }
             ],
         ),
-        # 调一次内置 now 工具：让离线 e2e/门禁确定性地覆盖 tool.invoked/tool.returned 链路。
+        # 调一次内置 current_time 工具：让离线 e2e/门禁确定性地覆盖 tool.invoked/tool.returned 链路。
         AIMessage(
             content="",
             tool_calls=[
-                {"name": "now", "args": {}, "id": "local_now", "type": "tool_call"}
+                {"name": "current_time", "args": {}, "id": "local_current_time", "type": "tool_call"}
             ],
         ),
         AIMessage(content=_FINAL_TEXT),

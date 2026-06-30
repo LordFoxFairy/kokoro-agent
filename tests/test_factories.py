@@ -8,7 +8,6 @@ from kokoro_agent.application.agent_factory import build_agent
 from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.domain.run_request import PermissionMode
 from kokoro_agent.infrastructure.model import make_chat_model
-from kokoro_agent.infrastructure.subagent import RuntimeSubagentRegistry
 from kokoro_agent.infrastructure.transport import make_stream
 from kokoro_agent.infrastructure.transport.memory_stream import MemoryStream
 from kokoro_agent.infrastructure.transport.redis_stream import RedisStream
@@ -48,5 +47,5 @@ def test_make_stream_unknown_backend_raises(monkeypatch: pytest.MonkeyPatch) -> 
 def test_build_agent_assembles_invokable(mode: PermissionMode) -> None:
     # default 走 interrupt_on 工具门控分支、auto 走空映射分支；两档都须装配出满足窄契约的 agent。
     model = make_chat_model()  # 无凭证 → LocalFakeChatModel
-    agent = build_agent(model, mode, RuntimeSubagentRegistry())
+    agent = build_agent(model, mode)
     assert isinstance(agent, InvokableAgent)

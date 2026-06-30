@@ -89,7 +89,7 @@ async def _fetch_guarded(url: str) -> str:
     return f"抓取失败：重定向超过 {FETCH_MAX_REDIRECTS} 跳"
 
 
-async def fetch_url(url: str) -> str:
+async def web_fetch(url: str) -> str:
     try:
         async with asyncio.timeout(FETCH_DEADLINE_S):
             return await _fetch_guarded(url)
@@ -102,14 +102,14 @@ async def fetch_url(url: str) -> str:
 
 
 # 直接构造而非 from_function：后者的 classmethod 仅部分类型化，pyright strict 会判 Unknown。
-class _FetchUrlArgs(BaseModel):
+class _WebFetchArgs(BaseModel):
     url: str = Field(description="目标 http/https URL")
 
 
 # 纯异步工具：只给 coroutine、不给 func，sync 调用由 langchain 原生 NotImplementedError 拒绝。
-FETCH_URL_TOOL = StructuredTool(
-    name="fetch_url",
+WEB_FETCH_TOOL = StructuredTool(
+    name="web_fetch",
     description=f"抓取一个 http/https 网页并返回其文本内容（最长 {FETCH_MAX_CHARS} 字符，拒绝内网地址）。需要查看网页实际内容时使用。",
-    args_schema=_FetchUrlArgs,
-    coroutine=fetch_url,
+    args_schema=_WebFetchArgs,
+    coroutine=web_fetch,
 )

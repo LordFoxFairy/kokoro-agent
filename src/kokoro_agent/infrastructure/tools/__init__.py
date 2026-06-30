@@ -7,22 +7,21 @@ from collections.abc import Iterable
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.infrastructure.constants import (
-    RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
     TODO_TOOL_NAME,
 )
-from kokoro_agent.infrastructure.tools.clock import NOW_TOOL
-from kokoro_agent.infrastructure.tools.fetch import FETCH_URL_TOOL
+from kokoro_agent.infrastructure.tools.ask_user_question import ASK_USER_QUESTION_TOOL
+from kokoro_agent.infrastructure.tools.current_time import CURRENT_TIME_TOOL
+from kokoro_agent.infrastructure.tools.web_fetch import WEB_FETCH_TOOL
 
 # deepagents 内置文件/执行工具（其契约名，非本仓所有）。
 _DEEPAGENTS_BUILTIN_TOOLS: frozenset[str] = frozenset(
     {"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
 )
-# 保留名集合：工具名与之冲突会破坏 translator 的事件分发（deepagents 内置 + 本仓路由名 write_todos/task/agent）。
+# 保留名集合：工具名与之冲突会破坏 translator 的事件分发（deepagents 内置 + 本仓路由名 write_todos/task）。
 RESERVED_TOOL_NAMES: frozenset[str] = _DEEPAGENTS_BUILTIN_TOOLS | {
     TODO_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
-    RUNTIME_SUBAGENT_TOOL_NAME,
 }
 
 
@@ -38,7 +37,11 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
         seen.add(name)
 
 
-BUILT_IN_TOOLS: list[StructuredTool] = [NOW_TOOL, FETCH_URL_TOOL]
+BUILT_IN_TOOLS: list[StructuredTool] = [
+    CURRENT_TIME_TOOL,
+    WEB_FETCH_TOOL,
+    ASK_USER_QUESTION_TOOL,
+]
 
 assert_tool_names_allowed(tool.name for tool in BUILT_IN_TOOLS)
 

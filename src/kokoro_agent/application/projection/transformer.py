@@ -7,7 +7,6 @@ from pydantic import JsonValue
 from kokoro_agent.application.protocols.agent import SubagentInfo, ToolCallInfo
 from kokoro_agent.domain.registered_subagent import SubagentSource
 from kokoro_agent.infrastructure.constants import (
-    RUNTIME_SUBAGENT_TOOL_NAME,
     SUBAGENT_TOOL_NAME,
 )
 from kokoro_agent.infrastructure.subagent.specs import subagent_source_for
@@ -27,7 +26,7 @@ from kokoro_agent.interfaces.envelope import (
     ToolStartData,
 )
 
-SUBAGENT_LAUNCH_NAMES = frozenset({SUBAGENT_TOOL_NAME, RUNTIME_SUBAGENT_TOOL_NAME})
+SUBAGENT_LAUNCH_NAMES = frozenset({SUBAGENT_TOOL_NAME})
 
 
 def _make_event(event: ExternalEvent, request_id: str, data: EventData) -> AgentEvent:
@@ -189,7 +188,7 @@ def custom_event(payload: object, *, request_id: str) -> AgentEvent:
 
 
 def _source_for(name: str) -> SubagentSource:
-    # 未在内建/env catalog 的名即运行时注册 → runtime-custom（catalog 对未知名抛 ValueError）。
+    # 投影层不打断 run；未知来源表示运行时观测到了未登记子代理，不代表授权动态创建。
     try:
         return subagent_source_for(name)
     except ValueError:

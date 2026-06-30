@@ -136,7 +136,7 @@ async def _names(queue: EventQueue) -> list[str]:
 
 async def test_normal_tool_emits_start_end_and_drains_output() -> None:
     queue: EventQueue = asyncio.Queue()
-    tool = _FakeTool("c1", "fetch_url", input={"url": "x"}, deltas=("a", "b"))
+    tool = _FakeTool("c1", "web_fetch", input={"url": "x"}, deltas=("a", "b"))
     await consume_run(_FakeRun(tools=(tool,)), "r", queue, subagent_id=None)
     assert await _names(queue) == ["tool_call_start", "tool_call_end"]
 
@@ -180,7 +180,7 @@ async def test_custom_channel_emits_custom_event() -> None:
 async def test_drain_tolerates_publish_failure_and_stops_on_sentinel() -> None:
     queue: EventQueue = asyncio.Queue()
     ev: AgentEvent = tool_start_event(
-        _FakeTool("c", "fetch_url", input={}), request_id="r"
+        _FakeTool("c", "web_fetch", input={}), request_id="r"
     )
     await queue.put(ev)
     await queue.put(None)
@@ -193,7 +193,7 @@ async def test_drain_tolerates_publish_failure_and_stops_on_sentinel() -> None:
 async def test_tool_with_none_output_yields_empty_result_text() -> None:
     # output 为 None 且无 error → 结果文本为空串（_result_text 的 None 分支）。
     queue: EventQueue = asyncio.Queue()
-    tool = _FakeTool("c", "fetch_url", output=None, error=None)
+    tool = _FakeTool("c", "web_fetch", output=None, error=None)
     await consume_run(_FakeRun(tools=(tool,)), "r", queue, subagent_id=None)
     queue.get_nowait()  # tool_call_start
     end = queue.get_nowait()

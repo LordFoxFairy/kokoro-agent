@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints
 
 from kokoro_agent.infrastructure.model.settings import LOCAL_FAKE_MODEL_FLAG, ChatModelSettings
 
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
-_DEFAULT_APPROVAL_TOOLS = ("fetch_url",)
+_DEFAULT_APPROVAL_TOOLS = ("web_fetch",)
 _DEFAULT_CHECKPOINT_DB = "kokoro_checkpoints.db"
 _DEFAULT_RUN_STATE_DB = "kokoro_run_state.db"
 _DEFAULT_MONGO_URL = "mongodb://127.0.0.1:27017"
 _DEFAULT_MONGO_DB = "kokoro"
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+RunStateBackend = Literal["sqlite", "mongo"]
 
 
 class ApprovalPolicy(BaseModel):
@@ -75,17 +76,17 @@ class CheckpointSettings(BaseModel):
 
 
 class RunStateSettings(BaseModel):
-    """run 状态持久化后端：sqlite（默认，落盘）/ mongo（跨 pod 去重/终态认领）/ memory（易失）。"""
+    """run 状态持久化后端：sqlite（默认，落盘）/ mongo（跨 pod 去重/终态认领）。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    backend: str
+    backend: RunStateBackend
     db_path: str
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> RunStateSettings:
         return cls(
-            backend=source.get("KOKORO_RUN_STATE_BACKEND", "sqlite").lower(),
+            backend=_run_state_backend(source.get("KOKORO_RUN_STATE_BACKEND", "sqlite")),
             db_path=source.get("KOKORO_RUN_STATE_DB", _DEFAULT_RUN_STATE_DB),
         )
 
@@ -118,6 +119,16 @@ def _approval_from_env(source: Mapping[str, str]) -> ApprovalPolicy:
     # 未设或全空白视同未配置 → 回退默认，避免空集静默放行所有工具。
     tools = parsed if parsed else _DEFAULT_APPROVAL_TOOLS
     return ApprovalPolicy(requires_approval_tools=frozenset(tools))
+
+
+def _run_state_backend(raw: str) -> RunStateBackend:
+    value = raw.lower()
+    if value == "sqlite":
+        return "sqlite"
+    if value == "mongo":
+        return "mongo"
+    msg = f"unsupported KOKORO_RUN_STATE_BACKEND: {raw!r}"
+    raise ValueError(msg)
 
 
 class AppConfig(BaseModel):

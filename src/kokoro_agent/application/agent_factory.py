@@ -10,27 +10,21 @@ from kokoro_agent.application.protocols.agent import InvokableAgent
 from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
 from kokoro_agent.infrastructure.agent_builder import make_deep_agent
 from kokoro_agent.infrastructure.permission import build_interrupt_on
-from kokoro_agent.infrastructure.tools.runtime_subagent import build_runtime_custom_subagent_tool
-from kokoro_agent.infrastructure.subagent import (
-    RuntimeSubagentRegistry,
-    materialize_runtime_subagents,
-)
+from kokoro_agent.infrastructure.subagent import materialize_subagents
 from kokoro_agent.domain.prompts import SYSTEM_PROMPT
 
 
 def build_agent(
     model: BaseChatModel,
     permission_mode: PermissionMode,
-    runtime_registry: RuntimeSubagentRegistry,
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> InvokableAgent:
-    tools = (build_runtime_custom_subagent_tool(model, runtime_registry), *BUILT_IN_TOOLS)
-    # default 档通过原生 interrupt_on 做工具级审批，auto 档空映射跳过。
+    # default 档审批外部能力；auto 档仍让 ask_user_question 走 input_required。
     return make_deep_agent(
         model=model,
-        tools=tools,
+        tools=BUILT_IN_TOOLS,
         system_prompt=SYSTEM_PROMPT,
-        subagents=materialize_runtime_subagents(model, runtime_registry=runtime_registry),
+        subagents=materialize_subagents(model),
         checkpointer=checkpointer,
         # FilesystemPermission 仅 allow/deny 不支持审批暂停，故不限制 FS。
         permissions=[],

@@ -1,4 +1,4 @@
-"""子代理规格汇编：合并内建/配置/运行时来源并物化为 deepagents SubAgent。"""
+"""子代理规格汇编：合并内建/配置来源并物化为 deepagents SubAgent。"""
 
 from __future__ import annotations
 
@@ -12,29 +12,21 @@ from kokoro_agent.infrastructure.subagent.catalog import (
     SubagentCatalog,
     load_custom_subagents_from_env,
 )
-from kokoro_agent.infrastructure.subagent.registry import RuntimeSubagentRegistry
 
 
-def _catalog(
-    env: dict[str, str] | None,
-    runtime_registry: RuntimeSubagentRegistry | None,
-) -> SubagentCatalog:
-    if runtime_registry is not None:
-        return runtime_registry.catalog(env)
+def _catalog(env: dict[str, str] | None) -> SubagentCatalog:
     return SubagentCatalog((*BUILT_IN_SUBAGENTS, *load_custom_subagents_from_env(env)))
 
 
-def runtime_subagent_specs(
+def subagent_specs(
     env: dict[str, str] | None = None,
-    runtime_registry: RuntimeSubagentRegistry | None = None,
 ) -> list[RegisteredSubagent]:
-    return list(_catalog(env, runtime_registry).values())
+    return list(_catalog(env).values())
 
 
-def materialize_runtime_subagents(
+def materialize_subagents(
     model: BaseChatModel,
     env: dict[str, str] | None = None,
-    runtime_registry: RuntimeSubagentRegistry | None = None,
 ) -> list[CompiledSubAgent]:
     # 预编译子代理：deepagents 用 dict["name"] 作图归属，v3 ACL 取 trigger_call_id 结构化归属。
     return [
@@ -45,13 +37,12 @@ def materialize_runtime_subagents(
                 model, system_prompt=spec.system_prompt, name=spec.name
             ),
         }
-        for spec in _catalog(env, runtime_registry).values()
+        for spec in _catalog(env).values()
     ]
 
 
 def subagent_source_for(
     name: str,
     env: dict[str, str] | None = None,
-    runtime_registry: RuntimeSubagentRegistry | None = None,
 ) -> SubagentSource:
-    return _catalog(env, runtime_registry).source_for(name)
+    return _catalog(env).source_for(name)

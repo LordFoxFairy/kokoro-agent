@@ -17,7 +17,7 @@ def test_empty_env_yields_defaults() -> None:
     assert config.stream.backend == "memory"
     assert config.stream.redis_url == "redis://127.0.0.1:6379/0"
     assert config.observability.langfuse_configured is False
-    assert config.approval.requires_approval_tools == frozenset({"fetch_url"})
+    assert config.approval.requires_approval_tools == frozenset({"web_fetch"})
     assert config.local_fake_model is False
     assert config.checkpoint.backend == "sqlite"
     assert config.checkpoint.db_path == "kokoro_checkpoints.db"
@@ -37,10 +37,15 @@ def test_mongo_from_env() -> None:
 
 def test_run_state_from_env() -> None:
     config = AppConfig.from_env(
-        {"KOKORO_RUN_STATE_BACKEND": "MEMORY", "KOKORO_RUN_STATE_DB": "/tmp/rs.db"}
+        {"KOKORO_RUN_STATE_BACKEND": "MONGO", "KOKORO_RUN_STATE_DB": "/tmp/rs.db"}
     )
-    assert config.run_state.backend == "memory"
+    assert config.run_state.backend == "mongo"
     assert config.run_state.db_path == "/tmp/rs.db"
+
+
+def test_run_state_rejects_memory_backend() -> None:
+    with pytest.raises(ValueError, match="unsupported KOKORO_RUN_STATE_BACKEND"):
+        AppConfig.from_env({"KOKORO_RUN_STATE_BACKEND": "memory"})
 
 
 def test_checkpoint_from_env() -> None:
@@ -75,10 +80,10 @@ def test_local_fake_flag() -> None:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("fetch_url", {"fetch_url"}),
+        ("web_fetch", {"web_fetch"}),
         ("a,b,c", {"a", "b", "c"}),
         (" a , b ,, c ", {"a", "b", "c"}),  # 去空白 + 丢空段
-        ("", {"fetch_url"}),  # 空串视同未设 → 回退默认
+        ("", {"web_fetch"}),  # 空串视同未设 → 回退默认
     ],
 )
 def test_approval_tools_from_env(raw: str, expected: set[str]) -> None:

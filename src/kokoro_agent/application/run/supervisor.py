@@ -23,7 +23,6 @@ from kokoro_agent.application.protocols.stream import StreamProtocol
 from kokoro_agent.interfaces.envelope import AgentEvent
 from kokoro_agent.infrastructure.observability import trace_config
 from kokoro_agent.infrastructure.permission import build_interrupt_on
-from kokoro_agent.infrastructure.run_state import MemoryRunStateStore
 from kokoro_agent.application.run.invoke import InvokableAgent, events_stream, invoke_once
 from kokoro_agent.interfaces.inbound import (
     InboundMessage,
@@ -55,7 +54,9 @@ class RunSupervisor:
         self._build = agent_builder
         self._checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
         # 持久化 run 态：请求去重 / resume 重建用原 request / 终态原子认领（多 pod 共享靠它）。
-        self._store: RunStateStore = store if store is not None else MemoryRunStateStore()
+        if store is None:
+            raise ValueError("RunSupervisor requires an injected RunStateStore")
+        self._store: RunStateStore = store
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
 

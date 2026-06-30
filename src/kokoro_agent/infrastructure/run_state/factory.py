@@ -1,4 +1,4 @@
-"""run 状态存储入口：按 KOKORO_RUN_STATE_BACKEND 选 sqlite（落盘）/mongo（跨 pod）/memory（易失）。"""
+"""run 状态存储入口：按 KOKORO_RUN_STATE_BACKEND 选 sqlite（落盘）/mongo（跨 pod）。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import aiosqlite
 
 from kokoro_agent.application.protocols.run_state import RunStateStore
 from kokoro_agent.infrastructure.config import AppConfig
-from kokoro_agent.infrastructure.run_state.memory_store import MemoryRunStateStore
 from kokoro_agent.infrastructure.run_state.mongo_store import (
     MongoRunStateStore,
     make_mongo_collection,
@@ -21,9 +20,6 @@ from kokoro_agent.infrastructure.run_state.sqlite_store import SqliteRunStateSto
 async def make_run_state_store() -> AsyncGenerator[RunStateStore, None]:
     config = AppConfig.from_env()
     backend = config.run_state.backend
-    if backend == "memory":
-        yield MemoryRunStateStore()
-        return
     if backend == "sqlite":
         async with aiosqlite.connect(config.run_state.db_path) as db:
             store = SqliteRunStateStore(db)

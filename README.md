@@ -66,7 +66,9 @@ uv run ruff check src tests
   `event_id` 做 SSE 幂等与续传锚点。
 - agent raw 终态是 `agent_done`/`agent_error`；
   session 归一化后才是 `run.completed`/`run.failed`。
-- 内置工具 `now` / `fetch_url`（带 SSRF 防护 + 撞名守卫 + 字节/墙钟限流）。
+- 内置工具 `current_time` / `web_fetch` / `ask_user_question`。
+  `web_fetch` 带 SSRF 防护、撞名守卫、字节/墙钟限流；`ask_user_question` 只通过 HITL
+  `respond` 解决，不直接执行。
 - 异常 → `agent_error`，session 归一化为 `run.failed`，worker 存活（不崩调度循环）。
 
 测试用例总账见

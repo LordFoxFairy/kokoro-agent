@@ -26,9 +26,9 @@ class MemoryStream:
         return signal
 
     async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem:
-        seq = self._counters.get(stream, 0)
-        self._counters[stream] = seq + 1
-        cursor = str(seq).zfill(self._cursor_width)
+        next_index = self._counters.get(stream, 0)
+        self._counters[stream] = next_index + 1
+        cursor = str(next_index).zfill(self._cursor_width)
         # StreamItem(frozen+strict) 构造期对 dict[str, JsonValue] 深拷贝，跨 item 不共享嵌套引用，
         # 故 validate_event 后无需再 clone_event：存量与返回各持独立副本。
         payload = validate_event(dict(event))

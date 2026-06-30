@@ -16,10 +16,10 @@ STREAM = "kokoro:test:stream"
 async def test_publish_then_read_all_preserves_order_and_unique_cursors() -> None:
     port = MemoryStream()
     for i in range(3):
-        await port.publish(STREAM, {"seq": i})
+        await port.publish(STREAM, {"index": i})
 
     items = await port.read_all(STREAM)
-    assert [item.event["seq"] for item in items] == [0, 1, 2]
+    assert [item.event["index"] for item in items] == [0, 1, 2]
 
     cursors = [item.cursor for item in items]
     assert len(set(cursors)) == 3
@@ -44,17 +44,17 @@ async def test_subscribe_yields_published_items() -> None:
 
     task = asyncio.create_task(consume())
     await asyncio.sleep(0)
-    await port.publish(STREAM, {"seq": 0})
-    await port.publish(STREAM, {"seq": 1})
+    await port.publish(STREAM, {"index": 0})
+    await port.publish(STREAM, {"index": 1})
     await task
 
-    assert [item.event["seq"] for item in received] == [0, 1]
+    assert [item.event["index"] for item in received] == [0, 1]
 
 
 async def test_subscribe_from_cursor_skips_earlier() -> None:
     port = MemoryStream()
-    await port.publish(STREAM, {"seq": 0})
-    await port.publish(STREAM, {"seq": 1})
+    await port.publish(STREAM, {"index": 0})
+    await port.publish(STREAM, {"index": 1})
     existing = await port.read_all(STREAM)
     first_cursor = existing[0].cursor
 
@@ -63,13 +63,13 @@ async def test_subscribe_from_cursor_skips_earlier() -> None:
     async def consume() -> None:
         async with asyncio.timeout(2):
             async for item in port.subscribe(STREAM, from_cursor=first_cursor):
-                received.append(cast(int, item.event["seq"]))
+                received.append(cast(int, item.event["index"]))
                 if received and received[-1] == 2:
                     return
 
     task = asyncio.create_task(consume())
     await asyncio.sleep(0)
-    await port.publish(STREAM, {"seq": 2})
+    await port.publish(STREAM, {"index": 2})
     await task
 
     assert received == [1, 2]
@@ -86,14 +86,14 @@ async def test_subscribe_blocks_without_busy_wait() -> None:
     task = asyncio.create_task(consume())
     await asyncio.sleep(0.05)
     assert not task.done()
-    await port.publish(STREAM, {"seq": 42})
+    await port.publish(STREAM, {"index": 42})
     item = await asyncio.wait_for(task, timeout=2)
-    assert item.event["seq"] == 42
+    assert item.event["index"] == 42
 
 
 async def test_memory_port_allows_custom_cursor_width() -> None:
     port = MemoryStream(cursor_width=6)
-    await port.publish(STREAM, {"seq": 1})
+    await port.publish(STREAM, {"index": 1})
     item = (await port.read_all(STREAM))[0]
     assert item.cursor == "000000"
 

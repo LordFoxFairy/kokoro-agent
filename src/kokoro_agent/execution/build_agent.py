@@ -1,4 +1,4 @@
-"""构造层：把 langchain / deepagents 的 agent 与 runner 构造成强类型协议。"""
+"""Agent 构建入口：把模型、工具、子代理、middleware 和 backend 组装成可运行 agent。"""
 
 from __future__ import annotations
 
@@ -15,11 +15,20 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from kokoro_agent.config import AppConfig, RuntimeSettings
+from kokoro_agent.execution.prompts import SYSTEM_PROMPT
 from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.run.request import PermissionMode
+from kokoro_agent.sandbox.backend import backend_from_settings
+from kokoro_agent.subagents import subagent_definitions
+from kokoro_agent.tools.middleware import ToolPolicyMiddleware
+from kokoro_agent.tools.permissions import build_filesystem_permissions, build_interrupt_on
+from kokoro_agent.tools.registry import BUILT_IN_TOOLS
 
 __all__ = [
     "FilesystemPermission",
-    "make_deep_agent",
+    "build_agent",
+    "build_deep_agent",
 ]
 
 
@@ -34,7 +43,30 @@ def _load_callable(module_name: str, attr: str) -> Callable[..., object]:
 _CREATE_DEEP_AGENT = _load_callable("deepagents", "create_deep_agent")
 
 
-def make_deep_agent(
+def build_agent(
+    model: BaseChatModel,
+    permission_mode: PermissionMode,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+    runtime: RuntimeSettings | None = None,
+) -> InvokableAgent:
+    settings = runtime if runtime is not None else AppConfig.from_env().runtime
+    # default 档通过原生 interrupt_on 做工具级审批，auto 档空映射跳过。
+    return build_deep_agent(
+        model=model,
+        tools=BUILT_IN_TOOLS,
+        system_prompt=SYSTEM_PROMPT,
+        subagents=subagent_definitions(),
+        checkpointer=checkpointer,
+        permissions=build_filesystem_permissions(permission_mode),
+        interrupt_on=build_interrupt_on(permission_mode),
+        middleware=(ToolPolicyMiddleware(),),
+        skills=settings.skills,
+        memory=settings.memory,
+        backend=backend_from_settings(settings),
+    )
+
+
+def build_deep_agent(
     *,
     model: BaseChatModel,
     tools: Sequence[StructuredTool],

@@ -7,7 +7,7 @@ import logging
 
 from dotenv import load_dotenv
 
-from kokoro_agent.execution.create_agent import build_agent
+from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.model import make_chat_model
 from kokoro_agent.observability import trace_config

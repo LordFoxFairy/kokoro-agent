@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, JsonValue, PrivateAttr
 
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.execution.agent_graph import make_deep_agent
+from kokoro_agent.execution.build_agent import build_deep_agent
 
 
 async def _emit_billing(amount: int) -> str:
@@ -93,7 +93,7 @@ async def _empty() -> AsyncIterator[StreamItem]:
 
 @pytest.mark.asyncio
 async def test_get_stream_writer_event_surfaces_as_agent_status_custom() -> None:
-    agent = make_deep_agent(
+    agent = build_deep_agent(
         model=_Scripted(),
         tools=[emit_billing],
         system_prompt="x",
@@ -120,7 +120,7 @@ async def test_get_stream_writer_event_surfaces_as_agent_status_custom() -> None
 @pytest.mark.asyncio
 async def test_text_chunk_carries_string_text_e2e() -> None:
     # 分通道：真实 agent 的助手文本经原生 .text projection → text_chunk{text:str}，无旧 content 块数组。
-    agent = make_deep_agent(
+    agent = build_deep_agent(
         model=_Scripted(),
         tools=[emit_billing],
         system_prompt="x",

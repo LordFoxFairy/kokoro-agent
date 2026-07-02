@@ -7,12 +7,12 @@ from deepagents.middleware.subagents import SubAgent
 from langchain_core.tools import StructuredTool
 from pydantic import ConfigDict, TypeAdapter
 
-from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.run.request import PermissionMode
-from kokoro_agent.execution import create_agent as agent_factory
-from kokoro_agent.execution.create_agent import build_agent
+import kokoro_agent.execution.build_agent as build_agent_module
 from kokoro_agent.config import RuntimeSettings
+from kokoro_agent.execution.build_agent import build_agent
+from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.model import make_chat_model
+from kokoro_agent.run.request import PermissionMode
 from kokoro_agent.streams import make_stream
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.streams.redis import RedisStream
@@ -75,15 +75,15 @@ def test_build_agent_does_not_install_runtime_custom_subagent_tool(
         async def aget_state(self, *args: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-    def fake_make_deep_agent(**kwargs: object) -> _FakeAgent:
+    def fake_build_deep_agent(**kwargs: object) -> _FakeAgent:
         captured.update(kwargs)
         return _FakeAgent()
 
     def fake_subagent_definitions(*args: object, **kwargs: object) -> list[SubAgent]:
         return [{"name": "researcher", "description": "查资料", "system_prompt": "研究"}]
 
-    monkeypatch.setattr(agent_factory, "make_deep_agent", fake_make_deep_agent)
-    monkeypatch.setattr(agent_factory, "subagent_definitions", fake_subagent_definitions, raising=False)
+    monkeypatch.setattr(build_agent_module, "build_deep_agent", fake_build_deep_agent)
+    monkeypatch.setattr(build_agent_module, "subagent_definitions", fake_subagent_definitions, raising=False)
 
     build_agent(make_chat_model(), "auto")
 
@@ -105,16 +105,16 @@ def test_build_agent_forwards_deepagents_runtime_capabilities(
         async def aget_state(self, *args: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-    def fake_make_deep_agent(**kwargs: object) -> _FakeAgent:
+    def fake_build_deep_agent(**kwargs: object) -> _FakeAgent:
         captured.update(kwargs)
         return _FakeAgent()
 
-    monkeypatch.setattr(agent_factory, "make_deep_agent", fake_make_deep_agent)
+    monkeypatch.setattr(build_agent_module, "build_deep_agent", fake_build_deep_agent)
 
     def no_subagents(*_args: object, **_kwargs: object) -> list[SubAgent]:
         return []
 
-    monkeypatch.setattr(agent_factory, "subagent_definitions", no_subagents)
+    monkeypatch.setattr(build_agent_module, "subagent_definitions", no_subagents)
 
     runtime = RuntimeSettings(
         backend="state",
@@ -145,16 +145,16 @@ def test_build_agent_forwards_tool_policy_middleware(
         async def aget_state(self, *args: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-    def fake_make_deep_agent(**kwargs: object) -> _FakeAgent:
+    def fake_build_deep_agent(**kwargs: object) -> _FakeAgent:
         captured.update(kwargs)
         return _FakeAgent()
 
-    monkeypatch.setattr(agent_factory, "make_deep_agent", fake_make_deep_agent)
+    monkeypatch.setattr(build_agent_module, "build_deep_agent", fake_build_deep_agent)
 
     def no_subagents(*_args: object, **_kwargs: object) -> list[SubAgent]:
         return []
 
-    monkeypatch.setattr(agent_factory, "subagent_definitions", no_subagents)
+    monkeypatch.setattr(build_agent_module, "subagent_definitions", no_subagents)
 
     build_agent(make_chat_model(), "auto")
 
@@ -175,16 +175,16 @@ def test_build_agent_installs_local_shell_backend_only_when_configured(
         async def aget_state(self, *args: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-    def fake_make_deep_agent(**kwargs: object) -> _FakeAgent:
+    def fake_build_deep_agent(**kwargs: object) -> _FakeAgent:
         captured.update(kwargs)
         return _FakeAgent()
 
-    monkeypatch.setattr(agent_factory, "make_deep_agent", fake_make_deep_agent)
+    monkeypatch.setattr(build_agent_module, "build_deep_agent", fake_build_deep_agent)
 
     def no_subagents(*_args: object, **_kwargs: object) -> list[SubAgent]:
         return []
 
-    monkeypatch.setattr(agent_factory, "subagent_definitions", no_subagents)
+    monkeypatch.setattr(build_agent_module, "subagent_definitions", no_subagents)
 
     runtime = RuntimeSettings(
         backend="local_shell",

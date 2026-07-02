@@ -29,7 +29,7 @@ from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.execution.run_agent import events_stream
 from kokoro_agent.execution.resume_agent import RunSupervisor
 from kokoro_agent.run.request import RunRequest
-from kokoro_agent.execution.agent_graph import make_deep_agent
+from kokoro_agent.execution.build_agent import build_deep_agent
 from kokoro_agent.worker.messages import InboundMessage, parse_inbound
 
 # 与测试注入的 requires_approval_tools 同名：确保 supervisor 计算的
@@ -425,7 +425,7 @@ class _RealHitlModel(BaseChatModel):
 
 
 def _real_agent() -> InvokableAgent:
-    return make_deep_agent(
+    return build_deep_agent(
         model=_RealHitlModel(),
         tools=[_real_tool],
         system_prompt="s",
@@ -513,7 +513,7 @@ class _RealMultiModel(BaseChatModel):
 
 
 def _real_multi_agent() -> InvokableAgent:
-    return make_deep_agent(
+    return build_deep_agent(
         model=_RealMultiModel(),
         tools=[_real_tool],
         system_prompt="s",

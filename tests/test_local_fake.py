@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from kokoro_agent.infrastructure.model import LocalFakeChatModel
-from kokoro_agent.infrastructure.tools import BUILT_IN_TOOLS
+from kokoro_agent.model import LocalFakeChatModel
+from kokoro_agent.tools.registry import BUILT_IN_TOOLS
 
 
 def test_sync_invoke_follows_script() -> None:

@@ -12,7 +12,7 @@ from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
 from pymongo import AsyncMongoClient
 
-from kokoro_agent.infrastructure.checkpoint import make_checkpointer
+from kokoro_agent.storage.checkpoints import make_checkpointer
 
 _CFG: RunnableConfig = {"configurable": {"thread_id": "t1", "checkpoint_ns": ""}}
 _META: CheckpointMetadata = {"source": "input", "step": 1, "parents": {}}

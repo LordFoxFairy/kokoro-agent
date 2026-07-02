@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kokoro_agent.application.projection.transformer import (
+from kokoro_agent.execution.events import (
     custom_event,
     reasoning_chunk_event,
     run_done_event,
@@ -163,7 +163,7 @@ def test_tool_end_event_subagent_id() -> None:
 
 def test_subagent_started_event_built_in() -> None:
     sub = _FakeSub(name="researcher", trigger_call_id="sub-x", task_input="查资料")
-    ev = subagent_started_event(sub, request_id=KORO)
+    ev = subagent_started_event(sub, request_id=KORO, source="built-in")
     assert ev.event == "agent_status"
     assert ev.data == {
         "status": "subagent_started",
@@ -176,15 +176,15 @@ def test_subagent_started_event_built_in() -> None:
     }
 
 
-def test_subagent_unknown_name_is_runtime_custom() -> None:
-    sub = _FakeSub(name="totally-unknown", trigger_call_id="sa3", task_input="运行时审稿")
-    ev = subagent_started_event(sub, request_id=KORO)
-    assert ev.data["source"] == "runtime-custom"
+def test_subagent_custom_source() -> None:
+    sub = _FakeSub(name="reviewer", trigger_call_id="sa3", task_input="审稿")
+    ev = subagent_started_event(sub, request_id=KORO, source="config-custom")
+    assert ev.data["source"] == "config-custom"
 
 
 def test_subagent_finished_event() -> None:
     sub = _FakeSub(name="researcher", trigger_call_id="sub-x")
-    ev = subagent_finished_event(sub, request_id=KORO)
+    ev = subagent_finished_event(sub, request_id=KORO, source="built-in")
     assert ev.data == {
         "status": "subagent_finished",
         "segment_id": "sub-x",
@@ -198,12 +198,14 @@ def test_subagent_finished_event() -> None:
 def test_subagent_finished_event_failed() -> None:
     # langgraph status="failed" → 失败有归属，不再被吞成顶层 agent_error。
     sub = _FakeSub(name="researcher", trigger_call_id="sub-x", status="failed")
-    ev = subagent_finished_event(sub, request_id=KORO)
+    ev = subagent_finished_event(sub, request_id=KORO, source="built-in")
     assert ev.data["failed"] is True
 
 
 def test_subagent_finished_event_completed_omits_failed() -> None:
-    ev = subagent_finished_event(_FakeSub(name="r", trigger_call_id="s"), request_id=KORO)
+    ev = subagent_finished_event(
+        _FakeSub(name="r", trigger_call_id="s"), request_id=KORO, source="config-custom"
+    )
     assert "failed" not in ev.data
 
 

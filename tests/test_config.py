@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from kokoro_agent.infrastructure.config import AppConfig, ApprovalPolicy
+from kokoro_agent.tools.names import EXECUTE_TOOL_NAME
+from kokoro_agent.config import AppConfig, ApprovalPolicy
+
+_DEFAULT_APPROVAL_TOOLS = {EXECUTE_TOOL_NAME}
 
 
 def test_empty_env_yields_defaults() -> None:
@@ -17,7 +20,7 @@ def test_empty_env_yields_defaults() -> None:
     assert config.stream.backend == "memory"
     assert config.stream.redis_url == "redis://127.0.0.1:6379/0"
     assert config.observability.langfuse_configured is False
-    assert config.approval.requires_approval_tools == frozenset({"fetch_url"})
+    assert config.approval.requires_approval_tools == frozenset(_DEFAULT_APPROVAL_TOOLS)
     assert config.local_fake_model is False
     assert config.checkpoint.backend == "sqlite"
     assert config.checkpoint.db_path == "kokoro_checkpoints.db"
@@ -25,6 +28,40 @@ def test_empty_env_yields_defaults() -> None:
     assert config.run_state.db_path == "kokoro_run_state.db"
     assert config.mongo.url == "mongodb://127.0.0.1:27017"
     assert config.mongo.db == "kokoro"
+    assert config.runtime.backend == "state"
+    assert config.runtime.skills == ()
+    assert config.runtime.memory == ()
+    assert config.runtime.local_shell_root is None
+    assert config.runtime.local_shell_inherit_env is False
+    assert config.runtime.local_shell_timeout == 120
+    assert config.runtime.local_shell_max_output_bytes == 100000
+
+
+def test_runtime_from_env() -> None:
+    config = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_BACKEND": "LOCAL_SHELL",
+            "KOKORO_AGENT_SKILLS": "/skills/user,/skills/project",
+            "KOKORO_AGENT_MEMORY": "/memory/AGENTS.md",
+            "KOKORO_AGENT_LOCAL_SHELL_ROOT": "/tmp/kokoro-agent",
+            "KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV": "1",
+            "KOKORO_AGENT_LOCAL_SHELL_TIMEOUT": "30",
+            "KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES": "4096",
+        }
+    )
+
+    assert config.runtime.backend == "local_shell"
+    assert config.runtime.skills == ("/skills/user", "/skills/project")
+    assert config.runtime.memory == ("/memory/AGENTS.md",)
+    assert config.runtime.local_shell_root == "/tmp/kokoro-agent"
+    assert config.runtime.local_shell_inherit_env is True
+    assert config.runtime.local_shell_timeout == 30
+    assert config.runtime.local_shell_max_output_bytes == 4096
+
+
+def test_runtime_rejects_unknown_backend() -> None:
+    with pytest.raises(ValueError, match="unknown KOKORO_AGENT_BACKEND"):
+        AppConfig.from_env({"KOKORO_AGENT_BACKEND": "e2b"})
 
 
 def test_mongo_from_env() -> None:
@@ -37,9 +74,9 @@ def test_mongo_from_env() -> None:
 
 def test_run_state_from_env() -> None:
     config = AppConfig.from_env(
-        {"KOKORO_RUN_STATE_BACKEND": "MEMORY", "KOKORO_RUN_STATE_DB": "/tmp/rs.db"}
+        {"KOKORO_RUN_STATE_BACKEND": "MONGO", "KOKORO_RUN_STATE_DB": "/tmp/rs.db"}
     )
-    assert config.run_state.backend == "memory"
+    assert config.run_state.backend == "mongo"
     assert config.run_state.db_path == "/tmp/rs.db"
 
 
@@ -75,10 +112,10 @@ def test_local_fake_flag() -> None:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("fetch_url", {"fetch_url"}),
+        ("external_action", {"external_action"}),
         ("a,b,c", {"a", "b", "c"}),
         (" a , b ,, c ", {"a", "b", "c"}),  # 去空白 + 丢空段
-        ("", {"fetch_url"}),  # 空串视同未设 → 回退默认
+        ("", _DEFAULT_APPROVAL_TOOLS),  # 空串视同未设 → 回退默认
     ],
 )
 def test_approval_tools_from_env(raw: str, expected: set[str]) -> None:

@@ -15,9 +15,9 @@ from langchain_core.tools import StructuredTool
 from langgraph.config import get_stream_writer
 from pydantic import BaseModel, Field, JsonValue, PrivateAttr
 
-from kokoro_agent.application.protocols.stream import StreamItem
-from kokoro_agent.application.run.invoke import invoke_once
-from kokoro_agent.infrastructure.agent_builder import make_deep_agent
+from kokoro_agent.streams.protocol import StreamItem
+from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.execution.agent_graph import make_deep_agent
 
 
 async def _emit_billing(amount: int) -> str:

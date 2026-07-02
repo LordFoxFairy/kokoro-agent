@@ -10,9 +10,9 @@ import pytest
 
 redis_asyncio = pytest.importorskip("redis.asyncio")
 
-from kokoro_agent.application.protocols.stream import StreamItem  # noqa: E402
-from kokoro_agent.domain.json_payload import JsonObject  # noqa: E402
-from kokoro_agent.infrastructure.transport import RedisStream, parse_xread_response  # noqa: E402
+from kokoro_agent.streams.protocol import StreamItem  # noqa: E402
+from kokoro_agent.run.json_payload import JsonObject  # noqa: E402
+from kokoro_agent.streams import RedisStream, parse_xread_response  # noqa: E402
 
 REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
 
@@ -44,18 +44,18 @@ def _stream() -> str:
 async def test_publish_then_read_all_preserves_order(port: RedisStream) -> None:
     stream = _stream()
     for i in range(3):
-        await port.publish(stream, {"seq": i})
+        await port.publish(stream, {"index": i})
 
     items = await port.read_all(stream)
-    assert [item.event["seq"] for item in items] == [0, 1, 2]
+    assert [item.event["index"] for item in items] == [0, 1, 2]
     cursors = [item.cursor for item in items]
     assert len(set(cursors)) == 3
 
 
 async def test_subscribe_from_cursor_skips_earlier(port: RedisStream) -> None:
     stream = _stream()
-    await port.publish(stream, {"seq": 0})
-    await port.publish(stream, {"seq": 1})
+    await port.publish(stream, {"index": 0})
+    await port.publish(stream, {"index": 1})
     existing = await port.read_all(stream)
     first_cursor = existing[0].cursor
 
@@ -65,24 +65,26 @@ async def test_subscribe_from_cursor_skips_earlier(port: RedisStream) -> None:
         async with asyncio.timeout(3):
             async for item in port.subscribe(stream, from_cursor=first_cursor):
                 received.append(item)
-                if item.event["seq"] == 2:
+                if item.event["index"] == 2:
                     return
 
     task = asyncio.create_task(consume())
     await asyncio.sleep(0.1)
-    await port.publish(stream, {"seq": 2})
+    await port.publish(stream, {"index": 2})
     await task
 
-    assert [item.event["seq"] for item in received] == [1, 2]
+    assert [item.event["index"] for item in received] == [1, 2]
 
 
 async def test_redis_port_allows_custom_block_ms() -> None:
+    if not await _redis_available():
+        pytest.skip(f"no redis reachable at {REDIS_URL}")
     stream = _stream()
     port = RedisStream(REDIS_URL, block_ms=25)
     try:
-        await port.publish(stream, {"seq": 1})
+        await port.publish(stream, {"index": 1})
         items = await port.read_all(stream)
-        assert items[0].event["seq"] == 1
+        assert items[0].event["index"] == 1
     finally:
         await port.aclose()
 
@@ -171,7 +173,7 @@ async def test_subscribe_reconnects_on_transient_error(monkeypatch: pytest.Monke
         return fake
 
     monkeypatch.setattr(
-        "kokoro_agent.infrastructure.transport.redis_stream.from_url", _fake_from_url
+        "kokoro_agent.streams.redis.from_url", _fake_from_url
     )
     port = RedisStream(REDIS_URL)
     agen = port.subscribe("s")

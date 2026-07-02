@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kokoro-agent-worker = "kokoro_agent.interfaces.worker:main"
+kokoro-agent-worker = "kokoro_agent.worker.main:main"
 
 [dependency-groups]
 dev = [
@@ -35,7 +35,7 @@ build-backend = "setuptools.build_meta"
 
 # 随包分发的非 .py 资源（提示词正文），否则 wheel 会漏掉。
 [tool.setuptools.package-data]
-kokoro_agent = ["domain/prompts/*.md"]
+kokoro_agent = ["execution/prompts/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

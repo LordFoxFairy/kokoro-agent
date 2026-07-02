@@ -11,12 +11,11 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Command, Interrupt
 from pydantic import JsonValue
 
-from kokoro_agent.application.protocols.stream import StreamItem
-from kokoro_agent.application.run.invoke import events_stream
-from kokoro_agent.application.run.supervisor import REQUESTS_STREAM, RunSupervisor
-from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure.run_state import MemoryRunStateStore
-from kokoro_agent.interfaces.inbound import InboundMessage, parse_inbound
+from kokoro_agent.streams.protocol import StreamItem
+from kokoro_agent.execution.run_agent import events_stream
+from kokoro_agent.execution.resume_agent import REQUESTS_STREAM, RunSupervisor
+from kokoro_agent.run.request import RunRequest
+from kokoro_agent.worker.messages import InboundMessage, parse_inbound
 
 _T = TypeVar("_T")
 
@@ -40,6 +39,30 @@ class _FakeBus:
 
     def subscribe(self, stream: str, from_cursor: str | None = None) -> AsyncIterator[StreamItem]:
         return _aiter(self._items)
+
+
+class _FakeRunStateStore:
+    def __init__(self) -> None:
+        self._requests: dict[str, RunRequest] = {}
+        self._terminals: set[str] = set()
+
+    async def try_register(self, request: RunRequest) -> bool:
+        if request.run_id in self._requests:
+            return False
+        self._requests[request.run_id] = request
+        return True
+
+    async def get_request(self, run_id: str) -> RunRequest | None:
+        return self._requests.get(run_id)
+
+    async def try_mark_terminal(self, run_id: str) -> bool:
+        if run_id in self._terminals:
+            return False
+        self._terminals.add(run_id)
+        return True
+
+    async def is_terminal(self, run_id: str) -> bool:
+        return run_id in self._terminals
 
 
 @dataclass
@@ -128,7 +151,7 @@ def _text_run(text: str = "done") -> _RunStream:
 
 
 def _interrupt_run() -> _RunStream:
-    # action_requests 空 + auto 档 interrupt_on_names 空 → awaiting 对齐 0==0，仅 invoke 返回 False（暂停）。
+    # action_requests 空 + auto 档 approval_tool_names 空 → HITL 对齐 0==0，仅 invoke 返回 False（暂停）。
     return _RunStream(is_interrupted=True)
 
 
@@ -136,11 +159,23 @@ _GATED = "danger"
 _TID = "call-A"
 _PENDING_AI = AIMessage(content="", id="seg", tool_calls=[{"name": _GATED, "args": {}, "id": _TID}])
 # 简单 pending（auto 档 names 空 → awaiting 0==0）：暂停/取消类测试用，无需 env。
-_PENDING_STATE = _State(interrupts=(Interrupt(value={"action_requests": []}),))
+_PENDING_STATE = _State(interrupts=(Interrupt(value={"action_requests": [], "review_configs": []}),))
 # 带门控工具的 pending：messages+action_request 各含 1 个 _GATED 工具，供 resume 决策按 tool_id 对齐。
 # 用此 state 的测试须 setenv(KOKORO_REQUIRES_APPROVAL_TOOLS=_GATED) 使 names={_GATED}、awaiting 1==1。
 _PENDING_TOOL_STATE = _State(
-    interrupts=(Interrupt(value={"action_requests": [{"name": _GATED, "args": {}, "description": "d"}]}),),
+    interrupts=(
+        Interrupt(
+            value={
+                "action_requests": [{"name": _GATED, "args": {}, "description": "d"}],
+                "review_configs": [
+                    {
+                        "action_name": _GATED,
+                        "allowed_decisions": ["approve", "edit", "reject", "respond"],
+                    }
+                ],
+            }
+        ),
+    ),
     values={"messages": [_PENDING_AI]},
 )
 _EMPTY_STATE = _State()
@@ -183,6 +218,18 @@ def _builder(agent: _FakeAgent) -> Callable[[RunRequest], _FakeAgent]:
     return build
 
 
+def _gated_approval_tool_names(_request: RunRequest) -> frozenset[str]:
+    return frozenset({_GATED})
+
+
+def _supervisor(agent: _FakeAgent) -> RunSupervisor:
+    return RunSupervisor(
+        agent_builder=_builder(agent),
+        store=_FakeRunStateStore(),
+        approval_tool_names=_gated_approval_tool_names,
+    )
+
+
 async def _drain(sup: RunSupervisor) -> None:
     for task in tuple(sup.tasks.values()):
         await task
@@ -198,7 +245,7 @@ def _inbound(raw: dict[str, JsonValue]) -> InboundMessage:
 async def test_request_dispatches_initial_invoke() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("r1"))
     await _drain(sup)
 
@@ -219,7 +266,7 @@ async def test_request_dispatches_initial_invoke() -> None:
 async def test_duplicate_run_id_skipped() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("dup"))
     await _drain(sup)
     first_count = len(bus.published)
@@ -234,7 +281,7 @@ async def test_resume_with_pending_invokes_command(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("r2"))
     await _drain(sup)
     agent.seen_payloads.clear()
@@ -253,7 +300,7 @@ async def test_resume_with_pending_invokes_command(monkeypatch: pytest.MonkeyPat
 async def test_resume_without_pending_is_dropped() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("r3"))
     await _drain(sup)
     before = len(bus.published)
@@ -272,7 +319,7 @@ async def test_resume_edit_and_reject_decision_shapes(monkeypatch: pytest.Monkey
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("r4"))
     await _drain(sup)
 
@@ -307,7 +354,7 @@ async def test_resume_edit_and_reject_decision_shapes(monkeypatch: pytest.Monkey
 async def test_resume_unknown_run_dropped() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     resume = _inbound({"kind": "run.resume", "run_id": "ghost", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup.dispatch(bus, resume)
     await _drain(sup)
@@ -320,7 +367,7 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
     gate = asyncio.Event()
     agent = _FakeAgent(run=_text_run("x"), state=_EMPTY_STATE, block=gate)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("r5"))
     await asyncio.sleep(0)
 
@@ -338,7 +385,7 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
 async def test_cancel_unknown_run_still_emits_cancelled() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     cancel = _inbound({"kind": "run.cancel", "run_id": "gone"})
     await sup.dispatch(bus, cancel)
     last = bus.published[-1]
@@ -352,7 +399,7 @@ async def test_builder_failure_emits_run_failed() -> None:
         raise ValueError("bad model")
 
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=build)
+    sup = RunSupervisor(agent_builder=build, store=_FakeRunStateStore())
     await sup.dispatch(bus, _request("r6"))
     await _drain(sup)
     last = bus.published[-1]
@@ -364,7 +411,7 @@ async def test_builder_failure_emits_run_failed() -> None:
 async def test_serve_dispatches_subscribed_requests() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus(items=(_request_item("sv1"),))
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.serve(bus)
     await _drain(sup)
     assert REQUESTS_STREAM == "kokoro:runs:requests"
@@ -382,11 +429,11 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
         captured.append({"args": args, "kwargs": kwargs})
         return True
 
-    with patch("kokoro_agent.application.run.supervisor.invoke_once", spy_invoke):
+    with patch("kokoro_agent.execution.resume_agent.invoke_once", spy_invoke):
         request = RunRequest(
             kind="run.request", run_id="r1", conversation_id="c1", session_id="s1", input="hello"
         )
-        supervisor = RunSupervisor(agent_builder=lambda req: _FakeAgent())
+        supervisor = RunSupervisor(agent_builder=lambda req: _FakeAgent(), store=_FakeRunStateStore())
         bus = _FakeBus()
         await supervisor.dispatch(bus, request)
         for task in list(supervisor.tasks.values()):
@@ -403,7 +450,7 @@ async def test_supervisor_passes_trace_to_invoke_once() -> None:
 async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("rc1"))
     await _drain(sup)
 
@@ -422,7 +469,7 @@ async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
 async def test_cancel_after_pause_emits_cancelled() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("rc2"))
     await _drain(sup)
 
@@ -442,7 +489,7 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
     gate = asyncio.Event()
     agent = _FakeAgent(run=_text_run("x"), state=_EMPTY_STATE, block=gate)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("rc3"))
     await asyncio.sleep(0)
 
@@ -462,7 +509,7 @@ async def test_cancel_mid_run_emits_cancelled() -> None:
 async def test_resume_after_cancel_blocked_by_terminal() -> None:
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("rc4"))
     await _drain(sup)
 
@@ -484,7 +531,7 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 async def test_resume_after_natural_completion_blocked_by_terminal() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=_builder(agent))
+    sup = _supervisor(agent)
     await sup.dispatch(bus, _request("rc5"))
     await _drain(sup)
     before = len(bus.published)
@@ -505,7 +552,7 @@ async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
         raise ValueError("bad model")
 
     bus = _FakeBus()
-    sup = RunSupervisor(agent_builder=build)
+    sup = RunSupervisor(agent_builder=build, store=_FakeRunStateStore())
     await sup.dispatch(bus, _request("rbf"))
     await _drain(sup)
 
@@ -521,15 +568,19 @@ async def test_cancel_after_build_failure_no_duplicate_terminal() -> None:
 @pytest.mark.asyncio
 async def test_resume_on_fresh_supervisor_via_shared_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KOKORO_REQUIRES_APPROVAL_TOOLS", _GATED)
-    store = MemoryRunStateStore()
+    store = _FakeRunStateStore()
     agent = _FakeAgent(run=_interrupt_run(), state=_PENDING_TOOL_STATE)
     bus = _FakeBus()
-    sup_a = RunSupervisor(agent_builder=_builder(agent), store=store)
+    sup_a = RunSupervisor(
+        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_approval_tool_names
+    )
     await sup_a.dispatch(bus, _request("rx"))
     await _drain(sup_a)
 
     # sup_b 无 sup_a 的进程内 map，仅共享 store；resume 须靠 store.get_request 重建 agent。
-    sup_b = RunSupervisor(agent_builder=_builder(agent), store=store)
+    sup_b = RunSupervisor(
+        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_approval_tool_names
+    )
     agent.seen_payloads.clear()
     resume = _inbound({"kind": "run.resume", "run_id": "rx", "decisions": [{"type": "approve", "tool_id": _TID}]})
     await sup_b.dispatch(bus, resume)

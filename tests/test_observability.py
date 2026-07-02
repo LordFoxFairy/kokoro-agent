@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.infrastructure import observability
-from kokoro_agent.infrastructure.observability import trace_config
+from kokoro_agent.run.request import RunRequest
+from kokoro_agent import observability
+from kokoro_agent.observability import trace_config
 
 
 def _clear_langfuse_env(monkeypatch: pytest.MonkeyPatch) -> None:

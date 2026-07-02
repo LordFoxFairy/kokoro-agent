@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from kokoro_agent.interfaces.envelope import AgentEvent
+from kokoro_agent.run.events import AgentEvent
 
 
 def test_envelope_shape_strict() -> None:
@@ -48,5 +48,5 @@ def test_unknown_event_rejected() -> None:
 def test_extra_field_forbidden() -> None:
     with pytest.raises(ValidationError):
         AgentEvent.model_validate(
-            {"event": "agent_status", "request_id": "r", "data": {}, "seq": 1}
+            {"event": "agent_status", "request_id": "r", "data": {}, "index": 1}
         )

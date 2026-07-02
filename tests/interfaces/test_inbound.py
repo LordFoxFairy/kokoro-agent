@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from kokoro_agent.domain.json_payload import JsonObject
-from kokoro_agent.domain.run_request import RunRequest
-from kokoro_agent.interfaces.inbound import (
+from kokoro_agent.run.json_payload import JsonObject
+from kokoro_agent.run.request import RunRequest
+from kokoro_agent.worker.messages import (
     EditDecision,
     RejectDecision,
     RespondDecision,

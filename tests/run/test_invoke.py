@@ -14,8 +14,8 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Interrupt
 from pydantic import JsonValue
 
-from kokoro_agent.application.protocols.stream import StreamItem, StreamProtocol
-from kokoro_agent.application.run.invoke import events_stream, invoke_once
+from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
+from kokoro_agent.execution.run_agent import events_stream, invoke_once
 
 _T = TypeVar("_T")
 
@@ -231,7 +231,18 @@ def _interrupt_state(
     action_requests: list[dict[str, JsonValue]], tool_calls: list[dict[str, object]]
 ) -> _State:
     messages = [HumanMessage(content="go"), AIMessage(content="", tool_calls=tool_calls, id="seg-1")]
-    interrupt = Interrupt(value={"action_requests": list(action_requests)})
+    interrupt = Interrupt(
+        value={
+            "action_requests": list(action_requests),
+            "review_configs": [
+                {
+                    "action_name": str(request["name"]),
+                    "allowed_decisions": ["approve", "edit", "reject", "respond"],
+                }
+                for request in action_requests
+            ],
+        }
+    )
     return _State(values={"messages": messages}, interrupts=(interrupt,))
 
 
@@ -250,7 +261,16 @@ async def test_pending_interrupt_emits_awaiting_no_done() -> None:
     assert "agent_done" not in _events(bus.published)
     last_event, last_data = bus.published[-1][1]["event"], _data(bus.published[-1][1])
     assert last_event == "tool_call_awaiting"
-    assert last_data == {"segment_id": "seg-1", "tool_id": "call-A", "name": "danger", "args": {"x": 1}}
+    assert last_data == {
+        "segment_id": "seg-1",
+        "tool_id": "call-A",
+        "name": "danger",
+        "args": {"x": 1},
+        "description": "do danger",
+        "allowed_decisions": ["approve", "edit", "reject", "respond"],
+        "kind": "tool_approval",
+        "editable": True,
+    }
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""一次 graph invoke 的生命周期编排：started → 投影消费 → interrupt 暂停 / 终态收口。"""
+"""一次 agent 执行的生命周期编排：started → 投影消费 → interrupt 暂停 / 终态收口。"""
 
 from __future__ import annotations
 
@@ -134,6 +134,6 @@ def _approval_requests(interrupts: tuple[Interrupt, ...]) -> list[ApprovalReques
 
 
 def _messages(values: Mapping[str, Any]) -> list[BaseMessage]:
-    # langgraph 图状态 values 为 Any；messages 在此唯一边界过滤为 BaseMessage 序列。
+    # LangGraph state values 为 Any；messages 在此唯一边界过滤为 BaseMessage 序列。
     raw: Any = values.get("messages") or []
     return [m for m in raw if isinstance(m, BaseMessage)]

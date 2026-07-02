@@ -248,6 +248,8 @@ def _request(run_id: str) -> RunRequest:
 
 
 def _inbound(raw: dict[str, JsonValue]) -> InboundMessage:
+    if raw.get("kind") in {"run.resume", "run.cancel"} and "session_id" not in raw:
+        raw = {**raw, "session_id": "s1"}
     parsed = parse_inbound(raw)
     assert parsed is not None
     return parsed

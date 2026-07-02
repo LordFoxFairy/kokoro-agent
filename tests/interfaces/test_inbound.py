@@ -31,6 +31,7 @@ def test_parse_run_resume_approve() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r2",
+        "session_id": "s1",
         "decisions": [{"type": "approve", "tool_id": "t1"}],
     }
     result = parse_inbound(raw)
@@ -43,6 +44,7 @@ def test_parse_run_resume_edit() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r3",
+        "session_id": "s1",
         "decisions": [
             {
                 "type": "edit",
@@ -61,6 +63,7 @@ def test_parse_run_resume_reject() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r4",
+        "session_id": "s1",
         "decisions": [{"type": "reject", "tool_id": "t1", "message": "nope"}],
     }
     result = parse_inbound(raw)
@@ -70,10 +73,21 @@ def test_parse_run_resume_reject() -> None:
 
 
 def test_parse_run_cancel() -> None:
-    raw: JsonObject = {"kind": "run.cancel", "run_id": "r5"}
+    raw: JsonObject = {"kind": "run.cancel", "run_id": "r5", "session_id": "s1"}
     result = parse_inbound(raw)
     assert isinstance(result, RunCancel)
     assert result.run_id == "r5"
+
+
+def test_control_without_session_id_returns_none() -> None:
+    assert parse_inbound({"kind": "run.cancel", "run_id": "r5"}) is None
+    assert parse_inbound(
+        {
+            "kind": "run.resume",
+            "run_id": "r5",
+            "decisions": [{"type": "approve", "tool_id": "t1"}],
+        }
+    ) is None
 
 
 def test_unknown_kind_returns_none() -> None:
@@ -107,6 +121,7 @@ def test_decision_without_tool_id_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r9",
+        "session_id": "s1",
         "decisions": [{"type": "approve"}],
     }
     assert parse_inbound(raw) is None
@@ -117,6 +132,7 @@ def test_edit_without_edited_action_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r10",
+        "session_id": "s1",
         "decisions": [{"type": "edit", "tool_id": "t1"}],
     }
     assert parse_inbound(raw) is None
@@ -127,6 +143,7 @@ def test_reject_without_message_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r11",
+        "session_id": "s1",
         "decisions": [{"type": "reject", "tool_id": "t1"}],
     }
     assert parse_inbound(raw) is None
@@ -137,6 +154,7 @@ def test_respond_without_message_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r12",
+        "session_id": "s1",
         "decisions": [{"type": "respond", "tool_id": "t1"}],
     }
     assert parse_inbound(raw) is None
@@ -147,6 +165,7 @@ def test_approve_with_edited_action_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r13",
+        "session_id": "s1",
         "decisions": [{"type": "approve", "tool_id": "t1", "edited_action": {"name": "bash"}}],
     }
     assert parse_inbound(raw) is None
@@ -157,6 +176,7 @@ def test_approve_with_message_returns_none() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r14",
+        "session_id": "s1",
         "decisions": [{"type": "approve", "tool_id": "t1", "message": "extra"}],
     }
     assert parse_inbound(raw) is None
@@ -167,6 +187,7 @@ def test_edit_with_edited_action_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r15",
+        "session_id": "s1",
         "decisions": [{"type": "edit", "tool_id": "t1", "edited_action": {"name": "bash", "args": {}}}],
     }
     result = parse_inbound(raw)
@@ -180,6 +201,7 @@ def test_reject_with_message_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r16",
+        "session_id": "s1",
         "decisions": [{"type": "reject", "tool_id": "t1", "message": "not approved"}],
     }
     result = parse_inbound(raw)
@@ -193,6 +215,7 @@ def test_respond_with_message_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r17",
+        "session_id": "s1",
         "decisions": [{"type": "respond", "tool_id": "t1", "message": "please clarify"}],
     }
     result = parse_inbound(raw)
@@ -206,6 +229,7 @@ def test_approve_clean_ok() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r18",
+        "session_id": "s1",
         "decisions": [{"type": "approve", "tool_id": "t1"}],
     }
     result = parse_inbound(raw)
@@ -218,6 +242,7 @@ def test_parse_run_resume_multi_decision() -> None:
     raw: JsonObject = {
         "kind": "run.resume",
         "run_id": "r19",
+        "session_id": "s1",
         "decisions": [
             {"type": "approve", "tool_id": "a"},
             {"type": "reject", "tool_id": "b", "message": "no"},

@@ -236,6 +236,8 @@ async def _drain(sup: RunSupervisor) -> None:
 
 
 def _inbound(raw: dict[str, JsonValue]) -> InboundMessage:
+    if raw.get("kind") in {"run.resume", "run.cancel"} and "session_id" not in raw:
+        raw = {**raw, "session_id": "s1"}
     parsed = parse_inbound(raw)
     assert parsed is not None
     return parsed
@@ -381,16 +383,31 @@ async def test_cancel_running_cancels_task_and_emits_cancelled() -> None:
     assert last[1]["data"] == {"status": "cancelled"}
 
 
-# cancel 未知/已结束 run → 仍补发 cancelled 终态。
-async def test_cancel_unknown_run_still_emits_cancelled() -> None:
+# cancel 未知 run → 直接丢弃，不得凭空创建终态。
+async def test_cancel_unknown_run_is_dropped() -> None:
     agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE)
     bus = _FakeBus()
     sup = _supervisor(agent)
     cancel = _inbound({"kind": "run.cancel", "run_id": "gone"})
     await sup.dispatch(bus, cancel)
-    last = bus.published[-1]
-    assert last[1]["event"] == "agent_done"
-    assert last[1]["data"] == {"status": "cancelled"}
+    assert bus.published == []
+
+
+async def test_cancel_from_another_session_is_dropped() -> None:
+    gate = asyncio.Event()
+    agent = _FakeAgent(run=_text_run("hi"), state=_EMPTY_STATE, block=gate)
+    bus = _FakeBus()
+    sup = _supervisor(agent)
+    await sup.dispatch(bus, _request("r_other"))
+    await asyncio.sleep(0)
+
+    cancel = _inbound({"kind": "run.cancel", "run_id": "r_other", "session_id": "s2"})
+    await sup.dispatch(bus, cancel)
+
+    events = [event for _, event in bus.published if event.get("event") == "agent_done"]
+    assert events == []
+    gate.set()
+    await _drain(sup)
 
 
 # agent_builder 抛异常 → agent_error{error_kind,message}。
@@ -614,7 +631,12 @@ async def test_serve_isolates_dispatch_failure_no_worker_death() -> None:
     # 令整个 worker 罢工；收口为该 run 的 agent_error，循环正常收束。
     resume = StreamItem(
         cursor="0",
-        event={"kind": "run.resume", "run_id": "rx", "decisions": [{"type": "approve", "tool_id": _TID}]},
+        event={
+            "kind": "run.resume",
+            "run_id": "rx",
+            "session_id": "s1",
+            "decisions": [{"type": "approve", "tool_id": _TID}],
+        },
     )
     bus = _FakeBus(items=[resume])
     sup = RunSupervisor(agent_builder=_builder(_FakeAgent()), store=_BoomStore())

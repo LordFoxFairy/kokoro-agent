@@ -119,6 +119,13 @@ class RunSupervisor:
         if request is None:
             LOGGER.warning("dropping resume for unknown run_id=%s", msg.run_id)
             return
+        if request.session_id != msg.session_id:
+            LOGGER.warning(
+                "dropping resume for run_id=%s from session_id=%s",
+                msg.run_id,
+                msg.session_id,
+            )
+            return
         try:
             agent = self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 agent_error
@@ -148,6 +155,17 @@ class RunSupervisor:
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
+        request = await self._store.get_request(msg.run_id)
+        if request is None:
+            LOGGER.warning("dropping cancel for unknown run_id=%s", msg.run_id)
+            return
+        if request.session_id != msg.session_id:
+            LOGGER.warning(
+                "dropping cancel for run_id=%s from session_id=%s",
+                msg.run_id,
+                msg.session_id,
+            )
+            return
         # 原子认领终态：自然完成 / 重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
         if not await self._store.try_mark_terminal(msg.run_id):
             return
@@ -258,7 +276,7 @@ class _Pending:
 
 def _pending_tool_calls(snapshot: StateView, names: frozenset[str]) -> _Pending:
     # 触发 HITL 的 AIMessage 中命中审批工具名的工具子序列（与 langgraph HITL 同序）。
-    # langgraph 图状态 values 为 Any：messages 在此边界过滤为 typed AIMessage（同 invoke._messages）。
+    # LangGraph state values 为 Any：messages 在此边界过滤为 typed AIMessage。
     raw: Any = snapshot.values.get("messages") or []
     last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
     if last_ai is None:

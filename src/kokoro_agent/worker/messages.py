@@ -59,6 +59,7 @@ class RunResume(BaseModel):
 
     kind: Literal["run.resume"]
     run_id: str
+    session_id: str
     decisions: list[ResumeDecision]
 
 
@@ -69,6 +70,7 @@ class RunCancel(BaseModel):
 
     kind: Literal["run.cancel"]
     run_id: str
+    session_id: str
 
 
 # 判别式联合：Pydantic 根据 kind 字段快速路由到对应模型。

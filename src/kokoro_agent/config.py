@@ -95,7 +95,7 @@ class RuntimeSettings(BaseModel):
 
 
 class CheckpointSettings(BaseModel):
-    """图状态 checkpointer 后端：sqlite（默认，落盘）/ mongo（跨 pod）/ memory（易失）。"""
+    """LangGraph 状态 checkpointer 后端：sqlite（默认，落盘）/ mongo（跨 pod）/ memory（易失）。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 

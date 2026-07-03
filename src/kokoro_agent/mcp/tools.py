@@ -10,7 +10,10 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from kokoro_agent.contract import McpServer
 from kokoro_agent.mcp.servers import McpConnectionError, build_connections
-from kokoro_agent.tools.names import mcp_tool_name
+
+
+def mcp_tool_name(server: str, tool: str) -> str:
+    return f"mcp__{server}__{tool}"
 
 
 class _ToolClient(Protocol):

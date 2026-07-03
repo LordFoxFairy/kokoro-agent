@@ -27,7 +27,7 @@ from kokoro_agent.execution.events import (
     tool_invoked_payload,
     tool_returned_payload,
 )
-from kokoro_agent.tools.names import SUBAGENT_TOOL_NAME, TODO_TOOL_NAME
+from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME, TODO_TOOL_NAME
 
 LOGGER = logging.getLogger(__name__)
 

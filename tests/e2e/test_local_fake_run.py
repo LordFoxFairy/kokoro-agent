@@ -38,7 +38,7 @@ from kokoro_agent.sandbox import build_filesystem_permissions
 from kokoro_agent.storage.sqlite import SqliteRunStateStore
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.subagents import build_catalog
-from kokoro_agent.tools.names import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.ask_user import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.worker.supervisor import RunSupervisor

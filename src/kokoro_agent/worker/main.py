@@ -27,7 +27,8 @@ from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
-from kokoro_agent.tools.names import ASK_USER_TOOL_NAME, RESERVED_TOOL_NAMES
+from kokoro_agent.tools.ask_user import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.worker.supervisor import RunSupervisor

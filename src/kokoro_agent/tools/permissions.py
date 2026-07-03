@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.human_in_the_loop import DecisionType
 
-from kokoro_agent.tools.names import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.ask_user import ASK_USER_TOOL_NAME
 
 # ask_user 是语义暂停点：只允许人工作答，不参与 approve/edit/reject。
 _ASK_USER_DECISIONS: list[DecisionType] = ["respond"]

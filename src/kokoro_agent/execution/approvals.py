@@ -17,7 +17,7 @@ from kokoro_agent.contract import (
     ToolReturnedPayload,
 )
 from kokoro_agent.execution.protocols import StateView
-from kokoro_agent.tools.names import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.ask_user import ASK_USER_TOOL_NAME
 
 _DEFAULT_REJECT_MESSAGE = "rejected by user"
 _REVIEW_KEY = "kokoro_result_review"

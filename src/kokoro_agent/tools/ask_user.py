@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.tools.names import ASK_USER_TOOL_NAME
+ASK_USER_TOOL_NAME = "ask_user"
 
 
 class AskUserArgs(BaseModel):

@@ -29,7 +29,9 @@ from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.memory import make_memory_tools
-from kokoro_agent.tools.web import make_web_fetch_tool, make_web_search_tool, make_zhipu_search
+from kokoro_agent.tools.web_search_providers import SearchProviderSettings, make_search_provider
+from kokoro_agent.tools.web_fetch import make_web_fetch_tool
+from kokoro_agent.tools.web_search import make_web_search_tool
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, SUBAGENT_TOOL_NAME
@@ -71,14 +73,16 @@ def build_web_tools(config: AppConfig) -> list[BaseTool]:
     tools: list[BaseTool] = [
         make_web_fetch_tool(allow_private=config.web_tools.fetch_allow_private)
     ]
-    provider = config.web_tools.search_provider
-    if provider is None:
+    if config.web_tools.search_provider is None:
         return tools
-    if provider != "zhipu" or config.web_tools.search_api_key is None:
-        raise ValueError(
-            f"unsupported web search provider config: {provider!r} (need zhipu + api key)"
+    provider = make_search_provider(
+        SearchProviderSettings(
+            provider=config.web_tools.search_provider,
+            api_key=config.web_tools.search_api_key,
+            base_url=config.web_tools.search_url,
         )
-    tools.append(make_web_search_tool(make_zhipu_search(config.web_tools.search_api_key.get_secret_value())))
+    )
+    tools.append(make_web_search_tool(provider))
     return tools
 
 

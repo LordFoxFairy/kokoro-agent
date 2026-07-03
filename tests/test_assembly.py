@@ -253,7 +253,11 @@ def test_web_tools_assembly_matrix() -> None:
         )
     )
     assert [tool.name for tool in full] == ["web_fetch", "web_search"]
-    with pytest.raises(ValueError, match="provider"):
+    searx = build_web_tools(AppConfig.from_env(
+        {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
+    ))
+    assert [tool.name for tool in searx] == ["web_fetch", "web_search"]
+    with pytest.raises(ValueError, match="KOKORO_WEB_SEARCH_API_KEY"):
         build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
-    with pytest.raises(ValueError, match="provider"):
+    with pytest.raises(ValueError, match="unsupported"):
         build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))

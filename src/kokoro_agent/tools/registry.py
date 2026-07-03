@@ -9,7 +9,8 @@ from langchain_core.tools import StructuredTool
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 from kokoro_agent.tools.memory import SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME
-from kokoro_agent.tools.web import WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME
+from kokoro_agent.tools.web_fetch import WEB_FETCH_TOOL_NAME
+from kokoro_agent.tools.web_search import WEB_SEARCH_TOOL_NAME
 
 TODO_TOOL_NAME = "write_todos"  # deepagents 内置 TODO 工具
 SUBAGENT_TOOL_NAME = "task"  # deepagents 子代理启动工具

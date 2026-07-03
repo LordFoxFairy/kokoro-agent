@@ -33,6 +33,7 @@ class WebToolSettings(BaseModel):
     fetch_allow_private: bool
     search_provider: str | None
     search_api_key: SecretStr | None
+    search_url: str | None
 
 
 class AppConfig(BaseModel):
@@ -103,6 +104,7 @@ class AppConfig(BaseModel):
                 fetch_allow_private=source.get("KOKORO_WEB_FETCH_ALLOW_PRIVATE") == "1",
                 search_provider=source.get("KOKORO_WEB_SEARCH_PROVIDER") or None,
                 search_api_key=_secret(source.get("KOKORO_WEB_SEARCH_API_KEY")),
+                search_url=source.get("KOKORO_WEB_SEARCH_URL") or None,
             ),
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
             lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),

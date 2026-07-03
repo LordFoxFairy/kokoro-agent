@@ -1,4 +1,4 @@
-"""web 底层工具规格：fetch 的 SSRF 防御/提取/截断，search 的 provider 协议与 zhipu 解析边界。"""
+"""web_fetch 规格：SSRF 拒绝矩阵、HTML 提取、JSON 原样、截断、重定向逐跳复检。"""
 
 from __future__ import annotations
 
@@ -11,16 +11,7 @@ import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import ValidationError
 
-from kokoro_agent.tools.web import (
-    FETCH_MAX_CHARS,
-    SearchHit,
-    WebFetchArgs,
-    make_web_fetch_tool,
-    make_web_search_tool,
-    parse_zhipu_response,
-)
-
-# --- fixture 服务器（loopback：测试用 allow_private 工厂） ---
+from kokoro_agent.tools.web_fetch import FETCH_MAX_CHARS, WebFetchArgs, make_web_fetch_tool
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -67,9 +58,6 @@ def base_url():
 def _coro(tool: StructuredTool):
     assert tool.coroutine is not None
     return tool.coroutine
-
-
-# --- web_fetch ---
 
 
 @pytest.mark.parametrize(
@@ -122,47 +110,3 @@ def test_fetch_args_schema_rejects_garbage() -> None:
         WebFetchArgs.model_validate({"url": ""})
     with pytest.raises(ValidationError):
         WebFetchArgs.model_validate({"url": "http://x", "extra": 1})
-
-
-# --- web_search ---
-
-
-async def test_search_tool_formats_hits() -> None:
-    async def fake_search(query: str, count: int) -> list[SearchHit]:
-        assert query == "python"
-        return [SearchHit(title="T1", url="https://a", snippet="S1")]
-
-    tool = make_web_search_tool(fake_search)
-    out = await _coro(tool)(query="python")
-    assert "T1" in out and "https://a" in out and "S1" in out
-
-
-async def test_search_tool_reports_empty() -> None:
-    async def fake_search(query: str, count: int) -> list[SearchHit]:
-        return []
-
-    tool = make_web_search_tool(fake_search)
-    assert "no results" in await _coro(tool)(query="python")
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ({"search_result": []}, 0),
-        ({}, 0),
-        (
-            {"search_result": [{"title": "T", "link": "https://a", "content": "C"}]},
-            1,
-        ),
-        (
-            {"search_result": [{"title": "T", "url": "https://b"}]},  # 缺 content/link 变体
-            1,
-        ),
-        ({"search_result": [{"no_title": 1}]}, 0),  # 无 url 的脏条目剔除
-    ],
-)
-def test_parse_zhipu_response_boundary_matrix(raw: dict[str, object], expected: int) -> None:
-    hits = parse_zhipu_response(raw)
-    assert len(hits) == expected
-    for hit in hits:
-        assert hit.url

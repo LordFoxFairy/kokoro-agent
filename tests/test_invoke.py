@@ -36,7 +36,9 @@ from kokoro_agent.contract import (
     ToolAwaitingApproval,
     ToolAwaitingApprovalPayload,
     ToolInvoked,
+    ToolInvokedPayload,
     ToolReturned,
+    ToolReturnedPayload,
 )
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
@@ -103,6 +105,45 @@ async def test_index_strictly_monotonic() -> None:
     await _invoke(bus, FakeAgent(run=FakeRunStream(models=(model,))))
     indexes = [e.index for e in bus.run_events("r1")]
     assert indexes == list(range(len(indexes)))
+
+
+async def test_tool_events_inherit_awaiting_segment() -> None:
+    # resume 后 invoked/returned 只有 tool_call_id 兜底段：必须继承 awaiting 的 AIMessage 段（真栈走查根治）。
+    bus = MemoryStream()
+    emitter = RunEmitter(bus, "rn")
+    await emitter.emit(
+        ToolAwaitingApprovalPayload(
+            segment_id="seg_msg",
+            tool_id="t1",
+            name="write_file",
+            args={},
+            description="d",
+            allowed_decisions=["approve"],
+            kind="tool_approval",
+            risk=None,
+            editable=False,
+            input_schema=None,
+            pending_tool_ids=["t1"],
+        )
+    )
+    # 模拟 resume：从流重建发射器（归属映射经历史回放恢复）。
+    resumed = await RunEmitter.attach(bus, "rn")
+    await resumed.emit(ToolInvokedPayload(segment_id="t1", tool_id="t1", name="write_file", args={}))
+    await resumed.emit(
+        ToolReturnedPayload(
+            segment_id="t1", tool_id="t1", name="write_file", result="ok", is_error=False,
+            rejected=None, reject_reason=None, responded=None, artifact_ref=None, summary=None,
+        )
+    )
+    items = await bus.read_all("kokoro:run:rn:events")
+    segs: list[str] = []
+    for item in items[-2:]:
+        payload = item.event["payload"]
+        assert isinstance(payload, dict)
+        seg = payload["segment_id"]
+        assert isinstance(seg, str)
+        segs.append(seg)
+    assert segs == ["seg_msg", "seg_msg"]
 
 
 async def test_optional_none_fields_never_serialize_as_null() -> None:

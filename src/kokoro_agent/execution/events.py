@@ -75,10 +75,19 @@ def _now_ms() -> int:
 class RunEmitter:
     """一次 run 的唯一发射口：index 在此单点递增，event_id=f(run_id,index) 永不回卷。"""
 
-    def __init__(self, bus: StreamProtocol, run_id: str, next_index: int = 0) -> None:
+    def __init__(
+        self,
+        bus: StreamProtocol,
+        run_id: str,
+        next_index: int = 0,
+        tool_segments: dict[str, str] | None = None,
+    ) -> None:
         self._bus = bus
         self._run_id = run_id
         self._next_index = next_index
+        # tool_id → 归属 segment：awaiting 携带 AIMessage 段，resume 后的 invoked/returned
+        # 只有 tool_call_id 兜底段——继承归属段，一次工具调用在渲染侧恒为一段。
+        self._tool_segments = tool_segments if tool_segments is not None else {}
 
     @property
     def run_id(self) -> str:
@@ -87,13 +96,28 @@ class RunEmitter:
     @classmethod
     async def attach(cls, bus: StreamProtocol, run_id: str) -> RunEmitter:
         # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
+        # 同时从历史 awaiting 事件重建 tool_id→segment 归属（漂移正发生在 resume 重建之后）。
         next_index = 0
+        tool_segments: dict[str, str] = {}
         for item in await bus.read_all(run_events_stream(run_id)):
             event = agent_event_adapter.validate_python(item.event)
             next_index = max(next_index, event.index + 1)
-        return cls(bus, run_id, next_index)
+            if isinstance(event.payload, ToolAwaitingApprovalPayload):
+                tool_segments[event.payload.tool_id] = event.payload.segment_id
+        return cls(bus, run_id, next_index, tool_segments)
+
+    def _with_owner_segment(self, payload: AgentEventPayload) -> AgentEventPayload:
+        if isinstance(payload, ToolAwaitingApprovalPayload):
+            self._tool_segments[payload.tool_id] = payload.segment_id
+            return payload
+        if isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
+            owner = self._tool_segments.get(payload.tool_id)
+            if owner is not None and owner != payload.segment_id:
+                return payload.model_copy(update={"segment_id": owner})
+        return payload
 
     async def emit(self, payload: AgentEventPayload) -> None:
+        payload = self._with_owner_segment(payload)
         event = agent_event_adapter.validate_python(
             {
                 "kind": _KIND_BY_PAYLOAD[type(payload)],

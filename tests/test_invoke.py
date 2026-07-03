@@ -40,7 +40,7 @@ from kokoro_agent.contract import (
     ToolReturned,
     ToolReturnedPayload,
 )
-from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.execution.events import RunEmitter, clip_result
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.streams.protocol import StreamProtocol
@@ -105,6 +105,14 @@ async def test_index_strictly_monotonic() -> None:
     await _invoke(bus, FakeAgent(run=FakeRunStream(models=(model,))))
     indexes = [e.index for e in bus.run_events("r1")]
     assert indexes == list(range(len(indexes)))
+
+
+def test_clip_result_boundary_matrix() -> None:
+    # wire 轻事件护栏：4000 内原样；超限截断并标注省略量；空串安全。
+    assert clip_result("") == ""
+    assert clip_result("a" * 4000) == "a" * 4000
+    clipped = clip_result("b" * 4100)
+    assert clipped.startswith("b" * 4000) and clipped.endswith("…[truncated 100 chars]")
 
 
 async def test_tool_events_inherit_awaiting_segment() -> None:

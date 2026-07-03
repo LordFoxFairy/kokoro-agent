@@ -257,11 +257,23 @@ def _json_args(args: dict[str, object] | None) -> dict[str, JsonValue]:
     return _ARGS_ADAPTER.validate_python(args or {})
 
 
+# wire 是轻事件通道：完整产物走 backend 文件（canvas 预览面读取），事件只带摘要级文本。
+# 截断是对不守规矩生产者的防御，模型侧 ToolMessage 不受影响。
+TOOL_RESULT_MAX_CHARS = 4000
+
+
+def clip_result(text: str) -> str:
+    if len(text) <= TOOL_RESULT_MAX_CHARS:
+        return text
+    omitted = len(text) - TOOL_RESULT_MAX_CHARS
+    return f"{text[:TOOL_RESULT_MAX_CHARS]}…[truncated {omitted} chars]"
+
+
 def _result_text(tc: ToolCallInfo) -> str:
     if tc.error is not None:
-        return tc.error
+        return clip_result(tc.error)
     output = tc.output
     if output is None:
         return ""
     text = getattr(output, "text", None)
-    return text if isinstance(text, str) else str(output)
+    return clip_result(text if isinstance(text, str) else str(output))

@@ -16,6 +16,7 @@ from kokoro_agent.contract import (
     ToolAwaitingApprovalPayload,
     ToolReturnedPayload,
 )
+from kokoro_agent.execution.events import clip_result
 from kokoro_agent.execution.protocols import StateView
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 
@@ -161,7 +162,7 @@ def awaiting_payloads(
                 kind="result_review",
                 editable=False,
                 pending_tool_ids=pending_ids,
-                result=entry.result,
+                result=clip_result(entry.result),
             )
             for entry in entries
         ]
@@ -279,7 +280,7 @@ def review_resolution_payloads(
                     segment_id=frame.segment_id,
                     tool_id=tool_id,
                     name=name_by_id[tool_id],
-                    result=cached[0],
+                    result=clip_result(cached[0]),
                     is_error=cached[1],
                     responded=True,
                 )

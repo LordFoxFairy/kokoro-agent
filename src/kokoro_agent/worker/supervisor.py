@@ -299,17 +299,25 @@ class RunSupervisor:
 
     async def _control_loop(self, bus: StreamProtocol, run_id: str) -> None:
         stream = run_control_stream(run_id)
-        async for item in bus.subscribe(stream, group=CONSUMER_GROUP, consumer=self._consumer):
-            msg = parse_inbound(item.event)
-            await bus.ack(stream, CONSUMER_GROUP, item.cursor)
-            # control 流按 run 隔离：只认本 run 的 resume/cancel，异帧安全丢弃。
-            if msg is None or msg.run_id != run_id or isinstance(msg, RunRequest):
-                continue
-            try:
-                await self.dispatch(bus, msg)
-            except Exception as error:  # noqa: BLE001 — 单控制帧容错：隔离故障，保 control 循环
-                LOGGER.exception("control dispatch failed: run_id=%s", run_id)
-                await self._fail_terminal(bus, run_id, error)
+        try:
+            async for item in bus.subscribe(stream, group=CONSUMER_GROUP, consumer=self._consumer):
+                msg = parse_inbound(item.event)
+                await bus.ack(stream, CONSUMER_GROUP, item.cursor)
+                # control 流按 run 隔离：只认本 run 的 resume/cancel，异帧安全丢弃。
+                if msg is None or msg.run_id != run_id or isinstance(msg, RunRequest):
+                    continue
+                try:
+                    await self.dispatch(bus, msg)
+                except Exception as error:  # noqa: BLE001 — 单控制帧容错：隔离故障，保 control 循环
+                    LOGGER.exception("control dispatch failed: run_id=%s", run_id)
+                    await self._fail_terminal(bus, run_id, error)
+        except Exception:
+            # 终态清理删流先于 cancel（监听可能是当前任务）：删流后阻塞读抛 NOGROUP 属干净收束；
+            # 非终态的订阅异常才是真故障，fail-loud。
+            if await self._store.is_terminal(run_id):
+                LOGGER.debug("control listener closed after terminal teardown: run_id=%s", run_id)
+                return
+            raise
 
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
         # 终态清理：删 control 流后取消监听任务（可能是当前任务，故删流先于 cancel）。

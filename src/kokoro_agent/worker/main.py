@@ -29,9 +29,12 @@ from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.memory import make_memory_tools
-from kokoro_agent.tools.web_search_providers import SearchProviderSettings, make_search_provider
 from kokoro_agent.tools.web_fetch import make_web_fetch_tool
-from kokoro_agent.tools.web_search import make_web_search_tool
+from kokoro_agent.tools.web_search import (
+    SearchProviderSettings,
+    make_search_provider,
+    make_web_search_tool,
+)
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, SUBAGENT_TOOL_NAME

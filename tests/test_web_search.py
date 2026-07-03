@@ -6,16 +6,18 @@ import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import SecretStr
 
-from kokoro_agent.tools.web_search_providers import (
+from kokoro_agent.tools.web_search import (
     SUPPORTED_SEARCH_PROVIDERS,
+    SearchHit,
+    SearchProvider,
     SearchProviderSettings,
     SearxngSearch,
     TavilySearch,
     ZhipuSearch,
     make_search_provider,
+    make_web_search_tool,
     parse_hits,
 )
-from kokoro_agent.tools.web_search import SearchHit, make_web_search_tool
 
 
 def _coro(tool: StructuredTool):
@@ -45,15 +47,15 @@ async def test_search_tool_reports_empty() -> None:
     assert "no results" in out
 
 
-def test_tool_module_is_vendor_free() -> None:
-    # 工具层是通用原语：任何 vendor 词汇出现即分层破裂。
+def test_tool_primitive_is_vendor_free() -> None:
+    # 工具原语（tool 工厂/协议/命中模型）不得含 vendor 词汇：适配器同文件但不许倒灌。
     import inspect
 
-    from kokoro_agent.tools import web_search
-
-    source = inspect.getsource(web_search).lower()
+    section = "".join(
+        inspect.getsource(obj) for obj in (make_web_search_tool, SearchProvider, SearchHit)
+    ).lower()
     for vendor in ("zhipu", "tavily", "searxng", "bigmodel"):
-        assert vendor not in source
+        assert vendor not in section
 
 
 @pytest.mark.parametrize(

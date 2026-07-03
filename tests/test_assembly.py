@@ -71,20 +71,20 @@ def test_invalid_backend_enums_fail_loud(env: dict[str, str]) -> None:
 
 def test_interrupt_on_no_approval_tools_only_ask_user() -> None:
     interrupt_on = build_interrupt_on(frozenset())
-    assert set(interrupt_on) == {"ask_user"}
-    assert interrupt_on["ask_user"]["allowed_decisions"] == ["respond"]
+    assert set(interrupt_on) == {"ask_user_question"}
+    assert interrupt_on["ask_user_question"]["allowed_decisions"] == ["respond"]
 
 
 def test_interrupt_on_gates_approval_tools() -> None:
     interrupt_on = build_interrupt_on(frozenset({"execute", "deploy"}))
-    assert set(interrupt_on) == {"ask_user", "execute", "deploy"}
+    assert set(interrupt_on) == {"ask_user_question", "execute", "deploy"}
     assert interrupt_on["execute"]["allowed_decisions"] == ["approve", "edit", "reject"]
 
 
 def test_interrupt_on_ask_user_stays_respond_only() -> None:
     # ask_user 即便被误列进审批集合，也不得降级为 approve/edit/reject。
-    interrupt_on = build_interrupt_on(frozenset({"ask_user"}))
-    assert interrupt_on["ask_user"]["allowed_decisions"] == ["respond"]
+    interrupt_on = build_interrupt_on(frozenset({"ask_user_question"}))
+    assert interrupt_on["ask_user_question"]["allowed_decisions"] == ["respond"]
 
 
 def test_filesystem_permissions_by_perm() -> None:
@@ -162,7 +162,7 @@ def test_local_fake_hitl_script_switch() -> None:
     assert isinstance(model, LocalFakeChatModel)
     first = model.invoke([HumanMessage(content="hi")])
     assert isinstance(first, AIMessage)
-    assert first.tool_calls and first.tool_calls[0]["name"] == "ask_user"
+    assert first.tool_calls and first.tool_calls[0]["name"] == "ask_user_question"
 
 
 def test_make_stream_backends() -> None:

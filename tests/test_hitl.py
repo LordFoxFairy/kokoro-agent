@@ -95,16 +95,16 @@ def test_awaiting_payloads_carry_full_pending_set() -> None:
 
 def test_awaiting_payloads_ask_user_kind() -> None:
     ai = AIMessage(
-        content="", id="seg-2", tool_calls=[{"name": "ask_user", "args": {}, "id": "q1"}]
+        content="", id="seg-2", tool_calls=[{"name": "ask_user_question", "args": {}, "id": "q1"}]
     )
     interrupt = Interrupt(
         value={
-            "action_requests": [{"name": "ask_user", "args": {"question": "?"}, "description": "ask"}],
-            "review_configs": [{"action_name": "ask_user", "allowed_decisions": ["respond"]}],
+            "action_requests": [{"name": "ask_user_question", "args": {"question": "?"}, "description": "ask"}],
+            "review_configs": [{"action_name": "ask_user_question", "allowed_decisions": ["respond"]}],
         }
     )
     state = FakeState(interrupts=(interrupt,), values={"messages": [ai]})
-    payloads = awaiting_payloads(state, frozenset({"ask_user"}))
+    payloads = awaiting_payloads(state, frozenset({"ask_user_question"}))
     assert payloads[0].kind == "ask_user"
     assert payloads[0].editable is False
     assert payloads[0].allowed_decisions == ["respond"]
@@ -178,7 +178,7 @@ def test_align_decisions_fail_loud_matrix(decisions: list[dict[str, JsonValue]])
 
 
 def test_align_decisions_respond_only_for_ask_user() -> None:
-    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user")))
+    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user_question")))
     # respond 用于普通审批工具即越界 fail-loud。
     with pytest.raises(ValueError, match="respond decision not allowed"):
         align_decisions(
@@ -222,7 +222,7 @@ def test_resume_command_approve_with_args_becomes_edit() -> None:
 
 
 def test_resume_command_reject_and_respond_messages() -> None:
-    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user")))
+    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user_question")))
     ordered = [
         _decision({"type": "reject", "tool_id": "call-A"}),
         _decision({"type": "respond", "tool_id": "call-B", "response": "北京"}),
@@ -234,7 +234,7 @@ def test_resume_command_reject_and_respond_messages() -> None:
 
 
 def test_resolution_payloads_reject_and_respond_snapshot() -> None:
-    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user")))
+    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user_question")))
     ordered = [
         _decision({"type": "reject", "tool_id": "call-A", "reason": "太危险"}),
         _decision({"type": "respond", "tool_id": "call-B", "response": "北京"}),

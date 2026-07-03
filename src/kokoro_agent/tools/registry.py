@@ -7,7 +7,7 @@ from typing import Final
 
 from langchain_core.tools import StructuredTool
 
-from kokoro_agent.tools.ask_user import ASK_USER_TOOL
+from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 
 TODO_TOOL_NAME = "write_todos"  # deepagents 内置 TODO 工具
 SUBAGENT_TOOL_NAME = "task"  # deepagents 子代理启动工具

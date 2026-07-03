@@ -38,7 +38,7 @@ from kokoro_agent.sandbox import build_filesystem_permissions
 from kokoro_agent.storage.sqlite import SqliteRunStateStore
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.subagents import build_catalog
-from kokoro_agent.tools.ask_user import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -257,7 +257,7 @@ async def test_local_fake_result_review_over_control_stream(tmp_path: Path) -> N
         store = SqliteRunStateStore(db, ttl_ms=90_000)
         await store.setup()
         # 脚本去掉 ask_user 帧：只走 write_file（审核）+ 终帧文本。
-        script = [turn for turn in hitl_script() if not _calls_tool(turn, "ask_user")]
+        script = [turn for turn in hitl_script() if not _calls_tool(turn, "ask_user_question")]
         supervisor = _build_supervisor(store, script=script)
         serve_task = asyncio.create_task(supervisor.serve(bus))
         await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)

@@ -1,11 +1,11 @@
-"""ask_user 工具：HITL respond 流程的语义暂停点。"""
+"""ask_user_question 工具：HITL respond 流程的语义暂停点（对齐 CC 的 AskUserQuestion）。"""
 
 from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
-ASK_USER_TOOL_NAME = "ask_user"
+ASK_USER_TOOL_NAME = "ask_user_question"
 
 
 class AskUserArgs(BaseModel):

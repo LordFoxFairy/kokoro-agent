@@ -43,13 +43,13 @@ def _script() -> list[AIMessage]:
 
 
 def hitl_script() -> list[AIMessage]:
-    # 跨栈 e2e 脚本：一次 ask_user 暂停 → 一次审批工具（write_file）暂停 → 正常文本流。
+    # 跨栈 e2e 脚本：一次 ask_user_question 暂停 → 一次审批工具（write_file）暂停 → 正常文本流。
     return [
         AIMessage(
             content="",
             tool_calls=[
                 {
-                    "name": "ask_user",
+                    "name": "ask_user_question",
                     "args": {"question": "偏好中文还是英文？", "choices": ["中文", "英文"]},
                     "id": "local_ask",
                     "type": "tool_call",

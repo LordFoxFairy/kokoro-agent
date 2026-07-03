@@ -58,6 +58,10 @@ class SubagentCatalog:
             by_name[spec.name] = spec
         self._by_name = by_name
 
+    def names(self) -> frozenset[str]:
+        # 委派执法的声明集来源：目录内即管理员声明，deny 策略下仍可被委派。
+        return frozenset(self._by_name)
+
     def definitions(self) -> list[SubAgent]:
         return [
             {

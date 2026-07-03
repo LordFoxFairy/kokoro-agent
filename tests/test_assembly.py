@@ -192,3 +192,12 @@ def test_runtime_system_prompt_on_wire() -> None:
     assert runtime.system_prompt == "你是音乐创作人格"
     with pytest.raises(ValidationError):
         RuntimeConfig.model_validate({**runtime.model_dump(), "system_prompt": ""})
+
+
+def test_interrupt_on_subagent_create_ask_gates_task() -> None:
+    gated = build_interrupt_on(frozenset(), subagent_create="ask")
+    assert set(gated) == {"ask_user_question", "task"}
+    assert gated["task"]["allowed_decisions"] == ["approve", "edit", "reject"]
+    # deny/allow 不进暂停门控（deny 由 middleware fail-closed，allow 直接放行）。
+    for policy in ("deny", "allow"):
+        assert "task" not in build_interrupt_on(frozenset(), subagent_create=policy)

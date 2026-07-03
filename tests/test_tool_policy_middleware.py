@@ -66,3 +66,57 @@ async def test_audit_logged_for_authorized(caplog: pytest.LogCaptureFixture) -> 
     with caplog.at_level("INFO", logger="kokoro_agent.tools.middleware"):
         await middleware.awrap_tool_call(_request("lookup"), _Handler())
     assert any("audit" in r.message for r in caplog.records)
+
+
+def _task_request(subagent_type: str) -> ToolCallRequest:
+    return ToolCallRequest(
+        tool_call={
+            "name": "task",
+            "args": {"description": "do it", "subagent_type": subagent_type},
+            "id": "c1",
+            "type": "tool_call",
+        },
+        tool=None,
+        state=None,
+        runtime=_runtime(),
+    )
+
+
+class _TaskHandler:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, request: ToolCallRequest) -> ToolMessage:
+        self.calls += 1
+        return ToolMessage(content="delegated", tool_call_id="c1", name="task")
+
+
+async def test_delegation_deny_blocks_undeclared_including_general_purpose() -> None:
+    middleware = ToolPolicyMiddleware(
+        frozenset({"task"}), declared_subagents=frozenset({"researcher"}), subagent_create="deny"
+    )
+    handler = _TaskHandler()
+    for undeclared in ("general-purpose", "ghost"):
+        result = await middleware.awrap_tool_call(_task_request(undeclared), handler)
+        assert isinstance(result, ToolMessage) and result.status == "error"
+        assert "not allowed" in result.text
+    assert handler.calls == 0
+
+
+async def test_delegation_deny_allows_declared() -> None:
+    middleware = ToolPolicyMiddleware(
+        frozenset({"task"}), declared_subagents=frozenset({"researcher"}), subagent_create="deny"
+    )
+    handler = _TaskHandler()
+    result = await middleware.awrap_tool_call(_task_request("researcher"), handler)
+    assert isinstance(result, ToolMessage) and result.text == "delegated"
+    assert handler.calls == 1
+
+
+async def test_delegation_allow_passes_anything() -> None:
+    middleware = ToolPolicyMiddleware(
+        frozenset({"task"}), declared_subagents=frozenset(), subagent_create="allow"
+    )
+    handler = _TaskHandler()
+    result = await middleware.awrap_tool_call(_task_request("general-purpose"), handler)
+    assert isinstance(result, ToolMessage) and result.text == "delegated"

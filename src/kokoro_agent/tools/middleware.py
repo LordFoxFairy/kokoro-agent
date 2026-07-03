@@ -13,6 +13,7 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from kokoro_agent.storage.run_state import RunStateStore
+from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
 
@@ -21,9 +22,31 @@ _ToolHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]
 
 
 class ToolPolicyMiddleware(AgentMiddleware):
-    def __init__(self, authorized: frozenset[str]) -> None:
+    def __init__(
+        self,
+        authorized: frozenset[str],
+        *,
+        declared_subagents: frozenset[str] = frozenset(),
+        subagent_create: str = "deny",
+    ) -> None:
         super().__init__()
         self._authorized = authorized
+        self._declared_subagents = declared_subagents
+        self._subagent_create = subagent_create
+
+    def _delegation_denial(self, call_args: dict[str, Any]) -> str | None:
+        # 委派执法（handbook 12：模型静默创建同权限子代理不可作生产默认）：
+        # deny=只放行声明集内的 subagent_type（general-purpose 属临时创建，不在声明集即拒）；
+        # ask 走 interrupt_on 审批（不在此层）；allow 放行任意。
+        if self._subagent_create == "allow":
+            return None
+        requested = call_args.get("subagent_type")
+        if isinstance(requested, str) and requested in self._declared_subagents:
+            return None
+        return (
+            f"subagent delegation to {requested!r} is not allowed: "
+            f"declared subagents are {sorted(self._declared_subagents)}"
+        )
 
     async def awrap_tool_call(
         self, request: ToolCallRequest, handler: _ToolHandler
@@ -38,6 +61,13 @@ class ToolPolicyMiddleware(AgentMiddleware):
                 name=name,
                 status="error",
             )
+        if name == SUBAGENT_TOOL_NAME:
+            denial = self._delegation_denial(dict(call["args"]))
+            if denial is not None:
+                _logger.warning("tool_policy denied delegation: %s", denial)
+                return ToolMessage(
+                    content=denial, tool_call_id=call["id"] or "", name=name, status="error"
+                )
         result = await handler(request)
         is_error = isinstance(result, ToolMessage) and result.status == "error"
         _logger.info("tool_policy audit tool=%r error=%s", name, is_error)

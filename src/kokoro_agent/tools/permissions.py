@@ -6,6 +6,7 @@ from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.human_in_the_loop import DecisionType
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 # ask_user 是语义暂停点：只允许人工作答，不参与 approve/edit/reject。
 _ASK_USER_DECISIONS: list[DecisionType] = ["respond"]
@@ -13,8 +14,11 @@ _ASK_USER_DECISIONS: list[DecisionType] = ["respond"]
 _APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject"]
 
 
-def build_interrupt_on(approval_tools: frozenset[str]) -> dict[str, InterruptOnConfig]:
-    """ask_user 恒暂停（respond）；approval_tools 各挂 approve/edit/reject 门控。"""
+def build_interrupt_on(
+    approval_tools: frozenset[str], *, subagent_create: str = "deny"
+) -> dict[str, InterruptOnConfig]:
+    """ask_user 恒暂停（respond）；approval_tools 挂 approve/edit/reject；
+    subagent_create=ask 时委派工具（task）同样进审批门控。"""
     interrupt_on: dict[str, InterruptOnConfig] = {
         ASK_USER_TOOL_NAME: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS)
     }
@@ -25,4 +29,8 @@ def build_interrupt_on(approval_tools: frozenset[str]) -> dict[str, InterruptOnC
             if tool != ASK_USER_TOOL_NAME
         }
     )
+    if subagent_create == "ask":
+        interrupt_on[SUBAGENT_TOOL_NAME] = InterruptOnConfig(
+            allowed_decisions=_APPROVAL_DECISIONS
+        )
     return interrupt_on

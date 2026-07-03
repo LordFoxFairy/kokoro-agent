@@ -29,7 +29,7 @@ from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
-from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES
+from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, SUBAGENT_TOOL_NAME
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -55,8 +55,12 @@ def _wire_subagents(request: RunRequest) -> list[SubAgent]:
 
 
 def _approval_names(request: RunRequest) -> frozenset[str]:
-    # ask_user 恒为语义暂停点，须与审批工具一同纳入 pending 识别集合。
-    return frozenset(request.runtime.permissions.approval_tools) | {ASK_USER_TOOL_NAME}
+    # ask_user 恒为语义暂停点，须与审批工具一同纳入 pending 识别集合；
+    # 委派策略为 ask 时 task 同样是暂停点。
+    names = frozenset(request.runtime.permissions.approval_tools) | {ASK_USER_TOOL_NAME}
+    if request.runtime.permissions.subagent_create == "ask":
+        names |= {SUBAGENT_TOOL_NAME}
+    return names
 
 
 async def _serve(config: AppConfig) -> None:
@@ -79,7 +83,17 @@ async def _serve(config: AppConfig) -> None:
             if ASK_USER_TOOL_NAME in review_tools:
                 # ask_user 的"结果"就是人工答复本身，再审即循环悖论。
                 raise ValueError("ask_user cannot be a result-review tool")
-            middleware: list[AgentMiddleware] = [ToolPolicyMiddleware(authorized)]
+            # 委派执法声明集 = 内建 catalog + 本次 wire 预设；策略源 = permissions.subagent_create。
+            declared_subagents = frozenset(catalog.names()) | frozenset(
+                sub.name for sub in runtime.subagents
+            )
+            middleware: list[AgentMiddleware] = [
+                ToolPolicyMiddleware(
+                    authorized,
+                    declared_subagents=declared_subagents,
+                    subagent_create=runtime.permissions.subagent_create,
+                )
+            ]
             if review_tools:
                 middleware.append(ToolResultReviewMiddleware(review_tools, store, request.run_id))
             return build_agent(
@@ -90,7 +104,9 @@ async def _serve(config: AppConfig) -> None:
                 subagents=[*catalog.definitions(), *_wire_subagents(request)],
                 checkpointer=saver,
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),
-                interrupt_on=build_interrupt_on(approval_tools),
+                interrupt_on=build_interrupt_on(
+                    approval_tools, subagent_create=runtime.permissions.subagent_create
+                ),
                 middleware=middleware,
                 skills=resolve_skill_mounts(runtime.skills),
                 backend=make_backend(runtime.backend, config.sandbox),

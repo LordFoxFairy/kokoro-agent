@@ -22,6 +22,7 @@ _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
 # 重连退避边界（秒）：抖动快恢复，持续断线不 busy-loop 打爆 redis。
 _RECONNECT_BACKOFF_MIN = 0.1
+_AUTOCLAIM_IDLE_MS = 60_000
 _RECONNECT_BACKOFF_MAX = 5.0
 
 # redis-py 无类型存根，xread/xrange 返回 object；逐层收窄到下列别名。
@@ -91,6 +92,13 @@ def _parse_entries(value: object) -> list[_Entry]:
     return parsed
 
 
+def parse_xautoclaim_response(raw: object) -> list[_Entry]:
+    # xautoclaim 返回 (next_cursor, entries, deleted_ids)：只消费 entries，沿用 xread 的窄化器。
+    if not _is_seq(raw) or len(raw) < 2:
+        raise ValueError("xautoclaim response must be (cursor, entries, ...)")
+    return _parse_entries(raw[1])
+
+
 def parse_xread_response(raw: object) -> _ReadResponse | None:
     if raw is None:
         return None
@@ -111,10 +119,13 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
 
 
 class RedisStream:
-    def __init__(self, url: str, block_ms: int = _BLOCK_MS) -> None:
+    def __init__(
+        self, url: str, block_ms: int = _BLOCK_MS, autoclaim_idle_ms: int = _AUTOCLAIM_IDLE_MS
+    ) -> None:
         # 固定 RESP2+decode_responses：xread/xrange 全返回 str，无 bytes 解码开销。
         self._redis: Redis = from_url(url, protocol=2, decode_responses=True)
         self._block_ms = block_ms
+        self._autoclaim_idle_ms = autoclaim_idle_ms
 
     async def aclose(self) -> None:
         await self._redis.aclose()
@@ -150,6 +161,19 @@ class RedisStream:
             if "BUSYGROUP" not in str(error):
                 raise
 
+    async def _autoclaim_stale(
+        self, stream: str, group: str, consumer: str
+    ) -> list[StreamItem]:
+        # 死信收养：崩溃消费者 ack 前的 PEL 条目不会被 XREADGROUP ">" 重投，
+        # 空转间隙按 idle 阈值认领到本消费者重放（下游幂等去重兜正确性）。
+        raw = await self._redis.xautoclaim(
+            stream, group, consumer, min_idle_time=self._autoclaim_idle_ms, count=16
+        )
+        return [
+            self._to_item(entry_id, fields)
+            for entry_id, fields in parse_xautoclaim_response(raw)
+        ]
+
     async def subscribe(
         self, stream: str, *, group: str, consumer: str
     ) -> AsyncIterator[StreamItem]:
@@ -163,6 +187,15 @@ class RedisStream:
                 raw = await self._redis.xreadgroup(
                     group, consumer, {stream: ">"}, block=self._block_ms
                 )
+                response = parse_xread_response(raw) or []
+                items = [
+                    self._to_item(entry_id, fields)
+                    for _stream_name, entries in response
+                    for entry_id, fields in entries
+                ]
+                if not items:
+                    # 空转间隙才做死信收养：不占热路径。
+                    items = await self._autoclaim_stale(stream, group, consumer)
             except (RedisConnectionError, RedisTimeoutError) as error:
                 # 断线/抖动绝不冒泡杀死订阅流；group 游标在 redis 侧存活，重连不重放已投递消息。
                 LOGGER.warning(
@@ -172,12 +205,8 @@ class RedisStream:
                 backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)
                 continue
             backoff = _RECONNECT_BACKOFF_MIN
-            response = parse_xread_response(raw)
-            if not response:
-                continue
-            for _stream_name, entries in response:
-                for entry_id, fields in entries:
-                    yield self._to_item(entry_id, fields)
+            for item in items:
+                yield item
 
     async def ack(self, stream: str, group: str, cursor: str) -> None:
         await self._redis.xack(stream, group, cursor)

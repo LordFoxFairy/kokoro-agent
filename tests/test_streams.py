@@ -187,6 +187,24 @@ async def test_redis_round_trip_and_group_ack() -> None:
         await port.aclose()
 
 
+async def test_redis_autoclaim_adopts_stale_pending() -> None:
+    # 死信收养：消费者 A 读到未 ack 即"崩溃"，空转的消费者 B 按 idle 阈值收养该 PEL 条目。
+    port_a = await _redis_or_skip()
+    port_b = RedisStream(REDIS_URL, block_ms=100, autoclaim_idle_ms=50)
+    stream = f"kokoro-test:{uuid.uuid4().hex}"
+    try:
+        await port_a.publish(stream, {"n": "orphan"}, maxlen=100)
+        got_a = await _collect(port_a.subscribe(stream, group="g", consumer="crashed"), 1)
+        assert got_a[0].event == {"n": "orphan"}  # 未 ack：留在 crashed 的 PEL
+        await asyncio.sleep(0.1)  # 超过 idle 阈值
+        got_b = await _collect(port_b.subscribe(stream, group="g", consumer="survivor"), 1)
+        assert got_b[0].event == {"n": "orphan"}
+        await port_b.ack(stream, "g", got_b[0].cursor)
+    finally:
+        await port_a.aclose()
+        await port_b.aclose()
+
+
 async def test_redis_publish_respects_maxlen() -> None:
     port = await _redis_or_skip()
     stream = f"kokoro-test:{uuid.uuid4().hex}"

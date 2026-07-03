@@ -184,7 +184,7 @@ def awaiting_payloads(
                 args=request.args,
                 description=request.description,
                 allowed_decisions=request.allowed_decisions,
-                kind="ask_user" if request.name == ASK_USER_TOOL_NAME else "tool_approval",
+                kind="ask_user_question" if request.name == ASK_USER_TOOL_NAME else "tool_approval",
                 editable="edit" in request.allowed_decisions,
                 # 同帧完整待批集合进契约：web 暂存逻辑读契约字段而非内嵌 agent 算法。
                 pending_tool_ids=pending_ids,

@@ -11,7 +11,7 @@ NonNegInt = Annotated[int, Field(ge=0)]
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
 AllowedDecision = Literal["approve", "edit", "reject", "respond"]
-AwaitingKind = Literal["tool_approval", "ask_user", "result_review"]
+AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review"]
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 RunCompletedStatus = Literal["completed", "cancelled", "timeout"]
 

@@ -220,7 +220,7 @@ async def test_local_fake_hitl_ask_user_then_approval_over_control_stream(tmp_pa
         await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
 
         # ① ask_user 暂停 → 人工作答（respond）从 control 流回灌。
-        ask = await _wait_awaiting(bus, run.run_id, "ask_user")
+        ask = await _wait_awaiting(bus, run.run_id, "ask_user_question")
         respond: dict[str, JsonValue] = {
             "type": "respond",
             "tool_id": str(ask["tool_id"]),

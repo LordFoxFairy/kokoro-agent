@@ -105,7 +105,7 @@ def test_awaiting_payloads_ask_user_kind() -> None:
     )
     state = FakeState(interrupts=(interrupt,), values={"messages": [ai]})
     payloads = awaiting_payloads(state, frozenset({"ask_user_question"}))
-    assert payloads[0].kind == "ask_user"
+    assert payloads[0].kind == "ask_user_question"
     assert payloads[0].editable is False
     assert payloads[0].allowed_decisions == ["respond"]
 

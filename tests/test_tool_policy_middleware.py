@@ -29,7 +29,7 @@ class _Handler:
 
     async def __call__(self, request: ToolCallRequest) -> ToolMessage:
         self.calls += 1
-        return ToolMessage(content="ok", tool_call_id="c1", name="ask_user")
+        return ToolMessage(content="ok", tool_call_id="c1", name="lookup")
 
 
 def _request(name: str) -> ToolCallRequest:
@@ -42,16 +42,16 @@ def _request(name: str) -> ToolCallRequest:
 
 
 async def test_authorized_tool_passes_through() -> None:
-    middleware = ToolPolicyMiddleware(frozenset({"ask_user"}))
+    middleware = ToolPolicyMiddleware(frozenset({"lookup"}))
     handler = _Handler()
-    result = await middleware.awrap_tool_call(_request("ask_user"), handler)
+    result = await middleware.awrap_tool_call(_request("lookup"), handler)
     assert handler.calls == 1
     assert isinstance(result, ToolMessage)
     assert result.status != "error"
 
 
 async def test_unauthorized_tool_denied_without_handler() -> None:
-    middleware = ToolPolicyMiddleware(frozenset({"ask_user"}))
+    middleware = ToolPolicyMiddleware(frozenset({"lookup"}))
     handler = _Handler()
     result = await middleware.awrap_tool_call(_request("rm_rf"), handler)
     assert handler.calls == 0
@@ -62,7 +62,7 @@ async def test_unauthorized_tool_denied_without_handler() -> None:
 
 
 async def test_audit_logged_for_authorized(caplog: pytest.LogCaptureFixture) -> None:
-    middleware = ToolPolicyMiddleware(frozenset({"ask_user"}))
+    middleware = ToolPolicyMiddleware(frozenset({"lookup"}))
     with caplog.at_level("INFO", logger="kokoro_agent.tools.middleware"):
-        await middleware.awrap_tool_call(_request("ask_user"), _Handler())
+        await middleware.awrap_tool_call(_request("lookup"), _Handler())
     assert any("audit" in r.message for r in caplog.records)

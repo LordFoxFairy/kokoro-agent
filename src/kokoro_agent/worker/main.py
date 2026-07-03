@@ -24,6 +24,7 @@ from kokoro_agent.observability import trace_config
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
 from kokoro_agent.skills.mounts import resolve_skill_mounts
 from kokoro_agent.storage.checkpoints import make_checkpointer
+from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
@@ -70,6 +71,7 @@ async def _serve(config: AppConfig) -> None:
     async with (
         make_checkpointer(config.checkpoint) as saver,
         make_run_state_store(config.run_state) as store,
+        make_memory_store(config.checkpoint) as memory_store,
     ):
 
         async def build(request: RunRequest) -> InvokableAgent:
@@ -112,6 +114,8 @@ async def _serve(config: AppConfig) -> None:
                 backend=make_backend(runtime.backend, config.sandbox),
                 # runtime context：工具/middleware 依赖注入面（namespace/session/run 身份）。
                 context_schema=RunContext,
+                # 长期记忆：后端随 checkpoint 对齐，工具侧按 RunContext.namespace 前缀隔离。
+                store=memory_store,
             )
 
         supervisor = RunSupervisor(

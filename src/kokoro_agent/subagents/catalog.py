@@ -32,17 +32,9 @@ class _SubagentDefinition(BaseModel):
 
 _CUSTOM_PAYLOADS: TypeAdapter[list[_SubagentDefinition]] = TypeAdapter(list[_SubagentDefinition])
 
-BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
-    RegisteredSubagent(
-        name="researcher",
-        description="查资料、做独立核查，并把结论反馈给主助手。",
-        system_prompt=(
-            "你是一个研究型子智能体。先独立核查，再用简洁中文返回结论；"
-            "如果信息不足，就明确说不足，不要编造。"
-        ),
-        source="built-in",
-    ),
-)
+# 内建目录只收"带真实工具挂载的真能力"；人格类预设归 namespace profile（wire 下发）。
+# 现阶段无 web_search 等专属工具可挂 → 内建为空，不设能力与命名不符的空壳。
+BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = ()
 
 
 class SubagentCatalog:

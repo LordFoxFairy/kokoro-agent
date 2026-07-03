@@ -99,9 +99,10 @@ def test_filesystem_permissions_by_perm() -> None:
 # --- 子代理目录 ---
 
 
-def test_catalog_builtin_and_runtime_custom_sources() -> None:
+def test_catalog_builtin_empty_until_real_capability() -> None:
+    # 内建目录只收带真实工具的真能力：现阶段为空，人格预设归 namespace（wire）。
     catalog = build_catalog(None)
-    assert catalog.source_for("researcher") == "built-in"
+    assert catalog.names() == frozenset()
     # 目录之外的名字是运行期动态子代理：一等来源，不抛错。
     assert catalog.source_for("ephemeral-worker") == "runtime-custom"
 
@@ -112,7 +113,7 @@ def test_catalog_custom_from_json() -> None:
     )
     assert catalog.source_for("poet") == "config-custom"
     names = [d["name"] for d in catalog.definitions()]
-    assert names == ["researcher", "poet"]
+    assert names == ["poet"]
 
 
 @pytest.mark.parametrize(
@@ -128,9 +129,12 @@ def test_catalog_malformed_custom_rejected(raw: str) -> None:
         build_catalog(raw)
 
 
-def test_catalog_duplicate_builtin_name_rejected() -> None:
-    with pytest.raises(ValueError, match="researcher"):
-        build_catalog('[{"name": "researcher", "description": "d", "system_prompt": "p"}]')
+def test_catalog_duplicate_custom_name_rejected() -> None:
+    with pytest.raises(ValueError, match="poet"):
+        build_catalog(
+            '[{"name": "poet", "description": "d", "system_prompt": "p"},'
+            ' {"name": "poet", "description": "d2", "system_prompt": "p2"}]'
+        )
 
 
 # --- 沙箱 / 模型 / 传输工厂（backend/model 每请求经 wire 选择） ---

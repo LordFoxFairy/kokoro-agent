@@ -32,8 +32,6 @@ def build_agent(
     permissions: Sequence[FilesystemPermission],
     interrupt_on: Mapping[str, bool | InterruptOnConfig],
     middleware: Sequence[AgentMiddleware] = (),
-    skills: Sequence[str] = (),
-    memory: Sequence[str] = (),
     backend: BackendProtocol | None = None,
     # 本仓唯一 context schema 就是 RunContext：不为单一场景开泛型（YAGNI）。
     context_schema: type[RunContext] | None = None,
@@ -50,8 +48,6 @@ def build_agent(
         permissions=list(permissions),
         interrupt_on=dict(interrupt_on),
         middleware=list(middleware),
-        skills=list(skills) or None,
-        memory=list(memory) or None,
         backend=backend,
         store=store,
         context_schema=context_schema,

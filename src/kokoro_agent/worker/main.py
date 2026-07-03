@@ -22,7 +22,7 @@ from kokoro_agent.run.context import RunContext
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.observability import trace_config
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
-from kokoro_agent.skills.mounts import resolve_skill_mounts
+from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.run_state import make_run_state_store
@@ -127,11 +127,14 @@ async def _serve(config: AppConfig) -> None:
             ]
             if review_tools:
                 middleware.append(ToolResultReviewMiddleware(review_tools, store, request.run_id))
+            # skills 全文注入 system prompt（backend 无关；渐进披露待沙箱供给，见 mounts.py）。
+            skills_prompt = render_skills_prompt(runtime.skills)
+            base_prompt = runtime.system_prompt or SYSTEM_PROMPT
             return build_agent(
                 model=make_chat_model(config.model, runtime.model),
                 tools=tools,
                 # 具名入口（专业 agent 作主 agent）：session 解析预设人格上 wire，缺省用内置。
-                system_prompt=runtime.system_prompt or SYSTEM_PROMPT,
+                system_prompt=f"{base_prompt}\n\n{skills_prompt}" if skills_prompt else base_prompt,
                 subagents=[*catalog.definitions(), *_wire_subagents(request)],
                 checkpointer=saver,
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),
@@ -139,7 +142,6 @@ async def _serve(config: AppConfig) -> None:
                     approval_tools, subagent_create=runtime.permissions.subagent_create
                 ),
                 middleware=middleware,
-                skills=resolve_skill_mounts(runtime.skills),
                 backend=make_backend(runtime.backend, config.sandbox),
                 # runtime context：工具/middleware 依赖注入面（namespace/session/run 身份）。
                 context_schema=RunContext,

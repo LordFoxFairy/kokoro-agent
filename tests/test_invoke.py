@@ -336,6 +336,7 @@ class _UsageAgent(FakeAgent):
         payload: object,
         *,
         version: str,
+        context: object | None = None,
         config: RunnableConfig,
         transformers: Sequence[object],
     ) -> FakeRunStream:

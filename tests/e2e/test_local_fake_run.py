@@ -34,6 +34,7 @@ from langchain.agents.middleware import AgentMiddleware
 
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
+from kokoro_agent.run.context import RunContext
 from kokoro_agent.sandbox import build_filesystem_permissions
 from kokoro_agent.storage.sqlite import SqliteRunStateStore
 from kokoro_agent.streams.memory import MemoryStream
@@ -96,6 +97,7 @@ def _build_supervisor(
             permissions=build_filesystem_permissions(runtime.permissions.filesystem),
             interrupt_on=build_interrupt_on(frozenset(runtime.permissions.approval_tools)),
             middleware=middleware,
+            context_schema=RunContext,
         )
 
     def approval_names(request: RunRequest) -> frozenset[str]:

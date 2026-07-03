@@ -262,6 +262,7 @@ class FakeAgent:
     seen_config: dict[str, object] = field(default_factory=dict[str, object])
     # 每次 astream_events 依序消费一个 gate（不足则不阻塞）：模拟长时运行与任务竞态。
     gates: list[asyncio.Event] = field(default_factory=list[asyncio.Event])
+    seen_contexts: list[object] = field(default_factory=list[object])
     _calls: int = 0
 
     async def astream_events(
@@ -271,8 +272,10 @@ class FakeAgent:
         version: str,
         config: RunnableConfig,
         transformers: Sequence[object],
+        context: object | None = None,
     ) -> FakeRunStream:
         self.seen_payloads.append(payload)
+        self.seen_contexts.append(context)
         self.seen_config.update(config)
         call = self._calls
         self._calls += 1

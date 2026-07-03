@@ -18,6 +18,7 @@ from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.prompts import SYSTEM_PROMPT
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.mcp.tools import load_mcp_tools
+from kokoro_agent.run.context import RunContext
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.observability import trace_config
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
@@ -93,6 +94,8 @@ async def _serve(config: AppConfig) -> None:
                 middleware=middleware,
                 skills=resolve_skill_mounts(runtime.skills),
                 backend=make_backend(runtime.backend, config.sandbox),
+                # runtime context：工具/middleware 依赖注入面（namespace/session/run 身份）。
+                context_schema=RunContext,
             )
 
         supervisor = RunSupervisor(

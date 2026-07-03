@@ -161,6 +161,7 @@ class RunSupervisor:
             payload,
             self._approval_tool_names(request),
             trace=self._trace(request),
+            context=context,
         )
         # agent 就位后订阅该 run 的独立 control 流：resume/cancel 从此来，与请求流解耦。
         self._ensure_control_listener(bus, request.run_id)
@@ -216,6 +217,7 @@ class RunSupervisor:
         self._spawn_agent(
             bus, agent, msg.run_id, context.scoped_thread_id, command, names,
             trace=self._trace(request),
+            context=context,
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
@@ -247,9 +249,10 @@ class RunSupervisor:
         approval_tool_names: frozenset[str],
         *,
         trace: RunnableConfig | None,
+        context: object | None = None,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(bus, agent, run_id, thread_id, payload, approval_tool_names, trace)
+            self._guarded(bus, agent, run_id, thread_id, payload, approval_tool_names, trace, context)
         )
         self._tasks[run_id] = task
 
@@ -269,6 +272,7 @@ class RunSupervisor:
         payload: object,
         approval_tool_names: frozenset[str],
         trace: RunnableConfig | None,
+        context: object | None = None,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，resume 重新竞争额度。
         async with self._sem:
@@ -281,6 +285,7 @@ class RunSupervisor:
                 approval_tool_names=approval_tool_names,
                 source_for=self._source_for,
                 trace=trace,
+                context=context,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
             )

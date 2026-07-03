@@ -84,7 +84,8 @@ async def _serve(config: AppConfig) -> None:
             return build_agent(
                 model=make_chat_model(config.model, runtime.model),
                 tools=tools,
-                system_prompt=SYSTEM_PROMPT,
+                # 具名入口（专业 agent 作主 agent）：session 解析预设人格上 wire，缺省用内置。
+                system_prompt=runtime.system_prompt or SYSTEM_PROMPT,
                 subagents=[*catalog.definitions(), *_wire_subagents(request)],
                 checkpointer=saver,
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),

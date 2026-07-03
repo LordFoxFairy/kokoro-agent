@@ -62,6 +62,7 @@ class Permissions(StrictModel):
 
 class RuntimeConfig(StrictModel):
     model: ModelConfig
+    system_prompt: NonEmptyStr | None = None
     tools: list[NonEmptyStr]
     skills: list[SkillMount]
     mcp: list[McpServer]

@@ -7,7 +7,7 @@ from deepagents.backends.local_shell import LocalShellBackend
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
-from kokoro_agent.contract import ModelConfig
+from kokoro_agent.contract import ModelConfig, Permissions, RuntimeConfig
 from kokoro_agent.model.factory import make_chat_model
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -173,3 +173,22 @@ def test_make_stream_backends() -> None:
         make_stream(StreamSettings(backend="redis", redis_url="redis://127.0.0.1:6379/0")),
         RedisStream,
     )
+
+
+def test_runtime_system_prompt_on_wire() -> None:
+    # 具名入口：RuntimeConfig 可带已解析人格；strict 契约拒绝空串。
+    runtime = RuntimeConfig(
+        model=ModelConfig(provider="anthropic", name="claude"),
+        system_prompt="你是音乐创作人格",
+        tools=[],
+        skills=[],
+        mcp=[],
+        subagents=[],
+        backend="state",
+        permissions=Permissions(
+            approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only"
+        ),
+    )
+    assert runtime.system_prompt == "你是音乐创作人格"
+    with pytest.raises(ValidationError):
+        RuntimeConfig.model_validate({**runtime.model_dump(), "system_prompt": ""})

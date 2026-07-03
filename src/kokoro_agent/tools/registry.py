@@ -8,6 +8,7 @@ from typing import Final
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
+from kokoro_agent.tools.memory import MEMORY_TOOLS
 
 TODO_TOOL_NAME = "write_todos"  # deepagents 内置 TODO 工具
 SUBAGENT_TOOL_NAME = "task"  # deepagents 子代理启动工具
@@ -33,7 +34,11 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
             raise ValueError(f"duplicate tool name {name!r}")
         seen.add(name)
 
-KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {ASK_USER_TOOL.name: ASK_USER_TOOL}
+KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {
+    tool.name: tool for tool in (ASK_USER_TOOL, *MEMORY_TOOLS)
+}
+# 恒挂载核心工具：ask_user（handbook 12 号）+ 长期记忆（模块文档 Owns memory）。
+CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL, *MEMORY_TOOLS)
 
 assert_tool_names_allowed(KOKORO_TOOLS)
 
@@ -47,11 +52,10 @@ def resolve_tools(names: Sequence[str]) -> list[StructuredTool]:
         raise ValueError(f"unknown tools in RuntimeConfig.tools: {unknown}")
     if len(set(names)) != len(names):
         raise ValueError("RuntimeConfig.tools contains duplicate names")
-    # ask_user 是 Kokoro 默认工具（handbook 12 号）：恒挂载，不依赖名单。
-    tools = [ASK_USER_TOOL]
+    tools = list(CORE_TOOLS)
     tools.extend(
         KOKORO_TOOLS[name]
         for name in names
-        if name in KOKORO_TOOLS and KOKORO_TOOLS[name] is not ASK_USER_TOOL
+        if name in KOKORO_TOOLS and KOKORO_TOOLS[name] not in CORE_TOOLS
     )
     return tools

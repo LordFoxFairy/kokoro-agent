@@ -1,0 +1,137 @@
+"""记忆工具规格：真图内经 RunContext.namespace 前缀读写 store，跨 run 可读、跨 namespace 不可见。"""
+
+from __future__ import annotations
+
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.store.memory import InMemoryStore
+from pydantic import ValidationError
+import pytest
+
+from kokoro_agent.execution.build_agent import build_agent
+from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.model.local_fake import LocalFakeChatModel
+from kokoro_agent.run.context import RunContext
+from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.contract.streams import run_events_stream
+from kokoro_agent.tools.memory import MEMORY_TOOLS, SaveMemoryArgs
+
+
+def _context(namespace: str, run_id: str) -> RunContext:
+    return RunContext(namespace=namespace, session_id="s1", run_id=run_id, thread_id="s1")
+
+
+async def _run(script: list[AIMessage], store: InMemoryStore, context: RunContext) -> MemoryStream:
+    agent = build_agent(
+        model=LocalFakeChatModel.with_script(script),
+        tools=list(MEMORY_TOOLS),
+        system_prompt="x",
+        subagents=[],
+        checkpointer=None,
+        permissions=[],
+        interrupt_on={},
+        context_schema=RunContext,
+        store=store,
+    )
+    bus = MemoryStream()
+
+    async def claim() -> bool:
+        return True
+
+    terminal = await invoke_once(
+        RunEmitter(bus, context.run_id),
+        agent,
+        context.scoped_thread_id,
+        {"messages": [HumanMessage(content="hi")]},
+        approval_tool_names=frozenset(),
+        source_for=lambda _name: "built-in",
+        claim_terminal=claim,
+        context=context,
+    )
+    assert terminal is True
+    return bus
+
+
+async def _tool_result(bus: MemoryStream, run_id: str, name: str) -> str:
+    for item in await bus.read_all(run_events_stream(run_id)):
+        event = item.event
+        payload = event.get("payload")
+        if (
+            event.get("kind") == "tool.returned"
+            and isinstance(payload, dict)
+            and payload.get("name") == name
+        ):
+            return str(payload.get("result"))
+    raise AssertionError(f"no tool.returned for {name!r}")
+
+
+def _save_script(key: str, content: str) -> list[AIMessage]:
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "save_memory",
+                    "args": {"key": key, "content": content},
+                    "id": "m1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content="saved"),
+    ]
+
+
+def _search_script(query: str) -> list[AIMessage]:
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "search_memory", "args": {"query": query}, "id": "m2", "type": "tool_call"}
+            ],
+        ),
+        AIMessage(content="done"),
+    ]
+
+
+async def test_save_then_search_across_runs_same_namespace() -> None:
+    store = InMemoryStore()
+    await _run(_save_script("pref", "user likes dark mode"), store, _context("team-a", "r1"))
+    # 跨 run（新图、新 run_id、同 store）：记忆持久可读。
+    bus = await _run(_search_script("dark"), store, _context("team-a", "r2"))
+    result = await _tool_result(bus, "r2", "search_memory")
+    assert "user likes dark mode" in result
+    items = await store.asearch(("team-a", "memories"))
+    assert [(i.key, i.value) for i in items] == [("pref", {"content": "user likes dark mode"})]
+
+
+async def test_namespace_isolation_between_tenants() -> None:
+    store = InMemoryStore()
+    await _run(_save_script("k", "team-a secret"), store, _context("team-a", "r1"))
+    bus = await _run(_search_script("secret"), store, _context("team-b", "r2"))
+    assert await _tool_result(bus, "r2", "search_memory") == "no memories found"
+    assert await store.asearch(("team-b",)) == []
+    assert len(await store.asearch(("team-a", "memories"))) == 1
+
+
+async def test_save_memory_error_reaches_wire_as_tool_error() -> None:
+    store = InMemoryStore()
+    bus = await _run(_save_script("k", "   "), store, _context("team-a", "r1"))
+    result = await _tool_result(bus, "r1", "save_memory")
+    assert "non-empty" in result
+    assert await store.asearch(("team-a", "memories")) == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"key": "k", "content": ""},
+        {"key": "", "content": "v"},
+        {"key": "k"},
+        {"content": "v"},
+        {"key": "k", "content": "v", "extra": "x"},
+    ],
+)
+def test_save_memory_args_schema_rejects_invalid(args: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        SaveMemoryArgs.model_validate(args)

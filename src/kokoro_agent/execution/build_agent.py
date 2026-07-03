@@ -17,6 +17,7 @@ from langchain.agents.middleware import AgentMiddleware, InterruptOnConfig
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.store.base import BaseStore
 from langgraph.typing import StateLike
 
 from kokoro_agent.execution.protocols import InvokableAgent
@@ -39,6 +40,7 @@ def build_agent(
     memory: Sequence[str] = (),
     backend: BackendProtocol | None = None,
     context_schema: type[ContextT] | None = None,
+    store: BaseStore | None = None,
 ) -> InvokableAgent:
     # deepagents 返回泛型 CompiledStateGraph（含未定 ResponseT）：object 边界 + TypeGuard
     # 一次收窄为窄端口，私有泛型不外泄。
@@ -56,6 +58,7 @@ def build_agent(
             skills=list(skills) or None,
             memory=list(memory) or None,
             backend=backend,
+            store=store,
         )
     else:
         agent = create_deep_agent(
@@ -70,6 +73,7 @@ def build_agent(
             skills=list(skills) or None,
             memory=list(memory) or None,
             backend=backend,
+            store=store,
             context_schema=context_schema,
         )
     if not _is_invokable_agent(agent):

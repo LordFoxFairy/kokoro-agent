@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from deepagents.backends.local_shell import LocalShellBackend
+from langchain_deepseek import ChatDeepSeek
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
@@ -209,3 +210,27 @@ def test_core_tools_always_mounted() -> None:
     names = [tool.name for tool in resolve_tools([])]
     assert names == ["ask_user_question", "save_memory", "search_memory"]
     assert [tool.name for tool in resolve_tools(["save_memory"])] == names
+
+
+def test_openai_reasoning_switch_selects_deepseek_wrapper() -> None:
+    # GLM/DeepSeek 等 openai 兼容端点的 reasoning_content 被 ChatOpenAI 明文拒收（上游 API scope），
+    # KOKORO_OPENAI_REASONING=1 切 ChatDeepSeek（官方 reasoning 抽取实现，同 openai-compat wire）。
+    env = {
+        "KOKORO_OPENAI_REASONING": "1",
+        "OPENAI_API_KEY": "sk-test",
+        "OPENAI_BASE_URL": "https://example.com/v4",
+    }
+    config = AppConfig.from_env(env)
+    model = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
+    assert isinstance(model, ChatDeepSeek)
+    assert model.api_base == "https://example.com/v4"
+    plain = AppConfig.from_env({k: v for k, v in env.items() if k != "KOKORO_OPENAI_REASONING"})
+    assert not isinstance(
+        make_chat_model(plain.model, ModelConfig(provider="openai", name="glm-5")), ChatDeepSeek
+    )
+
+
+def test_openai_reasoning_without_base_url_fails_loud() -> None:
+    config = AppConfig.from_env({"KOKORO_OPENAI_REASONING": "1", "OPENAI_API_KEY": "sk-test"})
+    with pytest.raises(ValueError, match="OPENAI_BASE_URL"):
+        make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))

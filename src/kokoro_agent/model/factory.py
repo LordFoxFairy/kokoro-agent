@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+from langchain_deepseek import ChatDeepSeek
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from kokoro_agent.contract import ModelConfig
@@ -21,6 +22,8 @@ class ChatModelSettings(BaseModel):
     local_fake_script: str
     openai_api_key: SecretStr | None
     openai_base_url: str | None
+    # openai 兼容端点（GLM/DeepSeek）带 reasoning_content 时置 1：ChatOpenAI 明文拒收该字段。
+    openai_reasoning: bool
     anthropic_api_key: SecretStr | None
     anthropic_base_url: str | None
 
@@ -37,6 +40,16 @@ def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChat
 
 
 def _build_openai_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+    if settings.openai_reasoning:
+        if not settings.openai_base_url:
+            raise ValueError("KOKORO_OPENAI_REASONING=1 requires OPENAI_BASE_URL")
+        # ChatDeepSeek = openai-compat wire + 官方 reasoning_content→reasoning 块抽取。
+        return ChatDeepSeek(
+            model=model.name,
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            disable_streaming=settings.disable_streaming,
+        )
     # openai 接受 api_key=None / base_url=None，无需按 None 分支。
     return init_chat_model(
         f"openai:{model.name}",

@@ -100,6 +100,7 @@ def _model_from_env(source: Mapping[str, str]) -> ChatModelSettings:
         local_fake_script=source.get("KOKORO_LOCAL_FAKE_SCRIPT", "default"),
         openai_api_key=_secret(source.get("OPENAI_API_KEY")),
         openai_base_url=source.get("OPENAI_BASE_URL"),
+        openai_reasoning=source.get("KOKORO_OPENAI_REASONING") == "1",
         anthropic_api_key=_secret(source.get("ANTHROPIC_API_KEY")),
         anthropic_base_url=source.get("ANTHROPIC_BASE_URL"),
     )

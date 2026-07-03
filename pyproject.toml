@@ -9,6 +9,7 @@ dependencies = [
   "httpx>=0.28.1",
   "langchain",
   "langchain-anthropic",
+  "langchain-deepseek>=1.1.0",
   "langchain-mcp-adapters>=0.3.0",
   "langchain-openai>=1.2.2",
   "langfuse>=4.7.1",

@@ -36,7 +36,7 @@ KOKORO_STREAM_BACKEND=redis KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
   KOKORO_LOCAL_FAKE_MODEL=1 uv run kokoro-agent-worker
 ```
 
-接真实模型：去掉 `KOKORO_LOCAL_FAKE_MODEL`，配 `.env`（`KOKORO_MODEL` 如 `anthropic:claude-...` + provider 凭据）。
+接真实模型：去掉 `KOKORO_LOCAL_FAKE_MODEL`，`.env` 只配 provider 凭据（OPENAI_API_KEY/ANTHROPIC_API_KEY 及可选 BASE_URL）；模型档位由 kokoro-session 的 namespace profile `model_policy` 决定（KOKORO_NAMESPACES_FILE）。
 
 ## Runtime capability
 

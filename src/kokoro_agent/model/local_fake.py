@@ -21,7 +21,7 @@ _PLAN: list[dict[str, str]] = [
 ]
 _FINAL_TEXT = (
     "本地预览：DeepAgents 活动流已接通（思考 / todo）。"
-    "配置真实模型（KOKORO_MODEL + 凭证）后，这里会是真实的多步回答。"
+    "在 session 的 namespace profile 配置真实模型（model_policy + 凭证）后，这里会是真实的多步回答。"
 )
 
 

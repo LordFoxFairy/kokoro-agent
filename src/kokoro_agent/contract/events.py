@@ -88,6 +88,8 @@ class ToolReturnedPayload(StrictModel):
     result: str
     # 严格必填 fail-loud：生产端始终发送；缺失即报错，绝不用默认 false 掩盖真失败。
     is_error: bool
+    # wire 展示层截断标记：缺席=结果完整，true=已截断（完整结果在后端，canvas 预览 P1 经 artifact_ref 取）。
+    truncated: bool | None = None
     rejected: bool | None = None
     reject_reason: str | None = None
     responded: bool | None = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
@@ -41,7 +42,7 @@ from kokoro_agent.contract import (
     ToolReturned,
     ToolReturnedPayload,
 )
-from kokoro_agent.execution.events import RunEmitter, clip_result
+from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.streams.protocol import StreamProtocol
@@ -119,11 +120,35 @@ async def test_resumed_segment_does_not_repeat_run_started() -> None:
 
 
 def test_clip_result_boundary_matrix() -> None:
-    # wire 轻事件护栏：4000 内原样；超限截断并标注省略量；空串安全。
-    assert clip_result("") == ""
-    assert clip_result("a" * 4000) == "a" * 4000
-    clipped = clip_result("b" * 4100)
+    # wire 轻事件护栏：4000 内原样（truncated=False）；超限截断标注省略量（truncated=True）；空串安全。
+    assert clip_result("") == ("", False)
+    assert clip_result("a" * 4000) == ("a" * 4000, False)
+    clipped, truncated = clip_result("b" * 4100)
+    assert truncated is True
     assert clipped.startswith("b" * 4000) and clipped.endswith("…[truncated 100 chars]")
+
+
+@dataclass
+class _StubToolCall:
+    tool_call_id: str = "t1"
+    tool_name: str = "probe"
+    input: dict[str, object] | None = None
+    output: object = None
+    error: str | None = None
+
+
+def _tool_call_info(output: object) -> _StubToolCall:
+    return _StubToolCall(output=output)
+
+
+def test_tool_returned_truncated_absent_when_complete() -> None:
+    # 契约语义：truncated 缺席 = 结果完整；截断时 = True（exclude_none 上 wire）。
+    short = tool_returned_payload(_tool_call_info(output="ok"))
+    assert short.truncated is None
+    assert "truncated" not in short.model_dump(exclude_none=True)
+    long = tool_returned_payload(_tool_call_info(output="c" * 5000))
+    assert long.truncated is True
+    assert long.model_dump(exclude_none=True)["truncated"] is True
 
 
 async def test_tool_events_inherit_awaiting_segment() -> None:

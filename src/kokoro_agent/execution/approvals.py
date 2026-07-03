@@ -162,7 +162,8 @@ def awaiting_payloads(
                 kind="result_review",
                 editable=False,
                 pending_tool_ids=pending_ids,
-                result=clip_result(entry.result),
+                # awaiting 帧无 truncated 契约位：只作展示裁剪，完整结果留在缓存。
+                result=clip_result(entry.result)[0],
             )
             for entry in entries
         ]
@@ -275,13 +276,15 @@ def review_resolution_payloads(
             cached = results.get(tool_id)
             if cached is None:
                 raise ValueError(f"no cached result for reviewed tool {tool_id!r}")
+            result, truncated = clip_result(cached[0])
             payloads.append(
                 ToolReturnedPayload(
                     segment_id=frame.segment_id,
                     tool_id=tool_id,
                     name=name_by_id[tool_id],
-                    result=clip_result(cached[0]),
+                    result=result,
                     is_error=cached[1],
+                    truncated=True if truncated else None,
                     responded=True,
                 )
             )

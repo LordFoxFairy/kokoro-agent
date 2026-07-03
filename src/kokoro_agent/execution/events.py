@@ -204,12 +204,14 @@ def tool_invoked_payload(tc: ToolCallInfo) -> ToolInvokedPayload:
 
 def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
     # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
+    result, truncated = _result_text(tc)
     return ToolReturnedPayload(
         segment_id=tc.tool_call_id,
         tool_id=tc.tool_call_id,
         name=tc.tool_name,
-        result=_result_text(tc),
+        result=result,
         is_error=tc.error is not None,
+        truncated=True if truncated else None,
     )
 
 
@@ -267,18 +269,19 @@ def _json_args(args: dict[str, object] | None) -> dict[str, JsonValue]:
 TOOL_RESULT_MAX_CHARS = 4000
 
 
-def clip_result(text: str) -> str:
+def clip_result(text: str) -> tuple[str, bool]:
+    """(wire 文本, 是否截断)：契约 tool.returned.truncated 缺席=完整。"""
     if len(text) <= TOOL_RESULT_MAX_CHARS:
-        return text
+        return text, False
     omitted = len(text) - TOOL_RESULT_MAX_CHARS
-    return f"{text[:TOOL_RESULT_MAX_CHARS]}…[truncated {omitted} chars]"
+    return f"{text[:TOOL_RESULT_MAX_CHARS]}…[truncated {omitted} chars]", True
 
 
-def _result_text(tc: ToolCallInfo) -> str:
+def _result_text(tc: ToolCallInfo) -> tuple[str, bool]:
     if tc.error is not None:
         return clip_result(tc.error)
     output = tc.output
     if output is None:
-        return ""
+        return "", False
     text = getattr(output, "text", None)
     return clip_result(text if isinstance(text, str) else str(output))

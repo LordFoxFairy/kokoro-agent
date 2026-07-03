@@ -1,13 +1,12 @@
 """DeepAgents 装配：静态 import create_deep_agent，出口收窄为 InvokableAgent 端口。"""
 
-# create_deep_agent 的签名含未解 ResponseT 泛型（第三方边界）；本文件唯一职责就是包住它。
-# StateLike 是 create_deep_agent ContextT 的官方 bound，但 langgraph.typing 未 re-export（上游缺口）。
-# pyright: reportUnknownVariableType=false, reportPrivateImportUsage=false
+# create_deep_agent 的签名含未解 ResponseT 泛型（上游 deepagents 边界）；本文件唯一职责就是包住它。
+# pyright: reportUnknownVariableType=false
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TypeGuard, TypeVar
+from typing import TypeGuard
 
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
@@ -18,12 +17,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
-from langgraph.typing import StateLike
 
 from kokoro_agent.execution.protocols import InvokableAgent
-
-# bound 镜像 create_deep_agent 的 ContextT（StateLike）：dataclass/TypedDict/pydantic 均可作 context。
-ContextT = TypeVar("ContextT", bound=StateLike)
+from kokoro_agent.run.context import RunContext
 
 
 def build_agent(
@@ -39,43 +35,27 @@ def build_agent(
     skills: Sequence[str] = (),
     memory: Sequence[str] = (),
     backend: BackendProtocol | None = None,
-    context_schema: type[ContextT] | None = None,
+    # 本仓唯一 context schema 就是 RunContext：不为单一场景开泛型（YAGNI）。
+    context_schema: type[RunContext] | None = None,
     store: BaseStore | None = None,
 ) -> InvokableAgent:
     # deepagents 返回泛型 CompiledStateGraph（含未定 ResponseT）：object 边界 + TypeGuard
     # 一次收窄为窄端口，私有泛型不外泄。
-    # Optional 掺进未 bound 的第三方泛型解不动：拆分支让 ContextT 干净绑定（12 行重复换类型干净）。
-    if context_schema is None:
-        agent: object = create_deep_agent(
-            model=model,
-            tools=list(tools),
-            system_prompt=system_prompt,
-            subagents=list(subagents),
-            checkpointer=checkpointer,
-            permissions=list(permissions),
-            interrupt_on=dict(interrupt_on),
-            middleware=list(middleware),
-            skills=list(skills) or None,
-            memory=list(memory) or None,
-            backend=backend,
-            store=store,
-        )
-    else:
-        agent = create_deep_agent(
-            model=model,
-            tools=list(tools),
-            system_prompt=system_prompt,
-            subagents=list(subagents),
-            checkpointer=checkpointer,
-            permissions=list(permissions),
-            interrupt_on=dict(interrupt_on),
-            middleware=list(middleware),
-            skills=list(skills) or None,
-            memory=list(memory) or None,
-            backend=backend,
-            store=store,
-            context_schema=context_schema,
-        )
+    agent: object = create_deep_agent(
+        model=model,
+        tools=list(tools),
+        system_prompt=system_prompt,
+        subagents=list(subagents),
+        checkpointer=checkpointer,
+        permissions=list(permissions),
+        interrupt_on=dict(interrupt_on),
+        middleware=list(middleware),
+        skills=list(skills) or None,
+        memory=list(memory) or None,
+        backend=backend,
+        store=store,
+        context_schema=context_schema,
+    )
     if not _is_invokable_agent(agent):
         raise TypeError("create_deep_agent returned an object that does not satisfy InvokableAgent")
     return agent

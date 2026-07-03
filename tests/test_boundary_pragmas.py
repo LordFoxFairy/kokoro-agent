@@ -1,0 +1,46 @@
+"""第三方边界豁免政策：pragma 全量清单锁死，新增或漂移必先过本测试评审。"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+# 每项必须能指认上游缺口（WHY 注释在对应文件头）；扩表 = 显式评审动作。
+ALLOWED: dict[str, frozenset[str]] = {
+    # deepagents create_deep_agent 返回未解 ResponseT 泛型。
+    "src/kokoro_agent/execution/build_agent.py": frozenset({"reportUnknownVariableType"}),
+    # langchain-core BaseTool.ainvoke 注解含裸 dict。
+    "tests/e2e/test_mcp_live.py": frozenset({"reportUnknownMemberType"}),
+}
+
+_PRAGMA = re.compile(r"^#\s*pyright:\s*(.+)$", re.MULTILINE)
+_IGNORE = re.compile(r"#\s*type:\s*ignore|#\s*pyright:\s*ignore")
+
+
+def _iter_sources() -> list[Path]:
+    root = Path(__file__).resolve().parents[1]
+    return [
+        p
+        for p in root.glob("**/*.py")
+        if ".venv" not in p.parts and not p.parts[len(root.parts)] == "build"
+    ]
+
+
+def test_pragma_inventory_matches_allowlist() -> None:
+    root = Path(__file__).resolve().parents[1]
+    found: dict[str, frozenset[str]] = {}
+    for path in _iter_sources():
+        match = _PRAGMA.search(path.read_text(encoding="utf-8"))
+        if match:
+            rules = frozenset(part.split("=")[0].strip() for part in match.group(1).split(","))
+            found[path.relative_to(root).as_posix()] = rules
+    assert found == ALLOWED
+
+
+def test_no_inline_type_or_pyright_ignores() -> None:
+    offenders = [
+        path.as_posix()
+        for path in _iter_sources()
+        if path.name != "test_boundary_pragmas.py" and _IGNORE.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []

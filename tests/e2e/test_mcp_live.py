@@ -4,10 +4,10 @@
 真实调用往返、不可达 fail-closed。无外部依赖，可进 CI。
 """
 
-from __future__ import annotations
+# BaseTool.ainvoke 上游注解含裸 dict（langchain-core Runnable 泛型缺口）：仅豁免该成员访问。
+# pyright: reportUnknownMemberType=false
 
-# BaseTool.ainvoke 的 Input 泛型未参数化：真实第三方边界，沿 build_agent.py 先例做文件级最窄豁免。
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+from __future__ import annotations
 
 import asyncio
 import socket
@@ -17,6 +17,7 @@ import time
 import pytest
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from pydantic import TypeAdapter
 
 from kokoro_agent.contract import McpServer
 from kokoro_agent.mcp.servers import McpConnectionError
@@ -75,11 +76,12 @@ async def test_live_roundtrip_with_allowlist(mcp_base_url: str) -> None:
     tools = await load_mcp_tools([_server(mcp_base_url, ["echo"])])
     # 白名单过滤 secret；命名规则 mcp__{server}__{tool}。
     assert [tool.name for tool in tools] == ["mcp__fx__echo"]
-    result = await tools[0].ainvoke({"text": "你好"})
-    # MCP 工具返回标准 content blocks：emit 层以 .text 收窄，此处按块形断言。
-    assert isinstance(result, list)
-    first = result[0]
-    assert isinstance(first, dict) and first["type"] == "text" and first["text"] == "echo:你好"
+    result: object = await tools[0].ainvoke({"text": "你好"})
+    # MCP 工具返回标准 content blocks（外部载荷）：TypeAdapter 洗净后按块形断言。
+    blocks = TypeAdapter(list[dict[str, object]]).validate_python(result)
+    first = blocks[0]
+    assert first["type"] == "text"
+    assert first["text"] == "echo:你好"
 
 
 async def test_live_unreachable_fails_closed() -> None:

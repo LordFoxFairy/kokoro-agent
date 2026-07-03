@@ -1,13 +1,11 @@
 """RuntimeContext 注入规格：真 deepagents 图内，工具经 get_runtime 读到本次 run 身份。"""
 
-# @tool 装饰器重载含未解 Runnable 泛型（第三方边界）：沿 build_agent.py 先例最窄豁免。
-# pyright: reportUnknownVariableType=false
-
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool
 from langgraph.runtime import get_runtime
+from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
@@ -20,13 +18,24 @@ from kokoro_agent.subagents import build_catalog
 _SEEN: dict[str, str] = {}
 
 
-@tool
-def probe_identity() -> str:
-    """读取本次 run 的注入身份。"""
+class _NoArgs(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+
+def _probe_identity() -> str:
     runtime = get_runtime(RunContext)
     _SEEN["namespace"] = runtime.context.namespace
     _SEEN["session_id"] = runtime.context.session_id
     return "ok"
+
+
+# StructuredTool 直构而非 @tool 装饰器：装饰器重载含未解 Runnable 泛型，直构保持 strict 零豁免。
+PROBE_TOOL = StructuredTool(
+    name="probe_identity",
+    description="读取本次 run 的注入身份。",
+    args_schema=_NoArgs,
+    func=_probe_identity,
+)
 
 
 async def test_tool_reads_injected_run_context() -> None:
@@ -40,7 +49,7 @@ async def test_tool_reads_injected_run_context() -> None:
     ]
     agent = build_agent(
         model=LocalFakeChatModel.with_script(script),
-        tools=[probe_identity],
+        tools=[PROBE_TOOL],
         system_prompt="x",
         subagents=build_catalog(None).definitions(),
         checkpointer=None,

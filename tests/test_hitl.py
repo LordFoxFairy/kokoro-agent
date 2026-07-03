@@ -15,8 +15,12 @@ from kokoro_agent.execution.approvals import (
     awaiting_payloads,
     has_pending_interrupt,
     pending_frame,
+    align_review_decisions,
     resolution_payloads,
     resume_command_decisions,
+    review_entries,
+    review_frame,
+    review_resume_value,
 )
 from fakes import FakeState
 
@@ -251,3 +255,90 @@ def test_resolution_payloads_skip_approve_and_edit() -> None:
         _decision({"type": "edit", "tool_id": "call-B", "args": {}}),
     ]
     assert resolution_payloads(ordered, _FRAME) == []
+
+
+# --- result_review 暂停帧 ---
+
+
+def _review_interrupt(tool_id: str, name: str = "lookup", result: str = "raw") -> Interrupt:
+    return Interrupt(
+        value={
+            "kokoro_result_review": {
+                "tool_id": tool_id,
+                "name": name,
+                "args": {"q": "x"},
+                "result": result,
+                "is_error": False,
+            }
+        }
+    )
+
+
+def _review_state(tool_id: str = "call-R") -> FakeState:
+    ai = AIMessage(
+        content="", id="seg-r", tool_calls=[{"name": "lookup", "args": {}, "id": tool_id}]
+    )
+    return FakeState(
+        interrupts=(_review_interrupt(tool_id),),
+        values={"messages": [HumanMessage(content="go"), ai]},
+    )
+
+
+def test_review_entries_none_for_approval_shape() -> None:
+    assert review_entries(_TWO_TOOL_STATE.interrupts) is None
+
+
+def test_review_entries_parse() -> None:
+    entries = review_entries(_review_state().interrupts)
+    assert entries is not None and entries[0].tool_id == "call-R"
+    assert entries[0].result == "raw"
+
+
+def test_review_entries_mixed_frame_fails_loud() -> None:
+    with pytest.raises(ValueError, match="mixed"):
+        review_entries((_interrupt(["danger"]), _review_interrupt("call-R")))
+
+
+def test_review_entries_multiple_reviews_fail_loud() -> None:
+    with pytest.raises(ValueError, match="multiple"):
+        review_entries((_review_interrupt("a"), _review_interrupt("b")))
+
+
+def test_review_awaiting_payload_carries_result() -> None:
+    payloads = awaiting_payloads(_review_state(), frozenset())
+    assert len(payloads) == 1
+    payload = payloads[0]
+    assert payload.kind == "result_review"
+    assert payload.result == "raw"
+    assert payload.segment_id == "seg-r"
+    assert payload.allowed_decisions == ["approve", "respond", "reject"]
+    assert payload.pending_tool_ids == ["call-R"]
+
+
+def test_align_review_decisions_matrix() -> None:
+    entries = review_entries(_review_state().interrupts)
+    assert entries is not None
+    frame = review_frame(_review_state(), entries)
+    ordered = align_review_decisions([_decision({"type": "approve", "tool_id": "call-R"})], frame)
+    assert ordered[0].tool_id == "call-R"
+    with pytest.raises(ValueError):
+        align_review_decisions([_decision({"type": "approve", "tool_id": "other"})], frame)
+    with pytest.raises(ValueError, match="not allowed"):
+        align_review_decisions(
+            [_decision({"type": "edit", "tool_id": "call-R", "args": {}})], frame
+        )
+
+
+def test_review_resume_value_shapes() -> None:
+    value = review_resume_value(
+        [
+            _decision({"type": "respond", "tool_id": "a", "response": "curated"}),
+            _decision({"type": "reject", "tool_id": "b"}),
+            _decision({"type": "approve", "tool_id": "c"}),
+        ]
+    )
+    assert value == [
+        {"tool_id": "a", "type": "respond", "response": "curated"},
+        {"tool_id": "b", "type": "reject", "reason": "rejected by user"},
+        {"tool_id": "c", "type": "approve"},
+    ]

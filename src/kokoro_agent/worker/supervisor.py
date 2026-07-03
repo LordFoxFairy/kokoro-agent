@@ -23,6 +23,11 @@ from kokoro_agent.contract import (
     run_control_stream,
 )
 from kokoro_agent.execution.approvals import (
+    align_review_decisions,
+    review_entries,
+    review_frame,
+    review_resolution_payloads,
+    review_resume_value,
     align_decisions,
     has_pending_interrupt,
     pending_frame,
@@ -182,16 +187,30 @@ class RunSupervisor:
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
             return
         names = self._approval_tool_names(request)
-        frame = pending_frame(snapshot, names)
-        # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。
-        ordered = align_decisions(msg.decisions, frame)
-        emitter = await self._emitter(bus, msg.run_id)
-        # reject/respond 不经 v3 projection → 据快照+decision 直发 tool.returned。
-        for resolution in resolution_payloads(ordered, frame):
-            await emitter.emit(resolution)
-        command: Command[object] = Command(
-            resume={"decisions": resume_command_decisions(ordered, frame)}
-        )
+        entries = review_entries(snapshot.interrupts)
+        command: Command[object]
+        if entries is not None:
+            # 结果审核帧：投影侧 returned 被抑制，裁决后的 returned 在此直发（approve/respond/reject 全量）。
+            rframe = review_frame(snapshot, entries)
+            ordered = align_review_decisions(msg.decisions, rframe)
+            results: dict[str, tuple[str, bool]] = {}
+            for tool_id in rframe.tool_ids:
+                cached = await self._store.get_tool_result(msg.run_id, tool_id)
+                if cached is not None:
+                    results[tool_id] = cached
+            emitter = await self._emitter(bus, msg.run_id)
+            for resolution in review_resolution_payloads(ordered, rframe, results):
+                await emitter.emit(resolution)
+            command = Command(resume=review_resume_value(ordered))
+        else:
+            frame = pending_frame(snapshot, names)
+            # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。
+            ordered = align_decisions(msg.decisions, frame)
+            emitter = await self._emitter(bus, msg.run_id)
+            # reject/respond 不经 v3 projection → 据快照+decision 直发 tool.returned。
+            for resolution in resolution_payloads(ordered, frame):
+                await emitter.emit(resolution)
+            command = Command(resume={"decisions": resume_command_decisions(ordered, frame)})
         # 离开 HITL 暂停哨兵：恢复活跃租约，重新纳入心跳/过期重拾。
         await self._store.renew(msg.run_id)
         self._spawn_agent(
@@ -303,7 +322,14 @@ class RunSupervisor:
     async def _emitter(self, bus: StreamProtocol, run_id: str) -> RunEmitter:
         emitter = self._emitters.get(run_id)
         if emitter is None:
-            emitter = await RunEmitter.attach(bus, run_id)
+            # 审核工具集用于抑制投影侧 raw returned：无 request（如迟到 cancel）按空集处理，
+            # 此时不再有投影流量，抑制与否无副作用。
+            request = await self._store.get_request(run_id)
+            review: frozenset[str] = (
+                frozenset() if request is None
+                else frozenset(request.runtime.permissions.review_tools)
+            )
+            emitter = await RunEmitter.attach(bus, run_id, review)
             self._emitters[run_id] = emitter
         return emitter
 

@@ -4,16 +4,31 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from typing import Any
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import DuplicateKeyError
+
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from kokoro_agent.contract import RunRequest
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+class _ToolResultEntry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    result: str
+    is_error: bool
+
+
+_TOOL_RESULTS_ADAPTER: TypeAdapter[dict[str, _ToolResultEntry]] = TypeAdapter(
+    dict[str, _ToolResultEntry]
+)
 
 
 class MongoRunStateStore:
@@ -106,6 +121,30 @@ class MongoRunStateStore:
 
     async def is_terminal(self, run_id: str) -> bool:
         return await self._coll.find_one({"_id": run_id, "terminal": True}) is not None
+
+
+    async def put_tool_result(
+        self, run_id: str, tool_id: str, result: str, is_error: bool
+    ) -> None:
+        # keep-first：字段已存在（重入/并发）不覆盖首跑结果。
+        await self._coll.update_one(
+            {"_id": run_id, f"tool_results.{tool_id}": {"$exists": False}},
+            {"$set": {f"tool_results.{tool_id}": {"result": result, "is_error": is_error}}},
+        )
+
+    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
+        doc = await self._coll.find_one({"_id": run_id}, {f"tool_results.{tool_id}": 1})
+        if doc is None:
+            return None
+        # mongo 文档是 Any 边界：整块交 Pydantic 洗净（缓存是本仓自写，脏形状即 fail-loud）。
+        raw: Any = doc.get("tool_results")
+        if raw is None:
+            return None
+        entries = _TOOL_RESULTS_ADAPTER.validate_python(raw)
+        entry = entries.get(tool_id)
+        if entry is None:
+            return None
+        return (entry.result, entry.is_error)
 
 
 def make_mongo_collection(

@@ -107,6 +107,7 @@ class FakeRunStateStore:
         self.renewed: list[str] = []
         self.paused_runs: list[str] = []
         self.expired: list[RunRequest] = []
+        self.tool_results: dict[tuple[str, str], tuple[str, bool]] = {}
 
     async def try_claim(self, request: RunRequest) -> bool:
         if request.run_id in self.requests:
@@ -141,6 +142,14 @@ class FakeRunStateStore:
 
     async def is_terminal(self, run_id: str) -> bool:
         return run_id in self.terminals
+
+    async def put_tool_result(
+        self, run_id: str, tool_id: str, result: str, is_error: bool
+    ) -> None:
+        self.tool_results.setdefault((run_id, tool_id), (result, is_error))
+
+    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
+        return self.tool_results.get((run_id, tool_id))
 
 
 @dataclass
@@ -295,6 +304,7 @@ def request(
     namespace: str = "local:s1",
     content: str = "hello",
     approval_tools: tuple[str, ...] = (),
+    review_tools: tuple[str, ...] = (),
 ) -> RunRequest:
     return RunRequest(
         kind="run.request",
@@ -310,6 +320,7 @@ def request(
             backend="state",
             permissions=Permissions(
                 approval_tools=list(approval_tools),
+                review_tools=list(review_tools),
                 subagent_create="deny",
                 filesystem="read_only",
             ),

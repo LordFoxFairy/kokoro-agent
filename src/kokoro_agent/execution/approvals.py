@@ -20,6 +20,8 @@ from kokoro_agent.execution.protocols import StateView
 from kokoro_agent.tools.names import ASK_USER_TOOL_NAME
 
 _DEFAULT_REJECT_MESSAGE = "rejected by user"
+_REVIEW_KEY = "kokoro_result_review"
+_REVIEW_DECISIONS: tuple[AllowedDecision, ...] = ("approve", "respond", "reject")
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,32 @@ class PendingFrame:
     @property
     def tool_ids(self) -> list[str]:
         return [tool_id for tool_id, _name in self.tools]
+
+
+class ReviewEntry(BaseModel):
+    """ToolResultReviewMiddleware interrupt 载荷：结果审核暂停的应用视图。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    tool_id: str
+    name: str
+    args: dict[str, JsonValue]
+    result: str
+    is_error: bool
+
+
+def review_entries(interrupts: tuple[Interrupt, ...]) -> list[ReviewEntry] | None:
+    """全帧 review 形状则返回条目；全帧 HIL 形状返回 None；混帧/多 review fail-loud。"""
+    # Interrupt.value 是框架 Any 边界：先按形状分拣，再交 Pydantic 洗净。
+    values: list[Any] = [i.value for i in interrupts]
+    shaped = [isinstance(v, dict) and _REVIEW_KEY in v for v in values]
+    if not any(shaped):
+        return None
+    if not all(shaped):
+        raise ValueError("mixed approval/review interrupts in one frame is unsupported (V1)")
+    if len(interrupts) != 1:
+        raise ValueError("multiple result-review interrupts in one frame is unsupported (V1)")
+    return [ReviewEntry.model_validate(values[0][_REVIEW_KEY])]
 
 
 def has_pending_interrupt(snapshot: StateView) -> bool:
@@ -50,6 +78,14 @@ def pending_frame(snapshot: StateView, approval_tool_names: frozenset[str]) -> P
         (tc["id"] or "", tc["name"]) for tc in last_ai.tool_calls if tc["name"] in approval_tool_names
     )
     return PendingFrame(last_ai.id or "", tools)
+
+
+def review_frame(snapshot: StateView, entries: Sequence[ReviewEntry]) -> PendingFrame:
+    # 审核帧归属段=触发帧的 AIMessage（与审批帧同源）；条目顺序即 interrupt 顺序。
+    raw: Any = snapshot.values.get("messages") or []
+    last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
+    segment = (last_ai.id or "") if last_ai is not None else ""
+    return PendingFrame(segment, tuple((e.tool_id, e.name) for e in entries))
 
 
 class ApprovalRequest(BaseModel):
@@ -110,6 +146,25 @@ def approval_requests(interrupts: tuple[Interrupt, ...]) -> list[ApprovalRequest
 def awaiting_payloads(
     snapshot: StateView, approval_tool_names: frozenset[str]
 ) -> list[ToolAwaitingApprovalPayload]:
+    entries = review_entries(snapshot.interrupts)
+    if entries is not None:
+        frame = review_frame(snapshot, entries)
+        pending_ids = frame.tool_ids
+        return [
+            ToolAwaitingApprovalPayload(
+                segment_id=frame.segment_id,
+                tool_id=entry.tool_id,
+                name=entry.name,
+                args=entry.args,
+                description=f"Tool result awaiting review: {entry.name}",
+                allowed_decisions=list(_REVIEW_DECISIONS),
+                kind="result_review",
+                editable=False,
+                pending_tool_ids=pending_ids,
+                result=entry.result,
+            )
+            for entry in entries
+        ]
     frame = pending_frame(snapshot, approval_tool_names)
     requests = approval_requests(snapshot.interrupts)
     # 对齐失配即 invariant 破裂：宁可 fail-loud 收口为 run.failed，不发错帧。
@@ -159,6 +214,101 @@ def align_decisions(
         if decision.type != "respond" and is_ask_user:
             raise ValueError(f"ask_user tool {decision.tool_id!r} accepts only respond")
     return [by_id[tool_id] for tool_id in frame.tool_ids]
+
+
+def align_review_decisions(
+    decisions: Sequence[ResumeDecision], frame: PendingFrame
+) -> list[ResumeDecision]:
+    # 与审批帧同一对齐纪律（缺/多/重复/未知 fail-loud）；决策集为 approve/respond/reject，
+    # respond=人工替换结果（不绑 ask_user），edit 对已执行结果无意义。
+    by_id: dict[str, ResumeDecision] = {d.tool_id: d for d in decisions}
+    if len(by_id) != len(decisions):
+        raise ValueError("resume decisions contain duplicate tool_id")
+    if set(by_id) != set(frame.tool_ids):
+        raise ValueError(
+            f"resume decisions {sorted(by_id)} != pending review tools {sorted(frame.tool_ids)}"
+        )
+    for decision in decisions:
+        if decision.type not in _REVIEW_DECISIONS:
+            raise ValueError(
+                f"decision {decision.type!r} not allowed for result review tool {decision.tool_id!r}"
+            )
+    return [by_id[tool_id] for tool_id in frame.tool_ids]
+
+
+def review_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, JsonValue]]:
+    # ToolResultReviewMiddleware 的 resume 契约：list[decision dict]，按 tool_id 自取。
+    out: list[dict[str, JsonValue]] = []
+    for decision in decisions:
+        if decision.type == "approve":
+            out.append({"tool_id": decision.tool_id, "type": "approve"})
+        elif decision.type == "respond":
+            out.append(
+                {"tool_id": decision.tool_id, "type": "respond", "response": decision.response}
+            )
+        elif decision.type == "reject":
+            out.append(
+                {
+                    "tool_id": decision.tool_id,
+                    "type": "reject",
+                    "reason": decision.reason or _DEFAULT_REJECT_MESSAGE,
+                }
+            )
+        else:
+            raise ValueError(f"decision {decision.type!r} not allowed for result review")
+    return out
+
+
+def review_resolution_payloads(
+    decisions: Sequence[ResumeDecision],
+    frame: PendingFrame,
+    results: dict[str, tuple[str, bool]],
+) -> list[ToolReturnedPayload]:
+    # 审核工具的 returned 一律裁决后直发（投影侧被抑制）：approve=放行原结果，
+    # respond=人工替换（responded 标记），reject=废弃（rejected 标记）。
+    name_by_id = dict(frame.tools)
+    payloads: list[ToolReturnedPayload] = []
+    for decision in decisions:
+        tool_id = decision.tool_id
+        if decision.type == "approve":
+            cached = results.get(tool_id)
+            if cached is None:
+                raise ValueError(f"no cached result for reviewed tool {tool_id!r}")
+            payloads.append(
+                ToolReturnedPayload(
+                    segment_id=frame.segment_id,
+                    tool_id=tool_id,
+                    name=name_by_id[tool_id],
+                    result=cached[0],
+                    is_error=cached[1],
+                    responded=True,
+                )
+            )
+        elif decision.type == "respond":
+            payloads.append(
+                ToolReturnedPayload(
+                    segment_id=frame.segment_id,
+                    tool_id=tool_id,
+                    name=name_by_id[tool_id],
+                    result=decision.response,
+                    is_error=False,
+                    responded=True,
+                )
+            )
+        elif decision.type == "reject":
+            reason = decision.reason or _DEFAULT_REJECT_MESSAGE
+            payloads.append(
+                ToolReturnedPayload(
+                    segment_id=frame.segment_id,
+                    tool_id=tool_id,
+                    name=name_by_id[tool_id],
+                    result=reason,
+                    is_error=False,
+                    rejected=True,
+                    reject_reason=reason,
+                )
+            )
+    return payloads
 
 
 def resume_command_decisions(

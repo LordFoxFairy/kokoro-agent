@@ -17,6 +17,16 @@ CREATE TABLE IF NOT EXISTS run_state(
     lease_expires_ms INTEGER
 )"""
 
+# 结果审核暂停的双执行防护：resume 后节点从头重跑，首跑结果 keep-first 落盘，重入命中即跳过工具。
+_TOOL_RESULTS_DDL = """\
+CREATE TABLE IF NOT EXISTS tool_results(
+    run_id   TEXT NOT NULL,
+    tool_id  TEXT NOT NULL,
+    result   TEXT NOT NULL,
+    is_error INTEGER NOT NULL,
+    PRIMARY KEY(run_id, tool_id)
+)"""
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -35,6 +45,7 @@ class SqliteRunStateStore:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.execute(_DDL)
+        await self._db.execute(_TOOL_RESULTS_DDL)
         await self._db.commit()
 
     async def try_claim(self, request: RunRequest) -> bool:
@@ -111,3 +122,23 @@ class SqliteRunStateStore:
         ) as cursor:
             row = await cursor.fetchone()
         return row is not None and row[0] == 1
+
+    async def put_tool_result(
+        self, run_id: str, tool_id: str, result: str, is_error: bool
+    ) -> None:
+        await self._db.execute(
+            "INSERT OR IGNORE INTO tool_results(run_id, tool_id, result, is_error)"
+            " VALUES(?, ?, ?, ?)",
+            (run_id, tool_id, result, 1 if is_error else 0),
+        )
+        await self._db.commit()
+
+    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
+        cur = await self._db.execute(
+            "SELECT result, is_error FROM tool_results WHERE run_id=? AND tool_id=?",
+            (run_id, tool_id),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return (str(row[0]), bool(row[1]))

@@ -30,7 +30,10 @@ from kokoro_agent.contract import (
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.prompts import SYSTEM_PROMPT
 from kokoro_agent.execution.protocols import InvokableAgent
+from langchain.agents.middleware import AgentMiddleware
+
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
+from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 from kokoro_agent.sandbox import build_filesystem_permissions
 from kokoro_agent.storage.sqlite import SqliteRunStateStore
 from kokoro_agent.streams.memory import MemoryStream
@@ -45,6 +48,7 @@ def _request(
     run_id: str,
     *,
     approval_tools: tuple[str, ...] = (),
+    review_tools: tuple[str, ...] = (),
     filesystem: FilesystemPerm = "read_only",
     content: str = "你好，帮我规划一下",
 ) -> RunRequest:
@@ -62,6 +66,7 @@ def _request(
             backend="state",
             permissions=Permissions(
                 approval_tools=list(approval_tools),
+                review_tools=list(review_tools),
                 subagent_create="deny",
                 filesystem=filesystem,
             ),
@@ -78,6 +83,10 @@ def _build_supervisor(
 
     async def build(request: RunRequest) -> InvokableAgent:
         runtime = request.runtime
+        review = frozenset(runtime.permissions.review_tools)
+        middleware: list[AgentMiddleware] = []
+        if review:
+            middleware.append(ToolResultReviewMiddleware(review, store, request.run_id))
         return build_agent(
             model=make_local_fake_chat_model(script),
             tools=resolve_tools(runtime.tools),
@@ -86,6 +95,7 @@ def _build_supervisor(
             checkpointer=saver,
             permissions=build_filesystem_permissions(runtime.permissions.filesystem),
             interrupt_on=build_interrupt_on(frozenset(runtime.permissions.approval_tools)),
+            middleware=middleware,
         )
 
     def approval_names(request: RunRequest) -> frozenset[str]:
@@ -237,3 +247,66 @@ async def test_local_fake_hitl_ask_user_then_approval_over_control_stream(tmp_pa
         assert kinds.count("tool.awaiting_approval") == 2
         assert "tool.returned" in kinds
         assert await store.is_terminal(run.run_id) is True
+
+
+async def test_local_fake_result_review_over_control_stream(tmp_path: Path) -> None:
+    """结果审核全链：write_file 配 review → 执行后暂停带结果 → respond 替换 → 回流为替换文本。"""
+    bus = MemoryStream()
+    run = _request("e2e-review-1", review_tools=("write_file",), filesystem="workspace_write")
+    async with aiosqlite.connect(str(tmp_path / "review.db")) as db:
+        store = SqliteRunStateStore(db, ttl_ms=90_000)
+        await store.setup()
+        # 脚本去掉 ask_user 帧：只走 write_file（审核）+ 终帧文本。
+        script = [turn for turn in hitl_script() if not _calls_tool(turn, "ask_user")]
+        supervisor = _build_supervisor(store, script=script)
+        serve_task = asyncio.create_task(supervisor.serve(bus))
+        await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
+
+        # ① 工具执行后暂停：awaiting 带真实结果，决策集为审核三元组。
+        awaiting = await _wait_awaiting(bus, run.run_id, "result_review")
+        assert awaiting["name"] == "write_file"
+        assert isinstance(awaiting["result"], str) and awaiting["result"]
+        assert awaiting["allowed_decisions"] == ["approve", "respond", "reject"]
+        # 双执行防护实证：首跑结果 keep-first 已落盘。
+        cached = await store.get_tool_result(run.run_id, str(awaiting["tool_id"]))
+        assert cached is not None and cached[0] == awaiting["result"]
+
+        # ② respond 替换结果 → 重入命中缓存不重跑工具 → 回流为替换文本。
+        respond: dict[str, JsonValue] = {
+            "type": "respond",
+            "tool_id": str(awaiting["tool_id"]),
+            "response": "curated result",
+        }
+        await _publish_resume(bus, run, respond)
+        await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
+        serve_task.cancel()
+        try:
+            await serve_task
+        except asyncio.CancelledError:
+            pass
+
+        kinds = await _read_kinds(bus, run.run_id)
+        assert kinds[-1] == "run.completed"
+        # raw returned 被抑制：wire 上唯一的 returned 是裁决直发，且在 awaiting 之后。
+        assert kinds.count("tool.returned") == 1
+        assert kinds.index("tool.awaiting_approval") < kinds.index("tool.returned")
+        returned = await _tool_returned_payload(bus, run.run_id, str(awaiting["tool_id"]))
+        assert returned["result"] == "curated result"
+        assert returned["responded"] is True
+
+
+def _calls_tool(turn: AIMessage, name: str) -> bool:
+    return any(tc["name"] == name for tc in turn.tool_calls)
+
+
+async def _tool_returned_payload(
+    bus: MemoryStream, run_id: str, tool_id: str
+) -> dict[str, JsonValue]:
+    for item in await bus.read_all(run_events_stream(run_id)):
+        if item.event.get("kind") != "tool.returned":
+            continue
+        payload = item.event.get("payload")
+        assert isinstance(payload, dict)
+        if payload.get("tool_id") == tool_id:
+            return payload
+    raise AssertionError(f"no tool.returned for {tool_id!r}")

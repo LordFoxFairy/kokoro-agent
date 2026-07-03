@@ -45,6 +45,14 @@ class RunStateStore(Protocol):
         # 只读查：resume stale 闸。
         ...
 
+    async def put_tool_result(
+        self, run_id: str, tool_id: str, result: str, is_error: bool
+    ) -> None:
+        # 结果审核暂停的双执行防护：首跑结果 keep-first 落盘，resume 重入命中即跳过工具执行。
+        ...
+
+    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None: ...
+
 
 class RunStateSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")

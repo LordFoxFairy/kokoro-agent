@@ -139,6 +139,7 @@ def test_run_completed_terminal_statuses(status: str) -> None:
 _MODEL: dict[str, JsonValue] = {"provider": "anthropic", "name": "claude"}
 _PERMISSIONS: dict[str, JsonValue] = {
     "approval_tools": ["execute"],
+    "review_tools": [],
     "subagent_create": "deny",
     "filesystem": "read_only",
 }

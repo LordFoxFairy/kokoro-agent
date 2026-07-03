@@ -11,7 +11,7 @@ NonNegInt = Annotated[int, Field(ge=0)]
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
 AllowedDecision = Literal["approve", "edit", "reject", "respond"]
-AwaitingKind = Literal["tool_approval", "ask_user"]
+AwaitingKind = Literal["tool_approval", "ask_user", "result_review"]
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 RunCompletedStatus = Literal["completed", "cancelled", "timeout"]
 
@@ -77,6 +77,8 @@ class ToolAwaitingApprovalPayload(StrictModel):
     input_schema: dict[str, JsonValue] | None = None
     # 同帧完整待批 tool_id 列表；HITL『凑齐才提交』契约依据，web 读契约而非内嵌算法。
     pending_tool_ids: list[NonEmptyStr]
+    # 仅 kind=result_review 时存在：待人工审核的已执行结果（payload 列表尾缀 ? = 该 kind 局部可选）。
+    result: str | None = None
 
 
 class ToolReturnedPayload(StrictModel):

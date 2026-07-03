@@ -9,6 +9,7 @@ import socket
 
 from deepagents.middleware.subagents import SubAgent
 from dotenv import load_dotenv
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.config import AppConfig
@@ -25,7 +26,7 @@ from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
-from kokoro_agent.tools.middleware import ToolPolicyMiddleware
+from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
 from kokoro_agent.tools.names import ASK_USER_TOOL_NAME, RESERVED_TOOL_NAMES
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.registry import resolve_tools
@@ -72,6 +73,13 @@ async def _serve(config: AppConfig) -> None:
             # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。
             authorized = frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES
             approval_tools = frozenset(runtime.permissions.approval_tools)
+            review_tools = frozenset(runtime.permissions.review_tools)
+            if ASK_USER_TOOL_NAME in review_tools:
+                # ask_user 的"结果"就是人工答复本身，再审即循环悖论。
+                raise ValueError("ask_user cannot be a result-review tool")
+            middleware: list[AgentMiddleware] = [ToolPolicyMiddleware(authorized)]
+            if review_tools:
+                middleware.append(ToolResultReviewMiddleware(review_tools, store, request.run_id))
             return build_agent(
                 model=make_chat_model(config.model, runtime.model),
                 tools=tools,
@@ -80,7 +88,7 @@ async def _serve(config: AppConfig) -> None:
                 checkpointer=saver,
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),
                 interrupt_on=build_interrupt_on(approval_tools),
-                middleware=[ToolPolicyMiddleware(authorized)],
+                middleware=middleware,
                 skills=resolve_skill_mounts(runtime.skills),
                 backend=make_backend(runtime.backend, config.sandbox),
             )

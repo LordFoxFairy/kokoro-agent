@@ -144,6 +144,17 @@ async def _assert_concurrent_single_winner(store: RunStateStore) -> None:
     assert sum(terminals) == 1
 
 
+async def _assert_tool_result_keep_first(store: RunStateStore) -> None:
+    # 结果审核缓存：首跑 keep-first，重入/并发写不覆盖；未知键返 None。
+    req = request("run-tr")
+    assert await store.try_claim(req) is True
+    assert await store.get_tool_result("run-tr", "t1") is None
+    await store.put_tool_result("run-tr", "t1", "first", False)
+    await store.put_tool_result("run-tr", "t1", "second", True)
+    assert await store.get_tool_result("run-tr", "t1") == ("first", False)
+    assert await store.get_tool_result("run-tr", "other") is None
+
+
 _MATRIX: list[Callable[[RunStateStore, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_claim_and_terminal(store),
     lambda store, _clock: _assert_unclaimed_mark_terminal(store),
@@ -152,6 +163,7 @@ _MATRIX: list[Callable[[RunStateStore, FakeClock], Awaitable[None]]] = [
     _assert_pause_excludes_reclaim,
     _assert_terminal_excluded_from_reclaim,
     lambda store, _clock: _assert_concurrent_single_winner(store),
+    lambda store, _clock: _assert_tool_result_keep_first(store),
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -161,6 +173,7 @@ _MATRIX_IDS = [
     "pause_excludes_reclaim",
     "terminal_excluded",
     "concurrent_single_winner",
+    "tool_result_keep_first",
 ]
 
 

@@ -81,10 +81,14 @@ class RunEmitter:
         run_id: str,
         next_index: int = 0,
         tool_segments: dict[str, str] | None = None,
+        review_tool_names: frozenset[str] = frozenset(),
     ) -> None:
         self._bus = bus
         self._run_id = run_id
         self._next_index = next_index
+        # 审核工具的 returned 由 supervisor 裁决后直发：投影在审核前就见到工具级完成，
+        # raw 结果不得先于裁决上 wire，此处按名抑制投影侧 returned。
+        self._review_tool_names = review_tool_names
         # tool_id → 归属 segment：awaiting 携带 AIMessage 段，resume 后的 invoked/returned
         # 只有 tool_call_id 兜底段——继承归属段，一次工具调用在渲染侧恒为一段。
         self._tool_segments = tool_segments if tool_segments is not None else {}
@@ -94,7 +98,12 @@ class RunEmitter:
         return self._run_id
 
     @classmethod
-    async def attach(cls, bus: StreamProtocol, run_id: str) -> RunEmitter:
+    async def attach(
+        cls,
+        bus: StreamProtocol,
+        run_id: str,
+        review_tool_names: frozenset[str] = frozenset(),
+    ) -> RunEmitter:
         # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
         # 同时从历史 awaiting 事件重建 tool_id→segment 归属（漂移正发生在 resume 重建之后）。
         next_index = 0
@@ -104,7 +113,7 @@ class RunEmitter:
             next_index = max(next_index, event.index + 1)
             if isinstance(event.payload, ToolAwaitingApprovalPayload):
                 tool_segments[event.payload.tool_id] = event.payload.segment_id
-        return cls(bus, run_id, next_index, tool_segments)
+        return cls(bus, run_id, next_index, tool_segments, review_tool_names)
 
     def _with_owner_segment(self, payload: AgentEventPayload) -> AgentEventPayload:
         if isinstance(payload, ToolAwaitingApprovalPayload):
@@ -117,6 +126,14 @@ class RunEmitter:
         return payload
 
     async def emit(self, payload: AgentEventPayload) -> None:
+        if (
+            isinstance(payload, ToolReturnedPayload)
+            and payload.name in self._review_tool_names
+            and payload.rejected is None
+            and payload.responded is None
+        ):
+            # 投影侧 raw returned 抑制；带 rejected/responded 标记的是 supervisor 裁决直发，放行。
+            return
         payload = self._with_owner_segment(payload)
         event = agent_event_adapter.validate_python(
             {

@@ -55,6 +55,7 @@ class SubagentDef(StrictModel):
 
 class Permissions(StrictModel):
     approval_tools: list[NonEmptyStr]
+    review_tools: list[NonEmptyStr]
     subagent_create: SubagentCreate
     filesystem: FilesystemPerm
 

@@ -1,4 +1,4 @@
-"""Redis Streams 传输：固定 RESP2+decode_responses=True，xread 真实形状为 list[list]。"""
+"""Redis Streams 传输：XADD maxlen 裁剪 + XREADGROUP/XACK 消费，断线指数退避。"""
 
 from __future__ import annotations
 
@@ -8,18 +8,19 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from typing import TypeAlias, TypeGuard
 
+from pydantic import JsonValue
 from redis.asyncio import Redis, from_url
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
-from kokoro_agent.streams.protocol import StreamItem
-from kokoro_agent.streams.json_types import JsonValue, clone_event, validate_event
+from kokoro_agent.streams.protocol import StreamItem, validate_event
 
 LOGGER = logging.getLogger(__name__)
 
 _REDIS_FIELD = "data"
 _BLOCK_MS = 1000
-# 重连退避边界（秒）：宏观分布式层韧性——抖动快恢复，持续断线不 busy-loop 打爆 redis。
+# 重连退避边界（秒）：抖动快恢复，持续断线不 busy-loop 打爆 redis。
 _RECONNECT_BACKOFF_MIN = 0.1
 _RECONNECT_BACKOFF_MAX = 5.0
 
@@ -110,8 +111,8 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
 
 
 class RedisStream:
-    def __init__(self, url: str = "redis://127.0.0.1:6379/0", block_ms: int = _BLOCK_MS) -> None:
-        # 固定 RESP2+decode_responses：xread/xrange 全返回 str，无 bytes 解码开销
+    def __init__(self, url: str, block_ms: int = _BLOCK_MS) -> None:
+        # 固定 RESP2+decode_responses：xread/xrange 全返回 str，无 bytes 解码开销。
         self._redis: Redis = from_url(url, protocol=2, decode_responses=True)
         self._block_ms = block_ms
 
@@ -119,19 +120,21 @@ class RedisStream:
         await self._redis.aclose()
 
     def _to_item(self, entry_id: bytes | str | None, fields: _Fields) -> StreamItem:
-        # decode_responses=True 下 key 是 str，直接用 _REDIS_FIELD 字符串查找
         raw = fields.get(_REDIS_FIELD) if fields is not None else None
         payload: object = json.loads(_decode(raw)) if raw is not None else {}
-        event = clone_event(validate_event(payload))
-        return StreamItem(cursor=_decode_cursor(entry_id), event=event)
+        return StreamItem(cursor=_decode_cursor(entry_id), event=validate_event(payload))
 
-    async def publish(self, stream: str, event: Mapping[str, JsonValue]) -> StreamItem:
-        payload = clone_event(validate_event(dict(event)))
+    async def publish(
+        self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+    ) -> StreamItem:
+        payload = validate_event(dict(event))
         entry_id = await self._redis.xadd(
             stream,
             {_REDIS_FIELD: json.dumps(payload, ensure_ascii=False)},
+            maxlen=maxlen,
+            approximate=True,
         )
-        return StreamItem(cursor=_decode_cursor(entry_id), event=clone_event(payload))
+        return StreamItem(cursor=_decode_cursor(entry_id), event=payload)
 
     async def read_all(self, stream: str) -> list[StreamItem]:
         entries = await self._redis.xrange(stream, min="-", max="+")
@@ -139,28 +142,45 @@ class RedisStream:
             return []
         return [self._to_item(entry_id, fields) for entry_id, fields in entries]
 
+    async def _ensure_group(self, stream: str, group: str) -> None:
+        try:
+            await self._redis.xgroup_create(stream, group, id="0", mkstream=True)
+        except ResponseError as error:
+            # 组已存在是幂等常态；其余 ResponseError 是真 bug，照常上抛。
+            if "BUSYGROUP" not in str(error):
+                raise
+
     async def subscribe(
-        self, stream: str, from_cursor: str | None = None
+        self, stream: str, *, group: str, consumer: str
     ) -> AsyncIterator[StreamItem]:
-        last = from_cursor if from_cursor is not None else "0-0"
+        group_ready = False
         backoff = _RECONNECT_BACKOFF_MIN
         while True:
             try:
-                raw = await self._redis.xread({stream: last}, block=self._block_ms)
+                if not group_ready:
+                    await self._ensure_group(stream, group)
+                    group_ready = True
+                raw = await self._redis.xreadgroup(
+                    group, consumer, {stream: ">"}, block=self._block_ms
+                )
             except (RedisConnectionError, RedisTimeoutError) as error:
-                # 宏观分布式层韧性：redis 断线/抖动绝不冒泡杀死订阅流（否则上游 serve 退出、整个
-                # worker 罢工）。last 游标在生成器内跨重连存活 → 重连从断点续读、不重放整条流；
-                # 指数退避防 busy-loop。非瞬态 RedisError（如命令错误）仍上抛，不掩盖真 bug。
-                LOGGER.warning("redis xread on %s failed, reconnect in %.1fs: %s", stream, backoff, error)
+                # 断线/抖动绝不冒泡杀死订阅流；group 游标在 redis 侧存活，重连不重放已投递消息。
+                LOGGER.warning(
+                    "redis xreadgroup on %s failed, reconnect in %.1fs: %s", stream, backoff, error
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)
                 continue
-            backoff = _RECONNECT_BACKOFF_MIN  # 成功读一次即重置退避
+            backoff = _RECONNECT_BACKOFF_MIN
             response = parse_xread_response(raw)
             if not response:
                 continue
             for _stream_name, entries in response:
                 for entry_id, fields in entries:
-                    item = self._to_item(entry_id, fields)
-                    last = item.cursor
-                    yield item
+                    yield self._to_item(entry_id, fields)
+
+    async def ack(self, stream: str, group: str, cursor: str) -> None:
+        await self._redis.xack(stream, group, cursor)
+
+    async def delete(self, stream: str) -> None:
+        await self._redis.delete(stream)

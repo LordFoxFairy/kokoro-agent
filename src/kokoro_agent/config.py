@@ -1,18 +1,22 @@
-"""进程级单一配置入口：一次性从环境变量解析全部稳定配置。"""
+"""AppConfig：全部环境变量的唯一解析点，仅 worker/main.py 调用一次并显式注入。"""
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from kokoro_agent.tools.names import EXECUTE_TOOL_NAME
-from kokoro_agent.model.settings import LOCAL_FAKE_MODEL_FLAG, ChatModelSettings
+from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.observability import ObservabilitySettings
+from kokoro_agent.sandbox import SandboxSettings
+from kokoro_agent.storage.checkpoints import CheckpointSettings
+from kokoro_agent.storage.run_state import DEFAULT_LEASE_TTL_S, RunStateSettings
+from kokoro_agent.streams.factory import StreamSettings
+
+DEFAULT_LEASE_HEARTBEAT_S = 30.0
 
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
-_DEFAULT_APPROVAL_TOOLS = (EXECUTE_TOOL_NAME,)
 _DEFAULT_CHECKPOINT_DB = "kokoro_checkpoints.db"
 _DEFAULT_RUN_STATE_DB = "kokoro_run_state.db"
 _DEFAULT_MONGO_URL = "mongodb://127.0.0.1:27017"
@@ -20,202 +24,100 @@ _DEFAULT_MONGO_DB = "kokoro"
 _DEFAULT_LOCAL_SHELL_TIMEOUT = 120
 _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES = 100000
 
-_NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-RuntimeBackend = Literal["state", "local_shell"]
-
-
-class ApprovalPolicy(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-    # strict=False 允许 list→frozenset coercion，元素由 _NonEmpty 校验空串。
-    requires_approval_tools: Annotated[frozenset[_NonEmpty], Field(strict=False)]
-
-
-class StreamSettings(BaseModel):
-    """事件流后端选择：memory（默认）或 redis。"""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    backend: str
-    redis_url: str
-
-    @classmethod
-    def from_env(cls, source: Mapping[str, str]) -> StreamSettings:
-        return cls(
-            backend=source.get("KOKORO_STREAM_BACKEND", "memory").lower(),
-            redis_url=source.get("KOKORO_REDIS_URL", _DEFAULT_REDIS_URL),
-        )
-
-
-class MongoSettings(BaseModel):
-    """共享 Mongo 连接：checkpointer 与 run_state 的 mongo 后端共用一处 url/db（多 pod GA）。"""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    url: str
-    db: str
-
-    @classmethod
-    def from_env(cls, source: Mapping[str, str]) -> MongoSettings:
-        return cls(
-            url=source.get("KOKORO_MONGO_URL", _DEFAULT_MONGO_URL),
-            db=source.get("KOKORO_MONGO_DB", _DEFAULT_MONGO_DB),
-        )
-
-
-class RuntimeSettings(BaseModel):
-    """DeepAgents 原生 runtime capability：skills/memory/backend。"""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    backend: RuntimeBackend
-    skills: tuple[_NonEmpty, ...]
-    memory: tuple[_NonEmpty, ...]
-    local_shell_root: str | None
-    local_shell_inherit_env: bool
-    local_shell_timeout: int
-    local_shell_max_output_bytes: int
-
-    @classmethod
-    def from_env(cls, source: Mapping[str, str]) -> RuntimeSettings:
-        return cls(
-            backend=_runtime_backend(source.get("KOKORO_AGENT_BACKEND", "state")),
-            skills=_csv_tuple(source.get("KOKORO_AGENT_SKILLS", "")),
-            memory=_csv_tuple(source.get("KOKORO_AGENT_MEMORY", "")),
-            local_shell_root=source.get("KOKORO_AGENT_LOCAL_SHELL_ROOT") or None,
-            local_shell_inherit_env=source.get("KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV") == "1",
-            local_shell_timeout=_int_from_env(
-                source, "KOKORO_AGENT_LOCAL_SHELL_TIMEOUT", _DEFAULT_LOCAL_SHELL_TIMEOUT
-            ),
-            local_shell_max_output_bytes=_int_from_env(
-                source,
-                "KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES",
-                _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES,
-            ),
-        )
-
-
-class CheckpointSettings(BaseModel):
-    """LangGraph 状态 checkpointer 后端：sqlite（默认，落盘）/ mongo（跨 pod）/ memory（易失）。"""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    backend: str
-    db_path: str
-
-    @classmethod
-    def from_env(cls, source: Mapping[str, str]) -> CheckpointSettings:
-        return cls(
-            backend=source.get("KOKORO_CHECKPOINT_BACKEND", "sqlite").lower(),
-            db_path=source.get("KOKORO_CHECKPOINT_DB", _DEFAULT_CHECKPOINT_DB),
-        )
-
-
-class RunStateSettings(BaseModel):
-    """run 状态持久化后端：sqlite（默认，落盘）/ mongo（跨 pod 去重/终态认领）。"""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    backend: str
-    db_path: str
-
-    @classmethod
-    def from_env(cls, source: Mapping[str, str]) -> RunStateSettings:
-        return cls(
-            backend=source.get("KOKORO_RUN_STATE_BACKEND", "sqlite").lower(),
-            db_path=source.get("KOKORO_RUN_STATE_DB", _DEFAULT_RUN_STATE_DB),
-        )
-
-
-class ObservabilitySettings(BaseModel):
-    """Langfuse 凭据；缺任一即视为未配置 → tracing 静默关闭。"""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    langfuse_public_key: SecretStr | None = None
-    langfuse_secret_key: SecretStr | None = None
-
-    @property
-    def langfuse_configured(self) -> bool:
-        return self.langfuse_public_key is not None and self.langfuse_secret_key is not None
-
-    @classmethod
-    def from_env(cls, source: Mapping[str, str]) -> ObservabilitySettings:
-        public_key = source.get("LANGFUSE_PUBLIC_KEY")
-        secret_key = source.get("LANGFUSE_SECRET_KEY")
-        return cls(
-            langfuse_public_key=SecretStr(public_key) if public_key else None,
-            langfuse_secret_key=SecretStr(secret_key) if secret_key else None,
-        )
-
-
-def _approval_from_env(source: Mapping[str, str]) -> ApprovalPolicy:
-    raw = source.get("KOKORO_REQUIRES_APPROVAL_TOOLS", "")
-    parsed = tuple(part for part in (s.strip() for s in raw.split(",")) if part)
-    # 未设或全空白视同未配置 → 回退默认，避免空集静默放行所有工具。
-    tools = parsed if parsed else _DEFAULT_APPROVAL_TOOLS
-    return ApprovalPolicy(requires_approval_tools=frozenset(tools))
-
 
 class AppConfig(BaseModel):
-    """单一配置入口：一次性读全部 env，按域分组。"""
+    """按域分组的进程配置：一次解析、全程注入。model/tools/skills/permissions 属每请求 wire。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     model: ChatModelSettings
     stream: StreamSettings
     observability: ObservabilitySettings
-    approval: ApprovalPolicy
     checkpoint: CheckpointSettings
     run_state: RunStateSettings
-    mongo: MongoSettings
-    runtime: RuntimeSettings
-    local_fake_model: bool
+    sandbox: SandboxSettings
+    custom_subagents_json: str | None
+    lease_heartbeat_s: Annotated[float, Field(gt=0)]
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> AppConfig:
-        source: Mapping[str, str] = env if env is not None else os.environ
+    def from_env(cls, source: Mapping[str, str]) -> AppConfig:
+        # 后端枚举经各 Settings 的 strict Literal 在构造期 fail-loud（model_validate 入口）。
+        mongo_url = source.get("KOKORO_MONGO_URL", _DEFAULT_MONGO_URL)
+        mongo_db = source.get("KOKORO_MONGO_DB", _DEFAULT_MONGO_DB)
         return cls(
-            model=ChatModelSettings.from_env(source),
-            stream=StreamSettings.from_env(source),
-            observability=ObservabilitySettings.from_env(source),
-            approval=_approval_from_env(source),
-            checkpoint=CheckpointSettings.from_env(source),
-            run_state=RunStateSettings.from_env(source),
-            mongo=MongoSettings.from_env(source),
-            runtime=RuntimeSettings.from_env(source),
-            local_fake_model=source.get(LOCAL_FAKE_MODEL_FLAG) == "1",
+            model=_model_from_env(source),
+            stream=StreamSettings.model_validate(
+                {
+                    "backend": source.get("KOKORO_STREAM_BACKEND", "memory").lower(),
+                    "redis_url": source.get("KOKORO_REDIS_URL", _DEFAULT_REDIS_URL),
+                }
+            ),
+            observability=ObservabilitySettings(
+                langfuse_public_key=_secret(source.get("LANGFUSE_PUBLIC_KEY")),
+                langfuse_secret_key=_secret(source.get("LANGFUSE_SECRET_KEY")),
+            ),
+            checkpoint=CheckpointSettings.model_validate(
+                {
+                    "backend": source.get("KOKORO_CHECKPOINT_BACKEND", "sqlite").lower(),
+                    "sqlite_path": source.get("KOKORO_CHECKPOINT_DB", _DEFAULT_CHECKPOINT_DB),
+                    "mongo_url": mongo_url,
+                    "mongo_db": mongo_db,
+                }
+            ),
+            run_state=RunStateSettings.model_validate(
+                {
+                    "backend": source.get("KOKORO_RUN_STATE_BACKEND", "sqlite").lower(),
+                    "sqlite_path": source.get("KOKORO_RUN_STATE_DB", _DEFAULT_RUN_STATE_DB),
+                    "mongo_url": mongo_url,
+                    "mongo_db": mongo_db,
+                    "lease_ttl_ms": _int(source, "KOKORO_LEASE_TTL_S", DEFAULT_LEASE_TTL_S) * 1000,
+                }
+            ),
+            sandbox=SandboxSettings.model_validate(
+                {
+                    "local_shell_root": source.get("KOKORO_AGENT_LOCAL_SHELL_ROOT") or None,
+                    "local_shell_inherit_env": source.get("KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV")
+                    == "1",
+                    "local_shell_timeout": _int(
+                        source, "KOKORO_AGENT_LOCAL_SHELL_TIMEOUT", _DEFAULT_LOCAL_SHELL_TIMEOUT
+                    ),
+                    "local_shell_max_output_bytes": _int(
+                        source,
+                        "KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES",
+                        _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES,
+                    ),
+                }
+            ),
+            custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
+            lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),
         )
 
 
-__all__ = [
-    "AppConfig",
-    "ApprovalPolicy",
-    "CheckpointSettings",
-    "LOCAL_FAKE_MODEL_FLAG",
-    "MongoSettings",
-    "ObservabilitySettings",
-    "RunStateSettings",
-    "RuntimeSettings",
-    "StreamSettings",
-]
+def _model_from_env(source: Mapping[str, str]) -> ChatModelSettings:
+    return ChatModelSettings(
+        disable_streaming=source.get("KOKORO_DISABLE_STREAMING") == "1",
+        local_fake=source.get("KOKORO_LOCAL_FAKE_MODEL") == "1",
+        local_fake_script=source.get("KOKORO_LOCAL_FAKE_SCRIPT", "default"),
+        openai_api_key=_secret(source.get("OPENAI_API_KEY")),
+        openai_base_url=source.get("OPENAI_BASE_URL"),
+        anthropic_api_key=_secret(source.get("ANTHROPIC_API_KEY")),
+        anthropic_base_url=source.get("ANTHROPIC_BASE_URL"),
+    )
 
 
-def _csv_tuple(raw: str) -> tuple[str, ...]:
-    return tuple(part for part in (item.strip() for item in raw.split(",")) if part)
+def _secret(raw: str | None) -> SecretStr | None:
+    return SecretStr(raw) if raw else None
 
 
-def _runtime_backend(raw: str) -> RuntimeBackend:
-    normalized = raw.strip().lower()
-    if normalized == "state":
-        return "state"
-    if normalized == "local_shell":
-        return "local_shell"
-    msg = f"unknown KOKORO_AGENT_BACKEND: {raw!r}"
-    raise ValueError(msg)
-
-
-def _int_from_env(source: Mapping[str, str], key: str, default: int) -> int:
+def _int(source: Mapping[str, str], key: str, default: int) -> int:
     raw = source.get(key)
     if raw is None or not raw.strip():
         return default
     return int(raw)
+
+
+def _float(source: Mapping[str, str], key: str, default: float) -> float:
+    raw = source.get(key)
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)

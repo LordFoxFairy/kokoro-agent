@@ -1,21 +1,17 @@
+"""子代理域：类型、内建定义与目录。"""
+
+from __future__ import annotations
+
 from kokoro_agent.subagents.catalog import (
     BUILT_IN_SUBAGENTS,
-    CUSTOM_SUBAGENTS_ENV,
+    RegisteredSubagent,
     SubagentCatalog,
-    load_custom_subagents_from_env,
-)
-from kokoro_agent.subagents.definitions import (
-    subagent_definitions,
-    subagent_specs,
-    subagent_source_for,
+    build_catalog,
 )
 
 __all__ = [
     "BUILT_IN_SUBAGENTS",
-    "CUSTOM_SUBAGENTS_ENV",
+    "RegisteredSubagent",
     "SubagentCatalog",
-    "load_custom_subagents_from_env",
-    "subagent_definitions",
-    "subagent_specs",
-    "subagent_source_for",
+    "build_catalog",
 ]

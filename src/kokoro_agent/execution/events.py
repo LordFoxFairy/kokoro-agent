@@ -1,191 +1,219 @@
-"""ACL 投影映射：把 v3 typed projection 元素映射为对外 AgentEvent，归属取自结构而非状态。"""
+"""wire 构造唯一地点：per-run 单调 index 单点递增，contract strict 模型构造即校验。"""
 
 from __future__ import annotations
 
-from pydantic import JsonValue
+import time
+from collections.abc import Callable, Mapping
 
+from pydantic import BaseModel, JsonValue, TypeAdapter
+
+from kokoro_agent.contract import (
+    RUN_EVENTS_MAXLEN,
+    MessageCompletedPayload,
+    MessageDeltaPayload,
+    RunCompletedPayload,
+    RunFailedPayload,
+    RunStartedPayload,
+    SubagentFinishedPayload,
+    SubagentSource,
+    SubagentStartedPayload,
+    SubagentTextCompletedPayload,
+    SubagentTextDeltaPayload,
+    ThinkingDeltaPayload,
+    Todo,
+    TodoUpdatedPayload,
+    ToolAwaitingApprovalPayload,
+    ToolInvokedPayload,
+    ToolReturnedPayload,
+    agent_event_adapter,
+    run_events_stream,
+)
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.subagents.types import SubagentSource
-from kokoro_agent.tools.names import SUBAGENT_TOOL_NAME
-from kokoro_agent.run.events import (
-    AgentEvent,
-    ChunkData,
-    CustomStatus,
-    DoneData,
-    ErrorData,
-    EventData,
-    ExternalEvent,
-    StartedStatus,
-    SubagentFinishedStatus,
-    SubagentStartedStatus,
-    TodoUpdatedStatus,
-    ToolEndData,
-    ToolStartData,
+from kokoro_agent.streams.protocol import StreamProtocol
+
+SourceResolver = Callable[[str], SubagentSource]
+
+AgentEventPayload = (
+    RunStartedPayload
+    | ThinkingDeltaPayload
+    | MessageDeltaPayload
+    | MessageCompletedPayload
+    | ToolInvokedPayload
+    | ToolAwaitingApprovalPayload
+    | ToolReturnedPayload
+    | TodoUpdatedPayload
+    | SubagentStartedPayload
+    | SubagentFinishedPayload
+    | SubagentTextDeltaPayload
+    | SubagentTextCompletedPayload
+    | RunCompletedPayload
+    | RunFailedPayload
 )
 
-SUBAGENT_LAUNCH_NAMES = frozenset({SUBAGENT_TOOL_NAME})
+_KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
+    RunStartedPayload: "run.started",
+    ThinkingDeltaPayload: "thinking.delta",
+    MessageDeltaPayload: "message.delta",
+    MessageCompletedPayload: "message.completed",
+    ToolInvokedPayload: "tool.invoked",
+    ToolAwaitingApprovalPayload: "tool.awaiting_approval",
+    ToolReturnedPayload: "tool.returned",
+    TodoUpdatedPayload: "todo.updated",
+    SubagentStartedPayload: "subagent.started",
+    SubagentFinishedPayload: "subagent.finished",
+    SubagentTextDeltaPayload: "subagent.text.delta",
+    SubagentTextCompletedPayload: "subagent.text.completed",
+    RunCompletedPayload: "run.completed",
+    RunFailedPayload: "run.failed",
+}
 
 
-def _make_event(event: ExternalEvent, request_id: str, data: EventData) -> AgentEvent:
-    return AgentEvent.model_validate({"event": event, "request_id": request_id, "data": data})
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
-def run_started_event(request_id: str) -> AgentEvent:
-    data: StartedStatus = {"status": "started"}
-    return _make_event("agent_status", request_id, data)
+class RunEmitter:
+    """一次 run 的唯一发射口：index 在此单点递增，event_id=f(run_id,index) 永不回卷。"""
+
+    def __init__(self, bus: StreamProtocol, run_id: str, next_index: int = 0) -> None:
+        self._bus = bus
+        self._run_id = run_id
+        self._next_index = next_index
+
+    @property
+    def run_id(self) -> str:
+        return self._run_id
+
+    @classmethod
+    async def attach(cls, bus: StreamProtocol, run_id: str) -> RunEmitter:
+        # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
+        next_index = 0
+        for item in await bus.read_all(run_events_stream(run_id)):
+            event = agent_event_adapter.validate_python(item.event)
+            next_index = max(next_index, event.index + 1)
+        return cls(bus, run_id, next_index)
+
+    async def emit(self, payload: AgentEventPayload) -> None:
+        event = agent_event_adapter.validate_python(
+            {
+                "kind": _KIND_BY_PAYLOAD[type(payload)],
+                "run_id": self._run_id,
+                "index": self._next_index,
+                "timestamp": _now_ms(),
+                "payload": payload,
+            }
+        )
+        self._next_index += 1
+        # exclude_none：契约 optional 字段的 None 即"缺席"；null 上 wire 会被 session 的 zod .optional() 拒收。
+        await self._bus.publish(
+            run_events_stream(self._run_id),
+            event.model_dump(exclude_none=True),
+            maxlen=RUN_EVENTS_MAXLEN,
+        )
 
 
-def run_done_event(usage: dict[str, JsonValue], *, request_id: str) -> AgentEvent:
-    data: DoneData = {"status": "completed", "usage": usage}
-    return _make_event("agent_done", request_id, data)
+# --- 投影 → payload 映射（v3 typed projection 元素转 contract 载荷的唯一地点） ---
+
+_TODOS_ADAPTER: TypeAdapter[list[Todo]] = TypeAdapter(list[Todo])
 
 
-def run_error_event(error: BaseException, *, request_id: str) -> AgentEvent:
-    data: ErrorData = {"error_kind": type(error).__name__, "message": str(error)}
-    return _make_event("agent_error", request_id, data)
+def message_delta_payload(text: str, *, segment_id: str) -> MessageDeltaPayload | None:
+    return MessageDeltaPayload(segment_id=segment_id, delta=text) if text else None
 
 
-def text_chunk_event(
-    text: str, *, segment_id: str, request_id: str, subagent_id: str | None, final: bool
-) -> AgentEvent | None:
-    return _chunk_event(
-        "text_chunk", text, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id, final=final
-    )
+def message_completed_payload(text: str, *, segment_id: str) -> MessageCompletedPayload | None:
+    # 空文本不发（tool-only 段 output_message.text==""）。
+    return MessageCompletedPayload(segment_id=segment_id, content=text) if text else None
 
 
-def reasoning_chunk_event(
-    text: str, *, segment_id: str, request_id: str, subagent_id: str | None, final: bool
-) -> AgentEvent | None:
-    return _chunk_event(
-        "reasoning_chunk", text, segment_id=segment_id, request_id=request_id, subagent_id=subagent_id, final=final
-    )
+def thinking_delta_payload(text: str, *, segment_id: str) -> ThinkingDeltaPayload | None:
+    return ThinkingDeltaPayload(segment_id=segment_id, delta=text) if text else None
 
 
-def _chunk_event(
-    event: ExternalEvent,
-    text: str,
-    *,
-    segment_id: str,
-    request_id: str,
-    subagent_id: str | None,
-    final: bool,
-) -> AgentEvent | None:
-    # 空文本不发（tool-only 段 output_message.text=""；reasoning 无内容同理）。
+def subagent_text_delta_payload(
+    text: str, *, segment_id: str, subagent_id: str
+) -> SubagentTextDeltaPayload | None:
     if not text:
         return None
-    data: ChunkData = {"segment_id": segment_id, "text": text, "final": final}
-    if subagent_id is not None:
-        data["subagent_id"] = subagent_id
-    return _make_event(event, request_id, data)
+    return SubagentTextDeltaPayload(segment_id=segment_id, subagent_id=subagent_id, text=text)
 
 
-def todo_event(tc: ToolCallInfo, *, request_id: str) -> AgentEvent:
-    # deepagents write_todos 已按 args_schema 校验 todos 结构，原样透传；JSON 安全由信封单一边界兜。
-    data: TodoUpdatedStatus = {
-        "status": "todo_updated",
-        "segment_id": tc.tool_call_id,
-        "todos": (tc.input or {}).get("todos", []),
-    }
-    return _make_event("agent_status", request_id, data)
+def subagent_text_completed_payload(
+    text: str, *, segment_id: str, subagent_id: str
+) -> SubagentTextCompletedPayload | None:
+    if not text:
+        return None
+    return SubagentTextCompletedPayload(segment_id=segment_id, subagent_id=subagent_id, text=text)
 
 
-def tool_start_event(tc: ToolCallInfo, *, request_id: str, subagent_id: str | None = None) -> AgentEvent:
-    data: ToolStartData = {
-        "segment_id": tc.tool_call_id,
-        "tool_id": tc.tool_call_id,
-        "name": tc.tool_name,
-        # 模型生成的入参原样透传；JSON 安全由 AgentEvent 信封单一边界校验，不在此重复。
-        "args": dict(tc.input or {}),
-    }
-    if subagent_id is not None:
-        data["subagent_id"] = subagent_id
-    return _make_event("tool_call_start", request_id, data)
+def tool_invoked_payload(tc: ToolCallInfo) -> ToolInvokedPayload:
+    return ToolInvokedPayload(
+        segment_id=tc.tool_call_id,
+        tool_id=tc.tool_call_id,
+        name=tc.tool_name,
+        # 模型生成的入参原样透传；JSON 安全由 strict payload 构造一次性校验。
+        args=_json_args(tc.input),
+    )
 
 
-def tool_end_event(tc: ToolCallInfo, *, request_id: str, subagent_id: str | None = None) -> AgentEvent:
-    # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 恒 False；
-    # reject/respond 工具不经 projection（见 tool_resolution_event）。
-    data: ToolEndData = {
-        "segment_id": tc.tool_call_id,
-        "tool_id": tc.tool_call_id,
-        "name": tc.tool_name,
-        # 工具结果原样透传，绝不截断（deepagents/工具自身管大小；wire 不毁内容）。
-        "result": _result_text(tc),
-        "is_error": tc.error is not None,
-        "rejected": False,
-    }
-    if subagent_id is not None:
-        data["subagent_id"] = subagent_id
-    return _make_event("tool_call_end", request_id, data)
+def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
+    # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
+    return ToolReturnedPayload(
+        segment_id=tc.tool_call_id,
+        tool_id=tc.tool_call_id,
+        name=tc.tool_name,
+        result=_result_text(tc),
+        is_error=tc.error is not None,
+    )
 
 
-def tool_resolution_event(
-    *,
-    tool_id: str,
-    segment_id: str,
-    name: str,
-    result: str,
-    request_id: str,
-    rejected: bool,
-    reject_reason: str | None = None,
-    responded: bool = False,
-) -> AgentEvent:
-    # HITL reject/respond 生成 synthetic ToolMessage 跳过 tool 节点 → 工具不经 v3 projection 浮现；
-    # 故由 resume 据 snapshot+decision 直发终态（与 tool_call_awaiting 同为快照直发，replay 安全）。
-    # respond=人工答复：done 态但带 responded 标记，让回看者知结果是人填非工具产出。
-    data: ToolEndData = {
-        "segment_id": segment_id,
-        "tool_id": tool_id,
-        "name": name,
-        "result": result,
-        "is_error": False,
-        "rejected": rejected,
-    }
-    if rejected and reject_reason:
-        data["reject_reason"] = reject_reason
-    if responded:
-        data["responded"] = True
-    return _make_event("tool_call_end", request_id, data)
+def todo_payload(tc: ToolCallInfo) -> TodoUpdatedPayload:
+    # todos 来自 LLM 工具入参（不可信载荷）：strict 洗净后进 wire。
+    todos = (tc.input or {}).get("todos", [])
+    return TodoUpdatedPayload(todos=_TODOS_ADAPTER.validate_python(todos))
 
 
-def subagent_started_event(
-    sub: SubagentInfo, *, request_id: str, source: SubagentSource
-) -> AgentEvent:
+def subagent_started_payload(sub: SubagentInfo, *, source: SubagentSource) -> SubagentStartedPayload:
     name = sub.name or "subagent"
-    data: SubagentStartedStatus = {
-        "status": "subagent_started",
-        "segment_id": sub.trigger_call_id or "",
-        "subagent_id": sub.trigger_call_id or "",
-        "name": name,
-        "description": sub.task_input or "",
-        "subagent_type": name,
-        "source": source,
-    }
-    return _make_event("agent_status", request_id, data)
+    return SubagentStartedPayload(
+        segment_id=sub.trigger_call_id or "subagent",
+        subagent_id=sub.trigger_call_id or "subagent",
+        name=name,
+        description=sub.task_input or "",
+        subagent_type=name,
+        source=source,
+    )
 
 
-def subagent_finished_event(
-    sub: SubagentInfo, *, request_id: str, source: SubagentSource
-) -> AgentEvent:
+def subagent_finished_payload(
+    sub: SubagentInfo, *, source: SubagentSource
+) -> SubagentFinishedPayload:
     name = sub.name or "subagent"
-    data: SubagentFinishedStatus = {
-        "status": "subagent_finished",
-        "segment_id": sub.trigger_call_id or "",
-        "subagent_id": sub.trigger_call_id or "",
-        "name": name,
-        "subagent_type": name,
-        "source": source,
-    }
-    # langgraph SubgraphStatus="failed" → 子代理内部异常：失败有归属，不再被吞成顶层 agent_error。
-    if sub.status == "failed":
-        data["failed"] = True
-    return _make_event("agent_status", request_id, data)
+    # SubgraphStatus=="failed" → 子代理内部异常：失败有归属，不被吞成顶层 run.failed。
+    failed = sub.status == "failed"
+    return SubagentFinishedPayload(
+        segment_id=sub.trigger_call_id or "subagent",
+        subagent_id=sub.trigger_call_id or "subagent",
+        name=name,
+        subagent_type=name,
+        source=source,
+        failed=True if failed else None,
+        error="subagent failed" if failed else None,
+    )
 
 
-def custom_event(payload: object, *, request_id: str) -> AgentEvent:
-    # 守则D：get_stream_writer() 业务遥测原样挂 agent_status.data.custom；JSON 安全由信封单一边界校验。
-    data: CustomStatus = {"status": "custom", "custom": payload}
-    return _make_event("agent_status", request_id, data)
+def run_failed_payload(error: BaseException) -> RunFailedPayload:
+    # message 契约 NonEmptyStr：空 str(error) 回退异常类名，绝不发空错误。
+    return RunFailedPayload(
+        error_kind=type(error).__name__, message=str(error) or type(error).__name__
+    )
+
+
+_ARGS_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+
+
+def _json_args(args: dict[str, object] | None) -> dict[str, JsonValue]:
+    return _ARGS_ADAPTER.validate_python(args or {})
 
 
 def _result_text(tc: ToolCallInfo) -> str:

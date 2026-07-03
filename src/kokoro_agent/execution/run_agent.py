@@ -1,119 +1,80 @@
-"""一次 agent 执行的生命周期编排：started → 投影消费 → interrupt 暂停 / 终态收口。"""
+"""单次 run 编排：run.started → 投影泵 → interrupt 暂停 / claim-before-emit 终态收口。"""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
 
 from langchain_core.callbacks import get_usage_metadata_callback
-from langchain_core.messages import BaseMessage, UsageMetadata
+from langchain_core.messages import UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
-from langgraph.types import Interrupt
-from pydantic import JsonValue
 
-from kokoro_agent.execution.approvals import (
-    ApprovalRequest,
-    tool_approval_events,
-    tool_approval_requests,
-)
-from kokoro_agent.execution.events import (
-    run_done_event,
-    run_error_event,
-    run_started_event,
-)
+from kokoro_agent.contract import RunCompletedPayload, RunStartedPayload, TokenUsage
+from kokoro_agent.execution.approvals import awaiting_payloads
+from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
 from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.streams.protocol import StreamProtocol
-from kokoro_agent.execution.publish_agent_events import SubagentSourceResolver, consume_and_drain_run
-from kokoro_agent.subagents.types import SubagentSource
-from kokoro_agent.run.events import AgentEvent
-
-__all__ = ["InvokableAgent", "events_stream", "invoke_once"]
-
-
-def events_stream(run_id: str) -> str:
-    return f"kokoro:run:{run_id}:events"
-
-
-async def _always_claim() -> bool:
-    # 默认认领：直接调 invoke_once（如测试）无共享存储时终态总归本次发。
-    return True
+from kokoro_agent.execution.publish_agent_events import pump_run
 
 
 async def invoke_once(
-    bus: StreamProtocol,
+    emitter: RunEmitter,
     agent: InvokableAgent,
-    run_id: str,
-    conversation_id: str,
+    thread_id: str,
     payload: object,
-    approval_tool_names: frozenset[str] = frozenset(),
-    subagent_source: SubagentSourceResolver | None = None,
+    *,
+    approval_tool_names: frozenset[str],
+    source_for: SourceResolver,
+    claim_terminal: Callable[[], Awaitable[bool]],
     trace: RunnableConfig | None = None,
-    claim_terminal: Callable[[], Awaitable[bool]] = _always_claim,
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
-    终态发射前先经 claim_terminal 原子认领：cancel 与自然完成共用同一认领 key，
-    多 pod 广播下恰好一个终态落地（认领失败者静默跳过，不重复发终态）。
+    终态发射前先经 claim_terminal 原子认领：cancel/自然完成/异常三路共用同一认领键，
+    多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
-    stream = events_stream(run_id)
-    config = _config(conversation_id, trace)
-    await _publish(bus, stream, run_started_event(run_id))
-    # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token，与事件投影解耦；
-    # 每次 invoke_once 独立计量本段（HITL resume 是新一段）。
+    config = _config(thread_id, trace)
+    await emitter.emit(RunStartedPayload())
+    # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
     with get_usage_metadata_callback() as usage_cb:
         try:
             run = await agent.astream_events(
                 payload, version="v3", config=config, transformers=[CustomTransformer]
             )
             async with run:
-                # 微观本地消费层：一体化合流管道并发抽干 v3 四投影→保序单点 publish，
-                # try/finally 保证哨兵必达、drainer 不泄漏（见 consume_and_drain_run）。
-                await consume_and_drain_run(
-                    bus,
-                    stream,
-                    run,
-                    run_id,
-                    subagent_source=subagent_source if subagent_source is not None else _custom_source,
-                )
+                await pump_run(emitter, run, source_for=source_for)
                 if await run.interrupted():
                     snapshot = await agent.aget_state(config)
-                    for ev in tool_approval_events(
-                        _messages(snapshot.values),
-                        _approval_requests(snapshot.interrupts),
-                        approval_tool_names,
-                        request_id=run_id,
-                    ):
-                        await _publish(bus, stream, ev)
+                    for awaiting in awaiting_payloads(snapshot, approval_tool_names):
+                        await emitter.emit(awaiting)
                     return False
             if await claim_terminal():
-                usage = _sum_usage(usage_cb.usage_metadata)
-                await _publish(bus, stream, run_done_event(usage, request_id=run_id))
+                await emitter.emit(
+                    RunCompletedPayload(
+                        status="completed", token_usage=_sum_usage(usage_cb.usage_metadata)
+                    )
+                )
             return True
-        except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 agent_error
+        except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
             if await claim_terminal():
-                await _publish(bus, stream, run_error_event(error, request_id=run_id))
+                await emitter.emit(run_failed_payload(error))
             return True
 
 
-def _sum_usage(per_model: Mapping[str, UsageMetadata]) -> dict[str, JsonValue]:
-    # 原生 callback 按 model_name 分组；wire 用扁平 total，故跨 model 累加三键。
-    total: dict[str, JsonValue] = {}
+def _sum_usage(per_model: Mapping[str, UsageMetadata]) -> TokenUsage | None:
+    # callback 按 model_name 分组；wire 用扁平 total，跨 model 累加；全无用量即 null。
+    if not per_model:
+        return None
+    input_tokens = 0
+    output_tokens = 0
     for usage in per_model.values():
-        for key in ("input_tokens", "output_tokens", "total_tokens"):
-            value = usage.get(key)
-            if isinstance(value, int):
-                prev = total.get(key, 0)
-                total[key] = (prev if isinstance(prev, int) else 0) + value
-    return total
+        # provider 可能漏报单项：缺省 0，绝不让计量残缺炸成 run.failed。
+        input_tokens += usage.get("input_tokens", 0)
+        output_tokens += usage.get("output_tokens", 0)
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
-def _custom_source(_name: str) -> SubagentSource:
-    return "config-custom"
-
-
-def _config(conversation_id: str, trace: RunnableConfig | None) -> RunnableConfig:
-    config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
+def _config(thread_id: str, trace: RunnableConfig | None) -> RunnableConfig:
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     if trace is not None:
         callbacks = trace.get("callbacks")
         metadata = trace.get("metadata")
@@ -122,18 +83,3 @@ def _config(conversation_id: str, trace: RunnableConfig | None) -> RunnableConfi
         if metadata is not None:
             config["metadata"] = metadata
     return config
-
-
-async def _publish(bus: StreamProtocol, stream: str, ev: AgentEvent) -> None:
-    await bus.publish(stream, ev.model_dump())
-
-
-def _approval_requests(interrupts: tuple[Interrupt, ...]) -> list[ApprovalRequest]:
-    # interrupt.value 是框架边界对象；结构解析在 projection.hitl 内一次性收口。
-    return tool_approval_requests([interrupt.value for interrupt in interrupts])
-
-
-def _messages(values: Mapping[str, Any]) -> list[BaseMessage]:
-    # LangGraph state values 为 Any；messages 在此唯一边界过滤为 BaseMessage 序列。
-    raw: Any = values.get("messages") or []
-    return [m for m in raw if isinstance(m, BaseMessage)]

@@ -1,4 +1,4 @@
-"""application 消费的 agent 端口：v3 typed projections 的窄契约，infra builder 实现。"""
+"""LangGraph/DeepAgents 的窄 runtime_checkable 端口：私有泛型止步于此。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from langgraph.types import Interrupt
 
 @runtime_checkable
 class ModelStream(Protocol):
-    """单次模型调用的 v3 流（AsyncChatModelStream）：原生 .text/.reasoning projection 取文本/推理与归属。"""
+    """单次模型调用的 v3 流（AsyncChatModelStream）：原生 .text/.reasoning projection。"""
 
     namespace: list[str]
     node: str | None
@@ -30,7 +30,7 @@ class ModelStream(Protocol):
 
 @runtime_checkable
 class ToolCallInfo(Protocol):
-    """transformer 映射工具事件所需的最小视图：起始稳定 + 终值。"""
+    """工具事件映射所需的最小视图：起始稳定 + 终值。"""
 
     tool_call_id: str
     tool_name: str
@@ -41,7 +41,7 @@ class ToolCallInfo(Protocol):
 
 @runtime_checkable
 class ToolCallView(ToolCallInfo, Protocol):
-    """invoke 驱动消费额外所需：完成标志 + 输出增量流（ToolCallStream 全貌）。"""
+    """驱动消费额外所需：完成标志 + 输出增量流（ToolCallStream 全貌）。"""
 
     completed: bool
     output_deltas: AsyncIterable[object]
@@ -62,7 +62,7 @@ class _RunProjections(Protocol):
 
 @runtime_checkable
 class SubagentInfo(Protocol):
-    """transformer 映射子代理状态所需的最小身份：归属取 trigger_call_id。"""
+    """子代理状态映射所需的最小身份：归属取 trigger_call_id。"""
 
     name: str | None
     trigger_call_id: str | None
@@ -86,7 +86,7 @@ class AgentRunStream(_RunProjections, Protocol):
 
 @runtime_checkable
 class StateView(Protocol):
-    """checkpoint 快照的窄视图（StateSnapshot）：暂停信息取 typed interrupts，消息取 values。"""
+    """checkpoint 快照的窄视图（StateSnapshot）：暂停取 typed interrupts，消息取 values。"""
 
     @property
     def values(self) -> Mapping[str, Any]: ...
@@ -96,7 +96,7 @@ class StateView(Protocol):
 
 @runtime_checkable
 class InvokableAgent(Protocol):
-    """编译后 langgraph 图的窄契约：v3 流入口 + 状态查询，挡住私有泛型泄漏。"""
+    """编译后 langgraph 图的窄契约：v3 流入口 + 状态查询。"""
 
     async def astream_events(
         self,

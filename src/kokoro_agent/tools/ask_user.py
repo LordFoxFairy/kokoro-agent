@@ -1,9 +1,9 @@
-"""ask_user tool definition for HITL respond flows."""
+"""ask_user 工具：HITL respond 流程的语义暂停点。"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
 from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.tools.names import ASK_USER_TOOL_NAME
 
@@ -28,6 +28,3 @@ ASK_USER_TOOL = StructuredTool(
     args_schema=AskUserArgs,
     func=_ask_user_uninterrupted,
 )
-
-
-__all__ = ["ASK_USER_TOOL", "ASK_USER_TOOL_NAME", "AskUserArgs"]

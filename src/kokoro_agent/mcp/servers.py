@@ -1,14 +1,27 @@
-"""MCP server configuration boundary for per-run capabilities."""
+"""MCP 连接装配：McpServer 契约 → langchain StreamableHttpConnection。"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from collections.abc import Sequence
+
+from langchain_mcp_adapters.sessions import Connection, StreamableHttpConnection
+
+from kokoro_agent.contract import McpServer
 
 
-class McpServerConfig(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+class McpConnectionError(Exception):
+    pass
 
-    name: str
-    transport: str
-    url: str
-    allowed_tools: tuple[str, ...] = ()
+
+# 返回 Connection 联合别名以匹配 MultiServerMCPClient 的不变 dict 参数。
+def build_connections(servers: Sequence[McpServer]) -> dict[str, Connection]:
+    connections: dict[str, Connection] = {}
+    for server in servers:
+        if server.name in connections:
+            raise McpConnectionError(f"duplicate mcp server name {server.name!r}")
+        # transport 两值均映射到 streamable_http 连接类型。
+        conn = StreamableHttpConnection(transport="streamable_http", url=server.url)
+        if server.timeout_s is not None:
+            conn["timeout"] = float(server.timeout_s)
+        connections[server.name] = conn
+    return connections

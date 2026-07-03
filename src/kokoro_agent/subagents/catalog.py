@@ -1,41 +1,36 @@
-"""子代理目录：内建子代理 + 从环境变量加载的配置自定义子代理。"""
+"""子代理目录：内建 + 配置自定义（JSON 经注入），source 标签解析单点。"""
 
 from __future__ import annotations
 
-import os
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Annotated, Final
 
+from deepagents.middleware.subagents import SubAgent
 from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 
-from kokoro_agent.subagents.types import RegisteredSubagent, SubagentSource
-
-CUSTOM_SUBAGENTS_ENV = "KOKORO_CUSTOM_SUBAGENTS"
+from kokoro_agent.contract import SubagentSource
 
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
+@dataclass(frozen=True, slots=True)
+class RegisteredSubagent:
+    name: str
+    description: str
+    system_prompt: str
+    source: SubagentSource
+
+
 class _SubagentDefinition(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
+
     name: _NonEmpty
     description: _NonEmpty
     system_prompt: _NonEmpty
 
 
-_CUSTOM_PAYLOADS = TypeAdapter(list[_SubagentDefinition])
-
-
-def normalize_subagent_name(name: str) -> str:
-    normalized = name.strip()
-    if not normalized:
-        msg = "subagent name must not be blank"
-        raise ValueError(msg)
-    return normalized
-
-
-def normalize_definition(name: str, description: str, system_prompt: str) -> _SubagentDefinition:
-    return _SubagentDefinition(name=name, description=description, system_prompt=system_prompt)
-
+_CUSTOM_PAYLOADS: TypeAdapter[list[_SubagentDefinition]] = TypeAdapter(list[_SubagentDefinition])
 
 BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
     RegisteredSubagent(
@@ -50,7 +45,7 @@ BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
 )
 
 
-class SubagentCatalog(Mapping[str, RegisteredSubagent]):
+class SubagentCatalog:
     """按 name 索引的不可变子代理目录：唯一性校验在构建处一次性收口。"""
 
     __slots__ = ("_by_name",)
@@ -59,44 +54,36 @@ class SubagentCatalog(Mapping[str, RegisteredSubagent]):
         by_name: dict[str, RegisteredSubagent] = {}
         for spec in specs:
             if spec.name in by_name:
-                msg = f"duplicate or reserved subagent name: {spec.name}"
-                raise ValueError(msg)
+                raise ValueError(f"duplicate or reserved subagent name: {spec.name}")
             by_name[spec.name] = spec
         self._by_name = by_name
 
-    def __getitem__(self, name: str) -> RegisteredSubagent:
-        return self._by_name[name]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._by_name)
-
-    def __len__(self) -> int:
-        return len(self._by_name)
+    def definitions(self) -> list[SubAgent]:
+        return [
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "system_prompt": spec.system_prompt,
+            }
+            for spec in self._by_name.values()
+        ]
 
     def source_for(self, name: str) -> SubagentSource:
-        spec = self._by_name.get(normalize_subagent_name(name))
-        if spec is None:
-            msg = f"unknown subagent name: {name.strip()}"
-            raise ValueError(msg)
-        return spec.source
+        spec = self._by_name.get(name.strip())
+        # 目录之外的名字 = 运行期动态创建的子代理：契约一等来源，不是错误。
+        return spec.source if spec is not None else "runtime-custom"
 
 
-def load_custom_subagents_from_env(env: Mapping[str, str] | None = None) -> list[RegisteredSubagent]:
-    source = env if env is not None else os.environ
-    raw = source.get(CUSTOM_SUBAGENTS_ENV)
-    if not raw:
-        return []
-
-    payloads = _CUSTOM_PAYLOADS.validate_json(raw)
-    custom = [
-        RegisteredSubagent(
-            name=payload.name,
-            description=payload.description,
-            system_prompt=payload.system_prompt,
-            source="config-custom",
-        )
-        for payload in payloads
-    ]
-    # 借目录构建的唯一性校验拦截内部重名与内建保留名冲突，避免本处再造一份。
-    SubagentCatalog((*BUILT_IN_SUBAGENTS, *custom))
-    return custom
+def build_catalog(custom_specs_json: str | None) -> SubagentCatalog:
+    custom: list[RegisteredSubagent] = []
+    if custom_specs_json:
+        custom = [
+            RegisteredSubagent(
+                name=payload.name,
+                description=payload.description,
+                system_prompt=payload.system_prompt,
+                source="config-custom",
+            )
+            for payload in _CUSTOM_PAYLOADS.validate_json(custom_specs_json)
+        ]
+    return SubagentCatalog((*BUILT_IN_SUBAGENTS, *custom))

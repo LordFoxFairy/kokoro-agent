@@ -42,6 +42,35 @@ def _script() -> list[AIMessage]:
     ]
 
 
+def hitl_script() -> list[AIMessage]:
+    # 跨栈 e2e 脚本：一次 ask_user 暂停 → 一次审批工具（write_file）暂停 → 正常文本流。
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "ask_user",
+                    "args": {"question": "偏好中文还是英文？", "choices": ["中文", "英文"]},
+                    "id": "local_ask",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": "/plan.md", "content": "# 计划\n本地预览"},
+                    "id": "local_write",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content=_FINAL_TEXT),
+    ]
+
+
 class LocalFakeChatModel(BaseChatModel):
     """支持工具调用的确定性、免凭证假模型。
 
@@ -50,8 +79,13 @@ class LocalFakeChatModel(BaseChatModel):
     （输入里尚无 ``AIMessage``）时归零，因此长驻 worker 复用同一实例也能跨轮正常工作。
     """
 
-    _cursor: int = PrivateAttr(default=0)
     _turns: list[AIMessage] = PrivateAttr(default_factory=_script)
+
+    @classmethod
+    def with_script(cls, script: Sequence[AIMessage]) -> LocalFakeChatModel:
+        model = cls()
+        model._turns = list(script)
+        return model
 
     @property
     def _llm_type(self) -> str:
@@ -74,15 +108,14 @@ class LocalFakeChatModel(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        if not any(isinstance(message, AIMessage) for message in messages):
-            self._cursor = 0  # 一轮的首个调用 → 重启脚本
-        if self._cursor < len(self._turns):
-            reply = self._turns[self._cursor]
-            self._cursor += 1
-        else:
-            reply = AIMessage(content="")  # 多出的循环轮次直接终止
+        # 从历史中已有的 AIMessage 数推断下一步：状态派生，跨 build/resume（新实例）稳定，
+        # 实例计数器做不到（resume 重建 model 会归零）。
+        turn = sum(1 for message in messages if isinstance(message, AIMessage))
+        reply = self._turns[turn] if turn < len(self._turns) else AIMessage(content="")
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
 
-def make_local_fake_chat_model() -> BaseChatModel:
+def make_local_fake_chat_model(script: Sequence[AIMessage] | None = None) -> BaseChatModel:
+    if script is not None:
+        return LocalFakeChatModel.with_script(script)
     return LocalFakeChatModel()

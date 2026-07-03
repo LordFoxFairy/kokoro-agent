@@ -1,55 +1,107 @@
-"""Worker 进程入口：装配 run 编排，订阅请求流并并发执行。"""
+"""进程入口：os.environ 在此读一次 → AppConfig → 每请求从 RuntimeConfig 装配 → Supervisor.serve。"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import socket
 
+from deepagents.middleware.subagents import SubAgent
 from dotenv import load_dotenv
+from langchain_core.tools import BaseTool
 
+from kokoro_agent.config import AppConfig
+from kokoro_agent.contract import REQUESTS_STREAM, RunRequest
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.storage.checkpoints import make_checkpointer
-from kokoro_agent.model import make_chat_model
+from kokoro_agent.execution.prompts import SYSTEM_PROMPT
+from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.mcp.tools import load_mcp_tools
+from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.observability import trace_config
+from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
+from kokoro_agent.skills.mounts import resolve_skill_mounts
+from kokoro_agent.storage.checkpoints import make_checkpointer
+from kokoro_agent.storage.run_state import make_run_state_store
+from kokoro_agent.streams.factory import make_stream
+from kokoro_agent.subagents import build_catalog
+from kokoro_agent.tools.middleware import ToolPolicyMiddleware
+from kokoro_agent.tools.names import ASK_USER_TOOL_NAME, RESERVED_TOOL_NAMES
 from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.storage import make_run_state_store
-from kokoro_agent.subagents import subagent_source_for
-from kokoro_agent.streams import make_stream
-from kokoro_agent.execution.run_agent import InvokableAgent
-from kokoro_agent.execution.resume_agent import REQUESTS_STREAM, RunSupervisor
-from kokoro_agent.worker.messages import RunRequest
+from kokoro_agent.tools.registry import resolve_tools
+from kokoro_agent.worker.supervisor import RunSupervisor
 
 LOGGER = logging.getLogger(__name__)
 
 
-async def _serve() -> None:
-    bus = make_stream()
-    # 进程级共享 checkpointer + run 状态存储：sqlite 后端落盘跨重启，多 pod 靠共享存储去重 / 终态认领。
-    async with make_checkpointer() as saver, make_run_state_store() as store:
+def _consumer_name() -> str:
+    # consumer-group 内的成员身份：主机+pid 保多 pod/多进程不撞名。
+    return f"{socket.gethostname()}-{os.getpid()}"
 
-        def build(request: RunRequest) -> InvokableAgent:
-            model = make_chat_model(request.execution_style)
+
+def _wire_subagents(request: RunRequest) -> list[SubAgent]:
+    # wire 子代理转 deepagents 定义；V1 只透传身份/提示，tools/model 后续接。
+    return [
+        {
+            "name": spec.name,
+            "description": spec.description,
+            "system_prompt": spec.system_prompt,
+        }
+        for spec in request.runtime.subagents
+    ]
+
+
+def _approval_names(request: RunRequest) -> frozenset[str]:
+    # ask_user 恒为语义暂停点，须与审批工具一同纳入 pending 识别集合。
+    return frozenset(request.runtime.permissions.approval_tools) | {ASK_USER_TOOL_NAME}
+
+
+async def _serve(config: AppConfig) -> None:
+    bus = make_stream(config.stream)
+    catalog = build_catalog(config.custom_subagents_json)
+    # 进程级共享 checkpointer + run 状态存储：sqlite 落盘跨重启，多 pod 靠共享存储去重/租约/终态认领。
+    async with (
+        make_checkpointer(config.checkpoint) as saver,
+        make_run_state_store(config.run_state) as store,
+    ):
+
+        async def build(request: RunRequest) -> InvokableAgent:
+            runtime = request.runtime
+            tools: list[BaseTool] = list(resolve_tools(runtime.tools))
+            tools.extend(await load_mcp_tools(runtime.mcp))
+            # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。
+            authorized = frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES
+            approval_tools = frozenset(runtime.permissions.approval_tools)
             return build_agent(
-                model,
-                request.permission_mode,
+                model=make_chat_model(config.model, runtime.model),
+                tools=tools,
+                system_prompt=SYSTEM_PROMPT,
+                subagents=[*catalog.definitions(), *_wire_subagents(request)],
                 checkpointer=saver,
+                permissions=build_filesystem_permissions(runtime.permissions.filesystem),
+                interrupt_on=build_interrupt_on(approval_tools),
+                middleware=[ToolPolicyMiddleware(authorized)],
+                skills=resolve_skill_mounts(runtime.skills),
+                backend=make_backend(runtime.backend, config.sandbox),
             )
 
         supervisor = RunSupervisor(
             agent_builder=build,
             store=store,
-            approval_tool_names=lambda request: frozenset(build_interrupt_on(request.permission_mode)),
-            trace_factory=trace_config,
-            subagent_source=subagent_source_for,
+            approval_tool_names=_approval_names,
+            trace_factory=lambda request: trace_config(config.observability, request),
+            source_for=catalog.source_for,
+            consumer=_consumer_name(),
+            heartbeat_s=config.lease_heartbeat_s,
         )
-        LOGGER.info("kokoro-agent worker starting on stream %s", REQUESTS_STREAM)
+        LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
         await supervisor.serve(bus)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
-    asyncio.run(_serve())
+    asyncio.run(_serve(AppConfig.from_env(os.environ)))
 
 
 if __name__ == "__main__":

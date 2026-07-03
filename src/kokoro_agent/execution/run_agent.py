@@ -33,7 +33,8 @@ async def invoke_once(
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
     config = _config(thread_id, trace)
-    await emitter.emit(RunStartedPayload())
+    if emitter.at_start:
+        await emitter.emit(RunStartedPayload())
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
     with get_usage_metadata_callback() as usage_cb:
         try:

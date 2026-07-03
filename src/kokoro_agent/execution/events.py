@@ -97,6 +97,11 @@ class RunEmitter:
     def run_id(self) -> str:
         return self._run_id
 
+    @property
+    def at_start(self) -> bool:
+        # index==0 才是 run 真起点：resume/重启/重拾续段不重复宣告 run.started。
+        return self._next_index == 0
+
     @classmethod
     async def attach(
         cls,

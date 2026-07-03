@@ -30,6 +30,7 @@ from kokoro_agent.contract import (
     MessageCompleted,
     RunCompleted,
     RunFailed,
+    RunStartedPayload,
     SubagentFinished,
     SubagentSource,
     SubagentStarted,
@@ -105,6 +106,16 @@ async def test_index_strictly_monotonic() -> None:
     await _invoke(bus, FakeAgent(run=FakeRunStream(models=(model,))))
     indexes = [e.index for e in bus.run_events("r1")]
     assert indexes == list(range(len(indexes)))
+
+
+async def test_resumed_segment_does_not_repeat_run_started() -> None:
+    # resume/重拾续段：index>0 时不再宣告 run.started（wire 噪音，真栈 dump 抓获）。
+    bus = MemoryStream()
+    first = RunEmitter(bus, "rn")
+    assert first.at_start is True
+    await first.emit(RunStartedPayload())
+    resumed = await RunEmitter.attach(bus, "rn")
+    assert resumed.at_start is False
 
 
 def test_clip_result_boundary_matrix() -> None:

@@ -5,6 +5,7 @@ description = "Kokoro agent runtime"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "beautifulsoup4>=4.15.0",
   "deepagents",
   "httpx>=0.28.1",
   "langchain",

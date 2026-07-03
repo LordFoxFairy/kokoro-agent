@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 from kokoro_agent.tools.memory import SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME
+from kokoro_agent.tools.web import WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME
 
 TODO_TOOL_NAME = "write_todos"  # deepagents 内置 TODO 工具
 SUBAGENT_TOOL_NAME = "task"  # deepagents 子代理启动工具
@@ -35,17 +36,17 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
         seen.add(name)
 
 KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {ASK_USER_TOOL.name: ASK_USER_TOOL}
-# 恒挂载核心工具：ask_user（handbook 12 号）。记忆工具同为恒挂载，但实例含
-# 每 run 注入的 scope，由 worker 装配点经 make_memory_tools 创建，不入常量表。
+# 恒挂载核心工具：ask_user（handbook 12 号）。记忆/web 工具同为底层工具，但实例
+# 含装配期注入的政策（scope / allow_private / search provider），由 worker 创建，不入常量表。
 CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL,)
-MEMORY_TOOL_NAMES: Final[frozenset[str]] = frozenset(
-    {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME}
+ASSEMBLY_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME}
 )
 
 assert_tool_names_allowed(KOKORO_TOOLS)
 
 KNOWN_TOOL_NAMES: frozenset[str] = (
-    frozenset(KOKORO_TOOLS) | MEMORY_TOOL_NAMES | DEEPAGENTS_BUILTIN_TOOLS
+    frozenset(KOKORO_TOOLS) | ASSEMBLY_TOOL_NAMES | DEEPAGENTS_BUILTIN_TOOLS
 )
 
 

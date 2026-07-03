@@ -21,6 +21,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
+from kokoro_agent.worker.main import build_web_tools
 
 
 def test_defaults_from_empty_env() -> None:
@@ -240,3 +241,19 @@ def test_openai_reasoning_without_base_url_fails_loud() -> None:
     config = AppConfig.from_env({"KOKORO_OPENAI_REASONING": "1", "OPENAI_API_KEY": "sk-test"})
     with pytest.raises(ValueError, match="OPENAI_BASE_URL"):
         make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
+
+
+def test_web_tools_assembly_matrix() -> None:
+    # search 配置即挂载：无 provider 只有 fetch；zhipu 配齐挂双件；半配 fail-loud。
+    bare = build_web_tools(AppConfig.from_env({}))
+    assert [tool.name for tool in bare] == ["web_fetch"]
+    full = build_web_tools(
+        AppConfig.from_env(
+            {"KOKORO_WEB_SEARCH_PROVIDER": "zhipu", "KOKORO_WEB_SEARCH_API_KEY": "k"}
+        )
+    )
+    assert [tool.name for tool in full] == ["web_fetch", "web_search"]
+    with pytest.raises(ValueError, match="provider"):
+        build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
+    with pytest.raises(ValueError, match="provider"):
+        build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))

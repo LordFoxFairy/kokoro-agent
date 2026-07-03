@@ -25,6 +25,16 @@ _DEFAULT_LOCAL_SHELL_TIMEOUT = 120
 _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES = 100000
 
 
+class WebToolSettings(BaseModel):
+    """web 底层工具政策：fetch 内网放行（本地开发）与 search provider（配置即挂载）。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    fetch_allow_private: bool
+    search_provider: str | None
+    search_api_key: SecretStr | None
+
+
 class AppConfig(BaseModel):
     """按域分组的进程配置：一次解析、全程注入。model/tools/skills/permissions 属每请求 wire。"""
 
@@ -36,6 +46,7 @@ class AppConfig(BaseModel):
     checkpoint: CheckpointSettings
     run_state: RunStateSettings
     sandbox: SandboxSettings
+    web_tools: WebToolSettings
     custom_subagents_json: str | None
     lease_heartbeat_s: Annotated[float, Field(gt=0)]
 
@@ -87,6 +98,11 @@ class AppConfig(BaseModel):
                         _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES,
                     ),
                 }
+            ),
+            web_tools=WebToolSettings(
+                fetch_allow_private=source.get("KOKORO_WEB_FETCH_ALLOW_PRIVATE") == "1",
+                search_provider=source.get("KOKORO_WEB_SEARCH_PROVIDER") or None,
+                search_api_key=_secret(source.get("KOKORO_WEB_SEARCH_API_KEY")),
             ),
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
             lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),

@@ -29,6 +29,7 @@ from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.memory import make_memory_tools
+from kokoro_agent.tools.web import make_web_fetch_tool, make_web_search_tool, make_zhipu_search
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, SUBAGENT_TOOL_NAME
@@ -65,9 +66,26 @@ def _approval_names(request: RunRequest) -> frozenset[str]:
     return names
 
 
+def build_web_tools(config: AppConfig) -> list[BaseTool]:
+    # fetch 恒挂载（SSRF 政策来自进程配置）；search 配置即挂载——无 provider 不挂空壳。
+    tools: list[BaseTool] = [
+        make_web_fetch_tool(allow_private=config.web_tools.fetch_allow_private)
+    ]
+    provider = config.web_tools.search_provider
+    if provider is None:
+        return tools
+    if provider != "zhipu" or config.web_tools.search_api_key is None:
+        raise ValueError(
+            f"unsupported web search provider config: {provider!r} (need zhipu + api key)"
+        )
+    tools.append(make_web_search_tool(make_zhipu_search(config.web_tools.search_api_key.get_secret_value())))
+    return tools
+
+
 async def _serve(config: AppConfig) -> None:
     bus = make_stream(config.stream)
     catalog = build_catalog(config.custom_subagents_json)
+    web_tools = build_web_tools(config)
     # 进程级共享 checkpointer + run 状态存储：sqlite 落盘跨重启，多 pod 靠共享存储去重/租约/终态认领。
     async with (
         make_checkpointer(config.checkpoint) as saver,
@@ -80,6 +98,7 @@ async def _serve(config: AppConfig) -> None:
             tools: list[BaseTool] = list(resolve_tools(runtime.tools))
             # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。
             tools.extend(make_memory_tools(request.context.namespace))
+            tools.extend(web_tools)
             tools.extend(await load_mcp_tools(runtime.mcp))
             # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。
             authorized = frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES

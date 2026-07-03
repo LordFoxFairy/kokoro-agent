@@ -1,4 +1,4 @@
-"""记忆工具规格：真图内经 RunContext.namespace 前缀读写 store，跨 run 可读、跨 namespace 不可见。"""
+"""记忆工具规格：scope 在装配时注入（工具体无租户概念），跨 run 可读、跨 scope 不可见。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.run.context import RunContext
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.contract.streams import run_events_stream
-from kokoro_agent.tools.memory import MEMORY_TOOLS, SaveMemoryArgs
+from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
 
 
 def _context(namespace: str, run_id: str) -> RunContext:
@@ -24,7 +24,7 @@ def _context(namespace: str, run_id: str) -> RunContext:
 async def _run(script: list[AIMessage], store: InMemoryStore, context: RunContext) -> MemoryStream:
     agent = build_agent(
         model=LocalFakeChatModel.with_script(script),
-        tools=list(MEMORY_TOOLS),
+        tools=list(make_memory_tools(context.namespace)),
         system_prompt="x",
         subagents=[],
         checkpointer=None,

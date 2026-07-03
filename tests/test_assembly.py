@@ -19,6 +19,7 @@ from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
+from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
 
 
@@ -206,10 +207,11 @@ def test_interrupt_on_subagent_create_ask_gates_task() -> None:
 
 
 def test_core_tools_always_mounted() -> None:
-    # ask_user（handbook 12 号）与长期记忆工具（模块文档 Owns memory）恒挂载，不依赖名单。
-    names = [tool.name for tool in resolve_tools([])]
-    assert names == ["ask_user_question", "save_memory", "search_memory"]
-    assert [tool.name for tool in resolve_tools(["save_memory"])] == names
+    # ask_user（handbook 12 号）恒挂载；记忆工具由 worker 装配点按 run scope 创建。
+    assert [tool.name for tool in resolve_tools([])] == ["ask_user_question"]
+    # 名单里出现记忆工具名不报未知也不重复挂载（实例只来自 make_memory_tools）。
+    assert [tool.name for tool in resolve_tools(["save_memory"])] == ["ask_user_question"]
+    assert [tool.name for tool in make_memory_tools("ns")] == ["save_memory", "search_memory"]
 
 
 def test_openai_reasoning_switch_selects_deepseek_wrapper() -> None:

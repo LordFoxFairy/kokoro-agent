@@ -8,7 +8,7 @@ from typing import Final
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
-from kokoro_agent.tools.memory import MEMORY_TOOLS
+from kokoro_agent.tools.memory import SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME
 
 TODO_TOOL_NAME = "write_todos"  # deepagents 内置 TODO 工具
 SUBAGENT_TOOL_NAME = "task"  # deepagents 子代理启动工具
@@ -34,15 +34,19 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
             raise ValueError(f"duplicate tool name {name!r}")
         seen.add(name)
 
-KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {
-    tool.name: tool for tool in (ASK_USER_TOOL, *MEMORY_TOOLS)
-}
-# 恒挂载核心工具：ask_user（handbook 12 号）+ 长期记忆（模块文档 Owns memory）。
-CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL, *MEMORY_TOOLS)
+KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {ASK_USER_TOOL.name: ASK_USER_TOOL}
+# 恒挂载核心工具：ask_user（handbook 12 号）。记忆工具同为恒挂载，但实例含
+# 每 run 注入的 scope，由 worker 装配点经 make_memory_tools 创建，不入常量表。
+CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL,)
+MEMORY_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME}
+)
 
 assert_tool_names_allowed(KOKORO_TOOLS)
 
-KNOWN_TOOL_NAMES: frozenset[str] = frozenset(KOKORO_TOOLS) | DEEPAGENTS_BUILTIN_TOOLS
+KNOWN_TOOL_NAMES: frozenset[str] = (
+    frozenset(KOKORO_TOOLS) | MEMORY_TOOL_NAMES | DEEPAGENTS_BUILTIN_TOOLS
+)
 
 
 def resolve_tools(names: Sequence[str]) -> list[StructuredTool]:

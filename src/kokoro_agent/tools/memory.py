@@ -1,13 +1,10 @@
-"""长期记忆工具：store 前缀 = RunContext.namespace，跨租户结构性不可见。"""
+"""长期记忆工具：通用存取原语；归属 scope 在装配时注入，工具体不含租户概念。"""
 
 from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
-from langgraph.runtime import get_runtime
-from langgraph.store.base import BaseStore
+from langgraph.config import get_store
 from pydantic import BaseModel, ConfigDict, Field
-
-from kokoro_agent.run.context import RunContext
 
 SAVE_MEMORY_TOOL_NAME = "save_memory"
 SEARCH_MEMORY_TOOL_NAME = "search_memory"
@@ -28,41 +25,33 @@ class SearchMemoryArgs(BaseModel):
     query: str = Field(min_length=1)
 
 
-def _store_and_prefix() -> tuple[BaseStore, tuple[str, str]]:
-    runtime = get_runtime(RunContext)
-    if runtime.store is None:
-        raise RuntimeError("memory store is not wired into the graph")
-    return runtime.store, (runtime.context.namespace, _MEMORY_SEGMENT)
+def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
+    """scope 是调用方的隔离政策（如租户 namespace）；本模块只负责在其下存取。"""
+    prefix = (scope, _MEMORY_SEGMENT)
 
+    async def save_memory(key: str, content: str) -> str:
+        if not content.strip():
+            raise ValueError("memory content must be non-empty")
+        await get_store().aput(prefix, key, {"content": content})
+        return f"memory saved under key {key!r}"
 
-async def _save_memory(key: str, content: str) -> str:
-    if not content.strip():
-        raise ValueError("memory content must be non-empty")
-    store, prefix = _store_and_prefix()
-    await store.aput(prefix, key, {"content": content})
-    return f"memory saved under key {key!r}"
+    async def search_memory(query: str) -> str:
+        items = await get_store().asearch(prefix, query=query, limit=_SEARCH_LIMIT)
+        if not items:
+            return "no memories found"
+        return "\n".join(f"- {item.key}: {item.value.get('content', '')}" for item in items)
 
-
-async def _search_memory(query: str) -> str:
-    store, prefix = _store_and_prefix()
-    items = await store.asearch(prefix, query=query, limit=_SEARCH_LIMIT)
-    if not items:
-        return "no memories found"
-    return "\n".join(f"- {item.key}: {item.value.get('content', '')}" for item in items)
-
-
-SAVE_MEMORY_TOOL = StructuredTool(
-    name=SAVE_MEMORY_TOOL_NAME,
-    description="Persist a durable memory for this workspace (short kebab-case key).",
-    args_schema=SaveMemoryArgs,
-    coroutine=_save_memory,
-)
-
-SEARCH_MEMORY_TOOL = StructuredTool(
-    name=SEARCH_MEMORY_TOOL_NAME,
-    description="Search durable memories saved in earlier runs of this workspace.",
-    args_schema=SearchMemoryArgs,
-    coroutine=_search_memory,
-)
-
-MEMORY_TOOLS: tuple[StructuredTool, ...] = (SAVE_MEMORY_TOOL, SEARCH_MEMORY_TOOL)
+    return (
+        StructuredTool(
+            name=SAVE_MEMORY_TOOL_NAME,
+            description="Persist a durable memory for this workspace (short kebab-case key).",
+            args_schema=SaveMemoryArgs,
+            coroutine=save_memory,
+        ),
+        StructuredTool(
+            name=SEARCH_MEMORY_TOOL_NAME,
+            description="Search durable memories saved in earlier runs of this workspace.",
+            args_schema=SearchMemoryArgs,
+            coroutine=search_memory,
+        ),
+    )

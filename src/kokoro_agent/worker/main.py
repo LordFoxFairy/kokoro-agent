@@ -28,6 +28,7 @@ from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
+from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, SUBAGENT_TOOL_NAME
@@ -77,6 +78,8 @@ async def _serve(config: AppConfig) -> None:
         async def build(request: RunRequest) -> InvokableAgent:
             runtime = request.runtime
             tools: list[BaseTool] = list(resolve_tools(runtime.tools))
+            # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。
+            tools.extend(make_memory_tools(request.context.namespace))
             tools.extend(await load_mcp_tools(runtime.mcp))
             # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。
             authorized = frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES

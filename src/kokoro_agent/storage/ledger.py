@@ -49,6 +49,10 @@ class RunLedger(Protocol):
         # run.completed 用量真源：跨段累计 input/output（与预算计数分开，语义不同）。
         ...
 
+    async def purge_terminal(self, max_age_ms: int) -> int:
+        # retention 清扫：终态且超龄的 run 连同附属（tool_results/计数/信箱）整体清除，返回条数。
+        ...
+
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 原子认领终态：首个认领者返 True，杜绝重复终态事件。
         ...

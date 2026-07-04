@@ -682,3 +682,44 @@ async def test_initial_payload_carries_stable_message_id() -> None:
     assert isinstance(payload, dict)
     messages = TypeAdapter(list[HumanMessage]).validate_python(payload["messages"])
     assert messages[0].id == "rid-m"  # fakes.request 的 message_id 约定
+
+
+# retention：终态收口给事件流设存活期；心跳清扫超龄终态行（0=全关，默认无副作用）。
+async def test_retention_expires_events_stream_on_terminal() -> None:
+    agent = FakeAgent(run=text_run("x"))
+    bus = FakeBus()
+    store = FakeLedger()
+    sup = RunSupervisor(
+        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_names,
+        trace_factory=_no_trace, source_for=_source, consumer="t", events_ttl_s=3600,
+    )
+    await sup.dispatch(bus, request("rr1"))
+    await _drain(sup)
+    assert ("kokoro:run:rr1:events", 3600) in bus.expired_streams
+
+
+async def test_retention_heartbeat_purges_terminal_runs() -> None:
+    agent = FakeAgent(run=text_run("x"))
+    bus = FakeBus()
+    store = FakeLedger()
+    sup = RunSupervisor(
+        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_names,
+        trace_factory=_no_trace, source_for=_source, consumer="t", run_ttl_s=1,
+    )
+    await sup.dispatch(bus, request("rr2"))
+    await _drain(sup)
+    store.clock_ms = 10_000  # 终态已超龄
+    await sup.heartbeat_once(bus)
+    assert await store.is_terminal("rr2") is False  # 已被清扫
+
+
+async def test_retention_off_by_default_no_side_effects() -> None:
+    agent = FakeAgent(run=text_run("x"))
+    bus = FakeBus()
+    store = FakeLedger()
+    sup, _ = _supervisor(agent, store)
+    await sup.dispatch(bus, request("rr3"))
+    await _drain(sup)
+    await sup.heartbeat_once(bus)
+    assert bus.expired_streams == []
+    assert await store.is_terminal("rr3") is True

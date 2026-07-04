@@ -56,6 +56,7 @@ class FakeBus:
         self.published: list[tuple[str, dict[str, JsonValue], int]] = []
         self.acked: list[str] = []
         self.deleted: list[str] = []
+        self.expired_streams: list[tuple[str, int]] = []
         self._inbound = tuple(inbound)
         # per-run control 流独立化：请求流投 _inbound，各 control 流投各自项。
         self._control = {stream: tuple(items) for stream, items in (control or {}).items()}
@@ -86,6 +87,9 @@ class FakeBus:
     async def delete(self, stream: str) -> None:
         self.deleted.append(stream)
 
+    async def expire(self, stream: str, ttl_s: int) -> None:
+        self.expired_streams.append((stream, ttl_s))
+
     def run_events(self, run_id: str) -> list[AgentEvent]:
         return [
             agent_event_adapter.validate_python(event)
@@ -111,6 +115,8 @@ class FakeLedger:
         self.token_totals: dict[str, int] = {}
         self.usage_totals: dict[str, tuple[int, int]] = {}
         self.steers: dict[str, list[tuple[str, str]]] = {}
+        self.terminal_at: dict[str, int] = {}
+        self.clock_ms = 0
 
     async def try_claim(self, request: RunRequest) -> bool:
         if request.run_id in self.requests:
@@ -157,7 +163,22 @@ class FakeLedger:
         if run_id in self.terminals:
             return False
         self.terminals.add(run_id)
+        self.terminal_at[run_id] = self.clock_ms
         return True
+
+    async def purge_terminal(self, max_age_ms: int) -> int:
+        cutoff = self.clock_ms - max_age_ms
+        stale = [r for r in self.terminals if self.terminal_at.get(r, 0) <= cutoff]
+        for run_id in stale:
+            self.terminals.discard(run_id)
+            self.terminal_at.pop(run_id, None)
+            self.requests.pop(run_id, None)
+            self.leases.pop(run_id, None)
+            self.token_totals.pop(run_id, None)
+            self.usage_totals.pop(run_id, None)
+            self.steers.pop(run_id, None)
+            self.tool_results = {k: v for k, v in self.tool_results.items() if k[0] != run_id}
+        return len(stale)
 
     async def is_terminal(self, run_id: str) -> bool:
         return run_id in self.terminals

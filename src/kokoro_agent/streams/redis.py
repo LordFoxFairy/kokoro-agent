@@ -211,5 +211,8 @@ class RedisStream:
     async def ack(self, stream: str, group: str, cursor: str) -> None:
         await self._redis.xack(stream, group, cursor)
 
+    async def expire(self, stream: str, ttl_s: int) -> None:
+        await self._redis.expire(stream, ttl_s)
+
     async def delete(self, stream: str) -> None:
         await self._redis.delete(stream)

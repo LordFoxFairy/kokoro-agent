@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS ledger(
     run_id           TEXT PRIMARY KEY,
     request_json     TEXT,
     terminal         INTEGER NOT NULL DEFAULT 0,
+    terminal_at_ms   INTEGER,
     lease_expires_ms INTEGER
 )"""
 
@@ -168,12 +169,25 @@ class SqliteLedger:
             return None
         return RunRequest.model_validate_json(row[0])
 
+    async def purge_terminal(self, max_age_ms: int) -> int:
+        cutoff = self._clock() - max_age_ms
+        cur = await self._db.execute(
+            "SELECT run_id FROM ledger WHERE terminal=1 AND terminal_at_ms<=?", (cutoff,)
+        )
+        run_ids = [str(row[0]) for row in await cur.fetchall()]
+        for run_id in run_ids:
+            for table in ("ledger", "tool_results", "token_totals", "run_usage", "steers"):
+                await self._db.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
+        await self._db.commit()
+        return len(run_ids)
+
     async def try_mark_terminal(self, run_id: str) -> bool:
         # UPSERT：未有记录时插入 terminal=1；已 terminal==1 时 rowcount==0 → 认领失败。
         cur = await self._db.execute(
-            "INSERT INTO ledger(run_id, terminal) VALUES(?, 1)"
-            " ON CONFLICT(run_id) DO UPDATE SET terminal=1 WHERE terminal=0",
-            (run_id,),
+            "INSERT INTO ledger(run_id, terminal, terminal_at_ms) VALUES(?, 1, ?)"
+            " ON CONFLICT(run_id) DO UPDATE SET terminal=1,"
+            " terminal_at_ms=excluded.terminal_at_ms WHERE terminal=0",
+            (run_id, self._clock()),
         )
         await self._db.commit()
         return cur.rowcount == 1

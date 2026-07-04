@@ -154,12 +154,18 @@ class MongoLedger:
             return None
         return RunRequest.model_validate_json(raw)
 
+    async def purge_terminal(self, max_age_ms: int) -> int:
+        result = await self._coll.delete_many(
+            {"terminal": True, "terminal_at_ms": {"$lte": self._clock() - max_age_ms}}
+        )
+        return int(result.deleted_count)
+
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 条件 update + upsert：已终态则过滤不中、upsert 撞 _id 抛 Duplicate → 已被认领。
         try:
             result = await self._coll.update_one(
                 {"_id": run_id, "terminal": {"$ne": True}},
-                {"$set": {"terminal": True}},
+                {"$set": {"terminal": True, "terminal_at_ms": self._clock()}},
                 upsert=True,
             )
         except DuplicateKeyError:

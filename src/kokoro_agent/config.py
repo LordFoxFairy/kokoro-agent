@@ -60,6 +60,9 @@ class AppConfig(BaseModel):
     drain_timeout_s: Annotated[float, Field(gt=0)]
     # run 级 token 预算（0=关闭）：跨 HITL 段累计，超限 run.failed(TokenBudgetExceeded)。
     run_token_budget: Annotated[int, Field(ge=0)]
+    # retention（0=关，保留期限是产品决策不擅代）：终态后事件流存活期 / 终态 run 行清扫龄。
+    retention_events_ttl_s: Annotated[int, Field(ge=0)]
+    retention_run_ttl_s: Annotated[int, Field(ge=0)]
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
@@ -134,6 +137,8 @@ class AppConfig(BaseModel):
             recursion_limit=_int(source, "KOKORO_RECURSION_LIMIT", 100),
             drain_timeout_s=_float(source, "KOKORO_DRAIN_TIMEOUT_S", 60.0),
             run_token_budget=_int(source, "KOKORO_RUN_TOKEN_BUDGET", 0),
+            retention_events_ttl_s=_int(source, "KOKORO_RETENTION_EVENTS_TTL_S", 0),
+            retention_run_ttl_s=_int(source, "KOKORO_RETENTION_RUN_TTL_S", 0),
         )
 
 

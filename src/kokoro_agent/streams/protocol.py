@@ -48,6 +48,10 @@ class StreamProtocol(Protocol):
         """确认消费完成；不 ack 即视为未处理，会被重投/收养——下游靠幂等吸收重放。"""
         ...
 
+    async def expire(self, stream: str, ttl_s: int) -> None:
+        # retention：给整条流设存活期（终态后事件流不再增长，仅供回放）。
+        ...
+
     async def delete(self, stream: str) -> None:
         """整流删除：run 终态后清理其 per-run 流。"""
         ...

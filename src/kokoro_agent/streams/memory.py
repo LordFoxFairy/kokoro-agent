@@ -17,6 +17,7 @@ class MemoryStream:
         self._streams: dict[str, list[StreamItem]] = {}
         self._counters: dict[str, int] = {}
         self._signals: dict[str, asyncio.Event] = {}
+        self.expirations: dict[str, int] = {}
         # group 语义等价 redis：同 group 内每条消息恰好投递一次（共享游标），ack 只做记账。
         self._group_cursors: dict[tuple[str, str], str] = {}
         self._acked: dict[tuple[str, str], set[str]] = {}
@@ -74,6 +75,10 @@ class MemoryStream:
 
     async def ack(self, stream: str, group: str, cursor: str) -> None:
         self._acked.setdefault((stream, group), set()).add(cursor)
+
+    async def expire(self, stream: str, ttl_s: int) -> None:
+        # 内存后端无真实过期：记录以供测试断言（单进程开发档不清理）。
+        self.expirations[stream] = ttl_s
 
     async def delete(self, stream: str) -> None:
         # 终态 control 流清理：连带 group 游标/信号，避免 stale 键累积。

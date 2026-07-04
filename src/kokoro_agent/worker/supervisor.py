@@ -21,6 +21,7 @@ from kokoro_agent.contract import (
     RunResume,
     RunSteer,
     SubagentSource,
+    run_events_stream,
     run_control_stream,
 )
 from kokoro_agent.execution.approvals import (
@@ -69,6 +70,8 @@ class RunSupervisor:
         heartbeat_s: float = 30.0,
         max_concurrent: int = MAX_CONCURRENT_RUNS,
         recursion_limit: int = 100,
+        events_ttl_s: int = 0,
+        run_ttl_s: int = 0,
     ) -> None:
         self._build = agent_builder
         self._store = store
@@ -78,6 +81,9 @@ class RunSupervisor:
         self._consumer = consumer
         self._heartbeat_s = heartbeat_s
         self._recursion_limit = recursion_limit
+        # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
+        self._events_ttl_s = events_ttl_s
+        self._run_ttl_s = run_ttl_s
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
@@ -155,6 +161,10 @@ class RunSupervisor:
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
         for run_id in await self._store.list_paused():
             self._ensure_control_listener(bus, run_id)
+        if self._run_ttl_s > 0:
+            purged = await self._store.purge_terminal(self._run_ttl_s * 1000)
+            if purged:
+                LOGGER.info("retention purged %d terminal runs", purged)
 
     async def _heartbeat_loop(self, bus: StreamProtocol) -> None:
         while True:
@@ -386,6 +396,9 @@ class RunSupervisor:
             raise
 
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
+        if self._events_ttl_s > 0:
+            # 事件流非权威（mongo session_events 才是回放真源）：终态后限期存活。
+            await bus.expire(run_events_stream(run_id), self._events_ttl_s)
         # 终态清理：删 control 流后取消监听任务（可能是当前任务，故删流先于 cancel）。
         with contextlib.suppress(Exception):
             await bus.delete(run_control_stream(run_id))

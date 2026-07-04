@@ -211,6 +211,29 @@ async def _assert_steer_mailbox(store: RunLedger) -> None:
     assert await store.try_claim(request("run-ghost")) is True
 
 
+
+async def _assert_purge_terminal(store: RunLedger, clock: FakeClock) -> None:
+    # retention 清扫：仅"终态且超龄"的 run 连同附属数据整体清除；活跃/暂停/新终态永不清。
+    done_old, done_new, active = request("run-old"), request("run-new"), request("run-live")
+    for req in (done_old, done_new, active):
+        await store.try_claim(req)
+    await store.add_tokens("run-old", 5)
+    await store.add_usage("run-old", 1, 2)
+    await store.put_tool_result("run-old", "t1", "r", False)
+    await store.try_mark_terminal("run-old")
+    clock.advance_ms(10_000)
+    await store.try_mark_terminal("run-new")  # 新终态：未超龄
+    assert await store.purge_terminal(max_age_ms=5_000) == 1
+    # 超龄终态被清：run 行与附属全消失，可再次认领（id 重用语义）。
+    assert await store.is_terminal("run-old") is False
+    assert await store.get_tool_result("run-old", "t1") is None
+    assert await store.add_tokens("run-old", 1) == 1  # 计数从零（旧累计已清）
+    # 未超龄/活跃不受影响。
+    assert await store.is_terminal("run-new") is True
+    assert await store.get_request("run-live") is not None
+    assert await store.purge_terminal(max_age_ms=5_000) == 0  # 幂等
+
+
 _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_claim_and_terminal(store),
     lambda store, _clock: _assert_unclaimed_mark_terminal(store),
@@ -224,6 +247,7 @@ _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     _assert_token_accumulation_per_run,
     _assert_usage_accumulation_two_columns,
     lambda store, _clock: _assert_steer_mailbox(store),
+    _assert_purge_terminal,
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -238,6 +262,7 @@ _MATRIX_IDS = [
     "token_accumulation_per_run",
     "usage_accumulation_two_columns",
     "steer_mailbox",
+    "purge_terminal",
 ]
 
 
@@ -358,3 +383,4 @@ async def test_gridfs_artifact_store_matrix() -> None:
         await _assert_artifact_roundtrip(store_a)
     finally:
         await client.close()
+

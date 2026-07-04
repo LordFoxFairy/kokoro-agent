@@ -41,6 +41,10 @@ class RunStateStore(Protocol):
         # 哨兵暂停且非终态的 run：control 监听收养的数据源（认领 worker 崩溃后接续 HITL）。
         ...
 
+    async def add_tokens(self, run_id: str, count: int) -> int:
+        # token 预算的跨段累计（resume 重建不清零）：原子加并返回累计值。
+        ...
+
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 原子认领终态：首个认领者返 True，杜绝重复终态事件。
         ...

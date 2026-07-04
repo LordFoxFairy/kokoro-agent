@@ -321,3 +321,10 @@ def testwire_subagents_tools_and_model_passthrough() -> None:
     ghost = SubagentDef(name="poet", description="d", system_prompt="p", tools=["nope"])
     with pytest.raises(ValueError, match="unmounted tools"):
         wire_subagents(request_with(ghost), {"web_fetch": fetch}, lambda _m: fake_model)
+
+
+def test_run_token_budget_env_parse() -> None:
+    assert AppConfig.from_env({}).run_token_budget == 0  # 默认关闭：预算数值属政策，不擅代
+    assert AppConfig.from_env({"KOKORO_RUN_TOKEN_BUDGET": "200000"}).run_token_budget == 200000
+    with pytest.raises(ValidationError):
+        AppConfig.from_env({"KOKORO_RUN_TOKEN_BUDGET": "-1"})

@@ -128,6 +128,17 @@ async def _assert_pause_excludes_reclaim(store: RunStateStore, clock: FakeClock)
     assert [r.run_id for r in await store.reclaim_expired()] == ["run-paused"]
 
 
+async def _assert_token_accumulation_per_run(store: RunStateStore, clock: FakeClock) -> None:
+    # token 预算跨 HITL 段累计：resume 重建 middleware 后计数不清零；run 间隔离。
+    req_a, req_b = request("run-tok-a"), request("run-tok-b")
+    await store.try_claim(req_a)
+    await store.try_claim(req_b)
+    assert await store.add_tokens("run-tok-a", 100) == 100
+    assert await store.add_tokens("run-tok-a", 50) == 150
+    assert await store.add_tokens("run-tok-b", 7) == 7  # 隔离
+    assert await store.add_tokens("run-tok-a", 0) == 150  # 零增量幂等读
+
+
 async def _assert_list_paused_only_pause_sentinel(store: RunStateStore, clock: FakeClock) -> None:
     # control 监听收养的数据源：仅"哨兵暂停且非终态"的 run；活跃/终态/重续租均不入列。
     active, paused, done = request("run-active"), request("run-hitl"), request("run-final")
@@ -180,6 +191,7 @@ _MATRIX: list[Callable[[RunStateStore, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_concurrent_single_winner(store),
     lambda store, _clock: _assert_tool_result_keep_first(store),
     _assert_list_paused_only_pause_sentinel,
+    _assert_token_accumulation_per_run,
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -191,6 +203,7 @@ _MATRIX_IDS = [
     "concurrent_single_winner",
     "tool_result_keep_first",
     "list_paused_only_pause_sentinel",
+    "token_accumulation_per_run",
 ]
 
 

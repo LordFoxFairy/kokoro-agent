@@ -7,8 +7,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ToolCallRequest
-from langchain_core.messages import ToolMessage
+from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
@@ -86,6 +86,36 @@ class _ReviewDecision(BaseModel):
 
 
 _REVIEW_DECISIONS_ADAPTER: TypeAdapter[list[_ReviewDecision]] = TypeAdapter(list[_ReviewDecision])
+
+
+class TokenBudgetExceeded(RuntimeError):
+    """run 级 token 预算超限：fail-loud 收口为 run.failed，绝不静默继续烧钱。"""
+
+
+class TokenBudgetMiddleware(AgentMiddleware):
+    """token 预算熔断：每次模型调用后累计 usage（store 背书，跨 HITL 段不清零），超限即炸。"""
+
+    def __init__(self, *, budget: int, store: RunStateStore, run_id: str) -> None:
+        super().__init__()
+        self._budget = budget
+        self._store = store
+        self._run_id = run_id
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelResponse:
+        response = await handler(request)
+        spent = sum(
+            usage.get("total_tokens", 0)
+            for message in response.result
+            if isinstance(message, AIMessage) and (usage := message.usage_metadata) is not None
+        )
+        total = await self._store.add_tokens(self._run_id, spent)
+        if total > self._budget:
+            raise TokenBudgetExceeded(
+                f"run token budget exceeded: spent {total} > budget {self._budget}"
+            )
+        return response
 
 
 class ToolResultReviewMiddleware(AgentMiddleware):

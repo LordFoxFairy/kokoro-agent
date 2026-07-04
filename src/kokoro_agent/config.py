@@ -54,6 +54,8 @@ class AppConfig(BaseModel):
     recursion_limit: Annotated[int, Field(gt=0)]
     # SIGTERM 优雅停机：限时等活跃 run 收尾（超时交 TTL 租约重拾）。
     drain_timeout_s: Annotated[float, Field(gt=0)]
+    # run 级 token 预算（0=关闭）：跨 HITL 段累计，超限 run.failed(TokenBudgetExceeded)。
+    run_token_budget: Annotated[int, Field(ge=0)]
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
@@ -114,6 +116,7 @@ class AppConfig(BaseModel):
             lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),
             recursion_limit=_int(source, "KOKORO_RECURSION_LIMIT", 100),
             drain_timeout_s=_float(source, "KOKORO_DRAIN_TIMEOUT_S", 60.0),
+            run_token_budget=_int(source, "KOKORO_RUN_TOKEN_BUDGET", 0),
         )
 
 

@@ -1,15 +1,21 @@
-"""工具策略中间件规格：未授权 fail-closed、授权放行 + 审计。"""
+"""工具策略中间件规格：未授权 fail-closed、授权放行 + 审计；token 预算熔断。"""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
-from langchain.agents.middleware.types import ToolCallRequest
-from langchain_core.messages import ToolMessage
+from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from kokoro_agent.tools.middleware import ToolPolicyMiddleware
+from fakes import FakeRunStateStore
+from kokoro_agent.model.local_fake import LocalFakeChatModel
+from kokoro_agent.tools.middleware import (
+    TokenBudgetExceeded,
+    TokenBudgetMiddleware,
+    ToolPolicyMiddleware,
+)
 
 
 def _runtime() -> ToolRuntime[Any, Any]:
@@ -120,3 +126,57 @@ async def test_delegation_allow_passes_anything() -> None:
     handler = _TaskHandler()
     result = await middleware.awrap_tool_call(_task_request("general-purpose"), handler)
     assert isinstance(result, ToolMessage) and result.text == "delegated"
+
+
+# --- token 预算熔断：跨段累计（store 背书），超限 fail-loud ---
+
+
+def _model_request() -> ModelRequest:
+    return ModelRequest(model=LocalFakeChatModel.with_script([]), messages=[])
+
+
+def _model_response(total_tokens: int) -> ModelResponse:
+    message = AIMessage(
+        content="ok",
+        usage_metadata={"input_tokens": total_tokens - 1, "output_tokens": 1, "total_tokens": total_tokens},
+    )
+    return ModelResponse(result=[message])
+
+
+async def test_token_budget_allows_then_trips() -> None:
+    store = FakeRunStateStore()
+    middleware = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
+
+    async def handler(_request: object) -> ModelResponse:
+        return _model_response(60)
+
+    first = await middleware.awrap_model_call(_model_request(), handler)
+    assert isinstance(first, ModelResponse)
+    with pytest.raises(TokenBudgetExceeded, match="budget"):
+        await middleware.awrap_model_call(_model_request(), handler)
+
+
+async def test_token_budget_survives_middleware_rebuild() -> None:
+    # resume 重建 middleware：计数在 store，不清零。
+    store = FakeRunStateStore()
+    first = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
+
+    async def handler(_request: object) -> ModelResponse:
+        return _model_response(60)
+
+    await first.awrap_model_call(_model_request(), handler)
+    rebuilt = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
+    with pytest.raises(TokenBudgetExceeded):
+        await rebuilt.awrap_model_call(_model_request(), handler)
+
+
+async def test_token_budget_isolated_per_run() -> None:
+    store = FakeRunStateStore()
+    a = TokenBudgetMiddleware(budget=100, store=store, run_id="ra")
+    b = TokenBudgetMiddleware(budget=100, store=store, run_id="rb")
+
+    async def handler(_request: object) -> ModelResponse:
+        return _model_response(90)
+
+    await a.awrap_model_call(_model_request(), handler)
+    await b.awrap_model_call(_model_request(), handler)  # 各自 90，均不超

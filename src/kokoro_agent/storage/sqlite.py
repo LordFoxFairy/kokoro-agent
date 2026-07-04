@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS run_state(
 )"""
 
 # 结果审核暂停的双执行防护：resume 后节点从头重跑，首跑结果 keep-first 落盘，重入命中即跳过工具。
+_TOKEN_TOTALS_DDL = """\
+CREATE TABLE IF NOT EXISTS token_totals(
+    run_id TEXT PRIMARY KEY,
+    total  INTEGER NOT NULL
+)"""
+
 _TOOL_RESULTS_DDL = """\
 CREATE TABLE IF NOT EXISTS tool_results(
     run_id   TEXT NOT NULL,
@@ -46,6 +52,7 @@ class SqliteRunStateStore:
         await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.execute(_DDL)
         await self._db.execute(_TOOL_RESULTS_DDL)
+        await self._db.execute(_TOKEN_TOTALS_DDL)
         await self._db.commit()
 
     async def try_claim(self, request: RunRequest) -> bool:
@@ -105,6 +112,18 @@ class SqliteRunStateStore:
         ) as cursor:
             rows = await cursor.fetchall()
         return [str(row[0]) for row in rows]
+
+    async def add_tokens(self, run_id: str, count: int) -> int:
+        # UPSERT 原子累加：跨段/跨进程计数单调，RETURNING 取累计值。
+        cur = await self._db.execute(
+            "INSERT INTO token_totals(run_id, total) VALUES(?, ?)"
+            " ON CONFLICT(run_id) DO UPDATE SET total=total+excluded.total"
+            " RETURNING total",
+            (run_id, count),
+        )
+        row = await cur.fetchone()
+        await self._db.commit()
+        return int(row[0]) if row is not None else count
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         async with self._db.execute(

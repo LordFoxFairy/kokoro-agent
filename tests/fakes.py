@@ -108,6 +108,7 @@ class FakeRunStateStore:
         self.paused_runs: list[str] = []
         self.expired: list[RunRequest] = []
         self.tool_results: dict[tuple[str, str], tuple[str, bool]] = {}
+        self.token_totals: dict[str, int] = {}
 
     async def try_claim(self, request: RunRequest) -> bool:
         if request.run_id in self.requests:
@@ -140,6 +141,10 @@ class FakeRunStateStore:
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         return self.requests.get(run_id)
+
+    async def add_tokens(self, run_id: str, count: int) -> int:
+        self.token_totals[run_id] = self.token_totals.get(run_id, 0) + count
+        return self.token_totals[run_id]
 
     async def try_mark_terminal(self, run_id: str) -> bool:
         if run_id in self.terminals:

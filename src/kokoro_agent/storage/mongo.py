@@ -8,6 +8,7 @@ from typing import Any
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
@@ -108,6 +109,18 @@ class MongoRunStateStore:
             {"_id": 1},
         ).sort("_id", 1)
         return [str(doc["_id"]) async for doc in cursor]
+
+    async def add_tokens(self, run_id: str, count: int) -> int:
+        doc = await self._coll.find_one_and_update(
+            {"_id": run_id},
+            {"$inc": {"token_total": count}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        total = doc.get("token_total") if doc else None
+        if not isinstance(total, int):
+            raise TypeError(f"token_total for {run_id!r} is not an int: {total!r}")
+        return total
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         doc = await self._coll.find_one({"_id": run_id})

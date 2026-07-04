@@ -38,7 +38,11 @@ from kokoro_agent.tools.web_search import (
     make_search_provider,
     make_web_search_tool,
 )
-from kokoro_agent.tools.middleware import ToolPolicyMiddleware, ToolResultReviewMiddleware
+from kokoro_agent.tools.middleware import (
+    TokenBudgetMiddleware,
+    ToolPolicyMiddleware,
+    ToolResultReviewMiddleware,
+)
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, SUBAGENT_TOOL_NAME
 from kokoro_agent.tools.permissions import build_interrupt_on
@@ -143,6 +147,13 @@ async def _serve(config: AppConfig) -> None:
             ]
             if review_tools:
                 middleware.append(ToolResultReviewMiddleware(review_tools, store, request.run_id))
+            if config.run_token_budget > 0:
+                # 钱的安全阀：预算数值是政策（现为进程 env，未来 profile 覆盖位），执法在此。
+                middleware.append(
+                    TokenBudgetMiddleware(
+                        budget=config.run_token_budget, store=store, run_id=request.run_id
+                    )
+                )
             # skills 全文注入 system prompt（backend 无关；渐进披露待沙箱供给，见 mounts.py）。
             skills_prompt = render_skills_prompt(runtime.skills)
             base_prompt = runtime.system_prompt or SYSTEM_PROMPT

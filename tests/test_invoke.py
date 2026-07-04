@@ -593,3 +593,16 @@ async def test_tool_output_stream_budget_clips_silently() -> None:
     deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"]
     assert sum(len(d) for d in deltas) == 4000  # TOOL_RESULT_MAX_CHARS 预算截停
     assert bus.kinds("r1")[-1] == "run.completed"
+
+
+async def test_subagent_thinking_streams_on_wire() -> None:
+    sub = FakeSubagentRun(
+        models=(FakeModel(text_deltas=("hi",), reasoning_deltas=("hmm",), output_message=AIMessage(content="hi", id="s")),),
+        name="poet", trigger_call_id="sub1",
+    )
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(subagent_runs=(sub,))))
+    kinds = bus.kinds("r1")
+    assert "subagent.thinking.delta" in kinds
+    deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "subagent.thinking.delta"]
+    assert deltas == ["hmm"]

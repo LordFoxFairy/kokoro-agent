@@ -22,6 +22,7 @@ from kokoro_agent.execution.events import (
     subagent_started_payload,
     subagent_text_completed_payload,
     subagent_text_delta_payload,
+    subagent_thinking_delta_payload,
     thinking_delta_payload,
     todo_payload,
     TOOL_RESULT_MAX_CHARS,
@@ -125,10 +126,13 @@ async def _pump_reasoning(
     deltas: AsyncIterable[str], queue: _EventQueue, segment_id: str, subagent_id: str | None
 ) -> None:
     async for text in deltas:
+        payload: AgentEventPayload | None
         if subagent_id is not None:
-            # 契约无 subagent thinking 通道：抽干防回压，内容弃置。
-            continue
-        payload = thinking_delta_payload(text, segment_id=segment_id)
+            payload = subagent_thinking_delta_payload(
+                text, segment_id=segment_id, subagent_id=subagent_id
+            )
+        else:
+            payload = thinking_delta_payload(text, segment_id=segment_id)
         if payload is not None:
             await queue.put(payload)
 

@@ -18,6 +18,7 @@ from kokoro_agent.contract import (
     SubagentSource,
     SubagentStartedPayload,
     SubagentTextCompletedPayload,
+    SubagentThinkingDeltaPayload,
     SubagentTextDeltaPayload,
     ThinkingDeltaPayload,
     Todo,
@@ -46,6 +47,7 @@ AgentEventPayload = (
     | TodoUpdatedPayload
     | SubagentStartedPayload
     | SubagentFinishedPayload
+    | SubagentThinkingDeltaPayload
     | SubagentTextDeltaPayload
     | SubagentTextCompletedPayload
     | RunCompletedPayload
@@ -63,6 +65,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     ToolReturnedPayload: "tool.returned",
     TodoUpdatedPayload: "todo.updated",
     SubagentStartedPayload: "subagent.started",
+    SubagentThinkingDeltaPayload: "subagent.thinking.delta",
     SubagentFinishedPayload: "subagent.finished",
     SubagentTextDeltaPayload: "subagent.text.delta",
     SubagentTextCompletedPayload: "subagent.text.completed",
@@ -177,6 +180,14 @@ def message_completed_payload(text: str, *, segment_id: str) -> MessageCompleted
 
 def thinking_delta_payload(text: str, *, segment_id: str) -> ThinkingDeltaPayload | None:
     return ThinkingDeltaPayload(segment_id=segment_id, delta=text) if text else None
+
+
+def subagent_thinking_delta_payload(
+    text: str, *, segment_id: str, subagent_id: str
+) -> SubagentThinkingDeltaPayload | None:
+    if not text:
+        return None
+    return SubagentThinkingDeltaPayload(segment_id=segment_id, subagent_id=subagent_id, delta=text)
 
 
 def subagent_text_delta_payload(

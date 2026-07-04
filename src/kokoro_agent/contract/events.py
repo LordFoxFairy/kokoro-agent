@@ -129,6 +129,12 @@ class SubagentFinishedPayload(StrictModel):
     error: str | None = None
 
 
+class SubagentThinkingDeltaPayload(StrictModel):
+    segment_id: NonEmptyStr
+    subagent_id: NonEmptyStr
+    delta: str
+
+
 class SubagentTextDeltaPayload(StrictModel):
     segment_id: NonEmptyStr
     subagent_id: NonEmptyStr
@@ -240,6 +246,14 @@ class SubagentFinished(StrictModel):
     payload: SubagentFinishedPayload
 
 
+class SubagentThinkingDelta(StrictModel):
+    kind: Literal["subagent.thinking.delta"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: SubagentThinkingDeltaPayload
+
+
 class SubagentTextDelta(StrictModel):
     kind: Literal["subagent.text.delta"]
     run_id: NonEmptyStr
@@ -285,6 +299,7 @@ AgentEvent = Annotated[
         TodoUpdated,
         SubagentStarted,
         SubagentFinished,
+        SubagentThinkingDelta,
         SubagentTextDelta,
         SubagentTextCompleted,
         RunCompleted,

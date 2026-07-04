@@ -12,14 +12,18 @@ Kokoro 三仓里的**执行层**：DeepAgents + LangChain worker。以 consumer-
 ```
 src/kokoro_agent/
 ├── contract/         ⚙ 生成物（DO NOT EDIT）：事件/控制/流名的唯一协议词汇
-├── config.py         AppConfig：环境变量唯一解析点，仅 worker/main.py 调用一次
-├── worker/           main=装配入口；supervisor=长驻调度（请求流消费、per-run control 流、
-│                     租约心跳/过期重拾、暂停 run 的 control 监听收养）
-├── execution/        单次 run 执行域：build_agent（DeepAgents 装配收窄为 InvokableAgent 端口）、
+├── config.py         AppConfig：环境变量唯一解析点，仅 worker/main.py 消费
+├── agents/           【成品层】封装好的对外 agent 定义（general 成品：人格+身份）
+├── orchestration/    【编排层】assemble=每请求主配方（RunRequest+RuntimeConfig→InvokableAgent，
+│                     只收领域设置不收 AppConfig）；context=模型可见面唯一拼装点
+│                     （人格+条件工具指引+skills）
+├── worker/           【调度域】main=env→deps→serve；supervisor=长驻调度（请求流消费、
+│                     per-run control 流、租约心跳/过期重拾、暂停 run 收养、SIGTERM drain）
+├── execution/        【运行域】build_agent（DeepAgents 装配收窄为 InvokableAgent 端口）、
 │                     run_agent（invoke/终态认领/recursion 熔断）、events（RunEmitter：index 单点
 │                     递增、wire 截断、review 抑制）、approvals（HITL/审核帧构造与 resume 对齐）
-├── run/context.py    RunContext：namespace/session/run/thread 身份，经 langgraph runtime context
-│                     注入，工具/middleware 用 get_runtime 读（不进 checkpoint）
+├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
+│                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
 ├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake
 ├── tools/            底层工具与治理：ask_user_question、memory（save/search，scope 装配注入）、
 │                     web_fetch（SSRF 防御）、web_search（协议+provider 注册表同文件）、

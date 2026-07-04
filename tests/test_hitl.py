@@ -83,6 +83,22 @@ def test_pending_frame_no_messages_is_empty() -> None:
     assert frame == PendingFrame("", ())
 
 
+def test_awaiting_description_is_tool_self_description_never_template() -> None:
+    # wire 只带数据：description=工具自述（describe_tool 提供）；查不到发空串，
+    # deepagents 的英文 interrupt 模板永不上 wire。
+    state = _state([("call-A", "danger"), ("call-B", "harmless")], ["danger", "harmless"])
+    names = frozenset({"danger", "harmless"})
+    payloads = awaiting_payloads(
+        state, names, describe_tool=lambda name: "危险操作，写真实文件" if name == "danger" else None
+    )
+    by_name = {p.name: p.description for p in payloads}
+    assert by_name["danger"] == "危险操作，写真实文件"
+    assert by_name["harmless"] == ""  # 无自述：空串，不是模板
+
+    bare = awaiting_payloads(state, names)
+    assert all(p.description == "" for p in bare)
+
+
 def test_awaiting_payloads_carry_full_pending_set() -> None:
     payloads = awaiting_payloads(_TWO_TOOL_STATE, _NAMES)
     assert [p.tool_id for p in payloads] == ["call-A", "call-B"]

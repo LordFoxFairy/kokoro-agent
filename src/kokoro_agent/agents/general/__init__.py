@@ -1,22 +1,13 @@
-"""通用 agent 成品：Kokoro 缺省主 agent（session 入口表的内建 general 引用此身份）。
+"""通用 agent 成品：Kokoro 缺省主 agent 的人格（session 入口表的内建 general 引用之）。
 
-成品包结构约定：每个对外 agent 一个子包，人格资源（persona.md）与定义同居本包；
-未来的成品资产（默认技能清单等）也归各自包内。
+成品包结构约定：每个对外 agent 一个子包，人格资源（persona.md）随包分发；
+名字/描述等入口元数据活在 session 入口表（wire 数据），不在本仓重复维护。
 """
 
 from __future__ import annotations
 
 from importlib.resources import files
 
-from kokoro_agent.agents.entry import AgentEntry
-
-
-def _load_persona() -> str:
-    return files("kokoro_agent.agents.general").joinpath("persona.md").read_text(encoding="utf-8").strip()
-
-
-GENERAL_ENTRY = AgentEntry(
-    name="general",
-    description="通用协调 agent：组装并调度本空间全部能力。",
-    persona=_load_persona(),
+GENERAL_PERSONA: str = (
+    files("kokoro_agent.agents.general").joinpath("persona.md").read_text(encoding="utf-8").strip()
 )

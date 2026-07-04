@@ -24,6 +24,7 @@ async def invoke_once(
     *,
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
+    describe_tool: Callable[[str], str | None] = lambda _name: None,
     claim_terminal: Callable[[], Awaitable[bool]],
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
@@ -50,7 +51,9 @@ async def invoke_once(
                 await pump_run(emitter, run, source_for=source_for)
                 if await run.interrupted():
                     snapshot = await agent.aget_state(config)
-                    for awaiting in awaiting_payloads(snapshot, approval_tool_names):
+                    for awaiting in awaiting_payloads(
+                        snapshot, approval_tool_names, describe_tool=describe_tool
+                    ):
                         await emitter.emit(awaiting)
                     # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
                     await _record(record_usage, usage_cb.usage_metadata)

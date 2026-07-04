@@ -17,7 +17,7 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.agents import GENERAL_ENTRY
+from kokoro_agent.agents import GENERAL_PERSONA
 from kokoro_agent.contract import ModelConfig, RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
@@ -50,6 +50,17 @@ from kokoro_agent.tools.web_search import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class AssembledAgent:
+    """装配产物：可运行图 + wire 面元数据（审批卡的工具自述查询）。"""
+
+    agent: InvokableAgent
+    tool_descriptions: Mapping[str, str]
+
+    def describe_tool(self, name: str) -> str | None:
+        return self.tool_descriptions.get(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +170,7 @@ def catalog_subagents(
     return subs, frozenset(mounted)
 
 
-async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAgent:
+async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> AssembledAgent:
     """每请求主配方（原 worker/main.build() 收编于此）。"""
     runtime = request.runtime
     tools: list[BaseTool] = list(resolve_tools(runtime.tools))
@@ -211,12 +222,12 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
     ]
     if review_middleware is not None:
         middleware.append(review_middleware)
-    return build_agent(
+    graph = build_agent(
         model=make_chat_model(deps.model, runtime.model),
         tools=tools,
         # 上下文组合：具名入口人格（wire）或通用成品人格 + 条件指引 + skills 全文。
         system_prompt=compose_system_prompt(
-            runtime.system_prompt or GENERAL_ENTRY.persona,
+            runtime.system_prompt or GENERAL_PERSONA,
             frozenset(tool_index),
             render_skills_prompt(runtime.skills),
         ),
@@ -240,4 +251,9 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
         backend=make_backend(runtime.backend, deps.sandbox),
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
         store=deps.memory_store,
+    )
+    return AssembledAgent(
+        agent=graph,
+        # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
+        tool_descriptions={tool.name: tool.description for tool in tools if tool.description},
     )

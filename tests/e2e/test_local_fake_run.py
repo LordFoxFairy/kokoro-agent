@@ -28,8 +28,8 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.agents import GENERAL_ENTRY
-from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.agents import GENERAL_PERSONA
+from kokoro_agent.orchestration.assemble import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
 
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
@@ -81,21 +81,24 @@ def _build_supervisor(
     saver = InMemorySaver()
     catalog = build_catalog(None)
 
-    async def build(request: RunRequest) -> InvokableAgent:
+    async def build(request: RunRequest) -> AssembledAgent:
         runtime = request.runtime
         review = frozenset(runtime.permissions.review_tools)
         middleware: list[AgentMiddleware] = []
         if review:
             middleware.append(ToolResultReviewMiddleware(review, store, request.run_id))
-        return build_agent(
-            model=make_local_fake_chat_model(script),
-            tools=resolve_tools(runtime.tools),
-            system_prompt=GENERAL_ENTRY.persona,
-            subagents=catalog.definitions(),
-            checkpointer=saver,
-            permissions=build_filesystem_permissions(runtime.permissions.filesystem),
-            interrupt_on=build_interrupt_on(frozenset(runtime.permissions.approval_tools)),
-            middleware=middleware,
+        return AssembledAgent(
+            agent=build_agent(
+                model=make_local_fake_chat_model(script),
+                tools=resolve_tools(runtime.tools),
+                system_prompt=GENERAL_PERSONA,
+                subagents=catalog.definitions(),
+                checkpointer=saver,
+                permissions=build_filesystem_permissions(runtime.permissions.filesystem),
+                interrupt_on=build_interrupt_on(frozenset(runtime.permissions.approval_tools)),
+                middleware=middleware,
+            ),
+            tool_descriptions={},
         )
 
     def approval_names(request: RunRequest) -> frozenset[str]:

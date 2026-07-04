@@ -28,7 +28,7 @@ from kokoro_agent.contract import (
     inbound_adapter,
     run_control_stream,
 )
-from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.orchestration.assemble import AssembledAgent
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -37,9 +37,9 @@ _GATED = "danger"
 _TID = "call-A"
 
 
-def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[InvokableAgent]]:
-    async def _build(_request: RunRequest) -> InvokableAgent:
-        return agent
+def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AssembledAgent]]:
+    async def _build(_request: RunRequest) -> AssembledAgent:
+        return AssembledAgent(agent=agent, tool_descriptions={})
 
     return _build
 
@@ -365,7 +365,7 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 
 
 async def test_builder_failure_emits_run_failed_once() -> None:
-    async def boom(_request: RunRequest) -> InvokableAgent:
+    async def boom(_request: RunRequest) -> AssembledAgent:
         raise ValueError("bad model")
 
     bus = FakeBus()

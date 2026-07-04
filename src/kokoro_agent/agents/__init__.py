@@ -1,6 +1,5 @@
-"""成品层：封装好的对外 agent 定义（每个成品一个子包，人格资源随包分发）。"""
+"""成品域：内置主 agent 的人格资产（入口分派与能力束归 session——入口是数据不是代码）。"""
 
-from kokoro_agent.agents.general import GENERAL_ENTRY
-from kokoro_agent.agents.entry import AgentEntry
+from kokoro_agent.agents.general import GENERAL_PERSONA
 
-__all__ = ["GENERAL_ENTRY", "AgentEntry"]
+__all__ = ["GENERAL_PERSONA"]

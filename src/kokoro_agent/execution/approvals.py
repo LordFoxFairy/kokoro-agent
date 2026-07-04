@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -151,8 +151,12 @@ def approval_requests(interrupts: tuple[Interrupt, ...]) -> list[ApprovalRequest
 
 
 def awaiting_payloads(
-    snapshot: StateView, approval_tool_names: frozenset[str]
+    snapshot: StateView,
+    approval_tool_names: frozenset[str],
+    describe_tool: Callable[[str], str | None] = lambda _name: None,
 ) -> list[ToolAwaitingApprovalPayload]:
+    # wire 只带数据：description=工具自述（装配侧注入查询）；查不到发空串，
+    # 执行侧英文 interrupt 模板是调试语料、永不上 wire（展示文案归 web）。
     entries = review_entries(snapshot.interrupts)
     if entries is not None:
         frame = review_frame(snapshot, entries)
@@ -163,7 +167,7 @@ def awaiting_payloads(
                 tool_id=entry.tool_id,
                 name=entry.name,
                 args=entry.args,
-                description=f"Tool result awaiting review: {entry.name}",
+                description=describe_tool(entry.name) or "",
                 allowed_decisions=list(_REVIEW_DECISIONS),
                 kind="result_review",
                 editable=False,
@@ -183,7 +187,7 @@ def awaiting_payloads(
                 tool_id=tool_id,
                 name=request.name,
                 args=request.args,
-                description=request.description,
+                description=describe_tool(request.name) or "",
                 allowed_decisions=request.allowed_decisions,
                 kind="ask_user_question" if request.name == ASK_USER_TOOL_NAME else "tool_approval",
                 editable="edit" in request.allowed_decisions,

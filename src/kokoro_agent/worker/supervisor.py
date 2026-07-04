@@ -37,8 +37,8 @@ from kokoro_agent.execution.approvals import (
     resume_command_decisions,
 )
 from kokoro_agent.execution.events import RunEmitter, run_failed_payload
-from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.orchestration.assemble import AssembledAgent
 from kokoro_agent.state import RunScope
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.streams.protocol import StreamProtocol
@@ -48,7 +48,7 @@ LOGGER = logging.getLogger(__name__)
 
 MAX_CONCURRENT_RUNS = 8
 
-AgentBuilder = Callable[[RunRequest], Awaitable[InvokableAgent]]
+AgentBuilder = Callable[[RunRequest], Awaitable[AssembledAgent]]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
 TraceFactory = Callable[[RunRequest], RunnableConfig | None]
 SourceResolver = Callable[[str], SubagentSource]
@@ -173,7 +173,7 @@ class RunSupervisor:
 
     async def _start_run(self, bus: StreamProtocol, request: RunRequest) -> None:
         try:
-            agent = await self._build(request)
+            assembled = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, request.run_id, error)
             return
@@ -186,7 +186,7 @@ class RunSupervisor:
         }
         self._spawn_agent(
             bus,
-            agent,
+            assembled,
             request.run_id,
             scope.scoped_thread_id,
             payload,
@@ -206,13 +206,13 @@ class RunSupervisor:
             LOGGER.warning("dropping resume for unknown run_id=%s", msg.run_id)
             return
         try:
-            agent = await self._build(request)
+            assembled = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, msg.run_id, error)
             return
         scope = RunScope.of(request)
         config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
-        snapshot = await agent.aget_state(config)
+        snapshot = await assembled.agent.aget_state(config)
         # 幂等护栏：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
         if not has_pending_interrupt(snapshot):
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
@@ -255,7 +255,7 @@ class RunSupervisor:
             LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
             return
         self._spawn_agent(
-            bus, agent, msg.run_id, scope.scoped_thread_id, command, names,
+            bus, assembled, msg.run_id, scope.scoped_thread_id, command, names,
             trace=self._trace(request),
         )
 
@@ -281,7 +281,7 @@ class RunSupervisor:
     def _spawn_agent(
         self,
         bus: StreamProtocol,
-        agent: InvokableAgent,
+        assembled: AssembledAgent,
         run_id: str,
         thread_id: str,
         payload: object,
@@ -290,7 +290,7 @@ class RunSupervisor:
         trace: RunnableConfig | None,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(bus, agent, run_id, thread_id, payload, approval_tool_names, trace)
+            self._guarded(bus, assembled, run_id, thread_id, payload, approval_tool_names, trace)
         )
         self._tasks[run_id] = task
 
@@ -313,7 +313,7 @@ class RunSupervisor:
     async def _guarded(
         self,
         bus: StreamProtocol,
-        agent: InvokableAgent,
+        assembled: AssembledAgent,
         run_id: str,
         thread_id: str,
         payload: object,
@@ -328,10 +328,12 @@ class RunSupervisor:
             emitter = await self._emitter(bus, run_id)
             terminal = await invoke_once(
                 emitter,
-                agent,
+                assembled.agent,
                 thread_id,
                 payload,
                 approval_tool_names=approval_tool_names,
+                # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
+                describe_tool=assembled.describe_tool,
                 source_for=self._source_for,
                 trace=trace,
                 recursion_limit=self._recursion_limit,

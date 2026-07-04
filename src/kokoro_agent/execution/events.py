@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
@@ -284,4 +284,33 @@ def _result_text(tc: ToolCallInfo) -> tuple[str, bool]:
     if output is None:
         return "", False
     text = getattr(output, "text", None)
-    return clip_result(text if isinstance(text, str) else str(output))
+    if isinstance(text, str):
+        return clip_result(text)
+    blocks = _render_content_blocks(output)
+    return clip_result(blocks if blocks is not None else str(output))
+
+
+_BLOCKS_ADAPTER: TypeAdapter[list[dict[str, object]]] = TypeAdapter(list[dict[str, object]])
+
+
+def _render_content_blocks(output: object) -> str | None:
+    """MCP 等标准 content blocks（list[{type,...}]）→ 文本拼接；非该形状返回 None。"""
+    if not isinstance(output, list) or not output:
+        return None
+    try:
+        blocks = _BLOCKS_ADAPTER.validate_python(output)
+    except ValidationError:
+        return None
+    texts: list[str] = []
+    omitted = 0
+    for block in blocks:
+        if "type" not in block:
+            return None
+        text = block.get("text")
+        if block.get("type") == "text" and isinstance(text, str):
+            texts.append(text)
+        else:
+            omitted += 1
+    if omitted:
+        texts.append(f"[{omitted} non-text block(s) omitted]")
+    return "\n".join(texts)

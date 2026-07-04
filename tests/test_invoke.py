@@ -559,3 +559,15 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
     payload = events[-1]["payload"]
     assert isinstance(payload, dict)
     assert "Recursion" in str(payload.get("error_kind"))
+
+
+def test_tool_returned_renders_content_blocks_readably() -> None:
+    # MCP 工具返回标准 content blocks（list[dict]）：wire 上应是文本拼接，不是 Python repr。
+    blocks = [
+        {"type": "text", "text": "第一段"},
+        {"type": "text", "text": "第二段"},
+        {"type": "image", "data": "..."},
+    ]
+    payload = tool_returned_payload(_tool_call_info(output=blocks))
+    assert payload.result == "第一段\n第二段\n[1 non-text block(s) omitted]"
+    assert "{'type'" not in payload.result

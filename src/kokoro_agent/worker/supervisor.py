@@ -38,8 +38,8 @@ from kokoro_agent.execution.approvals import (
 from kokoro_agent.execution.events import RunEmitter, run_failed_payload
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.run.state import RunScope
-from kokoro_agent.storage.run_state import RunStateStore
+from kokoro_agent.state import RunScope
+from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 
@@ -54,13 +54,13 @@ SourceResolver = Callable[[str], SubagentSource]
 
 
 class RunSupervisor:
-    """注入式装配的长驻调度：RunStateStore 持有去重/租约/原 request/终态认领四类真相。"""
+    """注入式装配的长驻调度：RunLedger 持有去重/租约/原 request/终态认领四类真相。"""
 
     def __init__(
         self,
         *,
         agent_builder: AgentBuilder,
-        store: RunStateStore,
+        store: RunLedger,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
         source_for: SourceResolver,

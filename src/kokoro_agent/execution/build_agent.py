@@ -19,7 +19,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
 from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.run.state import KokoroAgentState
+from kokoro_agent.state import KokoroAgentState
 
 
 def build_agent(

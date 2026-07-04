@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
-from kokoro_agent.storage.run_state import RunStateStore
+from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class TerminalGuardMiddleware(AgentMiddleware):
     """跨 worker cancel 的执行侧闸：每个模型轮前查终态，命中即熔断（invoke 的
     claim_terminal 已被 cancel 方拿走 → 异常路径不再发任何事件）。"""
 
-    def __init__(self, *, store: RunStateStore, run_id: str) -> None:
+    def __init__(self, *, store: RunLedger, run_id: str) -> None:
         super().__init__()
         self._store = store
         self._run_id = run_id
@@ -116,7 +116,7 @@ class TokenBudgetExceeded(RuntimeError):
 class TokenBudgetMiddleware(AgentMiddleware):
     """token 预算熔断：每次模型调用后累计 usage（store 背书，跨 HITL 段不清零），超限即炸。"""
 
-    def __init__(self, *, budget: int, store: RunStateStore, run_id: str) -> None:
+    def __init__(self, *, budget: int, store: RunLedger, run_id: str) -> None:
         super().__init__()
         self._budget = budget
         self._store = store
@@ -142,11 +142,11 @@ class TokenBudgetMiddleware(AgentMiddleware):
 class ToolResultReviewMiddleware(AgentMiddleware):
     """工具后结果审核：执行完暂停，结果经人裁决（采纳/替换/废弃）后才回流模型。
 
-    resume 后 langgraph 从节点头重跑：首跑结果 keep-first 落进 RunStateStore，
+    resume 后 langgraph 从节点头重跑：首跑结果 keep-first 落进 RunLedger，
     重入命中缓存即跳过工具执行——审核暂停绝不导致工具双跑。
     """
 
-    def __init__(self, review: frozenset[str], store: RunStateStore, run_id: str) -> None:
+    def __init__(self, review: frozenset[str], store: RunLedger, run_id: str) -> None:
         super().__init__()
         self._review = review
         self._store = store

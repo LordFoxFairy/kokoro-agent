@@ -60,5 +60,5 @@ class RunScope:
 
     @property
     def state_key(self) -> str:
-        # RunStateStore（去重/租约/终态）主键：namespace 前缀隔离。
+        # RunLedger（去重/租约/终态）主键：namespace 前缀隔离。
         return f"{self.namespace}:{self.run_id}"

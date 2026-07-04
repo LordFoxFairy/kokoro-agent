@@ -1,4 +1,4 @@
-"""RunStateStore 契约与后端工厂：多 pod 去重、TTL 租约、HITL 暂停哨兵、终态原子认领。"""
+"""RunLedger 契约与后端工厂：多 pod 去重、TTL 租约、HITL 暂停哨兵、终态原子认领。"""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ import aiosqlite
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.storage.mongo import MongoRunStateStore, make_mongo_collection
-from kokoro_agent.storage.sqlite import SqliteRunStateStore
+from kokoro_agent.storage.mongo import MongoLedger, make_mongo_collection
+from kokoro_agent.storage.sqlite import SqliteLedger
 
 DEFAULT_LEASE_TTL_S = 90
 
 
-class RunStateStore(Protocol):
+class RunLedger(Protocol):
     async def try_claim(self, request: RunRequest) -> bool:
         # 原子认领新 run：首个认领者持有 TTL 租约并返 True，重复广播去重返 False。
         ...
@@ -66,7 +66,7 @@ class RunStateStore(Protocol):
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None: ...
 
 
-class RunStateSettings(BaseModel):
+class LedgerSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     backend: Literal["sqlite", "mongo"]
@@ -77,17 +77,17 @@ class RunStateSettings(BaseModel):
 
 
 @asynccontextmanager
-async def make_run_state_store(
-    settings: RunStateSettings,
-) -> AsyncGenerator[RunStateStore, None]:
+async def make_ledger(
+    settings: LedgerSettings,
+) -> AsyncGenerator[RunLedger, None]:
     if settings.backend == "sqlite":
         async with aiosqlite.connect(settings.sqlite_path) as db:
-            store = SqliteRunStateStore(db, ttl_ms=settings.lease_ttl_ms)
+            store = SqliteLedger(db, ttl_ms=settings.lease_ttl_ms)
             await store.setup()
             yield store
         return
     client, collection = make_mongo_collection(settings.mongo_url, settings.mongo_db)
     try:
-        yield MongoRunStateStore(collection, ttl_ms=settings.lease_ttl_ms)
+        yield MongoLedger(collection, ttl_ms=settings.lease_ttl_ms)
     finally:
         await client.close()

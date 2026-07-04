@@ -24,7 +24,7 @@ from kokoro_agent.orchestration import (
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
-from kokoro_agent.storage.run_state import make_run_state_store
+from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -59,7 +59,7 @@ async def _serve(config: AppConfig) -> None:
     # 进程级共享 checkpointer + run 状态存储：sqlite 落盘跨重启，多 pod 靠共享存储去重/租约/终态认领。
     async with (
         make_checkpointer(config.checkpoint) as saver,
-        make_run_state_store(config.run_state) as store,
+        make_ledger(config.ledger) as store,
         make_memory_store(config.checkpoint) as memory_store,
     ):
         deps = AssembleDeps(
@@ -69,7 +69,7 @@ async def _serve(config: AppConfig) -> None:
             catalog=catalog,
             web_tools=tuple(web_tools_from_config(config)),
             checkpointer=saver,
-            run_state=store,
+            ledger=store,
             memory_store=memory_store,
         )
         supervisor = RunSupervisor(

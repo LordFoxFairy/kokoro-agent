@@ -10,7 +10,7 @@ import aiosqlite
 from kokoro_agent.contract import RunRequest
 
 _DDL = """\
-CREATE TABLE IF NOT EXISTS run_state(
+CREATE TABLE IF NOT EXISTS ledger(
     run_id           TEXT PRIMARY KEY,
     request_json     TEXT,
     terminal         INTEGER NOT NULL DEFAULT 0,
@@ -45,7 +45,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-class SqliteRunStateStore:
+class SqliteLedger:
     def __init__(
         self, db: aiosqlite.Connection, *, ttl_ms: int, clock: Callable[[], int] = _now_ms
     ) -> None:
@@ -66,7 +66,7 @@ class SqliteRunStateStore:
     async def try_claim(self, request: RunRequest) -> bool:
         # INSERT OR IGNORE：run_id 已存在（已被认领/终态）即去重丢弃，rowcount==0。
         cur = await self._db.execute(
-            "INSERT OR IGNORE INTO run_state(run_id, request_json, lease_expires_ms)"
+            "INSERT OR IGNORE INTO ledger(run_id, request_json, lease_expires_ms)"
             " VALUES(?, ?, ?)",
             (request.run_id, request.model_dump_json(), self._clock() + self._ttl_ms),
         )
@@ -76,7 +76,7 @@ class SqliteRunStateStore:
     async def renew(self, run_id: str) -> None:
         # 心跳续租；也把 HITL 暂停哨兵（NULL）拉回活跃租约。
         await self._db.execute(
-            "UPDATE run_state SET lease_expires_ms=? WHERE run_id=? AND terminal=0",
+            "UPDATE ledger SET lease_expires_ms=? WHERE run_id=? AND terminal=0",
             (self._clock() + self._ttl_ms, run_id),
         )
         await self._db.commit()
@@ -84,7 +84,7 @@ class SqliteRunStateStore:
     async def pause(self, run_id: str) -> None:
         # NULL 哨兵：HITL 等人可以是小时级，暂停 run 绝不被过期重拾重跑。
         await self._db.execute(
-            "UPDATE run_state SET lease_expires_ms=NULL WHERE run_id=? AND terminal=0",
+            "UPDATE ledger SET lease_expires_ms=NULL WHERE run_id=? AND terminal=0",
             (run_id,),
         )
         await self._db.commit()
@@ -92,7 +92,7 @@ class SqliteRunStateStore:
     async def reclaim_expired(self) -> list[RunRequest]:
         now = self._clock()
         async with self._db.execute(
-            "SELECT run_id, request_json FROM run_state"
+            "SELECT run_id, request_json FROM ledger"
             " WHERE terminal=0 AND request_json IS NOT NULL"
             " AND lease_expires_ms IS NOT NULL AND lease_expires_ms<=?",
             (now,),
@@ -102,7 +102,7 @@ class SqliteRunStateStore:
         for run_id, request_json in rows:
             # 逐行条件更新原子认领：多 pod 并发 reclaim 时每个 run 恰被一个赢家拾走。
             cur = await self._db.execute(
-                "UPDATE run_state SET lease_expires_ms=?"
+                "UPDATE ledger SET lease_expires_ms=?"
                 " WHERE run_id=? AND terminal=0"
                 " AND lease_expires_ms IS NOT NULL AND lease_expires_ms<=?",
                 (now + self._ttl_ms, run_id, now),
@@ -114,7 +114,7 @@ class SqliteRunStateStore:
 
     async def list_paused(self) -> list[str]:
         async with self._db.execute(
-            "SELECT run_id FROM run_state"
+            "SELECT run_id FROM ledger"
             " WHERE terminal=0 AND lease_expires_ms IS NULL AND request_json IS NOT NULL"
             " ORDER BY run_id"
         ) as cursor:
@@ -150,7 +150,7 @@ class SqliteRunStateStore:
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         async with self._db.execute(
-            "SELECT request_json FROM run_state WHERE run_id=?", (run_id,)
+            "SELECT request_json FROM ledger WHERE run_id=?", (run_id,)
         ) as cursor:
             row = await cursor.fetchone()
         if row is None or row[0] is None:
@@ -160,7 +160,7 @@ class SqliteRunStateStore:
     async def try_mark_terminal(self, run_id: str) -> bool:
         # UPSERT：未有记录时插入 terminal=1；已 terminal==1 时 rowcount==0 → 认领失败。
         cur = await self._db.execute(
-            "INSERT INTO run_state(run_id, terminal) VALUES(?, 1)"
+            "INSERT INTO ledger(run_id, terminal) VALUES(?, 1)"
             " ON CONFLICT(run_id) DO UPDATE SET terminal=1 WHERE terminal=0",
             (run_id,),
         )
@@ -169,7 +169,7 @@ class SqliteRunStateStore:
 
     async def is_terminal(self, run_id: str) -> bool:
         async with self._db.execute(
-            "SELECT terminal FROM run_state WHERE run_id=?", (run_id,)
+            "SELECT terminal FROM ledger WHERE run_id=?", (run_id,)
         ) as cursor:
             row = await cursor.fetchone()
         return row is not None and row[0] == 1

@@ -9,7 +9,7 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolC
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from fakes import FakeRunStateStore
+from fakes import FakeLedger
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.tools.middleware import (
     TokenBudgetExceeded,
@@ -144,7 +144,7 @@ def _model_response(total_tokens: int) -> ModelResponse:
 
 
 async def test_token_budget_allows_then_trips() -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     middleware = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
 
     async def handler(_request: object) -> ModelResponse:
@@ -158,7 +158,7 @@ async def test_token_budget_allows_then_trips() -> None:
 
 async def test_token_budget_survives_middleware_rebuild() -> None:
     # resume 重建 middleware：计数在 store，不清零。
-    store = FakeRunStateStore()
+    store = FakeLedger()
     first = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
 
     async def handler(_request: object) -> ModelResponse:
@@ -171,7 +171,7 @@ async def test_token_budget_survives_middleware_rebuild() -> None:
 
 
 async def test_token_budget_isolated_per_run() -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     a = TokenBudgetMiddleware(budget=100, store=store, run_id="ra")
     b = TokenBudgetMiddleware(budget=100, store=store, run_id="rb")
 

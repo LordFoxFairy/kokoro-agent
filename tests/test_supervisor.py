@@ -12,7 +12,7 @@ from pydantic import JsonValue, TypeAdapter
 from fakes import (
     FakeAgent,
     FakeBus,
-    FakeRunStateStore,
+    FakeLedger,
     FakeRunStream,
     FakeState,
     find_event,
@@ -57,9 +57,9 @@ def _source(_name: str) -> SubagentSource:
 
 
 def _supervisor(
-    agent: FakeAgent, store: FakeRunStateStore | None = None, heartbeat_s: float = 30.0
-) -> tuple[RunSupervisor, FakeRunStateStore]:
-    state_store = store if store is not None else FakeRunStateStore()
+    agent: FakeAgent, store: FakeLedger | None = None, heartbeat_s: float = 30.0
+) -> tuple[RunSupervisor, FakeLedger]:
+    state_store = store if store is not None else FakeLedger()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=state_store,
@@ -331,7 +331,7 @@ async def test_builder_failure_emits_run_failed_once() -> None:
         raise ValueError("bad model")
 
     bus = FakeBus()
-    store = FakeRunStateStore()
+    store = FakeLedger()
     sup = RunSupervisor(
         agent_builder=boom,
         store=store,
@@ -408,7 +408,7 @@ async def test_task_handle_popped_by_identity_not_run_id() -> None:
 
 # ⑦ serve：consumer-group 消费 + parse 后 ack（坏帧也 ack）+ 单消息失败隔离。
 async def test_serve_acks_and_isolates_failures() -> None:
-    class _BoomStore(FakeRunStateStore):
+    class _BoomStore(FakeLedger):
         async def is_terminal(self, run_id: str) -> bool:
             raise RuntimeError("store boom")
 
@@ -490,7 +490,7 @@ async def test_heartbeat_skips_reclaim_of_own_running_task() -> None:
 
 # ⑨ 跨 supervisor（模拟另一 pod / 重启）：共享 store + 总线续接，index 不回卷。
 async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
     sup_a, _ = _supervisor(agent, store=store)
@@ -610,7 +610,7 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
 
 # ⑫ 复审 #1 竞态：多 worker 收养后 resume/cancel 分投两处——终态后绝不 spawn。
 async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
-    class _CancelInWindowStore(FakeRunStateStore):
+    class _CancelInWindowStore(FakeLedger):
         async def renew(self, run_id: str) -> None:
             await super().renew(run_id)
             # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/renew 之后）完成终态。

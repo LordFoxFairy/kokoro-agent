@@ -16,7 +16,7 @@ from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.run.state import KokoroAgentState, RunScope
+from kokoro_agent.state import KokoroAgentState, RunScope
 from kokoro_agent.streams.memory import MemoryStream
 
 _SEEN: dict[str, object] = {}

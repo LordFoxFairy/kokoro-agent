@@ -8,7 +8,7 @@ from langchain_deepseek import ChatDeepSeek
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
-from fakes import FakeRunStateStore
+from fakes import FakeLedger
 from kokoro_agent.orchestration import render_tool_guidance
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
@@ -40,9 +40,9 @@ def test_defaults_from_empty_env() -> None:
     config = AppConfig.from_env({})
     assert config.stream.backend == "memory"
     assert config.checkpoint.backend == "sqlite"
-    assert config.run_state.backend == "sqlite"
+    assert config.ledger.backend == "sqlite"
     assert config.model.local_fake is False
-    assert config.run_state.lease_ttl_ms == 90_000
+    assert config.ledger.lease_ttl_ms == 90_000
     assert config.lease_heartbeat_s == 30.0
     assert config.custom_subagents_json is None
 
@@ -61,7 +61,7 @@ def test_env_overrides() -> None:
     assert config.model.local_fake is True
     assert config.stream.backend == "redis"
     assert config.stream.redis_url == "redis://example:6379/1"
-    assert config.run_state.lease_ttl_ms == 10_000
+    assert config.ledger.lease_ttl_ms == 10_000
     assert config.lease_heartbeat_s == 2.5
     # "[]" 非空字符串照实透传，目录构建时解析。
     assert config.custom_subagents_json == "[]"
@@ -72,7 +72,7 @@ def test_env_overrides() -> None:
     [
         {"KOKORO_STREAM_BACKEND": "kafka"},
         {"KOKORO_CHECKPOINT_BACKEND": "dynamo"},
-        {"KOKORO_RUN_STATE_BACKEND": "bogus"},
+        {"KOKORO_LEDGER_BACKEND": "bogus"},
         {"KOKORO_LEASE_TTL_S": "0"},
         {"KOKORO_LEASE_HEARTBEAT_S": "-1"},
     ],
@@ -381,7 +381,7 @@ def test_tool_guidance_follows_mounted_tools() -> None:
 
 def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
-    guard = TerminalGuardMiddleware(store=FakeRunStateStore(), run_id="r1")
+    guard = TerminalGuardMiddleware(store=FakeLedger(), run_id="r1")
     catalog = build_catalog(None, frozenset({"web-researcher"}))
     tools = web_tools_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}

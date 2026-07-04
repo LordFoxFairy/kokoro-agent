@@ -32,7 +32,7 @@ _TOOL_RESULTS_ADAPTER: TypeAdapter[dict[str, _ToolResultEntry]] = TypeAdapter(
 )
 
 
-class MongoRunStateStore:
+class MongoLedger:
     """单 collection、以 run_id 为 _id：upsert 与条件 update 提供跨 pod 原子认领。"""
 
     def __init__(
@@ -187,6 +187,6 @@ class MongoRunStateStore:
 def make_mongo_collection(
     url: str, db: str
 ) -> tuple[AsyncMongoClient[dict[str, object]], AsyncCollection[dict[str, object]]]:
-    # 建客户端并取 run_state collection；调用方负责 client 生命周期。
+    # 建客户端并取 ledger collection；调用方负责 client 生命周期。
     client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(url)
-    return client, client[db]["run_state"]
+    return client, client[db]["ledger"]

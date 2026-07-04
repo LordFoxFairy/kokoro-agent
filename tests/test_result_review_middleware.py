@@ -10,7 +10,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 import kokoro_agent.tools.middleware as middleware_module
-from fakes import FakeRunStateStore
+from fakes import FakeLedger
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
 
@@ -44,7 +44,7 @@ def _request(name: str = "lookup") -> ToolCallRequest:
     )
 
 
-def _mw(store: FakeRunStateStore) -> ToolResultReviewMiddleware:
+def _mw(store: FakeLedger) -> ToolResultReviewMiddleware:
     return ToolResultReviewMiddleware(frozenset({"lookup"}), store, "rn")
 
 
@@ -61,7 +61,7 @@ def _patch_interrupt(monkeypatch: pytest.MonkeyPatch, value: object) -> list[obj
 
 
 async def test_non_review_tool_bypasses(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     handler = _Handler()
     seen = _patch_interrupt(monkeypatch, [])
     result = await _mw(store).awrap_tool_call(_request("other"), handler)
@@ -70,7 +70,7 @@ async def test_non_review_tool_bypasses(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 async def test_first_pass_caches_then_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     handler = _Handler()
     seen = _patch_interrupt(
         monkeypatch, [{"tool_id": "c1", "type": "approve"}]
@@ -93,7 +93,7 @@ async def test_first_pass_caches_then_interrupts(monkeypatch: pytest.MonkeyPatch
 
 async def test_resume_reentry_skips_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     # resume 后节点从头重跑：缓存命中即不再执行工具——双执行防护的核心断言。
-    store = FakeRunStateStore()
+    store = FakeLedger()
     store.tool_results[("rn", "c1")] = ("first run result", False)
     handler = _Handler("second run result")
     _patch_interrupt(monkeypatch, [{"tool_id": "c1", "type": "approve"}])
@@ -103,7 +103,7 @@ async def test_resume_reentry_skips_handler(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_respond_replaces_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     _patch_interrupt(
         monkeypatch, [{"tool_id": "c1", "type": "respond", "response": "curated"}]
     )
@@ -112,7 +112,7 @@ async def test_respond_replaces_result(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_reject_discards_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     _patch_interrupt(
         monkeypatch, [{"tool_id": "c1", "type": "reject", "reason": "wrong data"}]
     )
@@ -134,7 +134,7 @@ async def test_reject_discards_result(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_bad_resume_values_fail_loud(
     monkeypatch: pytest.MonkeyPatch, resume_value: object
 ) -> None:
-    store = FakeRunStateStore()
+    store = FakeLedger()
     _patch_interrupt(monkeypatch, resume_value)
     with pytest.raises((ValueError, Exception)):
         await _mw(store).awrap_tool_call(_request(), _Handler())

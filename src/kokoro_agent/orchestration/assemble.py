@@ -26,7 +26,7 @@ from kokoro_agent.model.factory import ChatModelSettings, make_chat_model
 from kokoro_agent.orchestration.context import compose_system_prompt
 from kokoro_agent.sandbox import SandboxSettings, build_filesystem_permissions, make_backend
 from kokoro_agent.skills.mounts import render_skills_prompt
-from kokoro_agent.storage.run_state import RunStateStore
+from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.memory import make_memory_tools
@@ -63,7 +63,7 @@ class AssembleDeps:
     catalog: SubagentCatalog
     web_tools: tuple[BaseTool, ...]
     checkpointer: BaseCheckpointSaver[str]
-    run_state: RunStateStore
+    ledger: RunLedger
     memory_store: BaseStore
 
 
@@ -164,16 +164,16 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
     # 执行守卫（终态闸恒挂 + 预算闸按政策）：主 agent 与每个子代理同套下发——
     # 子代理 middleware 链独立，不下发即 task 委派旁路。
     guards: list[AgentMiddleware] = [
-        TerminalGuardMiddleware(store=deps.run_state, run_id=request.run_id)
+        TerminalGuardMiddleware(store=deps.ledger, run_id=request.run_id)
     ]
     if deps.run_token_budget > 0:
         guards.append(
             TokenBudgetMiddleware(
-                budget=deps.run_token_budget, store=deps.run_state, run_id=request.run_id
+                budget=deps.run_token_budget, store=deps.ledger, run_id=request.run_id
             )
         )
     review_middleware = (
-        ToolResultReviewMiddleware(review_tools, deps.run_state, request.run_id)
+        ToolResultReviewMiddleware(review_tools, deps.ledger, request.run_id)
         if review_tools
         else None
     )

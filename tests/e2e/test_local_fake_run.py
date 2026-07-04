@@ -35,7 +35,7 @@ from langchain.agents.middleware import AgentMiddleware
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 from kokoro_agent.sandbox import build_filesystem_permissions
-from kokoro_agent.storage.sqlite import SqliteRunStateStore
+from kokoro_agent.storage.sqlite import SqliteLedger
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
@@ -76,7 +76,7 @@ def _request(
 
 
 def _build_supervisor(
-    store: SqliteRunStateStore, script: Sequence[AIMessage] | None = None
+    store: SqliteLedger, script: Sequence[AIMessage] | None = None
 ) -> RunSupervisor:
     saver = InMemorySaver()
     catalog = build_catalog(None)
@@ -129,7 +129,7 @@ async def test_local_fake_full_run_over_serve_loop(tmp_path: Path) -> None:
     bus = MemoryStream()
     run = _request("e2e-run-1")
     async with aiosqlite.connect(str(tmp_path / "e2e.db")) as db:
-        store = SqliteRunStateStore(db, ttl_ms=90_000)
+        store = SqliteLedger(db, ttl_ms=90_000)
         await store.setup()
         supervisor = _build_supervisor(store)
 
@@ -213,7 +213,7 @@ async def test_local_fake_hitl_ask_user_then_approval_over_control_stream(tmp_pa
     bus = MemoryStream()
     run = _request("e2e-hitl-1", approval_tools=("write_file",), filesystem="workspace_write")
     async with aiosqlite.connect(str(tmp_path / "hitl.db")) as db:
-        store = SqliteRunStateStore(db, ttl_ms=90_000)
+        store = SqliteLedger(db, ttl_ms=90_000)
         await store.setup()
         supervisor = _build_supervisor(store, script=hitl_script())
         serve_task = asyncio.create_task(supervisor.serve(bus))
@@ -254,7 +254,7 @@ async def test_local_fake_result_review_over_control_stream(tmp_path: Path) -> N
     bus = MemoryStream()
     run = _request("e2e-review-1", review_tools=("write_file",), filesystem="workspace_write")
     async with aiosqlite.connect(str(tmp_path / "review.db")) as db:
-        store = SqliteRunStateStore(db, ttl_ms=90_000)
+        store = SqliteLedger(db, ttl_ms=90_000)
         await store.setup()
         # 脚本去掉 ask_user 帧：只走 write_file（审核）+ 终帧文本。
         script = [turn for turn in hitl_script() if not _calls_tool(turn, "ask_user_question")]

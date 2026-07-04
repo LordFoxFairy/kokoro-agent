@@ -1,4 +1,4 @@
-"""RunStateStore 规格：TTL 租约全生命周期 + 终态原子认领，sqlite/mongo 同语义矩阵。"""
+"""RunLedger 规格：TTL 租约全生命周期 + 终态原子认领，sqlite/mongo 同语义矩阵。"""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
-from kokoro_agent.storage.mongo import MongoRunStateStore
-from kokoro_agent.storage.run_state import (
-    RunStateSettings,
-    RunStateStore,
-    make_run_state_store,
+from kokoro_agent.storage.mongo import MongoLedger
+from kokoro_agent.storage.ledger import (
+    LedgerSettings,
+    RunLedger,
+    make_ledger,
 )
-from kokoro_agent.storage.sqlite import SqliteRunStateStore
+from kokoro_agent.storage.sqlite import SqliteLedger
 
 _MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 _TTL_MS = 1000
@@ -39,9 +39,9 @@ class FakeClock:
 
 
 @asynccontextmanager
-async def _sqlite_store(tmp_path: Path, clock: FakeClock) -> AsyncGenerator[RunStateStore]:
+async def _sqlite_store(tmp_path: Path, clock: FakeClock) -> AsyncGenerator[RunLedger]:
     async with aiosqlite.connect(str(tmp_path / "rs.db")) as db:
-        store = SqliteRunStateStore(db, ttl_ms=_TTL_MS, clock=clock)
+        store = SqliteLedger(db, ttl_ms=_TTL_MS, clock=clock)
         await store.setup()
         yield store
 
@@ -57,23 +57,23 @@ async def _mongo_collection_or_skip() -> tuple[
     except Exception:  # noqa: BLE001 — 网络/服务不可达统一视为 skip 条件
         await client.close()
         pytest.skip(f"no mongo reachable at {_MONGO_URL}")
-    return client, client["kokoro_test"][f"run_state_{uuid.uuid4().hex}"]
+    return client, client["kokoro_test"][f"ledger_{uuid.uuid4().hex}"]
 
 
 @asynccontextmanager
-async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunStateStore]:
+async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
     client, coll = await _mongo_collection_or_skip()
     try:
-        yield MongoRunStateStore(coll, ttl_ms=_TTL_MS, clock=clock)
+        yield MongoLedger(coll, ttl_ms=_TTL_MS, clock=clock)
     finally:
         await coll.drop()
         await client.close()
 
 
-# --- 共用行为矩阵：任意 RunStateStore 实例逐条对标 ---
+# --- 共用行为矩阵：任意 RunLedger 实例逐条对标 ---
 
 
-async def _assert_claim_and_terminal(store: RunStateStore) -> None:
+async def _assert_claim_and_terminal(store: RunLedger) -> None:
     req = request("run-abc")
     assert await store.try_claim(req) is True
     assert await store.try_claim(req) is False  # 重复认领去重
@@ -84,13 +84,13 @@ async def _assert_claim_and_terminal(store: RunStateStore) -> None:
     assert await store.is_terminal(req.run_id) is True
 
 
-async def _assert_unclaimed_mark_terminal(store: RunStateStore) -> None:
+async def _assert_unclaimed_mark_terminal(store: RunLedger) -> None:
     # 未认领的 run 也能直接认领终态（构建失败快速收口场景）。
     assert await store.try_mark_terminal("run-never-claimed") is True
     assert await store.get_request("run-never-claimed") is None
 
 
-async def _assert_lease_lifecycle(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_lease_lifecycle(store: RunLedger, clock: FakeClock) -> None:
     req = request("run-lease")
     await store.try_claim(req)
     # 租约未到期：不可重拾。
@@ -104,7 +104,7 @@ async def _assert_lease_lifecycle(store: RunStateStore, clock: FakeClock) -> Non
     assert await store.reclaim_expired() == []
 
 
-async def _assert_renew_extends(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_renew_extends(store: RunLedger, clock: FakeClock) -> None:
     req = request("run-renew")
     await store.try_claim(req)
     clock.advance_ms(_TTL_MS - 1)
@@ -115,7 +115,7 @@ async def _assert_renew_extends(store: RunStateStore, clock: FakeClock) -> None:
     assert [r.run_id for r in await store.reclaim_expired()] == ["run-renew"]
 
 
-async def _assert_pause_excludes_reclaim(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_pause_excludes_reclaim(store: RunLedger, clock: FakeClock) -> None:
     req = request("run-paused")
     await store.try_claim(req)
     await store.pause(req.run_id)
@@ -128,7 +128,7 @@ async def _assert_pause_excludes_reclaim(store: RunStateStore, clock: FakeClock)
     assert [r.run_id for r in await store.reclaim_expired()] == ["run-paused"]
 
 
-async def _assert_usage_accumulation_two_columns(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_usage_accumulation_two_columns(store: RunLedger, clock: FakeClock) -> None:
     # run.completed 用量真源：跨段累计 input/output 双列（与预算计数分开存，语义不同）。
     req = request("run-usage")
     await store.try_claim(req)
@@ -138,7 +138,7 @@ async def _assert_usage_accumulation_two_columns(store: RunStateStore, clock: Fa
     assert await store.add_usage("run-usage-other", 5, 5) == (5, 5)  # run 间隔离
 
 
-async def _assert_token_accumulation_per_run(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_token_accumulation_per_run(store: RunLedger, clock: FakeClock) -> None:
     # token 预算跨 HITL 段累计：resume 重建 middleware 后计数不清零；run 间隔离。
     req_a, req_b = request("run-tok-a"), request("run-tok-b")
     await store.try_claim(req_a)
@@ -149,7 +149,7 @@ async def _assert_token_accumulation_per_run(store: RunStateStore, clock: FakeCl
     assert await store.add_tokens("run-tok-a", 0) == 150  # 零增量幂等读
 
 
-async def _assert_list_paused_only_pause_sentinel(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_list_paused_only_pause_sentinel(store: RunLedger, clock: FakeClock) -> None:
     # control 监听收养的数据源：仅"哨兵暂停且非终态"的 run；活跃/终态/重续租均不入列。
     active, paused, done = request("run-active"), request("run-hitl"), request("run-final")
     for req in (active, paused, done):
@@ -164,7 +164,7 @@ async def _assert_list_paused_only_pause_sentinel(store: RunStateStore, clock: F
     assert await store.list_paused() == []
 
 
-async def _assert_terminal_excluded_from_reclaim(store: RunStateStore, clock: FakeClock) -> None:
+async def _assert_terminal_excluded_from_reclaim(store: RunLedger, clock: FakeClock) -> None:
     req = request("run-done")
     await store.try_claim(req)
     await store.try_mark_terminal(req.run_id)
@@ -172,7 +172,7 @@ async def _assert_terminal_excluded_from_reclaim(store: RunStateStore, clock: Fa
     assert await store.reclaim_expired() == []
 
 
-async def _assert_concurrent_single_winner(store: RunStateStore) -> None:
+async def _assert_concurrent_single_winner(store: RunLedger) -> None:
     req = request("run-race")
     claims = await asyncio.gather(*(store.try_claim(req) for _ in range(8)))
     assert sum(claims) == 1
@@ -180,7 +180,7 @@ async def _assert_concurrent_single_winner(store: RunStateStore) -> None:
     assert sum(terminals) == 1
 
 
-async def _assert_tool_result_keep_first(store: RunStateStore) -> None:
+async def _assert_tool_result_keep_first(store: RunLedger) -> None:
     # 结果审核缓存：首跑 keep-first，重入/并发写不覆盖；未知键返 None。
     req = request("run-tr")
     assert await store.try_claim(req) is True
@@ -191,7 +191,7 @@ async def _assert_tool_result_keep_first(store: RunStateStore) -> None:
     assert await store.get_tool_result("run-tr", "other") is None
 
 
-_MATRIX: list[Callable[[RunStateStore, FakeClock], Awaitable[None]]] = [
+_MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_claim_and_terminal(store),
     lambda store, _clock: _assert_unclaimed_mark_terminal(store),
     _assert_lease_lifecycle,
@@ -221,7 +221,7 @@ _MATRIX_IDS = [
 
 @pytest.mark.parametrize("check", _MATRIX, ids=_MATRIX_IDS)
 async def test_sqlite_behaviour_matrix(
-    tmp_path: Path, check: Callable[[RunStateStore, FakeClock], Awaitable[None]]
+    tmp_path: Path, check: Callable[[RunLedger, FakeClock], Awaitable[None]]
 ) -> None:
     clock = FakeClock()
     async with _sqlite_store(tmp_path, clock) as store:
@@ -230,7 +230,7 @@ async def test_sqlite_behaviour_matrix(
 
 @pytest.mark.parametrize("check", _MATRIX, ids=_MATRIX_IDS)
 async def test_mongo_behaviour_matrix(
-    check: Callable[[RunStateStore, FakeClock], Awaitable[None]],
+    check: Callable[[RunLedger, FakeClock], Awaitable[None]],
 ) -> None:
     clock = FakeClock()
     async with _mongo_store(clock) as store:
@@ -247,8 +247,8 @@ async def test_sqlite_concurrent_terminal_across_connections(tmp_path: Path) -> 
         aiosqlite.connect(db_path) as conn_a,
         aiosqlite.connect(db_path) as conn_b,
     ):
-        store_a = SqliteRunStateStore(conn_a, ttl_ms=_TTL_MS)
-        store_b = SqliteRunStateStore(conn_b, ttl_ms=_TTL_MS)
+        store_a = SqliteLedger(conn_a, ttl_ms=_TTL_MS)
+        store_b = SqliteLedger(conn_b, ttl_ms=_TTL_MS)
         await store_a.setup()
         await store_b.setup()
         await store_a.try_claim(request("race-x"))
@@ -259,8 +259,8 @@ async def test_sqlite_concurrent_terminal_across_connections(tmp_path: Path) -> 
     assert sum(results) == 1
 
 
-def _settings(backend: str, tmp_path: Path) -> RunStateSettings:
-    return RunStateSettings.model_validate(
+def _settings(backend: str, tmp_path: Path) -> LedgerSettings:
+    return LedgerSettings.model_validate(
         {
             "backend": backend,
             "sqlite_path": str(tmp_path / "factory.db"),
@@ -274,12 +274,12 @@ def _settings(backend: str, tmp_path: Path) -> RunStateSettings:
 async def test_factory_sqlite_persists_across_cycles(tmp_path: Path) -> None:
     settings = _settings("sqlite", tmp_path)
     req = request("run-persist")
-    async with make_run_state_store(settings) as store:
-        assert isinstance(store, SqliteRunStateStore)
+    async with make_ledger(settings) as store:
+        assert isinstance(store, SqliteLedger)
         assert await store.try_claim(req) is True
         await store.try_mark_terminal(req.run_id)
     # 全新工厂周期（模拟重启/另一 pod）从同一文件续读。
-    async with make_run_state_store(settings) as store:
+    async with make_ledger(settings) as store:
         assert await store.get_request(req.run_id) == req
         assert await store.is_terminal(req.run_id) is True
 
@@ -292,5 +292,5 @@ async def test_factory_unknown_backend_fails_loud(tmp_path: Path) -> None:
 async def test_factory_mongo_yields_mongo_store(tmp_path: Path) -> None:
     client, _coll = await _mongo_collection_or_skip()
     await client.close()
-    async with make_run_state_store(_settings("mongo", tmp_path)) as store:
-        assert isinstance(store, MongoRunStateStore)
+    async with make_ledger(_settings("mongo", tmp_path)) as store:
+        assert isinstance(store, MongoLedger)

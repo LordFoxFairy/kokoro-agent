@@ -97,7 +97,7 @@ class FakeBus:
         return [event.kind for event in self.run_events(run_id)]
 
 
-class FakeRunStateStore:
+class FakeLedger:
     """协议等价的内存 store：租约以 leases dict 表达，None=暂停哨兵。"""
 
     def __init__(self) -> None:

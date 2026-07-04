@@ -11,14 +11,14 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.checkpoints import CheckpointSettings
-from kokoro_agent.storage.run_state import DEFAULT_LEASE_TTL_S, RunStateSettings
+from kokoro_agent.storage.ledger import DEFAULT_LEASE_TTL_S, LedgerSettings
 from kokoro_agent.streams.factory import StreamSettings
 
 DEFAULT_LEASE_HEARTBEAT_S = 30.0
 
 _DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 _DEFAULT_CHECKPOINT_DB = "kokoro_checkpoints.db"
-_DEFAULT_RUN_STATE_DB = "kokoro_run_state.db"
+_DEFAULT_LEDGER_DB = "kokoro_ledger.db"
 _DEFAULT_MONGO_URL = "mongodb://127.0.0.1:27017"
 _DEFAULT_MONGO_DB = "kokoro"
 _DEFAULT_LOCAL_SHELL_TIMEOUT = 120
@@ -45,7 +45,7 @@ class AppConfig(BaseModel):
     stream: StreamSettings
     observability: ObservabilitySettings
     checkpoint: CheckpointSettings
-    run_state: RunStateSettings
+    ledger: LedgerSettings
     sandbox: SandboxSettings
     web_tools: WebToolSettings
     custom_subagents_json: str | None
@@ -84,10 +84,10 @@ class AppConfig(BaseModel):
                     "mongo_db": mongo_db,
                 }
             ),
-            run_state=RunStateSettings.model_validate(
+            ledger=LedgerSettings.model_validate(
                 {
-                    "backend": source.get("KOKORO_RUN_STATE_BACKEND", "sqlite").lower(),
-                    "sqlite_path": source.get("KOKORO_RUN_STATE_DB", _DEFAULT_RUN_STATE_DB),
+                    "backend": source.get("KOKORO_LEDGER_BACKEND", "sqlite").lower(),
+                    "sqlite_path": source.get("KOKORO_LEDGER_DB", _DEFAULT_LEDGER_DB),
                     "mongo_url": mongo_url,
                     "mongo_db": mongo_db,
                     "lease_ttl_ms": _int(source, "KOKORO_LEASE_TTL_S", DEFAULT_LEASE_TTL_S) * 1000,

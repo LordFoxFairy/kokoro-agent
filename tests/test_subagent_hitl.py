@@ -107,13 +107,13 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
 
 async def test_subagent_review_pauses_with_cached_result() -> None:
     # 审核政策同样不可被委派旁路：子代理内 review 工具执行后暂停，结果进卡（keep-first 缓存）。
-    from fakes import FakeRunStateStore
+    from fakes import FakeLedger
     from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
     _EXECUTED["n"] = 0
     saver = InMemorySaver()
     bus = MemoryStream()
-    store = FakeRunStateStore()
+    store = FakeLedger()
     gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
     review = ToolResultReviewMiddleware(frozenset({"gated"}), store, "rrev")
     main_model = LocalFakeChatModel.with_script([

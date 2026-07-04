@@ -7,7 +7,7 @@ from langchain_core.tools import BaseTool
 
 import kokoro_agent.mcp.tools as tools_mod
 from kokoro_agent.contract import McpServer
-from kokoro_agent.mcp.servers import McpConnectionError
+from kokoro_agent.mcp.servers import McpConnectionError, build_connections
 from kokoro_agent.mcp.tools import load_mcp_tools, tools_from_client
 
 
@@ -59,3 +59,18 @@ async def test_client_error_wraps_fail_closed(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(tools_mod, "MultiServerMCPClient", _BoomClient)
     with pytest.raises(McpConnectionError):
         await load_mcp_tools([_server()])
+
+
+def test_connection_carries_headers_and_timeout() -> None:
+    # 个人/私有 MCP 凭据直传：headers 原样进连接；缺省不带键（不发空 headers）。
+    with_auth = McpServer(
+        name="gh", transport="streamable_http", url="https://mcp.example/x",
+        allowed_tools=["t"], timeout_s=5, headers={"authorization": "Bearer tok"},
+    )
+    bare = McpServer(
+        name="pub", transport="streamable_http", url="https://mcp.example/y", allowed_tools=["t"],
+    )
+    conns = build_connections([with_auth, bare])
+    assert conns["gh"].get("headers") == {"authorization": "Bearer tok"}
+    assert conns["gh"].get("timeout") == 5.0
+    assert "headers" not in conns["pub"]

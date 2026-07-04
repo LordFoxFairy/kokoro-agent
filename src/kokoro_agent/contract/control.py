@@ -41,6 +41,7 @@ class McpServer(StrictModel):
     url: NonEmptyStr
     allowed_tools: list[NonEmptyStr]
     timeout_s: int | None = None
+    headers: dict[str, str] | None = None
 
 
 class SubagentDef(StrictModel):

@@ -23,5 +23,8 @@ def build_connections(servers: Sequence[McpServer]) -> dict[str, Connection]:
         conn = StreamableHttpConnection(transport="streamable_http", url=server.url)
         if server.timeout_s is not None:
             conn["timeout"] = float(server.timeout_s)
+        if server.headers is not None:
+            # 个人/私有 MCP 凭据直传（V1 内网）；升级路径=secret 引用（设计稿 hub v2）。
+            conn["headers"] = dict(server.headers)
         connections[server.name] = conn
     return connections

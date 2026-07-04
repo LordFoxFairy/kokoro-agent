@@ -7,7 +7,7 @@ import logging
 import os
 import signal
 import socket
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from deepagents.middleware.subagents import SubAgent
 from dotenv import load_dotenv
@@ -63,6 +63,7 @@ def wire_subagents(
     request: RunRequest,
     tool_index: Mapping[str, BaseTool],
     make_model: Callable[[ModelConfig], BaseChatModel],
+    guards: Sequence[AgentMiddleware] = (),
 ) -> list[SubAgent]:
     """wire 子代理 → deepagents 定义：tools 按名解析为已挂载实例（未知名 fail-loud，
     绝不静默丢弃），model 经工厂实例化；二者缺省即继承主 agent。"""
@@ -80,6 +81,9 @@ def wire_subagents(
             sub["tools"] = [tool_index[name] for name in spec.tools]
         if spec.model is not None:
             sub["model"] = make_model(spec.model)
+        if guards:
+            # 子代理 middleware 链独立于主 agent：预算/终态闸必须逐个下发，否则 task 委派即旁路。
+            sub["middleware"] = list(guards)
         out.append(sub)
     return out
 
@@ -94,7 +98,9 @@ def _approval_names(request: RunRequest) -> frozenset[str]:
 
 
 def catalog_subagents(
-    catalog: SubagentCatalog, tool_index: Mapping[str, BaseTool]
+    catalog: SubagentCatalog,
+    tool_index: Mapping[str, BaseTool],
+    guards: Sequence[AgentMiddleware] = (),
 ) -> tuple[list[SubAgent], frozenset[str]]:
     """内建/配置子代理 → deepagents 定义：声明工具缺任一即整个不挂（不设空壳），
     返回 (定义, 实际可委派名集)——deny 声明集只含真挂载者。"""
@@ -112,6 +118,8 @@ def catalog_subagents(
         }
         if spec.tools:
             sub["tools"] = [tool_index[name] for name in spec.tools]
+        if guards:
+            sub["middleware"] = list(guards)
         subs.append(sub)
         mounted.add(spec.name)
     return subs, frozenset(mounted)
@@ -160,15 +168,25 @@ async def _serve(config: AppConfig) -> None:
             if ASK_USER_TOOL_NAME in review_tools:
                 # ask_user 的"结果"就是人工答复本身，再审即循环悖论。
                 raise ValueError("ask_user cannot be a result-review tool")
+            # 执行守卫（终态闸恒挂 + 预算闸按政策）：主 agent 与每个子代理同套下发——
+            # 子代理 middleware 链独立，不下发即 task 委派旁路。
+            guards: list[AgentMiddleware] = [
+                TerminalGuardMiddleware(store=store, run_id=request.run_id)
+            ]
+            if config.run_token_budget > 0:
+                guards.append(
+                    TokenBudgetMiddleware(
+                        budget=config.run_token_budget, store=store, run_id=request.run_id
+                    )
+                )
             tool_index = {tool.name: tool for tool in tools}
-            catalog_defs, catalog_names = catalog_subagents(catalog, tool_index)
+            catalog_defs, catalog_names = catalog_subagents(catalog, tool_index, guards)
             # 委派执法声明集 = 真挂载的 catalog 子代理 + 本次 wire 预设。
             declared_subagents = catalog_names | frozenset(
                 sub.name for sub in runtime.subagents
             )
             middleware: list[AgentMiddleware] = [
-                # 跨 worker cancel 的执行侧闸：恒挂（轮粒度熔断，非政策项）。
-                TerminalGuardMiddleware(store=store, run_id=request.run_id),
+                *guards,
                 ToolPolicyMiddleware(
                     authorized,
                     declared_subagents=declared_subagents,
@@ -177,13 +195,6 @@ async def _serve(config: AppConfig) -> None:
             ]
             if review_tools:
                 middleware.append(ToolResultReviewMiddleware(review_tools, store, request.run_id))
-            if config.run_token_budget > 0:
-                # 钱的安全阀：预算数值是政策（现为进程 env，未来 profile 覆盖位），执法在此。
-                middleware.append(
-                    TokenBudgetMiddleware(
-                        budget=config.run_token_budget, store=store, run_id=request.run_id
-                    )
-                )
             # system prompt 三段组合：人格（入口/内置）+ 按挂载工具的行为指引 + skills 全文。
             skills_prompt = render_skills_prompt(runtime.skills)
             guidance = render_tool_guidance(frozenset(tool_index))
@@ -197,7 +208,10 @@ async def _serve(config: AppConfig) -> None:
                 subagents=[
                     *catalog_defs,
                     *wire_subagents(
-                        request, tool_index, lambda spec: make_chat_model(config.model, spec)
+                        request,
+                        tool_index,
+                        lambda spec: make_chat_model(config.model, spec),
+                        guards,
                     ),
                 ],
                 checkpointer=saver,

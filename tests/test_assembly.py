@@ -8,7 +8,9 @@ from langchain_deepseek import ChatDeepSeek
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
+from fakes import FakeRunStateStore
 from kokoro_agent.execution.prompts.guidance import render_tool_guidance
+from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
     ModelConfig,
     Permissions,
@@ -374,3 +376,15 @@ def test_tool_guidance_follows_mounted_tools() -> None:
     assert no_search is not None and "web_search" not in no_search
 
     assert render_tool_guidance(frozenset()) is None
+
+
+def test_guards_propagate_to_every_subagent() -> None:
+    # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
+    guard = TerminalGuardMiddleware(store=FakeRunStateStore(), run_id="r1")
+    catalog = build_catalog(None, frozenset({"web-researcher"}))
+    tools = build_web_tools(AppConfig.from_env(
+        {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
+    ))
+    index = {tool.name: tool for tool in tools}
+    defs, _ = catalog_subagents(catalog, index, [guard])
+    assert dict(defs[0]).get("middleware") == [guard]

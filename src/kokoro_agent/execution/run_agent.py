@@ -26,7 +26,6 @@ async def invoke_once(
     source_for: SourceResolver,
     claim_terminal: Callable[[], Awaitable[bool]],
     trace: RunnableConfig | None = None,
-    context: object | None = None,
     recursion_limit: int = 100,
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
@@ -40,13 +39,11 @@ async def invoke_once(
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
     with get_usage_metadata_callback() as usage_cb:
         try:
-            # runtime context 注入：工具/middleware 经 get_runtime/ToolRuntime.context 读取。
             run = await agent.astream_events(
                 payload,
                 version="v3",
                 config=config,
                 transformers=[CustomTransformer],
-                context=context,
             )
             async with run:
                 await pump_run(emitter, run, source_for=source_for)

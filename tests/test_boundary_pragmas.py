@@ -11,6 +11,8 @@ ALLOWED: dict[str, frozenset[str]] = {
     "src/kokoro_agent/execution/build_agent.py": frozenset({"reportUnknownVariableType"}),
     # langchain-core BaseTool.ainvoke 注解含裸 dict。
     "tests/e2e/test_mcp_live.py": frozenset({"reportUnknownMemberType"}),
+    # StructuredTool.from_function 未解 Runnable 泛型（ToolRuntime 注入唯一构造路径）。
+    "tests/test_run_scope_state.py": frozenset({"reportUnknownMemberType"}),
 }
 
 _PRAGMA = re.compile(r"^#\s*pyright:\s*(.+)$", re.MULTILINE)

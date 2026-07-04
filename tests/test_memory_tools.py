@@ -11,17 +11,17 @@ from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.run.context import RunContext
+from kokoro_agent.run.state import RunScope
 from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
 
 
-def _context(namespace: str, run_id: str) -> RunContext:
-    return RunContext(namespace=namespace, session_id="s1", run_id=run_id, thread_id="s1")
+def _context(namespace: str, run_id: str) -> RunScope:
+    return RunScope(namespace=namespace, session_id="s1", run_id=run_id, thread_id="s1")
 
 
-async def _run(script: list[AIMessage], store: InMemoryStore, context: RunContext) -> MemoryStream:
+async def _run(script: list[AIMessage], store: InMemoryStore, context: RunScope) -> MemoryStream:
     agent = build_agent(
         model=LocalFakeChatModel.with_script(script),
         tools=list(make_memory_tools(context.namespace)),
@@ -30,7 +30,6 @@ async def _run(script: list[AIMessage], store: InMemoryStore, context: RunContex
         checkpointer=None,
         permissions=[],
         interrupt_on={},
-        context_schema=RunContext,
         store=store,
     )
     bus = MemoryStream()
@@ -42,11 +41,10 @@ async def _run(script: list[AIMessage], store: InMemoryStore, context: RunContex
         RunEmitter(bus, context.run_id),
         agent,
         context.scoped_thread_id,
-        {"messages": [HumanMessage(content="hi")]},
+        {"messages": [HumanMessage(content="hi")], "scope": context.as_state()},
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
-        context=context,
     )
     assert terminal is True
     return bus

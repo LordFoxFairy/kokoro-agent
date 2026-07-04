@@ -19,7 +19,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
 from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.run.context import RunContext
+from kokoro_agent.run.state import KokoroAgentState
 
 
 def build_agent(
@@ -33,8 +33,6 @@ def build_agent(
     interrupt_on: Mapping[str, bool | InterruptOnConfig],
     middleware: Sequence[AgentMiddleware] = (),
     backend: BackendProtocol | None = None,
-    # 本仓唯一 context schema 就是 RunContext：不为单一场景开泛型（YAGNI）。
-    context_schema: type[RunContext] | None = None,
     store: BaseStore | None = None,
 ) -> InvokableAgent:
     # deepagents 返回泛型 CompiledStateGraph（含未定 ResponseT）：object 边界 + TypeGuard
@@ -50,7 +48,8 @@ def build_agent(
         middleware=list(middleware),
         backend=backend,
         store=store,
-        context_schema=context_schema,
+        # 身份乘 State 轴（scope 键）：随 input 进图、落 checkpoint（run/state.py 法则）。
+        state_schema=KokoroAgentState,
     )
     if not _is_invokable_agent(agent):
         raise TypeError("create_deep_agent returned an object that does not satisfy InvokableAgent")

@@ -123,7 +123,16 @@ async def test_request_dispatches_initial_invoke() -> None:
     assert kinds[-1] == "run.completed"
     assert len(agent.seen_payloads) == 1
     initial = agent.seen_payloads[0]
-    assert initial == {"messages": [HumanMessage(content="hello")]}
+    # 身份乘 State 轴：初始 payload 携带 scope（namespace 前缀键派生自 request.context）。
+    assert initial == {
+        "messages": [HumanMessage(content="hello")],
+        "scope": {
+            "namespace": "local:s1",
+            "session_id": "s1",
+            "run_id": "r1",
+            "thread_id": "c1",
+        },
+    }
 
 
 # namespace：checkpoint thread_id 带 namespace 前缀，双 namespace 互不可见。

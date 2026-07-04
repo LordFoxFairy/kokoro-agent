@@ -37,7 +37,7 @@ from kokoro_agent.execution.approvals import (
 from kokoro_agent.execution.events import RunEmitter, run_failed_payload
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.run.context import RunContext
+from kokoro_agent.run.state import RunScope
 from kokoro_agent.storage.run_state import RunStateStore
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
@@ -171,17 +171,20 @@ class RunSupervisor:
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, request.run_id, error)
             return
-        context = RunContext.of(request)
-        payload = {"messages": [HumanMessage(content=request.input.content)]}
+        scope = RunScope.of(request)
+        # 身份乘 State 轴：随初始 input 进图并落 checkpoint（resume 不重供，run/state.py 法则）。
+        payload = {
+            "messages": [HumanMessage(content=request.input.content)],
+            "scope": scope.as_state(),
+        }
         self._spawn_agent(
             bus,
             agent,
             request.run_id,
-            context.scoped_thread_id,
+            scope.scoped_thread_id,
             payload,
             self._approval_tool_names(request),
             trace=self._trace(request),
-            context=context,
         )
         # agent 就位后订阅该 run 的独立 control 流：resume/cancel 从此来，与请求流解耦。
         self._ensure_control_listener(bus, request.run_id)
@@ -200,8 +203,8 @@ class RunSupervisor:
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, msg.run_id, error)
             return
-        context = RunContext.of(request)
-        config: RunnableConfig = {"configurable": {"thread_id": context.scoped_thread_id}}
+        scope = RunScope.of(request)
+        config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
         snapshot = await agent.aget_state(config)
         # 幂等护栏：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
         if not has_pending_interrupt(snapshot):
@@ -240,9 +243,8 @@ class RunSupervisor:
             LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
             return
         self._spawn_agent(
-            bus, agent, msg.run_id, context.scoped_thread_id, command, names,
+            bus, agent, msg.run_id, scope.scoped_thread_id, command, names,
             trace=self._trace(request),
-            context=context,
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
@@ -274,10 +276,9 @@ class RunSupervisor:
         approval_tool_names: frozenset[str],
         *,
         trace: RunnableConfig | None,
-        context: object | None = None,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(bus, agent, run_id, thread_id, payload, approval_tool_names, trace, context)
+            self._guarded(bus, agent, run_id, thread_id, payload, approval_tool_names, trace)
         )
         self._tasks[run_id] = task
 
@@ -306,7 +307,6 @@ class RunSupervisor:
         payload: object,
         approval_tool_names: frozenset[str],
         trace: RunnableConfig | None,
-        context: object | None = None,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，resume 重新竞争额度。
         async with self._sem:
@@ -322,7 +322,6 @@ class RunSupervisor:
                 approval_tool_names=approval_tool_names,
                 source_for=self._source_for,
                 trace=trace,
-                context=context,
                 recursion_limit=self._recursion_limit,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),

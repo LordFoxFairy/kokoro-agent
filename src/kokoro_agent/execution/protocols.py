@@ -105,7 +105,6 @@ class InvokableAgent(Protocol):
         version: str,
         config: RunnableConfig,
         transformers: Sequence[type[StreamTransformer]],
-        context: object | None = None,
     ) -> AgentRunStream: ...
 
     async def aget_state(self, config: RunnableConfig) -> StateView: ...

@@ -18,7 +18,7 @@ from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.orchestration.context import SteeringMiddleware
+from kokoro_agent.tools.middleware import SteeringMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
 
 

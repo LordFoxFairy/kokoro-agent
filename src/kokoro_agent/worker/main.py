@@ -18,7 +18,7 @@ from kokoro_agent.observability import trace_config
 from kokoro_agent.orchestration import (
     AssembleDeps,
     approval_names,
-    assemble_agent,
+    assemble_general,
     build_web_tools,
 )
 from kokoro_agent.tools.web_search import SearchProviderSettings
@@ -73,7 +73,7 @@ async def _serve(config: AppConfig) -> None:
             memory_store=memory_store,
         )
         supervisor = RunSupervisor(
-            agent_builder=functools.partial(assemble_agent, deps),
+            agent_builder=functools.partial(assemble_general, deps),
             store=store,
             approval_tool_names=approval_names,
             trace_factory=lambda request: trace_config(config.observability, request),

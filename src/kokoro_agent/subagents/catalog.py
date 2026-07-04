@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 
 from kokoro_agent.contract import SubagentSource
 
+from kokoro_agent.prompts import load_prompt
+
 _NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -40,11 +42,7 @@ BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
     RegisteredSubagent(
         name="web-researcher",
         description="联网检索并阅读网页，交叉核对后给出带来源链接的结论。",
-        system_prompt=(
-            "你是网页研究子代理。流程：先用 web_search 找到候选来源，再用 web_fetch 阅读"
-            "关键页面正文，交叉核对后用简洁中文给出结论，并附上来源 URL。"
-            "信息不足或来源冲突时明说，不要编造。你没有写操作权限。"
-        ),
+        system_prompt=load_prompt("web-researcher"),
         source="built-in",
         tools=("web_search", "web_fetch"),
     ),

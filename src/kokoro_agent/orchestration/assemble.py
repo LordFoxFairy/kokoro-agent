@@ -1,7 +1,7 @@
-"""编排主配方：RunRequest + RuntimeConfig → InvokableAgent。
+"""编排共享装配件：AssembleDeps/AssembledAgent 形状 + 工具/守卫/子代理装配函数。
 
-系统最重要的组装点：工具解析 → 守卫构造 → 子代理装配 → 上下文组合 → 图构建。
-政策全部在此注入（租户 scope/审批集/预算/后端），工具与执行层保持通用原语。
+各 agent 类型的配方在同目录 <type>.py（现有 general.py；新增类型即新增配方文件），
+政策全部在配方内注入（租户 scope/审批集/预算/后端），工具与执行层保持通用原语。
 """
 
 from __future__ import annotations
@@ -17,31 +17,14 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.agents import GENERAL_PERSONA
 from kokoro_agent.contract import ModelConfig, RunRequest
-from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.mcp.tools import load_mcp_tools
-from kokoro_agent.model.factory import ChatModelSettings, make_chat_model
-from kokoro_agent.orchestration.context import SteeringMiddleware, compose_system_prompt
-from kokoro_agent.sandbox import SandboxSettings, build_filesystem_permissions, make_backend
-from kokoro_agent.skills.mounts import render_skills_prompt
+from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
-from kokoro_agent.tools.memory import make_memory_tools
-from kokoro_agent.tools.middleware import (
-    TerminalGuardMiddleware,
-    TokenBudgetMiddleware,
-    ToolPolicyMiddleware,
-    ToolResultReviewMiddleware,
-)
-from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.tools.registry import (
-    RESERVED_TOOL_NAMES,
-    SUBAGENT_TOOL_NAME,
-    resolve_tools,
-)
+from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.tools.web_fetch import make_web_fetch_tool
 from kokoro_agent.tools.web_search import (
     SearchProviderSettings,
@@ -168,92 +151,3 @@ def catalog_subagents(
         subs.append(sub)
         mounted.add(spec.name)
     return subs, frozenset(mounted)
-
-
-async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> AssembledAgent:
-    """每请求主配方（原 worker/main.build() 收编于此）。"""
-    runtime = request.runtime
-    tools: list[BaseTool] = list(resolve_tools(runtime.tools))
-    # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。
-    tools.extend(make_memory_tools(request.context.namespace))
-    tools.extend(deps.web_tools)
-    tools.extend(await load_mcp_tools(runtime.mcp))
-    # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。
-    authorized = frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES
-    approval_tools = frozenset(runtime.permissions.approval_tools)
-    review_tools = frozenset(runtime.permissions.review_tools)
-    if ASK_USER_TOOL_NAME in review_tools:
-        # ask_user 的"结果"就是人工答复本身，再审即循环悖论。
-        raise ValueError("ask_user cannot be a result-review tool")
-    # 执行守卫（终态闸恒挂 + 预算闸按政策）：主 agent 与每个子代理同套下发——
-    # 子代理 middleware 链独立，不下发即 task 委派旁路。
-    guards: list[AgentMiddleware] = [
-        TerminalGuardMiddleware(store=deps.ledger, run_id=request.run_id)
-    ]
-    if deps.run_token_budget > 0:
-        guards.append(
-            TokenBudgetMiddleware(
-                budget=deps.run_token_budget, store=deps.ledger, run_id=request.run_id
-            )
-        )
-    review_middleware = (
-        ToolResultReviewMiddleware(review_tools, deps.ledger, request.run_id)
-        if review_tools
-        else None
-    )
-    # 子代理链：守卫 + 审核一并下发（审核不下发=委派旁路审核政策）；
-    # 主链顺序保持 policy 在 review 外层，故审核在主链单独追加。
-    subagent_guards: list[AgentMiddleware] = (
-        [*guards, review_middleware] if review_middleware is not None else guards
-    )
-    tool_index = {tool.name: tool for tool in tools}
-    catalog_defs, catalog_names = catalog_subagents(deps.catalog, tool_index, subagent_guards)
-    # 委派执法声明集 = 真挂载的 catalog 子代理 + 本次 wire 预设。
-    declared_subagents = catalog_names | frozenset(sub.name for sub in runtime.subagents)
-    middleware: list[AgentMiddleware] = [
-        *guards,
-        # steering 只挂主链：插话是用户↔主 agent 的对话，注入子代理即语义污染。
-        SteeringMiddleware(store=deps.ledger, run_id=request.run_id),
-        ToolPolicyMiddleware(
-            authorized,
-            declared_subagents=declared_subagents,
-            subagent_create=runtime.permissions.subagent_create,
-        ),
-    ]
-    if review_middleware is not None:
-        middleware.append(review_middleware)
-    graph = build_agent(
-        model=make_chat_model(deps.model, runtime.model),
-        tools=tools,
-        # 上下文组合：具名入口人格（wire）或通用成品人格 + 条件指引 + skills 全文。
-        system_prompt=compose_system_prompt(
-            runtime.system_prompt or GENERAL_PERSONA,
-            frozenset(tool_index),
-            render_skills_prompt(runtime.skills),
-        ),
-        subagents=[
-            # 同名覆盖内生 general-purpose：守卫齐挂，可达性政策不变（不进 declared 集）。
-            general_purpose_subagent(subagent_guards),
-            *catalog_defs,
-            *wire_subagents(
-                request,
-                tool_index,
-                lambda spec: make_chat_model(deps.model, spec),
-                subagent_guards,
-            ),
-        ],
-        checkpointer=deps.checkpointer,
-        permissions=build_filesystem_permissions(runtime.permissions.filesystem),
-        interrupt_on=build_interrupt_on(
-            approval_tools, subagent_create=runtime.permissions.subagent_create
-        ),
-        middleware=middleware,
-        backend=make_backend(runtime.backend, deps.sandbox),
-        # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
-        store=deps.memory_store,
-    )
-    return AssembledAgent(
-        agent=graph,
-        # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
-        tool_descriptions={tool.name: tool.description for tool in tools if tool.description},
-    )

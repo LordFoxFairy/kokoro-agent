@@ -28,7 +28,7 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.agents import GENERAL_PERSONA
+from kokoro_agent.prompts import GENERAL_PERSONA
 from kokoro_agent.orchestration.assemble import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
 

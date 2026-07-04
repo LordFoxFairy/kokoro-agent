@@ -6,18 +6,9 @@ from langchain_core.tools import StructuredTool
 from langgraph.config import get_store
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.tools.guidance import ToolGuidance
 
 SAVE_MEMORY_TOOL_NAME = "save_memory"
 SEARCH_MEMORY_TOOL_NAME = "search_memory"
-
-GUIDANCE = ToolGuidance(
-    requires=frozenset({SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME}),
-    text="""## 记忆（save_memory / search_memory）
-- 请求可能涉及用户偏好或长期背景时，先 search_memory 查一下再动手。
-- 用户表达持久偏好、纠正你的做法、给出可复用事实时，及时 save_memory（key 用短横线小写）。
-- 一次性/临时信息与任何密钥密码，绝不入记忆。""",
-)
 _MEMORY_SEGMENT = "memories"
 _SEARCH_LIMIT = 8
 
@@ -54,13 +45,19 @@ def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
     return (
         StructuredTool(
             name=SAVE_MEMORY_TOOL_NAME,
-            description="Persist a durable memory for this workspace (short kebab-case key).",
+            description=(
+                "持久保存本空间的长期记忆（key 用短横线小写）。用户表达持久偏好、"
+                "纠正做法、给出可复用事实时及时保存；一次性/临时信息与任何密钥密码绝不入记忆。"
+            ),
             args_schema=SaveMemoryArgs,
             coroutine=save_memory,
         ),
         StructuredTool(
             name=SEARCH_MEMORY_TOOL_NAME,
-            description="Search durable memories saved in earlier runs of this workspace.",
+            description=(
+                "检索本空间既往保存的长期记忆。请求可能涉及用户偏好或长期背景时，"
+                "先查一下再动手。"
+            ),
             args_schema=SearchMemoryArgs,
             coroutine=search_memory,
         ),

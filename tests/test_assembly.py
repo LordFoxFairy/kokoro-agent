@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
 from fakes import FakeLedger
-from kokoro_agent.orchestration import render_tool_guidance
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
     ModelConfig,
@@ -362,22 +361,6 @@ def test_builtin_subagents_env_parse() -> None:
     assert AppConfig.from_env({}).enabled_builtin_subagents == frozenset()
 
 
-def test_tool_guidance_follows_mounted_tools() -> None:
-    # 行为指引只提真挂载的工具：提未挂载工具=教模型调用不存在的东西。
-    full = render_tool_guidance(
-        frozenset({"ask_user_question", "save_memory", "search_memory", "web_fetch", "web_search"})
-    )
-    assert full is not None
-    for token in ("ask_user_question", "save_memory", "web_fetch", "web_search"):
-        assert token in full
-
-    no_search = render_tool_guidance(
-        frozenset({"ask_user_question", "save_memory", "search_memory", "web_fetch"})
-    )
-    assert no_search is not None and "web_search" not in no_search
-
-    assert render_tool_guidance(frozenset()) is None
-
 
 def test_general_purpose_override_carries_guards_and_inherits() -> None:
     # 同名覆盖内生 GP：middleware 挂守卫；不带 tools/model 键 = 继承主 agent（GP 语义）。
@@ -401,12 +384,15 @@ def test_guards_propagate_to_every_subagent() -> None:
     assert dict(defs[0]).get("middleware") == [guard]
 
 
-def test_guidance_lives_with_its_tool() -> None:
-    # 文案随工具本体：各模块 GUIDANCE 必须覆盖自己的工具名（防指引与本体漂移）。
-    from kokoro_agent.tools import ask_user_question, memory, web_fetch, web_search
+def test_tool_usage_lives_in_tool_descriptions() -> None:
+    # 工具用法经 LangChain 工具 schema 交给模型（description），不进 system prompt。
+    from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
+    from kokoro_agent.tools.web_fetch import make_web_fetch_tool
+    from kokoro_agent.tools.web_search import SearchProviderSettings, make_search_provider, make_web_search_tool
 
-    assert ask_user_question.ASK_USER_TOOL_NAME in ask_user_question.GUIDANCE.requires
-    assert {memory.SAVE_MEMORY_TOOL_NAME, memory.SEARCH_MEMORY_TOOL_NAME} == memory.GUIDANCE.requires
-    assert web_fetch.WEB_FETCH_TOOL_NAME in web_fetch.GUIDANCE.requires
-    # 检索指引依赖 fetch 同挂：搜索→读原文是一条完整行为链。
-    assert web_search.GUIDANCE.requires == {web_search.WEB_SEARCH_TOOL_NAME, web_fetch.WEB_FETCH_TOOL_NAME}
+    assert "不连环追问" in ASK_USER_TOOL.description
+    assert "附 URL" in make_web_fetch_tool(allow_private=False).description
+    search = make_web_search_tool(make_search_provider(
+        SearchProviderSettings(provider="searxng", api_key=None, base_url="https://searx.local")
+    ))
+    assert "交叉核对" in search.description

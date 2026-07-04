@@ -20,9 +20,7 @@ class StrictModel(BaseModel):
 
 class RunInput(StrictModel):
     message_id: NonEmptyStr
-    content: str | None = None
-    content_ref: NonEmptyStr | None = None
-    attachments: list[dict[str, JsonValue]] | None = None
+    content: NonEmptyStr
 
 
 class ModelConfig(StrictModel):

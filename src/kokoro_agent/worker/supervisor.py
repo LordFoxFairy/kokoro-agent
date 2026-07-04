@@ -158,7 +158,7 @@ class RunSupervisor:
             await self._fail_terminal(bus, request.run_id, error)
             return
         context = RunContext.of(request)
-        payload = {"messages": [HumanMessage(content=request.input.content or "")]}
+        payload = {"messages": [HumanMessage(content=request.input.content)]}
         self._spawn_agent(
             bus,
             agent,

@@ -6,8 +6,18 @@ from langchain_core.tools import StructuredTool
 from langgraph.config import get_store
 from pydantic import BaseModel, ConfigDict, Field
 
+from kokoro_agent.tools.guidance import ToolGuidance
+
 SAVE_MEMORY_TOOL_NAME = "save_memory"
 SEARCH_MEMORY_TOOL_NAME = "search_memory"
+
+GUIDANCE = ToolGuidance(
+    requires=frozenset({SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME}),
+    text="""## 记忆（save_memory / search_memory）
+- 请求可能涉及用户偏好或长期背景时，先 search_memory 查一下再动手。
+- 用户表达持久偏好、纠正你的做法、给出可复用事实时，及时 save_memory（key 用短横线小写）。
+- 一次性/临时信息与任何密钥密码，绝不入记忆。""",
+)
 _MEMORY_SEGMENT = "memories"
 _SEARCH_LIMIT = 8
 

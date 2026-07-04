@@ -11,7 +11,15 @@ from bs4 import BeautifulSoup
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
+from kokoro_agent.tools.guidance import ToolGuidance
+
 WEB_FETCH_TOOL_NAME = "web_fetch"
+
+GUIDANCE = ToolGuidance(
+    requires=frozenset({WEB_FETCH_TOOL_NAME}),
+    text="""## 读网页（web_fetch）
+- 用户给了 URL 或结论依赖某个页面内容时，用 web_fetch 读正文再回答；引用时附 URL。""",
+)
 
 FETCH_MAX_CHARS = 24_000
 _FETCH_MAX_BYTES = 1_000_000

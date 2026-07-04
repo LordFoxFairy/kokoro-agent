@@ -8,7 +8,18 @@ import httpx
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter
 
+from kokoro_agent.tools.guidance import ToolGuidance
+from kokoro_agent.tools.web_fetch import WEB_FETCH_TOOL_NAME
+
 WEB_SEARCH_TOOL_NAME = "web_search"
+
+# 检索指引依赖 fetch 同挂（搜索→读原文交叉核对是一条完整行为链）。
+GUIDANCE = ToolGuidance(
+    requires=frozenset({WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME}),
+    text="""## 联网检索（web_search）
+- 需要时效信息或外部事实时先 web_search，再对关键来源 web_fetch 读原文，交叉核对后作答并附来源。
+- 检索不到就明说。""",
+)
 _SEARCH_COUNT = 5
 
 

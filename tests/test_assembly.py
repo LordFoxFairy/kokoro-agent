@@ -399,3 +399,14 @@ def test_guards_propagate_to_every_subagent() -> None:
     index = {tool.name: tool for tool in tools}
     defs, _ = catalog_subagents(catalog, index, [guard])
     assert dict(defs[0]).get("middleware") == [guard]
+
+
+def test_guidance_lives_with_its_tool() -> None:
+    # 文案随工具本体：各模块 GUIDANCE 必须覆盖自己的工具名（防指引与本体漂移）。
+    from kokoro_agent.tools import ask_user_question, memory, web_fetch, web_search
+
+    assert ask_user_question.ASK_USER_TOOL_NAME in ask_user_question.GUIDANCE.requires
+    assert {memory.SAVE_MEMORY_TOOL_NAME, memory.SEARCH_MEMORY_TOOL_NAME} == memory.GUIDANCE.requires
+    assert web_fetch.WEB_FETCH_TOOL_NAME in web_fetch.GUIDANCE.requires
+    # 检索指引依赖 fetch 同挂：搜索→读原文是一条完整行为链。
+    assert web_search.GUIDANCE.requires == {web_search.WEB_SEARCH_TOOL_NAME, web_fetch.WEB_FETCH_TOOL_NAME}

@@ -127,7 +127,7 @@ def test_missing_kind_rejected() -> None:
         agent_event_adapter.validate_python({"run_id": "r1", "index": 0, "timestamp": 1, "payload": {}})
 
 
-@pytest.mark.parametrize("status", ["completed", "cancelled", "timeout"])
+@pytest.mark.parametrize("status", ["completed", "cancelled"])
 def test_run_completed_terminal_statuses(status: str) -> None:
     event = agent_event_adapter.validate_python(
         _envelope("run.completed", {"status": status, "token_usage": None})

@@ -8,6 +8,7 @@ from langchain_deepseek import ChatDeepSeek
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
+from kokoro_agent.execution.prompts.guidance import render_tool_guidance
 from kokoro_agent.contract import (
     ModelConfig,
     Permissions,
@@ -356,3 +357,20 @@ def test_builtin_subagents_env_parse() -> None:
     config = AppConfig.from_env({"KOKORO_BUILTIN_SUBAGENTS": "web-researcher, "})
     assert config.enabled_builtin_subagents == {"web-researcher"}
     assert AppConfig.from_env({}).enabled_builtin_subagents == frozenset()
+
+
+def test_tool_guidance_follows_mounted_tools() -> None:
+    # 行为指引只提真挂载的工具：提未挂载工具=教模型调用不存在的东西。
+    full = render_tool_guidance(
+        frozenset({"ask_user_question", "save_memory", "search_memory", "web_fetch", "web_search"})
+    )
+    assert full is not None
+    for token in ("ask_user_question", "save_memory", "web_fetch", "web_search"):
+        assert token in full
+
+    no_search = render_tool_guidance(
+        frozenset({"ask_user_question", "save_memory", "search_memory", "web_fetch"})
+    )
+    assert no_search is not None and "web_search" not in no_search
+
+    assert render_tool_guidance(frozenset()) is None

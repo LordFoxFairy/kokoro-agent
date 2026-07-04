@@ -19,6 +19,7 @@ from kokoro_agent.config import AppConfig
 from kokoro_agent.contract import REQUESTS_STREAM, ModelConfig, RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.prompts import SYSTEM_PROMPT
+from kokoro_agent.execution.prompts.guidance import render_tool_guidance
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.mcp.tools import load_mcp_tools
 from kokoro_agent.run.context import RunContext
@@ -180,9 +181,11 @@ async def _serve(config: AppConfig) -> None:
                         budget=config.run_token_budget, store=store, run_id=request.run_id
                     )
                 )
-            # skills 全文注入 system prompt（backend 无关；渐进披露待沙箱供给，见 mounts.py）。
+            # system prompt 三段组合：人格（入口/内置）+ 按挂载工具的行为指引 + skills 全文。
             skills_prompt = render_skills_prompt(runtime.skills)
-            base_prompt = runtime.system_prompt or SYSTEM_PROMPT
+            guidance = render_tool_guidance(frozenset(tool_index))
+            persona = runtime.system_prompt or SYSTEM_PROMPT
+            base_prompt = "\n\n".join(part for part in (persona, guidance) if part)
             return build_agent(
                 model=make_chat_model(config.model, runtime.model),
                 tools=tools,

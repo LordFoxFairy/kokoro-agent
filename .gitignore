@@ -18,3 +18,6 @@ tmp/
 *.db-shm
 *.db-wal
 *.sqlite
+
+# 本地产物库缺省根（KOKORO_ARTIFACTS_DIR）
+kokoro_artifacts/

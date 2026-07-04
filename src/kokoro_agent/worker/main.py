@@ -24,6 +24,7 @@ from kokoro_agent.orchestration import (
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
+from kokoro_agent.storage.artifacts import make_artifact_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.subagents import build_catalog
@@ -70,6 +71,7 @@ async def _serve(config: AppConfig) -> None:
             web_tools=tuple(web_tools_from_config(config)),
             checkpointer=saver,
             ledger=store,
+            artifacts=make_artifact_store(config.artifacts),
             memory_store=memory_store,
         )
         supervisor = RunSupervisor(

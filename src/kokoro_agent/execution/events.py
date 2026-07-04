@@ -9,6 +9,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
+    Artifact,
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
@@ -32,6 +33,8 @@ from kokoro_agent.contract import (
     agent_event_adapter,
     run_events_stream,
 )
+from langgraph.prebuilt.tool_node import ToolRuntime
+
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.streams.protocol import StreamProtocol
 
@@ -238,6 +241,18 @@ def output_delta_text(chunk: object) -> str:
     return text if isinstance(text, str) else ""
 
 
+def artifact_of(tc: ToolCallInfo) -> Artifact | None:
+    """ToolMessage.artifact → wire 引用：Artifact 形状洗净通过才升；其余（第三方工具
+    塞的任意 artifact）静默忽略——wire 只带本仓产物库背书的引用。"""
+    raw = getattr(tc.output, "artifact", None)
+    if raw is None:
+        return None
+    try:
+        return Artifact.model_validate(raw)
+    except ValidationError:
+        return None
+
+
 def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
     # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
     result, truncated = _result_text(tc)
@@ -248,6 +263,7 @@ def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
         result=result,
         is_error=tc.error is not None,
         truncated=True if truncated else None,
+        artifact=artifact_of(tc),
     )
 
 
@@ -275,6 +291,7 @@ def subagent_tool_returned_payload(
         result=result,
         is_error=tc.error is not None,
         truncated=True if truncated else None,
+        artifact=artifact_of(tc),
     )
 
 
@@ -324,7 +341,9 @@ _ARGS_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonVal
 
 
 def _json_args(args: dict[str, object] | None) -> dict[str, JsonValue]:
-    return _ARGS_ADAPTER.validate_python(args or {})
+    # 框架注入参数（ToolRuntime）是机器参数，不属于模型生成入参：剔除后再 strict 洗净。
+    clean = {k: v for k, v in (args or {}).items() if not isinstance(v, ToolRuntime)}
+    return _ARGS_ADAPTER.validate_python(clean)
 
 
 # wire 是轻事件通道：完整产物走 backend 文件（canvas 预览面读取），事件只带摘要级文本。

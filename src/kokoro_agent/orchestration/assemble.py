@@ -21,6 +21,7 @@ from kokoro_agent.contract import ModelConfig, RunRequest
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.sandbox import SandboxSettings
+from kokoro_agent.storage.artifacts import ArtifactStore
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
@@ -58,6 +59,7 @@ class AssembleDeps:
     web_tools: tuple[BaseTool, ...]
     checkpointer: BaseCheckpointSaver[str]
     ledger: RunLedger
+    artifacts: ArtifactStore
     memory_store: BaseStore
 
 

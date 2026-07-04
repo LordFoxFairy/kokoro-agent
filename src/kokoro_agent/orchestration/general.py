@@ -26,6 +26,7 @@ from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
 from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.export_artifact import make_export_artifact_tool
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.middleware import (
     SteeringMiddleware,
@@ -44,6 +45,8 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
     tools: list[BaseTool] = list(resolve_tools(runtime.tools))
     # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。
     tools.extend(make_memory_tools(request.context.namespace))
+    # 产物导出恒挂载：归属（run_id）与共享库在装配期注入。
+    tools.append(make_export_artifact_tool(deps.artifacts, request.run_id))
     tools.extend(deps.web_tools)
     tools.extend(await load_mcp_tools(runtime.mcp))
     # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。

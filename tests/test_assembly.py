@@ -332,7 +332,9 @@ def testwire_subagents_tools_and_model_passthrough() -> None:
     )
     from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 
-    resolved = wire_subagents(request_with(dual), {"web_fetch": fetch}, lambda _m: fake_model)
+    resolved: list[dict[str, object]] = [dict(sub) for sub in wire_subagents(
+        request_with(dual), {"web_fetch": fetch}, lambda _m: fake_model
+    )]
     assert resolved[0].get("tools") == [ASK_USER_TOOL]
 
 

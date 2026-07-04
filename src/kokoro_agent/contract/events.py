@@ -63,6 +63,14 @@ class ToolInvokedPayload(StrictModel):
     args: dict[str, JsonValue]
 
 
+class ToolOutputDeltaPayload(StrictModel):
+    segment_id: NonEmptyStr
+    tool_id: NonEmptyStr
+    name: NonEmptyStr
+    # 长执行工具的增量输出（如 execute）；每工具累计上限同 result 护栏，超限静默停发（终值仍走 tool.returned）。
+    delta: str
+
+
 class ToolAwaitingApprovalPayload(StrictModel):
     segment_id: NonEmptyStr
     tool_id: NonEmptyStr
@@ -184,6 +192,14 @@ class ToolInvoked(StrictModel):
     payload: ToolInvokedPayload
 
 
+class ToolOutputDelta(StrictModel):
+    kind: Literal["tool.output.delta"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: ToolOutputDeltaPayload
+
+
 class ToolAwaitingApproval(StrictModel):
     kind: Literal["tool.awaiting_approval"]
     run_id: NonEmptyStr
@@ -263,6 +279,7 @@ AgentEvent = Annotated[
         MessageDelta,
         MessageCompleted,
         ToolInvoked,
+        ToolOutputDelta,
         ToolAwaitingApproval,
         ToolReturned,
         TodoUpdated,

@@ -43,6 +43,7 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
     ("message.delta", {"segment_id": "seg", "delta": "hi"}),
     ("message.completed", {"segment_id": "seg", "content": "hi there"}),
     ("tool.invoked", {"segment_id": "seg", "tool_id": "t1", "name": "execute", "args": {}}),
+    ("tool.output.delta", {"segment_id": "seg", "tool_id": "t1", "name": "execute", "delta": "ln\n"}),
     ("tool.awaiting_approval", _AWAITING_PAYLOAD),
     (
         "tool.returned",
@@ -81,7 +82,7 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
 
 
 @pytest.mark.parametrize(("kind", "payload"), _ALL_KINDS, ids=[k for k, _ in _ALL_KINDS])
-def test_all_14_kinds_round_trip(kind: str, payload: dict[str, JsonValue]) -> None:
+def test_all_wire_kinds_round_trip(kind: str, payload: dict[str, JsonValue]) -> None:
     event = agent_event_adapter.validate_python(_envelope(kind, payload))
     assert event.kind == kind
     assert event.run_id == "r1"

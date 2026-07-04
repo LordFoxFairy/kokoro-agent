@@ -571,3 +571,25 @@ def test_tool_returned_renders_content_blocks_readably() -> None:
     payload = tool_returned_payload(_tool_call_info(output=blocks))
     assert payload.result == "第一段\n第二段\n[1 non-text block(s) omitted]"
     assert "{'type'" not in payload.result
+
+
+async def test_tool_output_streams_between_invoked_and_returned() -> None:
+    tc = FakeToolCall(tool_call_id="t1", tool_name="execute", output="done", deltas=("line1\n", "line2\n"))
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tc,))))
+    kinds = bus.kinds("r1")
+    assert kinds.index("tool.invoked") < kinds.index("tool.output.delta") < kinds.index("tool.returned")
+    deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"]
+    assert deltas == ["line1\n", "line2\n"]
+
+
+async def test_tool_output_stream_budget_clips_silently() -> None:
+    tc = FakeToolCall(
+        tool_call_id="t1", tool_name="execute", output="done",
+        deltas=("a" * 3000, "b" * 3000, "c" * 3000),
+    )
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tc,))))
+    deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"]
+    assert sum(len(d) for d in deltas) == 4000  # TOOL_RESULT_MAX_CHARS 预算截停
+    assert bus.kinds("r1")[-1] == "run.completed"

@@ -24,7 +24,10 @@ from kokoro_agent.execution.events import (
     subagent_text_delta_payload,
     thinking_delta_payload,
     todo_payload,
+    TOOL_RESULT_MAX_CHARS,
+    output_delta_text,
     tool_invoked_payload,
+    tool_output_delta_payload,
     tool_returned_payload,
 )
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME, TODO_TOOL_NAME
@@ -130,6 +133,22 @@ async def _pump_reasoning(
             await queue.put(payload)
 
 
+async def _pump_tool_output(tc: ToolCallView, queue: _EventQueue) -> None:
+    # 长执行工具（如 execute）的增量输出上 wire；累计超 result 护栏后静默停发（终值走 returned）。
+    sent = 0
+    async for chunk in tc.output_deltas:
+        if sent >= TOOL_RESULT_MAX_CHARS:
+            continue  # 继续抽干防回压，只是不再上 wire
+        text = output_delta_text(chunk)
+        if not text:
+            continue
+        text = text[: TOOL_RESULT_MAX_CHARS - sent]
+        sent += len(text)
+        payload = tool_output_delta_payload(tc, text)
+        if payload is not None:
+            await queue.put(payload)
+
+
 async def _consume_tools(
     tool_calls: AsyncIterable[ToolCallView], queue: _EventQueue, subagent_id: str | None
 ) -> None:
@@ -147,7 +166,7 @@ async def _consume_tools(
             await _drain_aiter(tc.output_deltas)
             continue
         await queue.put(tool_invoked_payload(tc))
-        await _drain_aiter(tc.output_deltas)
+        await _pump_tool_output(tc, queue)
         await queue.put(tool_returned_payload(tc))
 
 

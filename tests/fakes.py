@@ -167,10 +167,11 @@ class FakeToolCall:
     output: object = None
     error: str | None = None
     completed: bool = True
+    deltas: Sequence[object] = ()
 
     @property
     def output_deltas(self) -> AsyncIterator[object]:
-        return aiter_items(())
+        return aiter_items(tuple(self.deltas))
 
 
 @dataclass

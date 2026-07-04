@@ -24,6 +24,7 @@ from kokoro_agent.contract import (
     TodoUpdatedPayload,
     ToolAwaitingApprovalPayload,
     ToolInvokedPayload,
+    ToolOutputDeltaPayload,
     ToolReturnedPayload,
     agent_event_adapter,
     run_events_stream,
@@ -39,6 +40,7 @@ AgentEventPayload = (
     | MessageDeltaPayload
     | MessageCompletedPayload
     | ToolInvokedPayload
+    | ToolOutputDeltaPayload
     | ToolAwaitingApprovalPayload
     | ToolReturnedPayload
     | TodoUpdatedPayload
@@ -56,6 +58,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     MessageDeltaPayload: "message.delta",
     MessageCompletedPayload: "message.completed",
     ToolInvokedPayload: "tool.invoked",
+    ToolOutputDeltaPayload: "tool.output.delta",
     ToolAwaitingApprovalPayload: "tool.awaiting_approval",
     ToolReturnedPayload: "tool.returned",
     TodoUpdatedPayload: "todo.updated",
@@ -200,6 +203,22 @@ def tool_invoked_payload(tc: ToolCallInfo) -> ToolInvokedPayload:
         # 模型生成的入参原样透传；JSON 安全由 strict payload 构造一次性校验。
         args=_json_args(tc.input),
     )
+
+
+def tool_output_delta_payload(tc: ToolCallInfo, delta: str) -> ToolOutputDeltaPayload | None:
+    if not delta:
+        return None
+    return ToolOutputDeltaPayload(
+        segment_id=tc.tool_call_id, tool_id=tc.tool_call_id, name=tc.tool_name, delta=delta
+    )
+
+
+def output_delta_text(chunk: object) -> str:
+    """工具输出增量的文本收窄：str 直用，带 .text 的取之，其余弃置（非文本流）。"""
+    if isinstance(chunk, str):
+        return chunk
+    text = getattr(chunk, "text", None)
+    return text if isinstance(text, str) else ""
 
 
 def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:

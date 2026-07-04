@@ -25,6 +25,7 @@ from fakes import (
     FakeSubagentRun,
     FakeToolCall,
     find_event,
+    find_events,
     text_model,
     text_run,
     usage_recorder,
@@ -38,6 +39,8 @@ from kokoro_agent.contract import (
     SubagentFinished,
     SubagentSource,
     SubagentStarted,
+    SubagentToolInvoked,
+    SubagentToolReturned,
     ToolAwaitingApproval,
     ToolAwaitingApprovalPayload,
     ToolInvoked,
@@ -313,11 +316,55 @@ async def test_subagent_text_and_inner_tools_routing() -> None:
     kinds = [e.kind for e in events]
     assert "subagent.text.delta" in kinds
     assert "subagent.text.completed" in kinds
-    # 契约无子代理内工具通道：抽干弃置，不冒充顶层工具。
-    assert "tool.invoked" not in kinds
+    # 子代理内工具走 subagent.tool.* 可见性通道，不冒充顶层工具。
+    assert "tool.invoked" not in kinds and "tool.returned" not in kinds
+    invoked = find_event(events, SubagentToolInvoked)
+    assert invoked.payload.subagent_id == "sub-1"
+    assert invoked.payload.tool_id == "inner"
+    assert invoked.payload.name == "lookup"
+    returned = find_event(events, SubagentToolReturned)
+    assert returned.payload.subagent_id == "sub-1"
+    assert returned.payload.is_error is False
     started = find_event(events, SubagentStarted)
     assert started.payload.subagent_id == "sub-1"
     assert started.payload.source == "runtime-custom"
+
+
+async def test_subagent_inner_tool_error_and_clip() -> None:
+    giant = "x" * 5000
+    bad = FakeToolCall(tool_call_id="e1", tool_name="lookup", input={}, error="boom")
+    big = FakeToolCall(tool_call_id="b1", tool_name="lookup", input={}, output=giant)
+    sub = FakeSubagentRun(trigger_call_id="sub-1", tool_views=(bad, big))
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(subagent_runs=(sub,))))
+    events = find_events(bus.run_events("r1"), SubagentToolReturned)
+    by_tool = {e.payload.tool_id: e.payload for e in events}
+    assert by_tool["e1"].is_error is True and by_tool["e1"].result == "boom"
+    assert by_tool["b1"].truncated is True and len(by_tool["b1"].result) < 5000
+
+
+async def test_subagent_todo_stays_in_subagent_channel() -> None:
+    # 子代理自己的 todo 不得覆盖主面板：走 subagent.tool.* 而非 todo.updated。
+    todo = FakeToolCall(
+        tool_call_id="td1",
+        tool_name="write_todos",
+        input={"todos": [{"content": "step", "status": "pending"}]},
+    )
+    sub = FakeSubagentRun(trigger_call_id="sub-1", tool_views=(todo,))
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(subagent_runs=(sub,))))
+    kinds = bus.kinds("r1")
+    assert "todo.updated" not in kinds
+    assert "subagent.tool.invoked" in kinds and "subagent.tool.returned" in kinds
+
+
+async def test_nested_task_inside_subagent_not_double_emitted() -> None:
+    inner_task = FakeToolCall(tool_call_id="nt1", tool_name="task", input={"description": "go"})
+    sub = FakeSubagentRun(trigger_call_id="sub-1", tool_views=(inner_task,))
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(subagent_runs=(sub,))))
+    kinds = bus.kinds("r1")
+    assert "subagent.tool.invoked" not in kinds and "subagent.tool.returned" not in kinds
 
 
 async def test_failed_subagent_flagged() -> None:

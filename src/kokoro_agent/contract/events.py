@@ -147,6 +147,26 @@ class SubagentTextCompletedPayload(StrictModel):
     text: str
 
 
+class SubagentToolInvokedPayload(StrictModel):
+    segment_id: NonEmptyStr
+    subagent_id: NonEmptyStr
+    tool_id: NonEmptyStr
+    name: NonEmptyStr
+    # 子代理内工具过程可见性通道；HITL 审批仍走主通道嵌套帧，无输出增量通道（终值走 returned）。
+    args: dict[str, JsonValue]
+
+
+class SubagentToolReturnedPayload(StrictModel):
+    segment_id: NonEmptyStr
+    subagent_id: NonEmptyStr
+    tool_id: NonEmptyStr
+    name: NonEmptyStr
+    result: str
+    is_error: bool
+    # 同 tool.returned.truncated：缺席=结果完整。
+    truncated: bool | None = None
+
+
 class RunCompletedPayload(StrictModel):
     status: RunCompletedStatus
     # agent 认真算的用量全链路贯通；无用量时为 null。
@@ -270,6 +290,22 @@ class SubagentTextCompleted(StrictModel):
     payload: SubagentTextCompletedPayload
 
 
+class SubagentToolInvoked(StrictModel):
+    kind: Literal["subagent.tool.invoked"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: SubagentToolInvokedPayload
+
+
+class SubagentToolReturned(StrictModel):
+    kind: Literal["subagent.tool.returned"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: SubagentToolReturnedPayload
+
+
 class RunCompleted(StrictModel):
     kind: Literal["run.completed"]
     run_id: NonEmptyStr
@@ -302,6 +338,8 @@ AgentEvent = Annotated[
         SubagentThinkingDelta,
         SubagentTextDelta,
         SubagentTextCompleted,
+        SubagentToolInvoked,
+        SubagentToolReturned,
         RunCompleted,
         RunFailed,
     ],

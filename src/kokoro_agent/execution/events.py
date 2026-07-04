@@ -20,6 +20,8 @@ from kokoro_agent.contract import (
     SubagentTextCompletedPayload,
     SubagentThinkingDeltaPayload,
     SubagentTextDeltaPayload,
+    SubagentToolInvokedPayload,
+    SubagentToolReturnedPayload,
     ThinkingDeltaPayload,
     Todo,
     TodoUpdatedPayload,
@@ -50,6 +52,8 @@ AgentEventPayload = (
     | SubagentThinkingDeltaPayload
     | SubagentTextDeltaPayload
     | SubagentTextCompletedPayload
+    | SubagentToolInvokedPayload
+    | SubagentToolReturnedPayload
     | RunCompletedPayload
     | RunFailedPayload
 )
@@ -69,6 +73,8 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     SubagentFinishedPayload: "subagent.finished",
     SubagentTextDeltaPayload: "subagent.text.delta",
     SubagentTextCompletedPayload: "subagent.text.completed",
+    SubagentToolInvokedPayload: "subagent.tool.invoked",
+    SubagentToolReturnedPayload: "subagent.tool.returned",
     RunCompletedPayload: "run.completed",
     RunFailedPayload: "run.failed",
 }
@@ -237,6 +243,33 @@ def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
     result, truncated = _result_text(tc)
     return ToolReturnedPayload(
         segment_id=tc.tool_call_id,
+        tool_id=tc.tool_call_id,
+        name=tc.tool_name,
+        result=result,
+        is_error=tc.error is not None,
+        truncated=True if truncated else None,
+    )
+
+
+def subagent_tool_invoked_payload(
+    tc: ToolCallInfo, *, subagent_id: str
+) -> SubagentToolInvokedPayload:
+    return SubagentToolInvokedPayload(
+        segment_id=tc.tool_call_id,
+        subagent_id=subagent_id,
+        tool_id=tc.tool_call_id,
+        name=tc.tool_name,
+        args=_json_args(tc.input),
+    )
+
+
+def subagent_tool_returned_payload(
+    tc: ToolCallInfo, *, subagent_id: str
+) -> SubagentToolReturnedPayload:
+    result, truncated = _result_text(tc)
+    return SubagentToolReturnedPayload(
+        segment_id=tc.tool_call_id,
+        subagent_id=subagent_id,
         tool_id=tc.tool_call_id,
         name=tc.tool_name,
         result=result,

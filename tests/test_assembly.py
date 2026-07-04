@@ -32,7 +32,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.orchestration import catalog_subagents, wire_subagents
+from kokoro_agent.orchestration import catalog_subagents, general_purpose_subagent, wire_subagents
 from kokoro_agent.worker.main import web_tools_from_config
 
 
@@ -377,6 +377,16 @@ def test_tool_guidance_follows_mounted_tools() -> None:
     assert no_search is not None and "web_search" not in no_search
 
     assert render_tool_guidance(frozenset()) is None
+
+
+def test_general_purpose_override_carries_guards_and_inherits() -> None:
+    # 同名覆盖内生 GP：middleware 挂守卫；不带 tools/model 键 = 继承主 agent（GP 语义）。
+    guard = TerminalGuardMiddleware(store=FakeLedger(), run_id="r1")
+    spec = general_purpose_subagent([guard])
+    assert spec["name"] == "general-purpose"
+    assert spec["description"] and spec["system_prompt"]
+    assert dict(spec).get("middleware") == [guard]
+    assert "tools" not in spec and "model" not in spec
 
 
 def test_guards_propagate_to_every_subagent() -> None:

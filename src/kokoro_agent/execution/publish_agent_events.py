@@ -21,6 +21,8 @@ from kokoro_agent.execution.events import (
     subagent_finished_payload,
     subagent_started_payload,
     subagent_text_completed_payload,
+    subagent_tool_invoked_payload,
+    subagent_tool_returned_payload,
     subagent_text_delta_payload,
     subagent_thinking_delta_payload,
     thinking_delta_payload,
@@ -158,15 +160,18 @@ async def _consume_tools(
 ) -> None:
     async for tc in tool_calls:
         if tc.tool_name == SUBAGENT_TOOL_NAME:
-            # 子代理启动工具由 subagents 投影处理，避免与 tool.* 双发。
-            await _drain_aiter(tc.output_deltas)
-            continue
-        if tc.tool_name == TODO_TOOL_NAME:
-            await queue.put(todo_payload(tc))
+            # 子代理启动工具由 subagents 投影处理，避免与 tool.* / subagent.tool.* 双发。
             await _drain_aiter(tc.output_deltas)
             continue
         if subagent_id is not None:
-            # 契约无子代理内工具通道：抽干防回压，内容弃置。
+            # 子代理内工具（含其自有 todo，不得覆盖主面板）走 subagent.tool.* 可见性通道；
+            # 无输出增量通道，抽干防回压，终值走 returned。
+            await queue.put(subagent_tool_invoked_payload(tc, subagent_id=subagent_id))
+            await _drain_aiter(tc.output_deltas)
+            await queue.put(subagent_tool_returned_payload(tc, subagent_id=subagent_id))
+            continue
+        if tc.tool_name == TODO_TOOL_NAME:
+            await queue.put(todo_payload(tc))
             await _drain_aiter(tc.output_deltas)
             continue
         await queue.put(tool_invoked_payload(tc))

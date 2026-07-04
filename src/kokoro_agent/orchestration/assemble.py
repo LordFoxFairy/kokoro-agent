@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from deepagents.middleware.subagents import SubAgent
+from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -85,6 +85,19 @@ def approval_names(request: RunRequest) -> frozenset[str]:
     if request.runtime.permissions.subagent_create == "ask":
         names |= {SUBAGENT_TOOL_NAME}
     return names
+
+
+def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent:
+    """deepagents 自动注入的 general-purpose 不带本仓守卫（allow 档可达即旁路预算/终态/审核）
+    ——传同名 spec 显式覆盖：tools/model 缺省即继承主 agent（GP 语义不变），middleware 挂满守卫。"""
+    sub: SubAgent = {
+        "name": GENERAL_PURPOSE_SUBAGENT["name"],
+        "description": GENERAL_PURPOSE_SUBAGENT["description"],
+        "system_prompt": GENERAL_PURPOSE_SUBAGENT["system_prompt"],
+    }
+    if guards:
+        sub["middleware"] = list(guards)
+    return sub
 
 
 def wire_subagents(
@@ -206,6 +219,8 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
             render_skills_prompt(runtime.skills),
         ),
         subagents=[
+            # 同名覆盖内生 general-purpose：守卫齐挂，可达性政策不变（不进 declared 集）。
+            general_purpose_subagent(subagent_guards),
             *catalog_defs,
             *wire_subagents(
                 request,

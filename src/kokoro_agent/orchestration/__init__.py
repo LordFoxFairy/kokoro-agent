@@ -10,6 +10,7 @@ from kokoro_agent.orchestration.assemble import (
     assemble_agent,
     build_web_tools,
     catalog_subagents,
+    general_purpose_subagent,
     wire_subagents,
 )
 from kokoro_agent.orchestration.context import compose_system_prompt, render_tool_guidance
@@ -21,6 +22,7 @@ __all__ = [
     "build_web_tools",
     "catalog_subagents",
     "compose_system_prompt",
+    "general_purpose_subagent",
     "render_tool_guidance",
     "wire_subagents",
 ]

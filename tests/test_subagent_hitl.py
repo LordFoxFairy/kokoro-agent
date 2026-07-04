@@ -105,6 +105,60 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
     assert events2[-1]["kind"] == "run.completed"
 
 
+async def test_general_purpose_delegation_runs_inside_guards() -> None:
+    # 内生 GP 旁路收口回归钉：唯一的 TerminalGuard 只挂在我们覆盖的 general-purpose spec 上，
+    # 账本已终态 → 委派进 GP 的首个模型轮必被熔断（RunSupersededError 出自 GP 子图内）。
+    from fakes import FakeLedger
+    from kokoro_agent.orchestration import general_purpose_subagent
+    from kokoro_agent.tools.middleware import TerminalGuardMiddleware
+
+    ledger = FakeLedger()
+    assert await ledger.try_mark_terminal("rgp")
+    guard = TerminalGuardMiddleware(store=ledger, run_id="rgp")
+    main_model = LocalFakeChatModel.with_script([
+        AIMessage(content="", tool_calls=[{
+            "name": "task", "args": {"description": "do", "subagent_type": "general-purpose"},
+            "id": "t1", "type": "tool_call"}]),
+        AIMessage(content="main done"),
+    ])
+    agent = build_agent(
+        model=main_model,
+        tools=[],
+        system_prompt="x",
+        subagents=[general_purpose_subagent([guard])],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on=build_interrupt_on(frozenset()),
+    )
+
+    async def claim() -> bool:
+        return True
+
+    recorder, _seen = usage_recorder()
+    bus = MemoryStream()
+    terminal = await invoke_once(
+        RunEmitter(bus, "rgp"),
+        agent,
+        "tgp",
+        {"messages": [HumanMessage(content="go", id="m1")]},
+        approval_tool_names=frozenset({"ask_user_question"}),
+        source_for=lambda _n: "built-in",
+        claim_terminal=claim,
+        record_usage=recorder,
+    )
+    assert terminal is True
+    events = [item.event for item in await bus.read_all(run_events_stream("rgp"))]
+    kinds = [e["kind"] for e in events]
+    # 委派真的进了 GP 子图，且首个模型轮即被守卫熔断。
+    assert "subagent.started" in kinds
+    failed = [e for e in events if e["kind"] == "run.failed"]
+    assert len(failed) == 1
+    payload = failed[0]["payload"]
+    assert isinstance(payload, dict)
+    # 异常跨子图边界被 LangGraph 重建（类型折叠为 RuntimeError），message 保留守卫原文。
+    assert "terminated elsewhere" in str(payload["message"])
+
+
 async def test_subagent_review_pauses_with_cached_result() -> None:
     # 审核政策同样不可被委派旁路：子代理内 review 工具执行后暂停，结果进卡（keep-first 缓存）。
     from fakes import FakeLedger

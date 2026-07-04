@@ -37,6 +37,10 @@ class RunStateStore(Protocol):
         # 取原 request 供 resume 重建 agent。
         ...
 
+    async def list_paused(self) -> list[str]:
+        # 哨兵暂停且非终态的 run：control 监听收养的数据源（认领 worker 崩溃后接续 HITL）。
+        ...
+
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 原子认领终态：首个认领者返 True，杜绝重复终态事件。
         ...

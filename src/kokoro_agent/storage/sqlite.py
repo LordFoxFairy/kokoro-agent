@@ -97,6 +97,15 @@ class SqliteRunStateStore:
                 reclaimed.append(RunRequest.model_validate_json(request_json))
         return reclaimed
 
+    async def list_paused(self) -> list[str]:
+        async with self._db.execute(
+            "SELECT run_id FROM run_state"
+            " WHERE terminal=0 AND lease_expires_ms IS NULL AND request_json IS NOT NULL"
+            " ORDER BY run_id"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [str(row[0]) for row in rows]
+
     async def get_request(self, run_id: str) -> RunRequest | None:
         async with self._db.execute(
             "SELECT request_json FROM run_state WHERE run_id=?", (run_id,)

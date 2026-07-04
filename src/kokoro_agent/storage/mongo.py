@@ -98,6 +98,17 @@ class MongoRunStateStore:
             if isinstance(raw, str):
                 reclaimed.append(RunRequest.model_validate_json(raw))
 
+    async def list_paused(self) -> list[str]:
+        cursor = self._coll.find(
+            {
+                "terminal": {"$ne": True},
+                "lease_expires_ms": None,
+                "request_json": {"$ne": None},
+            },
+            {"_id": 1},
+        ).sort("_id", 1)
+        return [str(doc["_id"]) async for doc in cursor]
+
     async def get_request(self, run_id: str) -> RunRequest | None:
         doc = await self._coll.find_one({"_id": run_id})
         if doc is None:

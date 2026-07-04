@@ -131,6 +131,10 @@ class RunSupervisor:
                 continue
             LOGGER.warning("reclaiming expired run_id=%s", request.run_id)
             await self._start_run(bus, request)
+        # control 监听收养：暂停 run 的认领 worker 崩溃后，其 resume/cancel 无人处理会永久卡死；
+        # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
+        for run_id in await self._store.list_paused():
+            self._ensure_control_listener(bus, run_id)
 
     async def _heartbeat_loop(self, bus: StreamProtocol) -> None:
         while True:

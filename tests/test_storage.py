@@ -128,6 +128,21 @@ async def _assert_pause_excludes_reclaim(store: RunStateStore, clock: FakeClock)
     assert [r.run_id for r in await store.reclaim_expired()] == ["run-paused"]
 
 
+async def _assert_list_paused_only_pause_sentinel(store: RunStateStore, clock: FakeClock) -> None:
+    # control 监听收养的数据源：仅"哨兵暂停且非终态"的 run；活跃/终态/重续租均不入列。
+    active, paused, done = request("run-active"), request("run-hitl"), request("run-final")
+    for req in (active, paused, done):
+        await store.try_claim(req)
+    await store.pause(paused.run_id)
+    await store.try_mark_terminal(done.run_id)
+    assert await store.list_paused() == [paused.run_id]
+    await store.renew(paused.run_id)  # resume 续租 → 离开暂停态
+    assert await store.list_paused() == []
+    await store.pause(paused.run_id)
+    await store.try_mark_terminal(paused.run_id)  # 终态后即使哨兵仍在也不入列
+    assert await store.list_paused() == []
+
+
 async def _assert_terminal_excluded_from_reclaim(store: RunStateStore, clock: FakeClock) -> None:
     req = request("run-done")
     await store.try_claim(req)
@@ -164,6 +179,7 @@ _MATRIX: list[Callable[[RunStateStore, FakeClock], Awaitable[None]]] = [
     _assert_terminal_excluded_from_reclaim,
     lambda store, _clock: _assert_concurrent_single_winner(store),
     lambda store, _clock: _assert_tool_result_keep_first(store),
+    _assert_list_paused_only_pause_sentinel,
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -174,6 +190,7 @@ _MATRIX_IDS = [
     "terminal_excluded",
     "concurrent_single_winner",
     "tool_result_keep_first",
+    "list_paused_only_pause_sentinel",
 ]
 
 

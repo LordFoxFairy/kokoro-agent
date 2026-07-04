@@ -511,3 +511,32 @@ async def test_pause_recorded_on_interrupt() -> None:
     await _drain(sup)
     assert store.paused_runs == ["rp"]
     assert store.leases["rp"] is None
+
+
+# ⑨ control 监听收养：认领 worker 崩溃后，暂停 run 的 resume/cancel 由任意存活 worker 心跳接管。
+async def test_heartbeat_adopts_control_listener_for_paused_run() -> None:
+    agent = FakeAgent(run=text_run("unused"))
+    bus = FakeBus(
+        control={
+            run_control_stream("orphan-hitl"): (
+                StreamItem(
+                    cursor="1",
+                    event={"kind": "run.cancel", "run_id": "orphan-hitl", "thread_id": "t1"},
+                ),
+            )
+        }
+    )
+    sup, store = _supervisor(agent)
+    # 模拟他处 worker 崩溃遗留：run 已认领并暂停（哨兵），本 supervisor 从未 dispatch 过它。
+    await store.try_claim(request("orphan-hitl"))
+    await store.pause("orphan-hitl")
+
+    await sup.heartbeat_once(bus)
+    for _ in range(200):
+        if run_control_stream("orphan-hitl") in bus.deleted:
+            break
+        await asyncio.sleep(0.005)
+
+    completed = find_event(bus.run_events("orphan-hitl"), RunCompleted)
+    assert completed.payload.status == "cancelled"
+    assert run_control_stream("orphan-hitl") in bus.deleted

@@ -131,6 +131,13 @@ class FakeRunStateStore:
         self.expired = []
         return out
 
+    async def list_paused(self) -> list[str]:
+        return sorted(
+            run_id
+            for run_id, lease in self.leases.items()
+            if lease is None and run_id not in self.terminals
+        )
+
     async def get_request(self, run_id: str) -> RunRequest | None:
         return self.requests.get(run_id)
 

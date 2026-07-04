@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
 from fakes import FakeRunStateStore
-from kokoro_agent.orchestration.context import render_tool_guidance
+from kokoro_agent.orchestration import render_tool_guidance
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
     ModelConfig,
@@ -32,7 +32,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.orchestration.assemble import catalog_subagents, wire_subagents
+from kokoro_agent.orchestration import catalog_subagents, wire_subagents
 from kokoro_agent.worker.main import web_tools_from_config
 
 

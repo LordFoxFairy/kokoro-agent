@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeVar
 
@@ -109,6 +109,7 @@ class FakeRunStateStore:
         self.expired: list[RunRequest] = []
         self.tool_results: dict[tuple[str, str], tuple[str, bool]] = {}
         self.token_totals: dict[str, int] = {}
+        self.usage_totals: dict[str, tuple[int, int]] = {}
 
     async def try_claim(self, request: RunRequest) -> bool:
         if request.run_id in self.requests:
@@ -145,6 +146,11 @@ class FakeRunStateStore:
     async def add_tokens(self, run_id: str, count: int) -> int:
         self.token_totals[run_id] = self.token_totals.get(run_id, 0) + count
         return self.token_totals[run_id]
+
+    async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        cur_in, cur_out = self.usage_totals.get(run_id, (0, 0))
+        self.usage_totals[run_id] = (cur_in + input_tokens, cur_out + output_tokens)
+        return self.usage_totals[run_id]
 
     async def try_mark_terminal(self, run_id: str) -> bool:
         if run_id in self.terminals:
@@ -343,3 +349,15 @@ def request(
         ),
         context=RuntimeContext(namespace=namespace, session_id=session_id),
     )
+
+
+def usage_recorder() -> tuple[Callable[[int, int], Awaitable[tuple[int, int]]], dict[str, int]]:
+    """invoke_once 用量入账的测试替身：返回 (recorder, 累计观测)。"""
+    seen = {"input": 0, "output": 0}
+
+    async def record(input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        seen["input"] += input_tokens
+        seen["output"] += output_tokens
+        return (seen["input"], seen["output"])
+
+    return record, seen

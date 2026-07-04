@@ -27,6 +27,7 @@ from fakes import (
     find_event,
     text_model,
     text_run,
+    usage_recorder,
 )
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
@@ -78,6 +79,7 @@ async def _invoke(
         approval_tool_names=approval_tool_names,
         source_for=_runtime_custom,
         claim_terminal=claim,
+        record_usage=usage_recorder()[0],
         trace=trace,
     )
 
@@ -551,6 +553,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         claim_terminal=claim,
+        record_usage=usage_recorder()[0],
         recursion_limit=8,
     )
     assert terminal is True
@@ -606,3 +609,51 @@ async def test_subagent_thinking_streams_on_wire() -> None:
     assert "subagent.thinking.delta" in kinds
     deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "subagent.thinking.delta"]
     assert deltas == ["hmm"]
+
+
+async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
+    # 多段 run 少报回归钉：终态 token_usage 取 record_usage 返回的跨段累计，而非本段测量。
+    async def preloaded_recorder(input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        return (30 + input_tokens, 3 + output_tokens)  # 模拟前段已入账 30/3
+
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(bus, "racc")
+    await invoke_once(
+        emitter,
+        FakeAgent(run=text_run("hi")),
+        "c1",
+        {"messages": []},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        claim_terminal=_always_claim,
+        record_usage=preloaded_recorder,
+    )
+    completed = find_event(bus.run_events("racc"), RunCompleted)
+    assert completed.payload.token_usage is not None
+    assert completed.payload.token_usage.input_tokens == 30
+    assert completed.payload.token_usage.output_tokens == 3
+
+
+async def test_pause_segment_records_usage_too() -> None:
+    # 暂停段也入账：不然恢复后终态只累计后段。
+    calls: list[tuple[int, int]] = []
+
+    async def recorder(input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        calls.append((input_tokens, output_tokens))
+        return (input_tokens, output_tokens)
+
+    bus = FakeBus()
+    agent = FakeAgent(
+        run=FakeRunStream(is_interrupted=True),
+        state=FakeState(interrupts=()),
+    )
+    emitter = await RunEmitter.attach(bus, "rpause")
+    terminal = await invoke_once(
+        emitter, agent, "c1", {"messages": []},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        claim_terminal=_always_claim,
+        record_usage=recorder,
+    )
+    assert terminal is False
+    assert len(calls) == 1  # 暂停路径恰好入账一次

@@ -128,6 +128,16 @@ async def _assert_pause_excludes_reclaim(store: RunStateStore, clock: FakeClock)
     assert [r.run_id for r in await store.reclaim_expired()] == ["run-paused"]
 
 
+async def _assert_usage_accumulation_two_columns(store: RunStateStore, clock: FakeClock) -> None:
+    # run.completed 用量真源：跨段累计 input/output 双列（与预算计数分开存，语义不同）。
+    req = request("run-usage")
+    await store.try_claim(req)
+    assert await store.add_usage("run-usage", 10, 1) == (10, 1)
+    assert await store.add_usage("run-usage", 20, 2) == (30, 3)
+    assert await store.add_usage("run-usage", 0, 0) == (30, 3)  # 零增量幂等读
+    assert await store.add_usage("run-usage-other", 5, 5) == (5, 5)  # run 间隔离
+
+
 async def _assert_token_accumulation_per_run(store: RunStateStore, clock: FakeClock) -> None:
     # token 预算跨 HITL 段累计：resume 重建 middleware 后计数不清零；run 间隔离。
     req_a, req_b = request("run-tok-a"), request("run-tok-b")
@@ -192,6 +202,7 @@ _MATRIX: list[Callable[[RunStateStore, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_tool_result_keep_first(store),
     _assert_list_paused_only_pause_sentinel,
     _assert_token_accumulation_per_run,
+    _assert_usage_accumulation_two_columns,
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -204,6 +215,7 @@ _MATRIX_IDS = [
     "tool_result_keep_first",
     "list_paused_only_pause_sentinel",
     "token_accumulation_per_run",
+    "usage_accumulation_two_columns",
 ]
 
 

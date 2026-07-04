@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command, Interrupt
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
 from fakes import (
     FakeAgent,
@@ -125,7 +125,7 @@ async def test_request_dispatches_initial_invoke() -> None:
     initial = agent.seen_payloads[0]
     # 身份乘 State 轴：初始 payload 携带 scope（namespace 前缀键派生自 request.context）。
     assert initial == {
-        "messages": [HumanMessage(content="hello")],
+        "messages": [HumanMessage(content="hello", id="r1-m")],
         "scope": {
             "namespace": "local:s1",
             "session_id": "s1",
@@ -631,3 +631,16 @@ async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
     await _drain(sup)
     # 终态复检收手：不 spawn、无新 invoke。
     assert agent.seen_payloads == []
+
+
+# ⑬ 崩溃重拾幂等：原始 input 重放（TTL 重拾语义）不得复制用户消息——稳定 id=message_id。
+async def test_initial_payload_carries_stable_message_id() -> None:
+    agent = FakeAgent(run=text_run("hi"))
+    bus = FakeBus()
+    sup, _store = _supervisor(agent)
+    await sup.dispatch(bus, request("rid"))
+    await _drain(sup)
+    payload = agent.seen_payloads[0]
+    assert isinstance(payload, dict)
+    messages = TypeAdapter(list[HumanMessage]).validate_python(payload["messages"])
+    assert messages[0].id == "rid-m"  # fakes.request 的 message_id 约定

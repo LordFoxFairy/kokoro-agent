@@ -174,7 +174,8 @@ class RunSupervisor:
         scope = RunScope.of(request)
         # 身份乘 State 轴：随初始 input 进图并落 checkpoint（resume 不重供，run/state.py 法则）。
         payload = {
-            "messages": [HumanMessage(content=request.input.content)],
+            # 稳定 id=message_id：TTL 重拾对已推进 checkpoint 重放原始 input 时，add_messages 按 id 去重。
+            "messages": [HumanMessage(content=request.input.content, id=request.input.message_id)],
             "scope": scope.as_state(),
         }
         self._spawn_agent(
@@ -325,6 +326,8 @@ class RunSupervisor:
                 recursion_limit=self._recursion_limit,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
+                # 用量跨段累计真源：run.completed 报累计而非末段。
+                record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
             )
         if terminal:
             self._emitters.pop(run_id, None)

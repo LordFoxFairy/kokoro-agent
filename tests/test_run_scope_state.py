@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 
+from fakes import usage_recorder
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.events import RunEmitter
@@ -54,6 +55,7 @@ async def _invoke(agent: InvokableAgent, payload: object, run_id: str) -> bool:
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
+        record_usage=usage_recorder()[0],
     )
 
 

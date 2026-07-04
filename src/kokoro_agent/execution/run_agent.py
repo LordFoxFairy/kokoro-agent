@@ -25,6 +25,7 @@ async def invoke_once(
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     claim_terminal: Callable[[], Awaitable[bool]],
+    record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
 ) -> bool:
@@ -51,12 +52,18 @@ async def invoke_once(
                     snapshot = await agent.aget_state(config)
                     for awaiting in awaiting_payloads(snapshot, approval_tool_names):
                         await emitter.emit(awaiting)
+                    # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
+                    await _record(record_usage, usage_cb.usage_metadata)
                     return False
             if await claim_terminal():
+                total_in, total_out = await _record(record_usage, usage_cb.usage_metadata)
+                token_usage = (
+                    TokenUsage(input_tokens=total_in, output_tokens=total_out)
+                    if total_in or total_out
+                    else None
+                )
                 await emitter.emit(
-                    RunCompletedPayload(
-                        status="completed", token_usage=_sum_usage(usage_cb.usage_metadata)
-                    )
+                    RunCompletedPayload(status="completed", token_usage=token_usage)
                 )
             return True
         except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
@@ -65,17 +72,18 @@ async def invoke_once(
             return True
 
 
-def _sum_usage(per_model: Mapping[str, UsageMetadata]) -> TokenUsage | None:
-    # callback 按 model_name 分组；wire 用扁平 total，跨 model 累加；全无用量即 null。
-    if not per_model:
-        return None
+async def _record(
+    record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
+    per_model: Mapping[str, UsageMetadata],
+) -> tuple[int, int]:
+    # callback 按 model_name 分组；跨 model 累加本段用量后入账，返回 run 级累计。
     input_tokens = 0
     output_tokens = 0
     for usage in per_model.values():
         # provider 可能漏报单项：缺省 0，绝不让计量残缺炸成 run.failed。
         input_tokens += usage.get("input_tokens", 0)
         output_tokens += usage.get("output_tokens", 0)
-    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    return await record_usage(input_tokens, output_tokens)
 
 
 def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) -> RunnableConfig:

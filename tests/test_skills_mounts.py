@@ -11,6 +11,7 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatResult
 
+from fakes import usage_recorder
 from kokoro_agent.contract import SkillMount
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
@@ -112,6 +113,7 @@ async def test_skill_body_reaches_model_system_prompt(tmp_path: Path) -> None:
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
+        record_usage=usage_recorder()[0],
     )
     assert terminal is True
     # .text 是框架的文本收窄口（content 联合 → str），不自拆 content 块。

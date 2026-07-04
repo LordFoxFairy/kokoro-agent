@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS token_totals(
     total  INTEGER NOT NULL
 )"""
 
+_RUN_USAGE_DDL = """\
+CREATE TABLE IF NOT EXISTS run_usage(
+    run_id       TEXT PRIMARY KEY,
+    input_total  INTEGER NOT NULL,
+    output_total INTEGER NOT NULL
+)"""
+
 _TOOL_RESULTS_DDL = """\
 CREATE TABLE IF NOT EXISTS tool_results(
     run_id   TEXT NOT NULL,
@@ -53,6 +60,7 @@ class SqliteRunStateStore:
         await self._db.execute(_DDL)
         await self._db.execute(_TOOL_RESULTS_DDL)
         await self._db.execute(_TOKEN_TOTALS_DDL)
+        await self._db.execute(_RUN_USAGE_DDL)
         await self._db.commit()
 
     async def try_claim(self, request: RunRequest) -> bool:
@@ -124,6 +132,21 @@ class SqliteRunStateStore:
         row = await cur.fetchone()
         await self._db.commit()
         return int(row[0]) if row is not None else count
+
+    async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        cur = await self._db.execute(
+            "INSERT INTO run_usage(run_id, input_total, output_total) VALUES(?, ?, ?)"
+            " ON CONFLICT(run_id) DO UPDATE SET"
+            " input_total=input_total+excluded.input_total,"
+            " output_total=output_total+excluded.output_total"
+            " RETURNING input_total, output_total",
+            (run_id, input_tokens, output_tokens),
+        )
+        row = await cur.fetchone()
+        await self._db.commit()
+        if row is None:
+            return (input_tokens, output_tokens)
+        return (int(row[0]), int(row[1]))
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         async with self._db.execute(

@@ -13,6 +13,7 @@ from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.run.state import RunScope
 from kokoro_agent.streams.memory import MemoryStream
+from fakes import usage_recorder
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
 
@@ -45,6 +46,7 @@ async def _run(script: list[AIMessage], store: InMemoryStore, context: RunScope)
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
+        record_usage=usage_recorder()[0],
     )
     assert terminal is True
     return bus

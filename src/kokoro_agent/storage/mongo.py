@@ -122,6 +122,19 @@ class MongoRunStateStore:
             raise TypeError(f"token_total for {run_id!r} is not an int: {total!r}")
         return total
 
+    async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        doc = await self._coll.find_one_and_update(
+            {"_id": run_id},
+            {"$inc": {"usage_input": input_tokens, "usage_output": output_tokens}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        input_total = doc.get("usage_input") if doc else None
+        output_total = doc.get("usage_output") if doc else None
+        if not isinstance(input_total, int) or not isinstance(output_total, int):
+            raise TypeError(f"usage totals for {run_id!r} are not ints")
+        return (input_total, output_total)
+
     async def get_request(self, run_id: str) -> RunRequest | None:
         doc = await self._coll.find_one({"_id": run_id})
         if doc is None:

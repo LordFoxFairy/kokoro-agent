@@ -45,6 +45,10 @@ class RunStateStore(Protocol):
         # token 预算的跨段累计（resume 重建不清零）：原子加并返回累计值。
         ...
 
+    async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        # run.completed 用量真源：跨段累计 input/output（与预算计数分开，语义不同）。
+        ...
+
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 原子认领终态：首个认领者返 True，杜绝重复终态事件。
         ...

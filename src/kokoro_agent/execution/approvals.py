@@ -19,6 +19,7 @@ from kokoro_agent.contract import (
 from kokoro_agent.execution.events import clip_result
 from kokoro_agent.execution.protocols import StateView
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 _DEFAULT_REJECT_MESSAGE = "rejected by user"
 _REVIEW_KEY = "kokoro_result_review"
@@ -27,10 +28,15 @@ _REVIEW_DECISIONS: tuple[AllowedDecision, ...] = ("approve", "respond", "reject"
 
 @dataclass(frozen=True)
 class PendingFrame:
-    """同帧完整待批集合：segment 归属 + (tool_id, name) 按 interrupt 顺序。"""
+    """同帧完整待批集合：segment 归属 + (tool_id, name) 按 interrupt 顺序。
+
+    nested=True：暂停源自子代理内部（deepagents 把 interrupt_on 下发进子图）——
+    主图消息里没有对应 tool_call，tool_id 为合成稳定 id（interrupt.id 派生），
+    segment 归属触发委派的 task 调用。"""
 
     segment_id: str
     tools: tuple[tuple[str, str], ...]
+    nested: bool = False
 
     @property
     def tool_ids(self) -> list[str]:
@@ -167,14 +173,7 @@ def awaiting_payloads(
             )
             for entry in entries
         ]
-    frame = pending_frame(snapshot, approval_tool_names)
-    requests = approval_requests(snapshot.interrupts)
-    # 对齐失配即 invariant 破裂：宁可 fail-loud 收口为 run.failed，不发错帧。
-    if len(frame.tools) != len(requests):
-        raise ValueError(
-            f"HITL alignment mismatch: pending tool_calls={len(frame.tools)} != "
-            f"approval_requests={len(requests)} (names={sorted(approval_tool_names)})"
-        )
+    frame, requests = approval_frame(snapshot, approval_tool_names)
     pending_ids = frame.tool_ids
     payloads: list[ToolAwaitingApprovalPayload] = []
     for (tool_id, _name), request in zip(frame.tools, requests, strict=True):
@@ -193,6 +192,40 @@ def awaiting_payloads(
             )
         )
     return payloads
+
+
+def approval_frame(
+    snapshot: StateView, approval_tool_names: frozenset[str]
+) -> tuple[PendingFrame, list[ApprovalRequest]]:
+    """审批帧唯一构造点：主帧优先；主图无对应 tool_call 时回退嵌套帧（子代理内暂停）。"""
+    frame = pending_frame(snapshot, approval_tool_names)
+    requests = approval_requests(snapshot.interrupts)
+    if not frame.tools and requests:
+        frame = _nested_frame(snapshot)
+    # 对齐失配即 invariant 破裂：宁可 fail-loud 收口为 run.failed，不发错帧。
+    if len(frame.tools) != len(requests):
+        raise ValueError(
+            f"HITL alignment mismatch: pending tool_calls={len(frame.tools)} != "
+            f"approval_requests={len(requests)} (names={sorted(approval_tool_names)})"
+        )
+    return frame, requests
+
+
+def _nested_frame(snapshot: StateView) -> PendingFrame:
+    # 合成 tool_id 必须跨快照重读稳定（resume 重建帧要与已发 awaiting 对齐）：由
+    # interrupt.id（langgraph 稳定哈希）+ 序号派生；segment 归属触发委派的 task 调用。
+    raw: Any = snapshot.values.get("messages") or []
+    last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
+    segment_id = ""
+    if last_ai is not None:
+        task_call = next((tc for tc in last_ai.tool_calls if tc["name"] == SUBAGENT_TOOL_NAME), None)
+        segment_id = (task_call["id"] if task_call else None) or last_ai.id or ""
+    tools: list[tuple[str, str]] = []
+    for interrupt in snapshot.interrupts:
+        payload = _ApprovalInterrupt.model_validate(interrupt.value)
+        for index, request in enumerate(payload.action_requests):
+            tools.append((f"{interrupt.id}:{index}", request.name))
+    return PendingFrame(segment_id, tuple(tools), nested=True)
 
 
 def align_decisions(
@@ -313,6 +346,24 @@ def review_resolution_payloads(
                 )
             )
     return payloads
+
+
+def nested_approved_payloads(
+    decisions: Sequence[ResumeDecision], frame: PendingFrame
+) -> list[ToolReturnedPayload]:
+    """嵌套帧的 approve/edit 收尾直发：子代理内工具无投影通道，占位文案闭合审批卡。"""
+    name_by_id = dict(frame.tools)
+    return [
+        ToolReturnedPayload(
+            segment_id=frame.segment_id,
+            tool_id=decision.tool_id,
+            name=name_by_id[decision.tool_id],
+            result="已批准，已在子代理内执行。",
+            is_error=False,
+        )
+        for decision in decisions
+        if decision.type in ("approve", "edit")
+    ]
 
 
 def resume_command_decisions(

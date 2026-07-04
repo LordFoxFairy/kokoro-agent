@@ -23,6 +23,8 @@ from kokoro_agent.contract import (
     run_control_stream,
 )
 from kokoro_agent.execution.approvals import (
+    approval_frame,
+    nested_approved_payloads,
     align_review_decisions,
     review_entries,
     review_frame,
@@ -30,7 +32,6 @@ from kokoro_agent.execution.approvals import (
     review_resume_value,
     align_decisions,
     has_pending_interrupt,
-    pending_frame,
     resolution_payloads,
     resume_command_decisions,
 )
@@ -228,13 +229,18 @@ class RunSupervisor:
                 await emitter.emit(resolution)
             command = Command(resume=review_resume_value(ordered))
         else:
-            frame = pending_frame(snapshot, names)
+            frame, _requests = approval_frame(snapshot, names)
             # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。
             ordered = align_decisions(msg.decisions, frame)
             emitter = await self._emitter(bus, msg.run_id)
             # reject/respond 不经 v3 projection → 据快照+decision 直发 tool.returned。
             for resolution in resolution_payloads(ordered, frame):
                 await emitter.emit(resolution)
+            if frame.nested:
+                # 子代理内工具无投影通道：approve/edit 的 returned 也在此直发（占位文案），
+                # 否则审批卡永远停在 awaiting（工具在子图内执行，projection 早已 drain）。
+                for resolution in nested_approved_payloads(ordered, frame):
+                    await emitter.emit(resolution)
             command = Command(resume={"decisions": resume_command_decisions(ordered, frame)})
         # 离开 HITL 暂停哨兵：恢复活跃租约，重新纳入心跳/过期重拾。
         await self._store.renew(msg.run_id)

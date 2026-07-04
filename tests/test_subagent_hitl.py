@@ -103,3 +103,61 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
     assert _EXECUTED["n"] == 1  # 批准后在子代理内执行恰一次
     events2 = [item.event for item in await bus.read_all(run_events_stream("rsub2"))]
     assert events2[-1]["kind"] == "run.completed"
+
+
+async def test_subagent_review_pauses_with_cached_result() -> None:
+    # 审核政策同样不可被委派旁路：子代理内 review 工具执行后暂停，结果进卡（keep-first 缓存）。
+    from fakes import FakeRunStateStore
+    from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
+
+    _EXECUTED["n"] = 0
+    saver = InMemorySaver()
+    bus = MemoryStream()
+    store = FakeRunStateStore()
+    gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
+    review = ToolResultReviewMiddleware(frozenset({"gated"}), store, "rrev")
+    main_model = LocalFakeChatModel.with_script([
+        AIMessage(content="", tool_calls=[{
+            "name": "task", "args": {"description": "do", "subagent_type": "helper"},
+            "id": "t1", "type": "tool_call"}]),
+        AIMessage(content="main done"),
+    ])
+    sub_model = LocalFakeChatModel.with_script([
+        AIMessage(content="", tool_calls=[{"name": "gated", "args": {}, "id": "g1", "type": "tool_call"}]),
+        AIMessage(content="sub done"),
+    ])
+    agent = build_agent(
+        model=main_model,
+        tools=[gate_tool],
+        system_prompt="x",
+        subagents=[{"name": "helper", "description": "h", "system_prompt": "s",
+                    "model": sub_model, "tools": [gate_tool], "middleware": [review]}],
+        checkpointer=saver,
+        permissions=[],
+        interrupt_on=build_interrupt_on(frozenset()),
+    )
+
+    async def claim() -> bool:
+        return True
+
+    recorder, _seen = usage_recorder()
+    paused = await invoke_once(
+        RunEmitter(bus, "rrev", review_tool_names=frozenset({"gated"})),
+        agent,
+        "trev",
+        {"messages": [HumanMessage(content="go", id="m1")]},
+        approval_tool_names=frozenset({"ask_user_question"}),
+        source_for=lambda _n: "built-in",
+        claim_terminal=claim,
+        record_usage=recorder,
+    )
+    assert paused is False
+    assert _EXECUTED["n"] == 1  # 审核语义：先执行后审
+    events = [item.event for item in await bus.read_all(run_events_stream("rrev"))]
+    awaiting = [e for e in events if e["kind"] == "tool.awaiting_approval"]
+    assert len(awaiting) == 1
+    payload = awaiting[0]["payload"]
+    assert isinstance(payload, dict)
+    assert payload["kind"] == "result_review"
+    assert payload["result"] == "gated-ok"
+    assert payload["tool_id"] == "g1"  # review 载荷自带子图内真实 tool_id

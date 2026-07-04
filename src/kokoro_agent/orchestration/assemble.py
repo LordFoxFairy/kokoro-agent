@@ -172,8 +172,18 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
                 budget=deps.run_token_budget, store=deps.run_state, run_id=request.run_id
             )
         )
+    review_middleware = (
+        ToolResultReviewMiddleware(review_tools, deps.run_state, request.run_id)
+        if review_tools
+        else None
+    )
+    # 子代理链：守卫 + 审核一并下发（审核不下发=委派旁路审核政策）；
+    # 主链顺序保持 policy 在 review 外层，故审核在主链单独追加。
+    subagent_guards: list[AgentMiddleware] = (
+        [*guards, review_middleware] if review_middleware is not None else guards
+    )
     tool_index = {tool.name: tool for tool in tools}
-    catalog_defs, catalog_names = catalog_subagents(deps.catalog, tool_index, guards)
+    catalog_defs, catalog_names = catalog_subagents(deps.catalog, tool_index, subagent_guards)
     # 委派执法声明集 = 真挂载的 catalog 子代理 + 本次 wire 预设。
     declared_subagents = catalog_names | frozenset(sub.name for sub in runtime.subagents)
     middleware: list[AgentMiddleware] = [
@@ -184,8 +194,8 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
             subagent_create=runtime.permissions.subagent_create,
         ),
     ]
-    if review_tools:
-        middleware.append(ToolResultReviewMiddleware(review_tools, deps.run_state, request.run_id))
+    if review_middleware is not None:
+        middleware.append(review_middleware)
     return build_agent(
         model=make_chat_model(deps.model, runtime.model),
         tools=tools,
@@ -201,7 +211,7 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
                 request,
                 tool_index,
                 lambda spec: make_chat_model(deps.model, spec),
-                guards,
+                subagent_guards,
             ),
         ],
         checkpointer=deps.checkpointer,

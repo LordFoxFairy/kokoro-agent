@@ -88,6 +88,27 @@ class _ReviewDecision(BaseModel):
 _REVIEW_DECISIONS_ADAPTER: TypeAdapter[list[_ReviewDecision]] = TypeAdapter(list[_ReviewDecision])
 
 
+class RunSupersededError(RuntimeError):
+    """run 已被他处终态（cancel）：模型轮边界静默熔断，不再产生事件与副作用。"""
+
+
+class TerminalGuardMiddleware(AgentMiddleware):
+    """跨 worker cancel 的执行侧闸：每个模型轮前查终态，命中即熔断（invoke 的
+    claim_terminal 已被 cancel 方拿走 → 异常路径不再发任何事件）。"""
+
+    def __init__(self, *, store: RunStateStore, run_id: str) -> None:
+        super().__init__()
+        self._store = store
+        self._run_id = run_id
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelResponse:
+        if await self._store.is_terminal(self._run_id):
+            raise RunSupersededError(f"run {self._run_id!r} was terminated elsewhere")
+        return await handler(request)
+
+
 class TokenBudgetExceeded(RuntimeError):
     """run 级 token 预算超限：fail-loud 收口为 run.failed，绝不静默继续烧钱。"""
 

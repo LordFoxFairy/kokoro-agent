@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command, Interrupt
@@ -573,3 +573,52 @@ async def test_drain_times_out_on_stuck_run() -> None:
     assert drained is False  # 超时如实上报；剩余恢复权归 TTL 租约重拾
     gate.set()
     await _drain(sup)
+
+
+# ⑪ 收养监听自退出必须出表：他处终态删流后 NOGROUP 收束，_control 不得无界泄漏。
+async def test_adopted_listener_pops_after_remote_teardown() -> None:
+    agent = FakeAgent(run=text_run("unused"))
+
+    class _ClosingBus(FakeBus):
+        async def subscribe(
+            self, stream: str, *, group: str, consumer: str
+        ) -> AsyncIterator[StreamItem]:
+            raise RuntimeError("NOGROUP no such stream")
+            yield StreamItem(cursor="0", event={})  # pragma: no cover — 使其成为异步生成器
+
+    closing = _ClosingBus()
+    sup, store = _supervisor(agent)
+    await store.try_claim(request("gone"))
+    await store.pause("gone")
+    await store.try_mark_terminal("gone")  # 他处已终态
+    await sup.heartbeat_once(closing)  # 收养入口＝心跳（公开面）
+    for _ in range(200):
+        if not sup.control_listeners:
+            break
+        await asyncio.sleep(0.005)
+    assert sup.control_listeners == {}
+
+
+# ⑫ 复审 #1 竞态：多 worker 收养后 resume/cancel 分投两处——终态后绝不 spawn。
+async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
+    class _CancelInWindowStore(FakeRunStateStore):
+        async def renew(self, run_id: str) -> None:
+            await super().renew(run_id)
+            # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/renew 之后）完成终态。
+            self.terminals.add(run_id)
+
+    agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
+    bus = FakeBus()
+    sup, store = _supervisor(agent, store=_CancelInWindowStore())
+    await sup.dispatch(bus, request("rc"))
+    await _drain(sup)
+    assert "rc" in store.paused_runs
+    agent.seen_payloads.clear()
+
+    resume = _inbound(
+        {"kind": "run.resume", "run_id": "rc", "decisions": [{"type": "approve", "tool_id": _TID}]}
+    )
+    await sup.dispatch(bus, resume)
+    await _drain(sup)
+    # 终态复检收手：不 spawn、无新 invoke。
+    assert agent.seen_payloads == []

@@ -70,15 +70,23 @@ def make_web_fetch_tool(*, allow_private: bool = False) -> StructuredTool:
                     await _assert_public_target(target)
                 elif urlsplit(target).scheme not in ("http", "https"):
                     raise ValueError(f"unsafe fetch target (scheme): {target!r}")
-                response = await client.get(target)
-                if response.is_redirect:
-                    location = response.headers.get("location", "")
-                    target = str(httpx.URL(target).join(location))
-                    continue
-                response.raise_for_status()
-                body = response.content[:_FETCH_MAX_BYTES].decode(
-                    response.charset_encoding or "utf-8", errors="replace"
-                )
+                # 流式读取边读边封顶：非流式 .content 会先吞下完整 body（任意大 → OOM 面）。
+                async with client.stream("GET", target) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location", "")
+                        target = str(httpx.URL(target).join(location))
+                        continue
+                    response.raise_for_status()
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        chunks.append(chunk)
+                        size += len(chunk)
+                        if size >= _FETCH_MAX_BYTES:
+                            break
+                    body = b"".join(chunks)[:_FETCH_MAX_BYTES].decode(
+                        response.charset_encoding or "utf-8", errors="replace"
+                    )
                 return _clip(_extract_text(response.headers.get("content-type", ""), body))
         raise ValueError(f"too many redirects fetching {url!r}")
 

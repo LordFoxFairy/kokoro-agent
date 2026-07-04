@@ -84,6 +84,11 @@ class RunSupervisor:
         self._emitters: dict[str, RunEmitter] = {}
 
     @property
+    def control_listeners(self) -> Mapping[str, asyncio.Task[None]]:
+        # 运维可见性：当前挂着的 per-run control 监听（收养泄漏的观测面）。
+        return dict(self._control)
+
+    @property
     def tasks(self) -> Mapping[str, asyncio.Task[None]]:
         return self._tasks
 
@@ -229,6 +234,11 @@ class RunSupervisor:
             command = Command(resume={"decisions": resume_command_decisions(ordered, frame)})
         # 离开 HITL 暂停哨兵：恢复活跃租约，重新纳入心跳/过期重拾。
         await self._store.renew(msg.run_id)
+        # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
+        # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
+        if await self._store.is_terminal(msg.run_id):
+            LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
+            return
         self._spawn_agent(
             bus, agent, msg.run_id, context.scoped_thread_id, command, names,
             trace=self._trace(request),
@@ -278,6 +288,15 @@ class RunSupervisor:
 
         task.add_done_callback(_pop)
 
+    async def _guarded_entry_gate(self, run_id: str) -> bool:
+        # spawn 与他处 cancel 的微竞态最后一闸：进入执行前终态即静默收手。
+        # 闸门是尽力而为的额外防线（终态权威在 claim_terminal）：store 故障降级放行，不引爆任务。
+        try:
+            return not await self._store.is_terminal(run_id)
+        except Exception:  # noqa: BLE001 — 防线降级：主正确性不依赖此闸
+            LOGGER.exception("terminal entry gate degraded for run_id=%s", run_id)
+            return True
+
     async def _guarded(
         self,
         bus: StreamProtocol,
@@ -291,6 +310,9 @@ class RunSupervisor:
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，resume 重新竞争额度。
         async with self._sem:
+            if not await self._guarded_entry_gate(run_id):
+                LOGGER.warning("skipping execution for terminal run_id=%s", run_id)
+                return
             emitter = await self._emitter(bus, run_id)
             terminal = await invoke_once(
                 emitter,
@@ -316,7 +338,15 @@ class RunSupervisor:
         existing = self._control.get(run_id)
         if existing is not None and not existing.done():
             return
-        self._control[run_id] = asyncio.create_task(self._control_loop(bus, run_id))
+        task = asyncio.create_task(self._control_loop(bus, run_id))
+        self._control[run_id] = task
+
+        # 自退出（他处终态删流→NOGROUP 收束）也要出表：多 worker 收养下不 pop 即无界泄漏。
+        def _pop(done: asyncio.Task[None]) -> None:
+            if self._control.get(run_id) is done:
+                self._control.pop(run_id, None)
+
+        task.add_done_callback(_pop)
 
     async def _control_loop(self, bus: StreamProtocol, run_id: str) -> None:
         stream = run_control_stream(run_id)

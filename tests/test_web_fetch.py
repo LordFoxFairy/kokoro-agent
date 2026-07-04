@@ -25,6 +25,14 @@ class _Handler(BaseHTTPRequestHandler):
             "/json": ("application/json", json.dumps({"ok": True})),
             "/big": ("text/plain", "x" * (FETCH_MAX_CHARS + 500)),
         }
+        if self.path == "/giant":
+            data = b"g" * (5 * 1024 * 1024)
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("location", "/html")
@@ -110,3 +118,10 @@ def test_fetch_args_schema_rejects_garbage() -> None:
         WebFetchArgs.model_validate({"url": ""})
     with pytest.raises(ValidationError):
         WebFetchArgs.model_validate({"url": "http://x", "extra": 1})
+
+
+async def test_fetch_streams_and_caps_giant_body(base_url: str) -> None:
+    # 复审实锤：非流式 get 会整包吞下任意大 body。流式封顶后 5MB 响应只读 1MB 即断。
+    tool = make_web_fetch_tool(allow_private=True)
+    text = await _coro(tool)(url=f"{base_url}/giant")
+    assert len(text) <= FETCH_MAX_CHARS + 100

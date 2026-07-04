@@ -40,6 +40,7 @@ from kokoro_agent.tools.web_search import (
     make_web_search_tool,
 )
 from kokoro_agent.tools.middleware import (
+    TerminalGuardMiddleware,
     TokenBudgetMiddleware,
     ToolPolicyMiddleware,
     ToolResultReviewMiddleware,
@@ -166,6 +167,8 @@ async def _serve(config: AppConfig) -> None:
                 sub.name for sub in runtime.subagents
             )
             middleware: list[AgentMiddleware] = [
+                # 跨 worker cancel 的执行侧闸：恒挂（轮粒度熔断，非政策项）。
+                TerminalGuardMiddleware(store=store, run_id=request.run_id),
                 ToolPolicyMiddleware(
                     authorized,
                     declared_subagents=declared_subagents,

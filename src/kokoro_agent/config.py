@@ -49,6 +49,8 @@ class AppConfig(BaseModel):
     sandbox: SandboxSettings
     web_tools: WebToolSettings
     custom_subagents_json: str | None
+    # 内建子代理按名启用（默认全关；未知名 fail-loud）。
+    enabled_builtin_subagents: frozenset[str]
     lease_heartbeat_s: Annotated[float, Field(gt=0)]
     # 失控熔断：单 run 图步数上限（无限工具循环 → GraphRecursionError → run.failed）。
     recursion_limit: Annotated[int, Field(gt=0)]
@@ -113,6 +115,11 @@ class AppConfig(BaseModel):
                 search_url=source.get("KOKORO_WEB_SEARCH_URL") or None,
             ),
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
+            enabled_builtin_subagents=frozenset(
+                name.strip()
+                for name in source.get("KOKORO_BUILTIN_SUBAGENTS", "").split(",")
+                if name.strip()
+            ),
             lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),
             recursion_limit=_int(source, "KOKORO_RECURSION_LIMIT", 100),
             drain_timeout_s=_float(source, "KOKORO_DRAIN_TIMEOUT_S", 60.0),

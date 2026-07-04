@@ -29,7 +29,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.worker.main import wire_subagents, build_web_tools
+from kokoro_agent.worker.main import build_web_tools, catalog_subagents, wire_subagents
 
 
 def test_defaults_from_empty_env() -> None:
@@ -328,3 +328,31 @@ def test_run_token_budget_env_parse() -> None:
     assert AppConfig.from_env({"KOKORO_RUN_TOKEN_BUDGET": "200000"}).run_token_budget == 200000
     with pytest.raises(ValidationError):
         AppConfig.from_env({"KOKORO_RUN_TOKEN_BUDGET": "-1"})
+
+
+def test_builtin_subagents_opt_in_matrix() -> None:
+    # 用户裁定：实现但默认关闭——显式点名才挂；工具缺任一即整个不挂（不设空壳）。
+    assert build_catalog(None).names() == frozenset()
+    with pytest.raises(ValueError, match="unknown built-in"):
+        build_catalog(None, frozenset({"ghost"}))
+
+    catalog = build_catalog(None, frozenset({"web-researcher"}))
+    assert catalog.names() == {"web-researcher"}
+    tools = build_web_tools(AppConfig.from_env(
+        {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
+    ))
+    index = {tool.name: tool for tool in tools}
+    defs, mounted = catalog_subagents(catalog, index)
+    assert mounted == {"web-researcher"}
+    assert dict(defs[0]).get("tools") == [index["web_search"], index["web_fetch"]]
+
+    # search 未配置 → web_search 缺 → 整个不挂、不进 deny 声明集。
+    bare_index = {tool.name: tool for tool in build_web_tools(AppConfig.from_env({}))}
+    defs_bare, mounted_bare = catalog_subagents(catalog, bare_index)
+    assert defs_bare == [] and mounted_bare == frozenset()
+
+
+def test_builtin_subagents_env_parse() -> None:
+    config = AppConfig.from_env({"KOKORO_BUILTIN_SUBAGENTS": "web-researcher, "})
+    assert config.enabled_builtin_subagents == {"web-researcher"}
+    assert AppConfig.from_env({}).enabled_builtin_subagents == frozenset()

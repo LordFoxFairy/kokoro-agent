@@ -30,7 +30,7 @@ from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.run_state import make_run_state_store
 from kokoro_agent.streams.factory import make_stream
-from kokoro_agent.subagents import build_catalog
+from kokoro_agent.subagents import SubagentCatalog, build_catalog
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.web_fetch import make_web_fetch_tool
 from kokoro_agent.tools.web_search import (
@@ -91,6 +91,30 @@ def _approval_names(request: RunRequest) -> frozenset[str]:
     return names
 
 
+def catalog_subagents(
+    catalog: SubagentCatalog, tool_index: Mapping[str, BaseTool]
+) -> tuple[list[SubAgent], frozenset[str]]:
+    """内建/配置子代理 → deepagents 定义：声明工具缺任一即整个不挂（不设空壳），
+    返回 (定义, 实际可委派名集)——deny 声明集只含真挂载者。"""
+    subs: list[SubAgent] = []
+    mounted: set[str] = set()
+    for spec in catalog.specs():
+        missing = sorted(set(spec.tools) - set(tool_index))
+        if missing:
+            LOGGER.info("built-in subagent %r not mounted (tools unavailable: %s)", spec.name, missing)
+            continue
+        sub: SubAgent = {
+            "name": spec.name,
+            "description": spec.description,
+            "system_prompt": spec.system_prompt,
+        }
+        if spec.tools:
+            sub["tools"] = [tool_index[name] for name in spec.tools]
+        subs.append(sub)
+        mounted.add(spec.name)
+    return subs, frozenset(mounted)
+
+
 def build_web_tools(config: AppConfig) -> list[BaseTool]:
     # fetch 恒挂载（SSRF 政策来自进程配置）；search 配置即挂载——无 provider 不挂空壳。
     tools: list[BaseTool] = [
@@ -111,7 +135,7 @@ def build_web_tools(config: AppConfig) -> list[BaseTool]:
 
 async def _serve(config: AppConfig) -> None:
     bus = make_stream(config.stream)
-    catalog = build_catalog(config.custom_subagents_json)
+    catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
     web_tools = build_web_tools(config)
     # 进程级共享 checkpointer + run 状态存储：sqlite 落盘跨重启，多 pod 靠共享存储去重/租约/终态认领。
     async with (
@@ -134,8 +158,10 @@ async def _serve(config: AppConfig) -> None:
             if ASK_USER_TOOL_NAME in review_tools:
                 # ask_user 的"结果"就是人工答复本身，再审即循环悖论。
                 raise ValueError("ask_user cannot be a result-review tool")
-            # 委派执法声明集 = 内建 catalog + 本次 wire 预设；策略源 = permissions.subagent_create。
-            declared_subagents = frozenset(catalog.names()) | frozenset(
+            tool_index = {tool.name: tool for tool in tools}
+            catalog_defs, catalog_names = catalog_subagents(catalog, tool_index)
+            # 委派执法声明集 = 真挂载的 catalog 子代理 + 本次 wire 预设。
+            declared_subagents = catalog_names | frozenset(
                 sub.name for sub in runtime.subagents
             )
             middleware: list[AgentMiddleware] = [
@@ -163,11 +189,9 @@ async def _serve(config: AppConfig) -> None:
                 # 具名入口（专业 agent 作主 agent）：session 解析预设人格上 wire，缺省用内置。
                 system_prompt=f"{base_prompt}\n\n{skills_prompt}" if skills_prompt else base_prompt,
                 subagents=[
-                    *catalog.definitions(),
+                    *catalog_defs,
                     *wire_subagents(
-                        request,
-                        {tool.name: tool for tool in tools},
-                        lambda spec: make_chat_model(config.model, spec),
+                        request, tool_index, lambda spec: make_chat_model(config.model, spec)
                     ),
                 ],
                 checkpointer=saver,

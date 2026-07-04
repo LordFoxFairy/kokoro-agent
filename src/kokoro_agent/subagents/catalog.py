@@ -20,6 +20,8 @@ class RegisteredSubagent:
     description: str
     system_prompt: str
     source: SubagentSource
+    # 内建子代理的真实工具挂载（按名声明，装配点解析实例；缺任一即整个不挂——不设空壳）。
+    tools: tuple[str, ...] = ()
 
 
 class _SubagentDefinition(BaseModel):
@@ -33,8 +35,20 @@ class _SubagentDefinition(BaseModel):
 _CUSTOM_PAYLOADS: TypeAdapter[list[_SubagentDefinition]] = TypeAdapter(list[_SubagentDefinition])
 
 # 内建目录只收"带真实工具挂载的真能力"；人格类预设归 namespace profile（wire 下发）。
-# 现阶段无 web_search 等专属工具可挂 → 内建为空，不设能力与命名不符的空壳。
-BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = ()
+# 装配点按工具可用性过滤：声明的工具缺任一（如 web_search 未配 provider）则整个不挂。
+BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
+    RegisteredSubagent(
+        name="web-researcher",
+        description="联网检索并阅读网页，交叉核对后给出带来源链接的结论。",
+        system_prompt=(
+            "你是网页研究子代理。流程：先用 web_search 找到候选来源，再用 web_fetch 阅读"
+            "关键页面正文，交叉核对后用简洁中文给出结论，并附上来源 URL。"
+            "信息不足或来源冲突时明说，不要编造。你没有写操作权限。"
+        ),
+        source="built-in",
+        tools=("web_search", "web_fetch"),
+    ),
+)
 
 
 class SubagentCatalog:
@@ -54,6 +68,9 @@ class SubagentCatalog:
         # 委派执法的声明集来源：目录内即管理员声明，deny 策略下仍可被委派。
         return frozenset(self._by_name)
 
+    def specs(self) -> tuple[RegisteredSubagent, ...]:
+        return tuple(self._by_name.values())
+
     def definitions(self) -> list[SubAgent]:
         return [
             {
@@ -70,7 +87,14 @@ class SubagentCatalog:
         return spec.source if spec is not None else "runtime-custom"
 
 
-def build_catalog(custom_specs_json: str | None) -> SubagentCatalog:
+def build_catalog(
+    custom_specs_json: str | None, enabled_builtins: frozenset[str] = frozenset()
+) -> SubagentCatalog:
+    """enabled_builtins：内建按名显式启用（默认全关——用户裁定：实现但不默认挂）。"""
+    unknown = enabled_builtins - {spec.name for spec in BUILT_IN_SUBAGENTS}
+    if unknown:
+        raise ValueError(f"unknown built-in subagents enabled: {sorted(unknown)}")
+    builtins = tuple(spec for spec in BUILT_IN_SUBAGENTS if spec.name in enabled_builtins)
     custom: list[RegisteredSubagent] = []
     if custom_specs_json:
         custom = [
@@ -82,4 +106,4 @@ def build_catalog(custom_specs_json: str | None) -> SubagentCatalog:
             )
             for payload in _CUSTOM_PAYLOADS.validate_json(custom_specs_json)
         ]
-    return SubagentCatalog((*BUILT_IN_SUBAGENTS, *custom))
+    return SubagentCatalog((*builtins, *custom))

@@ -74,14 +74,6 @@ class RuntimeConfig(StrictModel):
 class RuntimeContext(StrictModel):
     namespace: NonEmptyStr
     session_id: NonEmptyStr
-    site_id: NonEmptyStr | None = None
-    user_id: NonEmptyStr | None = None
-    workspace_id: NonEmptyStr | None = None
-    project_id: NonEmptyStr | None = None
-    recent_messages: list[dict[str, JsonValue]] | None = None
-    summary: str | None = None
-    memory_scope: NonEmptyStr | None = None
-    feature_flags: dict[str, JsonValue] | None = None
 
 
 class ApproveDecision(StrictModel):

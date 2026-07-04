@@ -23,7 +23,7 @@ from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.mcp.tools import load_mcp_tools
 from kokoro_agent.model.factory import ChatModelSettings, make_chat_model
-from kokoro_agent.orchestration.context import compose_system_prompt
+from kokoro_agent.orchestration.context import SteeringMiddleware, compose_system_prompt
 from kokoro_agent.sandbox import SandboxSettings, build_filesystem_permissions, make_backend
 from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.storage.ledger import RunLedger
@@ -201,6 +201,8 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
     declared_subagents = catalog_names | frozenset(sub.name for sub in runtime.subagents)
     middleware: list[AgentMiddleware] = [
         *guards,
+        # steering 只挂主链：插话是用户↔主 agent 的对话，注入子代理即语义污染。
+        SteeringMiddleware(store=deps.ledger, run_id=request.run_id),
         ToolPolicyMiddleware(
             authorized,
             declared_subagents=declared_subagents,

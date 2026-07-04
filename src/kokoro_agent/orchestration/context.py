@@ -1,10 +1,15 @@
-"""上下文构造器：模型可见面的唯一拼装点（人格 + 按挂载工具的行为指引 + skills 全文）。
-
-V1 为纯函数组合；运行时注入（steering/记忆预取）到来时升级为 middleware
-（ModelRequest.override 官方口，须先实证与 deepagents 自身 prompt 改写的层叠序）。"""
+"""上下文构造器：模型可见面的唯一拼装点（静态=人格/指引/skills 组合，动态=steering 注入）。"""
 
 from __future__ import annotations
 
+from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import AgentState
+from langchain_core.messages import HumanMessage
+from langgraph.runtime import Runtime
+
+from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.memory import SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME
 from kokoro_agent.tools.web_fetch import WEB_FETCH_TOOL_NAME
@@ -46,3 +51,28 @@ def compose_system_prompt(
     """三段组合：人格（入口预设或成品缺省）+ 条件行为指引 + skills 全文。"""
     guidance = render_tool_guidance(mounted_tools)
     return "\n\n".join(part for part in (persona, guidance, skills_prompt) if part)
+
+
+class SteeringMiddleware(AgentMiddleware):
+    """运行中插话：模型轮前排空信箱，按到达序注入 HumanMessage——协作式转向，
+    不打断进行中的工具；稳定 id=message_id 保 checkpoint 重放幂等。只挂主链。"""
+
+    def __init__(self, *, store: RunLedger, run_id: str) -> None:
+        super().__init__()
+        self._store = store
+        self._run_id = run_id
+
+    async def abefore_model(
+        self, state: AgentState[Any], runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:
+        steers = await self._store.drain_steers(self._run_id)
+        if not steers:
+            return None
+        for message_id, content in steers:
+            if not content:
+                raise ValueError(f"empty steer content: message_id={message_id!r}")
+        return {
+            "messages": [
+                HumanMessage(content=content, id=message_id) for message_id, content in steers
+            ]
+        }

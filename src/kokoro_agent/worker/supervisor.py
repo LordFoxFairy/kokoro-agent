@@ -19,6 +19,7 @@ from kokoro_agent.contract import (
     RunCompletedPayload,
     RunRequest,
     RunResume,
+    RunSteer,
     SubagentSource,
     run_control_stream,
 )
@@ -124,6 +125,10 @@ class RunSupervisor:
             await self._on_request(bus, msg)
         elif isinstance(msg, RunResume):
             await self._on_resume(bus, msg)
+        elif isinstance(msg, RunSteer):
+            # 入账信箱即完成（keep-first 幂等）：注入由 SteeringMiddleware 在下一模型轮消费；
+            # 暂停 run 同样入账，resume 后首轮生效；终态后到达无消费者，安全无害。
+            await self._store.add_steer(msg.run_id, msg.message_id, msg.content)
         else:
             await self._on_cancel(bus, msg)
 

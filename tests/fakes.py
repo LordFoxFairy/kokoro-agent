@@ -110,6 +110,7 @@ class FakeLedger:
         self.tool_results: dict[tuple[str, str], tuple[str, bool]] = {}
         self.token_totals: dict[str, int] = {}
         self.usage_totals: dict[str, tuple[int, int]] = {}
+        self.steers: dict[str, list[tuple[str, str]]] = {}
 
     async def try_claim(self, request: RunRequest) -> bool:
         if request.run_id in self.requests:
@@ -160,6 +161,16 @@ class FakeLedger:
 
     async def is_terminal(self, run_id: str) -> bool:
         return run_id in self.terminals
+
+    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
+        if run_id not in self.requests:
+            return
+        box = self.steers.setdefault(run_id, [])
+        if all(mid != message_id for mid, _ in box):
+            box.append((message_id, content))
+
+    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
+        return self.steers.pop(run_id, [])
 
     async def put_tool_result(
         self, run_id: str, tool_id: str, result: str, is_error: bool

@@ -13,10 +13,15 @@ from kokoro_agent.orchestration.assemble import (
     general_purpose_subagent,
     wire_subagents,
 )
-from kokoro_agent.orchestration.context import compose_system_prompt, render_tool_guidance
+from kokoro_agent.orchestration.context import (
+    SteeringMiddleware,
+    compose_system_prompt,
+    render_tool_guidance,
+)
 
 __all__ = [
     "AssembleDeps",
+    "SteeringMiddleware",
     "approval_names",
     "assemble_agent",
     "build_web_tools",

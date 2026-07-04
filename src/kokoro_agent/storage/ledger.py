@@ -57,6 +57,14 @@ class RunLedger(Protocol):
         # 只读查：resume stale 闸。
         ...
 
+    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
+        # steering 信箱：keep-first 幂等（message_id 重放不覆盖）；未认领 run 安全丢弃。
+        ...
+
+    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
+        # 排空信箱（按到达序返回 (message_id, content)）：模型轮前由 SteeringMiddleware 消费。
+        ...
+
     async def put_tool_result(
         self, run_id: str, tool_id: str, result: str, is_error: bool
     ) -> None:

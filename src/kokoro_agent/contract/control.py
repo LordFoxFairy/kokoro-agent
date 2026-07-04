@@ -128,8 +128,16 @@ class RunCancel(StrictModel):
     thread_id: NonEmptyStr
 
 
+class RunSteer(StrictModel):
+    kind: Literal["run.steer"]
+    run_id: NonEmptyStr
+    thread_id: NonEmptyStr
+    message_id: NonEmptyStr
+    content: NonEmptyStr
+
+
 InboundMessage = Annotated[
-    Union[RunRequest, RunResume, RunCancel],
+    Union[RunRequest, RunResume, RunCancel, RunSteer],
     Field(discriminator="kind"),
 ]
 

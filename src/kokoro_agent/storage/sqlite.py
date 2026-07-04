@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS tool_results(
     PRIMARY KEY(run_id, tool_id)
 )"""
 
+# steering 信箱：seq 自增保到达序，UNIQUE(run_id, message_id) 保 keep-first 幂等。
+_STEERS_DDL = """\
+CREATE TABLE IF NOT EXISTS steers(
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    UNIQUE(run_id, message_id)
+)"""
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -61,6 +71,7 @@ class SqliteLedger:
         await self._db.execute(_TOOL_RESULTS_DDL)
         await self._db.execute(_TOKEN_TOTALS_DDL)
         await self._db.execute(_RUN_USAGE_DDL)
+        await self._db.execute(_STEERS_DDL)
         await self._db.commit()
 
     async def try_claim(self, request: RunRequest) -> bool:
@@ -193,3 +204,21 @@ class SqliteLedger:
         if row is None:
             return None
         return (str(row[0]), bool(row[1]))
+
+    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
+        # WHERE EXISTS：未认领 run 安全丢弃（与 mongo 语义对齐，绝不预创建 run 行）。
+        await self._db.execute(
+            "INSERT OR IGNORE INTO steers(run_id, message_id, content)"
+            " SELECT ?, ?, ? WHERE EXISTS(SELECT 1 FROM ledger WHERE run_id=?)",
+            (run_id, message_id, content, run_id),
+        )
+        await self._db.commit()
+
+    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
+        cur = await self._db.execute(
+            "SELECT message_id, content FROM steers WHERE run_id=? ORDER BY seq", (run_id,)
+        )
+        rows = await cur.fetchall()
+        await self._db.execute("DELETE FROM steers WHERE run_id=?", (run_id,))
+        await self._db.commit()
+        return [(str(row[0]), str(row[1])) for row in rows]

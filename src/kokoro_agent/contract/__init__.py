@@ -73,6 +73,7 @@ from kokoro_agent.contract.control import (
     RunRequest,
     RunResume,
     RunCancel,
+    RunSteer,
 )
 from kokoro_agent.contract.streams import (
     REQUESTS_STREAM,
@@ -158,6 +159,7 @@ __all__ = [
     "RunRequest",
     "RunResume",
     "RunCancel",
+    "RunSteer",
     "REQUESTS_STREAM",
     "CONSUMER_GROUP",
     "REQUESTS_MAXLEN",

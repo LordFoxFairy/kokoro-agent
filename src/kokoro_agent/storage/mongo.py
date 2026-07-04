@@ -32,6 +32,16 @@ _TOOL_RESULTS_ADAPTER: TypeAdapter[dict[str, _ToolResultEntry]] = TypeAdapter(
 )
 
 
+class _SteerEntry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    message_id: str
+    content: str
+
+
+_STEERS_ADAPTER: TypeAdapter[list[_SteerEntry]] = TypeAdapter(list[_SteerEntry])
+
+
 class MongoLedger:
     """单 collection、以 run_id 为 _id：upsert 与条件 update 提供跨 pod 原子认领。"""
 
@@ -168,6 +178,25 @@ class MongoLedger:
             {"_id": run_id, f"tool_results.{tool_id}": {"$exists": False}},
             {"$set": {f"tool_results.{tool_id}": {"result": result, "is_error": is_error}}},
         )
+
+    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
+        # 仅更新已认领 run 的文档（filter 含 _id 存在语义）；$ne 数组守卫给 keep-first。
+        await self._coll.update_one(
+            {"_id": run_id, "steers.message_id": {"$ne": message_id}},
+            {"$push": {"steers": {"message_id": message_id, "content": content}}},
+        )
+
+    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
+        doc = await self._coll.find_one_and_update(
+            {"_id": run_id, "steers.0": {"$exists": True}},
+            {"$set": {"steers": []}},
+            projection={"steers": 1},
+            return_document=ReturnDocument.BEFORE,
+        )
+        if doc is None:
+            return []
+        entries = _STEERS_ADAPTER.validate_python(doc.get("steers") or [])
+        return [(entry.message_id, entry.content) for entry in entries]
 
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
         doc = await self._coll.find_one({"_id": run_id}, {f"tool_results.{tool_id}": 1})

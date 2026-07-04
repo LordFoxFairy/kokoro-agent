@@ -257,6 +257,44 @@ async def test_resume_unknown_run_dropped() -> None:
     assert bus.published == []
 
 
+# steer：入账信箱（keep-first），不打断运行、不发事件；终态后到达安全丢弃。
+async def test_steer_lands_in_mailbox_without_interrupting() -> None:
+    gate = asyncio.Event()
+    agent = FakeAgent(run=text_run("x"), gates=[gate])
+    bus = FakeBus()
+    sup, store = _supervisor(agent)
+    await sup.dispatch(bus, request("rs1"))
+    await asyncio.sleep(0)
+
+    steer = _inbound(
+        {"kind": "run.steer", "run_id": "rs1", "thread_id": "c1",
+         "message_id": "m9", "content": "改方向"}
+    )
+    await sup.dispatch(bus, steer)
+    await sup.dispatch(bus, steer)  # 重放幂等
+    assert store.steers["rs1"] == [("m9", "改方向")]
+
+    gate.set()
+    await _drain(sup)
+    kinds = bus.kinds("rs1")
+    assert kinds[-1] == "run.completed"  # steer 不产生额外 wire 事件、不打断 run
+
+
+async def test_steer_after_terminal_dropped() -> None:
+    agent = FakeAgent(run=text_run("x"))
+    bus = FakeBus()
+    sup, _store = _supervisor(agent)
+    await sup.dispatch(bus, request("rs2"))
+    await _drain(sup)
+    await sup.dispatch(bus, _inbound(
+        {"kind": "run.steer", "run_id": "rs2", "thread_id": "c1",
+         "message_id": "m1", "content": "太迟了"}
+    ))
+    # run 已终态：信箱入账与否无消费者，但绝不抛错、绝不产生新事件。
+    terminals = [e for e in bus.run_events("rs2") if e.kind in {"run.completed", "run.failed"}]
+    assert len(terminals) == 1
+
+
 # ⑤ cancel：运行中 → task.cancel + run.completed{cancelled} 恰一次。
 async def test_cancel_running_emits_cancelled() -> None:
     gate = asyncio.Event()

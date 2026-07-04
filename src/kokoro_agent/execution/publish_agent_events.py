@@ -88,6 +88,11 @@ async def _consume_messages(
     messages: AsyncIterable[ModelStream], queue: _EventQueue, subagent_id: str | None
 ) -> None:
     async for model in messages:
+        if model.node != "model":
+            # 非模型节点的消息投影（如 before_model 注入的 steer HumanMessage、
+            # summarization 改写）：绝不冒充正文上 wire；仍抽干防回压。
+            await asyncio.gather(_drain_aiter(model.text), _drain_aiter(model.reasoning))
+            continue
         segment_id = model.message_id or ""
         # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全）。
         text_full, _ = await asyncio.gather(

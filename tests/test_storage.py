@@ -191,6 +191,25 @@ async def _assert_tool_result_keep_first(store: RunLedger) -> None:
     assert await store.get_tool_result("run-tr", "other") is None
 
 
+async def _assert_steer_mailbox(store: RunLedger) -> None:
+    # steering 信箱：keep-first 幂等（message_id 重放不覆盖）、按到达序、drain 即清空、run 间隔离。
+    req = request("run-steer")
+    assert await store.try_claim(req) is True
+    assert await store.drain_steers("run-steer") == []
+    await store.add_steer("run-steer", "m1", "改成国内市场")
+    await store.add_steer("run-steer", "m2", "再加一条")
+    await store.add_steer("run-steer", "m1", "重放不覆盖")
+    assert await store.drain_steers("run-steer") == [
+        ("m1", "改成国内市场"),
+        ("m2", "再加一条"),
+    ]
+    assert await store.drain_steers("run-steer") == []  # drain 即清空
+    # 未认领 run 的插话安全丢弃（绝不预创建 run 文档毒化 try_claim 去重）。
+    await store.add_steer("run-ghost", "mg", "orphan")
+    assert await store.drain_steers("run-ghost") == []
+    assert await store.try_claim(request("run-ghost")) is True
+
+
 _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_claim_and_terminal(store),
     lambda store, _clock: _assert_unclaimed_mark_terminal(store),
@@ -203,6 +222,7 @@ _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     _assert_list_paused_only_pause_sentinel,
     _assert_token_accumulation_per_run,
     _assert_usage_accumulation_two_columns,
+    lambda store, _clock: _assert_steer_mailbox(store),
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -216,6 +236,7 @@ _MATRIX_IDS = [
     "list_paused_only_pause_sentinel",
     "token_accumulation_per_run",
     "usage_accumulation_two_columns",
+    "steer_mailbox",
 ]
 
 

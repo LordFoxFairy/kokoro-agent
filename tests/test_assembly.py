@@ -322,8 +322,18 @@ def testwire_subagents_tools_and_model_passthrough() -> None:
     assert "model" not in plain[0]
 
     ghost = SubagentDef(name="poet", description="d", system_prompt="p", tools=["nope"])
-    with pytest.raises(ValueError, match="unmounted tools"):
+    with pytest.raises(ValueError, match="unknown tools"):
         wire_subagents(request_with(ghost), {"web_fetch": fetch}, lambda _m: fake_model)
+
+    # 入口对偶性：成品降格为子代理时声明的注册表工具可以不在主 agent 工具集里——
+    # 主 index 优先复用（政策实例），miss 走注册表独立解析，仍未知才 fail-loud。
+    dual = SubagentDef(
+        name="asker", description="d", system_prompt="p", tools=["ask_user_question"]
+    )
+    from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
+
+    resolved = wire_subagents(request_with(dual), {"web_fetch": fetch}, lambda _m: fake_model)
+    assert resolved[0].get("tools") == [ASK_USER_TOOL]
 
 
 def test_run_token_budget_env_parse() -> None:

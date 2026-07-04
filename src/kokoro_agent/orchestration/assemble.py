@@ -24,7 +24,7 @@ from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
-from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
+from kokoro_agent.tools.registry import KOKORO_TOOLS, SUBAGENT_TOOL_NAME
 from kokoro_agent.tools.web_fetch import make_web_fetch_tool
 from kokoro_agent.tools.web_search import (
     SearchProviderSettings,
@@ -100,8 +100,9 @@ def wire_subagents(
     make_model: Callable[[ModelConfig], BaseChatModel],
     guards: Sequence[AgentMiddleware] = (),
 ) -> list[SubAgent]:
-    """wire 子代理 → deepagents 定义：tools 按名解析为已挂载实例（未知名 fail-loud，
-    绝不静默丢弃），model 经工厂实例化；二者缺省即继承主 agent。"""
+    """wire 子代理 → deepagents 定义：tools 主 index 优先（复用政策实例）、注册表兜底
+    （入口对偶性：成品降格为子代理时，其专属注册表工具可不在主 agent 工具集里），
+    仍未知即 fail-loud——绝不静默丢弃；model 经工厂实例化；二者缺省即继承主 agent。"""
     out: list[SubAgent] = []
     for spec in request.runtime.subagents:
         sub: SubAgent = {
@@ -110,10 +111,19 @@ def wire_subagents(
             "system_prompt": spec.system_prompt,
         }
         if spec.tools:
-            missing = sorted(set(spec.tools) - set(tool_index))
-            if missing:
-                raise ValueError(f"subagent {spec.name!r} declares unmounted tools: {missing}")
-            sub["tools"] = [tool_index[name] for name in spec.tools]
+            resolved: list[BaseTool] = []
+            unknown: list[str] = []
+            for name in spec.tools:
+                tool = tool_index.get(name) or KOKORO_TOOLS.get(name)
+                if tool is None:
+                    unknown.append(name)
+                else:
+                    resolved.append(tool)
+            if unknown:
+                raise ValueError(
+                    f"subagent {spec.name!r} declares unknown tools: {sorted(unknown)}"
+                )
+            sub["tools"] = resolved
         if spec.model is not None:
             sub["model"] = make_model(spec.model)
         if guards:

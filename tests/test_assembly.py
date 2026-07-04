@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
 from fakes import FakeRunStateStore
-from kokoro_agent.execution.prompts.guidance import render_tool_guidance
+from kokoro_agent.orchestration.context import render_tool_guidance
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
     ModelConfig,
@@ -32,7 +32,8 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.worker.main import build_web_tools, catalog_subagents, wire_subagents
+from kokoro_agent.orchestration.assemble import catalog_subagents, wire_subagents
+from kokoro_agent.worker.main import web_tools_from_config
 
 
 def test_defaults_from_empty_env() -> None:
@@ -256,22 +257,22 @@ def test_openai_reasoning_without_base_url_fails_loud() -> None:
 
 def test_web_tools_assembly_matrix() -> None:
     # search 配置即挂载：无 provider 只有 fetch；zhipu 配齐挂双件；半配 fail-loud。
-    bare = build_web_tools(AppConfig.from_env({}))
+    bare = web_tools_from_config(AppConfig.from_env({}))
     assert [tool.name for tool in bare] == ["web_fetch"]
-    full = build_web_tools(
+    full = web_tools_from_config(
         AppConfig.from_env(
             {"KOKORO_WEB_SEARCH_PROVIDER": "zhipu", "KOKORO_WEB_SEARCH_API_KEY": "k"}
         )
     )
     assert [tool.name for tool in full] == ["web_fetch", "web_search"]
-    searx = build_web_tools(AppConfig.from_env(
+    searx = web_tools_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
     ))
     assert [tool.name for tool in searx] == ["web_fetch", "web_search"]
     with pytest.raises(ValueError, match="KOKORO_WEB_SEARCH_API_KEY"):
-        build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
+        web_tools_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
     with pytest.raises(ValueError, match="unsupported"):
-        build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))
+        web_tools_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))
 
 
 def test_recursion_limit_env_parse() -> None:
@@ -283,7 +284,7 @@ def test_recursion_limit_env_parse() -> None:
 
 def testwire_subagents_tools_and_model_passthrough() -> None:
     # wire 预设声明的 tools/model 必须生效或炸——静默丢弃是最坏失效（真实缺陷回归钉）。
-    fetch = build_web_tools(AppConfig.from_env({}))[0]
+    fetch = web_tools_from_config(AppConfig.from_env({}))[0]
     fake_model = LocalFakeChatModel.with_script([])
 
     def request_with(sub: SubagentDef) -> RunRequest:
@@ -341,7 +342,7 @@ def test_builtin_subagents_opt_in_matrix() -> None:
 
     catalog = build_catalog(None, frozenset({"web-researcher"}))
     assert catalog.names() == {"web-researcher"}
-    tools = build_web_tools(AppConfig.from_env(
+    tools = web_tools_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
     ))
     index = {tool.name: tool for tool in tools}
@@ -350,7 +351,7 @@ def test_builtin_subagents_opt_in_matrix() -> None:
     assert dict(defs[0]).get("tools") == [index["web_search"], index["web_fetch"]]
 
     # search 未配置 → web_search 缺 → 整个不挂、不进 deny 声明集。
-    bare_index = {tool.name: tool for tool in build_web_tools(AppConfig.from_env({}))}
+    bare_index = {tool.name: tool for tool in web_tools_from_config(AppConfig.from_env({}))}
     defs_bare, mounted_bare = catalog_subagents(catalog, bare_index)
     assert defs_bare == [] and mounted_bare == frozenset()
 
@@ -382,7 +383,7 @@ def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
     guard = TerminalGuardMiddleware(store=FakeRunStateStore(), run_id="r1")
     catalog = build_catalog(None, frozenset({"web-researcher"}))
-    tools = build_web_tools(AppConfig.from_env(
+    tools = web_tools_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
     ))
     index = {tool.name: tool for tool in tools}

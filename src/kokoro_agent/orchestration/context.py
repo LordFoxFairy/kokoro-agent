@@ -1,4 +1,7 @@
-"""按挂载工具条件拼装的行为指引：不提未挂载的工具（避免模型自我混乱）。"""
+"""上下文构造器：模型可见面的唯一拼装点（人格 + 按挂载工具的行为指引 + skills 全文）。
+
+V1 为纯函数组合；运行时注入（steering/记忆预取）到来时升级为 middleware
+（ModelRequest.override 官方口，须先实证与 deepagents 自身 prompt 改写的层叠序）。"""
 
 from __future__ import annotations
 
@@ -35,3 +38,11 @@ def render_tool_guidance(mounted: frozenset[str]) -> str | None:
     """段落仅在其全部所需工具真挂载时出现；全缺返回 None（不占 prompt）。"""
     parts = [text for required, text in _SECTIONS if required <= mounted]
     return "\n\n".join(parts) if parts else None
+
+
+def compose_system_prompt(
+    persona: str, mounted_tools: frozenset[str], skills_prompt: str | None
+) -> str:
+    """三段组合：人格（入口预设或成品缺省）+ 条件行为指引 + skills 全文。"""
+    guidance = render_tool_guidance(mounted_tools)
+    return "\n\n".join(part for part in (persona, guidance, skills_prompt) if part)

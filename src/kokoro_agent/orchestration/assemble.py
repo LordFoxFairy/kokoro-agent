@@ -17,7 +17,7 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.agents import GENERAL_AGENT
+from kokoro_agent.agents import GENERAL_ENTRY
 from kokoro_agent.contract import ModelConfig, RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
@@ -191,7 +191,7 @@ async def assemble_agent(deps: AssembleDeps, request: RunRequest) -> InvokableAg
         tools=tools,
         # 上下文组合：具名入口人格（wire）或通用成品人格 + 条件指引 + skills 全文。
         system_prompt=compose_system_prompt(
-            runtime.system_prompt or GENERAL_AGENT.persona,
+            runtime.system_prompt or GENERAL_ENTRY.persona,
             frozenset(tool_index),
             render_skills_prompt(runtime.skills),
         ),

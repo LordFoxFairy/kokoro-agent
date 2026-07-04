@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-from kokoro_agent.agents.product import AgentProduct
+from kokoro_agent.agents.entry import AgentEntry
 
 
 def _load_persona() -> str:
     return files("kokoro_agent.agents.general").joinpath("persona.md").read_text(encoding="utf-8").strip()
 
 
-GENERAL_AGENT = AgentProduct(
+GENERAL_ENTRY = AgentEntry(
     name="general",
     description="通用协调 agent：组装并调度本空间全部能力。",
     persona=_load_persona(),

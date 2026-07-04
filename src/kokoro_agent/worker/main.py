@@ -6,14 +6,16 @@ import asyncio
 import logging
 import os
 import socket
+from collections.abc import Callable, Mapping
 
 from deepagents.middleware.subagents import SubAgent
 from dotenv import load_dotenv
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.config import AppConfig
-from kokoro_agent.contract import REQUESTS_STREAM, RunRequest
+from kokoro_agent.contract import REQUESTS_STREAM, ModelConfig, RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.prompts import SYSTEM_PROMPT
 from kokoro_agent.execution.protocols import InvokableAgent
@@ -50,16 +52,29 @@ def _consumer_name() -> str:
     return f"{socket.gethostname()}-{os.getpid()}"
 
 
-def _wire_subagents(request: RunRequest) -> list[SubAgent]:
-    # wire 子代理转 deepagents 定义；V1 只透传身份/提示，tools/model 后续接。
-    return [
-        {
+def wire_subagents(
+    request: RunRequest,
+    tool_index: Mapping[str, BaseTool],
+    make_model: Callable[[ModelConfig], BaseChatModel],
+) -> list[SubAgent]:
+    """wire 子代理 → deepagents 定义：tools 按名解析为已挂载实例（未知名 fail-loud，
+    绝不静默丢弃），model 经工厂实例化；二者缺省即继承主 agent。"""
+    out: list[SubAgent] = []
+    for spec in request.runtime.subagents:
+        sub: SubAgent = {
             "name": spec.name,
             "description": spec.description,
             "system_prompt": spec.system_prompt,
         }
-        for spec in request.runtime.subagents
-    ]
+        if spec.tools:
+            missing = sorted(set(spec.tools) - set(tool_index))
+            if missing:
+                raise ValueError(f"subagent {spec.name!r} declares unmounted tools: {missing}")
+            sub["tools"] = [tool_index[name] for name in spec.tools]
+        if spec.model is not None:
+            sub["model"] = make_model(spec.model)
+        out.append(sub)
+    return out
 
 
 def _approval_names(request: RunRequest) -> frozenset[str]:
@@ -135,7 +150,14 @@ async def _serve(config: AppConfig) -> None:
                 tools=tools,
                 # 具名入口（专业 agent 作主 agent）：session 解析预设人格上 wire，缺省用内置。
                 system_prompt=f"{base_prompt}\n\n{skills_prompt}" if skills_prompt else base_prompt,
-                subagents=[*catalog.definitions(), *_wire_subagents(request)],
+                subagents=[
+                    *catalog.definitions(),
+                    *wire_subagents(
+                        request,
+                        {tool.name: tool for tool in tools},
+                        lambda spec: make_chat_model(config.model, spec),
+                    ),
+                ],
                 checkpointer=saver,
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),
                 interrupt_on=build_interrupt_on(

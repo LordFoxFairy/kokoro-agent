@@ -8,7 +8,15 @@ from langchain_deepseek import ChatDeepSeek
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
-from kokoro_agent.contract import ModelConfig, Permissions, RuntimeConfig
+from kokoro_agent.contract import (
+    ModelConfig,
+    Permissions,
+    RunInput,
+    RunRequest,
+    RuntimeConfig,
+    RuntimeContext,
+    SubagentDef,
+)
 from kokoro_agent.model.factory import make_chat_model
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -21,7 +29,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.worker.main import build_web_tools
+from kokoro_agent.worker.main import wire_subagents, build_web_tools
 
 
 def test_defaults_from_empty_env() -> None:
@@ -268,3 +276,48 @@ def test_recursion_limit_env_parse() -> None:
     assert AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "12"}).recursion_limit == 12
     with pytest.raises(ValidationError):
         AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "0"})
+
+
+def testwire_subagents_tools_and_model_passthrough() -> None:
+    # wire 预设声明的 tools/model 必须生效或炸——静默丢弃是最坏失效（真实缺陷回归钉）。
+    fetch = build_web_tools(AppConfig.from_env({}))[0]
+    fake_model = LocalFakeChatModel.with_script([])
+
+    def request_with(sub: SubagentDef) -> RunRequest:
+        return RunRequest(
+            kind="run.request",
+            run_id="r1",
+            thread_id="t1",
+            input=RunInput(message_id="m1", content="hi"),
+            context=RuntimeContext(namespace="ns", session_id="s1"),
+            runtime=RuntimeConfig(
+                model=ModelConfig(provider="anthropic", name="claude"),
+                tools=[],
+                skills=[],
+                mcp=[],
+                subagents=[sub],
+                backend="state",
+                permissions=Permissions(
+                    approval_tools=[], review_tools=[], subagent_create="deny",
+                    filesystem="workspace_write",
+                ),
+            ),
+        )
+
+    spec = SubagentDef(
+        name="poet", description="d", system_prompt="p", tools=["web_fetch"],
+        model=ModelConfig(provider="anthropic", name="claude"),
+    )
+    subs = wire_subagents(request_with(spec), {"web_fetch": fetch}, lambda _m: fake_model)
+    first = dict(subs[0])
+    assert first.get("tools") == [fetch]
+    assert first.get("model") is fake_model
+
+    inherit = SubagentDef(name="poet", description="d", system_prompt="p", tools=[])
+    plain = wire_subagents(request_with(inherit), {}, lambda _m: fake_model)
+    assert "tools" not in plain[0]
+    assert "model" not in plain[0]
+
+    ghost = SubagentDef(name="poet", description="d", system_prompt="p", tools=["nope"])
+    with pytest.raises(ValueError, match="unmounted tools"):
+        wire_subagents(request_with(ghost), {"web_fetch": fetch}, lambda _m: fake_model)

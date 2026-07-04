@@ -157,6 +157,7 @@ async def _serve(config: AppConfig) -> None:
             source_for=catalog.source_for,
             consumer=_consumer_name(),
             heartbeat_s=config.lease_heartbeat_s,
+            recursion_limit=config.recursion_limit,
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
         await supervisor.serve(bus)

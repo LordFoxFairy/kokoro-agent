@@ -66,6 +66,7 @@ class RunSupervisor:
         consumer: str,
         heartbeat_s: float = 30.0,
         max_concurrent: int = MAX_CONCURRENT_RUNS,
+        recursion_limit: int = 100,
     ) -> None:
         self._build = agent_builder
         self._store = store
@@ -74,6 +75,7 @@ class RunSupervisor:
         self._source_for = source_for
         self._consumer = consumer
         self._heartbeat_s = heartbeat_s
+        self._recursion_limit = recursion_limit
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
@@ -286,6 +288,7 @@ class RunSupervisor:
                 source_for=self._source_for,
                 trace=trace,
                 context=context,
+                recursion_limit=self._recursion_limit,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
             )

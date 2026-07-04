@@ -50,6 +50,8 @@ class AppConfig(BaseModel):
     web_tools: WebToolSettings
     custom_subagents_json: str | None
     lease_heartbeat_s: Annotated[float, Field(gt=0)]
+    # 失控熔断：单 run 图步数上限（无限工具循环 → GraphRecursionError → run.failed）。
+    recursion_limit: Annotated[int, Field(gt=0)]
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
@@ -108,6 +110,7 @@ class AppConfig(BaseModel):
             ),
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
             lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),
+            recursion_limit=_int(source, "KOKORO_RECURSION_LIMIT", 100),
         )
 
 

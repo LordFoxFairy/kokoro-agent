@@ -12,7 +12,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import RunnableConfig
+from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
+from pydantic import BaseModel as PydanticBaseModel
 
 from fakes import (
     FakeAgent,
@@ -42,6 +44,8 @@ from kokoro_agent.contract import (
     ToolReturned,
     ToolReturnedPayload,
 )
+from kokoro_agent.execution.build_agent import build_agent
+from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.streams.memory import MemoryStream
@@ -497,3 +501,61 @@ async def test_events_published_with_run_events_maxlen() -> None:
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=text_run("hi")))
     assert all(maxlen == RUN_EVENTS_MAXLEN for _stream, _event, maxlen in bus.published)
+
+
+class _NoopArgs(PydanticBaseModel):
+    pass
+
+
+class _LoopingModel(LocalFakeChatModel):
+    """每轮都发同一工具调用：制造无限图循环，验证 recursion_limit 熔断。"""
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        calls = sum(1 for m in messages if isinstance(m, AIMessage))
+        message = AIMessage(
+            content="",
+            tool_calls=[{"name": "noop", "args": {}, "id": f"loop{calls}", "type": "tool_call"}],
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
+    noop = StructuredTool(
+        name="noop", description="no-op", args_schema=_NoopArgs, func=lambda: "ok"
+    )
+    agent = build_agent(
+        model=_LoopingModel.with_script([]),
+        tools=[noop],
+        system_prompt="x",
+        subagents=[],
+        checkpointer=None,
+        permissions=[],
+        interrupt_on={},
+    )
+    bus = MemoryStream()
+
+    async def claim() -> bool:
+        return True
+
+    terminal = await invoke_once(
+        RunEmitter(bus, "rloop"),
+        agent,
+        "tloop",
+        {"messages": [HumanMessage(content="go")]},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        claim_terminal=claim,
+        recursion_limit=8,
+    )
+    assert terminal is True
+    events = [item.event for item in await bus.read_all("kokoro:run:rloop:events")]
+    assert events[-1]["kind"] == "run.failed"
+    payload = events[-1]["payload"]
+    assert isinstance(payload, dict)
+    assert "Recursion" in str(payload.get("error_kind"))

@@ -261,3 +261,10 @@ def test_web_tools_assembly_matrix() -> None:
         build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
     with pytest.raises(ValueError, match="unsupported"):
         build_web_tools(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))
+
+
+def test_recursion_limit_env_parse() -> None:
+    assert AppConfig.from_env({}).recursion_limit == 100
+    assert AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "12"}).recursion_limit == 12
+    with pytest.raises(ValidationError):
+        AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "0"})

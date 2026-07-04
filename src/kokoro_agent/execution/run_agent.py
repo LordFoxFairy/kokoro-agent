@@ -27,13 +27,14 @@ async def invoke_once(
     claim_terminal: Callable[[], Awaitable[bool]],
     trace: RunnableConfig | None = None,
     context: object | None = None,
+    recursion_limit: int = 100,
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
     终态发射前先经 claim_terminal 原子认领：cancel/自然完成/异常三路共用同一认领键，
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
-    config = _config(thread_id, trace)
+    config = _config(thread_id, trace, recursion_limit)
     if emitter.at_start:
         await emitter.emit(RunStartedPayload())
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
@@ -80,8 +81,9 @@ def _sum_usage(per_model: Mapping[str, UsageMetadata]) -> TokenUsage | None:
     return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
-def _config(thread_id: str, trace: RunnableConfig | None) -> RunnableConfig:
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) -> RunnableConfig:
+    # 失控熔断：无限工具循环在限额处炸成 GraphRecursionError → run.failed fail-loud。
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit}
     if trace is not None:
         callbacks = trace.get("callbacks")
         metadata = trace.get("metadata")

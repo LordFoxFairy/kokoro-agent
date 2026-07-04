@@ -30,6 +30,13 @@ class TokenUsage(StrictModel):
     output_tokens: int
 
 
+class Artifact(StrictModel):
+    artifact_id: NonEmptyStr
+    name: NonEmptyStr
+    mime: NonEmptyStr
+    bytes: int
+
+
 class Risk(StrictModel):
     level: NonEmptyStr
     source: NonEmptyStr
@@ -96,13 +103,13 @@ class ToolReturnedPayload(StrictModel):
     result: str
     # 严格必填 fail-loud：生产端始终发送；缺失即报错，绝不用默认 false 掩盖真失败。
     is_error: bool
-    # wire 展示层截断标记：缺席=结果完整，true=已截断（完整结果在后端，canvas 预览 P1 经 artifact_ref 取）。
+    # wire 展示层截断标记：缺席=结果完整，true=已截断（完整结果在后端，预览经 artifact 端点取）。
     truncated: bool | None = None
     rejected: bool | None = None
     reject_reason: str | None = None
     responded: bool | None = None
-    # 大结果落 artifact，SSE 只带引用；P1 生产者。
-    artifact_ref: NonEmptyStr | None = None
+    # 产物引用（id/name/mime/bytes）：字节活在共享产物库，session 端点按 id 出体。
+    artifact: Artifact | None = None
     summary: dict[str, JsonValue] | None = None
 
 
@@ -165,6 +172,7 @@ class SubagentToolReturnedPayload(StrictModel):
     is_error: bool
     # 同 tool.returned.truncated：缺席=结果完整。
     truncated: bool | None = None
+    artifact: Artifact | None = None
 
 
 class RunCompletedPayload(StrictModel):

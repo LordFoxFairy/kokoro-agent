@@ -52,6 +52,8 @@ class AppConfig(BaseModel):
     lease_heartbeat_s: Annotated[float, Field(gt=0)]
     # 失控熔断：单 run 图步数上限（无限工具循环 → GraphRecursionError → run.failed）。
     recursion_limit: Annotated[int, Field(gt=0)]
+    # SIGTERM 优雅停机：限时等活跃 run 收尾（超时交 TTL 租约重拾）。
+    drain_timeout_s: Annotated[float, Field(gt=0)]
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
@@ -111,6 +113,7 @@ class AppConfig(BaseModel):
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
             lease_heartbeat_s=_float(source, "KOKORO_LEASE_HEARTBEAT_S", DEFAULT_LEASE_HEARTBEAT_S),
             recursion_limit=_int(source, "KOKORO_RECURSION_LIMIT", 100),
+            drain_timeout_s=_float(source, "KOKORO_DRAIN_TIMEOUT_S", 60.0),
         )
 
 

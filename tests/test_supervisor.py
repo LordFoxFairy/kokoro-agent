@@ -540,3 +540,36 @@ async def test_heartbeat_adopts_control_listener_for_paused_run() -> None:
     completed = find_event(bus.run_events("orphan-hitl"), RunCompleted)
     assert completed.payload.status == "cancelled"
     assert run_control_stream("orphan-hitl") in bus.deleted
+
+
+# ⑩ 优雅停机：drain 等活跃 run 收尾（限时），暂停 run 不阻塞退出。
+async def test_drain_waits_active_runs_until_deadline() -> None:
+    gate = asyncio.Event()
+    agent = FakeAgent(run=text_run("slow"), gates=[gate])
+    bus = FakeBus()
+    sup, _store = _supervisor(agent)
+    await sup.dispatch(bus, request("draining"))
+    await asyncio.sleep(0)
+
+    async def release() -> None:
+        await asyncio.sleep(0.05)
+        gate.set()
+
+    releaser = asyncio.create_task(release())
+    drained = await sup.drain(timeout_s=5.0)
+    await releaser
+    assert drained is True
+    assert bus.kinds("draining")[-1] == "run.completed"
+
+
+async def test_drain_times_out_on_stuck_run() -> None:
+    gate = asyncio.Event()  # 永不 set：模拟卡死 run
+    agent = FakeAgent(run=text_run("stuck"), gates=[gate])
+    bus = FakeBus()
+    sup, _store = _supervisor(agent)
+    await sup.dispatch(bus, request("stuck"))
+    await asyncio.sleep(0)
+    drained = await sup.drain(timeout_s=0.1)
+    assert drained is False  # 超时如实上报；剩余恢复权归 TTL 租约重拾
+    gate.set()
+    await _drain(sup)

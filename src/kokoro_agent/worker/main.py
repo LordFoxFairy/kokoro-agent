@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import socket
 from collections.abc import Callable, Mapping
 
@@ -182,7 +183,15 @@ async def _serve(config: AppConfig) -> None:
             recursion_limit=config.recursion_limit,
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
-        await supervisor.serve(bus)
+        serve_task = asyncio.create_task(supervisor.serve(bus))
+        loop = asyncio.get_running_loop()
+        # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。
+        loop.add_signal_handler(signal.SIGTERM, serve_task.cancel)
+        try:
+            await serve_task
+        except asyncio.CancelledError:
+            drained = await supervisor.drain(timeout_s=config.drain_timeout_s)
+            LOGGER.info("graceful shutdown: drained=%s", drained)
 
 
 def main() -> None:

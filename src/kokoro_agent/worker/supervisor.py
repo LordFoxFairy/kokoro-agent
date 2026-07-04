@@ -121,6 +121,15 @@ class RunSupervisor:
         else:
             await self._on_cancel(bus, msg)
 
+    async def drain(self, *, timeout_s: float) -> bool:
+        """优雅停机：限时等活跃 run 自然收尾（暂停 run 不算活跃，不阻塞退出）。
+        返回 False=超时仍有活跃 run——如实上报，恢复权归 TTL 租约重拾。"""
+        pending = [task for task in self._tasks.values() if not task.done()]
+        if not pending:
+            return True
+        _, not_done = await asyncio.wait(pending, timeout=timeout_s)
+        return not not_done
+
     async def heartbeat_once(self, bus: StreamProtocol) -> None:
         """一轮租约维护：为活跃 run 续租，再把他处过期的 run 重拾续跑。"""
         for run_id in tuple(self._tasks):

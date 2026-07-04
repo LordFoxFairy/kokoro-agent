@@ -1,7 +1,8 @@
-"""通用 agent 配方——现阶段唯一代码型成品。
+"""通用配方=数据型成品共用的标准装配管线。
 
-新增类型（如 music）：prompts/<type>.md 放人格资产 + 本目录 <type>.py 放配方；
-数据型入口（人格+工具束即可表达）不进本仓——归 session 入口表/hub。
+general 本身不是代码型成品——它没有专属编排逻辑，只是"标准管线 + prompts/general.md
+缺省人格"的数据型成品之一；music 等数据型入口同走本管线（差异全在 wire 携带的 bundle）。
+仅当某类型需要数据表达不了的专属编排时，才另立 <type>.py 配方并经契约分派键选择。
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 
 
 async def assemble_general(deps: AssembleDeps, request: RunRequest) -> AssembledAgent:
-    """通用 agent 的每请求配方：工具解析 → 守卫 → 子代理 → 上下文 → 图。"""
+    """每请求标准装配：工具解析 → 守卫 → 子代理 → 上下文 → 图（数据型成品共用）。"""
     runtime = request.runtime
     tools: list[BaseTool] = list(resolve_tools(runtime.tools))
     # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。

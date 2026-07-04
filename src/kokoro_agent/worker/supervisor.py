@@ -72,6 +72,8 @@ class RunSupervisor:
         recursion_limit: int = 100,
         events_ttl_s: int = 0,
         run_ttl_s: int = 0,
+        thread_ttl_s: int = 0,
+        delete_thread: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self._build = agent_builder
         self._store = store
@@ -84,6 +86,9 @@ class RunSupervisor:
         # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
         self._events_ttl_s = events_ttl_s
         self._run_ttl_s = run_ttl_s
+        # checkpoint TTL：活跃账本超龄 thread 经官方 adelete_thread 清（不穿透 saver 内部表）。
+        self._thread_ttl_s = thread_ttl_s
+        self._delete_thread = delete_thread
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
@@ -165,6 +170,11 @@ class RunSupervisor:
             purged = await self._store.purge_terminal(self._run_ttl_s * 1000)
             if purged:
                 LOGGER.info("retention purged %d terminal runs", purged)
+        if self._thread_ttl_s > 0 and self._delete_thread is not None:
+            for thread_id in await self._store.purge_stale_threads(self._thread_ttl_s * 1000):
+                # 清 checkpoint=会话历史进入"新会话语义"（snapshot 消息史仍在 session 侧）。
+                await self._delete_thread(thread_id)
+                LOGGER.info("retention deleted checkpoint thread %s", thread_id)
 
     async def _heartbeat_loop(self, bus: StreamProtocol) -> None:
         while True:
@@ -188,6 +198,8 @@ class RunSupervisor:
             await self._fail_terminal(bus, request.run_id, error)
             return
         scope = RunScope.of(request)
+        # thread 活跃账本：每次开跑刷新（checkpoint TTL 的时间真源）。
+        await self._store.touch_thread(scope.scoped_thread_id)
         # 身份乘 State 轴：随初始 input 进图并落 checkpoint（resume 不重供，run/state.py 法则）。
         payload = {
             # 稳定 id=message_id：TTL 重拾对已推进 checkpoint 重放原始 input 时，add_messages 按 id 去重。
@@ -259,6 +271,7 @@ class RunSupervisor:
             command = Command(resume={"decisions": resume_command_decisions(ordered, frame)})
         # 离开 HITL 暂停哨兵：恢复活跃租约，重新纳入心跳/过期重拾。
         await self._store.renew(msg.run_id)
+        await self._store.touch_thread(scope.scoped_thread_id)
         # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
         # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
         if await self._store.is_terminal(msg.run_id):

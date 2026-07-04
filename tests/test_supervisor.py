@@ -723,3 +723,28 @@ async def test_retention_off_by_default_no_side_effects() -> None:
     await sup.heartbeat_once(bus)
     assert bus.expired_streams == []
     assert await store.is_terminal("rr3") is True
+
+
+async def test_retention_thread_ttl_deletes_stale_checkpoints() -> None:
+    deleted: list[str] = []
+
+    async def deleter(thread_id: str) -> None:
+        deleted.append(thread_id)
+
+    agent = FakeAgent(run=text_run("x"))
+    bus = FakeBus()
+    store = FakeLedger()
+    sup = RunSupervisor(
+        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_names,
+        trace_factory=_no_trace, source_for=_source, consumer="t",
+        thread_ttl_s=1, delete_thread=deleter,
+    )
+    await sup.dispatch(bus, request("rt1"))
+    await _drain(sup)
+    assert store.thread_active == {"local:s1:c1": 0}  # 开跑即 touch（scoped id）
+    store.clock_ms = 10_000
+    await sup.heartbeat_once(bus)
+    assert deleted == ["local:s1:c1"]  # 超龄 thread 经官方 adelete_thread 口删除
+    assert store.thread_active == {}  # 账本行已清；再跑幂等
+    await sup.heartbeat_once(bus)
+    assert deleted == ["local:s1:c1"]

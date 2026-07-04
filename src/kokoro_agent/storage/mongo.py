@@ -154,6 +154,25 @@ class MongoLedger:
             return None
         return RunRequest.model_validate_json(raw)
 
+    async def touch_thread(self, thread_id: str) -> None:
+        await self._coll.update_one(
+            {"_id": f"thread:{thread_id}"},
+            {"$set": {"last_active_ms": self._clock(), "kind": "thread"}},
+            upsert=True,
+        )
+
+    async def purge_stale_threads(self, max_age_ms: int) -> list[str]:
+        cutoff = self._clock() - max_age_ms
+        stale: list[str] = []
+        cursor = self._coll.find(
+            {"kind": "thread", "last_active_ms": {"$lte": cutoff}}, {"_id": 1}
+        ).sort("_id", 1)
+        async for doc in cursor:
+            stale.append(str(doc["_id"]).removeprefix("thread:"))
+        if stale:
+            await self._coll.delete_many({"_id": {"$in": [f"thread:{t}" for t in stale]}})
+        return stale
+
     async def purge_terminal(self, max_age_ms: int) -> int:
         result = await self._coll.delete_many(
             {"terminal": True, "terminal_at_ms": {"$lte": self._clock() - max_age_ms}}

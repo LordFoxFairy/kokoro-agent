@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS tool_results(
 )"""
 
 # steering 信箱：seq 自增保到达序，UNIQUE(run_id, message_id) 保 keep-first 幂等。
+_THREADS_DDL = """\
+CREATE TABLE IF NOT EXISTS threads(
+    thread_id      TEXT PRIMARY KEY,
+    last_active_ms INTEGER NOT NULL
+)"""
+
 _STEERS_DDL = """\
 CREATE TABLE IF NOT EXISTS steers(
     seq        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +79,7 @@ class SqliteLedger:
         await self._db.execute(_TOKEN_TOTALS_DDL)
         await self._db.execute(_RUN_USAGE_DDL)
         await self._db.execute(_STEERS_DDL)
+        await self._db.execute(_THREADS_DDL)
         await self._db.commit()
 
     async def try_claim(self, request: RunRequest) -> bool:
@@ -168,6 +175,25 @@ class SqliteLedger:
         if row is None or row[0] is None:
             return None
         return RunRequest.model_validate_json(row[0])
+
+    async def touch_thread(self, thread_id: str) -> None:
+        await self._db.execute(
+            "INSERT INTO threads(thread_id, last_active_ms) VALUES(?, ?)"
+            " ON CONFLICT(thread_id) DO UPDATE SET last_active_ms=excluded.last_active_ms",
+            (thread_id, self._clock()),
+        )
+        await self._db.commit()
+
+    async def purge_stale_threads(self, max_age_ms: int) -> list[str]:
+        cutoff = self._clock() - max_age_ms
+        cur = await self._db.execute(
+            "SELECT thread_id FROM threads WHERE last_active_ms<=? ORDER BY thread_id", (cutoff,)
+        )
+        stale = [str(row[0]) for row in await cur.fetchall()]
+        for thread_id in stale:
+            await self._db.execute("DELETE FROM threads WHERE thread_id=?", (thread_id,))
+        await self._db.commit()
+        return stale
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self._clock() - max_age_ms

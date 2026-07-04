@@ -117,6 +117,7 @@ class FakeLedger:
         self.steers: dict[str, list[tuple[str, str]]] = {}
         self.terminal_at: dict[str, int] = {}
         self.clock_ms = 0
+        self.thread_active: dict[str, int] = {}
 
     async def try_claim(self, request: RunRequest) -> bool:
         if request.run_id in self.requests:
@@ -165,6 +166,16 @@ class FakeLedger:
         self.terminals.add(run_id)
         self.terminal_at[run_id] = self.clock_ms
         return True
+
+    async def touch_thread(self, thread_id: str) -> None:
+        self.thread_active[thread_id] = self.clock_ms
+
+    async def purge_stale_threads(self, max_age_ms: int) -> list[str]:
+        cutoff = self.clock_ms - max_age_ms
+        stale = sorted(t for t, at in self.thread_active.items() if at <= cutoff)
+        for thread_id in stale:
+            self.thread_active.pop(thread_id, None)
+        return stale
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self.clock_ms - max_age_ms

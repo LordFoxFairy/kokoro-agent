@@ -234,6 +234,19 @@ async def _assert_purge_terminal(store: RunLedger, clock: FakeClock) -> None:
     assert await store.purge_terminal(max_age_ms=5_000) == 0  # 幂等
 
 
+async def _assert_thread_activity(store: RunLedger, clock: FakeClock) -> None:
+    # thread 活跃账本：touch 即 upsert 最后活跃；清扫原子取出超龄 thread 并删行（幂等）。
+    await store.touch_thread("ns:t1")
+    clock.advance_ms(10_000)
+    await store.touch_thread("ns:t2")
+    await store.touch_thread("ns:t1")  # 再活跃：刷新
+    clock.advance_ms(4_000)
+    assert await store.purge_stale_threads(max_age_ms=5_000) == []  # t1/t2 都在 5s 内
+    clock.advance_ms(2_000)
+    assert await store.purge_stale_threads(max_age_ms=5_000) == ["ns:t1", "ns:t2"]
+    assert await store.purge_stale_threads(max_age_ms=5_000) == []  # 已取出：幂等
+
+
 _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     lambda store, _clock: _assert_claim_and_terminal(store),
     lambda store, _clock: _assert_unclaimed_mark_terminal(store),
@@ -248,6 +261,7 @@ _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     _assert_usage_accumulation_two_columns,
     lambda store, _clock: _assert_steer_mailbox(store),
     _assert_purge_terminal,
+    _assert_thread_activity,
 ]
 _MATRIX_IDS = [
     "claim_and_terminal",
@@ -263,6 +277,7 @@ _MATRIX_IDS = [
     "usage_accumulation_two_columns",
     "steer_mailbox",
     "purge_terminal",
+    "thread_activity",
 ]
 
 

@@ -63,6 +63,8 @@ class AppConfig(BaseModel):
     # retention（0=关，保留期限是产品决策不擅代）：终态后事件流存活期 / 终态 run 行清扫龄。
     retention_events_ttl_s: Annotated[int, Field(ge=0)]
     retention_run_ttl_s: Annotated[int, Field(ge=0)]
+    # 会话 checkpoint 保留（0=关）：thread 最后活跃超龄即删（官方 adelete_thread）。
+    retention_thread_ttl_s: Annotated[int, Field(ge=0)]
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
@@ -139,6 +141,7 @@ class AppConfig(BaseModel):
             run_token_budget=_int(source, "KOKORO_RUN_TOKEN_BUDGET", 0),
             retention_events_ttl_s=_int(source, "KOKORO_RETENTION_EVENTS_TTL_S", 0),
             retention_run_ttl_s=_int(source, "KOKORO_RETENTION_RUN_TTL_S", 0),
+            retention_thread_ttl_s=_int(source, "KOKORO_RETENTION_THREAD_TTL_S", 0),
         )
 
 

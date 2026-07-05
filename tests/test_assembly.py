@@ -165,9 +165,10 @@ def test_sandbox_local_shell_backend() -> None:
     assert isinstance(backend, LocalShellBackend)
 
 
-def test_sandbox_unsupported_backend_fails_loud() -> None:
+def test_sandbox_e2b_requires_run_scoped_assembly() -> None:
+    # e2b 有 run 级生命周期：同步纯函数入口 fail-loud 指路 make_backend_for_run。
     config = AppConfig.from_env({})
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="make_backend_for_run"):
         make_backend("e2b", config.sandbox)
 
 

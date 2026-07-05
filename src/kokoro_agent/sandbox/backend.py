@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import BackendProtocol
@@ -18,6 +19,7 @@ from kokoro_agent.sandbox.archive import (
     S3Archiver,
     S3Workspace,
 )
+from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox
 
 
 class SandboxSettings(BaseModel):
@@ -33,6 +35,8 @@ class SandboxSettings(BaseModel):
     workspace: LocalWorkspace | S3Workspace | None
     workspace_s3_access_key: SecretStr | None
     workspace_s3_secret_key: SecretStr | None
+    # e2b 云沙箱（ADR-009 1b）：api_key 缺失时选择 e2b backend 即 fail-loud。
+    e2b: E2BSettings
 
     @model_validator(mode="after")
     def _s3_requires_credentials(self) -> SandboxSettings:
@@ -91,5 +95,37 @@ def make_backend(
             max_output_bytes=settings.local_shell_max_output_bytes,
             inherit_env=settings.local_shell_inherit_env,
         )
-    # e2b/custom backend V1 未落地：fail-loud，不静默降级为 state。
+    # e2b 有 run 级生命周期（ledger 查询 sandbox_id），走 make_backend_for_run 的 async 编排。
+    if kind == "e2b":
+        raise ValueError("backend e2b requires run-scoped assembly via make_backend_for_run")
+    # custom backend V1 未落地：fail-loud，不静默降级为 state。
     raise NotImplementedError(f"backend {kind!r} is not supported in V1")
+
+
+class SandboxBinding(Protocol):
+    """run 级箱绑定存取（RunLedger 子集）：装配路径只依赖这两个方法。"""
+
+    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None: ...
+
+    async def get_sandbox_id(self, run_id: str) -> str | None: ...
+
+
+async def make_backend_for_run(
+    kind: Backend,
+    settings: SandboxSettings,
+    *,
+    workspace: str,
+    run_id: str,
+    binding: SandboxBinding,
+) -> BackendProtocol | None:
+    """统一装配入口：state/local_shell 走纯函数；e2b 编排 run 级生命周期——
+    resume 优先重连既往箱（暂停期文件在箱内），新建即落 ledger（keep-first）。
+    """
+    if kind != "e2b":
+        return make_backend(kind, settings, workspace=workspace)
+    prior = await binding.get_sandbox_id(run_id)
+    # SDK 同步阻塞（create ~秒级）：to_thread 让出事件循环。
+    backend = await asyncio.to_thread(connect_e2b_sandbox, settings.e2b, sandbox_id=prior)
+    if prior is None or backend.id != prior:
+        await binding.put_sandbox_id(run_id, backend.id)
+    return backend

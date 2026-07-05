@@ -22,7 +22,7 @@ from kokoro_agent.orchestration.assemble import (
 )
 from kokoro_agent.orchestration.context import compose_system_prompt
 from kokoro_agent.prompts import GENERAL_PERSONA
-from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
+from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
@@ -117,9 +117,12 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
         ),
         middleware=middleware,
         # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
-        backend=make_backend(
+        # e2b 档带 run 级生命周期：resume 经 ledger 重连既往箱（暂停期文件在箱内）。
+        backend=await make_backend_for_run(
             runtime.backend, deps.sandbox,
             workspace=f"{request.context.namespace}:{request.context.session_id}",
+            run_id=request.run_id,
+            binding=deps.ledger,
         ),
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
         store=deps.memory_store,

@@ -23,6 +23,8 @@ _DEFAULT_MONGO_URL = "mongodb://127.0.0.1:27017"
 _DEFAULT_MONGO_DB = "kokoro"
 _DEFAULT_LOCAL_SHELL_TIMEOUT = 120
 _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES = 100000
+# e2b sandbox 空闲存活期：覆盖常规 HITL 等人窗口；超期由归档兜底。
+_DEFAULT_E2B_TIMEOUT = 1800
 
 
 class WebToolSettings(BaseModel):
@@ -115,6 +117,11 @@ class AppConfig(BaseModel):
                     "workspace": load_workspace_config(source.get("KOKORO_WORKSPACE_CONFIG")),
                     "workspace_s3_access_key": _secret(source.get("KOKORO_WORKSPACE_S3_ACCESS_KEY")),
                     "workspace_s3_secret_key": _secret(source.get("KOKORO_WORKSPACE_S3_SECRET_KEY")),
+                    "e2b": {
+                        "api_key": _secret(source.get("KOKORO_E2B_API_KEY")),
+                        "template": source.get("KOKORO_E2B_TEMPLATE") or None,
+                        "timeout": _int(source, "KOKORO_E2B_TIMEOUT", _DEFAULT_E2B_TIMEOUT),
+                    },
                 }
             ),
             web_tools=WebToolSettings(

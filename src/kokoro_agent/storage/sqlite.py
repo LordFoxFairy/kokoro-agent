@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS steers(
     UNIQUE(run_id, message_id)
 )"""
 
+# e2b run 级 sandbox 绑定（ADR-009 1b）：HITL resume 重连既往箱，keep-first 防重建覆盖。
+_SANDBOXES_DDL = """\
+CREATE TABLE IF NOT EXISTS sandboxes(
+    run_id     TEXT PRIMARY KEY,
+    sandbox_id TEXT NOT NULL
+)"""
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -80,6 +87,7 @@ class SqliteLedger:
         await self._db.execute(_RUN_USAGE_DDL)
         await self._db.execute(_STEERS_DDL)
         await self._db.execute(_THREADS_DDL)
+        await self._db.execute(_SANDBOXES_DDL)
         await self._db.commit()
 
     async def try_claim(self, request: RunRequest) -> bool:
@@ -202,7 +210,7 @@ class SqliteLedger:
         )
         run_ids = [str(row[0]) for row in await cur.fetchall()]
         for run_id in run_ids:
-            for table in ("ledger", "tool_results", "token_totals", "run_usage", "steers"):
+            for table in ("ledger", "tool_results", "token_totals", "run_usage", "steers", "sandboxes"):
                 await self._db.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
         await self._db.commit()
         return len(run_ids)
@@ -244,6 +252,21 @@ class SqliteLedger:
         if row is None:
             return None
         return (str(row[0]), bool(row[1]))
+
+    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
+        # keep-first：resume 竞态下首个绑定生效，重连语义不被后建箱覆盖。
+        await self._db.execute(
+            "INSERT OR IGNORE INTO sandboxes(run_id, sandbox_id) VALUES(?, ?)",
+            (run_id, sandbox_id),
+        )
+        await self._db.commit()
+
+    async def get_sandbox_id(self, run_id: str) -> str | None:
+        cur = await self._db.execute(
+            "SELECT sandbox_id FROM sandboxes WHERE run_id=?", (run_id,)
+        )
+        row = await cur.fetchone()
+        return None if row is None else str(row[0])
 
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
         # WHERE EXISTS：未认领 run 安全丢弃（与 mongo 语义对齐，绝不预创建 run 行）。

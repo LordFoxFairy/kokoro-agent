@@ -223,6 +223,20 @@ class MongoLedger:
         entries = _STEERS_ADAPTER.validate_python(doc.get("steers") or [])
         return [(entry.message_id, entry.content) for entry in entries]
 
+    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
+        # keep-first：resume 竞态下首个绑定生效（与 put_tool_result 同模式）。
+        await self._coll.update_one(
+            {"_id": run_id, "sandbox_id": {"$exists": False}},
+            {"$set": {"sandbox_id": sandbox_id}},
+        )
+
+    async def get_sandbox_id(self, run_id: str) -> str | None:
+        doc = await self._coll.find_one({"_id": run_id}, {"sandbox_id": 1})
+        if doc is None:
+            return None
+        value = doc.get("sandbox_id")
+        return value if isinstance(value, str) else None
+
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
         doc = await self._coll.find_one({"_id": run_id}, {f"tool_results.{tool_id}": 1})
         if doc is None:

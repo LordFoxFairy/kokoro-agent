@@ -7,11 +7,15 @@ from kokoro_agent.sandbox.backend import (
     SandboxSettings,
     build_filesystem_permissions,
     make_backend,
+    make_backend_for_run,
 )
+from kokoro_agent.sandbox.e2b_backend import E2BSettings
 
 __all__ = [
+    "E2BSettings",
     "SandboxSettings",
     "build_filesystem_permissions",
     "load_workspace_config",
     "make_backend",
+    "make_backend_for_run",
 ]

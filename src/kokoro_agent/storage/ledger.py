@@ -85,6 +85,12 @@ class RunLedger(Protocol):
 
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None: ...
 
+    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
+        # e2b run 级箱绑定（keep-first）：HITL resume 重连既往 sandbox，暂停期文件不丢。
+        ...
+
+    async def get_sandbox_id(self, run_id: str) -> str | None: ...
+
 
 class LedgerSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")

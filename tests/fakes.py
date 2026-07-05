@@ -115,6 +115,7 @@ class FakeLedger:
         self.token_totals: dict[str, int] = {}
         self.usage_totals: dict[str, tuple[int, int]] = {}
         self.steers: dict[str, list[tuple[str, str]]] = {}
+        self.sandbox_ids: dict[str, str] = {}
         self.terminal_at: dict[str, int] = {}
         self.clock_ms = 0
         self.thread_active: dict[str, int] = {}
@@ -211,6 +212,12 @@ class FakeLedger:
 
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
         return self.tool_results.get((run_id, tool_id))
+
+    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
+        self.sandbox_ids.setdefault(run_id, sandbox_id)
+
+    async def get_sandbox_id(self, run_id: str) -> str | None:
+        return self.sandbox_ids.get(run_id)
 
 
 @dataclass

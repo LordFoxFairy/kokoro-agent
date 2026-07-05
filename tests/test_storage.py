@@ -191,6 +191,17 @@ async def _assert_tool_result_keep_first(store: RunLedger) -> None:
     assert await store.get_tool_result("run-tr", "other") is None
 
 
+async def _assert_sandbox_binding_keep_first(store: RunLedger) -> None:
+    # e2b run 级箱绑定：首绑生效（resume 竞态不覆盖）、未绑定返 None、run 间隔离。
+    req = request("run-sbx")
+    assert await store.try_claim(req) is True
+    assert await store.get_sandbox_id("run-sbx") is None
+    await store.put_sandbox_id("run-sbx", "sbx_first")
+    await store.put_sandbox_id("run-sbx", "sbx_second")
+    assert await store.get_sandbox_id("run-sbx") == "sbx_first"
+    assert await store.get_sandbox_id("run-other") is None
+
+
 async def _assert_steer_mailbox(store: RunLedger) -> None:
     # steering 信箱：keep-first 幂等（message_id 重放不覆盖）、按到达序、drain 即清空、run 间隔离。
     req = request("run-steer")
@@ -255,6 +266,7 @@ _MATRIX: list[Callable[[RunLedger, FakeClock], Awaitable[None]]] = [
     _assert_terminal_excluded_from_reclaim,
     lambda store, _clock: _assert_concurrent_single_winner(store),
     lambda store, _clock: _assert_tool_result_keep_first(store),
+    lambda store, _clock: _assert_sandbox_binding_keep_first(store),
     _assert_list_paused_only_pause_sentinel,
     _assert_token_accumulation_per_run,
     _assert_usage_accumulation_two_columns,
@@ -271,6 +283,7 @@ _MATRIX_IDS = [
     "terminal_excluded",
     "concurrent_single_winner",
     "tool_result_keep_first",
+    "sandbox_binding_keep_first",
     "list_paused_only_pause_sentinel",
     "token_accumulation_per_run",
     "usage_accumulation_two_columns",

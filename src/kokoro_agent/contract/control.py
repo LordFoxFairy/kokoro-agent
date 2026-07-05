@@ -30,12 +30,6 @@ class ModelConfig(StrictModel):
     effort: NonEmptyStr | None = None
 
 
-class SkillMount(StrictModel):
-    name: NonEmptyStr
-    path: NonEmptyStr
-    lock: NonEmptyStr
-
-
 class McpServer(StrictModel):
     name: NonEmptyStr
     transport: McpTransport
@@ -48,7 +42,7 @@ class McpServer(StrictModel):
 class SubagentDef(StrictModel):
     name: NonEmptyStr
     description: str
-    system_prompt: NonEmptyStr
+    system_prompt: NonEmptyStr | None = None
     tools: list[NonEmptyStr]
     model: ModelConfig | None = None
 
@@ -62,10 +56,11 @@ class Permissions(StrictModel):
 
 class RuntimeConfig(StrictModel):
     agent_type: AgentType
+    entry: NonEmptyStr | None = None
     model: ModelConfig
     system_prompt: NonEmptyStr | None = None
     tools: list[NonEmptyStr]
-    skills: list[SkillMount]
+    skills: list[NonEmptyStr]
     mcp: list[McpServer]
     subagents: list[SubagentDef]
     backend: Backend

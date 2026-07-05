@@ -478,3 +478,70 @@ def test_resolve_tools_empty_core_for_studio_types() -> None:
     from kokoro_agent.tools.registry import resolve_tools
 
     assert resolve_tools([], core=()) == []
+
+
+# --- 资产化：skills 按名 + persona 按名（配置引用资产，不内联资产） ---
+
+
+def test_persona_library_deploy_dir_overrides_builtin(tmp_path) -> None:
+    from kokoro_agent.prompts import PersonaLibrary
+
+    (tmp_path / "general.md").write_text("部署覆盖人格")
+    (tmp_path / "poet.md").write_text("诗人人格")
+    library = PersonaLibrary(str(tmp_path))
+    assert library.get("general") == "部署覆盖人格"
+    assert library.get("poet") == "诗人人格"
+    assert PersonaLibrary(None).get("poet") is None  # 内置包无此资产
+    assert PersonaLibrary(None).get("general") is not None  # 内置缺省人格恒在
+
+
+def test_wire_subagent_persona_resolution(tmp_path) -> None:
+    from kokoro_agent.prompts import PersonaLibrary
+    from kokoro_agent.subagents import wire_subagents
+
+    (tmp_path / "poet.md").write_text("诗人资产人格")
+    personas = PersonaLibrary(str(tmp_path))
+    request = RunRequest(
+        kind="run.request", run_id="r1", thread_id="c1",
+        input=RunInput(message_id="m1", content="hi"),
+        runtime=RuntimeConfig(
+            agent_type="general",
+            model=ModelConfig(provider="anthropic", name="claude"),
+            tools=[], skills=[], mcp=[],
+            subagents=[
+                SubagentDef(name="poet", description="诗", tools=[]),  # 无内联 → 资产解析
+                SubagentDef(name="critic", description="评", system_prompt="内联覆盖", tools=[]),
+            ],
+            backend="state",
+            permissions=Permissions(
+                approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
+            ),
+        ),
+        context=RuntimeContext(namespace="ns", session_id="s1"),
+    )
+    subs = wire_subagents(request, {}, lambda spec: None, personas=personas)
+    by_name = {sub["name"]: sub["system_prompt"] for sub in subs}
+    assert by_name == {"poet": "诗人资产人格", "critic": "内联覆盖"}
+
+
+def test_wire_subagent_without_any_persona_fails_loud() -> None:
+    from kokoro_agent.prompts import PersonaLibrary
+    from kokoro_agent.subagents import wire_subagents
+
+    request = RunRequest(
+        kind="run.request", run_id="r1", thread_id="c1",
+        input=RunInput(message_id="m1", content="hi"),
+        runtime=RuntimeConfig(
+            agent_type="general",
+            model=ModelConfig(provider="anthropic", name="claude"),
+            tools=[], skills=[], mcp=[],
+            subagents=[SubagentDef(name="ghost", description="?", tools=[])],
+            backend="state",
+            permissions=Permissions(
+                approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
+            ),
+        ),
+        context=RuntimeContext(namespace="ns", session_id="s1"),
+    )
+    with pytest.raises(ValueError, match="no persona"):
+        wire_subagents(request, {}, lambda spec: None, personas=PersonaLibrary(None))

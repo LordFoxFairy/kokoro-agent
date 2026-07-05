@@ -18,7 +18,6 @@ from kokoro_agent.mcp.tools import load_mcp_tools
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.prompts import GENERAL_PERSONA
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
-from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent, wire_subagents
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL, ASK_USER_TOOL_NAME
 from kokoro_agent.tools.memory import make_memory_tools
@@ -100,9 +99,12 @@ class GeneralAgentFactory(AgentFactory):
             model=make_chat_model(deps.model, runtime.model),
             tools=tools,
             # 上下文组合：具名入口人格（wire）或通用成品人格 + skills 全文。
+            # 人格解析链：内联覆盖（wire）→ 入口名资产（prompts/<entry>.md）→ 通用缺省。
             system_prompt=compose_system_prompt(
-                runtime.system_prompt or GENERAL_PERSONA,
-                render_skills_prompt(runtime.skills),
+                runtime.system_prompt
+                or (deps.personas.get(runtime.entry) if runtime.entry else None)
+                or GENERAL_PERSONA,
+                deps.skills.render_prompt(runtime.skills),
             ),
             subagents=[
                 # 同名覆盖内生 general-purpose：守卫齐挂，可达性政策不变（不进 declared 集）。
@@ -113,6 +115,7 @@ class GeneralAgentFactory(AgentFactory):
                     tool_index,
                     lambda spec: make_chat_model(deps.model, spec),
                     subagent_guards,
+                    personas=deps.personas,
                 ),
             ],
             checkpointer=deps.checkpointer,

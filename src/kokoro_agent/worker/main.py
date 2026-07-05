@@ -26,6 +26,8 @@ from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
+from kokoro_agent.prompts import PersonaLibrary
+from kokoro_agent.skills.mounts import load_skill_library
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -75,6 +77,8 @@ async def _serve(config: AppConfig) -> None:
             checkpointer=saver,
             ledger=store,
             memory_store=memory_store,
+            skills=load_skill_library(config.skills_dir),
+            personas=PersonaLibrary(config.personas_dir),
         )
         supervisor = RunSupervisor(
             agent_builder=functools.partial(assemble, deps),

@@ -52,6 +52,9 @@ class AppConfig(BaseModel):
     sandbox: SandboxSettings
     web_tools: WebToolSettings
     custom_subagents_json: str | None
+    # 资产库目录（ADR-010 心智：配置引用名称，资产统一入库）。
+    skills_dir: str | None
+    personas_dir: str | None
     # 内建子代理按名启用（默认全关；未知名 fail-loud）。
     enabled_builtin_subagents: frozenset[str]
     lease_heartbeat_s: Annotated[float, Field(gt=0)]
@@ -142,6 +145,8 @@ class AppConfig(BaseModel):
                 search_url=source.get("KOKORO_WEB_SEARCH_URL") or None,
             ),
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
+            skills_dir=source.get("KOKORO_SKILLS_DIR") or None,
+            personas_dir=source.get("KOKORO_PERSONAS_DIR") or None,
             enabled_builtin_subagents=frozenset(
                 name.strip()
                 for name in source.get("KOKORO_BUILTIN_SUBAGENTS", "").split(",")

@@ -47,6 +47,8 @@ _YAML_TO_ENV: dict[str, str] = {
     "web_tools.fetch_allow_private": "KOKORO_WEB_FETCH_ALLOW_PRIVATE",
     "web_tools.search.provider": "KOKORO_WEB_SEARCH_PROVIDER",
     "web_tools.search.url": "KOKORO_WEB_SEARCH_URL",
+    "assets.skills_dir": "KOKORO_SKILLS_DIR",
+    "assets.personas_dir": "KOKORO_PERSONAS_DIR",
     "subagents.builtin": "KOKORO_BUILTIN_SUBAGENTS",
     "subagents.custom_json": "KOKORO_CUSTOM_SUBAGENTS",
     "limits.lease_heartbeat_s": "KOKORO_LEASE_HEARTBEAT_S",

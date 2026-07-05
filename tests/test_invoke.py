@@ -185,7 +185,7 @@ async def test_tool_events_inherit_awaiting_segment() -> None:
     await resumed.emit(
         ToolReturnedPayload(
             segment_id="t1", tool_id="t1", name="write_file", result="ok", is_error=False,
-            rejected=None, reject_reason=None, responded=None, artifact=None, summary=None,
+            rejected=None, reject_reason=None, responded=None, summary=None,
         )
     )
     items = await bus.read_all("kokoro:run:rn:events")

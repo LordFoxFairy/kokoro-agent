@@ -26,9 +26,9 @@ from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
 from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
-from kokoro_agent.tools.export_artifact import make_export_artifact_tool
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.middleware import (
+    ArtifactMirrorMiddleware,
     SteeringMiddleware,
     TerminalGuardMiddleware,
     TokenBudgetMiddleware,
@@ -45,8 +45,6 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
     tools: list[BaseTool] = list(resolve_tools(runtime.tools))
     # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。
     tools.extend(make_memory_tools(request.context.namespace))
-    # 产物导出恒挂载：归属（run_id）与共享库在装配期注入。
-    tools.append(make_export_artifact_tool(deps.artifacts, request.run_id))
     tools.extend(deps.web_tools)
     tools.extend(await load_mcp_tools(runtime.mcp))
     # ToolPolicyMiddleware fail-closed 全集：本次工具名 + deepagents 保留工具（文件/执行/todo/task）。
@@ -81,8 +79,11 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
     catalog_defs, catalog_names = catalog_subagents(deps.catalog, tool_index, subagent_guards)
     # 委派执法声明集 = 真挂载的 catalog 子代理 + 本次 wire 预设。
     declared_subagents = catalog_names | frozenset(sub.name for sub in runtime.subagents)
+    # 产物镜像只挂主链（V1）：write_file 内容自动入共享库，引用经自有队列上 wire。
+    mirror = ArtifactMirrorMiddleware(store=deps.artifacts, run_id=request.run_id)
     middleware: list[AgentMiddleware] = [
         *guards,
+        mirror,
         # steering 只挂主链：插话是用户↔主 agent 的对话，注入子代理即语义污染。
         SteeringMiddleware(store=deps.ledger, run_id=request.run_id),
         ToolPolicyMiddleware(
@@ -125,6 +126,7 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
     )
     return AssembledAgent(
         agent=graph,
+        mirror=mirror,
         # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
         tool_descriptions={tool.name: tool.description for tool in tools if tool.description},
     )

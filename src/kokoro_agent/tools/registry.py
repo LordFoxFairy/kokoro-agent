@@ -9,7 +9,6 @@ from langchain_core.tools import StructuredTool
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 from kokoro_agent.tools.memory import SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME
-from kokoro_agent.tools.export_artifact import EXPORT_ARTIFACT_TOOL_NAME
 from kokoro_agent.tools.web_fetch import WEB_FETCH_TOOL_NAME
 from kokoro_agent.tools.web_search import WEB_SEARCH_TOOL_NAME
 
@@ -42,7 +41,7 @@ KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {ASK_USER_TOOL.name: ASK_USER_T
 # 含装配期注入的政策（scope / allow_private / search provider），由 worker 创建，不入常量表。
 CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL,)
 ASSEMBLY_TOOL_NAMES: Final[frozenset[str]] = frozenset(
-    {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, EXPORT_ARTIFACT_TOOL_NAME}
+    {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME}
 )
 
 assert_tool_names_allowed(KOKORO_TOOLS)

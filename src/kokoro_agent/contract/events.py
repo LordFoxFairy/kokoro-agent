@@ -108,8 +108,6 @@ class ToolReturnedPayload(StrictModel):
     rejected: bool | None = None
     reject_reason: str | None = None
     responded: bool | None = None
-    # 产物引用（id/name/mime/bytes）：字节活在共享产物库，session 端点按 id 出体。
-    artifact: Artifact | None = None
     summary: dict[str, JsonValue] | None = None
 
 
@@ -154,6 +152,13 @@ class SubagentTextCompletedPayload(StrictModel):
     text: str
 
 
+class ArtifactCreatedPayload(StrictModel):
+    segment_id: NonEmptyStr
+    tool_id: NonEmptyStr
+    # 产物诞生是独立事实（write_file 自动镜像产出）：字节活在共享产物库，session 端点按 id 出体；web 按 tool_id 挂回工具步。
+    artifact: Artifact
+
+
 class SubagentToolInvokedPayload(StrictModel):
     segment_id: NonEmptyStr
     subagent_id: NonEmptyStr
@@ -172,7 +177,6 @@ class SubagentToolReturnedPayload(StrictModel):
     is_error: bool
     # 同 tool.returned.truncated：缺席=结果完整。
     truncated: bool | None = None
-    artifact: Artifact | None = None
 
 
 class RunCompletedPayload(StrictModel):
@@ -298,6 +302,14 @@ class SubagentTextCompleted(StrictModel):
     payload: SubagentTextCompletedPayload
 
 
+class ArtifactCreated(StrictModel):
+    kind: Literal["artifact.created"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: ArtifactCreatedPayload
+
+
 class SubagentToolInvoked(StrictModel):
     kind: Literal["subagent.tool.invoked"]
     run_id: NonEmptyStr
@@ -346,6 +358,7 @@ AgentEvent = Annotated[
         SubagentThinkingDelta,
         SubagentTextDelta,
         SubagentTextCompleted,
+        ArtifactCreated,
         SubagentToolInvoked,
         SubagentToolReturned,
         RunCompleted,

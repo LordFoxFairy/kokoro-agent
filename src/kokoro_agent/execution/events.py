@@ -10,6 +10,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
     Artifact,
+    ArtifactCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
@@ -55,6 +56,7 @@ AgentEventPayload = (
     | SubagentThinkingDeltaPayload
     | SubagentTextDeltaPayload
     | SubagentTextCompletedPayload
+    | ArtifactCreatedPayload
     | SubagentToolInvokedPayload
     | SubagentToolReturnedPayload
     | RunCompletedPayload
@@ -76,6 +78,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     SubagentFinishedPayload: "subagent.finished",
     SubagentTextDeltaPayload: "subagent.text.delta",
     SubagentTextCompletedPayload: "subagent.text.completed",
+    ArtifactCreatedPayload: "artifact.created",
     SubagentToolInvokedPayload: "subagent.tool.invoked",
     SubagentToolReturnedPayload: "subagent.tool.returned",
     RunCompletedPayload: "run.completed",
@@ -241,18 +244,6 @@ def output_delta_text(chunk: object) -> str:
     return text if isinstance(text, str) else ""
 
 
-def artifact_of(tc: ToolCallInfo) -> Artifact | None:
-    """ToolMessage.artifact → wire 引用：Artifact 形状洗净通过才升；其余（第三方工具
-    塞的任意 artifact）静默忽略——wire 只带本仓产物库背书的引用。"""
-    raw = getattr(tc.output, "artifact", None)
-    if raw is None:
-        return None
-    try:
-        return Artifact.model_validate(raw)
-    except ValidationError:
-        return None
-
-
 def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
     # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
     result, truncated = _result_text(tc)
@@ -263,7 +254,6 @@ def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
         result=result,
         is_error=tc.error is not None,
         truncated=True if truncated else None,
-        artifact=artifact_of(tc),
     )
 
 
@@ -291,8 +281,12 @@ def subagent_tool_returned_payload(
         result=result,
         is_error=tc.error is not None,
         truncated=True if truncated else None,
-        artifact=artifact_of(tc),
     )
+
+
+def artifact_created_payload(tool_id: str, artifact: Artifact) -> ArtifactCreatedPayload:
+    # 产物诞生独立事件：segment 归属沿 tool_id（web 按 tool_id 挂回工具步）。
+    return ArtifactCreatedPayload(segment_id=tool_id, tool_id=tool_id, artifact=artifact)
 
 
 def todo_payload(tc: ToolCallInfo) -> TodoUpdatedPayload:

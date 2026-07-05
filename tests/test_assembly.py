@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from deepagents.backends.local_shell import LocalShellBackend
 from langchain_deepseek import ChatDeepSeek
@@ -410,7 +412,7 @@ def test_tool_usage_lives_in_tool_descriptions() -> None:
     assert "交叉核对" in search.description
 
 
-def test_local_shell_workspace_subdir(tmp_path) -> None:
+def test_local_shell_workspace_subdir(tmp_path: Path) -> None:
     # 工作区约定：{root}/{namespace:session_id}/——session files 端点按同约定直读。
     config = AppConfig.from_env({"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)})
     backend = make_backend("local_shell", config.sandbox, workspace="ns:ses_1")

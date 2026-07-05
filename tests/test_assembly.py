@@ -483,7 +483,7 @@ def test_resolve_tools_empty_core_for_studio_types() -> None:
 # --- 资产化：skills 按名 + persona 按名（配置引用资产，不内联资产） ---
 
 
-def test_persona_library_deploy_dir_overrides_builtin(tmp_path) -> None:
+def test_persona_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
     from kokoro_agent.prompts import PersonaLibrary
 
     (tmp_path / "general.md").write_text("部署覆盖人格")
@@ -495,7 +495,7 @@ def test_persona_library_deploy_dir_overrides_builtin(tmp_path) -> None:
     assert PersonaLibrary(None).get("general") is not None  # 内置缺省人格恒在
 
 
-def test_wire_subagent_persona_resolution(tmp_path) -> None:
+def test_wire_subagent_persona_resolution(tmp_path: Path) -> None:
     from kokoro_agent.prompts import PersonaLibrary
     from kokoro_agent.subagents import wire_subagents
 
@@ -519,7 +519,7 @@ def test_wire_subagent_persona_resolution(tmp_path) -> None:
         ),
         context=RuntimeContext(namespace="ns", session_id="s1"),
     )
-    subs = wire_subagents(request, {}, lambda spec: None, personas=personas)
+    subs = wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=personas)
     by_name = {sub["name"]: sub["system_prompt"] for sub in subs}
     assert by_name == {"poet": "诗人资产人格", "critic": "内联覆盖"}
 
@@ -544,4 +544,4 @@ def test_wire_subagent_without_any_persona_fails_loud() -> None:
         context=RuntimeContext(namespace="ns", session_id="s1"),
     )
     with pytest.raises(ValueError, match="no persona"):
-        wire_subagents(request, {}, lambda spec: None, personas=PersonaLibrary(None))
+        wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=PersonaLibrary(None))

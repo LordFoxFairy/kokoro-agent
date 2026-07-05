@@ -33,7 +33,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.orchestration import catalog_subagents, general_purpose_subagent, wire_subagents
+from kokoro_agent.assembly.parts import catalog_subagents, general_purpose_subagent, wire_subagents
 from kokoro_agent.worker.main import web_tools_from_config
 
 

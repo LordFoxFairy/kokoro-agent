@@ -123,7 +123,7 @@ class TestDockerSandbox:
         assert second.container_id != first.container_id
 
     @pytest.mark.asyncio
-    async def test_orchestration_binds_and_reuses(self, tmp_path: Path) -> None:
+    async def test_run_scoped_binding_and_reuse(self, tmp_path: Path) -> None:
         run_id = f"run_{uuid.uuid4().hex[:6]}"
         settings = _dispatch_settings().model_copy(
             update={"local_shell_root": str(tmp_path)}

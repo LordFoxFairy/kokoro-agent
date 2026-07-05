@@ -15,7 +15,7 @@ from kokoro_agent.config import AppConfig
 from kokoro_agent.contract import REQUESTS_STREAM
 from langchain_core.tools import BaseTool
 from kokoro_agent.observability import trace_config
-from kokoro_agent.orchestration import (
+from kokoro_agent.assembly import (
     AssembleDeps,
     approval_names,
     assemble_general,

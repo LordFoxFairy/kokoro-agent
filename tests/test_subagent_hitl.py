@@ -109,7 +109,7 @@ async def test_general_purpose_delegation_runs_inside_guards() -> None:
     # 内生 GP 旁路收口回归钉：唯一的 TerminalGuard 只挂在我们覆盖的 general-purpose spec 上，
     # 账本已终态 → 委派进 GP 的首个模型轮必被熔断（RunSupersededError 出自 GP 子图内）。
     from fakes import FakeLedger
-    from kokoro_agent.orchestration import general_purpose_subagent
+    from kokoro_agent.assembly.parts import general_purpose_subagent
     from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 
     ledger = FakeLedger()

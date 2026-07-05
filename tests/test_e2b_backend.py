@@ -128,7 +128,7 @@ class TestLifecycle:
         assert backend.id == "sbx_created_0"
 
     @pytest.mark.asyncio
-    async def test_orchestration_binds_new_sandbox_and_reuses_it(self, tmp_path: Path) -> None:
+    async def test_run_scoped_binding_new_sandbox_and_reuse(self, tmp_path: Path) -> None:
         async with aiosqlite.connect(str(tmp_path / "ledger.db")) as db:
             ledger = SqliteLedger(db, ttl_ms=60_000)
             await ledger.setup()

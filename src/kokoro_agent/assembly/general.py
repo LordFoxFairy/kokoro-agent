@@ -13,14 +13,13 @@ from langchain_core.tools import BaseTool
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.mcp.tools import load_mcp_tools
-from kokoro_agent.orchestration.assemble import (
+from kokoro_agent.assembly.parts import (
     AssembleDeps,
     AssembledAgent,
     catalog_subagents,
     general_purpose_subagent,
     wire_subagents,
 )
-from kokoro_agent.orchestration.context import compose_system_prompt
 from kokoro_agent.prompts import GENERAL_PERSONA
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.skills.mounts import render_skills_prompt
@@ -132,3 +131,9 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
         # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
         tool_descriptions={tool.name: tool.description for tool in tools if tool.description},
     )
+
+
+def compose_system_prompt(persona: str, skills_prompt: str | None) -> str:
+    """模型可见面的两段组合：人格（入口预设或成品缺省）+ skills 全文。
+    工具用法不进 system prompt——它活在各工具的 description，由 LangChain 经工具 schema 交给模型。"""
+    return "\n\n".join(part for part in (persona, skills_prompt) if part)

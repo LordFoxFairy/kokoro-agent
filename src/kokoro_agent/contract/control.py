@@ -11,6 +11,7 @@ NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 McpTransport = Literal["http", "streamable_http"]
 SubagentCreate = Literal["deny", "ask", "allow"]
 FilesystemPerm = Literal["read_only", "workspace_write"]
+AgentType = Literal["general"]
 Backend = Literal["state", "local_shell", "docker", "e2b", "custom"]
 
 
@@ -60,6 +61,7 @@ class Permissions(StrictModel):
 
 
 class RuntimeConfig(StrictModel):
+    agent_type: AgentType
     model: ModelConfig
     system_prompt: NonEmptyStr | None = None
     tools: list[NonEmptyStr]

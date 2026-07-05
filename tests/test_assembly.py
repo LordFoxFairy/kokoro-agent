@@ -33,7 +33,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.assembly.parts import catalog_subagents, general_purpose_subagent, wire_subagents
+from kokoro_agent.agents.parts import catalog_subagents, general_purpose_subagent, wire_subagents
 from kokoro_agent.worker.main import web_tools_from_config
 
 
@@ -200,6 +200,7 @@ def test_make_stream_backends() -> None:
 def test_runtime_system_prompt_on_wire() -> None:
     # 具名入口：RuntimeConfig 可带已解析人格；strict 契约拒绝空串。
     runtime = RuntimeConfig(
+        agent_type="general",
         model=ModelConfig(provider="anthropic", name="claude"),
         system_prompt="你是音乐创作人格",
         tools=[],
@@ -297,6 +298,7 @@ def testwire_subagents_tools_and_model_passthrough() -> None:
             input=RunInput(message_id="m1", content="hi"),
             context=RuntimeContext(namespace="ns", session_id="s1"),
             runtime=RuntimeConfig(
+        agent_type="general",
                 model=ModelConfig(provider="anthropic", name="claude"),
                 tools=[],
                 skills=[],
@@ -419,3 +421,60 @@ def test_local_shell_workspace_subdir(tmp_path: Path) -> None:
     backend = make_backend("local_shell", config.sandbox, workspace="ns:ses_1")
     assert isinstance(backend, LocalShellBackend)
     assert (tmp_path / "ns:ses_1").is_dir()
+
+
+# --- 业务包层（agents/<type>/）：注册表分派与类型政策 ---
+
+
+def test_agent_type_registry_covers_contract_enum() -> None:
+    # 契约枚举扩值忘注册业务包 = 此处爆炸（装配期 NotImplementedError 提前到测试期）。
+    from typing import get_args
+
+    from kokoro_agent.agents import AGENT_TYPES
+    from kokoro_agent.contract import AgentType
+
+    assert set(AGENT_TYPES) == set(get_args(AgentType))
+
+
+def test_general_package_pause_policy_includes_ask_user() -> None:
+    from kokoro_agent.agents import AGENT_TYPES
+
+    assert AGENT_TYPES["general"].pause_tools == frozenset({"ask_user_question"})
+
+
+def test_approval_names_unions_wire_and_package_policy() -> None:
+    from kokoro_agent.agents import approval_names
+
+    request = RunRequest(
+        kind="run.request",
+        run_id="r1",
+        thread_id="c1",
+        input=RunInput(message_id="m1", content="hi"),
+        runtime=RuntimeConfig(
+            agent_type="general",
+            model=ModelConfig(provider="anthropic", name="claude"),
+            tools=[],
+            skills=[],
+            mcp=[],
+            subagents=[],
+            backend="state",
+            permissions=Permissions(
+                approval_tools=["execute"], review_tools=[],
+                subagent_create="ask", filesystem="read_only",
+            ),
+        ),
+        context=RuntimeContext(namespace="ns", session_id="s1"),
+    )
+    assert approval_names(request) == frozenset({"execute", "ask_user_question", "task"})
+
+
+def test_interrupt_on_empty_pause_tools_for_studio_types() -> None:
+    # 无 chat 面的类型：不注入 ask_user 暂停点，审批工具照常门控。
+    interrupt_on = build_interrupt_on(frozenset({"execute"}), pause_tools=frozenset())
+    assert set(interrupt_on) == {"execute"}
+
+
+def test_resolve_tools_empty_core_for_studio_types() -> None:
+    from kokoro_agent.tools.registry import resolve_tools
+
+    assert resolve_tools([], core=()) == []

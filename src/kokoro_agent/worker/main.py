@@ -15,10 +15,10 @@ from kokoro_agent.config import AppConfig
 from kokoro_agent.contract import REQUESTS_STREAM
 from langchain_core.tools import BaseTool
 from kokoro_agent.observability import trace_config
-from kokoro_agent.assembly import (
+from kokoro_agent.agents import (
     AssembleDeps,
     approval_names,
-    assemble_general,
+    assemble,
     build_web_tools,
 )
 from kokoro_agent.tools.web_search import SearchProviderSettings
@@ -73,7 +73,7 @@ async def _serve(config: AppConfig) -> None:
             memory_store=memory_store,
         )
         supervisor = RunSupervisor(
-            agent_builder=functools.partial(assemble_general, deps),
+            agent_builder=functools.partial(assemble, deps),
             store=store,
             approval_tool_names=approval_names,
             trace_factory=lambda request: trace_config(config.observability, request),

@@ -39,7 +39,7 @@ from kokoro_agent.execution.approvals import (
 )
 from kokoro_agent.execution.events import RunEmitter, run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.assembly.parts import AssembledAgent
+from kokoro_agent.agents.parts import AssembledAgent
 from kokoro_agent.state import RunScope
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.streams.protocol import StreamProtocol

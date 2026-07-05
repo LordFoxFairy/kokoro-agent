@@ -15,18 +15,21 @@ _APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject"]
 
 
 def build_interrupt_on(
-    approval_tools: frozenset[str], *, subagent_create: str = "deny"
+    approval_tools: frozenset[str],
+    *,
+    subagent_create: str = "deny",
+    pause_tools: frozenset[str] = frozenset({ASK_USER_TOOL_NAME}),
 ) -> dict[str, InterruptOnConfig]:
-    """ask_user 恒暂停（respond）；approval_tools 挂 approve/edit/reject；
-    subagent_create=ask 时委派工具（task）同样进审批门控。"""
+    """pause_tools=类型包的 respond 语义暂停点（对话型={ask_user}，studio 类型=∅）；
+    approval_tools 挂 approve/edit/reject；subagent_create=ask 时委派工具同样进审批门控。"""
     interrupt_on: dict[str, InterruptOnConfig] = {
-        ASK_USER_TOOL_NAME: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS)
+        tool: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS) for tool in pause_tools
     }
     interrupt_on.update(
         {
             tool: InterruptOnConfig(allowed_decisions=_APPROVAL_DECISIONS)
             for tool in approval_tools
-            if tool != ASK_USER_TOOL_NAME
+            if tool not in pause_tools
         }
     )
     if subagent_create == "ask":

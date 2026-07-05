@@ -384,6 +384,7 @@ def request(
         thread_id=thread_id,
         input=RunInput(message_id=f"{run_id}-m", content=content),
         runtime=RuntimeConfig(
+        agent_type="general",
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[],
             skills=[],

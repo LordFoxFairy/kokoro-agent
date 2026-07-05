@@ -7,20 +7,21 @@ general 本身不是代码型成品——它没有专属编排逻辑，只是"�
 
 from __future__ import annotations
 
+from importlib.resources import files
+
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.mcp.tools import load_mcp_tools
-from kokoro_agent.assembly.parts import (
+from kokoro_agent.agents.parts import (
     AssembleDeps,
     AssembledAgent,
     catalog_subagents,
     general_purpose_subagent,
     wire_subagents,
 )
-from kokoro_agent.prompts import GENERAL_PERSONA
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.skills.mounts import render_skills_prompt
 from kokoro_agent.model.factory import make_chat_model
@@ -34,13 +35,13 @@ from kokoro_agent.tools.middleware import (
     ToolResultReviewMiddleware,
 )
 from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
+from kokoro_agent.tools.registry import CORE_TOOLS, RESERVED_TOOL_NAMES, resolve_tools
 
 
 async def assemble_general(deps: AssembleDeps, request: RunRequest) -> AssembledAgent:
     """每请求标准装配：工具解析 → 守卫 → 子代理 → 上下文 → 图（数据型成品共用）。"""
     runtime = request.runtime
-    tools: list[BaseTool] = list(resolve_tools(runtime.tools))
+    tools: list[BaseTool] = list(resolve_tools(runtime.tools, core=CORE_TOOLS))
     # 记忆工具是通用原语，隔离政策（租户 scope）在此注入——工具体不含租户概念。
     tools.extend(make_memory_tools(request.context.namespace))
     tools.extend(deps.web_tools)
@@ -131,6 +132,12 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
         # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
         tool_descriptions={tool.name: tool.description for tool in tools if tool.description},
     )
+
+
+# 人格资产随包分发：与配方同目录，types 落地即照此自包含。
+GENERAL_PERSONA: str = (
+    files("kokoro_agent.agents.general").joinpath("persona.md").read_text(encoding="utf-8").strip()
+)
 
 
 def compose_system_prompt(persona: str, skills_prompt: str | None) -> str:

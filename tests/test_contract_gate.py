@@ -145,6 +145,7 @@ _PERMISSIONS: dict[str, JsonValue] = {
     "filesystem": "read_only",
 }
 _RUNTIME: dict[str, JsonValue] = {
+    "agent_type": "general",
     "model": _MODEL,
     "tools": [],
     "skills": [],

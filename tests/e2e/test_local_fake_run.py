@@ -28,8 +28,8 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.prompts import GENERAL_PERSONA
-from kokoro_agent.assembly.parts import AssembledAgent
+from kokoro_agent.agents.general import GENERAL_PERSONA
+from kokoro_agent.agents.parts import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
 
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
@@ -58,6 +58,7 @@ def _request(
         thread_id=f"{run_id}-thread",
         input=RunInput(message_id=f"{run_id}-m", content=content),
         runtime=RuntimeConfig(
+        agent_type="general",
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[],
             skills=[],

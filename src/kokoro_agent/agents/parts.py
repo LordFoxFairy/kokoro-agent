@@ -23,8 +23,7 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
-from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
-from kokoro_agent.tools.registry import KOKORO_TOOLS, SUBAGENT_TOOL_NAME
+from kokoro_agent.tools.registry import KOKORO_TOOLS
 from kokoro_agent.tools.web_fetch import make_web_fetch_tool
 from kokoro_agent.tools.web_search import (
     SearchProviderSettings,
@@ -70,15 +69,6 @@ def build_web_tools(
         return tools
     tools.append(make_web_search_tool(make_search_provider(search)))
     return tools
-
-
-def approval_names(request: RunRequest) -> frozenset[str]:
-    # ask_user 恒为语义暂停点，须与审批工具一同纳入 pending 识别集合；
-    # 委派策略为 ask 时 task 同样是暂停点。
-    names = frozenset(request.runtime.permissions.approval_tools) | {ASK_USER_TOOL_NAME}
-    if request.runtime.permissions.subagent_create == "ask":
-        names |= {SUBAGENT_TOOL_NAME}
-    return names
 
 
 def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent:

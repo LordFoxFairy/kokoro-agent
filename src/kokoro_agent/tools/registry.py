@@ -51,17 +51,20 @@ KNOWN_TOOL_NAMES: frozenset[str] = (
 )
 
 
-def resolve_tools(names: Sequence[str]) -> list[StructuredTool]:
+def resolve_tools(
+    names: Sequence[str], *, core: Sequence[StructuredTool] = CORE_TOOLS
+) -> list[StructuredTool]:
     """runtime.tools → 需显式挂载的 Kokoro 工具（deepagents 内置工具由框架自带）。"""
     unknown = sorted(set(names) - KNOWN_TOOL_NAMES)
     if unknown:
         raise ValueError(f"unknown tools in RuntimeConfig.tools: {unknown}")
     if len(set(names)) != len(names):
         raise ValueError("RuntimeConfig.tools contains duplicate names")
-    tools = list(CORE_TOOLS)
+    # core=类型包的基础工具面政策（对话型含 ask_user；无 chat 面的 studio 类型传空）。
+    tools = list(core)
     tools.extend(
         KOKORO_TOOLS[name]
         for name in names
-        if name in KOKORO_TOOLS and KOKORO_TOOLS[name] not in CORE_TOOLS
+        if name in KOKORO_TOOLS and KOKORO_TOOLS[name] not in tuple(core)
     )
     return tools

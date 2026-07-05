@@ -313,7 +313,7 @@ def testwire_subagents_tools_and_model_passthrough() -> None:
         )
 
     spec = SubagentDef(
-        name="poet", description="d", system_prompt="p", tools=["web_fetch"],
+        name="poet", description="d", system_prompt="p", tools=["web_fetch"], skills=[],
         model=ModelConfig(provider="anthropic", name="claude"),
     )
     subs = wire_subagents(request_with(spec), {"web_fetch": fetch}, lambda _m: fake_model)
@@ -321,19 +321,19 @@ def testwire_subagents_tools_and_model_passthrough() -> None:
     assert first.get("tools") == [fetch]
     assert first.get("model") is fake_model
 
-    inherit = SubagentDef(name="poet", description="d", system_prompt="p", tools=[])
+    inherit = SubagentDef(name="poet", description="d", system_prompt="p", tools=[], skills=[])
     plain = wire_subagents(request_with(inherit), {}, lambda _m: fake_model)
     assert "tools" not in plain[0]
     assert "model" not in plain[0]
 
-    ghost = SubagentDef(name="poet", description="d", system_prompt="p", tools=["nope"])
+    ghost = SubagentDef(name="poet", description="d", system_prompt="p", tools=["nope"], skills=[])
     with pytest.raises(ValueError, match="unknown tools"):
         wire_subagents(request_with(ghost), {"web_fetch": fetch}, lambda _m: fake_model)
 
     # 入口对偶性：成品降格为子代理时声明的注册表工具可以不在主 agent 工具集里——
     # 主 index 优先复用（政策实例），miss 走注册表独立解析，仍未知才 fail-loud。
     dual = SubagentDef(
-        name="asker", description="d", system_prompt="p", tools=["ask_user_question"]
+        name="asker", description="d", system_prompt="p", tools=["ask_user_question"], skills=[]
     )
     from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 
@@ -509,8 +509,8 @@ def test_wire_subagent_persona_resolution(tmp_path: Path) -> None:
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[], skills=[], mcp=[],
             subagents=[
-                SubagentDef(name="poet", description="诗", tools=[]),  # 无内联 → 资产解析
-                SubagentDef(name="critic", description="评", system_prompt="内联覆盖", tools=[]),
+                SubagentDef(name="poet", description="诗", tools=[], skills=[]),  # 无内联 → 资产解析
+                SubagentDef(name="critic", description="评", system_prompt="内联覆盖", tools=[], skills=[]),
             ],
             backend="state",
             permissions=Permissions(
@@ -535,7 +535,7 @@ def test_wire_subagent_without_any_persona_fails_loud() -> None:
             agent_type="general",
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[], skills=[], mcp=[],
-            subagents=[SubagentDef(name="ghost", description="?", tools=[])],
+            subagents=[SubagentDef(name="ghost", description="?", tools=[], skills=[])],
             backend="state",
             permissions=Permissions(
                 approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",

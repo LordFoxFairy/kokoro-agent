@@ -11,7 +11,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.contract import ModelConfig, RunRequest
-from kokoro_agent.prompts import PersonaLibrary
+from kokoro_agent.prompts import PersonaLibrary, compose_system_prompt
+from kokoro_agent.skills.mounts import SkillLibrary
 from kokoro_agent.subagents.catalog import SubagentCatalog
 from kokoro_agent.tools.registry import KOKORO_TOOLS
 
@@ -37,6 +38,7 @@ def wire_subagents(
     make_model: Callable[[ModelConfig], BaseChatModel],
     guards: Sequence[AgentMiddleware] = (),
     personas: PersonaLibrary | None = None,
+    skills: SkillLibrary | None = None,
 ) -> list[SubAgent]:
     """wire 子代理 → deepagents 定义：tools 主 index 优先（复用政策实例）、注册表兜底
     （入口对偶性：成品降格为子代理时，其专属注册表工具可不在主 agent 工具集里），
@@ -47,10 +49,12 @@ def wire_subagents(
         persona = spec.system_prompt or (personas.get(spec.name) if personas else None)
         if persona is None:
             raise ValueError(f"subagent {spec.name!r} has no persona (inline or prompts/{spec.name}.md)")
+        # 入口对偶性：成品作下属仍带自己的技能包（与作主 agent 同一组合语义）。
+        skills_prompt = skills.render_prompt(spec.skills) if skills and spec.skills else None
         sub: SubAgent = {
             "name": spec.name,
             "description": spec.description,
-            "system_prompt": persona,
+            "system_prompt": compose_system_prompt(persona, skills_prompt),
         }
         if spec.tools:
             resolved: list[BaseTool] = []

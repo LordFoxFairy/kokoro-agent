@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Annotated
 
 from deepagents.backends.local_shell import LocalShellBackend
+
+from kokoro_agent.sandbox.archive import ArchivingWritesMixin, S3Archiver
 from deepagents.backends.protocol import ExecuteResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -126,3 +128,28 @@ def connect_docker_sandbox(
         timeout=exec_timeout,
         max_output_bytes=max_output_bytes,
     )
+
+
+class ArchivingDockerShellBackend(ArchivingWritesMixin, DockerShellBackend):
+    """docker 执行隔离 + S3 写时归档（多 pod 无共享卷 + 容器隔离的组合档）。"""
+
+    def __init__(
+        self,
+        *,
+        root: Path,
+        container_id: str,
+        archiver: S3Archiver,
+        prefix: str,
+        timeout: int,
+        max_output_bytes: int,
+    ) -> None:
+        DockerShellBackend.__init__(
+            self,
+            root=root,
+            container_id=container_id,
+            timeout=timeout,
+            max_output_bytes=max_output_bytes,
+        )
+        self._archive_root = root
+        self._archiver = archiver
+        self._prefix = prefix

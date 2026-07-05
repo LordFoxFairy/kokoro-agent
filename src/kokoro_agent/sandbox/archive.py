@@ -98,31 +98,15 @@ class S3Archiver:
         return count
 
 
-class ArchivingLocalShellBackend(LocalShellBackend):
-    """local_shell + 写时归档：write/edit 增量上传；execute/upload_files 后全量兜底
-    （shell 直写无法逐文件感知）。归档失败 log 可见、绝不打断工具结果（ADR-009 强制规则）。
-    """
+class ArchivingWritesMixin(LocalShellBackend):
+    """写时归档层（叠加于 LocalShellBackend 系，含 docker 变体；C3 线性化保证
+    super() 落在真正的执行基类上）：write/edit 增量上传；execute/upload_files 后
+    全量兜底（shell 直写无法逐文件感知）。归档失败 log 可见、绝不打断工具结果
+    （ADR-009 强制规则）。组合类构造须设 _archive_root/_archiver/_prefix。"""
 
-    def __init__(
-        self,
-        *,
-        root: Path,
-        archiver: S3Archiver,
-        prefix: str,
-        timeout: int,
-        max_output_bytes: int,
-        inherit_env: bool,
-    ) -> None:
-        super().__init__(
-            root_dir=str(root),
-            virtual_mode=True,
-            timeout=timeout,
-            max_output_bytes=max_output_bytes,
-            inherit_env=inherit_env,
-        )
-        self._archive_root = root
-        self._archiver = archiver
-        self._prefix = prefix
+    _archive_root: Path
+    _archiver: S3Archiver
+    _prefix: str
 
     def _archive_file(self, file_path: str) -> None:
         rel = file_path.lstrip("/")
@@ -181,3 +165,27 @@ class ArchivingLocalShellBackend(LocalShellBackend):
         result = await super().aupload_files(files)
         await asyncio.to_thread(self._archive_all)
         return result
+
+
+class ArchivingLocalShellBackend(ArchivingWritesMixin):
+    def __init__(
+        self,
+        *,
+        root: Path,
+        archiver: S3Archiver,
+        prefix: str,
+        timeout: int,
+        max_output_bytes: int,
+        inherit_env: bool,
+    ) -> None:
+        super().__init__(
+            root_dir=str(root),
+            # 虚拟根：模型绝对路径映射进工作区，绝不触宿主真实根。
+            virtual_mode=True,
+            timeout=timeout,
+            max_output_bytes=max_output_bytes,
+            inherit_env=inherit_env,
+        )
+        self._archive_root = root
+        self._archiver = archiver
+        self._prefix = prefix

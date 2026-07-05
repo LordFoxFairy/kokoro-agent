@@ -16,7 +16,7 @@ from kokoro_agent.contract import AgentType, RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.mcp.tools import load_mcp_tools
 from kokoro_agent.model.factory import make_chat_model
-from kokoro_agent.prompts import GENERAL_PERSONA
+from kokoro_agent.prompts import GENERAL_PERSONA, compose_system_prompt
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent, wire_subagents
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL, ASK_USER_TOOL_NAME
@@ -30,12 +30,6 @@ from kokoro_agent.tools.middleware import (
 )
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
-
-
-def compose_system_prompt(persona: str, skills_prompt: str | None) -> str:
-    """模型可见面的两段组合：人格（入口预设或成品缺省）+ skills 全文。
-    工具用法不进 system prompt——它活在各工具的 description，由 LangChain 经工具 schema 交给模型。"""
-    return "\n\n".join(part for part in (persona, skills_prompt) if part)
 
 
 class GeneralAgentFactory(AgentFactory):
@@ -116,6 +110,7 @@ class GeneralAgentFactory(AgentFactory):
                     lambda spec: make_chat_model(deps.model, spec),
                     subagent_guards,
                     personas=deps.personas,
+                    skills=deps.skills,
                 ),
             ],
             checkpointer=deps.checkpointer,

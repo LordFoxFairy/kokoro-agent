@@ -152,3 +152,43 @@ def test_connectors_cover_backend_enum() -> None:
     from kokoro_agent.sandbox.backend import registered_backends
 
     assert registered_backends() == frozenset(get_args(Backend))
+
+
+@needs_docker
+class TestDockerWithS3Archive:
+    def test_docker_execute_archives_to_s3(self, tmp_path: Path) -> None:
+        # docker 隔离 + S3 文件面组合档：容器写 → 宿主挂载 → 全量归档推 S3。
+        import boto3
+        from botocore.config import Config as BotoConfig
+        from pydantic import SecretStr
+
+        from kokoro_agent.sandbox.archive import S3Archiver, S3Workspace
+        from kokoro_agent.sandbox.docker_backend import ArchivingDockerShellBackend
+
+        minio = boto3.client(
+            "s3", endpoint_url="http://127.0.0.1:9100", region_name="us-east-1",
+            aws_access_key_id="kokoro", aws_secret_access_key="kokoro-secret",
+            config=BotoConfig(s3={"addressing_style": "path"}, connect_timeout=1,
+                              retries={"max_attempts": 1}),
+        )
+        bucket = f"kokoro-docker-s3-{uuid.uuid4().hex[:6]}"
+        try:
+            minio.create_bucket(Bucket=bucket)
+        except Exception:
+            pytest.skip("minio unreachable at :9100")
+        plain = _connect(tmp_path, run_id="run_ds3")
+        backend = ArchivingDockerShellBackend(
+            root=tmp_path,
+            container_id=plain.container_id,
+            archiver=S3Archiver(
+                S3Workspace(type="s3", endpoint="http://127.0.0.1:9100", bucket=bucket),
+                access_key=SecretStr("kokoro"), secret_key=SecretStr("kokoro-secret"),
+            ),
+            prefix="ns:ds3",
+            timeout=30,
+            max_output_bytes=100000,
+        )
+        result = backend.execute("echo from-docker > out.txt")
+        assert result.exit_code == 0
+        body = minio.get_object(Bucket=bucket, Key="ns:ds3/out.txt")["Body"].read()
+        assert body == b"from-docker\n"

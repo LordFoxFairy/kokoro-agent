@@ -21,7 +21,11 @@ from kokoro_agent.sandbox.archive import (
     S3Workspace,
 )
 from kokoro_agent.sandbox.custom_backend import CustomBackendSettings, connect_custom_sandbox
-from kokoro_agent.sandbox.docker_backend import DockerSettings, connect_docker_sandbox
+from kokoro_agent.sandbox.docker_backend import (
+    ArchivingDockerShellBackend,
+    DockerSettings,
+    connect_docker_sandbox,
+)
 from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox
 
 
@@ -148,14 +152,34 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
     root = _workspace_root(context.settings, context.workspace)
     if root is None:
         raise ValueError("backend docker requires KOKORO_AGENT_LOCAL_SHELL_ROOT")
-    return connect_docker_sandbox(
-        context.settings.docker,
+    settings = context.settings
+    backend = connect_docker_sandbox(
+        settings.docker,
         root=Path(root),
         container_id=context.prior_sandbox_id,
         run_id=context.run_id,
-        exec_timeout=context.settings.local_shell_timeout,
-        max_output_bytes=context.settings.local_shell_max_output_bytes,
+        exec_timeout=settings.local_shell_timeout,
+        max_output_bytes=settings.local_shell_max_output_bytes,
     )
+    # docker + s3 组合档：与 local_shell 同享写时归档（缺此即静默丢文件面）。
+    if (
+        isinstance(settings.workspace, S3Workspace)
+        and settings.workspace_s3_access_key is not None
+        and settings.workspace_s3_secret_key is not None
+    ):
+        return ArchivingDockerShellBackend(
+            root=Path(root),
+            container_id=backend.container_id,
+            archiver=S3Archiver(
+                settings.workspace,
+                access_key=settings.workspace_s3_access_key,
+                secret_key=settings.workspace_s3_secret_key,
+            ),
+            prefix=context.workspace,
+            timeout=settings.local_shell_timeout,
+            max_output_bytes=settings.local_shell_max_output_bytes,
+        )
+    return backend
 
 
 def _connect_e2b(context: SandboxContext) -> BackendProtocol | None:

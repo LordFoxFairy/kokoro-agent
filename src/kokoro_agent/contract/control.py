@@ -44,6 +44,7 @@ class SubagentDef(StrictModel):
     description: str
     system_prompt: NonEmptyStr | None = None
     tools: list[NonEmptyStr]
+    skills: list[NonEmptyStr]
     model: ModelConfig | None = None
 
 

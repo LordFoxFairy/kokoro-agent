@@ -1,74 +1,20 @@
-"""编排共享装配件：AssembleDeps/AssembledAgent 形状 + 工具/守卫/子代理装配函数。
-
-各 agent 类型的配方在同目录 <type>.py（现有 general.py；新增类型即新增配方文件），
-政策全部在配方内注入（租户 scope/审批集/预算/后端），工具与执行层保持通用原语。
-"""
+"""子代理装配件：catalog/wire 声明 → deepagents SubAgent 定义（守卫逐个下发）。"""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.store.base import BaseStore
 
 from kokoro_agent.contract import ModelConfig, RunRequest
-from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.model.factory import ChatModelSettings
-from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.storage.ledger import RunLedger
-from kokoro_agent.subagents import SubagentCatalog
+from kokoro_agent.subagents.catalog import SubagentCatalog
 from kokoro_agent.tools.registry import KOKORO_TOOLS
-from kokoro_agent.tools.web_fetch import make_web_fetch_tool
-from kokoro_agent.tools.web_search import (
-    SearchProviderSettings,
-    make_search_provider,
-    make_web_search_tool,
-)
 
 LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class AssembledAgent:
-    """装配产物：可运行图 + wire 面元数据（审批卡的工具自述查询）。"""
-
-    agent: InvokableAgent
-    tool_descriptions: Mapping[str, str]
-
-    def describe_tool(self, name: str) -> str | None:
-        return self.tool_descriptions.get(name)
-
-
-@dataclass(frozen=True, slots=True)
-class AssembleDeps:
-    """进程级共享件：worker 启动时构建一次，逐请求复用。
-    只收领域设置，不收整个 AppConfig（config 单点消费法则）。"""
-
-    model: ChatModelSettings
-    sandbox: SandboxSettings
-    run_token_budget: int
-    catalog: SubagentCatalog
-    web_tools: tuple[BaseTool, ...]
-    checkpointer: BaseCheckpointSaver[str]
-    ledger: RunLedger
-    memory_store: BaseStore
-
-
-def build_web_tools(
-    *, fetch_allow_private: bool, search: SearchProviderSettings | None
-) -> list[BaseTool]:
-    # fetch 恒挂载（SSRF 政策来自进程配置）；search 配置即挂载——无 provider 不挂空壳。
-    tools: list[BaseTool] = [make_web_fetch_tool(allow_private=fetch_allow_private)]
-    if search is None:
-        return tools
-    tools.append(make_web_search_tool(make_search_provider(search)))
-    return tools
 
 
 def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent:

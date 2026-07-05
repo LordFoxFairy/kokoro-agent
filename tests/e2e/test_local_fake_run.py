@@ -28,8 +28,8 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.agents.general import GENERAL_PERSONA
-from kokoro_agent.agents.parts import AssembledAgent
+from kokoro_agent.prompts import GENERAL_PERSONA
+from kokoro_agent.agents.base import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
 
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model

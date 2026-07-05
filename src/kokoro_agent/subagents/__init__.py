@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from kokoro_agent.subagents.assemble import (
+    catalog_subagents,
+    general_purpose_subagent,
+    wire_subagents,
+)
 from kokoro_agent.subagents.catalog import (
     BUILT_IN_SUBAGENTS,
     RegisteredSubagent,
@@ -10,6 +15,9 @@ from kokoro_agent.subagents.catalog import (
 )
 
 __all__ = [
+    "catalog_subagents",
+    "general_purpose_subagent",
+    "wire_subagents",
     "BUILT_IN_SUBAGENTS",
     "RegisteredSubagent",
     "SubagentCatalog",

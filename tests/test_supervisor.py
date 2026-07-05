@@ -28,7 +28,7 @@ from kokoro_agent.contract import (
     inbound_adapter,
     run_control_stream,
 )
-from kokoro_agent.agents.parts import AssembledAgent
+from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor

@@ -15,13 +15,13 @@ from kokoro_agent.config import AppConfig
 from kokoro_agent.contract import REQUESTS_STREAM
 from langchain_core.tools import BaseTool
 from kokoro_agent.observability import trace_config
-from kokoro_agent.agents import (
-    AssembleDeps,
-    approval_names,
-    assemble,
-    build_web_tools,
+from kokoro_agent.agents import AssembleDeps, approval_names, assemble
+from kokoro_agent.tools.web_fetch import make_web_fetch_tool
+from kokoro_agent.tools.web_search import (
+    SearchProviderSettings,
+    make_search_provider,
+    make_web_search_tool,
 )
-from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
@@ -43,9 +43,13 @@ def web_tools_from_config(config: AppConfig) -> list[BaseTool]:
             base_url=config.web_tools.search_url,
         )
     )
-    return build_web_tools(
-        fetch_allow_private=config.web_tools.fetch_allow_private, search=search
-    )
+    tools: list[BaseTool] = [
+        make_web_fetch_tool(allow_private=config.web_tools.fetch_allow_private)
+    ]
+    # search 配置即挂载：无 provider 不挂空壳。
+    if search is not None:
+        tools.append(make_web_search_tool(make_search_provider(search)))
+    return tools
 
 
 def _consumer_name() -> str:

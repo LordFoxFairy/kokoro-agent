@@ -33,7 +33,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.agents.parts import catalog_subagents, general_purpose_subagent, wire_subagents
+from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent, wire_subagents
 from kokoro_agent.worker.main import web_tools_from_config
 
 
@@ -430,16 +430,16 @@ def test_agent_type_registry_covers_contract_enum() -> None:
     # 契约枚举扩值忘注册业务包 = 此处爆炸（装配期 NotImplementedError 提前到测试期）。
     from typing import get_args
 
-    from kokoro_agent.agents import AGENT_TYPES
+    from kokoro_agent.agents import FACTORIES
     from kokoro_agent.contract import AgentType
 
-    assert set(AGENT_TYPES) == set(get_args(AgentType))
+    assert set(FACTORIES) == set(get_args(AgentType))
 
 
 def test_general_package_pause_policy_includes_ask_user() -> None:
-    from kokoro_agent.agents import AGENT_TYPES
+    from kokoro_agent.agents import FACTORIES
 
-    assert AGENT_TYPES["general"].pause_tools == frozenset({"ask_user_question"})
+    assert FACTORIES["general"].pause_tools == frozenset({"ask_user_question"})
 
 
 def test_approval_names_unions_wire_and_package_policy() -> None:

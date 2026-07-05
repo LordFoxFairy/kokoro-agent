@@ -34,7 +34,7 @@ from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent, wire_subagents
-from kokoro_agent.worker.main import web_tools_from_config
+from kokoro_agent.worker.main import toolbox_from_config
 
 
 def test_defaults_from_empty_env() -> None:
@@ -258,24 +258,28 @@ def test_openai_reasoning_without_base_url_fails_loud() -> None:
         make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
 
 
-def test_web_tools_assembly_matrix() -> None:
+def test_toolbox_assembly_matrix() -> None:
     # search 配置即挂载：无 provider 只有 fetch；zhipu 配齐挂双件；半配 fail-loud。
-    bare = web_tools_from_config(AppConfig.from_env({}))
-    assert [tool.name for tool in bare] == ["web_fetch"]
-    full = web_tools_from_config(
+    bare = toolbox_from_config(AppConfig.from_env({}))
+    assert [tool.name for tool in bare.configured] == ["web_fetch"]
+    full = toolbox_from_config(
         AppConfig.from_env(
             {"KOKORO_WEB_SEARCH_PROVIDER": "zhipu", "KOKORO_WEB_SEARCH_API_KEY": "k"}
         )
     )
-    assert [tool.name for tool in full] == ["web_fetch", "web_search"]
-    searx = web_tools_from_config(AppConfig.from_env(
+    assert [tool.name for tool in full.configured] == ["web_fetch", "web_search"]
+    searx = toolbox_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
     ))
-    assert [tool.name for tool in searx] == ["web_fetch", "web_search"]
+    assert [tool.name for tool in searx.configured] == ["web_fetch", "web_search"]
     with pytest.raises(ValueError, match="KOKORO_WEB_SEARCH_API_KEY"):
-        web_tools_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
+        toolbox_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
     with pytest.raises(ValueError, match="unsupported"):
-        web_tools_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))
+        toolbox_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))
+    # 恒挂底座一口出：租户态 memory 双件在前、配置态在后（挂载序即工具序）。
+    assert [tool.name for tool in bare.tools_for("ns-1")] == [
+        "save_memory", "search_memory", "web_fetch",
+    ]
 
 
 def test_recursion_limit_env_parse() -> None:
@@ -287,7 +291,7 @@ def test_recursion_limit_env_parse() -> None:
 
 def testwire_subagents_tools_and_model_passthrough() -> None:
     # wire 预设声明的 tools/model 必须生效或炸——静默丢弃是最坏失效（真实缺陷回归钉）。
-    fetch = web_tools_from_config(AppConfig.from_env({}))[0]
+    fetch = toolbox_from_config(AppConfig.from_env({})).configured[0]
     fake_model = LocalFakeChatModel.with_script([])
 
     def request_with(sub: SubagentDef) -> RunRequest:
@@ -358,16 +362,16 @@ def test_builtin_subagents_opt_in_matrix() -> None:
 
     catalog = build_catalog(None, frozenset({"web-researcher"}))
     assert catalog.names() == {"web-researcher"}
-    tools = web_tools_from_config(AppConfig.from_env(
+    tools = toolbox_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
-    ))
+    )).configured
     index = {tool.name: tool for tool in tools}
     defs, mounted = catalog_subagents(catalog, index)
     assert mounted == {"web-researcher"}
     assert dict(defs[0]).get("tools") == [index["web_search"], index["web_fetch"]]
 
     # search 未配置 → web_search 缺 → 整个不挂、不进 deny 声明集。
-    bare_index = {tool.name: tool for tool in web_tools_from_config(AppConfig.from_env({}))}
+    bare_index = {tool.name: tool for tool in toolbox_from_config(AppConfig.from_env({})).configured}
     defs_bare, mounted_bare = catalog_subagents(catalog, bare_index)
     assert defs_bare == [] and mounted_bare == frozenset()
 
@@ -393,9 +397,9 @@ def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
     guard = TerminalGuardMiddleware(store=FakeLedger(), run_id="r1")
     catalog = build_catalog(None, frozenset({"web-researcher"}))
-    tools = web_tools_from_config(AppConfig.from_env(
+    tools = toolbox_from_config(AppConfig.from_env(
         {"KOKORO_WEB_SEARCH_PROVIDER": "searxng", "KOKORO_WEB_SEARCH_URL": "https://searx.local"}
-    ))
+    )).configured
     index = {tool.name: tool for tool in tools}
     defs, _ = catalog_subagents(catalog, index, [guard])
     assert dict(defs[0]).get("middleware") == [guard]

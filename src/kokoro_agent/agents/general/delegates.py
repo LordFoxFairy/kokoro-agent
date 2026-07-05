@@ -1,4 +1,9 @@
-"""可委派子代理集合：内生 general-purpose + 部署 catalog + 本次 wire 预设，三路合流。"""
+"""可委派子代理集合：内生 general-purpose + 部署 catalog + 本次 wire 预设，三路合流。
+
+swarm 也在这条线上：V1 桥语义下 swarm_members ⊆ runtime.subagents（session resolve
+已保证成员完整定义在 wire 里），所以成员经本模块挂为层级下属即已可达；
+P2 langgraph-swarm 落地时在工厂加 swarm.py 一步，按 swarm_members 建 handoff 图。
+"""
 
 from __future__ import annotations
 

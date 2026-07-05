@@ -37,8 +37,8 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
         seen.add(name)
 
 KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {ASK_USER_TOOL.name: ASK_USER_TOOL}
-# 恒挂载核心工具：ask_user（handbook 12 号）。记忆/web 工具同为底层工具，但实例
-# 含装配期注入的政策（scope / allow_private / search provider），由 worker 创建，不入常量表。
+# 恒挂载核心工具：ask_user（handbook 12 号）。记忆/联网工具是带参内置件
+# （租户 scope / 进程配置），归 tools/toolbox.py 的 ProcessToolbox，不入常量表。
 CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL,)
 ASSEMBLY_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME}

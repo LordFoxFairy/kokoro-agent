@@ -13,15 +13,10 @@ from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig
 from kokoro_agent.contract import REQUESTS_STREAM
-from langchain_core.tools import BaseTool
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
-from kokoro_agent.tools.web_fetch import make_web_fetch_tool
-from kokoro_agent.tools.web_search import (
-    SearchProviderSettings,
-    make_search_provider,
-    make_web_search_tool,
-)
+from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
+from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
@@ -33,8 +28,8 @@ from kokoro_agent.worker.supervisor import RunSupervisor
 LOGGER = logging.getLogger(__name__)
 
 
-def web_tools_from_config(config: AppConfig) -> list[BaseTool]:
-    # env → 领域设置的唯一翻译点（config 单点消费法则）。
+def toolbox_from_config(config: AppConfig) -> ProcessToolbox:
+    # env → 领域设置的唯一翻译点（config 单点消费法则）；构建逻辑在 tools/toolbox.py。
     search = (
         None
         if config.web_tools.search_provider is None
@@ -44,13 +39,7 @@ def web_tools_from_config(config: AppConfig) -> list[BaseTool]:
             base_url=config.web_tools.search_url,
         )
     )
-    tools: list[BaseTool] = [
-        make_web_fetch_tool(allow_private=config.web_tools.fetch_allow_private)
-    ]
-    # search 配置即挂载：无 provider 不挂空壳。
-    if search is not None:
-        tools.append(make_web_search_tool(make_search_provider(search)))
-    return tools
+    return build_toolbox(fetch_allow_private=config.web_tools.fetch_allow_private, search=search)
 
 
 def _consumer_name() -> str:
@@ -74,7 +63,7 @@ async def _serve(config: AppConfig) -> None:
             sandbox=config.sandbox,
             run_token_budget=config.run_token_budget,
             catalog=catalog,
-            web_tools=tuple(web_tools_from_config(config)),
+            toolbox=toolbox_from_config(config),
             checkpointer=saver,
             ledger=store,
             memory_store=memory_store,

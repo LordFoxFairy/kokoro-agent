@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import ClassVar
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
@@ -23,6 +23,7 @@ from kokoro_agent.assets import PersonaLibrary, SkillLibrary
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
+from kokoro_agent.tools.toolbox import ProcessToolbox
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +46,7 @@ class AssembleDeps:
     sandbox: SandboxSettings
     run_token_budget: int
     catalog: SubagentCatalog
-    web_tools: tuple[BaseTool, ...]
+    toolbox: ProcessToolbox
     checkpointer: BaseCheckpointSaver[str]
     ledger: RunLedger
     memory_store: BaseStore

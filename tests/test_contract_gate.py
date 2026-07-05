@@ -203,7 +203,7 @@ def test_resume_decisions_accepted(decision: dict[str, JsonValue]) -> None:
         _request(conversation_id="c1"),  # 旧字段污染
         _request(execution_style="fast"),  # 旧字段污染
         {**_request(), "input": {"content": "hi"}},  # 缺 message_id
-        {**_request(), "runtime": {**_RUNTIME, "backend": "docker"}},  # 非法 backend 枚举
+        {**_request(), "runtime": {**_RUNTIME, "backend": "podman"}},  # 非法 backend 枚举
         _control("run.cancel", extra_field=1),  # 信封污染
         {"kind": "run.pause", "run_id": "r1", "thread_id": "c1"},  # 未知 kind
     ],

@@ -19,6 +19,7 @@ from kokoro_agent.sandbox.archive import (
     S3Archiver,
     S3Workspace,
 )
+from kokoro_agent.sandbox.docker_backend import DockerSettings, connect_docker_sandbox
 from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox
 
 
@@ -37,6 +38,8 @@ class SandboxSettings(BaseModel):
     workspace_s3_secret_key: SecretStr | None
     # e2b 云沙箱（ADR-009 1b）：api_key 缺失时选择 e2b backend 即 fail-loud。
     e2b: E2BSettings
+    # docker 沙箱（ADR-009）：执行隔离进容器、文件面留宿主 workspace；image 缺失 fail-loud。
+    docker: DockerSettings
 
     @model_validator(mode="after")
     def _s3_requires_credentials(self) -> SandboxSettings:
@@ -62,11 +65,7 @@ def make_backend(
         return None
     if kind == "local_shell":
         # 工作区约定：{root}/{namespace:session_id}/ ——session files 端点按同约定直读。
-        root = settings.local_shell_root
-        if workspace is not None and root is not None:
-            sub = Path(root) / workspace
-            sub.mkdir(parents=True, exist_ok=True)
-            root = str(sub)
+        root = _workspace_root(settings, workspace)
         # s3 档（ADR-009）：写时归档装饰——session 读对象存储，写侧真源处增量推送。
         if (
             isinstance(settings.workspace, S3Workspace)
@@ -95,11 +94,20 @@ def make_backend(
             max_output_bytes=settings.local_shell_max_output_bytes,
             inherit_env=settings.local_shell_inherit_env,
         )
-    # e2b 有 run 级生命周期（ledger 查询 sandbox_id），走 make_backend_for_run 的 async 编排。
-    if kind == "e2b":
-        raise ValueError("backend e2b requires run-scoped assembly via make_backend_for_run")
+    # docker/e2b 有 run 级生命周期（ledger 绑定箱/容器），走 make_backend_for_run 的 async 编排。
+    if kind in ("docker", "e2b"):
+        raise ValueError(f"backend {kind} requires run-scoped assembly via make_backend_for_run")
     # custom backend V1 未落地：fail-loud，不静默降级为 state。
     raise NotImplementedError(f"backend {kind!r} is not supported in V1")
+
+
+def _workspace_root(settings: SandboxSettings, workspace: str | None) -> str | None:
+    root = settings.local_shell_root
+    if workspace is not None and root is not None:
+        sub = Path(root) / workspace
+        sub.mkdir(parents=True, exist_ok=True)
+        return str(sub)
+    return root
 
 
 class SandboxBinding(Protocol):
@@ -118,9 +126,27 @@ async def make_backend_for_run(
     run_id: str,
     binding: SandboxBinding,
 ) -> BackendProtocol | None:
-    """统一装配入口：state/local_shell 走纯函数；e2b 编排 run 级生命周期——
-    resume 优先重连既往箱（暂停期文件在箱内），新建即落 ledger（keep-first）。
+    """统一装配入口：state/local_shell 走纯函数；docker/e2b 编排 run 级生命周期——
+    resume 优先重连既往箱/容器，新建即落 ledger（keep-first）。
     """
+    if kind == "docker":
+        root = _workspace_root(settings, workspace)
+        if root is None:
+            raise ValueError("backend docker requires KOKORO_AGENT_LOCAL_SHELL_ROOT")
+        prior = await binding.get_sandbox_id(run_id)
+        # docker CLI 同步阻塞（run ~秒级）：to_thread 让出事件循环。
+        docker_backend = await asyncio.to_thread(
+            connect_docker_sandbox,
+            settings.docker,
+            root=Path(root),
+            container_id=prior,
+            run_id=run_id,
+            exec_timeout=settings.local_shell_timeout,
+            max_output_bytes=settings.local_shell_max_output_bytes,
+        )
+        if prior is None or docker_backend.container_id != prior:
+            await binding.put_sandbox_id(run_id, docker_backend.container_id)
+        return docker_backend
     if kind != "e2b":
         return make_backend(kind, settings, workspace=workspace)
     prior = await binding.get_sandbox_id(run_id)

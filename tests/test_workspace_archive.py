@@ -35,6 +35,7 @@ def _sandbox_settings(root: str | None, workspace: object = None) -> SandboxSett
             "workspace_s3_access_key": SecretStr("kokoro") if workspace else None,
             "workspace_s3_secret_key": SecretStr("kokoro-secret") if workspace else None,
             "e2b": {"api_key": None, "template": None, "timeout": 1800},
+            "docker": {"image": None, "ttl": 1800},
         }
     )
 
@@ -109,6 +110,7 @@ class TestWorkspaceConfig:
                     "workspace_s3_access_key": None,
                     "workspace_s3_secret_key": None,
                     "e2b": {"api_key": None, "template": None, "timeout": 1800},
+            "docker": {"image": None, "ttl": 1800},
                 }
             )
 

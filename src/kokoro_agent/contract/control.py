@@ -11,7 +11,7 @@ NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 McpTransport = Literal["http", "streamable_http"]
 SubagentCreate = Literal["deny", "ask", "allow"]
 FilesystemPerm = Literal["read_only", "workspace_write"]
-Backend = Literal["state", "local_shell", "e2b", "custom"]
+Backend = Literal["state", "local_shell", "docker", "e2b", "custom"]
 
 
 class StrictModel(BaseModel):

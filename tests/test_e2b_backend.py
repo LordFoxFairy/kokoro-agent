@@ -36,6 +36,7 @@ def _dispatch_settings() -> SandboxSettings:
             "workspace_s3_access_key": None,
             "workspace_s3_secret_key": None,
             "e2b": _e2b_settings(),
+            "docker": {"image": None, "ttl": 1800},
         }
     )
 

@@ -19,9 +19,8 @@ from langgraph.store.base import BaseStore
 from kokoro_agent.contract import AgentType, RunRequest
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.assets import PersonaLibrary, SkillLibrary
 from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.prompts import PersonaLibrary
-from kokoro_agent.skills.mounts import SkillLibrary
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
 

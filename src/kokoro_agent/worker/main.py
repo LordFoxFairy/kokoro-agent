@@ -26,8 +26,7 @@ from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
-from kokoro_agent.prompts import PersonaLibrary
-from kokoro_agent.skills.mounts import load_skill_library
+from kokoro_agent.assets import load_asset_libraries
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -62,6 +61,8 @@ def _consumer_name() -> str:
 async def _serve(config: AppConfig) -> None:
     bus = make_stream(config.stream)
     catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
+    # 启动一次装载资产快照（local/s3 同口）：装不到 fail-loud，不带残库开工。
+    skills, personas = load_asset_libraries(config.assets)
     # 进程级共享 checkpointer + run 状态存储：sqlite 落盘跨重启，多 pod 靠共享存储去重/租约/终态认领。
     async with (
         make_checkpointer(config.checkpoint) as saver,
@@ -77,8 +78,8 @@ async def _serve(config: AppConfig) -> None:
             checkpointer=saver,
             ledger=store,
             memory_store=memory_store,
-            skills=load_skill_library(config.skills_dir),
-            personas=PersonaLibrary(config.personas_dir),
+            skills=skills,
+            personas=personas,
         )
         supervisor = RunSupervisor(
             agent_builder=functools.partial(assemble, deps),

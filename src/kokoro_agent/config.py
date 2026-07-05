@@ -7,6 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from kokoro_agent.assets import AssetSettings, LocalAssets, load_assets_config
 from kokoro_agent.config_file import layer_config_sources
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
@@ -52,9 +53,8 @@ class AppConfig(BaseModel):
     sandbox: SandboxSettings
     web_tools: WebToolSettings
     custom_subagents_json: str | None
-    # 资产库目录（ADR-010 心智：配置引用名称，资产统一入库）。
-    skills_dir: str | None
-    personas_dir: str | None
+    # 资产源（skills/personas 从哪来）：local 目录或 s3，配置引用名称、资产统一入库。
+    assets: AssetSettings
     # 内建子代理按名启用（默认全关；未知名 fail-loud）。
     enabled_builtin_subagents: frozenset[str]
     lease_heartbeat_s: Annotated[float, Field(gt=0)]
@@ -145,8 +145,17 @@ class AppConfig(BaseModel):
                 search_url=source.get("KOKORO_WEB_SEARCH_URL") or None,
             ),
             custom_subagents_json=source.get("KOKORO_CUSTOM_SUBAGENTS") or None,
-            skills_dir=source.get("KOKORO_SKILLS_DIR") or None,
-            personas_dir=source.get("KOKORO_PERSONAS_DIR") or None,
+            # 资产源 yaml（与 workspace 同心智）优先；缺省=env 目录局部档（零配置可用）。
+            assets=AssetSettings(
+                source=load_assets_config(source.get("KOKORO_ASSETS_CONFIG"))
+                or LocalAssets(
+                    type="local",
+                    skills_dir=source.get("KOKORO_SKILLS_DIR") or None,
+                    personas_dir=source.get("KOKORO_PERSONAS_DIR") or None,
+                ),
+                s3_access_key=_secret(source.get("KOKORO_ASSETS_S3_ACCESS_KEY")),
+                s3_secret_key=_secret(source.get("KOKORO_ASSETS_S3_SECRET_KEY")),
+            ),
             enabled_builtin_subagents=frozenset(
                 name.strip()
                 for name in source.get("KOKORO_BUILTIN_SUBAGENTS", "").split(",")

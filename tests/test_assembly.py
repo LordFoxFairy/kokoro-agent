@@ -484,23 +484,26 @@ def test_resolve_tools_empty_core_for_studio_types() -> None:
 
 
 def test_persona_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
-    from kokoro_agent.prompts import PersonaLibrary
+    from kokoro_agent.assets import LocalAssets, LocalAssetSource, PersonaLibrary
 
     (tmp_path / "general.md").write_text("部署覆盖人格")
     (tmp_path / "poet.md").write_text("诗人人格")
-    library = PersonaLibrary(str(tmp_path))
+    source = LocalAssetSource(LocalAssets(type="local", personas_dir=str(tmp_path)))
+    library = PersonaLibrary(source.load_personas())
     assert library.get("general") == "部署覆盖人格"
     assert library.get("poet") == "诗人人格"
-    assert PersonaLibrary(None).get("poet") is None  # 内置包无此资产
-    assert PersonaLibrary(None).get("general") is not None  # 内置缺省人格恒在
+    assert PersonaLibrary({}).get("poet") is None  # 内置包无此资产
+    assert PersonaLibrary({}).get("general") is not None  # 内置缺省人格恒在
 
 
 def test_wire_subagent_persona_resolution(tmp_path: Path) -> None:
-    from kokoro_agent.prompts import PersonaLibrary
+    from kokoro_agent.assets import LocalAssets, LocalAssetSource, PersonaLibrary
     from kokoro_agent.subagents import wire_subagents
 
     (tmp_path / "poet.md").write_text("诗人资产人格")
-    personas = PersonaLibrary(str(tmp_path))
+    personas = PersonaLibrary(
+        LocalAssetSource(LocalAssets(type="local", personas_dir=str(tmp_path))).load_personas()
+    )
     request = RunRequest(
         kind="run.request", run_id="r1", thread_id="c1",
         input=RunInput(message_id="m1", content="hi"),
@@ -525,7 +528,7 @@ def test_wire_subagent_persona_resolution(tmp_path: Path) -> None:
 
 
 def test_wire_subagent_without_any_persona_fails_loud() -> None:
-    from kokoro_agent.prompts import PersonaLibrary
+    from kokoro_agent.assets import PersonaLibrary
     from kokoro_agent.subagents import wire_subagents
 
     request = RunRequest(
@@ -544,4 +547,4 @@ def test_wire_subagent_without_any_persona_fails_loud() -> None:
         context=RuntimeContext(namespace="ns", session_id="s1"),
     )
     with pytest.raises(ValueError, match="no persona"):
-        wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=PersonaLibrary(None))
+        wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=PersonaLibrary({}))

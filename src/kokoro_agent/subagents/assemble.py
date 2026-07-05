@@ -11,8 +11,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.contract import ModelConfig, RunRequest
-from kokoro_agent.prompts import PersonaLibrary, compose_system_prompt
-from kokoro_agent.skills.mounts import SkillLibrary
+from kokoro_agent.assets import PersonaLibrary, SkillLibrary
+from kokoro_agent.prompts import compose_system_prompt
 from kokoro_agent.subagents.catalog import SubagentCatalog
 from kokoro_agent.tools.registry import KOKORO_TOOLS
 

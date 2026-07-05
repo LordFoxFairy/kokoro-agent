@@ -24,6 +24,7 @@ from kokoro_agent.contract import (
     RunCompleted,
     RunFailed,
     RunRequest,
+    RunSteer,
     SubagentSource,
     inbound_adapter,
     run_control_stream,
@@ -725,26 +726,22 @@ async def test_retention_off_by_default_no_side_effects() -> None:
     assert await store.is_terminal("rr3") is True
 
 
-async def test_retention_thread_ttl_deletes_stale_checkpoints() -> None:
-    deleted: list[str] = []
+# --- 审计修复回归钉（2026-07-05 链路审计） ---
 
-    async def deleter(thread_id: str) -> None:
-        deleted.append(thread_id)
 
-    agent = FakeAgent(run=text_run("x"))
+class _ExplodingMailboxLedger(FakeLedger):
+    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
+        raise RuntimeError("mailbox down")
+
+
+async def test_steer_persist_failure_does_not_kill_healthy_run() -> None:
+    # steer 只是插话信箱：入账失败可由用户重发，绝不判死健康 run（审计缺口①）。
+    agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
-    store = FakeLedger()
-    sup = RunSupervisor(
-        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_names,
-        trace_factory=_no_trace, source_for=_source, consumer="t",
-        thread_ttl_s=1, delete_thread=deleter,
+    sup, store = _supervisor(agent, store=_ExplodingMailboxLedger())
+    await sup.dispatch(
+        bus,
+        RunSteer(kind="run.steer", run_id="r-any", thread_id="c-any", message_id="m1", content="嘿"),
     )
-    await sup.dispatch(bus, request("rt1"))
-    await _drain(sup)
-    assert store.thread_active == {"local:s1:c1": 0}  # 开跑即 touch（scoped id）
-    store.clock_ms = 10_000
-    await sup.heartbeat_once(bus)
-    assert deleted == ["local:s1:c1"]  # 超龄 thread 经官方 adelete_thread 口删除
-    assert store.thread_active == {}  # 账本行已清；再跑幂等
-    await sup.heartbeat_once(bus)
-    assert deleted == ["local:s1:c1"]
+    assert "r-any" not in store.terminals
+    assert bus.kinds("r-any") == []

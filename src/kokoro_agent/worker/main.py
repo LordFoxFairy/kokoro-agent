@@ -81,8 +81,6 @@ async def _serve(config: AppConfig) -> None:
             recursion_limit=config.recursion_limit,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
-            thread_ttl_s=config.retention_thread_ttl_s,
-            delete_thread=saver.adelete_thread,
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
         serve_task = asyncio.create_task(supervisor.serve(bus))

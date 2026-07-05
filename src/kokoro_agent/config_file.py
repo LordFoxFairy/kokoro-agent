@@ -58,7 +58,6 @@ _YAML_TO_ENV: dict[str, str] = {
     "limits.run_token_budget": "KOKORO_RUN_TOKEN_BUDGET",
     "retention.events_ttl_s": "KOKORO_RETENTION_EVENTS_TTL_S",
     "retention.run_ttl_s": "KOKORO_RETENTION_RUN_TTL_S",
-    "retention.thread_ttl_s": "KOKORO_RETENTION_THREAD_TTL_S",
 }
 
 

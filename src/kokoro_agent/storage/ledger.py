@@ -49,14 +49,6 @@ class RunLedger(Protocol):
         # run.completed 用量真源：跨段累计 input/output（与预算计数分开，语义不同）。
         ...
 
-    async def touch_thread(self, thread_id: str) -> None:
-        # thread 活跃账本（checkpoint TTL 的时间真源——不穿透 saver 内部表）：认领即刷新。
-        ...
-
-    async def purge_stale_threads(self, max_age_ms: int) -> list[str]:
-        # 原子取出超龄 thread 并删行；调用方持官方 adelete_thread 清 checkpoint。
-        ...
-
     async def purge_terminal(self, max_age_ms: int) -> int:
         # retention 清扫：终态且超龄的 run 连同附属（tool_results/计数/信箱）整体清除，返回条数。
         ...

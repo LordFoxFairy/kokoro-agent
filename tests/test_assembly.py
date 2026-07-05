@@ -408,3 +408,11 @@ def test_tool_usage_lives_in_tool_descriptions() -> None:
         SearchProviderSettings(provider="searxng", api_key=None, base_url="https://searx.local")
     ))
     assert "交叉核对" in search.description
+
+
+def test_local_shell_workspace_subdir(tmp_path) -> None:
+    # 工作区约定：{root}/{namespace:session_id}/——session files 端点按同约定直读。
+    config = AppConfig.from_env({"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)})
+    backend = make_backend("local_shell", config.sandbox, workspace="ns:ses_1")
+    assert isinstance(backend, LocalShellBackend)
+    assert (tmp_path / "ns:ses_1").is_dir()

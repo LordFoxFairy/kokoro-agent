@@ -21,8 +21,6 @@ from kokoro_agent.contract import ModelConfig, RunRequest
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.storage.artifacts import ArtifactStore
-from kokoro_agent.tools.middleware import ArtifactMirrorMiddleware
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
@@ -43,9 +41,6 @@ class AssembledAgent:
 
     agent: InvokableAgent
     tool_descriptions: Mapping[str, str]
-    # write_file 自动镜像的产物队列出口（invoke 第五路消费 → artifact.created）；
-    # 允许缺席：不带镜像的配方/测试装配无第五路。
-    mirror: ArtifactMirrorMiddleware | None = None
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -63,7 +58,6 @@ class AssembleDeps:
     web_tools: tuple[BaseTool, ...]
     checkpointer: BaseCheckpointSaver[str]
     ledger: RunLedger
-    artifacts: ArtifactStore
     memory_store: BaseStore
 
 

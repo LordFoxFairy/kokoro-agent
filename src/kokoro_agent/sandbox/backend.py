@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from typing import Annotated
 
 from deepagents.backends.local_shell import LocalShellBackend
@@ -29,12 +31,20 @@ def build_filesystem_permissions(perm: FilesystemPerm) -> list[FilesystemPermiss
     return [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
 
 
-def make_backend(kind: Backend, settings: SandboxSettings) -> BackendProtocol | None:
+def make_backend(
+    kind: Backend, settings: SandboxSettings, *, workspace: str | None = None
+) -> BackendProtocol | None:
     if kind == "state":
         return None
     if kind == "local_shell":
+        # 工作区约定：{root}/{namespace:session_id}/ ——session files 端点按同约定直读。
+        root = settings.local_shell_root
+        if workspace is not None and root is not None:
+            sub = Path(root) / workspace
+            sub.mkdir(parents=True, exist_ok=True)
+            root = str(sub)
         return LocalShellBackend(
-            root_dir=settings.local_shell_root,
+            root_dir=root,
             virtual_mode=False,
             timeout=settings.local_shell_timeout,
             max_output_bytes=settings.local_shell_max_output_bytes,

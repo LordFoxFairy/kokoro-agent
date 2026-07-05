@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 
 from collections.abc import Awaitable, Callable, Mapping
 
@@ -12,14 +10,9 @@ from langchain_core.messages import UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
-from kokoro_agent.contract import Artifact, RunCompletedPayload, RunStartedPayload, TokenUsage
+from kokoro_agent.contract import RunCompletedPayload, RunStartedPayload, TokenUsage
 from kokoro_agent.execution.approvals import awaiting_payloads
-from kokoro_agent.execution.events import (
-    RunEmitter,
-    SourceResolver,
-    artifact_created_payload,
-    run_failed_payload,
-)
+from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.publish_agent_events import pump_run
 
@@ -33,7 +26,6 @@ async def invoke_once(
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
-    artifact_queue: "asyncio.Queue[tuple[str, Artifact]] | None" = None,
     claim_terminal: Callable[[], Awaitable[bool]],
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
@@ -57,21 +49,7 @@ async def invoke_once(
                 transformers=[CustomTransformer],
             )
             async with run:
-                # 第五路：产物诞生队列（mirror 写入）实时上 wire；图结束后 flush 残余。
-                artifact_task = (
-                    asyncio.create_task(_pump_artifacts(emitter, artifact_queue))
-                    if artifact_queue is not None
-                    else None
-                )
-                try:
-                    await pump_run(emitter, run, source_for=source_for)
-                finally:
-                    if artifact_task is not None:
-                        artifact_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await artifact_task
-                    if artifact_queue is not None:
-                        await _flush_artifacts(emitter, artifact_queue)
+                await pump_run(emitter, run, source_for=source_for)
                 if await run.interrupted():
                     snapshot = await agent.aget_state(config)
                     for awaiting in awaiting_payloads(
@@ -124,18 +102,3 @@ def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) 
             config["metadata"] = metadata
     return config
 
-
-async def _pump_artifacts(
-    emitter: RunEmitter, queue: "asyncio.Queue[tuple[str, Artifact]]"
-) -> None:
-    while True:
-        tool_id, artifact = await queue.get()
-        await emitter.emit(artifact_created_payload(tool_id, artifact))
-
-
-async def _flush_artifacts(
-    emitter: RunEmitter, queue: "asyncio.Queue[tuple[str, Artifact]]"
-) -> None:
-    while not queue.empty():
-        tool_id, artifact = queue.get_nowait()
-        await emitter.emit(artifact_created_payload(tool_id, artifact))

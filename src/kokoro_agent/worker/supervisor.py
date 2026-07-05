@@ -357,7 +357,6 @@ class RunSupervisor:
                 approval_tool_names=approval_tool_names,
                 # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
                 describe_tool=assembled.describe_tool,
-                artifact_queue=None if assembled.mirror is None else assembled.mirror.created,
                 source_for=self._source_for,
                 trace=trace,
                 recursion_limit=self._recursion_limit,

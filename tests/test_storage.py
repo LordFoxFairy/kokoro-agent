@@ -15,7 +15,6 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
-from kokoro_agent.storage.artifacts import ArtifactStore as ArtifactStoreT
 from kokoro_agent.storage.mongo import MongoLedger
 from kokoro_agent.storage.ledger import (
     LedgerSettings,
@@ -356,46 +355,4 @@ async def test_factory_mongo_yields_mongo_store(tmp_path: Path) -> None:
     await client.close()
     async with make_ledger(_settings("mongo", tmp_path)) as store:
         assert isinstance(store, MongoLedger)
-
-
-# --- 产物库矩阵（dir/GridFS 同语义）---
-
-
-async def _assert_artifact_roundtrip(store_a: "ArtifactStoreT") -> None:
-    ref = await store_a.put("r1", "t1", "track.wav", "audio/wav", b"RIFFxxxx")
-    assert ref.artifact_id == "r1/t1-track.wav"
-    assert ref.mime == "audio/wav" and ref.bytes == 8
-    assert await store_a.get("r1/t1-track.wav") == ("audio/wav", b"RIFFxxxx")
-    # 幂等覆盖（resume 重放同 id）：读到最新字节，不产孤儿。
-    await store_a.put("r1", "t1", "track.wav", "audio/wav", b"RIFFyyyy")
-    assert await store_a.get("r1/t1-track.wav") == ("audio/wav", b"RIFFyyyy")
-    assert await store_a.get("r1/ghost") is None
-
-
-async def test_dir_artifact_store_matrix(tmp_path: Path) -> None:
-    from kokoro_agent.storage.artifacts import DirArtifactStore
-
-    store_a = DirArtifactStore(str(tmp_path / "arts"))
-    await _assert_artifact_roundtrip(store_a)
-    # 路径穿越：读侧注入 → 未知 id；写侧恶意名 → fail-loud。
-    assert await store_a.get("../../etc/passwd") is None
-    with pytest.raises(ValueError, match="escapes"):
-        await store_a.put("r1", "t1", "../../../evil", "text/plain", b"x")
-
-
-async def test_gridfs_artifact_store_matrix() -> None:
-    from gridfs.asynchronous import AsyncGridFSBucket
-
-    from kokoro_agent.storage.artifacts import GridFsArtifactStore
-
-    client, collection = await _mongo_collection_or_skip()
-    try:
-        await collection.database.drop_collection("kokoro_artifacts.files")
-        await collection.database.drop_collection("kokoro_artifacts.chunks")
-        store_a = GridFsArtifactStore(
-            AsyncGridFSBucket(collection.database, bucket_name="kokoro_artifacts")
-        )
-        await _assert_artifact_roundtrip(store_a)
-    finally:
-        await client.close()
 

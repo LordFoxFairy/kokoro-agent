@@ -28,7 +28,6 @@ from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.middleware import (
-    ArtifactMirrorMiddleware,
     SteeringMiddleware,
     TerminalGuardMiddleware,
     TokenBudgetMiddleware,
@@ -79,11 +78,8 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
     catalog_defs, catalog_names = catalog_subagents(deps.catalog, tool_index, subagent_guards)
     # 委派执法声明集 = 真挂载的 catalog 子代理 + 本次 wire 预设。
     declared_subagents = catalog_names | frozenset(sub.name for sub in runtime.subagents)
-    # 产物镜像只挂主链（V1）：write_file 内容自动入共享库，引用经自有队列上 wire。
-    mirror = ArtifactMirrorMiddleware(store=deps.artifacts, run_id=request.run_id)
     middleware: list[AgentMiddleware] = [
         *guards,
-        mirror,
         # steering 只挂主链：插话是用户↔主 agent 的对话，注入子代理即语义污染。
         SteeringMiddleware(store=deps.ledger, run_id=request.run_id),
         ToolPolicyMiddleware(
@@ -120,13 +116,16 @@ async def assemble_general(deps: AssembleDeps, request: RunRequest) -> Assembled
             approval_tools, subagent_create=runtime.permissions.subagent_create
         ),
         middleware=middleware,
-        backend=make_backend(runtime.backend, deps.sandbox),
+        # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
+        backend=make_backend(
+            runtime.backend, deps.sandbox,
+            workspace=f"{request.context.namespace}:{request.context.session_id}",
+        ),
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
         store=deps.memory_store,
     )
     return AssembledAgent(
         agent=graph,
-        mirror=mirror,
         # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
         tool_descriptions={tool.name: tool.description for tool in tools if tool.description},
     )

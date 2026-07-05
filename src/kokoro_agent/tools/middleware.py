@@ -16,10 +16,6 @@ from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 
-import asyncio
-
-from kokoro_agent.contract import Artifact
-from kokoro_agent.storage.artifacts import ArtifactStore
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
@@ -240,63 +236,3 @@ class SteeringMiddleware(AgentMiddleware):
             ]
         }
 
-
-# 扩展名 → MIME（write_file 是文本工具；未知扩展回退 text/plain 保可预览）。
-_MIME_BY_EXT: dict[str, str] = {
-    ".md": "text/markdown",
-    ".markdown": "text/markdown",
-    ".json": "application/json",
-    ".csv": "text/csv",
-    ".html": "text/html",
-    ".htm": "text/html",
-    ".svg": "image/svg+xml",
-    ".txt": "text/plain",
-    ".py": "text/x-python",
-    ".ts": "text/x-typescript",
-    ".js": "text/javascript",
-    ".css": "text/css",
-    ".yaml": "text/yaml",
-    ".yml": "text/yaml",
-}
-
-
-def mime_for_filename(name: str) -> str:
-    dot = name.rfind(".")
-    return _MIME_BY_EXT.get(name[dot:].lower(), "text/plain") if dot >= 0 else "text/plain"
-
-
-class ArtifactMirrorMiddleware(AgentMiddleware):
-    """write_file 自动镜像：成功写入即把内容送进共享产物库，并把引用投入自有队列
-    （pump 第五路消费 → wire artifact.created）。产物诞生是独立事件——绝不回写
-    ToolMessage（事件流早已携其快照飞出，回写=结构性竞态，实测确证）。
-    模型零感知（对标 manus/codex：路径即预览入口）；失败结果不镜像；入库失败不毁工具结果。"""
-
-    def __init__(self, *, store: ArtifactStore, run_id: str) -> None:
-        super().__init__()
-        self._store = store
-        self._run_id = run_id
-        self.created: asyncio.Queue[tuple[str, Artifact]] = asyncio.Queue()
-
-    async def awrap_tool_call(
-        self, request: ToolCallRequest, handler: _ToolHandler
-    ) -> ToolMessage | Command[Any]:
-        result = await handler(request)
-        call = request.tool_call
-        if call["name"] != "write_file" or not isinstance(result, ToolMessage):
-            return result
-        if result.status == "error":
-            return result
-        file_path = call["args"].get("file_path")
-        content = call["args"].get("content")
-        if not isinstance(file_path, str) or not file_path or not isinstance(content, str):
-            return result
-        name = file_path.rsplit("/", 1)[-1] or file_path
-        try:
-            ref = await self._store.put(
-                self._run_id, call["id"] or "call", name, mime_for_filename(name), content.encode("utf-8")
-            )
-        except Exception:  # noqa: BLE001 — 镜像是可见性增强：入库失败不毁真实工具结果
-            _logger.exception("artifact mirror failed for %s", file_path)
-            return result
-        self.created.put_nowait((call["id"] or "", ref))
-        return result

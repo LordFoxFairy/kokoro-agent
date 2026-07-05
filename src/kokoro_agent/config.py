@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.storage.artifacts import ArtifactSettings
 from kokoro_agent.storage.checkpoints import CheckpointSettings
 from kokoro_agent.storage.ledger import DEFAULT_LEASE_TTL_S, LedgerSettings
 from kokoro_agent.streams.factory import StreamSettings
@@ -47,7 +46,6 @@ class AppConfig(BaseModel):
     observability: ObservabilitySettings
     checkpoint: CheckpointSettings
     ledger: LedgerSettings
-    artifacts: ArtifactSettings
     sandbox: SandboxSettings
     web_tools: WebToolSettings
     custom_subagents_json: str | None
@@ -98,14 +96,6 @@ class AppConfig(BaseModel):
                     "mongo_url": mongo_url,
                     "mongo_db": mongo_db,
                     "lease_ttl_ms": _int(source, "KOKORO_LEASE_TTL_S", DEFAULT_LEASE_TTL_S) * 1000,
-                }
-            ),
-            artifacts=ArtifactSettings.model_validate(
-                {
-                    "backend": source.get("KOKORO_ARTIFACT_BACKEND", "dir").lower(),
-                    "dir_root": source.get("KOKORO_ARTIFACTS_DIR", "./kokoro_artifacts"),
-                    "mongo_url": mongo_url,
-                    "mongo_db": mongo_db,
                 }
             ),
             sandbox=SandboxSettings.model_validate(

@@ -30,13 +30,6 @@ class TokenUsage(StrictModel):
     output_tokens: int
 
 
-class Artifact(StrictModel):
-    artifact_id: NonEmptyStr
-    name: NonEmptyStr
-    mime: NonEmptyStr
-    bytes: int
-
-
 class Risk(StrictModel):
     level: NonEmptyStr
     source: NonEmptyStr
@@ -103,7 +96,7 @@ class ToolReturnedPayload(StrictModel):
     result: str
     # 严格必填 fail-loud：生产端始终发送；缺失即报错，绝不用默认 false 掩盖真失败。
     is_error: bool
-    # wire 展示层截断标记：缺席=结果完整，true=已截断（完整结果在后端，预览经 artifact 端点取）。
+    # wire 展示层截断标记：缺席=结果完整，true=已截断（完整结果在工作区文件，预览经 files 端点取）。
     truncated: bool | None = None
     rejected: bool | None = None
     reject_reason: str | None = None
@@ -150,13 +143,6 @@ class SubagentTextCompletedPayload(StrictModel):
     segment_id: NonEmptyStr
     subagent_id: NonEmptyStr
     text: str
-
-
-class ArtifactCreatedPayload(StrictModel):
-    segment_id: NonEmptyStr
-    tool_id: NonEmptyStr
-    # 产物诞生是独立事实（write_file 自动镜像产出）：字节活在共享产物库，session 端点按 id 出体；web 按 tool_id 挂回工具步。
-    artifact: Artifact
 
 
 class SubagentToolInvokedPayload(StrictModel):
@@ -302,14 +288,6 @@ class SubagentTextCompleted(StrictModel):
     payload: SubagentTextCompletedPayload
 
 
-class ArtifactCreated(StrictModel):
-    kind: Literal["artifact.created"]
-    run_id: NonEmptyStr
-    index: NonNegInt
-    timestamp: int
-    payload: ArtifactCreatedPayload
-
-
 class SubagentToolInvoked(StrictModel):
     kind: Literal["subagent.tool.invoked"]
     run_id: NonEmptyStr
@@ -358,7 +336,6 @@ AgentEvent = Annotated[
         SubagentThinkingDelta,
         SubagentTextDelta,
         SubagentTextCompleted,
-        ArtifactCreated,
         SubagentToolInvoked,
         SubagentToolReturned,
         RunCompleted,

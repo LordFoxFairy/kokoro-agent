@@ -9,8 +9,6 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
-    Artifact,
-    ArtifactCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
@@ -56,7 +54,6 @@ AgentEventPayload = (
     | SubagentThinkingDeltaPayload
     | SubagentTextDeltaPayload
     | SubagentTextCompletedPayload
-    | ArtifactCreatedPayload
     | SubagentToolInvokedPayload
     | SubagentToolReturnedPayload
     | RunCompletedPayload
@@ -78,7 +75,6 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     SubagentFinishedPayload: "subagent.finished",
     SubagentTextDeltaPayload: "subagent.text.delta",
     SubagentTextCompletedPayload: "subagent.text.completed",
-    ArtifactCreatedPayload: "artifact.created",
     SubagentToolInvokedPayload: "subagent.tool.invoked",
     SubagentToolReturnedPayload: "subagent.tool.returned",
     RunCompletedPayload: "run.completed",
@@ -282,11 +278,6 @@ def subagent_tool_returned_payload(
         is_error=tc.error is not None,
         truncated=True if truncated else None,
     )
-
-
-def artifact_created_payload(tool_id: str, artifact: Artifact) -> ArtifactCreatedPayload:
-    # 产物诞生独立事件：segment 归属沿 tool_id（web 按 tool_id 挂回工具步）。
-    return ArtifactCreatedPayload(segment_id=tool_id, tool_id=tool_id, artifact=artifact)
 
 
 def todo_payload(tc: ToolCallInfo) -> TodoUpdatedPayload:

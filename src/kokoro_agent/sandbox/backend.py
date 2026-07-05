@@ -45,7 +45,8 @@ def make_backend(
             root = str(sub)
         return LocalShellBackend(
             root_dir=root,
-            virtual_mode=False,
+            # 虚拟根：模型的绝对路径（"/note.md"）映射进工作区，绝不触宿主真实根（越界即安全缺陷）。
+            virtual_mode=True,
             timeout=settings.local_shell_timeout,
             max_output_bytes=settings.local_shell_max_output_bytes,
             inherit_env=settings.local_shell_inherit_env,

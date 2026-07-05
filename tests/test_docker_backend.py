@@ -53,6 +53,7 @@ def _dispatch_settings() -> SandboxSettings:
             "workspace_s3_secret_key": None,
             "e2b": {"api_key": None, "template": None, "timeout": 1800},
             "docker": {"image": IMAGE, "ttl": 120},
+            "custom": {"factory_ref": None, "config_path": None},
         }
     )
 
@@ -141,3 +142,13 @@ class TestDockerSandbox:
             )
             assert isinstance(second, DockerShellBackend)
             assert second.container_id == first.container_id
+
+
+def test_connectors_cover_backend_enum() -> None:
+    # 枚举加值忘注册连接器 = 装配期 NotImplementedError；此守卫把它提前到测试期。
+    from typing import get_args
+
+    from kokoro_agent.contract import Backend
+    from kokoro_agent.sandbox.backend import registered_backends
+
+    assert registered_backends() == frozenset(get_args(Backend))

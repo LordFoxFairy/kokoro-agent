@@ -7,6 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from kokoro_agent.config_file import layer_config_sources
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
@@ -68,6 +69,8 @@ class AppConfig(BaseModel):
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
+        # 统一配置树（ADR-010）：KOKORO_AGENT_CONFIG yaml 摊平作底座，env 覆盖其上。
+        source = layer_config_sources(source)
         # 后端枚举经各 Settings 的 strict Literal 在构造期 fail-loud（model_validate 入口）。
         mongo_url = source.get("KOKORO_MONGO_URL", _DEFAULT_MONGO_URL)
         mongo_db = source.get("KOKORO_MONGO_DB", _DEFAULT_MONGO_DB)
@@ -125,6 +128,10 @@ class AppConfig(BaseModel):
                     "docker": {
                         "image": source.get("KOKORO_DOCKER_IMAGE") or None,
                         "ttl": _int(source, "KOKORO_DOCKER_TTL", _DEFAULT_SANDBOX_TTL),
+                    },
+                    "custom": {
+                        "factory_ref": source.get("KOKORO_CUSTOM_BACKEND") or None,
+                        "config_path": source.get("KOKORO_CUSTOM_BACKEND_CONFIG") or None,
                     },
                 }
             ),

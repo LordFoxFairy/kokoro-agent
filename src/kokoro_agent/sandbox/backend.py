@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
 from typing import Annotated, Protocol
@@ -19,6 +20,7 @@ from kokoro_agent.sandbox.archive import (
     S3Archiver,
     S3Workspace,
 )
+from kokoro_agent.sandbox.custom_backend import CustomBackendSettings, connect_custom_sandbox
 from kokoro_agent.sandbox.docker_backend import DockerSettings, connect_docker_sandbox
 from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox
 
@@ -40,6 +42,8 @@ class SandboxSettings(BaseModel):
     e2b: E2BSettings
     # docker 沙箱（ADR-009）：执行隔离进容器、文件面留宿主 workspace；image 缺失 fail-loud。
     docker: DockerSettings
+    # custom 沙箱（ADR-010 BYO）：`pkg.module:factory` 自带实现；选 custom 未配引用即 fail-loud。
+    custom: CustomBackendSettings
 
     @model_validator(mode="after")
     def _s3_requires_credentials(self) -> SandboxSettings:
@@ -94,11 +98,8 @@ def make_backend(
             max_output_bytes=settings.local_shell_max_output_bytes,
             inherit_env=settings.local_shell_inherit_env,
         )
-    # docker/e2b 有 run 级生命周期（ledger 绑定箱/容器），走 make_backend_for_run 的 async 编排。
-    if kind in ("docker", "e2b"):
-        raise ValueError(f"backend {kind} requires run-scoped assembly via make_backend_for_run")
-    # custom backend V1 未落地：fail-loud，不静默降级为 state。
-    raise NotImplementedError(f"backend {kind!r} is not supported in V1")
+    # docker/e2b/custom 有 run 级生命周期（ledger 绑定），走 make_backend_for_run 的 async 编排。
+    raise ValueError(f"backend {kind} requires run-scoped assembly via make_backend_for_run")
 
 
 def _workspace_root(settings: SandboxSettings, workspace: str | None) -> str | None:
@@ -118,6 +119,69 @@ class SandboxBinding(Protocol):
     async def get_sandbox_id(self, run_id: str) -> str | None: ...
 
 
+@dataclass(frozen=True)
+class SandboxContext:
+    """连接器唯一入参：本 run 的装配现场。"""
+
+    settings: SandboxSettings
+    workspace: str
+    run_id: str
+    # ledger 既往绑定（HITL resume 现场）：重连既往箱/容器而非新建。
+    prior_sandbox_id: str | None
+
+
+class SandboxConnector(Protocol):
+    """每档一个连接器（Strategy）：sync 构造（编排层 to_thread），返回 None=无 backend。"""
+
+    def __call__(self, context: SandboxContext) -> BackendProtocol | None: ...
+
+
+def _connect_state(context: SandboxContext) -> BackendProtocol | None:
+    return None
+
+
+def _connect_local_shell(context: SandboxContext) -> BackendProtocol | None:
+    return make_backend("local_shell", context.settings, workspace=context.workspace)
+
+
+def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
+    root = _workspace_root(context.settings, context.workspace)
+    if root is None:
+        raise ValueError("backend docker requires KOKORO_AGENT_LOCAL_SHELL_ROOT")
+    return connect_docker_sandbox(
+        context.settings.docker,
+        root=Path(root),
+        container_id=context.prior_sandbox_id,
+        run_id=context.run_id,
+        exec_timeout=context.settings.local_shell_timeout,
+        max_output_bytes=context.settings.local_shell_max_output_bytes,
+    )
+
+
+def _connect_e2b(context: SandboxContext) -> BackendProtocol | None:
+    return connect_e2b_sandbox(context.settings.e2b, sandbox_id=context.prior_sandbox_id)
+
+
+def _connect_custom(context: SandboxContext) -> BackendProtocol | None:
+    return connect_custom_sandbox(
+        context.settings.custom,
+        run_id=context.run_id,
+        workspace=context.workspace,
+        workspace_root=_workspace_root(context.settings, context.workspace),
+        prior_sandbox_id=context.prior_sandbox_id,
+    )
+
+
+# 注册表分派：加新档 = 写连接器 + 注册一行；覆盖度由 test_connectors_cover_backend_enum 守卫。
+_CONNECTORS: dict[Backend, SandboxConnector] = {
+    "state": _connect_state,
+    "local_shell": _connect_local_shell,
+    "docker": _connect_docker,
+    "e2b": _connect_e2b,
+    "custom": _connect_custom,
+}
+
+
 async def make_backend_for_run(
     kind: Backend,
     settings: SandboxSettings,
@@ -126,32 +190,24 @@ async def make_backend_for_run(
     run_id: str,
     binding: SandboxBinding,
 ) -> BackendProtocol | None:
-    """统一装配入口：state/local_shell 走纯函数；docker/e2b 编排 run 级生命周期——
-    resume 优先重连既往箱/容器，新建即落 ledger（keep-first）。
+    """统一装配入口：注册表选连接器 + 生命周期单点收口——
+    产物带非空 `sandbox_id` 即落 ledger（keep-first），resume 经 prior 重连而非新建。
     """
-    if kind == "docker":
-        root = _workspace_root(settings, workspace)
-        if root is None:
-            raise ValueError("backend docker requires KOKORO_AGENT_LOCAL_SHELL_ROOT")
-        prior = await binding.get_sandbox_id(run_id)
-        # docker CLI 同步阻塞（run ~秒级）：to_thread 让出事件循环。
-        docker_backend = await asyncio.to_thread(
-            connect_docker_sandbox,
-            settings.docker,
-            root=Path(root),
-            container_id=prior,
-            run_id=run_id,
-            exec_timeout=settings.local_shell_timeout,
-            max_output_bytes=settings.local_shell_max_output_bytes,
-        )
-        if prior is None or docker_backend.container_id != prior:
-            await binding.put_sandbox_id(run_id, docker_backend.container_id)
-        return docker_backend
-    if kind != "e2b":
-        return make_backend(kind, settings, workspace=workspace)
+    connector = _CONNECTORS.get(kind)
+    if connector is None:
+        raise NotImplementedError(f"backend {kind!r} has no registered connector")
     prior = await binding.get_sandbox_id(run_id)
-    # SDK 同步阻塞（create ~秒级）：to_thread 让出事件循环。
-    backend = await asyncio.to_thread(connect_e2b_sandbox, settings.e2b, sandbox_id=prior)
-    if prior is None or backend.id != prior:
-        await binding.put_sandbox_id(run_id, backend.id)
+    context = SandboxContext(
+        settings=settings, workspace=workspace, run_id=run_id, prior_sandbox_id=prior
+    )
+    # 连接器一律 sync（docker CLI / SDK 网络调用秒级阻塞）：to_thread 让出事件循环。
+    backend = await asyncio.to_thread(connector, context)
+    bound = getattr(backend, "sandbox_id", None)
+    if isinstance(bound, str) and bound and bound != prior:
+        await binding.put_sandbox_id(run_id, bound)
     return backend
+
+
+def registered_backends() -> frozenset[str]:
+    """注册表覆盖面（守卫测试用）：与 Backend 枚举保持一致由测试强制。"""
+    return frozenset(_CONNECTORS)

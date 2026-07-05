@@ -60,6 +60,11 @@ class DockerShellBackend(LocalShellBackend):
         self._exec_timeout = timeout
         self._max_output_bytes = max_output_bytes
 
+    @property
+    def sandbox_id(self) -> str:
+        # 统一生命周期面（ADR-010）：编排层据此落 ledger 绑定，各档同一属性名。
+        return self.container_id
+
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         effective = timeout if timeout is not None else self._exec_timeout
         try:

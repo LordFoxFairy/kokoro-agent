@@ -37,6 +37,7 @@ def _dispatch_settings() -> SandboxSettings:
             "workspace_s3_secret_key": None,
             "e2b": _e2b_settings(),
             "docker": {"image": None, "ttl": 1800},
+            "custom": {"factory_ref": None, "config_path": None},
         }
     )
 

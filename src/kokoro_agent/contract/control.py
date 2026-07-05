@@ -70,6 +70,7 @@ class RuntimeConfig(StrictModel):
     subagents: list[SubagentDef]
     backend: Backend
     permissions: Permissions
+    swarm_members: list[NonEmptyStr] | None = None
 
 
 class RuntimeContext(StrictModel):

@@ -14,6 +14,7 @@ AllowedDecision = Literal["approve", "edit", "reject", "respond"]
 AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review"]
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 RunCompletedStatus = Literal["completed", "cancelled"]
+RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "internal_error"]
 
 
 class StrictModel(BaseModel):
@@ -172,6 +173,8 @@ class RunCompletedPayload(StrictModel):
 
 
 class RunFailedPayload(StrictModel):
+    # 三层错误语义：code=稳定错误码（web 按码本地化的键，闭集枚举）；error_kind=诊断用异常类名（观测/排障，不作展示）；message=人读原文（未知码/未译码的兜底展示，绝不裸露 key）。
+    code: RunErrorCode
     error_kind: NonEmptyStr
     message: NonEmptyStr
 

@@ -12,6 +12,7 @@ from kokoro_agent.contract import (
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
+    RunErrorCode,
     RunFailedPayload,
     RunStartedPayload,
     SubagentFinishedPayload,
@@ -32,7 +33,10 @@ from kokoro_agent.contract import (
     agent_event_adapter,
     run_events_stream,
 )
+from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt.tool_node import ToolRuntime
+
+from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.streams.protocol import StreamProtocol
@@ -315,10 +319,24 @@ def subagent_finished_payload(
     )
 
 
-def run_failed_payload(error: BaseException) -> RunFailedPayload:
+def failure_code(error: BaseException) -> RunErrorCode:
+    """执行期失败归码（闭集枚举）；装配期失败由调用点显式传 assembly_failed，不猜类型。"""
+    if isinstance(error, TokenBudgetExceeded):
+        return "token_budget_exceeded"
+    if isinstance(error, GraphRecursionError):
+        return "recursion_limit_exceeded"
+    return "internal_error"
+
+
+def run_failed_payload(
+    error: BaseException, *, code: RunErrorCode | None = None
+) -> RunFailedPayload:
+    # 三层错误语义（契约注记）：code=web 本地化键（缺省自动归码）；error_kind=诊断类名；
     # message 契约 NonEmptyStr：空 str(error) 回退异常类名，绝不发空错误。
     return RunFailedPayload(
-        error_kind=type(error).__name__, message=str(error) or type(error).__name__
+        code=code or failure_code(error),
+        error_kind=type(error).__name__,
+        message=str(error) or type(error).__name__,
     )
 
 

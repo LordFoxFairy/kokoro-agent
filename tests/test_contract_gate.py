@@ -77,7 +77,7 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
         "run.completed",
         {"status": "completed", "token_usage": {"input_tokens": 1, "output_tokens": 2}},
     ),
-    ("run.failed", {"error_kind": "ValueError", "message": "boom"}),
+    ("run.failed", {"code": "internal_error", "error_kind": "ValueError", "message": "boom"}),
 ]
 
 
@@ -102,7 +102,9 @@ def test_all_wire_kinds_round_trip(kind: str, payload: dict[str, JsonValue]) -> 
         {**_envelope("message.delta", {"segment_id": "s", "delta": "x"}), "index": -1},  # 负 index
         {**_envelope("message.delta", {"segment_id": "s", "delta": "x"}), "run_id": ""},  # 空 run_id
         _envelope("run.completed", {"status": "done"}),  # 非法终态枚举
-        _envelope("run.failed", {"error_kind": "E", "message": ""}),  # 空错误消息
+        _envelope("run.failed", {"code": "internal_error", "error_kind": "E", "message": ""}),  # 空错误消息
+        _envelope("run.failed", {"code": "oops", "error_kind": "E", "message": "m"}),  # 码不在闭集
+        _envelope("run.failed", {"error_kind": "E", "message": "m"}),  # 缺失败码
         _envelope("todo.updated", {"todos": [{"content": "x", "status": "later"}]}),  # 非法 todo 态
         _envelope(
             "subagent.started",

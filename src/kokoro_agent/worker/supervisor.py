@@ -17,6 +17,7 @@ from kokoro_agent.contract import (
     InboundMessage,
     RunCancel,
     RunCompletedPayload,
+    RunErrorCode,
     RunRequest,
     RunResume,
     RunSteer,
@@ -195,7 +196,7 @@ class RunSupervisor:
         try:
             assembled = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
-            await self._fail_terminal(bus, request.run_id, error)
+            await self._fail_terminal(bus, request.run_id, error, code="assembly_failed")
             return
         scope = RunScope.of(request)
         # thread 活跃账本：每次开跑刷新（checkpoint TTL 的时间真源）。
@@ -230,7 +231,7 @@ class RunSupervisor:
         try:
             assembled = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
-            await self._fail_terminal(bus, msg.run_id, error)
+            await self._fail_terminal(bus, msg.run_id, error, code="assembly_failed")
             return
         scope = RunScope.of(request)
         config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
@@ -433,10 +434,12 @@ class RunSupervisor:
             self._emitters[run_id] = emitter
         return emitter
 
-    async def _fail_terminal(self, bus: StreamProtocol, run_id: str, error: Exception) -> None:
+    async def _fail_terminal(
+        self, bus: StreamProtocol, run_id: str, error: Exception, *, code: RunErrorCode | None = None
+    ) -> None:
         # 认领成功才发 run.failed，与并发 cancel/自然完成互斥为单一终态。
         if await self._store.try_mark_terminal(run_id):
             emitter = await self._emitter(bus, run_id)
-            await emitter.emit(run_failed_payload(error))
+            await emitter.emit(run_failed_payload(error, code=code))
             self._emitters.pop(run_id, None)
             await self._teardown_control(bus, run_id)

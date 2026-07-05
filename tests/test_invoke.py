@@ -475,6 +475,7 @@ async def test_exception_emits_run_failed() -> None:
     failed = find_event(bus.run_events("r1"), RunFailed)
     assert failed.payload.error_kind == "ValueError"
     assert failed.payload.message == "boom"
+    assert failed.payload.code == "internal_error"  # 未归类异常兜底码
 
 
 async def test_empty_exception_message_falls_back_to_kind() -> None:
@@ -609,6 +610,8 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
     payload = events[-1]["payload"]
     assert isinstance(payload, dict)
     assert "Recursion" in str(payload.get("error_kind"))
+    # 失败码闭集：熔断失败在 wire 上是稳定码（web 本地化键），不是异常类名。
+    assert payload.get("code") == "recursion_limit_exceeded"
 
 
 def test_tool_returned_renders_content_blocks_readably() -> None:
@@ -704,3 +707,16 @@ async def test_pause_segment_records_usage_too() -> None:
     )
     assert terminal is False
     assert len(calls) == 1  # 暂停路径恰好入账一次
+
+
+def test_failure_code_classification_matrix() -> None:
+    # 归码闭集：预算/熔断各归其码，其余兜底 internal_error；装配码由调用点显式指定。
+    from langgraph.errors import GraphRecursionError
+
+    from kokoro_agent.execution.events import failure_code, run_failed_payload
+    from kokoro_agent.tools.middleware import TokenBudgetExceeded
+
+    assert failure_code(TokenBudgetExceeded("over budget")) == "token_budget_exceeded"
+    assert failure_code(GraphRecursionError("loop")) == "recursion_limit_exceeded"
+    assert failure_code(ValueError("x")) == "internal_error"
+    assert run_failed_payload(ValueError("x"), code="assembly_failed").code == "assembly_failed"

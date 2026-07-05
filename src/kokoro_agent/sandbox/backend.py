@@ -9,9 +9,15 @@ from typing import Annotated
 from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from kokoro_agent.contract import Backend, FilesystemPerm
+from kokoro_agent.sandbox.archive import (
+    ArchivingLocalShellBackend,
+    LocalWorkspace,
+    S3Archiver,
+    S3Workspace,
+)
 
 
 class SandboxSettings(BaseModel):
@@ -23,6 +29,20 @@ class SandboxSettings(BaseModel):
     local_shell_inherit_env: bool
     local_shell_timeout: Annotated[int, Field(gt=0)]
     local_shell_max_output_bytes: Annotated[int, Field(gt=0)]
+    # 存储形态（ADR-009，与 session 读同一 yaml）：None=local 默认档，无归档动作。
+    workspace: LocalWorkspace | S3Workspace | None
+    workspace_s3_access_key: SecretStr | None
+    workspace_s3_secret_key: SecretStr | None
+
+    @model_validator(mode="after")
+    def _s3_requires_credentials(self) -> SandboxSettings:
+        if isinstance(self.workspace, S3Workspace) and (
+            self.workspace_s3_access_key is None or self.workspace_s3_secret_key is None
+        ):
+            raise ValueError(
+                "workspace type s3 requires KOKORO_WORKSPACE_S3_ACCESS_KEY/SECRET_KEY"
+            )
+        return self
 
 
 def build_filesystem_permissions(perm: FilesystemPerm) -> list[FilesystemPermission]:
@@ -43,6 +63,26 @@ def make_backend(
             sub = Path(root) / workspace
             sub.mkdir(parents=True, exist_ok=True)
             root = str(sub)
+        # s3 档（ADR-009）：写时归档装饰——session 读对象存储，写侧真源处增量推送。
+        if (
+            isinstance(settings.workspace, S3Workspace)
+            and workspace is not None
+            and root is not None
+            and settings.workspace_s3_access_key is not None
+            and settings.workspace_s3_secret_key is not None
+        ):
+            return ArchivingLocalShellBackend(
+                root=Path(root),
+                archiver=S3Archiver(
+                    settings.workspace,
+                    access_key=settings.workspace_s3_access_key,
+                    secret_key=settings.workspace_s3_secret_key,
+                ),
+                prefix=workspace,
+                timeout=settings.local_shell_timeout,
+                max_output_bytes=settings.local_shell_max_output_bytes,
+                inherit_env=settings.local_shell_inherit_env,
+            )
         return LocalShellBackend(
             root_dir=root,
             # 虚拟根：模型的绝对路径（"/note.md"）映射进工作区，绝不触宿主真实根（越界即安全缺陷）。

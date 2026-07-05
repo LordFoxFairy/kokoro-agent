@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
-from kokoro_agent.sandbox import SandboxSettings
+from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.storage.checkpoints import CheckpointSettings
 from kokoro_agent.storage.ledger import DEFAULT_LEASE_TTL_S, LedgerSettings
 from kokoro_agent.streams.factory import StreamSettings
@@ -111,6 +111,10 @@ class AppConfig(BaseModel):
                         "KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES",
                         _DEFAULT_LOCAL_SHELL_MAX_OUTPUT_BYTES,
                     ),
+                    # 存储形态 yaml（ADR-009）：与 session 读同一文件；缺省=local 默认档。
+                    "workspace": load_workspace_config(source.get("KOKORO_WORKSPACE_CONFIG")),
+                    "workspace_s3_access_key": _secret(source.get("KOKORO_WORKSPACE_S3_ACCESS_KEY")),
+                    "workspace_s3_secret_key": _secret(source.get("KOKORO_WORKSPACE_S3_SECRET_KEY")),
                 }
             ),
             web_tools=WebToolSettings(

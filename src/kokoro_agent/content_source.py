@@ -1,4 +1,4 @@
-"""资产源（skills/personas 从哪来）：与 workspace 同一套 type 判别配置心智。
+"""资产源（skills/prompts 从哪来）：与 workspace 同一套 type 判别配置心智。
 
 local=目录扫描（单机/共享卷）；s3=对象存储（多 pod 免分发、platform 后台管理落点）。
 凭据 env-only。装载即快照：源只在 worker 启动时被读一次，装不到 fail-loud 不降级。
@@ -16,8 +16,8 @@ from botocore.config import Config as BotoConfig
 from mypy_boto3_s3 import S3Client
 from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter, model_validator
 
-from kokoro_agent.assets.personas import PersonaLibrary
-from kokoro_agent.assets.skills import SkillLibrary, build_packages
+from kokoro_agent.prompts.library import PromptLibrary
+from kokoro_agent.skills.package import SkillLibrary, build_packages
 
 
 class AssetSourceError(Exception):
@@ -107,7 +107,7 @@ class LocalAssetSource:
         return contents
 
     def load_personas(self) -> Mapping[str, str]:
-        root = _existing_dir(self._config.personas_dir, "personas")
+        root = _existing_dir(self._config.personas_dir, "prompts")
         if root is None:
             return {}
         return {
@@ -206,10 +206,10 @@ def make_asset_source(settings: AssetSettings) -> AssetSource:
     return LocalAssetSource(settings.source)
 
 
-def load_asset_libraries(settings: AssetSettings) -> tuple[SkillLibrary, PersonaLibrary]:
-    """worker 启动一次装载：skills/personas 同源快照入库。"""
+def load_asset_libraries(settings: AssetSettings) -> tuple[SkillLibrary, PromptLibrary]:
+    """worker 启动一次装载：skills/prompts 同源快照入库。"""
     source = make_asset_source(settings)
     return (
         SkillLibrary(build_packages(source.load_skills())),
-        PersonaLibrary(source.load_personas()),
+        PromptLibrary(source.load_personas()),
     )

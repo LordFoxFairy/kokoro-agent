@@ -36,7 +36,7 @@ class _SubagentDefinition(BaseModel):
 
 _CUSTOM_PAYLOADS: TypeAdapter[list[_SubagentDefinition]] = TypeAdapter(list[_SubagentDefinition])
 
-# 内建目录只收"带真实工具挂载的真能力"；人格类预设归 namespace profile（wire 下发）。
+# 内建目录只收"带真实工具挂载的真能力"；prompt 类预设归 namespace profile（wire 下发）。
 # 装配点按工具可用性过滤：声明的工具缺任一（如 web_search 未配 provider）则整个不挂。
 BUILT_IN_SUBAGENTS: Final[tuple[RegisteredSubagent, ...]] = (
     RegisteredSubagent(

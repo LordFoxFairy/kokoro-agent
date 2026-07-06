@@ -16,7 +16,8 @@ from typing import Protocol
 from deepagents.backends.protocol import FileData, FileUploadResponse
 from deepagents.backends.utils import create_file_data
 
-from kokoro_agent.assets import MAIN_SKILLS_SOURCE, SkillLibrary, subagent_skills_source
+from kokoro_agent.skills.package import SkillLibrary
+from kokoro_agent.skills.supply import MAIN_SKILLS_SOURCE, subagent_skills_source
 from kokoro_agent.contract import RuntimeConfig
 
 

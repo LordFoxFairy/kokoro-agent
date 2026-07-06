@@ -21,19 +21,21 @@ from pydantic import SecretStr, ValidationError
 from deepagents.backends.utils import create_file_data
 
 from fakes import usage_recorder
-from kokoro_agent.assets import (
-    MAIN_SKILLS_SOURCE,
+from kokoro_agent.content_source import (
     AssetSettings,
     AssetSourceError,
     LocalAssets,
     LocalAssetSource,
     S3Assets,
     S3AssetSource,
+    load_asset_libraries,
+    load_assets_config,
+)
+from kokoro_agent.skills import (
+    MAIN_SKILLS_SOURCE,
     SkillAssetError,
     SkillLibrary,
     build_packages,
-    load_asset_libraries,
-    load_assets_config,
 )
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
@@ -131,11 +133,11 @@ def test_configured_missing_dir_fails_loud(tmp_path: Path) -> None:
 
 
 def test_unconfigured_source_is_empty_library() -> None:
-    skills, personas = load_asset_libraries(
+    skills, prompts = load_asset_libraries(
         AssetSettings(source=LocalAssets(type="local"), s3_access_key=None, s3_secret_key=None)
     )
     assert skills.names() == frozenset()
-    assert personas.get("ghost") is None
+    assert prompts.get("ghost") is None
 
 
 # --- 配置矩阵（type 判别 yaml + 凭据 env-only） ---
@@ -232,13 +234,13 @@ class TestS3AssetSource:
     def test_loads_full_packages_under_prefix(self) -> None:
         self._put("deploy/skills/style/SKILL.md", fm("style", "s3 技能") + "s3 正文")
         self._put("deploy/skills/style/helper.md", "辅助")
-        self._put("deploy/personas/poet.md", "s3 诗人人格\n")
+        self._put("deploy/personas/poet.md", "s3 诗人 prompt\n")
         source = self._source("deploy")
         library = SkillLibrary(build_packages(source.load_skills()))
         package = library.get("style")
         assert package.description == "s3 技能"
         assert package.files["helper.md"] == "辅助"
-        assert dict(source.load_personas()) == {"poet": "s3 诗人人格"}
+        assert dict(source.load_personas()) == {"poet": "s3 诗人 prompt"}
 
     def test_skill_without_skill_md_fails_loud(self) -> None:
         self._put("broken/skills/ghost/notes.txt", "无 SKILL.md")
@@ -247,7 +249,7 @@ class TestS3AssetSource:
 
     def test_load_asset_libraries_end_to_end(self) -> None:
         self._put("e2e/skills/tone/SKILL.md", fm("tone", "语气技能") + "via-s3-skill 正文")
-        skills, _personas = load_asset_libraries(
+        skills, _prompts = load_asset_libraries(
             AssetSettings(
                 source=S3Assets(type="s3", endpoint=MINIO_URL, bucket=BUCKET, prefix="e2e"),
                 s3_access_key=SecretStr("kokoro"),
@@ -280,7 +282,7 @@ async def test_progressive_disclosure_prompt_has_description_not_body(tmp_path: 
     agent = build_agent(
         model=Recorder.with_script([AIMessage(content="ok")]),
         tools=[],
-        system_prompt="base persona",
+        system_prompt="base prompt",
         subagents=[],
         checkpointer=None,
         permissions=[],
@@ -314,4 +316,4 @@ async def test_progressive_disclosure_prompt_has_description_not_body(tmp_path: 
     system_text = "\n".join(m.text for m in captured[-1] if m.type == "system")
     assert "输出末尾带 via-skill 标记" in system_text  # description 上 prompt
     assert "BODY-SENTINEL" not in system_text  # 正文绝不进 prompt（渐进披露）
-    assert "base persona" in system_text
+    assert "base prompt" in system_text

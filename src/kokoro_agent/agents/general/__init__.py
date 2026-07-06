@@ -4,7 +4,7 @@
   toolset    ① 工具面：四路来源合流 + 授权白名单
   guardrails ② 中间件链：守卫/审批的主链与子代理链
   delegates  ③ 可委派子代理：内生 + catalog + wire 三路
-  persona    ④ system prompt：人格三级解析 + skills 注入
+  prompt     ④ system prompt：agent prompt 三级解析 + skills 注入
 需要专属编排的新类型（studio 系）另立 agents/<type>/ 同构包。
 """
 
@@ -17,8 +17,8 @@ from langchain_core.tools import StructuredTool
 from kokoro_agent.agents.base import AgentFactory, AssembleDeps, AssembledAgent
 from kokoro_agent.agents.general.delegates import build_delegates
 from kokoro_agent.agents.general.guardrails import build_guard_chains
-from kokoro_agent.agents.general.persona import resolve_system_prompt
-from kokoro_agent.agents.general.skills import provision_skills
+from kokoro_agent.agents.general.prompt import resolve_system_prompt
+from kokoro_agent.skills import provision_skills
 from kokoro_agent.agents.general.toolset import build_toolset
 from kokoro_agent.contract import AgentType, RunRequest
 from kokoro_agent.execution.build_agent import build_agent

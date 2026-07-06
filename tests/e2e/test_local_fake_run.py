@@ -28,7 +28,7 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.prompts import GENERAL_PERSONA
+from kokoro_agent.prompts import GENERAL_PROMPT
 from kokoro_agent.agents.base import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
 
@@ -92,7 +92,7 @@ def _build_supervisor(
             agent=build_agent(
                 model=make_local_fake_chat_model(script),
                 tools=resolve_tools(runtime.tools),
-                system_prompt=GENERAL_PERSONA,
+                system_prompt=GENERAL_PROMPT,
                 subagents=catalog.definitions(),
                 checkpointer=saver,
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),

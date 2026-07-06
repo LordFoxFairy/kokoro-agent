@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from kokoro_agent.assets import AssetSettings, LocalAssets, load_assets_config
+from kokoro_agent.content_source import AssetSettings, LocalAssets, load_assets_config
 from kokoro_agent.config_file import layer_config_sources
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
@@ -53,7 +53,7 @@ class AppConfig(BaseModel):
     sandbox: SandboxSettings
     web_tools: WebToolSettings
     custom_subagents_json: str | None
-    # 资产源（skills/personas 从哪来）：local 目录或 s3，配置引用名称、资产统一入库。
+    # 资产源（skills/prompts 从哪来）：local 目录或 s3，配置引用名称、资产统一入库。
     assets: AssetSettings
     # 内建子代理按名启用（默认全关；未知名 fail-loud）。
     enabled_builtin_subagents: frozenset[str]

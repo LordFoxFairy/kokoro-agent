@@ -21,7 +21,7 @@ from kokoro_agent.contract import (
     RuntimeContext,
     SubagentDef,
 )
-from kokoro_agent.assets import SkillLibrary, SkillPackage
+from kokoro_agent.skills import SkillLibrary, SkillPackage
 from kokoro_agent.model.factory import make_chat_model
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -115,7 +115,7 @@ def test_filesystem_permissions_by_perm() -> None:
 
 
 def test_catalog_builtin_empty_until_real_capability() -> None:
-    # 内建目录只收带真实工具的真能力：现阶段为空，人格预设归 namespace（wire）。
+    # 内建目录只收带真实工具的真能力：现阶段为空，prompt 预设归 namespace（wire）。
     catalog = build_catalog(None)
     assert catalog.names() == frozenset()
     # 目录之外的名字是运行期动态子代理：一等来源，不抛错。
@@ -199,11 +199,11 @@ def test_make_stream_backends() -> None:
 
 
 def test_runtime_system_prompt_on_wire() -> None:
-    # 具名入口：RuntimeConfig 可带已解析人格；strict 契约拒绝空串。
+    # 具名入口：RuntimeConfig 可带已解析 prompt；strict 契约拒绝空串。
     runtime = RuntimeConfig(
         agent_type="general",
         model=ModelConfig(provider="anthropic", name="claude"),
-        system_prompt="你是音乐创作人格",
+        system_prompt="你是音乐创作 prompt",
         tools=[],
         skills=[],
         mcp=[],
@@ -213,7 +213,7 @@ def test_runtime_system_prompt_on_wire() -> None:
             approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only"
         ),
     )
-    assert runtime.system_prompt == "你是音乐创作人格"
+    assert runtime.system_prompt == "你是音乐创作 prompt"
     with pytest.raises(ValidationError):
         RuntimeConfig.model_validate({**runtime.model_dump(), "system_prompt": ""})
 
@@ -485,28 +485,30 @@ def test_resolve_tools_empty_core_for_studio_types() -> None:
     assert resolve_tools([], core=()) == []
 
 
-# --- 资产化：skills 按名 + persona 按名（配置引用资产，不内联资产） ---
+# --- 资产化：skills 按名 + prompt 按名（配置引用资产，不内联资产） ---
 
 
-def test_persona_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
-    from kokoro_agent.assets import LocalAssets, LocalAssetSource, PersonaLibrary
+def test_prompt_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
+    from kokoro_agent.content_source import LocalAssets, LocalAssetSource
+    from kokoro_agent.prompts import PromptLibrary
 
-    (tmp_path / "general.md").write_text("部署覆盖人格")
-    (tmp_path / "poet.md").write_text("诗人人格")
+    (tmp_path / "general.md").write_text("部署覆盖 prompt")
+    (tmp_path / "poet.md").write_text("诗人 prompt")
     source = LocalAssetSource(LocalAssets(type="local", personas_dir=str(tmp_path)))
-    library = PersonaLibrary(source.load_personas())
-    assert library.get("general") == "部署覆盖人格"
-    assert library.get("poet") == "诗人人格"
-    assert PersonaLibrary({}).get("poet") is None  # 内置包无此资产
-    assert PersonaLibrary({}).get("general") is not None  # 内置缺省人格恒在
+    library = PromptLibrary(source.load_personas())
+    assert library.get("general") == "部署覆盖 prompt"
+    assert library.get("poet") == "诗人 prompt"
+    assert PromptLibrary({}).get("poet") is None  # 内置包无此资产
+    assert PromptLibrary({}).get("general") is not None  # 内置缺省 prompt 恒在
 
 
-def test_wire_subagent_persona_resolution(tmp_path: Path) -> None:
-    from kokoro_agent.assets import LocalAssets, LocalAssetSource, PersonaLibrary
+def test_wire_subagent_prompt_resolution(tmp_path: Path) -> None:
+    from kokoro_agent.content_source import LocalAssets, LocalAssetSource
+    from kokoro_agent.prompts import PromptLibrary
     from kokoro_agent.subagents import wire_subagents
 
-    (tmp_path / "poet.md").write_text("诗人资产人格")
-    personas = PersonaLibrary(
+    (tmp_path / "poet.md").write_text("诗人资产 prompt")
+    prompts = PromptLibrary(
         LocalAssetSource(LocalAssets(type="local", personas_dir=str(tmp_path))).load_personas()
     )
     request = RunRequest(
@@ -527,13 +529,13 @@ def test_wire_subagent_persona_resolution(tmp_path: Path) -> None:
         ),
         context=RuntimeContext(namespace="ns", session_id="s1"),
     )
-    subs = wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=personas)
+    subs = wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), prompts=prompts)
     by_name = {sub["name"]: sub["system_prompt"] for sub in subs}
-    assert by_name == {"poet": "诗人资产人格", "critic": "内联覆盖"}
+    assert by_name == {"poet": "诗人资产 prompt", "critic": "内联覆盖"}
 
 
-def test_wire_subagent_without_any_persona_fails_loud() -> None:
-    from kokoro_agent.assets import PersonaLibrary
+def test_wire_subagent_without_any_prompt_fails_loud() -> None:
+    from kokoro_agent.prompts import PromptLibrary
     from kokoro_agent.subagents import wire_subagents
 
     request = RunRequest(
@@ -551,8 +553,8 @@ def test_wire_subagent_without_any_persona_fails_loud() -> None:
         ),
         context=RuntimeContext(namespace="ns", session_id="s1"),
     )
-    with pytest.raises(ValueError, match="no persona"):
-        wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=PersonaLibrary({}))
+    with pytest.raises(ValueError, match="no prompt"):
+        wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), prompts=PromptLibrary({}))
 
 
 # --- Skills V2 供给器（分发→供给→消费三层的中间层） ---
@@ -587,8 +589,7 @@ def _library_two() -> SkillLibrary:
 
 
 async def test_provision_state_backend_builds_initial_files_with_prefix_isolation() -> None:
-    from kokoro_agent.agents.general.skills import provision_skills
-    from kokoro_agent.assets import MAIN_SKILLS_SOURCE, subagent_skills_source
+    from kokoro_agent.skills import MAIN_SKILLS_SOURCE, provision_skills, subagent_skills_source
 
     provisioned = await provision_skills(_skills_runtime(["style"], ["tone"]), _library_two(), None)
     assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
@@ -606,8 +607,7 @@ async def test_provision_state_backend_builds_initial_files_with_prefix_isolatio
 async def test_provision_real_backend_uploads_and_leaves_initial_empty() -> None:
     from deepagents.backends.protocol import FileUploadResponse
 
-    from kokoro_agent.agents.general.skills import provision_skills
-    from kokoro_agent.assets import MAIN_SKILLS_SOURCE
+    from kokoro_agent.skills import MAIN_SKILLS_SOURCE, provision_skills
 
     uploaded: list[tuple[str, bytes]] = []
 
@@ -628,15 +628,14 @@ async def test_provision_real_backend_uploads_and_leaves_initial_empty() -> None
 async def test_provision_unknown_skill_fails_loud() -> None:
     import pytest as _pytest
 
-    from kokoro_agent.agents.general.skills import provision_skills
-    from kokoro_agent.assets import SkillAssetError
+    from kokoro_agent.skills import SkillAssetError, provision_skills
 
     with _pytest.raises(SkillAssetError, match="ghost"):
         await provision_skills(_skills_runtime(["ghost"], []), _library_two(), None)
 
 
 def test_wire_subagent_carries_native_skills_source() -> None:
-    from kokoro_agent.assets import subagent_skills_source
+    from kokoro_agent.skills import subagent_skills_source
     from kokoro_agent.subagents import wire_subagents
 
     request = RunRequest(

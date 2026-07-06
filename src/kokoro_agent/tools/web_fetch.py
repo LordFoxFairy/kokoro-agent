@@ -65,30 +65,36 @@ def make_web_fetch_tool(*, allow_private: bool = False) -> StructuredTool:
     async def web_fetch(url: str) -> str:
         # 重定向手动跟随并逐跳复检；残余 TOCTOU（解析↔连接间 DNS 重绑）V1 接受。
         target = url
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_S, follow_redirects=False) as client:
-            for _ in range(_MAX_REDIRECTS + 1):
-                if not allow_private:
-                    await _assert_public_target(target)
-                elif urlsplit(target).scheme not in ("http", "https"):
-                    raise ValueError(f"unsafe fetch target (scheme): {target!r}")
-                # 流式读取边读边封顶：非流式 .content 会先吞下完整 body（任意大 → OOM 面）。
-                async with client.stream("GET", target) as response:
-                    if response.is_redirect:
-                        location = response.headers.get("location", "")
-                        target = str(httpx.URL(target).join(location))
-                        continue
-                    response.raise_for_status()
-                    chunks: list[bytes] = []
-                    size = 0
-                    async for chunk in response.aiter_bytes():
-                        chunks.append(chunk)
-                        size += len(chunk)
-                        if size >= _FETCH_MAX_BYTES:
-                            break
-                    body = b"".join(chunks)[:_FETCH_MAX_BYTES].decode(
-                        response.charset_encoding or "utf-8", errors="replace"
-                    )
-                return _clip(_extract_text(response.headers.get("content-type", ""), body))
+        # 外部抓取失败（非 2xx / 网络 / 超时）作工具结果回给模型自行改道，绝不抛异常炸整轮；
+        # SSRF 拒绝与重定向超限是策略边界，仍 fail-loud 抛 ValueError。
+        try:
+            async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_S, follow_redirects=False) as client:
+                for _ in range(_MAX_REDIRECTS + 1):
+                    if not allow_private:
+                        await _assert_public_target(target)
+                    elif urlsplit(target).scheme not in ("http", "https"):
+                        raise ValueError(f"unsafe fetch target (scheme): {target!r}")
+                    # 流式读取边读边封顶：非流式 .content 会先吞下完整 body（任意大 → OOM 面）。
+                    async with client.stream("GET", target) as response:
+                        if response.is_redirect:
+                            location = response.headers.get("location", "")
+                            target = str(httpx.URL(target).join(location))
+                            continue
+                        if response.status_code >= 400:
+                            return f"web_fetch 未取到内容：HTTP {response.status_code} {response.reason_phrase} — {target}"
+                        chunks: list[bytes] = []
+                        size = 0
+                        async for chunk in response.aiter_bytes():
+                            chunks.append(chunk)
+                            size += len(chunk)
+                            if size >= _FETCH_MAX_BYTES:
+                                break
+                        body = b"".join(chunks)[:_FETCH_MAX_BYTES].decode(
+                            response.charset_encoding or "utf-8", errors="replace"
+                        )
+                    return _clip(_extract_text(response.headers.get("content-type", ""), body))
+        except httpx.HTTPError as exc:
+            return f"web_fetch 未取到内容：{type(exc).__name__} — {target}"
         raise ValueError(f"too many redirects fetching {url!r}")
 
     return StructuredTool(

@@ -38,6 +38,12 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("location", "/html")
             self.end_headers()
             return
+        if self.path == "/forbidden":
+            self.send_response(403)
+            self.send_header("content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"nope")
+            return
         ctype, body = routes.get(self.path, ("text/plain", "fallback"))
         data = body.encode()
         self.send_response(200)
@@ -111,6 +117,13 @@ async def test_fetch_follows_redirect_with_recheck(base_url: str) -> None:
     tool = make_web_fetch_tool(allow_private=True)
     text = await _coro(tool)(url=f"{base_url}/redirect")
     assert "正文 A" in text
+
+
+async def test_fetch_returns_http_error_as_result(base_url: str) -> None:
+    """非 2xx 不炸整轮：把 HTTP 错误作工具结果回给模型自行改道，而非抛异常终结 run。"""
+    tool = make_web_fetch_tool(allow_private=True)
+    text = await _coro(tool)(url=f"{base_url}/forbidden")
+    assert "403" in text
 
 
 def test_fetch_args_schema_rejects_garbage() -> None:

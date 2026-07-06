@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS ledger(
     request_json     TEXT,
     terminal         INTEGER NOT NULL DEFAULT 0,
     terminal_at_ms   INTEGER,
-    lease_expires_ms INTEGER
+    lease_expires_ms INTEGER,
+    owner            TEXT
 )"""
 
 # 结果审核暂停的双执行防护：resume 后节点从头重跑，首跑结果 keep-first 落盘，重入命中即跳过工具。
@@ -83,21 +84,30 @@ class SqliteLedger:
         await self._db.execute(_SANDBOXES_DDL)
         await self._db.commit()
 
-    async def try_claim(self, request: RunRequest) -> bool:
+    async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # INSERT OR IGNORE：run_id 已存在（已被认领/终态）即去重丢弃，rowcount==0。
         cur = await self._db.execute(
-            "INSERT OR IGNORE INTO ledger(run_id, request_json, lease_expires_ms)"
-            " VALUES(?, ?, ?)",
-            (request.run_id, request.model_dump_json(), self._clock() + self._ttl_ms),
+            "INSERT OR IGNORE INTO ledger(run_id, request_json, lease_expires_ms, owner)"
+            " VALUES(?, ?, ?, ?)",
+            (request.run_id, request.model_dump_json(), self._clock() + self._ttl_ms, owner),
         )
         await self._db.commit()
         return cur.rowcount == 1
 
-    async def renew(self, run_id: str) -> None:
-        # 心跳续租；也把 HITL 暂停哨兵（NULL）拉回活跃租约。
+    async def renew(self, run_id: str, owner: str) -> bool:
+        # 严格属主续租（fencing）：owner 不符即失败——假死副本苏醒后据此让渡。
+        cur = await self._db.execute(
+            "UPDATE ledger SET lease_expires_ms=? WHERE run_id=? AND terminal=0 AND owner=?",
+            (self._clock() + self._ttl_ms, run_id, owner),
+        )
+        await self._db.commit()
+        return cur.rowcount == 1
+
+    async def adopt(self, run_id: str, owner: str) -> None:
+        # 所有权交接（resume 收养）：置 owner 并把暂停哨兵拉回活跃租约。
         await self._db.execute(
-            "UPDATE ledger SET lease_expires_ms=? WHERE run_id=? AND terminal=0",
-            (self._clock() + self._ttl_ms, run_id),
+            "UPDATE ledger SET lease_expires_ms=?, owner=? WHERE run_id=? AND terminal=0",
+            (self._clock() + self._ttl_ms, owner, run_id),
         )
         await self._db.commit()
 
@@ -109,7 +119,7 @@ class SqliteLedger:
         )
         await self._db.commit()
 
-    async def reclaim_expired(self) -> list[RunRequest]:
+    async def reclaim_expired(self, owner: str) -> list[RunRequest]:
         now = self._clock()
         async with self._db.execute(
             "SELECT run_id, request_json FROM ledger"
@@ -122,10 +132,10 @@ class SqliteLedger:
         for run_id, request_json in rows:
             # 逐行条件更新原子认领：多 pod 并发 reclaim 时每个 run 恰被一个赢家拾走。
             cur = await self._db.execute(
-                "UPDATE ledger SET lease_expires_ms=?"
+                "UPDATE ledger SET lease_expires_ms=?, owner=?"
                 " WHERE run_id=? AND terminal=0"
                 " AND lease_expires_ms IS NOT NULL AND lease_expires_ms<=?",
-                (now + self._ttl_ms, run_id, now),
+                (now + self._ttl_ms, owner, run_id, now),
             )
             await self._db.commit()
             if cur.rowcount == 1:
@@ -251,11 +261,19 @@ class SqliteLedger:
         )
         await self._db.commit()
 
-    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
+    async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         cur = await self._db.execute(
             "SELECT message_id, content FROM steers WHERE run_id=? ORDER BY seq", (run_id,)
         )
         rows = await cur.fetchall()
-        await self._db.execute("DELETE FROM steers WHERE run_id=?", (run_id,))
-        await self._db.commit()
         return [(str(row[0]), str(row[1])) for row in rows]
+
+    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
+        if not message_ids:
+            return
+        marks = ",".join("?" for _ in message_ids)
+        await self._db.execute(
+            f"DELETE FROM steers WHERE run_id=? AND message_id IN ({marks})",
+            (run_id, *message_ids),
+        )
+        await self._db.commit()

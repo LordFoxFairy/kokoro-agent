@@ -7,7 +7,7 @@ from kokoro_agent.sandbox.backend import (
     SandboxSettings,
     build_filesystem_permissions,
     make_backend,
-    make_backend_for_run,
+    make_backend_for_run, teardown_backend_for_run,
     registered_backends,
 )
 from kokoro_agent.sandbox.custom_backend import CustomBackendContext
@@ -22,5 +22,6 @@ __all__ = [
     "load_workspace_config",
     "make_backend",
     "make_backend_for_run",
+    "teardown_backend_for_run",
     "registered_backends",
 ]

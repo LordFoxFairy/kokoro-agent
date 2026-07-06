@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,11 +23,14 @@ from kokoro_agent.sandbox.archive import (
 )
 from kokoro_agent.sandbox.custom_backend import CustomBackendSettings, connect_custom_sandbox
 from kokoro_agent.sandbox.docker_backend import (
+    destroy_docker_sandbox,
     ArchivingDockerShellBackend,
     DockerSettings,
     connect_docker_sandbox,
 )
-from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox
+from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox, kill_e2b_sandbox
+
+LOGGER = logging.getLogger("kokoro_agent.sandbox")
 
 
 class SandboxSettings(BaseModel):
@@ -230,6 +234,23 @@ async def make_backend_for_run(
     if isinstance(bound, str) and bound and bound != prior:
         await binding.put_sandbox_id(run_id, bound)
     return backend
+
+
+async def teardown_backend_for_run(
+    kind: Backend, settings: SandboxSettings, sandbox_id: str | None
+) -> None:
+    """终态/cancel 后主动回收沙箱（审计缺口③）：尽力而为——失败落回 TTL 自清兜底，
+    绝不影响终态收口。state/local_shell 无箱；custom 生命周期归 BYO 作者（升级路径：
+    工厂返回 teardown 钩子）。"""
+    if sandbox_id is None:
+        return
+    try:
+        if kind == "docker":
+            await asyncio.to_thread(destroy_docker_sandbox, sandbox_id)
+        elif kind == "e2b":
+            await asyncio.to_thread(kill_e2b_sandbox, settings.e2b, sandbox_id)
+    except Exception:
+        LOGGER.warning("sandbox teardown failed kind=%s id=%s", kind, sandbox_id, exc_info=True)
 
 
 def registered_backends() -> frozenset[str]:

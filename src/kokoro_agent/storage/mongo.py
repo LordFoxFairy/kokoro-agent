@@ -56,7 +56,7 @@ class MongoLedger:
         self._ttl_ms = ttl_ms
         self._clock = clock
 
-    async def try_claim(self, request: RunRequest) -> bool:
+    async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # $setOnInsert + upsert：仅 _id 不存在时写入；并发 upsert 撞 _id 抛 DuplicateKeyError
         # （mongo 文档明载的 upsert 竞态）→ 视为已被他人认领。
         try:
@@ -67,6 +67,7 @@ class MongoLedger:
                         "request_json": request.model_dump_json(),
                         "terminal": False,
                         "lease_expires_ms": self._clock() + self._ttl_ms,
+                        "owner": owner,
                     }
                 },
                 upsert=True,
@@ -75,11 +76,19 @@ class MongoLedger:
             return False
         return result.upserted_id is not None
 
-    async def renew(self, run_id: str) -> None:
-        # 心跳续租；也把 HITL 暂停哨兵（null）拉回活跃租约。
+    async def renew(self, run_id: str, owner: str) -> bool:
+        # 严格属主续租（fencing）：owner 不符即失败——假死副本苏醒后据此让渡。
+        result = await self._coll.update_one(
+            {"_id": run_id, "terminal": {"$ne": True}, "owner": owner},
+            {"$set": {"lease_expires_ms": self._clock() + self._ttl_ms}},
+        )
+        return result.matched_count == 1
+
+    async def adopt(self, run_id: str, owner: str) -> None:
+        # 所有权交接（resume 收养）：置 owner 并把暂停哨兵拉回活跃租约。
         await self._coll.update_one(
             {"_id": run_id, "terminal": {"$ne": True}},
-            {"$set": {"lease_expires_ms": self._clock() + self._ttl_ms}},
+            {"$set": {"lease_expires_ms": self._clock() + self._ttl_ms, "owner": owner}},
         )
 
     async def pause(self, run_id: str) -> None:
@@ -89,7 +98,7 @@ class MongoLedger:
             {"$set": {"lease_expires_ms": None}},
         )
 
-    async def reclaim_expired(self) -> list[RunRequest]:
+    async def reclaim_expired(self, owner: str) -> list[RunRequest]:
         now = self._clock()
         reclaimed: list[RunRequest] = []
         while True:
@@ -101,7 +110,7 @@ class MongoLedger:
                     "request_json": {"$type": "string"},
                     "lease_expires_ms": {"$lte": now},
                 },
-                {"$set": {"lease_expires_ms": now + self._ttl_ms}},
+                {"$set": {"lease_expires_ms": now + self._ttl_ms, "owner": owner}},
             )
             if doc is None:
                 return reclaimed
@@ -192,17 +201,20 @@ class MongoLedger:
             {"$push": {"steers": {"message_id": message_id, "content": content}}},
         )
 
-    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
-        doc = await self._coll.find_one_and_update(
-            {"_id": run_id, "steers.0": {"$exists": True}},
-            {"$set": {"steers": []}},
-            projection={"steers": 1},
-            return_document=ReturnDocument.BEFORE,
-        )
+    async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
+        doc = await self._coll.find_one({"_id": run_id}, {"steers": 1})
         if doc is None:
             return []
         entries = _STEERS_ADAPTER.validate_python(doc.get("steers") or [])
         return [(entry.message_id, entry.content) for entry in entries]
+
+    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
+        if not message_ids:
+            return
+        await self._coll.update_one(
+            {"_id": run_id},
+            {"$pull": {"steers": {"message_id": {"$in": message_ids}}}},
+        )
 
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
         # keep-first：resume 竞态下首个绑定生效（与 put_tool_result 同模式）。

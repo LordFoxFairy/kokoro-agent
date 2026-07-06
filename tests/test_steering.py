@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 
+from langchain.agents.middleware.types import AgentState
 from langgraph.runtime import Runtime
 
 from fakes import FakeBus, FakeLedger, request, usage_recorder
@@ -89,7 +90,18 @@ async def test_steer_reaches_model_in_real_graph() -> None:
     assert terminal is True
     humans = [m.text for m in captured[-1] if m.type == "human"]
     assert humans == ["写调研报告", "重点只看国内市场"]
-    assert await ledger.drain_steers("r-graph") == []  # 信箱已被消费
+    # peek+下一轮见证语义：run 在注入轮后即终态、无下一轮，信箱残留是设计内
+    # （随 run TTL 清扫，绝不丢插话）。手动再走一轮 before_model 验证见证机制：
+    # 插话已在消息史（=已随 checkpoint 落定）→ 本轮 ack 清箱、且不重复注入。
+    assert await ledger.peek_steers("r-graph") == [("steer-1", "重点只看国内市场")]
+    witness = SteeringMiddleware(store=ledger, run_id="r-graph")
+    # "已落定"的最小见证态：插话以稳定 id 存在于消息史（即已进 checkpoint）。
+    landed_state: AgentState[Any] = {
+        "messages": [HumanMessage(content="重点只看国内市场", id="steer-1")]
+    }
+    update = await witness.abefore_model(landed_state, Runtime(context=None))
+    assert update is None  # 已落定：不重复注入
+    assert await ledger.peek_steers("r-graph") == []  # 见证后 ack 清箱
     # 注入项经 before_model 节点出现在消息投影里：绝不冒充 assistant 正文上 wire。
     events = [item.event for item in await bus.read_all(run_events_stream("r-graph"))]
     texts: list[str] = []

@@ -224,15 +224,25 @@ class SteeringMiddleware(AgentMiddleware):
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
-        steers = await self._store.drain_steers(self._run_id)
+        # peek + 下一轮见证 ack（审计缺口：排空与 checkpoint 落盘非原子会窄窗丢插话）——
+        # 只有已出现在 state["messages"]（即已随 checkpoint 落定）的插话才从信箱删除；
+        # 未落定的每轮重注入，稳定 id 由 add_messages 去重，任意崩溃点收敛且绝不丢。
+        steers = await self._store.peek_steers(self._run_id)
         if not steers:
             return None
         for message_id, content in steers:
             if not content:
                 raise ValueError(f"empty steer content: message_id={message_id!r}")
+        seen_ids = {message.id for message in state["messages"]}
+        landed = [message_id for message_id, _ in steers if message_id in seen_ids]
+        if landed:
+            await self._store.ack_steers(self._run_id, landed)
+        fresh = [(mid, content) for mid, content in steers if mid not in seen_ids]
+        if not fresh:
+            return None
         return {
             "messages": [
-                HumanMessage(content=content, id=message_id) for message_id, content in steers
+                HumanMessage(content=content, id=message_id) for message_id, content in fresh
             ]
         }
 

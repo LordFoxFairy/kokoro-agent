@@ -85,6 +85,11 @@ class DockerShellBackend(LocalShellBackend):
         return ExecuteResponse(output=output, exit_code=result.returncode, truncated=truncated)
 
 
+def destroy_docker_sandbox(container_id: str) -> None:
+    """终态主动回收（--rm 容器 rm -f 即删）；失败交 TTL 自清兜底，调用方吞错记日志。"""
+    _docker("rm", "-f", container_id)
+
+
 def _container_alive(container_id: str) -> bool:
     result = _docker("inspect", "-f", "{{.State.Running}}", container_id)
     return result.returncode == 0 and result.stdout.strip() == "true"

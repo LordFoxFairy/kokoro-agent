@@ -123,6 +123,13 @@ class E2BSandboxBackend(BaseSandbox):
         return responses
 
 
+def kill_e2b_sandbox(settings: E2BSettings, sandbox_id: str) -> None:
+    """终态主动回收：官方类形态 Sandbox.kill(sandbox_id)；无 key 直接返回（无箱可回收）。"""
+    if settings.api_key is None:
+        return
+    Sandbox.kill(sandbox_id, api_key=settings.api_key.get_secret_value())
+
+
 def connect_e2b_sandbox(settings: E2BSettings, *, sandbox_id: str | None) -> E2BSandboxBackend:
     """run 级生命周期：有既往 sandbox_id 先重连（HITL 暂停期文件在箱内）；
     箱已被 TTL 回收则新建并告警（文件面由归档兜底）。SDK 网络调用是同步阻塞——

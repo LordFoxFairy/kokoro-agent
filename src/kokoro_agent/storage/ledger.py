@@ -17,19 +17,24 @@ DEFAULT_LEASE_TTL_S = 90
 
 
 class RunLedger(Protocol):
-    async def try_claim(self, request: RunRequest) -> bool:
+    async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # 原子认领新 run：首个认领者持有 TTL 租约并返 True，重复广播去重返 False。
         ...
 
-    async def renew(self, run_id: str) -> None:
-        # 心跳续租：活跃 pod 周期性延长租约；也把暂停哨兵拉回活跃。
+    async def renew(self, run_id: str, owner: str) -> bool:
+        # 严格属主续租（fencing）：仅当前 owner 可续；False=所有权已被他处夺走，
+        # 调用方必须让渡本地执行（裂脑双跑收窄到一个心跳窗）。
+        ...
+
+    async def adopt(self, run_id: str, owner: str) -> None:
+        # 所有权交接（resume 收养/过期重拾的赢家）：置 owner 并恢复活跃租约。
         ...
 
     async def pause(self, run_id: str) -> None:
         # HITL 暂停：租约置哨兵，等人期间不参与过期重拾。
         ...
 
-    async def reclaim_expired(self) -> list[RunRequest]:
+    async def reclaim_expired(self, owner: str) -> list[RunRequest]:
         # 过期且无终态的 run 原子重认领并连同原始 request 返回，供从 checkpoint 续跑。
         ...
 
@@ -65,8 +70,12 @@ class RunLedger(Protocol):
         # steering 信箱：keep-first 幂等（message_id 重放不覆盖）；未认领 run 安全丢弃。
         ...
 
-    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
-        # 排空信箱（按到达序返回 (message_id, content)）：模型轮前由 SteeringMiddleware 消费。
+    async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
+        # 非破坏读信箱（按到达序返回 (message_id, content)）：模型轮前注入。
+        ...
+
+    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
+        # 确认消费：仅删除已随 checkpoint 落定的插话（下一轮见证原子性——排空绝不先于落盘）。
         ...
 
     async def put_tool_result(

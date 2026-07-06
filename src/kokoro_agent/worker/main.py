@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import functools
 import logging
 import os
@@ -15,6 +16,8 @@ from kokoro_agent.config import AppConfig
 from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
+from kokoro_agent.contract import Backend
+from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
@@ -40,6 +43,13 @@ def toolbox_from_config(config: AppConfig) -> ProcessToolbox:
         )
     )
     return build_toolbox(fetch_allow_private=config.web_tools.fetch_allow_private, search=search)
+
+
+def _sandbox_teardown(config: AppConfig) -> "Callable[[Backend, str | None], Awaitable[None]]":
+    async def teardown(kind: Backend, sandbox_id: str | None) -> None:
+        await teardown_backend_for_run(kind, config.sandbox, sandbox_id)
+
+    return teardown
 
 
 def _consumer_name() -> str:
@@ -81,6 +91,7 @@ async def _serve(config: AppConfig) -> None:
             recursion_limit=config.recursion_limit,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
+            sandbox_teardown=_sandbox_teardown(config),
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
         serve_task = asyncio.create_task(supervisor.serve(bus))

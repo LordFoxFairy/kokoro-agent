@@ -13,6 +13,7 @@ from langgraph.types import Command
 
 from kokoro_agent.contract import (
     CONSUMER_GROUP,
+    Backend,
     REQUESTS_STREAM,
     InboundMessage,
     RunCancel,
@@ -73,6 +74,8 @@ class RunSupervisor:
         recursion_limit: int = 100,
         events_ttl_s: int = 0,
         run_ttl_s: int = 0,
+        # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
+        sandbox_teardown: Callable[[Backend, str | None], Awaitable[None]] | None = None,
     ) -> None:
         self._build = agent_builder
         self._store = store
@@ -85,6 +88,7 @@ class RunSupervisor:
         # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
         self._events_ttl_s = events_ttl_s
         self._run_ttl_s = run_ttl_s
+        self._sandbox_teardown = sandbox_teardown
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
@@ -154,8 +158,15 @@ class RunSupervisor:
     async def heartbeat_once(self, bus: StreamProtocol) -> None:
         """一轮租约维护：为活跃 run 续租，再把他处过期的 run 重拾续跑。"""
         for run_id in tuple(self._tasks):
-            await self._store.renew(run_id)
-        for request in await self._store.reclaim_expired():
+            if await self._store.renew(run_id, self._consumer):
+                continue
+            # fencing（审计缺口：裂脑双跑）：所有权已被他处夺走——让渡本地执行，
+            # 不发终态（终态权归新属主）；双跑窗收窄到一个心跳周期。
+            task = self._tasks.get(run_id)
+            if task is not None and not task.done():
+                LOGGER.warning("fencing: lost lease ownership, yielding run_id=%s", run_id)
+                task.cancel()
+        for request in await self._store.reclaim_expired(self._consumer):
             if request.run_id in self._tasks:
                 # 自己仍在跑（仅心跳迟到被自己拾回）：不双起。
                 continue
@@ -180,7 +191,7 @@ class RunSupervisor:
 
     async def _on_request(self, bus: StreamProtocol, request: RunRequest) -> None:
         # 原子认领 + TTL 租约：多 pod 消费同一请求时仅首个认领者起 run。
-        if not await self._store.try_claim(request):
+        if not await self._store.try_claim(request, self._consumer):
             LOGGER.debug("skipping already-claimed run_id=%s", request.run_id)
             return
         await self._start_run(bus, request)
@@ -264,8 +275,8 @@ class RunSupervisor:
                 for resolution in nested_approved_payloads(ordered, frame):
                     await emitter.emit(resolution)
             command = Command(resume={"decisions": resume_command_decisions(ordered, frame)})
-        # 离开 HITL 暂停哨兵：恢复活跃租约，重新纳入心跳/过期重拾。
-        await self._store.renew(msg.run_id)
+        # 离开 HITL 暂停哨兵：所有权交接给收养 worker（fencing 属主随之更新），恢复活跃租约。
+        await self._store.adopt(msg.run_id, self._consumer)
         # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
         # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
         if await self._store.is_terminal(msg.run_id):
@@ -402,7 +413,18 @@ class RunSupervisor:
                 return
             raise
 
+    async def _teardown_sandbox(self, run_id: str) -> None:
+        if self._sandbox_teardown is None:
+            return
+        request = await self._store.get_request(run_id)
+        if request is None:
+            return
+        sandbox_id = await self._store.get_sandbox_id(run_id)
+        await self._sandbox_teardown(request.runtime.backend, sandbox_id)
+
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
+        # 终态统一漏斗：三路（自然完成/失败/取消）都经此——沙箱随终态回收。
+        await self._teardown_sandbox(run_id)
         if self._events_ttl_s > 0:
             # 事件流非权威（mongo session_events 才是回放真源）：终态后限期存活。
             await bus.expire(run_events_stream(run_id), self._events_ttl_s)

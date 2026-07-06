@@ -108,6 +108,7 @@ class FakeLedger:
         self.requests: dict[str, RunRequest] = {}
         self.terminals: set[str] = set()
         self.leases: dict[str, int | None] = {}
+        self.owners: dict[str, str] = {}
         self.renewed: list[str] = []
         self.paused_runs: list[str] = []
         self.expired: list[RunRequest] = []
@@ -119,26 +120,39 @@ class FakeLedger:
         self.terminal_at: dict[str, int] = {}
         self.clock_ms = 0
 
-    async def try_claim(self, request: RunRequest) -> bool:
+    async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
         if request.run_id in self.requests:
             return False
         self.requests[request.run_id] = request
         self.leases[request.run_id] = 1
+        self.owners[request.run_id] = owner
         return True
 
-    async def renew(self, run_id: str) -> None:
+    async def renew(self, run_id: str, owner: str = "test-consumer") -> bool:
         self.renewed.append(run_id)
+        if run_id in self.terminals:
+            return False
+        if self.owners.get(run_id, owner) != owner:
+            return False
+        self.leases[run_id] = 1
+        self.owners.setdefault(run_id, owner)
+        return True
+
+    async def adopt(self, run_id: str, owner: str = "test-consumer") -> None:
         if run_id not in self.terminals:
             self.leases[run_id] = 1
+            self.owners[run_id] = owner
 
     async def pause(self, run_id: str) -> None:
         self.paused_runs.append(run_id)
         if run_id not in self.terminals:
             self.leases[run_id] = None
 
-    async def reclaim_expired(self) -> list[RunRequest]:
+    async def reclaim_expired(self, owner: str = "test-consumer") -> list[RunRequest]:
         out = self.expired
         self.expired = []
+        for req in out:
+            self.owners[req.run_id] = owner
         return out
 
     async def list_paused(self) -> list[str]:
@@ -191,8 +205,14 @@ class FakeLedger:
         if all(mid != message_id for mid, _ in box):
             box.append((message_id, content))
 
-    async def drain_steers(self, run_id: str) -> list[tuple[str, str]]:
-        return self.steers.pop(run_id, [])
+    async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
+        return list(self.steers.get(run_id, []))
+
+    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
+        box = self.steers.get(run_id)
+        if box is None:
+            return
+        self.steers[run_id] = [(mid, c) for mid, c in box if mid not in set(message_ids)]
 
     async def put_tool_result(
         self, run_id: str, tool_id: str, result: str, is_error: bool

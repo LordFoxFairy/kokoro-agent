@@ -181,8 +181,9 @@ async def test_resume_with_pending_invokes_command() -> None:
     payload = agent.seen_payloads[0]
     assert isinstance(payload, Command)
     assert payload.resume == {"decisions": [{"type": "approve"}]}
-    # 离开暂停：resume 前续租。
-    assert "r2" in store.renewed
+    # 离开暂停：resume 前完成所有权交接（fencing 属主随收养更新）；
+    # 段末再次 interrupt 会重回暂停哨兵，故不断言租约数值。
+    assert store.owners.get("r2") == "test-consumer"
 
 
 async def test_resume_edit_and_reject_decision_shapes() -> None:
@@ -650,9 +651,9 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
 # ⑫ 复审 #1 竞态：多 worker 收养后 resume/cancel 分投两处——终态后绝不 spawn。
 async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
     class _CancelInWindowStore(FakeLedger):
-        async def renew(self, run_id: str) -> None:
-            await super().renew(run_id)
-            # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/renew 之后）完成终态。
+        async def adopt(self, run_id: str, owner: str = "test-consumer") -> None:
+            await super().adopt(run_id, owner)
+            # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/adopt 之后）完成终态。
             self.terminals.add(run_id)
 
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
@@ -745,3 +746,49 @@ async def test_steer_persist_failure_does_not_kill_healthy_run() -> None:
     )
     assert "r-any" not in store.terminals
     assert bus.kinds("r-any") == []
+
+
+async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
+    # 审计缺口③：终态统一漏斗回收沙箱——自然完成与 cancel 两路都要触发（kind+sandbox_id 透传）。
+    torn: list[tuple[str, str | None]] = []
+
+    async def teardown(kind: str, sandbox_id: str | None) -> None:
+        torn.append((kind, sandbox_id))
+
+    agent = FakeAgent(run=text_run("hi"))
+    bus = FakeBus()
+    store = FakeLedger()
+    sup = RunSupervisor(
+        agent_builder=_builder(agent),
+        store=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="test-consumer",
+        heartbeat_s=30.0,
+        sandbox_teardown=teardown,
+    )
+    store.sandbox_ids["t1"] = "sbx_123"
+    await sup.dispatch(bus, request("t1"))
+    await _drain(sup)
+    assert torn == [("state", "sbx_123")]
+
+
+async def test_fencing_yields_local_task_when_ownership_lost() -> None:
+    # 裂脑 fencing：心跳发现所有权被他处夺走 → 取消本地任务、不由本 worker 发终态。
+    gate = asyncio.Event()
+    agent = FakeAgent(run=text_run("slow"), gates=[gate])
+    bus = FakeBus()
+    sup, store = _supervisor(agent)
+    await sup.dispatch(bus, request("split"))
+    await asyncio.sleep(0)
+    assert "split" in store.owners
+    # 模拟他处重拾：所有权易主。
+    store.owners["split"] = "another-pod"
+    await sup.heartbeat_once(bus)
+    gate.set()
+    # 被 fencing 取消的任务以 CancelledError 收束：用生产 drain 面（asyncio.wait 不上抛）。
+    assert await sup.drain(timeout_s=2) is True
+    # 本 worker 让渡：未发任何终态事件（终态权归新属主）；run 也未被本地标终态。
+    assert all(kind != "run.completed" and kind != "run.failed" for kind in bus.kinds("split"))
+    assert "split" not in store.terminals

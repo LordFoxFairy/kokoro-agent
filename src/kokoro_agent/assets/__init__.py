@@ -6,7 +6,15 @@
 from __future__ import annotations
 
 from kokoro_agent.assets.personas import PersonaLibrary
-from kokoro_agent.assets.skills import SKILL_MAX_CHARS, SkillAssetError, SkillLibrary
+from kokoro_agent.assets.skills import (
+    MAIN_SKILLS_SOURCE,
+    SkillAssetError,
+    SkillLibrary,
+    SkillPackage,
+    build_packages,
+    parse_frontmatter,
+    subagent_skills_source,
+)
 from kokoro_agent.assets.source import (
     AssetSettings,
     AssetSource,
@@ -21,7 +29,8 @@ from kokoro_agent.assets.source import (
 )
 
 __all__ = [
-    "SKILL_MAX_CHARS",
+    "MAIN_SKILLS_SOURCE",
+    "subagent_skills_source",
     "AssetSettings",
     "AssetSource",
     "AssetSourceError",
@@ -32,6 +41,9 @@ __all__ = [
     "S3Assets",
     "SkillAssetError",
     "SkillLibrary",
+    "SkillPackage",
+    "build_packages",
+    "parse_frontmatter",
     "load_asset_libraries",
     "load_assets_config",
     "make_asset_source",

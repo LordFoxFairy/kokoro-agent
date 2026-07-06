@@ -40,7 +40,6 @@ def build_delegates(
         lambda spec: make_chat_model(deps.model, spec),
         chain,
         personas=deps.personas,
-        skills=deps.skills,
     )
     return Delegates(
         subagents=(general_purpose_subagent(chain), *catalog_defs, *wired),

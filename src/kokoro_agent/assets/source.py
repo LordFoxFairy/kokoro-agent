@@ -17,7 +17,7 @@ from mypy_boto3_s3 import S3Client
 from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter, model_validator
 
 from kokoro_agent.assets.personas import PersonaLibrary
-from kokoro_agent.assets.skills import SkillLibrary
+from kokoro_agent.assets.skills import SkillLibrary, build_packages
 
 
 class AssetSourceError(Exception):
@@ -78,7 +78,7 @@ class AssetSettings(BaseModel):
 
 
 class AssetSource(Protocol):
-    def load_skills(self) -> Mapping[str, str]: ...
+    def load_skills(self) -> Mapping[str, Mapping[str, str]]: ...
     def load_personas(self) -> Mapping[str, str]: ...
 
 
@@ -86,19 +86,24 @@ class LocalAssetSource:
     def __init__(self, config: LocalAssets) -> None:
         self._config = config
 
-    def load_skills(self) -> Mapping[str, str]:
-        """扫描 {skills_dir}/<name>/SKILL.md；缺 SKILL.md 的目录 fail-loud（半成品即配置错误）。"""
+    def load_skills(self) -> Mapping[str, Mapping[str, str]]:
+        """整包装载 {skills_dir}/<name>/**（文本文件）；缺 SKILL.md 的目录 fail-loud。"""
         root = _existing_dir(self._config.skills_dir, "skills")
         if root is None:
             return {}
-        contents: dict[str, str] = {}
+        contents: dict[str, dict[str, str]] = {}
         for child in sorted(root.iterdir()):
             if not child.is_dir() or child.name.startswith("."):
                 continue
-            skill_md = child / "SKILL.md"
-            if not skill_md.is_file():
+            files: dict[str, str] = {}
+            for file in sorted(child.rglob("*")):
+                if not file.is_file() or file.name.startswith("."):
+                    continue
+                rel = file.relative_to(child).as_posix()
+                files[rel] = file.read_text(encoding="utf-8")
+            if "SKILL.md" not in files:
                 raise AssetSourceError(f"skill dir {child} has no SKILL.md")
-            contents[child.name] = skill_md.read_text(encoding="utf-8")
+            contents[child.name] = files
         return contents
 
     def load_personas(self) -> Mapping[str, str]:
@@ -158,18 +163,23 @@ class S3AssetSource:
     def _read(self, key: str) -> str:
         return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read().decode("utf-8")
 
-    def load_skills(self) -> Mapping[str, str]:
+    def load_skills(self) -> Mapping[str, Mapping[str, str]]:
         prefix = f"{self._base}skills/"
-        keys = set(self._list(prefix))
-        names = {key[len(prefix) :].split("/", 1)[0] for key in keys if "/" in key[len(prefix) :]}
-        contents: dict[str, str] = {}
-        for name in sorted(names):
-            skill_key = f"{prefix}{name}/SKILL.md"
-            if skill_key not in keys:
+        keys = sorted(set(self._list(prefix)))
+        contents: dict[str, dict[str, str]] = {}
+        for key in keys:
+            rel = key[len(prefix) :]
+            if "/" not in rel:
+                continue
+            name, path = rel.split("/", 1)
+            if path == "":
+                continue
+            contents.setdefault(name, {})[path] = self._read(key)
+        for name, files in contents.items():
+            if "SKILL.md" not in files:
                 raise AssetSourceError(
                     f"skill {name!r} has no SKILL.md under s3://{self._bucket}/{prefix}"
                 )
-            contents[name] = self._read(skill_key)
         return contents
 
     def load_personas(self) -> Mapping[str, str]:
@@ -199,4 +209,7 @@ def make_asset_source(settings: AssetSettings) -> AssetSource:
 def load_asset_libraries(settings: AssetSettings) -> tuple[SkillLibrary, PersonaLibrary]:
     """worker 启动一次装载：skills/personas 同源快照入库。"""
     source = make_asset_source(settings)
-    return SkillLibrary(source.load_skills()), PersonaLibrary(source.load_personas())
+    return (
+        SkillLibrary(build_packages(source.load_skills())),
+        PersonaLibrary(source.load_personas()),
+    )

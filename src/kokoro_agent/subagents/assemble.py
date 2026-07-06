@@ -11,8 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.contract import ModelConfig, RunRequest
-from kokoro_agent.assets import PersonaLibrary, SkillLibrary
-from kokoro_agent.prompts import compose_system_prompt
+from kokoro_agent.assets import PersonaLibrary, subagent_skills_source
 from kokoro_agent.subagents.catalog import SubagentCatalog
 from kokoro_agent.tools.registry import KOKORO_TOOLS
 
@@ -38,7 +37,6 @@ def wire_subagents(
     make_model: Callable[[ModelConfig], BaseChatModel],
     guards: Sequence[AgentMiddleware] = (),
     personas: PersonaLibrary | None = None,
-    skills: SkillLibrary | None = None,
 ) -> list[SubAgent]:
     """wire 子代理 → deepagents 定义：tools 主 index 优先（复用政策实例）、注册表兜底
     （入口对偶性：成品降格为子代理时，其专属注册表工具可不在主 agent 工具集里），
@@ -49,13 +47,15 @@ def wire_subagents(
         persona = spec.system_prompt or (personas.get(spec.name) if personas else None)
         if persona is None:
             raise ValueError(f"subagent {spec.name!r} has no persona (inline or prompts/{spec.name}.md)")
-        # 入口对偶性：成品作下属仍带自己的技能包（与作主 agent 同一组合语义）。
-        skills_prompt = skills.render_prompt(spec.skills) if skills and spec.skills else None
         sub: SubAgent = {
             "name": spec.name,
             "description": spec.description,
-            "system_prompt": compose_system_prompt(persona, skills_prompt),
+            "system_prompt": persona,
         }
+        # 入口对偶性（Skills V2）：成品作下属仍带自己的技能包——工厂已按前缀供给进
+        # backend，这里挂原生 SkillsMiddleware 源路径（渐进披露，不再渲染文本）。
+        if spec.skills:
+            sub["skills"] = [subagent_skills_source(spec.name)]
         if spec.tools:
             resolved: list[BaseTool] = []
             unknown: list[str] = []

@@ -21,6 +21,7 @@ from kokoro_agent.contract import (
     RuntimeContext,
     SubagentDef,
 )
+from kokoro_agent.assets import SkillLibrary, SkillPackage
 from kokoro_agent.model.factory import make_chat_model
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -552,3 +553,99 @@ def test_wire_subagent_without_any_persona_fails_loud() -> None:
     )
     with pytest.raises(ValueError, match="no persona"):
         wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), personas=PersonaLibrary({}))
+
+
+# --- Skills V2 供给器（分发→供给→消费三层的中间层） ---
+
+
+def _skills_runtime(main: list[str], sub: list[str]) -> RuntimeConfig:
+    return RuntimeConfig(
+        agent_type="general",
+        model=ModelConfig(provider="anthropic", name="claude"),
+        tools=[], skills=main, mcp=[],
+        subagents=[
+            SubagentDef(name="poet", description="诗", system_prompt="诗人", tools=[], skills=sub),
+        ],
+        backend="state",
+        permissions=Permissions(
+            approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
+        ),
+    )
+
+
+def _library_two() -> SkillLibrary:
+    return SkillLibrary({
+        "style": SkillPackage(
+            name="style", description="风格",
+            files={"SKILL.md": "---\nname: style\ndescription: 风格\n---\n正文A", "helper.md": "辅"},
+        ),
+        "tone": SkillPackage(
+            name="tone", description="语气",
+            files={"SKILL.md": "---\nname: tone\ndescription: 语气\n---\n正文B"},
+        ),
+    })
+
+
+async def test_provision_state_backend_builds_initial_files_with_prefix_isolation() -> None:
+    from kokoro_agent.agents.general.skills import provision_skills
+    from kokoro_agent.assets import MAIN_SKILLS_SOURCE, subagent_skills_source
+
+    provisioned = await provision_skills(_skills_runtime(["style"], ["tone"]), _library_two(), None)
+    assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
+    paths = set(provisioned.initial_files)
+    # 主/子代理前缀隔离：各自只见各自授权包；整包（含辅助文件）供给。
+    assert f"{MAIN_SKILLS_SOURCE}style/SKILL.md" in paths
+    assert f"{MAIN_SKILLS_SOURCE}style/helper.md" in paths
+    assert f"{subagent_skills_source('poet')}tone/SKILL.md" in paths
+    assert not any(p.startswith(f"{MAIN_SKILLS_SOURCE}tone/") for p in paths)
+    # FileData 官方口径（content 字段）。
+    entry = provisioned.initial_files[f"{MAIN_SKILLS_SOURCE}style/SKILL.md"]
+    assert "正文A" in entry["content"]
+
+
+async def test_provision_real_backend_uploads_and_leaves_initial_empty() -> None:
+    from deepagents.backends.protocol import FileUploadResponse
+
+    from kokoro_agent.agents.general.skills import provision_skills
+    from kokoro_agent.assets import MAIN_SKILLS_SOURCE
+
+    uploaded: list[tuple[str, bytes]] = []
+
+    class FakeBackend:
+        def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+            uploaded.extend(files)
+            return []
+
+    provisioned = await provision_skills(_skills_runtime(["style"], []), _library_two(), FakeBackend())
+    assert provisioned.initial_files == {}
+    assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
+    assert [p for p, _ in uploaded] == [
+        f"{MAIN_SKILLS_SOURCE}style/SKILL.md",
+        f"{MAIN_SKILLS_SOURCE}style/helper.md",
+    ]
+
+
+async def test_provision_unknown_skill_fails_loud() -> None:
+    import pytest as _pytest
+
+    from kokoro_agent.agents.general.skills import provision_skills
+    from kokoro_agent.assets import SkillAssetError
+
+    with _pytest.raises(SkillAssetError, match="ghost"):
+        await provision_skills(_skills_runtime(["ghost"], []), _library_two(), None)
+
+
+def test_wire_subagent_carries_native_skills_source() -> None:
+    from kokoro_agent.assets import subagent_skills_source
+    from kokoro_agent.subagents import wire_subagents
+
+    request = RunRequest(
+        kind="run.request", run_id="r1", thread_id="c1",
+        input=RunInput(message_id="m1", content="hi"),
+        runtime=_skills_runtime([], ["tone"]),
+        context=RuntimeContext(namespace="ns", session_id="s1"),
+    )
+    subs = wire_subagents(request, {}, lambda spec: LocalFakeChatModel())
+    # SubAgent.skills 是 NotRequired 键：先证存在再取值（.get 在该 TypedDict 上类型面不全）。
+    assert "skills" in subs[0]
+    assert subs[0]["skills"] == [subagent_skills_source("poet")]

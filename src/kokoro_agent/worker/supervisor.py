@@ -193,11 +193,14 @@ class RunSupervisor:
             return
         scope = RunScope.of(request)
         # 身份乘 State 轴：随初始 input 进图并落 checkpoint（resume 不重供，run/state.py 法则）。
-        payload = {
+        payload: dict[str, object] = {
             # 稳定 id=message_id：TTL 重拾对已推进 checkpoint 重放原始 input 时，add_messages 按 id 去重。
             "messages": [HumanMessage(content=request.input.content, id=request.input.message_id)],
             "scope": scope.as_state(),
         }
+        if assembled.initial_files:
+            # Skills V2 state 档：授权包经官方 files 口径进初始状态（重拾重放幂等覆盖）。
+            payload["files"] = dict(assembled.initial_files)
         self._spawn_agent(
             bus,
             assembled,

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from kokoro_agent.agents.base import AssembleDeps
+from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.mcp.tools import load_mcp_tools
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools

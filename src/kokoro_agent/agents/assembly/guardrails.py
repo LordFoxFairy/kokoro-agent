@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from langchain.agents.middleware import AgentMiddleware
 
-from kokoro_agent.agents.base import AssembleDeps
+from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.middleware import (

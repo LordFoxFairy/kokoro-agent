@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from deepagents.middleware.subagents import SubAgent
 from langchain.agents.middleware import AgentMiddleware
 
-from kokoro_agent.agents.base import AssembleDeps
-from kokoro_agent.agents.general.toolset import Toolset
+from kokoro_agent.agents.deps import AssembleDeps
+from kokoro_agent.agents.assembly.toolset import Toolset
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent, wire_subagents

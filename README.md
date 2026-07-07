@@ -6,6 +6,8 @@ Kokoro 三仓里的**执行层**：DeepAgents + LangChain worker。以 consumer-
 
 > 全局架构与起栈见 [根 README](../README.md)；技术法律见根仓 `docs/kokoro-handbook/`；
 > 协议单源见根仓 `contract/`（本仓 `src/kokoro_agent/contract/` 是生成镜像，勿手改）。
+> 本仓正式文档入口见 [docs/README.md](docs/README.md)；历史本地草稿仍按 `.gitignore`
+> 留在未跟踪区，不作为权威依据。
 
 ## 目录（按执行链路组织）
 
@@ -54,6 +56,8 @@ KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
 含 reasoning 抽取/web 工具/Langfuse/熔断等全部开关的注释）。**模型档位、sandbox backend、
 skills/MCP/子代理预设、权限**全部由 kokoro-session 的 namespace profile 决定并经 wire 下发
 ——agent 只消费 RuntimeConfig，不自造政策。
+GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ownerId` /
+`workspaceId` 作为隔离辅助字段，也不要拼 `user:<id>` 这类业务前缀。
 
 ## 能力面（全部经 单测 → 跨栈 e2e → 真模型 验证）
 

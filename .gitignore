@@ -10,7 +10,10 @@ __pycache__/
 .jbeval/
 coverage/
 .coverage
-docs/
+docs/*
+!docs/README.md
+!docs/agent/
+!docs/agent/**
 tmp/
 *.egg-info/
 # sqlite checkpointer 落盘文件（KOKORO_CHECKPOINT_DB）

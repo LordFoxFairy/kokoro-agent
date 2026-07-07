@@ -253,6 +253,25 @@ def test_openai_reasoning_switch_selects_deepseek_wrapper() -> None:
     )
 
 
+def test_openai_reasoning_thinking_toggle() -> None:
+    # thinking=True→开 GLM 推理；False→关；None(不设)→不覆盖，随 GLM 默认（extra_body 直传 openai-compat wire）。
+    env = {
+        "KOKORO_OPENAI_REASONING": "1",
+        "OPENAI_API_KEY": "sk-test",
+        "OPENAI_BASE_URL": "https://example.com/v4",
+    }
+    config = AppConfig.from_env(env)
+    thinking = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5", thinking=True))
+    assert isinstance(thinking, ChatDeepSeek)
+    assert thinking.extra_body == {"thinking": {"type": "enabled"}}
+    fast = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5", thinking=False))
+    assert isinstance(fast, ChatDeepSeek)
+    assert fast.extra_body == {"thinking": {"type": "disabled"}}
+    default = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
+    assert isinstance(default, ChatDeepSeek)
+    assert default.extra_body is None
+
+
 def test_openai_reasoning_without_base_url_fails_loud() -> None:
     config = AppConfig.from_env({"KOKORO_OPENAI_REASONING": "1", "OPENAI_API_KEY": "sk-test"})
     with pytest.raises(ValueError, match="OPENAI_BASE_URL"):

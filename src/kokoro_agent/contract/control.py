@@ -28,6 +28,7 @@ class ModelConfig(StrictModel):
     provider: NonEmptyStr
     name: NonEmptyStr
     effort: NonEmptyStr | None = None
+    thinking: bool | None = None
 
 
 class McpServer(StrictModel):

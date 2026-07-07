@@ -44,11 +44,18 @@ def _build_openai_model(settings: ChatModelSettings, model: ModelConfig) -> Base
         if not settings.openai_base_url:
             raise ValueError("KOKORO_OPENAI_REASONING=1 requires OPENAI_BASE_URL")
         # ChatDeepSeek = openai-compat wire + 官方 reasoning_content→reasoning 块抽取。
+        # thinking 意图翻成 GLM 原生开关：显式 True/False 才覆盖，None=模型默认（GLM 默认开）。
+        extra_body = (
+            None
+            if model.thinking is None
+            else {"thinking": {"type": "enabled" if model.thinking else "disabled"}}
+        )
         return ChatDeepSeek(
             model=model.name,
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
             disable_streaming=settings.disable_streaming,
+            extra_body=extra_body,
         )
     # openai 接受 api_key=None / base_url=None，无需按 None 分支。
     return init_chat_model(

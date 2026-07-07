@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 from deepagents.backends.local_shell import LocalShellBackend
+from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
@@ -270,6 +272,41 @@ def test_openai_reasoning_thinking_toggle() -> None:
     default = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
     assert isinstance(default, ChatDeepSeek)
     assert default.extra_body is None
+
+
+def test_openai_plain_thinking_maps_reasoning_effort() -> None:
+    # 非 reasoning 的 openai：thinking 意图翻成 reasoning_effort（此前被静默丢弃）。
+    config = AppConfig.from_env({"OPENAI_API_KEY": "sk-test"})
+
+    def effort_of(thinking: bool | None, effort: str | None) -> object:
+        model = make_chat_model(
+            config.model,
+            ModelConfig(provider="openai", name="gpt-5", thinking=thinking, effort=effort),
+        )
+        assert isinstance(model, ChatOpenAI)
+        return model.reasoning_effort
+
+    assert effort_of(True, None) == "high"
+    assert effort_of(False, None) == "minimal"
+    # thinking 未设 → 回落 policy 的 effort（保持旧行为）。
+    assert effort_of(None, "medium") == "medium"
+
+
+def test_anthropic_thinking_maps_effort() -> None:
+    # 默认部署模型：thinking 意图翻成 anthropic effort（此前被静默丢弃 → UI 开关无效）。
+    config = AppConfig.from_env({"ANTHROPIC_API_KEY": "sk-ant-test"})
+
+    def effort_of(thinking: bool | None, effort: str | None) -> object:
+        model = make_chat_model(
+            config.model,
+            ModelConfig(provider="anthropic", name="claude-x", thinking=thinking, effort=effort),
+        )
+        assert isinstance(model, ChatAnthropic)
+        return model.effort
+
+    assert effort_of(True, None) == "high"
+    assert effort_of(False, None) == "low"
+    assert effort_of(None, "medium") == "medium"
 
 
 def test_openai_reasoning_without_base_url_fails_loud() -> None:

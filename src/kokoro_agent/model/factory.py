@@ -39,6 +39,17 @@ def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChat
     raise ValueError(f"unsupported model provider: {model.provider!r}")
 
 
+def _thinking_effort(model: ModelConfig, *, off: str) -> str | None:
+    """thinking 意图翻成推理力度档（True→high、False→off、None→回落 model.effort）。
+    GLM 走 extra_body 原生开关；openai-plain/anthropic 无该开关，用推理力度近似意图。
+    off 因 provider 而异：openai reasoning_effort 收 'minimal'，anthropic effort 用 'low'。"""
+    if model.thinking is True:
+        return "high"
+    if model.thinking is False:
+        return off
+    return model.effort
+
+
 def _build_openai_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
     if settings.openai_reasoning:
         if not settings.openai_base_url:
@@ -63,14 +74,15 @@ def _build_openai_model(settings: ChatModelSettings, model: ModelConfig) -> Base
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         disable_streaming=settings.disable_streaming,
-        reasoning_effort=model.effort,
+        reasoning_effort=_thinking_effort(model, off="minimal"),
     )
 
 
 def _build_anthropic_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
     # anthropic 推理参数名为 effort（非 reasoning_effort），混用会静默失效。
     # api_key=None 被 ChatAnthropic pydantic 拒绝，须省略以回退环境变量；base_url=None 可安全传入。
-    effort = model.effort or "low"
+    # thinking 意图翻成 effort 档（thinking 优先于 policy 的 model.effort），否则回落 low。
+    effort = _thinking_effort(model, off="low") or "low"
     model_spec = f"anthropic:{model.name}"
     if settings.anthropic_api_key is not None:
         return init_chat_model(

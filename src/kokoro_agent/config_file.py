@@ -1,8 +1,9 @@
 """统一配置树（ADR-010）：KOKORO_AGENT_CONFIG yaml 按域分组，env 只做覆盖与凭据。
 
-机制：yaml 树按映射表摊平成"虚拟 env 底座"，真 env 叠加其上——解析逻辑单源不变，
-优先级 env > yaml > 内置默认自然成立。映射表即配置 schema：未知键 fail-loud；
+机制：yaml 树按映射表摊平成"env 键→原生值"的底座字典（保留 bool/int/list 原生类型，
+不再 stringify）；真 env 叠加其上覆盖。映射表即配置 schema：未知键 fail-loud；
 凭据（api key/secret）故意不在表内——写进 yaml 即报错，强制走 env/secret 注入。
+原生值最终交 AppConfig（lax pydantic）统一 coerce，取代此前的手写 stringify/parse 往返。
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pydantic import TypeAdapter
 # 外部 yaml 是不可信字典：TypeAdapter 运行时洗净（str 键 + object 值收窄）。
 _TREE_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 
-# yaml 路径（点分域）→ env 键。加配置项 = Settings 字段 + 此表一行 + example 一行。
+# yaml 路径（点分域）→ env 键。加配置项 = AppConfig 字段 + 此表一行 + example 一行。
 _YAML_TO_ENV: dict[str, str] = {
     "model.disable_streaming": "KOKORO_DISABLE_STREAMING",
     "model.local_fake": "KOKORO_LOCAL_FAKE_MODEL",
@@ -24,14 +25,9 @@ _YAML_TO_ENV: dict[str, str] = {
     "model.openai_base_url": "OPENAI_BASE_URL",
     "model.openai_reasoning": "KOKORO_OPENAI_REASONING",
     "model.anthropic_base_url": "ANTHROPIC_BASE_URL",
-    "stream.backend": "KOKORO_STREAM_BACKEND",
     "stream.redis_url": "KOKORO_REDIS_URL",
     "mongo.url": "KOKORO_MONGO_URL",
     "mongo.db": "KOKORO_MONGO_DB",
-    "checkpoint.backend": "KOKORO_CHECKPOINT_BACKEND",
-    "checkpoint.sqlite_path": "KOKORO_CHECKPOINT_DB",
-    "ledger.backend": "KOKORO_LEDGER_BACKEND",
-    "ledger.sqlite_path": "KOKORO_LEDGER_DB",
     "ledger.lease_ttl_s": "KOKORO_LEASE_TTL_S",
     "sandbox.local_shell.root": "KOKORO_AGENT_LOCAL_SHELL_ROOT",
     "sandbox.local_shell.inherit_env": "KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV",
@@ -61,22 +57,7 @@ _YAML_TO_ENV: dict[str, str] = {
 }
 
 
-def _stringify(path: str, value: object) -> str:
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, (int, float, str)):
-        return str(value)
-    if isinstance(value, list):
-        # csv 语义键（如 subagents.builtin）：列表拼回既有 env 词汇。
-        items: list[object] = [*value]
-        strings = [item for item in items if isinstance(item, str)]
-        if len(strings) == len(items):
-            return ",".join(strings)
-        raise TypeError(f"config key {path!r} list items must all be strings")
-    raise TypeError(f"config key {path!r} has unsupported value type {type(value).__name__}")
-
-
-def _walk(prefix: str, node: object, out: dict[str, str]) -> None:
+def _walk(prefix: str, node: object, out: dict[str, object]) -> None:
     if isinstance(node, Mapping):
         for key, value in _TREE_ADAPTER.validate_python(node).items():
             _walk(f"{prefix}.{key}" if prefix else key, value, out)
@@ -90,11 +71,12 @@ def _walk(prefix: str, node: object, out: dict[str, str]) -> None:
         )
     if node is None:
         return
-    out[env_key] = _stringify(prefix, node)
+    # 原生值直接落座（bool/int/str/list）：类型收窄交 AppConfig 的 pydantic 统一处理。
+    out[env_key] = node
 
 
-def load_config_file_as_env(path: str | None) -> dict[str, str]:
-    """yaml 配置树 → 虚拟 env 底座；缺省（未配置文件）= 空底座，行为与纯 env 完全一致。"""
+def load_config_file(path: str | None) -> dict[str, object]:
+    """yaml 配置树 → env 键→原生值底座；缺省（未配置文件）= 空底座，行为与纯 env 完全一致。"""
     if path is None or path == "":
         return {}
     raw: object = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -102,14 +84,6 @@ def load_config_file_as_env(path: str | None) -> dict[str, str]:
         return {}
     if not isinstance(raw, Mapping):
         raise TypeError("KOKORO_AGENT_CONFIG must be a mapping of config domains")
-    out: dict[str, str] = {}
+    out: dict[str, object] = {}
     _walk("", _TREE_ADAPTER.validate_python(raw), out)
     return out
-
-
-def layer_config_sources(env: Mapping[str, str]) -> Mapping[str, str]:
-    """env > yaml：文件摊平作底座，真实 env 原样叠加覆盖。"""
-    file_env = load_config_file_as_env(env.get("KOKORO_AGENT_CONFIG"))
-    if not file_env:
-        return env
-    return {**file_env, **dict(env)}

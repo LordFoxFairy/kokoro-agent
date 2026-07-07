@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
@@ -52,8 +53,9 @@ from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamProtocol
+from kokoro_agent.streams.redis import RedisStream
 
 
 def _runtime_custom(_name: str) -> SubagentSource:
@@ -118,13 +120,13 @@ async def test_index_strictly_monotonic() -> None:
     assert indexes == list(range(len(indexes)))
 
 
-async def test_resumed_segment_does_not_repeat_run_started() -> None:
+async def test_resumed_segment_does_not_repeat_run_started(stream: RedisStream) -> None:
     # resume/重拾续段：index>0 时不再宣告 run.started（wire 噪音，真栈 dump 抓获）。
-    bus = MemoryStream()
-    first = RunEmitter(bus, "rn")
+    run_id = f"rn-{uuid4().hex}"
+    first = RunEmitter(stream, run_id)
     assert first.at_start is True
     await first.emit(RunStartedPayload())
-    resumed = await RunEmitter.attach(bus, "rn")
+    resumed = await RunEmitter.attach(stream, run_id)
     assert resumed.at_start is False
 
 
@@ -160,10 +162,10 @@ def test_tool_returned_truncated_absent_when_complete() -> None:
     assert long.model_dump(exclude_none=True)["truncated"] is True
 
 
-async def test_tool_events_inherit_awaiting_segment() -> None:
+async def test_tool_events_inherit_awaiting_segment(stream: RedisStream) -> None:
     # resume 后 invoked/returned 只有 tool_call_id 兜底段：必须继承 awaiting 的 AIMessage 段（真栈走查根治）。
-    bus = MemoryStream()
-    emitter = RunEmitter(bus, "rn")
+    run_id = f"rn-{uuid4().hex}"
+    emitter = RunEmitter(stream, run_id)
     await emitter.emit(
         ToolAwaitingApprovalPayload(
             segment_id="seg_msg",
@@ -180,7 +182,7 @@ async def test_tool_events_inherit_awaiting_segment() -> None:
         )
     )
     # 模拟 resume：从流重建发射器（归属映射经历史回放恢复）。
-    resumed = await RunEmitter.attach(bus, "rn")
+    resumed = await RunEmitter.attach(stream, run_id)
     await resumed.emit(ToolInvokedPayload(segment_id="t1", tool_id="t1", name="write_file", args={}))
     await resumed.emit(
         ToolReturnedPayload(
@@ -188,7 +190,7 @@ async def test_tool_events_inherit_awaiting_segment() -> None:
             rejected=None, reject_reason=None, responded=None, summary=None,
         )
     )
-    items = await bus.read_all("kokoro:run:rn:events")
+    items = await stream.read_all(run_events_stream(run_id))
     segs: list[str] = []
     for item in items[-2:]:
         payload = item.event["payload"]
@@ -199,10 +201,10 @@ async def test_tool_events_inherit_awaiting_segment() -> None:
     assert segs == ["seg_msg", "seg_msg"]
 
 
-async def test_optional_none_fields_never_serialize_as_null() -> None:
+async def test_optional_none_fields_never_serialize_as_null(stream: RedisStream) -> None:
     # 契约 optional 字段的 None 即缺席：null 上 wire 会被 session zod .optional() 拒收（跨栈 e2e 抓获的真实缺陷）。
-    bus = MemoryStream()
-    emitter = RunEmitter(bus, "rn")
+    run_id = f"rn-{uuid4().hex}"
+    emitter = RunEmitter(stream, run_id)
     await emitter.emit(
         ToolAwaitingApprovalPayload(
             segment_id="s1",
@@ -218,7 +220,7 @@ async def test_optional_none_fields_never_serialize_as_null() -> None:
             pending_tool_ids=["t1"],
         )
     )
-    items = await bus.read_all("kokoro:run:rn:events")
+    items = await stream.read_all(run_events_stream(run_id))
     payload = items[-1].event["payload"]
     assert isinstance(payload, dict)
     assert "risk" not in payload and "input_schema" not in payload
@@ -575,7 +577,7 @@ class _LoopingModel(LocalFakeChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
-async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
+async def test_runaway_loop_hits_recursion_limit_and_fails_loud(stream: RedisStream) -> None:
     noop = StructuredTool(
         name="noop", description="no-op", args_schema=_NoopArgs, func=lambda: "ok"
     )
@@ -588,13 +590,13 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
         permissions=[],
         interrupt_on={},
     )
-    bus = MemoryStream()
+    run_id = f"rloop-{uuid4().hex}"
 
     async def claim() -> bool:
         return True
 
     terminal = await invoke_once(
-        RunEmitter(bus, "rloop"),
+        RunEmitter(stream, run_id),
         agent,
         "tloop",
         {"messages": [HumanMessage(content="go")]},
@@ -605,7 +607,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud() -> None:
         recursion_limit=8,
     )
     assert terminal is True
-    events = [item.event for item in await bus.read_all("kokoro:run:rloop:events")]
+    events = [item.event for item in await stream.read_all(run_events_stream(run_id))]
     assert events[-1]["kind"] == "run.failed"
     payload = events[-1]["payload"]
     assert isinstance(payload, dict)

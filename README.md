@@ -34,9 +34,9 @@ src/kokoro_agent/
 ├── mcp/              langchain-mcp-adapters 接入：白名单过滤 + mcp__{server}__{tool} 命名
 ├── sandbox/          执行 backend 工厂（state / local_shell；e2b 待落地 fail-loud）
 ├── streams/          StreamProtocol（cursor 不透明）+ redis（XADD maxlen、XREADGROUP/XACK、
-│                     XAUTOCLAIM 死信收养）/ memory
+│                     XAUTOCLAIM 死信收养）
 ├── storage/          RunStateStore（TTL 租约/暂停哨兵/终态原子认领/审核结果 keep-first，
-│                     sqlite/mongo）+ checkpointer 工厂 + 记忆 store 工厂（随 checkpoint 对齐）
+│                     mongo）+ checkpointer 工厂 + 记忆 store 工厂（随 checkpoint 对齐）
 └── observability.py  Langfuse trace config（三 env 齐备才开，缺任一静默关闭）
 ```
 
@@ -45,7 +45,8 @@ src/kokoro_agent/
 ```bash
 uv sync
 # 本地假模型（凭据无关，离线可跑）：
-KOKORO_STREAM_BACKEND=redis KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
+KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
+  KOKORO_MONGO_URL=mongodb://127.0.0.1:27017 KOKORO_MONGO_DB=kokoro \
   KOKORO_LOCAL_FAKE_MODEL=1 uv run kokoro-agent-worker
 ```
 

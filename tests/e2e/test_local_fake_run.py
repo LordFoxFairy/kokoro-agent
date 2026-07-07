@@ -1,14 +1,13 @@
-"""LocalFake 全链路 e2e：真实 DeepAgents 循环 + memory 传输 + sqlite 状态，wire 全程契约校验。"""
+"""LocalFake 全链路 e2e：真实 DeepAgents 循环 + redis 传输 + mongo 状态，wire 全程契约校验。"""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from pathlib import Path
+from uuid import uuid4
 
-import aiosqlite
 from langchain_core.messages import AIMessage
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import JsonValue
 
 from kokoro_agent.contract import (
@@ -35,8 +34,8 @@ from langchain.agents.middleware import AgentMiddleware
 from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 from kokoro_agent.sandbox import build_filesystem_permissions
-from kokoro_agent.storage.sqlite import SqliteLedger
-from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.permissions import build_interrupt_on
@@ -77,9 +76,8 @@ def _request(
 
 
 def _build_supervisor(
-    store: SqliteLedger, script: Sequence[AIMessage] | None = None
+    store: RunLedger, saver: BaseCheckpointSaver[str], script: Sequence[AIMessage] | None = None
 ) -> RunSupervisor:
-    saver = InMemorySaver()
     catalog = build_catalog(None)
 
     async def build(request: RunRequest) -> AssembledAgent:
@@ -116,12 +114,12 @@ def _build_supervisor(
     )
 
 
-async def _read_kinds(bus: MemoryStream, run_id: str) -> list[str]:
+async def _read_kinds(bus: RedisStream, run_id: str) -> list[str]:
     items = await bus.read_all(run_events_stream(run_id))
     return [str(item.event.get("kind")) for item in items]
 
 
-async def _wait_for(bus: MemoryStream, run_id: str, kinds: set[str], timeout: float = 30.0) -> None:
+async def _wait_for(bus: RedisStream, run_id: str, kinds: set[str], timeout: float = 30.0) -> None:
     async def _poll() -> None:
         while not (set(await _read_kinds(bus, run_id)) & kinds):
             await asyncio.sleep(0.01)
@@ -129,52 +127,55 @@ async def _wait_for(bus: MemoryStream, run_id: str, kinds: set[str], timeout: fl
     await asyncio.wait_for(_poll(), timeout=timeout)
 
 
-async def test_local_fake_full_run_over_serve_loop(tmp_path: Path) -> None:
-    bus = MemoryStream()
-    run = _request("e2e-run-1")
-    async with aiosqlite.connect(str(tmp_path / "e2e.db")) as db:
-        store = SqliteLedger(db, ttl_ms=90_000)
-        await store.setup()
-        supervisor = _build_supervisor(store)
+async def test_local_fake_full_run_over_serve_loop(
+    stream: RedisStream, ledger: RunLedger, checkpointer: BaseCheckpointSaver[str]
+) -> None:
+    bus = stream
+    store = ledger
+    # 共享 redis 隔离：清空全局请求流（连同 consumer group），本测独占。
+    await bus.delete(REQUESTS_STREAM)
+    run = _request(f"e2e-run-{uuid4().hex[:8]}")
+    supervisor = _build_supervisor(store, checkpointer)
 
-        # 走真实 serve 循环：请求经 consumer-group 消费 + ack，非直调 dispatch。
-        serve_task = asyncio.create_task(supervisor.serve(bus))
-        await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
+    # 走真实 serve 循环：请求经 consumer-group 消费 + ack，非直调 dispatch。
+    serve_task = asyncio.create_task(supervisor.serve(bus))
+    await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
 
-        await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
-        serve_task.cancel()
-        try:
-            await serve_task
-        except asyncio.CancelledError:
-            pass
+    await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
+    serve_task.cancel()
+    try:
+        await serve_task
+    except asyncio.CancelledError:
+        pass
 
-        items = await bus.read_all(run_events_stream(run.run_id))
-        # 每帧 wire 都过契约门（strict 判别联合）：非法帧根本发不出来。
-        events = [agent_event_adapter.validate_python(item.event) for item in items]
-        kinds = [event.kind for event in events]
+    items = await bus.read_all(run_events_stream(run.run_id))
+    # 每帧 wire 都过契约门（strict 判别联合）：非法帧根本发不出来。
+    events = [agent_event_adapter.validate_python(item.event) for item in items]
+    kinds = [event.kind for event in events]
 
-        assert kinds[0] == "run.started"
-        assert kinds[-1] == "run.completed"
-        assert "todo.updated" in kinds
-        assert "message.delta" in kinds
-        assert "message.completed" in kinds
-        # per-run index 从 0 起严格连续单调：event_id 幂等链的根基。
-        assert [event.index for event in events] == list(range(len(events)))
-        assert all(event.run_id == run.run_id for event in events)
+    assert kinds[0] == "run.started"
+    assert kinds[-1] == "run.completed"
+    assert "todo.updated" in kinds
+    assert "message.delta" in kinds
+    assert "message.completed" in kinds
+    # per-run index 从 0 起严格连续单调：event_id 幂等链的根基。
+    assert [event.index for event in events] == list(range(len(events)))
+    assert all(event.run_id == run.run_id for event in events)
 
-        # 请求已被 ack（consumer-group 语义），终态已被认领。
-        assert len(bus.acked(REQUESTS_STREAM, CONSUMER_GROUP)) == 1
-        assert await store.is_terminal(run.run_id) is True
+    # 请求已被 ack（consumer-group 语义）：恰一条入流且 PEL 无残留（无重投），终态已被认领。
+    assert len(await bus.read_all(REQUESTS_STREAM)) == 1
+    assert await bus.pending(REQUESTS_STREAM, CONSUMER_GROUP) == 0
+    assert await store.is_terminal(run.run_id) is True
 
-        # 幂等：同一 run.request 再来一遍，不产生任何新事件。
-        before = len(items)
-        await supervisor.dispatch(bus, run)
-        for task in tuple(supervisor.tasks.values()):
-            await task
-        assert len(await bus.read_all(run_events_stream(run.run_id))) == before
+    # 幂等：同一 run.request 再来一遍，不产生任何新事件。
+    before = len(items)
+    await supervisor.dispatch(bus, run)
+    for task in tuple(supervisor.tasks.values()):
+        await task
+    assert len(await bus.read_all(run_events_stream(run.run_id))) == before
 
 
-async def _awaiting_frames(bus: MemoryStream, run_id: str) -> list[dict[str, JsonValue]]:
+async def _awaiting_frames(bus: RedisStream, run_id: str) -> list[dict[str, JsonValue]]:
     out: list[dict[str, JsonValue]] = []
     for item in await bus.read_all(run_events_stream(run_id)):
         if item.event.get("kind") == "tool.awaiting_approval":
@@ -185,7 +186,7 @@ async def _awaiting_frames(bus: MemoryStream, run_id: str) -> list[dict[str, Jso
 
 
 async def _wait_awaiting(
-    bus: MemoryStream, run_id: str, kind: str, timeout: float = 30.0
+    bus: RedisStream, run_id: str, kind: str, timeout: float = 30.0
 ) -> dict[str, JsonValue]:
     async def _poll() -> dict[str, JsonValue]:
         while True:
@@ -202,7 +203,7 @@ async def _wait_awaiting(
 
 
 async def _publish_resume(
-    bus: MemoryStream, run: RunRequest, decision: dict[str, JsonValue]
+    bus: RedisStream, run: RunRequest, decision: dict[str, JsonValue]
 ) -> None:
     event: dict[str, JsonValue] = {
         "kind": "run.resume",
@@ -213,90 +214,96 @@ async def _publish_resume(
     await bus.publish(run_control_stream(run.run_id), event, maxlen=RUN_CONTROL_MAXLEN)
 
 
-async def test_local_fake_hitl_ask_user_then_approval_over_control_stream(tmp_path: Path) -> None:
-    bus = MemoryStream()
-    run = _request("e2e-hitl-1", approval_tools=("write_file",), filesystem="workspace_write")
-    async with aiosqlite.connect(str(tmp_path / "hitl.db")) as db:
-        store = SqliteLedger(db, ttl_ms=90_000)
-        await store.setup()
-        supervisor = _build_supervisor(store, script=hitl_script())
-        serve_task = asyncio.create_task(supervisor.serve(bus))
-        await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
+async def test_local_fake_hitl_ask_user_then_approval_over_control_stream(
+    stream: RedisStream, ledger: RunLedger, checkpointer: BaseCheckpointSaver[str]
+) -> None:
+    bus = stream
+    store = ledger
+    await bus.delete(REQUESTS_STREAM)
+    run = _request(
+        f"e2e-hitl-{uuid4().hex[:8]}", approval_tools=("write_file",), filesystem="workspace_write"
+    )
+    supervisor = _build_supervisor(store, checkpointer, script=hitl_script())
+    serve_task = asyncio.create_task(supervisor.serve(bus))
+    await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
 
-        # ① ask_user 暂停 → 人工作答（respond）从 control 流回灌。
-        ask = await _wait_awaiting(bus, run.run_id, "ask_user_question")
-        respond: dict[str, JsonValue] = {
-            "type": "respond",
-            "tool_id": str(ask["tool_id"]),
-            "response": "中文",
-        }
-        await _publish_resume(bus, run, respond)
+    # ① ask_user 暂停 → 人工作答（respond）从 control 流回灌。
+    ask = await _wait_awaiting(bus, run.run_id, "ask_user_question")
+    respond: dict[str, JsonValue] = {
+        "type": "respond",
+        "tool_id": str(ask["tool_id"]),
+        "response": "中文",
+    }
+    await _publish_resume(bus, run, respond)
 
-        # ② write_file 审批暂停 → approve 从 control 流回灌。
-        approval = await _wait_awaiting(bus, run.run_id, "tool_approval")
-        approve: dict[str, JsonValue] = {"type": "approve", "tool_id": str(approval["tool_id"])}
-        await _publish_resume(bus, run, approve)
+    # ② write_file 审批暂停 → approve 从 control 流回灌。
+    approval = await _wait_awaiting(bus, run.run_id, "tool_approval")
+    approve: dict[str, JsonValue] = {"type": "approve", "tool_id": str(approval["tool_id"])}
+    await _publish_resume(bus, run, approve)
 
-        # ③ 正常文本流收束到终态。
-        await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
-        serve_task.cancel()
-        try:
-            await serve_task
-        except asyncio.CancelledError:
-            pass
+    # ③ 正常文本流收束到终态。
+    await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
+    serve_task.cancel()
+    try:
+        await serve_task
+    except asyncio.CancelledError:
+        pass
 
-        kinds = await _read_kinds(bus, run.run_id)
-        assert kinds[-1] == "run.completed"
-        # 两次暂停都发过 awaiting；write_file 审批后真实执行并返回。
-        assert kinds.count("tool.awaiting_approval") == 2
-        assert "tool.returned" in kinds
-        assert await store.is_terminal(run.run_id) is True
+    kinds = await _read_kinds(bus, run.run_id)
+    assert kinds[-1] == "run.completed"
+    # 两次暂停都发过 awaiting；write_file 审批后真实执行并返回。
+    assert kinds.count("tool.awaiting_approval") == 2
+    assert "tool.returned" in kinds
+    assert await store.is_terminal(run.run_id) is True
 
 
-async def test_local_fake_result_review_over_control_stream(tmp_path: Path) -> None:
+async def test_local_fake_result_review_over_control_stream(
+    stream: RedisStream, ledger: RunLedger, checkpointer: BaseCheckpointSaver[str]
+) -> None:
     """结果审核全链：write_file 配 review → 执行后暂停带结果 → respond 替换 → 回流为替换文本。"""
-    bus = MemoryStream()
-    run = _request("e2e-review-1", review_tools=("write_file",), filesystem="workspace_write")
-    async with aiosqlite.connect(str(tmp_path / "review.db")) as db:
-        store = SqliteLedger(db, ttl_ms=90_000)
-        await store.setup()
-        # 脚本去掉 ask_user 帧：只走 write_file（审核）+ 终帧文本。
-        script = [turn for turn in hitl_script() if not _calls_tool(turn, "ask_user_question")]
-        supervisor = _build_supervisor(store, script=script)
-        serve_task = asyncio.create_task(supervisor.serve(bus))
-        await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
+    bus = stream
+    store = ledger
+    await bus.delete(REQUESTS_STREAM)
+    run = _request(
+        f"e2e-review-{uuid4().hex[:8]}", review_tools=("write_file",), filesystem="workspace_write"
+    )
+    # 脚本去掉 ask_user 帧：只走 write_file（审核）+ 终帧文本。
+    script = [turn for turn in hitl_script() if not _calls_tool(turn, "ask_user_question")]
+    supervisor = _build_supervisor(store, checkpointer, script=script)
+    serve_task = asyncio.create_task(supervisor.serve(bus))
+    await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
 
-        # ① 工具执行后暂停：awaiting 带真实结果，决策集为审核三元组。
-        awaiting = await _wait_awaiting(bus, run.run_id, "result_review")
-        assert awaiting["name"] == "write_file"
-        assert isinstance(awaiting["result"], str) and awaiting["result"]
-        assert awaiting["allowed_decisions"] == ["approve", "respond", "reject"]
-        # 双执行防护实证：首跑结果 keep-first 已落盘。
-        cached = await store.get_tool_result(run.run_id, str(awaiting["tool_id"]))
-        assert cached is not None and cached[0] == awaiting["result"]
+    # ① 工具执行后暂停：awaiting 带真实结果，决策集为审核三元组。
+    awaiting = await _wait_awaiting(bus, run.run_id, "result_review")
+    assert awaiting["name"] == "write_file"
+    assert isinstance(awaiting["result"], str) and awaiting["result"]
+    assert awaiting["allowed_decisions"] == ["approve", "respond", "reject"]
+    # 双执行防护实证：首跑结果 keep-first 已落盘。
+    cached = await store.get_tool_result(run.run_id, str(awaiting["tool_id"]))
+    assert cached is not None and cached[0] == awaiting["result"]
 
-        # ② respond 替换结果 → 重入命中缓存不重跑工具 → 回流为替换文本。
-        respond: dict[str, JsonValue] = {
-            "type": "respond",
-            "tool_id": str(awaiting["tool_id"]),
-            "response": "curated result",
-        }
-        await _publish_resume(bus, run, respond)
-        await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
-        serve_task.cancel()
-        try:
-            await serve_task
-        except asyncio.CancelledError:
-            pass
+    # ② respond 替换结果 → 重入命中缓存不重跑工具 → 回流为替换文本。
+    respond: dict[str, JsonValue] = {
+        "type": "respond",
+        "tool_id": str(awaiting["tool_id"]),
+        "response": "curated result",
+    }
+    await _publish_resume(bus, run, respond)
+    await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
+    serve_task.cancel()
+    try:
+        await serve_task
+    except asyncio.CancelledError:
+        pass
 
-        kinds = await _read_kinds(bus, run.run_id)
-        assert kinds[-1] == "run.completed"
-        # raw returned 被抑制：wire 上唯一的 returned 是裁决直发，且在 awaiting 之后。
-        assert kinds.count("tool.returned") == 1
-        assert kinds.index("tool.awaiting_approval") < kinds.index("tool.returned")
-        returned = await _tool_returned_payload(bus, run.run_id, str(awaiting["tool_id"]))
-        assert returned["result"] == "curated result"
-        assert returned["responded"] is True
+    kinds = await _read_kinds(bus, run.run_id)
+    assert kinds[-1] == "run.completed"
+    # raw returned 被抑制：wire 上唯一的 returned 是裁决直发，且在 awaiting 之后。
+    assert kinds.count("tool.returned") == 1
+    assert kinds.index("tool.awaiting_approval") < kinds.index("tool.returned")
+    returned = await _tool_returned_payload(bus, run.run_id, str(awaiting["tool_id"]))
+    assert returned["result"] == "curated result"
+    assert returned["responded"] is True
 
 
 def _calls_tool(turn: AIMessage, name: str) -> bool:
@@ -304,7 +311,7 @@ def _calls_tool(turn: AIMessage, name: str) -> bool:
 
 
 async def _tool_returned_payload(
-    bus: MemoryStream, run_id: str, tool_id: str
+    bus: RedisStream, run_id: str, tool_id: str
 ) -> dict[str, JsonValue]:
     for item in await bus.read_all(run_events_stream(run_id)):
         if item.event.get("kind") != "tool.returned":

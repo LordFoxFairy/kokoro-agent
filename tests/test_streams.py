@@ -1,4 +1,4 @@
-"""传输层规格：memory/redis 同语义——publish 裁剪、group 单投递、ack、断线退避、边界洗净。"""
+"""传输层规格：redis（唯一真后端）——publish 裁剪、group 单投递、ack、断线退避、边界洗净。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from collections.abc import AsyncIterator
 import pytest
 from pydantic import JsonValue, ValidationError
 
-from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol, validate_event
 from kokoro_agent.streams.redis import RedisStream, parse_xread_response
 
@@ -32,80 +31,18 @@ async def _collect(
     return items
 
 
-# --- memory ---
+async def _redis_required() -> RedisStream:
+    """真 redis 前置：不可达即 fail-loud（不 skip、不灌绿数）。"""
+    port = RedisStream(REDIS_URL, block_ms=100)
+    try:
+        await asyncio.wait_for(port.read_all("kokoro-test-ping"), timeout=1.0)
+    except Exception as exc:  # noqa: BLE001 — 服务缺失显式炸
+        await port.aclose()
+        raise RuntimeError(f"redis required but unreachable at {REDIS_URL}: {exc}") from exc
+    return port
 
 
-async def test_memory_publish_read_all_round_trip() -> None:
-    stream = MemoryStream()
-    await stream.publish("s", {"a": 1}, maxlen=10)
-    await stream.publish("s", {"b": {"nested": [1, 2]}}, maxlen=10)
-    items = await stream.read_all("s")
-    assert [item.event for item in items] == [{"a": 1}, {"b": {"nested": [1, 2]}}]
-    assert items[0].cursor < items[1].cursor
-
-
-async def test_memory_maxlen_trims_oldest() -> None:
-    stream = MemoryStream()
-    for i in range(5):
-        await stream.publish("s", {"i": i}, maxlen=3)
-    items = await stream.read_all("s")
-    assert [item.event["i"] for item in items] == [2, 3, 4]
-
-
-async def test_memory_group_delivers_each_message_once() -> None:
-    stream = MemoryStream()
-    for i in range(4):
-        await stream.publish("s", {"i": i}, maxlen=10)
-    # 同 group 两个 consumer 共享游标：合计恰好各消息一次。
-    sub_a = stream.subscribe("s", group="g", consumer="a")
-    got_a = await _collect(sub_a, 2)
-    sub_b = stream.subscribe("s", group="g", consumer="b")
-    got_b = await _collect(sub_b, 2)
-    seen = [item.event["i"] for item in got_a + got_b]
-    assert sorted(seen, key=lambda value: str(value)) == [0, 1, 2, 3]
-
-
-async def test_memory_two_groups_each_get_all() -> None:
-    stream = MemoryStream()
-    await stream.publish("s", {"x": 1}, maxlen=10)
-    got_g1 = await _collect(stream.subscribe("s", group="g1", consumer="a"), 1)
-    got_g2 = await _collect(stream.subscribe("s", group="g2", consumer="a"), 1)
-    assert got_g1[0].event == got_g2[0].event == {"x": 1}
-
-
-async def test_memory_subscribe_wakes_on_late_publish() -> None:
-    stream = MemoryStream()
-
-    async def _late() -> None:
-        await asyncio.sleep(0.01)
-        await stream.publish("s", {"late": True}, maxlen=10)
-
-    task = asyncio.create_task(_late())
-    got = await _collect(stream.subscribe("s", group="g", consumer="a"), 1)
-    await task
-    assert got[0].event == {"late": True}
-
-
-async def test_memory_ack_recorded() -> None:
-    stream = MemoryStream()
-    item = await stream.publish("s", {"x": 1}, maxlen=10)
-    await stream.ack("s", "g", item.cursor)
-    assert stream.acked("s", "g") == frozenset({item.cursor})
-
-
-async def test_memory_events_isolated_between_items() -> None:
-    stream = MemoryStream()
-    payload: dict[str, JsonValue] = {"nested": {"n": 1}}
-    returned = await stream.publish("s", payload, maxlen=10)
-    nested = returned.event["nested"]
-    assert isinstance(nested, dict)
-    nested["n"] = 999
-    stored = (await stream.read_all("s"))[0]
-    assert stored.event == {"nested": {"n": 1}}
-
-
-def test_memory_satisfies_protocol() -> None:
-    assert isinstance(MemoryStream(), StreamProtocol)
+# --- 边界洗净（无需 redis） ---
 
 
 @pytest.mark.parametrize("bad", [object(), {"k": object()}, {"k": {1, 2}}, [1, 2], "str", None])
@@ -113,15 +50,6 @@ def test_event_boundary_rejects_non_json(bad: object) -> None:
     # publish 的入参洗净单点：非 JSON 载荷在边界即 ValidationError，绝不入流。
     with pytest.raises(ValidationError):
         validate_event(bad)
-
-
-@pytest.mark.parametrize(
-    "empty", [{}, {"empty_str": ""}, {"empty_list": []}, {"empty_dict": {}}, {"null": None}],
-)
-async def test_publish_accepts_json_edge_values(empty: dict[str, JsonValue]) -> None:
-    stream = MemoryStream()
-    item = await stream.publish("s", empty, maxlen=10)
-    assert item.event == empty
 
 
 # --- parse_xread_response（无需 redis） ---
@@ -153,21 +81,28 @@ def test_parse_xread_malformed_rejected(raw: object) -> None:
         parse_xread_response(raw)
 
 
-# --- redis（不可达即显式 skip） ---
+# --- redis（不可达即 fail-loud） ---
 
 
-async def _redis_or_skip() -> RedisStream:
-    port = RedisStream(REDIS_URL, block_ms=100)
+def test_redis_satisfies_protocol() -> None:
+    assert isinstance(RedisStream(REDIS_URL), StreamProtocol)
+
+
+@pytest.mark.parametrize(
+    "empty", [{}, {"empty_str": ""}, {"empty_list": []}, {"empty_dict": {}}, {"null": None}],
+)
+async def test_publish_accepts_json_edge_values(empty: dict[str, JsonValue]) -> None:
+    port = await _redis_required()
+    stream = f"kokoro-test:{uuid.uuid4().hex}"
     try:
-        await asyncio.wait_for(port.read_all("kokoro-test-ping"), timeout=1.0)
-    except Exception:  # noqa: BLE001 — 网络/服务不可达统一视为 skip 条件
+        item = await port.publish(stream, empty, maxlen=10)
+        assert item.event == empty
+    finally:
         await port.aclose()
-        pytest.skip(f"no redis reachable at {REDIS_URL}")
-    return port
 
 
 async def test_redis_round_trip_and_group_ack() -> None:
-    port = await _redis_or_skip()
+    port = await _redis_required()
     stream = f"kokoro-test:{uuid.uuid4().hex}"
     try:
         published = await port.publish(stream, {"n": 1, "nested": {"深": "值"}}, maxlen=100)
@@ -189,7 +124,7 @@ async def test_redis_round_trip_and_group_ack() -> None:
 
 async def test_redis_autoclaim_adopts_stale_pending() -> None:
     # 死信收养：消费者 A 读到未 ack 即"崩溃"，空转的消费者 B 按 idle 阈值收养该 PEL 条目。
-    port_a = await _redis_or_skip()
+    port_a = await _redis_required()
     port_b = RedisStream(REDIS_URL, block_ms=100, autoclaim_idle_ms=50)
     stream = f"kokoro-test:{uuid.uuid4().hex}"
     try:
@@ -206,7 +141,7 @@ async def test_redis_autoclaim_adopts_stale_pending() -> None:
 
 
 async def test_redis_publish_respects_maxlen() -> None:
-    port = await _redis_or_skip()
+    port = await _redis_required()
     stream = f"kokoro-test:{uuid.uuid4().hex}"
     try:
         # approximate trim 不保证精确长度，但公开 API 必须可用且不增长到无限。

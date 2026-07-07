@@ -7,20 +7,18 @@ from pathlib import Path
 import pytest
 
 from kokoro_agent.config import AppConfig
-from kokoro_agent.config_file import load_config_file_as_env
+from kokoro_agent.config_file import load_config_file
 
 FULL_TREE = """\
 model:
   local_fake: true
   local_fake_script: hitl
 stream:
-  backend: redis
   redis_url: redis://127.0.0.1:6379/5
 mongo:
   url: mongodb://127.0.0.1:27017
   db: kokoro_tree
 ledger:
-  backend: mongo
   lease_ttl_s: 90
 sandbox:
   local_shell:
@@ -56,8 +54,8 @@ class TestConfigTree:
         config = _config_from(tmp_path, FULL_TREE)
         assert config.model.local_fake is True
         assert config.model.local_fake_script == "hitl"
-        assert (config.stream.backend, config.stream.redis_url) == ("redis", "redis://127.0.0.1:6379/5")
-        assert (config.ledger.backend, config.ledger.lease_ttl_ms) == ("mongo", 90_000)
+        assert config.stream.redis_url == "redis://127.0.0.1:6379/5"
+        assert config.ledger.lease_ttl_ms == 90_000
         assert config.ledger.mongo_db == "kokoro_tree"
         assert config.sandbox.local_shell_root == "/data/ws"
         assert config.sandbox.local_shell_timeout == 60
@@ -100,13 +98,14 @@ class TestConfigTree:
         with pytest.raises(OSError):
             AppConfig.from_env({"KOKORO_AGENT_CONFIG": "/nonexistent/agent.yaml"})
 
-    def test_bool_false_and_zero_stringified(self, tmp_path: Path) -> None:
-        flat = load_config_file_as_env(None)
+    def test_bool_false_and_zero_preserved(self, tmp_path: Path) -> None:
+        # 原生值保留：false/0 不被 falsy 丢弃，交 AppConfig 的 pydantic 统一 coerce。
+        flat = load_config_file(None)
         assert flat == {}
         file = tmp_path / "a.yaml"
         file.write_text("web_tools:\n  fetch_allow_private: false\nlimits:\n  run_token_budget: 0\n")
-        flat = load_config_file_as_env(str(file))
-        assert flat == {"KOKORO_WEB_FETCH_ALLOW_PRIVATE": "0", "KOKORO_RUN_TOKEN_BUDGET": "0"}
+        flat = load_config_file(str(file))
+        assert flat == {"KOKORO_WEB_FETCH_ALLOW_PRIVATE": False, "KOKORO_RUN_TOKEN_BUDGET": 0}
 
 
 class TestExamplesStayValid:
@@ -116,7 +115,8 @@ class TestExamplesStayValid:
 
     @pytest.mark.skipif(not EXAMPLES.exists(), reason="parent-repo examples not present")
     def test_agent_full_example_loads(self) -> None:
-        flat = load_config_file_as_env(str(self.EXAMPLES / "agent.example.full.yaml"))
+        flat = load_config_file(str(self.EXAMPLES / "agent.example.full.yaml"))
         assert flat["KOKORO_DOCKER_IMAGE"] == "python:3.12-slim"
         assert flat["KOKORO_CUSTOM_BACKEND"] == "my_pkg.sandbox:make_backend"
-        assert flat["KOKORO_BUILTIN_SUBAGENTS"] == "researcher"
+        # 原生 yaml 列表直接落座（不再 CSV stringify）；AppConfig 再收窄成 frozenset。
+        assert flat["KOKORO_BUILTIN_SUBAGENTS"] == ["researcher"]

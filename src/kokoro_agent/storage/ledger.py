@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Protocol
 
-import aiosqlite
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.storage.mongo import MongoLedger, make_mongo_collection
-from kokoro_agent.storage.sqlite import SqliteLedger
 
 DEFAULT_LEASE_TTL_S = 90
 
@@ -96,8 +94,6 @@ class RunLedger(Protocol):
 class LedgerSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    backend: Literal["sqlite", "mongo"]
-    sqlite_path: str
     mongo_url: str
     mongo_db: str
     lease_ttl_ms: Annotated[int, Field(gt=0)]
@@ -107,12 +103,6 @@ class LedgerSettings(BaseModel):
 async def make_ledger(
     settings: LedgerSettings,
 ) -> AsyncGenerator[RunLedger, None]:
-    if settings.backend == "sqlite":
-        async with aiosqlite.connect(settings.sqlite_path) as db:
-            store = SqliteLedger(db, ttl_ms=settings.lease_ttl_ms)
-            await store.setup()
-            yield store
-        return
     client, collection = make_mongo_collection(settings.mongo_url, settings.mongo_db)
     try:
         yield MongoLedger(collection, ttl_ms=settings.lease_ttl_ms)

@@ -12,7 +12,7 @@ import socket
 
 from dotenv import load_dotenv
 
-from kokoro_agent.config import AppConfig
+from kokoro_agent.config import AppConfig, log_config_summary
 from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
@@ -62,7 +62,7 @@ async def _serve(config: AppConfig) -> None:
     catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
     # 启动一次装载资产快照（local/s3 同口）：装不到 fail-loud，不带残库开工。
     skills, prompts = load_asset_libraries(config.assets)
-    # 进程级共享 checkpointer + run 状态存储：sqlite 落盘跨重启，多 pod 靠共享存储去重/租约/终态认领。
+    # 进程级共享 checkpointer + run 状态存储：mongo 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
         make_ledger(config.ledger) as store,
@@ -108,7 +108,10 @@ async def _serve(config: AppConfig) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
-    asyncio.run(_serve(AppConfig.from_env(os.environ)))
+    config = AppConfig.from_env(os.environ)
+    # 启动期配置快照（secret 掩码）：一眼看清本进程实际生效的配置，便于排障。
+    log_config_summary(config, LOGGER)
+    asyncio.run(_serve(config))
 
 
 if __name__ == "__main__":

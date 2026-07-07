@@ -11,6 +11,8 @@ SAVE_MEMORY_TOOL_NAME = "save_memory"
 SEARCH_MEMORY_TOOL_NAME = "search_memory"
 _MEMORY_SEGMENT = "memories"
 _SEARCH_LIMIT = 8
+# 命名空间列举上限（过滤前拉取的候选量）：远大于返回上限，够本地关键词过滤。
+_LIST_LIMIT = 200
 
 
 class SaveMemoryArgs(BaseModel):
@@ -37,10 +39,22 @@ def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
         return f"memory saved under key {key!r}"
 
     async def search_memory(query: str) -> str:
-        items = await get_store().asearch(prefix, query=query, limit=_SEARCH_LIMIT)
-        if not items:
+        # 向量语义检索需 Atlas Vector Search（index_config + embeddings）；plain mongo 上
+        # 传 query= 会触发 $vectorSearch 崩溃。改命名空间列举 + 大小写不敏感子串过滤——
+        # 任意后端可用，local==prod。真语义检索留待未来 embeddings 档（model 库 spec 邻域）。
+        items = await get_store().asearch(prefix, limit=_LIST_LIMIT)
+        needle = query.strip().lower()
+        matched = [
+            item
+            for item in items
+            if needle in item.key.lower()
+            or needle in str(item.value.get("content", "")).lower()
+        ]
+        if not matched:
             return "no memories found"
-        return "\n".join(f"- {item.key}: {item.value.get('content', '')}" for item in items)
+        return "\n".join(
+            f"- {item.key}: {item.value.get('content', '')}" for item in matched[:_SEARCH_LIMIT]
+        )
 
     return (
         StructuredTool(

@@ -8,17 +8,17 @@ import sys
 import types
 from pathlib import Path
 
-import aiosqlite
 import pytest
 from deepagents.backends.state import StateBackend
 
+from fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.custom_backend import (
     CustomBackendContext,
     CustomBackendSettings,
     connect_custom_sandbox,
 )
-from kokoro_agent.storage.sqlite import SqliteLedger
+from kokoro_agent.storage.ledger import RunLedger
 
 SEEN_CONTEXTS: list[CustomBackendContext] = []
 
@@ -144,30 +144,29 @@ class TestLoading:
 
 class TestLifecycleBinding:
     @pytest.mark.asyncio
-    async def test_bound_backend_lands_in_ledger_and_resume_reuses(self, tmp_path: Path) -> None:
+    async def test_bound_backend_lands_in_ledger_and_resume_reuses(
+        self, ledger: RunLedger
+    ) -> None:
         settings = _dispatch_settings("kokoro_custom_probe:make_bound_backend")
-        async with aiosqlite.connect(str(tmp_path / "ledger.db")) as db:
-            ledger = SqliteLedger(db, ttl_ms=60_000)
-            await ledger.setup()
-            first = await make_backend_for_run(
-                "custom", settings, workspace="ns:s1", run_id="run_c", binding=ledger
-            )
-            assert getattr(first, "sandbox_id", None) == "custom_run_c"
-            assert await ledger.get_sandbox_id("run_c") == "custom_run_c"
-            # HITL resume：prior 经 context 透传，工厂重连同一沙箱。
-            await make_backend_for_run(
-                "custom", settings, workspace="ns:s1", run_id="run_c", binding=ledger
-            )
-            assert SEEN_CONTEXTS[1].prior_sandbox_id == "custom_run_c"
-            assert await ledger.get_sandbox_id("run_c") == "custom_run_c"
+        # 生产路径：run 先经 supervisor 认领（建 run 文档），沙箱绑定才落账（keep-first）。
+        await ledger.try_claim(request("run_c"), "owner")
+        first = await make_backend_for_run(
+            "custom", settings, workspace="ns:s1", run_id="run_c", binding=ledger
+        )
+        assert getattr(first, "sandbox_id", None) == "custom_run_c"
+        assert await ledger.get_sandbox_id("run_c") == "custom_run_c"
+        # HITL resume：prior 经 context 透传，工厂重连同一沙箱。
+        await make_backend_for_run(
+            "custom", settings, workspace="ns:s1", run_id="run_c", binding=ledger
+        )
+        assert SEEN_CONTEXTS[1].prior_sandbox_id == "custom_run_c"
+        assert await ledger.get_sandbox_id("run_c") == "custom_run_c"
 
     @pytest.mark.asyncio
-    async def test_unbound_backend_skips_ledger(self, tmp_path: Path) -> None:
+    async def test_unbound_backend_skips_ledger(self, ledger: RunLedger) -> None:
         settings = _dispatch_settings("kokoro_custom_probe:make_ok_backend")
-        async with aiosqlite.connect(str(tmp_path / "ledger.db")) as db:
-            ledger = SqliteLedger(db, ttl_ms=60_000)
-            await ledger.setup()
-            await make_backend_for_run(
-                "custom", settings, workspace="ns:s1", run_id="run_u", binding=ledger
-            )
-            assert await ledger.get_sandbox_id("run_u") is None
+        await ledger.try_claim(request("run_u"), "owner")
+        await make_backend_for_run(
+            "custom", settings, workspace="ns:s1", run_id="run_u", binding=ledger
+        )
+        assert await ledger.get_sandbox_id("run_u") is None

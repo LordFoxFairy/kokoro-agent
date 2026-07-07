@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.store.memory import InMemoryStore
+from langgraph.store.base import BaseStore
 from pydantic import ValidationError
 import pytest
 
@@ -12,7 +14,7 @@ from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.state import RunScope
-from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.streams.redis import RedisStream
 from fakes import usage_recorder
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
@@ -22,7 +24,9 @@ def _context(namespace: str, run_id: str) -> RunScope:
     return RunScope(namespace=namespace, session_id="s1", run_id=run_id, thread_id="s1")
 
 
-async def _run(script: list[AIMessage], store: InMemoryStore, context: RunScope) -> MemoryStream:
+async def _run(
+    script: list[AIMessage], store: BaseStore, context: RunScope, bus: RedisStream
+) -> RedisStream:
     agent = build_agent(
         model=LocalFakeChatModel.with_script(script),
         tools=list(make_memory_tools(context.namespace)),
@@ -33,7 +37,6 @@ async def _run(script: list[AIMessage], store: InMemoryStore, context: RunScope)
         interrupt_on={},
         store=store,
     )
-    bus = MemoryStream()
 
     async def claim() -> bool:
         return True
@@ -52,7 +55,7 @@ async def _run(script: list[AIMessage], store: InMemoryStore, context: RunScope)
     return bus
 
 
-async def _tool_result(bus: MemoryStream, run_id: str, name: str) -> str:
+async def _tool_result(bus: RedisStream, run_id: str, name: str) -> str:
     for item in await bus.read_all(run_events_stream(run_id)):
         event = item.event
         payload = event.get("payload")
@@ -94,30 +97,39 @@ def _search_script(query: str) -> list[AIMessage]:
     ]
 
 
-async def test_save_then_search_across_runs_same_namespace() -> None:
-    store = InMemoryStore()
-    await _run(_save_script("pref", "user likes dark mode"), store, _context("team-a", "r1"))
+async def test_save_then_search_across_runs_same_namespace(
+    stream: RedisStream, memory_store: BaseStore
+) -> None:
+    store = memory_store
+    r1, r2 = f"r1-{uuid4().hex}", f"r2-{uuid4().hex}"
+    await _run(_save_script("pref", "user likes dark mode"), store, _context("team-a", r1), stream)
     # 跨 run（新图、新 run_id、同 store）：记忆持久可读。
-    bus = await _run(_search_script("dark"), store, _context("team-a", "r2"))
-    result = await _tool_result(bus, "r2", "search_memory")
+    bus = await _run(_search_script("dark"), store, _context("team-a", r2), stream)
+    result = await _tool_result(bus, r2, "search_memory")
     assert "user likes dark mode" in result
     items = await store.asearch(("team-a", "memories"))
     assert [(i.key, i.value) for i in items] == [("pref", {"content": "user likes dark mode"})]
 
 
-async def test_namespace_isolation_between_tenants() -> None:
-    store = InMemoryStore()
-    await _run(_save_script("k", "team-a secret"), store, _context("team-a", "r1"))
-    bus = await _run(_search_script("secret"), store, _context("team-b", "r2"))
-    assert await _tool_result(bus, "r2", "search_memory") == "no memories found"
+async def test_namespace_isolation_between_tenants(
+    stream: RedisStream, memory_store: BaseStore
+) -> None:
+    store = memory_store
+    r1, r2 = f"r1-{uuid4().hex}", f"r2-{uuid4().hex}"
+    await _run(_save_script("k", "team-a secret"), store, _context("team-a", r1), stream)
+    bus = await _run(_search_script("secret"), store, _context("team-b", r2), stream)
+    assert await _tool_result(bus, r2, "search_memory") == "no memories found"
     assert await store.asearch(("team-b",)) == []
     assert len(await store.asearch(("team-a", "memories"))) == 1
 
 
-async def test_save_memory_error_reaches_wire_as_tool_error() -> None:
-    store = InMemoryStore()
-    bus = await _run(_save_script("k", "   "), store, _context("team-a", "r1"))
-    result = await _tool_result(bus, "r1", "save_memory")
+async def test_save_memory_error_reaches_wire_as_tool_error(
+    stream: RedisStream, memory_store: BaseStore
+) -> None:
+    store = memory_store
+    r1 = f"r1-{uuid4().hex}"
+    bus = await _run(_save_script("k", "   "), store, _context("team-a", r1), stream)
+    result = await _tool_result(bus, r1, "save_memory")
     assert "non-empty" in result
     assert await store.asearch(("team-a", "memories")) == []
 

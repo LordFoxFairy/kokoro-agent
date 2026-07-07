@@ -9,16 +9,16 @@ import subprocess
 import uuid
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
+from fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.docker_backend import (
     DockerSettings,
     DockerShellBackend,
     connect_docker_sandbox,
 )
-from kokoro_agent.storage.sqlite import SqliteLedger
+from kokoro_agent.storage.ledger import RunLedger
 
 IMAGE = "busybox"
 
@@ -123,25 +123,26 @@ class TestDockerSandbox:
         assert second.container_id != first.container_id
 
     @pytest.mark.asyncio
-    async def test_run_scoped_binding_and_reuse(self, tmp_path: Path) -> None:
+    async def test_run_scoped_binding_and_reuse(
+        self, tmp_path: Path, ledger: RunLedger
+    ) -> None:
         run_id = f"run_{uuid.uuid4().hex[:6]}"
         settings = _dispatch_settings().model_copy(
             update={"local_shell_root": str(tmp_path)}
         )
-        async with aiosqlite.connect(str(tmp_path / "ledger.db")) as db:
-            ledger = SqliteLedger(db, ttl_ms=60_000)
-            await ledger.setup()
-            first = await make_backend_for_run(
-                "docker", settings, workspace="ns:s1", run_id=run_id, binding=ledger
-            )
-            assert isinstance(first, DockerShellBackend)
-            _SPAWNED.append(first.container_id)
-            assert await ledger.get_sandbox_id(run_id) == first.container_id
-            second = await make_backend_for_run(
-                "docker", settings, workspace="ns:s1", run_id=run_id, binding=ledger
-            )
-            assert isinstance(second, DockerShellBackend)
-            assert second.container_id == first.container_id
+        # 生产路径：run 先被认领（建 run 文档），容器绑定才落账。
+        await ledger.try_claim(request(run_id), "owner")
+        first = await make_backend_for_run(
+            "docker", settings, workspace="ns:s1", run_id=run_id, binding=ledger
+        )
+        assert isinstance(first, DockerShellBackend)
+        _SPAWNED.append(first.container_id)
+        assert await ledger.get_sandbox_id(run_id) == first.container_id
+        second = await make_backend_for_run(
+            "docker", settings, workspace="ns:s1", run_id=run_id, binding=ledger
+        )
+        assert isinstance(second, DockerShellBackend)
+        assert second.container_id == first.container_id
 
 
 def test_connectors_cover_backend_enum() -> None:

@@ -211,6 +211,12 @@ class RedisStream:
     async def ack(self, stream: str, group: str, cursor: str) -> None:
         await self._redis.xack(stream, group, cursor)
 
+    async def pending(self, stream: str, group: str) -> int:
+        """consumer group 的 PEL 未 ack 计数（观测/测试用；0=已消费且 ack、无重投）。"""
+        summary = await self._redis.xpending(stream, group)
+        count = summary["pending"]
+        return count if isinstance(count, int) else 0
+
     async def expire(self, stream: str, ttl_s: int) -> None:
         await self._redis.expire(stream, ttl_s)
 

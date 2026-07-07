@@ -30,7 +30,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
 from kokoro_agent.streams.factory import StreamSettings, make_stream
-from kokoro_agent.streams.memory import MemoryStream
 from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
@@ -41,10 +40,11 @@ from kokoro_agent.worker.main import toolbox_from_config
 
 
 def test_defaults_from_empty_env() -> None:
+    # 存储收敛后唯一真后端：stream=redis、checkpoint/ledger=mongo（无 backend 选择枚举）。
     config = AppConfig.from_env({})
-    assert config.stream.backend == "memory"
-    assert config.checkpoint.backend == "sqlite"
-    assert config.ledger.backend == "sqlite"
+    assert config.stream.redis_url == "redis://127.0.0.1:6379/0"
+    assert config.checkpoint.mongo_url == "mongodb://127.0.0.1:27017"
+    assert config.ledger.mongo_url == "mongodb://127.0.0.1:27017"
     assert config.model.local_fake is False
     assert config.ledger.lease_ttl_ms == 90_000
     assert config.lease_heartbeat_s == 30.0
@@ -54,8 +54,8 @@ def test_defaults_from_empty_env() -> None:
 def test_env_overrides() -> None:
     config = AppConfig.from_env(
         {
-            "KOKORO_STREAM_BACKEND": "redis",
             "KOKORO_REDIS_URL": "redis://example:6379/1",
+            "KOKORO_MONGO_URL": "mongodb://example:27017",
             "KOKORO_LEASE_TTL_S": "10",
             "KOKORO_LEASE_HEARTBEAT_S": "2.5",
             "KOKORO_LOCAL_FAKE_MODEL": "1",
@@ -63,8 +63,9 @@ def test_env_overrides() -> None:
         }
     )
     assert config.model.local_fake is True
-    assert config.stream.backend == "redis"
     assert config.stream.redis_url == "redis://example:6379/1"
+    assert config.checkpoint.mongo_url == "mongodb://example:27017"
+    assert config.ledger.mongo_url == "mongodb://example:27017"
     assert config.ledger.lease_ttl_ms == 10_000
     assert config.lease_heartbeat_s == 2.5
     # "[]" 非空字符串照实透传，目录构建时解析。
@@ -74,14 +75,11 @@ def test_env_overrides() -> None:
 @pytest.mark.parametrize(
     "env",
     [
-        {"KOKORO_STREAM_BACKEND": "kafka"},
-        {"KOKORO_CHECKPOINT_BACKEND": "dynamo"},
-        {"KOKORO_LEDGER_BACKEND": "bogus"},
         {"KOKORO_LEASE_TTL_S": "0"},
         {"KOKORO_LEASE_HEARTBEAT_S": "-1"},
     ],
 )
-def test_invalid_backend_enums_fail_loud(env: dict[str, str]) -> None:
+def test_invalid_config_values_fail_loud(env: dict[str, str]) -> None:
     with pytest.raises(ValidationError):
         AppConfig.from_env(env)
 
@@ -191,11 +189,9 @@ def test_local_fake_hitl_script_switch() -> None:
 
 
 def test_make_stream_backends() -> None:
+    # 存储收敛：传输唯一真后端是 redis（无 backend 选择字段）。
     assert isinstance(
-        make_stream(StreamSettings(backend="memory", redis_url="redis://x")), MemoryStream
-    )
-    assert isinstance(
-        make_stream(StreamSettings(backend="redis", redis_url="redis://127.0.0.1:6379/0")),
+        make_stream(StreamSettings(redis_url="redis://127.0.0.1:6379/0")),
         RedisStream,
     )
 

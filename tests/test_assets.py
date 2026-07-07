@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import boto3
 import pytest
@@ -41,7 +42,7 @@ from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.streams.redis import RedisStream
 
 MINIO_URL = "http://127.0.0.1:9100"
 BUCKET = f"kokoro-assets-test-{int(time.time())}"
@@ -263,7 +264,9 @@ class TestS3AssetSource:
 
 
 @pytest.mark.asyncio
-async def test_progressive_disclosure_prompt_has_description_not_body(tmp_path: Path) -> None:
+async def test_progressive_disclosure_prompt_has_description_not_body(
+    tmp_path: Path, stream: RedisStream
+) -> None:
     # 原生 SkillsMiddleware：system prompt 只挂 name+description，正文不进 prompt——
     # 与 V1 全文注入相反的行为钉（正文经 read_file 渐进获取）。
     captured: list[list[BaseMessage]] = []
@@ -294,7 +297,7 @@ async def test_progressive_disclosure_prompt_has_description_not_body(tmp_path: 
         return True
 
     terminal = await invoke_once(
-        RunEmitter(MemoryStream(), "rn"),
+        RunEmitter(stream, f"rn-{uuid4().hex}"),
         agent,
         "t1",
         {

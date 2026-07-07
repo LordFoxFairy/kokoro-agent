@@ -17,7 +17,6 @@ dependencies = [
   "langchain-openai>=1.2.2",
   "langfuse>=4.7.1",
   "langgraph-checkpoint-mongodb>=0.4.0",
-  "langgraph-checkpoint-sqlite>=3.1.0",
   "langgraph-store-mongodb>=0.3.0",
   "mypy-boto3-s3>=1.43.31",
   "pydantic>=2",

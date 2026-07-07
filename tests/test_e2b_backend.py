@@ -4,17 +4,16 @@ execute 映射。SDK 边界以 fake 注入验证我们的编排语义；SDK 真�
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Self
 
-import aiosqlite
 import pytest
 from e2b import CommandExitException, SandboxException
 from pydantic import SecretStr
 
+from fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.e2b_backend import E2BSandboxBackend, E2BSettings, connect_e2b_sandbox
-from kokoro_agent.storage.sqlite import SqliteLedger
+from kokoro_agent.storage.ledger import RunLedger
 
 
 def _e2b_settings(api_key: str | None = "e2b-key") -> E2BSettings:
@@ -128,22 +127,21 @@ class TestLifecycle:
         assert backend.id == "sbx_created_0"
 
     @pytest.mark.asyncio
-    async def test_run_scoped_binding_new_sandbox_and_reuse(self, tmp_path: Path) -> None:
-        async with aiosqlite.connect(str(tmp_path / "ledger.db")) as db:
-            ledger = SqliteLedger(db, ttl_ms=60_000)
-            await ledger.setup()
-            first = await make_backend_for_run(
-                "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", binding=ledger
-            )
-            assert isinstance(first, E2BSandboxBackend)
-            assert await ledger.get_sandbox_id("run_1") == first.id
-            # HITL resume：重建 backend 走重连，箱不重建、绑定不被覆盖（keep-first）。
-            second = await make_backend_for_run(
-                "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", binding=ledger
-            )
-            assert isinstance(second, E2BSandboxBackend)
-            assert second.id == first.id
-            assert len(FakeSandbox.created) == 1
+    async def test_run_scoped_binding_new_sandbox_and_reuse(self, ledger: RunLedger) -> None:
+        # 生产路径：run 先被认领（建 run 文档），箱绑定才落账。
+        await ledger.try_claim(request("run_1"), "owner")
+        first = await make_backend_for_run(
+            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", binding=ledger
+        )
+        assert isinstance(first, E2BSandboxBackend)
+        assert await ledger.get_sandbox_id("run_1") == first.id
+        # HITL resume：重建 backend 走重连，箱不重建、绑定不被覆盖（keep-first）。
+        second = await make_backend_for_run(
+            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", binding=ledger
+        )
+        assert isinstance(second, E2BSandboxBackend)
+        assert second.id == first.id
+        assert len(FakeSandbox.created) == 1
 
 
 class TestExecuteMapping:

@@ -1,4 +1,4 @@
-"""RunLedger 规格：TTL 租约全生命周期 + 终态原子认领，sqlite/mongo 同语义矩阵。"""
+"""RunLedger 规格：TTL 租约全生命周期 + 终态原子认领（mongo 唯一真后端）。"""
 
 from __future__ import annotations
 
@@ -7,21 +7,18 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-import aiosqlite
 import pytest
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
-from kokoro_agent.storage.mongo import MongoLedger
 from kokoro_agent.storage.ledger import (
     LedgerSettings,
     RunLedger,
     make_ledger,
 )
-from kokoro_agent.storage.sqlite import SqliteLedger
+from kokoro_agent.storage.mongo import MongoLedger
 
 _MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 _TTL_MS = 1000
@@ -40,31 +37,24 @@ class FakeClock:
         self.now += delta
 
 
-@asynccontextmanager
-async def _sqlite_store(tmp_path: Path, clock: FakeClock) -> AsyncGenerator[RunLedger]:
-    async with aiosqlite.connect(str(tmp_path / "rs.db")) as db:
-        store = SqliteLedger(db, ttl_ms=_TTL_MS, clock=clock)
-        await store.setup()
-        yield store
-
-
-async def _mongo_collection_or_skip() -> tuple[
+async def _mongo_collection() -> tuple[
     AsyncMongoClient[dict[str, object]], AsyncCollection[dict[str, object]]
 ]:
+    # 真 mongo 前置：不可达即 fail-loud（不 skip、不灌绿数）。
     client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(
-        _MONGO_URL, serverSelectionTimeoutMS=500
+        _MONGO_URL, serverSelectionTimeoutMS=1000
     )
     try:
         await client.admin.command("ping")
-    except Exception:  # noqa: BLE001 — 网络/服务不可达统一视为 skip 条件
+    except Exception as exc:  # noqa: BLE001 — 服务缺失显式炸
         await client.close()
-        pytest.skip(f"no mongo reachable at {_MONGO_URL}")
+        raise RuntimeError(f"mongo required but unreachable at {_MONGO_URL}: {exc}") from exc
     return client, client["kokoro_test"][f"ledger_{uuid.uuid4().hex}"]
 
 
 @asynccontextmanager
 async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
-    client, coll = await _mongo_collection_or_skip()
+    client, coll = await _mongo_collection()
     try:
         yield MongoLedger(coll, ttl_ms=_TTL_MS, clock=clock)
     finally:
@@ -304,15 +294,6 @@ _MATRIX_IDS = [
 
 
 @pytest.mark.parametrize("check", _MATRIX, ids=_MATRIX_IDS)
-async def test_sqlite_behaviour_matrix(
-    tmp_path: Path, check: Callable[[RunLedger, FakeClock], Awaitable[None]]
-) -> None:
-    clock = FakeClock()
-    async with _sqlite_store(tmp_path, clock) as store:
-        await check(store, clock)
-
-
-@pytest.mark.parametrize("check", _MATRIX, ids=_MATRIX_IDS)
 async def test_mongo_behaviour_matrix(
     check: Callable[[RunLedger, FakeClock], Awaitable[None]],
 ) -> None:
@@ -321,61 +302,34 @@ async def test_mongo_behaviour_matrix(
         await check(store, clock)
 
 
-# --- sqlite 专项：跨连接争用与跨工厂周期持久性 ---
+# --- 工厂：跨周期持久性 + 类型 ---
 
 
-async def test_sqlite_concurrent_terminal_across_connections(tmp_path: Path) -> None:
-    # 两个连接（模拟两进程）争用同一文件并发认领终态：busy_timeout 下互等、恰一个 True。
-    db_path = str(tmp_path / "race.db")
-    async with (
-        aiosqlite.connect(db_path) as conn_a,
-        aiosqlite.connect(db_path) as conn_b,
-    ):
-        store_a = SqliteLedger(conn_a, ttl_ms=_TTL_MS)
-        store_b = SqliteLedger(conn_b, ttl_ms=_TTL_MS)
-        await store_a.setup()
-        await store_b.setup()
-        await store_a.try_claim(request("race-x"), OWNER)
-        results = await asyncio.gather(
-            store_a.try_mark_terminal("race-x"),
-            store_b.try_mark_terminal("race-x"),
-        )
-    assert sum(results) == 1
-
-
-def _settings(backend: str, tmp_path: Path) -> LedgerSettings:
+def _settings(mongo_db: str) -> LedgerSettings:
     return LedgerSettings.model_validate(
         {
-            "backend": backend,
-            "sqlite_path": str(tmp_path / "factory.db"),
             "mongo_url": _MONGO_URL,
-            "mongo_db": "kokoro_test",
+            "mongo_db": mongo_db,
             "lease_ttl_ms": _TTL_MS,
         }
     )
 
 
-async def test_factory_sqlite_persists_across_cycles(tmp_path: Path) -> None:
-    settings = _settings("sqlite", tmp_path)
+async def test_factory_mongo_persists_across_cycles() -> None:
+    settings = _settings(f"kokoro_test_{uuid.uuid4().hex}")
     req = request("run-persist")
     async with make_ledger(settings) as store:
-        assert isinstance(store, SqliteLedger)
+        assert isinstance(store, MongoLedger)
         assert await store.try_claim(req, OWNER) is True
         await store.try_mark_terminal(req.run_id)
-    # 全新工厂周期（模拟重启/另一 pod）从同一文件续读。
+    # 全新工厂周期（模拟重启/另一 pod）从同一 mongo 续读。
     async with make_ledger(settings) as store:
         assert await store.get_request(req.run_id) == req
         assert await store.is_terminal(req.run_id) is True
-
-
-async def test_factory_unknown_backend_fails_loud(tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
-        _settings("bogus", tmp_path)
-
-
-async def test_factory_mongo_yields_mongo_store(tmp_path: Path) -> None:
-    client, _coll = await _mongo_collection_or_skip()
-    await client.close()
-    async with make_ledger(_settings("mongo", tmp_path)) as store:
-        assert isinstance(store, MongoLedger)
+    # 清扫本测专用 db。
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
+    try:
+        await client.drop_database(settings.mongo_db)
+    finally:
+        await client.close()
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from fakes import usage_recorder
 from kokoro_agent.execution.build_agent import build_agent
@@ -17,7 +17,7 @@ from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.state import KokoroAgentState, RunScope
-from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.streams.redis import RedisStream
 
 _SEEN: dict[str, object] = {}
 
@@ -43,12 +43,14 @@ def _scope() -> RunScope:
     return RunScope(namespace="tenant-a", session_id="s1", run_id="rn", thread_id="s1")
 
 
-async def _invoke(agent: InvokableAgent, payload: object, run_id: str) -> bool:
+async def _invoke(
+    agent: InvokableAgent, payload: object, run_id: str, bus: RedisStream
+) -> bool:
     async def claim() -> bool:
         return True
 
     return await invoke_once(
-        RunEmitter(MemoryStream(), run_id),
+        RunEmitter(bus, run_id),
         agent,
         _scope().scoped_thread_id,
         payload,
@@ -59,7 +61,7 @@ async def _invoke(agent: InvokableAgent, payload: object, run_id: str) -> bool:
     )
 
 
-async def test_tool_reads_scope_from_state() -> None:
+async def test_tool_reads_scope_from_state(stream: RedisStream) -> None:
     _SEEN.clear()
     agent = build_agent(
         model=LocalFakeChatModel.with_script(_SCRIPT),
@@ -75,16 +77,19 @@ async def test_tool_reads_scope_from_state() -> None:
         agent,
         {"messages": [HumanMessage(content="hi")], "scope": scope.as_state()},
         "rn",
+        stream,
     )
     assert terminal is True
     assert _SEEN["scope"] == scope.as_state()
     assert RunScope.from_state(scope.as_state()) == scope
 
 
-async def test_scope_survives_second_segment_without_resupply() -> None:
+async def test_scope_survives_second_segment_without_resupply(
+    stream: RedisStream, checkpointer: BaseCheckpointSaver[str]
+) -> None:
     # 法则：scope 落 checkpoint，续段（resume 式二跑）不重供仍可读——图节点不得改写。
     _SEEN.clear()
-    saver = InMemorySaver()
+    saver = checkpointer
     scope = _scope()
     first = build_agent(
         model=LocalFakeChatModel.with_script(_SCRIPT),
@@ -95,7 +100,9 @@ async def test_scope_survives_second_segment_without_resupply() -> None:
         permissions=[],
         interrupt_on={},
     )
-    await _invoke(first, {"messages": [HumanMessage(content="hi")], "scope": scope.as_state()}, "rn")
+    await _invoke(
+        first, {"messages": [HumanMessage(content="hi")], "scope": scope.as_state()}, "rn", stream
+    )
     _SEEN.clear()
     second_script = [
         *_SCRIPT,  # 占位：同线程历史已含首段两条 AIMessage（LocalFake 轮次=历史 AIMessage 数）
@@ -114,5 +121,5 @@ async def test_scope_survives_second_segment_without_resupply() -> None:
         permissions=[],
         interrupt_on={},
     )
-    await _invoke(second, {"messages": [HumanMessage(content="again")]}, "rn2")
+    await _invoke(second, {"messages": [HumanMessage(content="again")]}, "rn2", stream)
     assert _SEEN["scope"] == scope.as_state()

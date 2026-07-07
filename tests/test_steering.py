@@ -8,9 +8,9 @@ import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatResult
-from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain.agents.middleware.types import AgentState
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.runtime import Runtime
 
 from fakes import FakeBus, FakeLedger, request, usage_recorder
@@ -44,7 +44,7 @@ async def test_before_model_empty_mailbox_is_noop() -> None:
     assert await middleware.abefore_model({"messages": []}, Runtime(context=None)) is None
 
 
-async def test_steer_reaches_model_in_real_graph() -> None:
+async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSaver[str]) -> None:
     # 真图：invoke 前信箱有插话 → 首个模型轮的 messages 里可见该 HumanMessage。
     captured: list[list[BaseMessage]] = []
 
@@ -67,7 +67,7 @@ async def test_steer_reaches_model_in_real_graph() -> None:
         tools=[],
         system_prompt="base",
         subagents=[],
-        checkpointer=InMemorySaver(),
+        checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
         middleware=[SteeringMiddleware(store=ledger, run_id="r-graph")],

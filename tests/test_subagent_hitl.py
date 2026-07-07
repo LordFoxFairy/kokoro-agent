@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict
 
@@ -15,7 +17,7 @@ from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.streams.memory import MemoryStream
+from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.tools.permissions import build_interrupt_on
 
 _EXECUTED = {"n": 0}
@@ -30,7 +32,7 @@ def _gated() -> str:
     return "gated-ok"
 
 
-def _build(saver: InMemorySaver):
+def _build(saver: BaseCheckpointSaver[str]):
     gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
     main_model = LocalFakeChatModel.with_script([
         AIMessage(content="", tool_calls=[{
@@ -54,10 +56,13 @@ def _build(saver: InMemorySaver):
     )
 
 
-async def test_subagent_approval_pauses_then_approve_completes() -> None:
+async def test_subagent_approval_pauses_then_approve_completes(
+    stream: RedisStream, checkpointer: BaseCheckpointSaver[str]
+) -> None:
     _EXECUTED["n"] = 0
-    saver = InMemorySaver()
-    bus = MemoryStream()
+    saver = checkpointer
+    sfx = uuid4().hex
+    run1, run2 = f"rsub-{sfx}", f"rsub2-{sfx}"
     names = frozenset({"gated", "ask_user_question"})
 
     async def claim() -> bool:
@@ -65,7 +70,7 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
 
     recorder, _seen = usage_recorder()
     first = await invoke_once(
-        RunEmitter(bus, "rsub"),
+        RunEmitter(stream, run1),
         _build(saver),
         "tsub",
         {"messages": [HumanMessage(content="go", id="m1")]},
@@ -76,7 +81,7 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
     )
     assert first is False  # 暂停成卡，而非 run.failed
     assert _EXECUTED["n"] == 0  # 审批前工具未执行（无旁路）
-    events = [item.event for item in await bus.read_all(run_events_stream("rsub"))]
+    events = [item.event for item in await stream.read_all(run_events_stream(run1))]
     awaiting = [e for e in events if e["kind"] == "tool.awaiting_approval"]
     assert len(awaiting) == 1
     payload = awaiting[0]["payload"]
@@ -90,7 +95,7 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
     # 重读快照重建帧：合成 id 必须稳定（resume 对齐依据）。
     agent2 = _build(saver)
     second = await invoke_once(
-        RunEmitter(bus, "rsub2"),
+        RunEmitter(stream, run2),
         agent2,
         "tsub",
         Command(resume={"decisions": [{"type": "approve"}]}),
@@ -101,20 +106,23 @@ async def test_subagent_approval_pauses_then_approve_completes() -> None:
     )
     assert second is True
     assert _EXECUTED["n"] == 1  # 批准后在子代理内执行恰一次
-    events2 = [item.event for item in await bus.read_all(run_events_stream("rsub2"))]
+    events2 = [item.event for item in await stream.read_all(run_events_stream(run2))]
     assert events2[-1]["kind"] == "run.completed"
 
 
-async def test_general_purpose_delegation_runs_inside_guards() -> None:
+async def test_general_purpose_delegation_runs_inside_guards(
+    stream: RedisStream, checkpointer: BaseCheckpointSaver[str]
+) -> None:
     # 内生 GP 旁路收口回归钉：唯一的 TerminalGuard 只挂在我们覆盖的 general-purpose spec 上，
     # 账本已终态 → 委派进 GP 的首个模型轮必被熔断（RunSupersededError 出自 GP 子图内）。
     from fakes import FakeLedger
     from kokoro_agent.subagents import general_purpose_subagent
     from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 
+    run_id = f"rgp-{uuid4().hex}"
     ledger = FakeLedger()
-    assert await ledger.try_mark_terminal("rgp")
-    guard = TerminalGuardMiddleware(store=ledger, run_id="rgp")
+    assert await ledger.try_mark_terminal(run_id)
+    guard = TerminalGuardMiddleware(store=ledger, run_id=run_id)
     main_model = LocalFakeChatModel.with_script([
         AIMessage(content="", tool_calls=[{
             "name": "task", "args": {"description": "do", "subagent_type": "general-purpose"},
@@ -126,7 +134,7 @@ async def test_general_purpose_delegation_runs_inside_guards() -> None:
         tools=[],
         system_prompt="x",
         subagents=[general_purpose_subagent([guard])],
-        checkpointer=InMemorySaver(),
+        checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
     )
@@ -135,9 +143,8 @@ async def test_general_purpose_delegation_runs_inside_guards() -> None:
         return True
 
     recorder, _seen = usage_recorder()
-    bus = MemoryStream()
     terminal = await invoke_once(
-        RunEmitter(bus, "rgp"),
+        RunEmitter(stream, run_id),
         agent,
         "tgp",
         {"messages": [HumanMessage(content="go", id="m1")]},
@@ -147,7 +154,7 @@ async def test_general_purpose_delegation_runs_inside_guards() -> None:
         record_usage=recorder,
     )
     assert terminal is True
-    events = [item.event for item in await bus.read_all(run_events_stream("rgp"))]
+    events = [item.event for item in await stream.read_all(run_events_stream(run_id))]
     kinds = [e["kind"] for e in events]
     # 委派真的进了 GP 子图，且首个模型轮即被守卫熔断。
     assert "subagent.started" in kinds
@@ -159,17 +166,19 @@ async def test_general_purpose_delegation_runs_inside_guards() -> None:
     assert "terminated elsewhere" in str(payload["message"])
 
 
-async def test_subagent_review_pauses_with_cached_result() -> None:
+async def test_subagent_review_pauses_with_cached_result(
+    stream: RedisStream, checkpointer: BaseCheckpointSaver[str]
+) -> None:
     # 审核政策同样不可被委派旁路：子代理内 review 工具执行后暂停，结果进卡（keep-first 缓存）。
     from fakes import FakeLedger
     from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
     _EXECUTED["n"] = 0
-    saver = InMemorySaver()
-    bus = MemoryStream()
+    saver = checkpointer
+    run_id = f"rrev-{uuid4().hex}"
     store = FakeLedger()
     gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
-    review = ToolResultReviewMiddleware(frozenset({"gated"}), store, "rrev")
+    review = ToolResultReviewMiddleware(frozenset({"gated"}), store, run_id)
     main_model = LocalFakeChatModel.with_script([
         AIMessage(content="", tool_calls=[{
             "name": "task", "args": {"description": "do", "subagent_type": "helper"},
@@ -196,7 +205,7 @@ async def test_subagent_review_pauses_with_cached_result() -> None:
 
     recorder, _seen = usage_recorder()
     paused = await invoke_once(
-        RunEmitter(bus, "rrev", review_tool_names=frozenset({"gated"})),
+        RunEmitter(stream, run_id, review_tool_names=frozenset({"gated"})),
         agent,
         "trev",
         {"messages": [HumanMessage(content="go", id="m1")]},
@@ -207,7 +216,7 @@ async def test_subagent_review_pauses_with_cached_result() -> None:
     )
     assert paused is False
     assert _EXECUTED["n"] == 1  # 审核语义：先执行后审
-    events = [item.event for item in await bus.read_all(run_events_stream("rrev"))]
+    events = [item.event for item in await stream.read_all(run_events_stream(run_id))]
     awaiting = [e for e in events if e["kind"] == "tool.awaiting_approval"]
     assert len(awaiting) == 1
     payload = awaiting[0]["payload"]

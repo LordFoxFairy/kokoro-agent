@@ -277,14 +277,20 @@ def test_resolution_payloads_skip_approve_and_edit() -> None:
 
 
 def _review_interrupt(tool_id: str, name: str = "lookup", result: str = "raw") -> Interrupt:
+    # review 预设的 HumanRequest 信封（request_id=tool_id）：与 ToolResultReviewMiddleware
+    # 经 request_human(kind="review") 发出的 interrupt.value 同构。
     return Interrupt(
         value={
-            "kokoro_result_review": {
-                "tool_id": tool_id,
-                "name": name,
-                "args": {"q": "x"},
-                "result": result,
-                "is_error": False,
+            "kokoro_human_request": {
+                "request_id": tool_id,
+                "kind": "review",
+                "response_schema": None,
+                "context": {
+                    "name": name,
+                    "args": {"q": "x"},
+                    "result": result,
+                    "is_error": False,
+                },
             }
         }
     )

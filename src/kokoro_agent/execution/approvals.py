@@ -18,12 +18,11 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.events import clip_result
 from kokoro_agent.execution.protocols import StateView
+from kokoro_agent.hitl import REVIEW_DECISIONS, HumanRequest
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 _DEFAULT_REJECT_MESSAGE = "rejected by user"
-_REVIEW_KEY = "kokoro_result_review"
-_REVIEW_DECISIONS: tuple[AllowedDecision, ...] = ("approve", "respond", "reject")
 
 
 @dataclass(frozen=True)
@@ -43,8 +42,19 @@ class PendingFrame:
         return [tool_id for tool_id, _name in self.tools]
 
 
+class ReviewContext(BaseModel):
+    """review 预设的 HumanRequest.context 约定字段：结果审核暂停的展示载荷。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str
+    args: dict[str, JsonValue]
+    result: str
+    is_error: bool
+
+
 class ReviewEntry(BaseModel):
-    """ToolResultReviewMiddleware interrupt 载荷：结果审核暂停的应用视图。"""
+    """结果审核暂停的应用视图：request_id 归位为 tool_id + context 展开。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -56,17 +66,30 @@ class ReviewEntry(BaseModel):
 
 
 def review_entries(interrupts: tuple[Interrupt, ...]) -> list[ReviewEntry] | None:
-    """全帧 review 形状则返回条目；全帧 HIL 形状返回 None；混帧/多 review fail-loud。"""
-    # Interrupt.value 是框架 Any 边界：先按形状分拣，再交 Pydantic 洗净。
-    values: list[Any] = [i.value for i in interrupts]
-    shaped = [isinstance(v, dict) and _REVIEW_KEY in v for v in values]
-    if not any(shaped):
+    """全帧 review 预设则返回条目；全帧 approval 形态返回 None；混帧/多 review fail-loud。"""
+    # Interrupt.value 是框架 Any 边界：HumanRequest.from_interrupt_value 反解本原语信封
+    # （非本信封=langchain approval 形态返回 None，信封在但体不合法 fail-loud），再按 kind 分拣。
+    requests = [HumanRequest.from_interrupt_value(i.value) for i in interrupts]
+    is_review = [req is not None and req.kind == "review" for req in requests]
+    if not any(is_review):
         return None
-    if not all(shaped):
+    if not all(is_review):
         raise ValueError("mixed approval/review interrupts in one frame is unsupported (V1)")
-    if len(interrupts) != 1:
+    if len(requests) != 1:
         raise ValueError("multiple result-review interrupts in one frame is unsupported (V1)")
-    return [ReviewEntry.model_validate(values[0][_REVIEW_KEY])]
+    request = requests[0]
+    if request is None:  # is_review[0] 已保证非空；显式收窄给类型检查器。
+        raise ValueError("result review interrupt missing human request envelope")
+    ctx = ReviewContext.model_validate(request.context)
+    return [
+        ReviewEntry(
+            tool_id=request.request_id,
+            name=ctx.name,
+            args=ctx.args,
+            result=ctx.result,
+            is_error=ctx.is_error,
+        )
+    ]
 
 
 def has_pending_interrupt(snapshot: StateView) -> bool:
@@ -168,7 +191,7 @@ def awaiting_payloads(
                 name=entry.name,
                 args=entry.args,
                 description=describe_tool(entry.name) or "",
-                allowed_decisions=list(_REVIEW_DECISIONS),
+                allowed_decisions=list(REVIEW_DECISIONS),
                 kind="result_review",
                 editable=False,
                 pending_tool_ids=pending_ids,
@@ -268,7 +291,7 @@ def align_review_decisions(
             f"resume decisions {sorted(by_id)} != pending review tools {sorted(frame.tool_ids)}"
         )
     for decision in decisions:
-        if decision.type not in _REVIEW_DECISIONS:
+        if decision.type not in REVIEW_DECISIONS:
             raise ValueError(
                 f"decision {decision.type!r} not allowed for result review tool {decision.tool_id!r}"
             )

@@ -5,13 +5,14 @@ from __future__ import annotations
 from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.human_in_the_loop import DecisionType
 
+from kokoro_agent.hitl import APPROVAL_DECISIONS, QUESTION_DECISIONS
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
-# ask_user 是语义暂停点：只允许人工作答，不参与 approve/edit/reject。
-_ASK_USER_DECISIONS: list[DecisionType] = ["respond"]
-# 普通工具审批：放行 / 改参放行 / 拒绝；respond 不适用（非 ask_user 用 respond 是契约违例）。
-_APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject"]
+# 三预设决策词汇的单一事实源在 hitl.presets（kind=question / kind=approval 形态）。
+# ask_user 是 question 预设（语义暂停点，只人工作答）；普通工具审批是 approval 预设（放行/改参/拒绝）。
+_ASK_USER_DECISIONS: list[DecisionType] = list(QUESTION_DECISIONS)
+_APPROVAL_DECISIONS: list[DecisionType] = list(APPROVAL_DECISIONS)
 
 
 def build_interrupt_on(

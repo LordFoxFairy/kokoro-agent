@@ -9,13 +9,14 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.types import Command, interrupt
+from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 
+from kokoro_agent.hitl import request_human
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
@@ -175,16 +176,17 @@ class ToolResultReviewMiddleware(AgentMiddleware):
             await self._store.put_tool_result(self._run_id, tool_id, first[0], first[1])
             cached = first
         content, is_error = cached
-        decisions = interrupt(
-            {
-                "kokoro_result_review": {
-                    "tool_id": tool_id,
-                    "name": name,
-                    "args": dict(call["args"]),
-                    "result": content,
-                    "is_error": is_error,
-                }
-            }
+        # 结果审核 = request_human(kind="review") 预设：request_id=tool_id（工具边界幂等锚），
+        # context 携已执行结果供人裁决。resume 值语义不变（list[decision dict]），wire 投影不变。
+        decisions = request_human(
+            kind="review",
+            request_id=tool_id,
+            context={
+                "name": name,
+                "args": dict(call["args"]),
+                "result": content,
+                "is_error": is_error,
+            },
         )
         return _apply_review_decision(decisions, tool_id=tool_id, name=name, content=content)
 

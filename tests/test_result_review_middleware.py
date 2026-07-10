@@ -9,7 +9,7 @@ from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-import kokoro_agent.tools.middleware as middleware_module
+import kokoro_agent.hitl.request as request_module
 from fakes import FakeLedger
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
@@ -49,14 +49,15 @@ def _mw(store: FakeLedger) -> ToolResultReviewMiddleware:
 
 
 def _patch_interrupt(monkeypatch: pytest.MonkeyPatch, value: object) -> list[object]:
-    # interrupt 是 langgraph 运行时边界：单测在此打桩，真实 interrupt 行为由 e2e 覆盖。
+    # 中间件经 request_human 发起审核暂停，request_human 包装 hitl 的 interrupt：
+    # 单测在此打桩（真实 interrupt/resume 由 e2e 覆盖），seen 收下信封供形状断言。
     seen: list[object] = []
 
     def fake_interrupt(payload: object) -> object:
         seen.append(payload)
         return value
 
-    monkeypatch.setattr(middleware_module, "interrupt", fake_interrupt)
+    monkeypatch.setattr(request_module, "interrupt", fake_interrupt)
     return seen
 
 
@@ -82,12 +83,17 @@ async def test_first_pass_caches_then_interrupts(monkeypatch: pytest.MonkeyPatch
     assert len(seen) == 1
     payload = seen[0]
     assert isinstance(payload, dict)
-    assert payload["kokoro_result_review"] == {
-        "tool_id": "c1",
-        "name": "lookup",
-        "args": {"q": "x"},
-        "result": "raw result",
-        "is_error": False,
+    # review 预设的 HumanRequest 信封：request_id=tool_id，结果进 context 供人裁决。
+    assert payload["kokoro_human_request"] == {
+        "request_id": "c1",
+        "kind": "review",
+        "response_schema": None,
+        "context": {
+            "name": "lookup",
+            "args": {"q": "x"},
+            "result": "raw result",
+            "is_error": False,
+        },
     }
 
 

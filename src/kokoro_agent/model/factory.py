@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from kokoro_agent.contract import ModelConfig
@@ -26,6 +27,9 @@ class ChatModelSettings(BaseModel):
     openai_reasoning: bool
     anthropic_api_key: SecretStr | None
     anthropic_base_url: str | None
+    # litellm 网关档：agent 只持网关地址与网关 key（单点凭据），绝不存任何底层 provider 凭据。
+    litellm_base_url: str | None
+    litellm_api_key: SecretStr | None
 
 
 def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
@@ -36,6 +40,8 @@ def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChat
         return _build_openai_model(settings, model)
     if model.provider == "anthropic":
         return _build_anthropic_model(settings, model)
+    if model.provider == "litellm":
+        return _build_litellm_model(settings, model)
     raise ValueError(f"unsupported model provider: {model.provider!r}")
 
 
@@ -97,4 +103,24 @@ def _build_anthropic_model(settings: ChatModelSettings, model: ModelConfig) -> B
         base_url=settings.anthropic_base_url,
         disable_streaming=settings.disable_streaming,
         effort=effort,
+    )
+
+
+def _build_litellm_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+    # litellm 网关档 = OpenAI 兼容客户端指向网关。model.name 是网关侧 model_name（路由别名），
+    # 非底层真实 model id；凭据只有网关地址 + 网关 key，底层 provider key 由网关自己持有。
+    # 缺网关地址或网关 key 即"未配网关"，fail-loud——绝不让 ChatOpenAI 回落 OPENAI_API_KEY 环境变量
+    # （否则会把无关的 openai 直连 key 当网关 key 发出，既错也泄）。
+    if settings.litellm_base_url is None:
+        raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_BASE_URL")
+    if settings.litellm_api_key is None:
+        raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_API_KEY")
+    # thinking/effort 按 OpenAI 兼容语义尽力透传 reasoning_effort（网关转发底层 provider）；
+    # 底层不支持则网关侧忽略，此处不臆造语义。
+    return ChatOpenAI(
+        model=model.name,
+        api_key=settings.litellm_api_key,
+        base_url=settings.litellm_base_url,
+        disable_streaming=settings.disable_streaming,
+        reasoning_effort=_thinking_effort(model, off="minimal"),
     )

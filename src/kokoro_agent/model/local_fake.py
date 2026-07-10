@@ -138,6 +138,15 @@ class LocalFakeChatModel(BaseChatModel):
         # 实例计数器做不到（resume 重建 model 会归零）。
         turn = sum(1 for message in messages if isinstance(message, AIMessage))
         reply = self._turns[turn] if turn < len(self._turns) else AIMessage(content="")
+        if reply.usage_metadata is None:
+            # 固定用量：让 token_usage 全链路（run.completed → session settle 计量）离线可断言。
+            # UsageMetadataCallbackHandler 同时要求 response_metadata.model_name,缺一不记。
+            reply = reply.model_copy(
+                update={
+                    "usage_metadata": {"input_tokens": 120, "output_tokens": 45, "total_tokens": 165},
+                    "response_metadata": {**reply.response_metadata, "model_name": "kokoro-local-fake"},
+                }
+            )
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
 

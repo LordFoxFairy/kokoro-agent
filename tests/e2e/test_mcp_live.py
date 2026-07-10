@@ -17,11 +17,9 @@ import time
 import pytest
 import uvicorn
 from mcp.server.fastmcp import FastMCP
-from pydantic import TypeAdapter
 
 from kokoro_agent.mcp.config import McpServerConfig
-from kokoro_agent.mcp.servers import McpConnectionError
-from kokoro_agent.mcp.tools import load_mcp_tools
+from kokoro_agent.mcp.tools import make_mcp_tools
 
 
 def _free_port() -> int:
@@ -74,19 +72,28 @@ def _registry(url: str, allowed: list[str]) -> dict[str, McpServerConfig]:
     }
 
 
-async def test_live_roundtrip_with_allowlist(mcp_base_url: str) -> None:
-    tools = await load_mcp_tools(["fx"], _registry(mcp_base_url, ["echo"]))
-    # 白名单过滤 secret；命名规则 mcp__{server}__{tool}。
-    assert [tool.name for tool in tools] == ["mcp__fx__echo"]
-    result: object = await tools[0].ainvoke({"text": "你好"})
-    # MCP 工具返回标准 content blocks（外部载荷）：TypeAdapter 洗净后按块形断言。
-    blocks = TypeAdapter(list[dict[str, object]]).validate_python(result)
-    first = blocks[0]
-    assert first["type"] == "text"
-    assert first["text"] == "echo:你好"
+async def test_live_roundtrip_via_stable_surface(mcp_base_url: str) -> None:
+    # 稳定三工具全链：list（白名单过滤 secret）→ describe（schema）→ call（真调用往返）。
+    list_tool, describe_tool, call_tool = make_mcp_tools(["fx"], _registry(mcp_base_url, ["echo"]))
+    listed: str = await list_tool.ainvoke({})
+    assert "fx/echo" in listed and "secret" not in listed
+    described: str = await describe_tool.ainvoke({"server": "fx", "tool": "echo"})
+    assert "text" in described
+    result: str = await call_tool.ainvoke(
+        {"server": "fx", "tool": "echo", "arguments": {"text": "你好"}}
+    )
+    # MCP 工具返回标准 content blocks（外部载荷）：稳定面已序列化为字符串。
+    assert "echo:你好" in result
 
 
-async def test_live_unreachable_fails_closed() -> None:
-    dead = _registry(f"http://127.0.0.1:{_free_port()}/mcp", ["echo"])
-    with pytest.raises(McpConnectionError):
-        await asyncio.wait_for(load_mcp_tools(["fx"], dead), timeout=30)
+async def test_live_unreachable_degrades_per_call() -> None:
+    # 惰性连接：装配不炸；运行时不可达降级为 error 文本（不炸 run）。
+    list_tool, _, call_tool = make_mcp_tools(
+        ["fx"], _registry(f"http://127.0.0.1:{_free_port()}/mcp", ["echo"])
+    )
+    listed: str = await asyncio.wait_for(list_tool.ainvoke({}), timeout=30)
+    assert "不可达" in listed
+    result: str = await asyncio.wait_for(
+        call_tool.ainvoke({"server": "fx", "tool": "echo", "arguments": {}}), timeout=30
+    )
+    assert "error" in result

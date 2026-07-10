@@ -9,7 +9,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.mcp.tools import load_mcp_tools
+from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.skills.supply import UploadCapableBackend
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.skills import make_skill_tools
@@ -39,13 +39,13 @@ async def build_toolset(
     ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user）
     ② 内置底座（恒挂，toolbox 一口出）：租户态 memory + 进程配置态 web_search/web_fetch
     ③ 技能库（恒挂，schema 不随 skill 池变）：find_skill/read_skill 渐进披露
-    ④ MCP 工具：wire 声明的外接 server 清单，逐 run 连接
+    ④ MCP 稳定三工具（恒挂，schema 不随 server 集/远端漂移变）：list/describe/call
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
     tools.extend(make_skill_tools(request.runtime.skills, deps.skills, backend))
-    # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析。
-    tools.extend(await load_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
+    # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析；连接惰性化。
+    tools.extend(make_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
     return Toolset(
         tools=tuple(tools),
         authorized=frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES,

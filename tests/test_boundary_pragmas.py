@@ -9,10 +9,14 @@ from pathlib import Path
 ALLOWED: dict[str, frozenset[str]] = {
     # deepagents create_deep_agent 返回未解 ResponseT 泛型。
     "src/kokoro_agent/execution/build_agent.py": frozenset({"reportUnknownVariableType"}),
+    # langchain-core BaseTool.ainvoke/tool_call_schema 未解泛型（MCP 稳定面转发调用）。
+    "src/kokoro_agent/mcp/tools.py": frozenset({"reportUnknownMemberType"}),
     # langchain-core BaseTool.ainvoke 注解含裸 dict。
     "tests/e2e/test_mcp_live.py": frozenset({"reportUnknownMemberType"}),
     # 同上：技能库工具经 ainvoke 驱动断言。
     "tests/test_skill_tools.py": frozenset({"reportUnknownMemberType"}),
+    # 同上：MCP 稳定三工具经 ainvoke 驱动断言。
+    "tests/test_mcp_tools.py": frozenset({"reportUnknownMemberType"}),
     # StructuredTool.from_function 未解 Runnable 泛型（ToolRuntime 注入唯一构造路径）。
     "tests/test_run_scope_state.py": frozenset({"reportUnknownMemberType"}),
 }

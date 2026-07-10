@@ -151,7 +151,7 @@ _RUNTIME: dict[str, JsonValue] = {
     "model": _MODEL,
     "tools": [],
     "skills": [],
-    "mcp": [],
+    "mcp_servers": [],
     "subagents": [],
     "backend": "state",
     "permissions": _PERMISSIONS,

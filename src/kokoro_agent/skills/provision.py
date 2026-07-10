@@ -1,8 +1,8 @@
 """skills 供给（Skills V2）：把本次授权的 skill 包物化进 run 的 backend。
 
 消费在图内由 deepagents 原生 SkillsMiddleware 承担（渐进披露：prompt 只挂
-name+description，agent 用到才 read_file 全文）。授权面按前缀隔离：主 agent
-供给到 MAIN_SKILLS_SOURCE，各子代理供给到各自 sub-<name>/ 前缀。
+name+description，agent 用到才 read_file 全文）。wire subagents 已 names 化，
+per-subagent 技能包随 wire 定义路径退役；供给面只剩主 agent 的 MAIN_SKILLS_SOURCE。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from deepagents.backends.protocol import FileData, FileUploadResponse
 from deepagents.backends.utils import create_file_data
 
 from kokoro_agent.skills.package import SkillLibrary
-from kokoro_agent.skills.supply import MAIN_SKILLS_SOURCE, subagent_skills_source
+from kokoro_agent.skills.supply import MAIN_SKILLS_SOURCE
 from kokoro_agent.contract import RuntimeConfig
 
 
@@ -34,9 +34,6 @@ def _granted_files(runtime: RuntimeConfig, skills: SkillLibrary) -> dict[str, st
     grants: dict[str, tuple[str, ...]] = {}
     if runtime.skills:
         grants[MAIN_SKILLS_SOURCE] = tuple(dict.fromkeys(runtime.skills))
-    for spec in runtime.subagents:
-        if spec.skills:
-            grants[subagent_skills_source(spec.name)] = tuple(dict.fromkeys(spec.skills))
     files: dict[str, str] = {}
     for prefix, names in grants.items():
         for name in names:

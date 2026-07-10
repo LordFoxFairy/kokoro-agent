@@ -1,20 +1,18 @@
-"""子代理装配件：catalog/wire 声明 → deepagents SubAgent 定义（守卫逐个下发）。"""
+"""子代理装配件：catalog 声明 → deepagents SubAgent 定义（守卫逐个下发）。
+
+wire 不再携带子代理定义（names 只作声明性白名单）；定义住 catalog/资产库。
+"""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgent
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from kokoro_agent.contract import ModelConfig, RunRequest
-from kokoro_agent.prompts import PromptLibrary
-from kokoro_agent.skills import subagent_skills_source
 from kokoro_agent.subagents.catalog import SubagentCatalog
-from kokoro_agent.tools.registry import KOKORO_TOOLS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,54 +28,6 @@ def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent
     if guards:
         sub["middleware"] = list(guards)
     return sub
-
-
-def wire_subagents(
-    request: RunRequest,
-    tool_index: Mapping[str, BaseTool],
-    make_model: Callable[[ModelConfig], BaseChatModel],
-    guards: Sequence[AgentMiddleware] = (),
-    prompts: PromptLibrary | None = None,
-) -> list[SubAgent]:
-    """wire 子代理 → deepagents 定义：tools 主 index 优先（复用政策实例）、注册表兜底
-    （入口对偶性：成品降格为子代理时，其专属注册表工具可不在主 agent 工具集里），
-    仍未知即 fail-loud——绝不静默丢弃；model 经工厂实例化；二者缺省即继承主 agent。"""
-    out: list[SubAgent] = []
-    for spec in request.runtime.subagents:
-        # prompt：内联覆盖 → 按名资产（prompts/<name>.md）；两者皆无即 fail-loud（不设无 prompt 下属）。
-        prompt = spec.system_prompt or (prompts.get(spec.name) if prompts else None)
-        if prompt is None:
-            raise ValueError(f"subagent {spec.name!r} has no prompt (inline or prompts/{spec.name}.md)")
-        sub: SubAgent = {
-            "name": spec.name,
-            "description": spec.description,
-            "system_prompt": prompt,
-        }
-        # 入口对偶性（Skills V2）：成品作下属仍带自己的技能包——工厂已按前缀供给进
-        # backend，这里挂原生 SkillsMiddleware 源路径（渐进披露，不再渲染文本）。
-        if spec.skills:
-            sub["skills"] = [subagent_skills_source(spec.name)]
-        if spec.tools:
-            resolved: list[BaseTool] = []
-            unknown: list[str] = []
-            for name in spec.tools:
-                tool = tool_index.get(name) or KOKORO_TOOLS.get(name)
-                if tool is None:
-                    unknown.append(name)
-                else:
-                    resolved.append(tool)
-            if unknown:
-                raise ValueError(
-                    f"subagent {spec.name!r} declares unknown tools: {sorted(unknown)}"
-                )
-            sub["tools"] = resolved
-        if spec.model is not None:
-            sub["model"] = make_model(spec.model)
-        if guards:
-            # 子代理 middleware 链独立于主 agent：预算/终态闸必须逐个下发，否则 task 委派即旁路。
-            sub["middleware"] = list(guards)
-        out.append(sub)
-    return out
 
 
 def catalog_subagents(

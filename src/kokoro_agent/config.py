@@ -111,6 +111,9 @@ class AppConfig(BaseModel):
         default=None, validation_alias="KOKORO_CUSTOM_BACKEND_CONFIG"
     )
 
+    # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
+    mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
+
     # --- web_tools 域 ---
     fetch_allow_private: bool = Field(
         default=False, validation_alias="KOKORO_WEB_FETCH_ALLOW_PRIVATE"

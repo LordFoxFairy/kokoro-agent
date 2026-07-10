@@ -397,7 +397,7 @@ def request(
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[],
             skills=[],
-            mcp=[],
+            mcp_servers=[],
             subagents=[],
             backend="state",
             permissions=Permissions(

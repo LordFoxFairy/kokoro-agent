@@ -19,7 +19,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from pydantic import TypeAdapter
 
-from kokoro_agent.contract import McpServer
+from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.mcp.servers import McpConnectionError
 from kokoro_agent.mcp.tools import load_mcp_tools
 
@@ -66,14 +66,16 @@ def mcp_base_url():
     thread.join(timeout=5)
 
 
-def _server(url: str, allowed: list[str]) -> McpServer:
-    return McpServer(
-        name="fx", transport="streamable_http", url=url, allowed_tools=allowed, timeout_s=10
-    )
+def _registry(url: str, allowed: list[str]) -> dict[str, McpServerConfig]:
+    return {
+        "fx": McpServerConfig(
+            transport="streamable_http", url=url, allowed_tools=allowed, timeout_s=10
+        )
+    }
 
 
 async def test_live_roundtrip_with_allowlist(mcp_base_url: str) -> None:
-    tools = await load_mcp_tools([_server(mcp_base_url, ["echo"])])
+    tools = await load_mcp_tools(["fx"], _registry(mcp_base_url, ["echo"]))
     # 白名单过滤 secret；命名规则 mcp__{server}__{tool}。
     assert [tool.name for tool in tools] == ["mcp__fx__echo"]
     result: object = await tools[0].ainvoke({"text": "你好"})
@@ -85,6 +87,6 @@ async def test_live_roundtrip_with_allowlist(mcp_base_url: str) -> None:
 
 
 async def test_live_unreachable_fails_closed() -> None:
-    dead = _server(f"http://127.0.0.1:{_free_port()}/mcp", ["echo"])
+    dead = _registry(f"http://127.0.0.1:{_free_port()}/mcp", ["echo"])
     with pytest.raises(McpConnectionError):
-        await asyncio.wait_for(load_mcp_tools([dead]), timeout=30)
+        await asyncio.wait_for(load_mcp_tools(["fx"], dead), timeout=30)

@@ -36,7 +36,8 @@ async def build_toolset(
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
-    tools.extend(await load_mcp_tools(request.runtime.mcp))
+    # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析。
+    tools.extend(await load_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
     return Toolset(
         tools=tuple(tools),
         authorized=frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES,

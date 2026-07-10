@@ -25,6 +25,7 @@ from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.content_source import load_asset_libraries
+from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -79,6 +80,8 @@ async def _serve(config: AppConfig) -> None:
             memory_store=memory_store,
             skills=skills,
             prompts=prompts,
+            # MCP server 定义住部署侧：启动即加载校验（含 ${ENV} 凭据展开），fail-loud。
+            mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
         )
         supervisor = RunSupervisor(
             agent_builder=functools.partial(assemble, deps),

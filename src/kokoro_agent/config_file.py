@@ -40,6 +40,7 @@ _YAML_TO_ENV: dict[str, str] = {
     "sandbox.custom.factory": "KOKORO_CUSTOM_BACKEND",
     "sandbox.custom.config": "KOKORO_CUSTOM_BACKEND_CONFIG",
     "workspace_config": "KOKORO_WORKSPACE_CONFIG",
+    "mcp.config": "KOKORO_MCP_CONFIG",
     "web_tools.fetch_allow_private": "KOKORO_WEB_FETCH_ALLOW_PRIVATE",
     "web_tools.search.provider": "KOKORO_WEB_SEARCH_PROVIDER",
     "web_tools.search.url": "KOKORO_WEB_SEARCH_URL",

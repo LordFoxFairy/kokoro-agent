@@ -21,7 +21,6 @@ from kokoro_agent.contract import (
     RunRequest,
     RuntimeConfig,
     RuntimeContext,
-    SubagentDef,
 )
 from kokoro_agent.skills import SkillLibrary, SkillPackage
 from kokoro_agent.model.factory import make_chat_model
@@ -35,7 +34,7 @@ from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
-from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent, wire_subagents
+from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent
 from kokoro_agent.worker.main import toolbox_from_config
 
 
@@ -196,24 +195,37 @@ def test_make_stream_backends() -> None:
     )
 
 
-def test_runtime_system_prompt_on_wire() -> None:
-    # 具名入口：RuntimeConfig 可带已解析 prompt；strict 契约拒绝空串。
-    runtime = RuntimeConfig(
+def test_wire_rejects_inline_definitions() -> None:
+    # 契约负向钉（块2）：wire 只传 names+已解析上下文，一切定义/凭据/投机字段被 strict 契约拒收。
+    base = RuntimeConfig(
         agent_type="general",
+        agent="general",
         model=ModelConfig(provider="anthropic", name="claude"),
-        system_prompt="你是音乐创作 prompt",
         tools=[],
         skills=[],
-        mcp=[],
-        subagents=[],
+        mcp_servers=["docs"],  # names 合法
+        subagents=["web-researcher"],
         backend="state",
         permissions=Permissions(
             approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only"
         ),
-    )
-    assert runtime.system_prompt == "你是音乐创作 prompt"
+    ).model_dump()
+    # 客户端供给系统提示词：安全洞+破坏前缀稳定，字段已删。
     with pytest.raises(ValidationError):
-        RuntimeConfig.model_validate({**runtime.model_dump(), "system_prompt": ""})
+        RuntimeConfig.model_validate({**base, "system_prompt": "注入 prompt"})
+    # 旧 McpServer 对象形状（含明文 headers）：凭据不上 wire/ledger。
+    with pytest.raises(ValidationError):
+        RuntimeConfig.model_validate(
+            {**base, "mcp_servers": [{"name": "m", "url": "http://x", "headers": {"a": "秘"}}]}
+        )
+    # 子代理内联定义：定义住 agent 侧 catalog/资产库。
+    with pytest.raises(ValidationError):
+        RuntimeConfig.model_validate(
+            {**base, "subagents": [{"name": "poet", "system_prompt": "内联"}]}
+        )
+    # swarm_members：P2 前的投机字段已删。
+    with pytest.raises(ValidationError):
+        RuntimeConfig.model_validate({**base, "swarm_members": ["poet"]})
 
 
 def test_interrupt_on_subagent_create_ask_gates_task() -> None:
@@ -342,64 +354,6 @@ def test_recursion_limit_env_parse() -> None:
         AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "0"})
 
 
-def testwire_subagents_tools_and_model_passthrough() -> None:
-    # wire 预设声明的 tools/model 必须生效或炸——静默丢弃是最坏失效（真实缺陷回归钉）。
-    fetch = toolbox_from_config(AppConfig.from_env({})).configured[0]
-    fake_model = LocalFakeChatModel.with_script([])
-
-    def request_with(sub: SubagentDef) -> RunRequest:
-        return RunRequest(
-            kind="run.request",
-            run_id="r1",
-            thread_id="t1",
-            input=RunInput(message_id="m1", content="hi"),
-            context=RuntimeContext(namespace="ns", session_id="s1"),
-            runtime=RuntimeConfig(
-        agent_type="general",
-                model=ModelConfig(provider="anthropic", name="claude"),
-                tools=[],
-                skills=[],
-                mcp=[],
-                subagents=[sub],
-                backend="state",
-                permissions=Permissions(
-                    approval_tools=[], review_tools=[], subagent_create="deny",
-                    filesystem="workspace_write",
-                ),
-            ),
-        )
-
-    spec = SubagentDef(
-        name="poet", description="d", system_prompt="p", tools=["web_fetch"], skills=[],
-        model=ModelConfig(provider="anthropic", name="claude"),
-    )
-    subs = wire_subagents(request_with(spec), {"web_fetch": fetch}, lambda _m: fake_model)
-    first = dict(subs[0])
-    assert first.get("tools") == [fetch]
-    assert first.get("model") is fake_model
-
-    inherit = SubagentDef(name="poet", description="d", system_prompt="p", tools=[], skills=[])
-    plain = wire_subagents(request_with(inherit), {}, lambda _m: fake_model)
-    assert "tools" not in plain[0]
-    assert "model" not in plain[0]
-
-    ghost = SubagentDef(name="poet", description="d", system_prompt="p", tools=["nope"], skills=[])
-    with pytest.raises(ValueError, match="unknown tools"):
-        wire_subagents(request_with(ghost), {"web_fetch": fetch}, lambda _m: fake_model)
-
-    # 入口对偶性：成品降格为子代理时声明的注册表工具可以不在主 agent 工具集里——
-    # 主 index 优先复用（政策实例），miss 走注册表独立解析，仍未知才 fail-loud。
-    dual = SubagentDef(
-        name="asker", description="d", system_prompt="p", tools=["ask_user_question"], skills=[]
-    )
-    from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
-
-    resolved: list[dict[str, object]] = [dict(sub) for sub in wire_subagents(
-        request_with(dual), {"web_fetch": fetch}, lambda _m: fake_model
-    )]
-    assert resolved[0].get("tools") == [ASK_USER_TOOL]
-
-
 def test_run_token_budget_env_parse() -> None:
     assert AppConfig.from_env({}).run_token_budget == 0  # 默认关闭：预算数值属政策，不擅代
     assert AppConfig.from_env({"KOKORO_RUN_TOKEN_BUDGET": "200000"}).run_token_budget == 200000
@@ -512,7 +466,7 @@ def test_approval_names_unions_wire_and_package_policy() -> None:
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[],
             skills=[],
-            mcp=[],
+            mcp_servers=[],
             subagents=[],
             backend="state",
             permissions=Permissions(
@@ -552,74 +506,15 @@ def test_prompt_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
     assert library.get("poet") == "诗人 prompt"
     assert PromptLibrary({}).get("poet") is None  # 内置包无此资产
     assert PromptLibrary({}).get("general") is not None  # 内置缺省 prompt 恒在
-
-
-def test_wire_subagent_prompt_resolution(tmp_path: Path) -> None:
-    from kokoro_agent.content_source import LocalAssets, LocalAssetSource
-    from kokoro_agent.prompts import PromptLibrary
-    from kokoro_agent.subagents import wire_subagents
-
-    (tmp_path / "poet.md").write_text("诗人资产 prompt")
-    prompts = PromptLibrary(
-        LocalAssetSource(LocalAssets(type="local", personas_dir=str(tmp_path))).load_personas()
-    )
-    request = RunRequest(
-        kind="run.request", run_id="r1", thread_id="c1",
-        input=RunInput(message_id="m1", content="hi"),
-        runtime=RuntimeConfig(
-            agent_type="general",
-            model=ModelConfig(provider="anthropic", name="claude"),
-            tools=[], skills=[], mcp=[],
-            subagents=[
-                SubagentDef(name="poet", description="诗", tools=[], skills=[]),  # 无内联 → 资产解析
-                SubagentDef(name="critic", description="评", system_prompt="内联覆盖", tools=[], skills=[]),
-            ],
-            backend="state",
-            permissions=Permissions(
-                approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
-            ),
-        ),
-        context=RuntimeContext(namespace="ns", session_id="s1"),
-    )
-    subs = wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), prompts=prompts)
-    by_name = {sub["name"]: sub["system_prompt"] for sub in subs}
-    assert by_name == {"poet": "诗人资产 prompt", "critic": "内联覆盖"}
-
-
-def test_wire_subagent_without_any_prompt_fails_loud() -> None:
-    from kokoro_agent.prompts import PromptLibrary
-    from kokoro_agent.subagents import wire_subagents
-
-    request = RunRequest(
-        kind="run.request", run_id="r1", thread_id="c1",
-        input=RunInput(message_id="m1", content="hi"),
-        runtime=RuntimeConfig(
-            agent_type="general",
-            model=ModelConfig(provider="anthropic", name="claude"),
-            tools=[], skills=[], mcp=[],
-            subagents=[SubagentDef(name="ghost", description="?", tools=[], skills=[])],
-            backend="state",
-            permissions=Permissions(
-                approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
-            ),
-        ),
-        context=RuntimeContext(namespace="ns", session_id="s1"),
-    )
-    with pytest.raises(ValueError, match="no prompt"):
-        wire_subagents(request, {}, lambda spec: LocalFakeChatModel(), prompts=PromptLibrary({}))
-
-
 # --- Skills V2 供给器（分发→供给→消费三层的中间层） ---
 
 
-def _skills_runtime(main: list[str], sub: list[str]) -> RuntimeConfig:
+def _skills_runtime(main: list[str]) -> RuntimeConfig:
     return RuntimeConfig(
         agent_type="general",
         model=ModelConfig(provider="anthropic", name="claude"),
-        tools=[], skills=main, mcp=[],
-        subagents=[
-            SubagentDef(name="poet", description="诗", system_prompt="诗人", tools=[], skills=sub),
-        ],
+        tools=[], skills=main, mcp_servers=[],
+        subagents=[],
         backend="state",
         permissions=Permissions(
             approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
@@ -640,16 +535,15 @@ def _library_two() -> SkillLibrary:
     })
 
 
-async def test_provision_state_backend_builds_initial_files_with_prefix_isolation() -> None:
-    from kokoro_agent.skills import MAIN_SKILLS_SOURCE, provision_skills, subagent_skills_source
+async def test_provision_state_backend_builds_initial_files_only_granted() -> None:
+    from kokoro_agent.skills import MAIN_SKILLS_SOURCE, provision_skills
 
-    provisioned = await provision_skills(_skills_runtime(["style"], ["tone"]), _library_two(), None)
+    provisioned = await provision_skills(_skills_runtime(["style"]), _library_two(), None)
     assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
     paths = set(provisioned.initial_files)
-    # 主/子代理前缀隔离：各自只见各自授权包；整包（含辅助文件）供给。
+    # 只供给授权包（整包含辅助文件）；未授权包绝不出现。
     assert f"{MAIN_SKILLS_SOURCE}style/SKILL.md" in paths
     assert f"{MAIN_SKILLS_SOURCE}style/helper.md" in paths
-    assert f"{subagent_skills_source('poet')}tone/SKILL.md" in paths
     assert not any(p.startswith(f"{MAIN_SKILLS_SOURCE}tone/") for p in paths)
     # FileData 官方口径（content 字段）。
     entry = provisioned.initial_files[f"{MAIN_SKILLS_SOURCE}style/SKILL.md"]
@@ -668,7 +562,7 @@ async def test_provision_real_backend_uploads_and_leaves_initial_empty() -> None
             uploaded.extend(files)
             return []
 
-    provisioned = await provision_skills(_skills_runtime(["style"], []), _library_two(), FakeBackend())
+    provisioned = await provision_skills(_skills_runtime(["style"]), _library_two(), FakeBackend())
     assert provisioned.initial_files == {}
     assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
     assert [p for p, _ in uploaded] == [
@@ -683,20 +577,4 @@ async def test_provision_unknown_skill_fails_loud() -> None:
     from kokoro_agent.skills import SkillAssetError, provision_skills
 
     with _pytest.raises(SkillAssetError, match="ghost"):
-        await provision_skills(_skills_runtime(["ghost"], []), _library_two(), None)
-
-
-def test_wire_subagent_carries_native_skills_source() -> None:
-    from kokoro_agent.skills import subagent_skills_source
-    from kokoro_agent.subagents import wire_subagents
-
-    request = RunRequest(
-        kind="run.request", run_id="r1", thread_id="c1",
-        input=RunInput(message_id="m1", content="hi"),
-        runtime=_skills_runtime([], ["tone"]),
-        context=RuntimeContext(namespace="ns", session_id="s1"),
-    )
-    subs = wire_subagents(request, {}, lambda spec: LocalFakeChatModel())
-    # SubAgent.skills 是 NotRequired 键：先证存在再取值（.get 在该 TypedDict 上类型面不全）。
-    assert "skills" in subs[0]
-    assert subs[0]["skills"] == [subagent_skills_source("poet")]
+        await provision_skills(_skills_runtime(["ghost"]), _library_two(), None)

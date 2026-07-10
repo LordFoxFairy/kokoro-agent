@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints,
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
-McpTransport = Literal["http", "streamable_http"]
 SubagentCreate = Literal["deny", "ask", "allow"]
 FilesystemPerm = Literal["read_only", "workspace_write"]
 AgentType = Literal["general"]
@@ -31,24 +30,6 @@ class ModelConfig(StrictModel):
     thinking: bool | None = None
 
 
-class McpServer(StrictModel):
-    name: NonEmptyStr
-    transport: McpTransport
-    url: NonEmptyStr
-    allowed_tools: list[NonEmptyStr]
-    timeout_s: int | None = None
-    headers: dict[str, str] | None = None
-
-
-class SubagentDef(StrictModel):
-    name: NonEmptyStr
-    description: str
-    system_prompt: NonEmptyStr | None = None
-    tools: list[NonEmptyStr]
-    skills: list[NonEmptyStr]
-    model: ModelConfig | None = None
-
-
 class Permissions(StrictModel):
     approval_tools: list[NonEmptyStr]
     review_tools: list[NonEmptyStr]
@@ -58,16 +39,14 @@ class Permissions(StrictModel):
 
 class RuntimeConfig(StrictModel):
     agent_type: AgentType
-    entry: NonEmptyStr | None = None
+    agent: NonEmptyStr | None = None
     model: ModelConfig
-    system_prompt: NonEmptyStr | None = None
     tools: list[NonEmptyStr]
     skills: list[NonEmptyStr]
-    mcp: list[McpServer]
-    subagents: list[SubagentDef]
+    mcp_servers: list[NonEmptyStr]
+    subagents: list[NonEmptyStr]
     backend: Backend
     permissions: Permissions
-    swarm_members: list[NonEmptyStr] | None = None
 
 
 class RuntimeContext(StrictModel):

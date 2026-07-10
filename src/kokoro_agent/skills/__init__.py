@@ -1,4 +1,8 @@
-"""skills 一等域：包契约（package）+ 供给布局（supply）+ 授权物化（provision）。"""
+"""skills 一等域：包契约（package）+ 资产供给布局（supply）。
+
+消费面在 tools/skills.py（find_skill/read_skill，渐进披露）；
+装配期全量物化（provision）已随"挂载=逻辑授权"退役。
+"""
 
 from __future__ import annotations
 
@@ -10,16 +14,10 @@ from kokoro_agent.skills.package import (
     build_packages,
     parse_frontmatter,
 )
-from kokoro_agent.skills.provision import (
-    ProvisionedSkills,
-    UploadCapableBackend,
-    provision_skills,
-)
-from kokoro_agent.skills.supply import MAIN_SKILLS_SOURCE, subagent_skills_source
+from kokoro_agent.skills.supply import SKILLS_ROOT, UploadCapableBackend
 
 __all__ = [
-    "MAIN_SKILLS_SOURCE",
-    "ProvisionedSkills",
+    "SKILLS_ROOT",
     "SkillAssetError",
     "SkillFrontmatter",
     "SkillLibrary",
@@ -27,6 +25,4 @@ __all__ = [
     "UploadCapableBackend",
     "build_packages",
     "parse_frontmatter",
-    "provision_skills",
-    "subagent_skills_source",
 ]

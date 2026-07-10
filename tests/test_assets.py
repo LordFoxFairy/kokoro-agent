@@ -7,21 +7,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
 
 import boto3
 import pytest
 from botocore.config import Config as BotoConfig
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.outputs import ChatResult
 from mypy_boto3_s3 import S3Client
 from pydantic import SecretStr, ValidationError
 
-from deepagents.backends.utils import create_file_data
 
-from fakes import usage_recorder
 from kokoro_agent.content_source import (
     AssetSettings,
     AssetSourceError,
@@ -33,16 +26,10 @@ from kokoro_agent.content_source import (
     load_assets_config,
 )
 from kokoro_agent.skills import (
-    MAIN_SKILLS_SOURCE,
     SkillAssetError,
     SkillLibrary,
     build_packages,
 )
-from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.execution.events import RunEmitter
-from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.streams.redis import RedisStream
 
 MINIO_URL = "http://127.0.0.1:9100"
 BUCKET = f"kokoro-assets-test-{int(time.time())}"
@@ -260,63 +247,3 @@ class TestS3AssetSource:
         assert "via-s3-skill" in skills.get("tone").files["SKILL.md"]
 
 
-# --- 渐进披露真图（Skills V2 的核心行为断言） ---
-
-
-@pytest.mark.asyncio
-async def test_progressive_disclosure_prompt_has_description_not_body(
-    tmp_path: Path, stream: RedisStream
-) -> None:
-    # 原生 SkillsMiddleware：system prompt 只挂 name+description，正文不进 prompt——
-    # 与 V1 全文注入相反的行为钉（正文经 read_file 渐进获取）。
-    captured: list[list[BaseMessage]] = []
-
-    class Recorder(LocalFakeChatModel):
-        def _generate(
-            self,
-            messages: list[BaseMessage],
-            stop: list[str] | None = None,
-            run_manager: CallbackManagerForLLMRun | None = None,
-            **kwargs: Any,
-        ) -> ChatResult:
-            captured.append(list(messages))
-            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
-
-    agent = build_agent(
-        model=Recorder.with_script([AIMessage(content="ok")]),
-        tools=[],
-        system_prompt="base prompt",
-        subagents=[],
-        checkpointer=None,
-        permissions=[],
-        interrupt_on={},
-        skills=[MAIN_SKILLS_SOURCE],
-    )
-
-    async def claim() -> bool:
-        return True
-
-    terminal = await invoke_once(
-        RunEmitter(stream, f"rn-{uuid4().hex}"),
-        agent,
-        "t1",
-        {
-            "messages": [HumanMessage(content="hi")],
-            # state 档官方口径：授权包随首 invoke files 注入。
-            "files": {
-                f"{MAIN_SKILLS_SOURCE}style/SKILL.md": create_file_data(
-                    fm("style", "输出末尾带 via-skill 标记")
-                    + "全文正文只在按需读取时可见 BODY-SENTINEL"
-                ),
-            },
-        },
-        approval_tool_names=frozenset(),
-        source_for=lambda _name: "built-in",
-        claim_terminal=claim,
-        record_usage=usage_recorder()[0],
-    )
-    assert terminal is True
-    system_text = "\n".join(m.text for m in captured[-1] if m.type == "system")
-    assert "输出末尾带 via-skill 标记" in system_text  # description 上 prompt
-    assert "BODY-SENTINEL" not in system_text  # 正文绝不进 prompt（渐进披露）
-    assert "base prompt" in system_text

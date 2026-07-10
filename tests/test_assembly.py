@@ -22,7 +22,6 @@ from kokoro_agent.contract import (
     RuntimeConfig,
     RuntimeContext,
 )
-from kokoro_agent.skills import SkillLibrary, SkillPackage
 from kokoro_agent.model.factory import make_chat_model
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -506,75 +505,3 @@ def test_prompt_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
     assert library.get("poet") == "诗人 prompt"
     assert PromptLibrary({}).get("poet") is None  # 内置包无此资产
     assert PromptLibrary({}).get("general") is not None  # 内置缺省 prompt 恒在
-# --- Skills V2 供给器（分发→供给→消费三层的中间层） ---
-
-
-def _skills_runtime(main: list[str]) -> RuntimeConfig:
-    return RuntimeConfig(
-        agent_type="general",
-        model=ModelConfig(provider="anthropic", name="claude"),
-        tools=[], skills=main, mcp_servers=[],
-        subagents=[],
-        backend="state",
-        permissions=Permissions(
-            approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only",
-        ),
-    )
-
-
-def _library_two() -> SkillLibrary:
-    return SkillLibrary({
-        "style": SkillPackage(
-            name="style", description="风格",
-            files={"SKILL.md": "---\nname: style\ndescription: 风格\n---\n正文A", "helper.md": "辅"},
-        ),
-        "tone": SkillPackage(
-            name="tone", description="语气",
-            files={"SKILL.md": "---\nname: tone\ndescription: 语气\n---\n正文B"},
-        ),
-    })
-
-
-async def test_provision_state_backend_builds_initial_files_only_granted() -> None:
-    from kokoro_agent.skills import MAIN_SKILLS_SOURCE, provision_skills
-
-    provisioned = await provision_skills(_skills_runtime(["style"]), _library_two(), None)
-    assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
-    paths = set(provisioned.initial_files)
-    # 只供给授权包（整包含辅助文件）；未授权包绝不出现。
-    assert f"{MAIN_SKILLS_SOURCE}style/SKILL.md" in paths
-    assert f"{MAIN_SKILLS_SOURCE}style/helper.md" in paths
-    assert not any(p.startswith(f"{MAIN_SKILLS_SOURCE}tone/") for p in paths)
-    # FileData 官方口径（content 字段）。
-    entry = provisioned.initial_files[f"{MAIN_SKILLS_SOURCE}style/SKILL.md"]
-    assert "正文A" in entry["content"]
-
-
-async def test_provision_real_backend_uploads_and_leaves_initial_empty() -> None:
-    from deepagents.backends.protocol import FileUploadResponse
-
-    from kokoro_agent.skills import MAIN_SKILLS_SOURCE, provision_skills
-
-    uploaded: list[tuple[str, bytes]] = []
-
-    class FakeBackend:
-        def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-            uploaded.extend(files)
-            return []
-
-    provisioned = await provision_skills(_skills_runtime(["style"]), _library_two(), FakeBackend())
-    assert provisioned.initial_files == {}
-    assert provisioned.sources == (MAIN_SKILLS_SOURCE,)
-    assert [p for p, _ in uploaded] == [
-        f"{MAIN_SKILLS_SOURCE}style/SKILL.md",
-        f"{MAIN_SKILLS_SOURCE}style/helper.md",
-    ]
-
-
-async def test_provision_unknown_skill_fails_loud() -> None:
-    import pytest as _pytest
-
-    from kokoro_agent.skills import SkillAssetError, provision_skills
-
-    with _pytest.raises(SkillAssetError, match="ghost"):
-        await provision_skills(_skills_runtime(["ghost"]), _library_two(), None)

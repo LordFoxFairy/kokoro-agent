@@ -209,9 +209,6 @@ class RunSupervisor:
             "messages": [HumanMessage(content=request.input.content, id=request.input.message_id)],
             "scope": scope.as_state(),
         }
-        if assembled.initial_files:
-            # Skills V2 state 档：授权包经官方 files 口径进初始状态（重拾重放幂等覆盖）。
-            payload["files"] = dict(assembled.initial_files)
         self._spawn_agent(
             bus,
             assembled,

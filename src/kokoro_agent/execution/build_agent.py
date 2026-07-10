@@ -34,8 +34,6 @@ def build_agent(
     middleware: Sequence[AgentMiddleware] = (),
     backend: BackendProtocol | None = None,
     store: BaseStore | None = None,
-    # Skills V2：deepagents 原生 SkillsMiddleware 源路径（渐进披露）；空=不挂。
-    skills: Sequence[str] = (),
 ) -> InvokableAgent:
     # deepagents 返回泛型 CompiledStateGraph（含未定 ResponseT）：object 边界 + TypeGuard
     # 一次收窄为窄端口，私有泛型不外泄。
@@ -50,7 +48,6 @@ def build_agent(
         middleware=list(middleware),
         backend=backend,
         store=store,
-        skills=list(skills) if skills else None,
         # 身份乘 State 轴（scope 键）：随 input 进图、落 checkpoint（run/state.py 法则）。
         state_schema=KokoroAgentState,
     )

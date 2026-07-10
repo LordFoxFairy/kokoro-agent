@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar, Protocol
 
-from deepagents.backends.protocol import FileData
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
@@ -32,8 +31,6 @@ class AssembledAgent:
 
     agent: InvokableAgent
     tool_descriptions: Mapping[str, str]
-    # Skills V2 state 档：随首次 invoke 注入的初始文件（官方 FileData 口径）；真实 backend 恒空。
-    initial_files: Mapping[str, FileData] = field(default_factory=dict[str, FileData])
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)

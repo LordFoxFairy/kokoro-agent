@@ -16,8 +16,6 @@ from botocore.config import Config as BotoConfig
 from mypy_boto3_s3 import S3Client
 from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter, model_validator
 
-from kokoro_agent.prompts.library import PromptLibrary
-from kokoro_agent.skills.package import SkillLibrary, build_packages
 
 
 class AssetSourceError(Exception):
@@ -206,10 +204,3 @@ def make_asset_source(settings: AssetSettings) -> AssetSource:
     return LocalAssetSource(settings.source)
 
 
-def load_asset_libraries(settings: AssetSettings) -> tuple[SkillLibrary, PromptLibrary]:
-    """worker 启动一次装载：skills/prompts 同源快照入库。"""
-    source = make_asset_source(settings)
-    return (
-        SkillLibrary(build_packages(source.load_skills())),
-        PromptLibrary(source.load_personas()),
-    )

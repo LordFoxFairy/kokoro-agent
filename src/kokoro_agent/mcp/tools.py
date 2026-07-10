@@ -102,13 +102,9 @@ def make_mcp_tools(
         found = await _find_tool(server, tool)
         if isinstance(found, str):
             return found
-        # 上游注解声称 type[BaseModel]，但 adapters 工具运行时给 dict（live e2e 实证）：object 收敛后双分支。
+        # 上游注解声称 type[BaseModel]，但 adapters 工具运行时给 dict（live e2e 实证）：dict 分支优先。
         schema: object = found.tool_call_schema
-        raw: object = (
-            schema.model_json_schema()
-            if isinstance(schema, type) and issubclass(schema, BaseModel)
-            else schema
-        )
+        raw: object = schema if isinstance(schema, dict) else schema.model_json_schema()
         rendered = json.dumps(raw, ensure_ascii=False, default=str)
         return f"{server}/{tool}\n{(found.description or '').strip()}\n参数 schema：{rendered}"
 

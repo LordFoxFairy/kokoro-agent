@@ -421,3 +421,4 @@ def usage_recorder() -> tuple[Callable[[int, int], Awaitable[tuple[int, int]]], 
         return (seen["input"], seen["output"])
 
     return record, seen
+

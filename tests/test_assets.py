@@ -22,14 +22,11 @@ from kokoro_agent.content_source import (
     LocalAssetSource,
     S3Assets,
     S3AssetSource,
-    load_asset_libraries,
+    make_asset_source,
     load_assets_config,
 )
-from kokoro_agent.skills import (
-    SkillAssetError,
-    SkillLibrary,
-    build_packages,
-)
+from kokoro_agent.prompts import PromptLibrary
+from kokoro_agent.skills import SkillAssetError, parse_frontmatter
 
 MINIO_URL = "http://127.0.0.1:9100"
 BUCKET = f"kokoro-assets-test-{int(time.time())}"
@@ -45,11 +42,11 @@ def _write_skill(root: Path, name: str, body: str, description: str = "技能描
     (d / "SKILL.md").write_text(fm(name, description) + body)
 
 
-def _local_library(tmp_path: Path, skills: dict[str, str]) -> SkillLibrary:
+def _local_raw(tmp_path: Path, skills: dict[str, str]) -> dict[str, dict[str, str]]:
     for name, body in skills.items():
         _write_skill(tmp_path, name, body)
     source = LocalAssetSource(LocalAssets(type="local", skills_dir=str(tmp_path)))
-    return SkillLibrary(build_packages(source.load_skills()))
+    return {name: dict(files) for name, files in source.load_skills().items()}
 
 
 # --- frontmatter 契约（S1） ---
@@ -59,11 +56,11 @@ def test_package_load_with_frontmatter_and_helper_files(tmp_path: Path) -> None:
     _write_skill(tmp_path, "style", "正文指引", description="风格技能")
     (tmp_path / "style" / "helper.md").write_text("辅助文件")
     source = LocalAssetSource(LocalAssets(type="local", skills_dir=str(tmp_path)))
-    library = SkillLibrary(build_packages(source.load_skills()))
-    package = library.get("style")
-    assert package.description == "风格技能"
-    assert "正文指引" in package.files["SKILL.md"]
-    assert package.files["helper.md"] == "辅助文件"
+    raw = source.load_skills()
+    meta = parse_frontmatter("style", raw["style"]["SKILL.md"])
+    assert meta.description == "风格技能"
+    assert "正文指引" in raw["style"]["SKILL.md"]
+    assert raw["style"]["helper.md"] == "辅助文件"
 
 
 @pytest.mark.parametrize(
@@ -81,21 +78,21 @@ def test_frontmatter_negatives_fail_loud(tmp_path: Path, content: str, match: st
     d.mkdir()
     (d / "SKILL.md").write_text(content)
     source = LocalAssetSource(LocalAssets(type="local", skills_dir=str(tmp_path)))
+    raw = source.load_skills()
     with pytest.raises((SkillAssetError, ValidationError)):
-        build_packages(source.load_skills())
+        parse_frontmatter("style", raw["style"]["SKILL.md"])
 
 
-def test_unknown_name_fails_loud(tmp_path: Path) -> None:
-    library = _local_library(tmp_path, {"alpha": "A"})
-    with pytest.raises(SkillAssetError, match="ghost"):
-        library.get("ghost")
+def test_unknown_name_absent_from_raw(tmp_path: Path) -> None:
+    raw = _local_raw(tmp_path, {"alpha": "A"})
+    assert "ghost" not in raw  # 未知名的 fail-closed 由 hub 读面承担（test_skill_hub 覆盖）。
 
 
 def test_snapshot_ignores_post_start_edits(tmp_path: Path) -> None:
-    # 快照语义：装载后盘上被改，取用仍是装载时内容——改资产=滚动重启。
-    library = _local_library(tmp_path, {"alpha": "原文"})
+    # 快照语义：装载返回即内存快照，盘上后改不影响——seed 消费的就是这份快照。
+    raw = _local_raw(tmp_path, {"alpha": "原文"})
     (tmp_path / "alpha" / "SKILL.md").write_text(fm("alpha") + "被篡改")
-    assert "原文" in library.get("alpha").files["SKILL.md"]
+    assert "原文" in raw["alpha"]["SKILL.md"]
 
 
 def test_dir_without_skill_md_fails_loud(tmp_path: Path) -> None:
@@ -121,11 +118,11 @@ def test_configured_missing_dir_fails_loud(tmp_path: Path) -> None:
 
 
 def test_unconfigured_source_is_empty_library() -> None:
-    skills, prompts = load_asset_libraries(
+    source = make_asset_source(
         AssetSettings(source=LocalAssets(type="local"), s3_access_key=None, s3_secret_key=None)
     )
-    assert skills.names() == frozenset()
-    assert prompts.get("ghost") is None
+    assert dict(source.load_skills()) == {}
+    assert PromptLibrary(source.load_personas()).get("ghost") is None
 
 
 # --- 配置矩阵（type 判别 yaml + 凭据 env-only） ---
@@ -224,10 +221,9 @@ class TestS3AssetSource:
         self._put("deploy/skills/style/helper.md", "辅助")
         self._put("deploy/personas/poet.md", "s3 诗人 prompt\n")
         source = self._source("deploy")
-        library = SkillLibrary(build_packages(source.load_skills()))
-        package = library.get("style")
-        assert package.description == "s3 技能"
-        assert package.files["helper.md"] == "辅助"
+        raw = source.load_skills()
+        assert parse_frontmatter("style", raw["style"]["SKILL.md"]).description == "s3 技能"
+        assert raw["style"]["helper.md"] == "辅助"
         assert dict(source.load_personas()) == {"poet": "s3 诗人 prompt"}
 
     def test_skill_without_skill_md_fails_loud(self) -> None:
@@ -235,15 +231,16 @@ class TestS3AssetSource:
         with pytest.raises(AssetSourceError, match="no SKILL.md"):
             self._source("broken").load_skills()
 
-    def test_load_asset_libraries_end_to_end(self) -> None:
+    def test_load_assets_end_to_end(self) -> None:
         self._put("e2e/skills/tone/SKILL.md", fm("tone", "语气技能") + "via-s3-skill 正文")
-        skills, _prompts = load_asset_libraries(
+        source = make_asset_source(
             AssetSettings(
                 source=S3Assets(type="s3", endpoint=MINIO_URL, bucket=BUCKET, prefix="e2e"),
                 s3_access_key=SecretStr("kokoro"),
                 s3_secret_key=SecretStr("kokoro-secret"),
             )
         )
-        assert "via-s3-skill" in skills.get("tone").files["SKILL.md"]
+        raw = source.load_skills()
+        assert "via-s3-skill" in raw["tone"]["SKILL.md"]
 
 

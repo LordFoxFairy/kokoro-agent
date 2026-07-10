@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from kokoro_agent.agents.assembly.delegates import build_delegates
 from kokoro_agent.agents.assembly.guardrails import build_guard_chains
-from kokoro_agent.agents.assembly.prompt import resolve_system_prompt
+from kokoro_agent.agents.assembly.prompt import build_system_prompt
 from kokoro_agent.agents.assembly.toolset import build_toolset
 from kokoro_agent.agents.deps import AgentPolicy, AssembleDeps, AssembledAgent
 from kokoro_agent.contract import RunRequest
@@ -43,7 +43,7 @@ async def assemble_agent(
     graph = build_agent(
         model=make_chat_model(deps.model, runtime.model),
         tools=toolset.tools,
-        system_prompt=resolve_system_prompt(runtime, deps, default=policy.default_prompt),
+        system_prompt=await build_system_prompt(request, deps, default=policy.default_prompt),
         subagents=delegates.subagents,
         checkpointer=deps.checkpointer,
         permissions=build_filesystem_permissions(runtime.permissions.filesystem),

@@ -1,35 +1,47 @@
-"""技能库工具规格（渐进披露）：find 过滤 / read 直返 / 资产按需幂等供给 / 前缀恒定。"""
+"""skill 工具与清单规格（真件：真文件 → seed → 真 Mongo + 包体存储驱动）。"""
 
 # BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，e2e/test_mcp_live 同款豁免）。
 # pyright: reportUnknownMemberType=false
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import AsyncGenerator
+from pathlib import Path
+
+import pytest
 from deepagents.backends.protocol import FileUploadResponse
 from pydantic import BaseModel
+from pymongo import AsyncMongoClient
 
-from kokoro_agent.skills import SKILLS_ROOT, SkillLibrary, SkillPackage
-from kokoro_agent.tools.skills import make_skill_tools
+from kokoro_agent.agents.assembly.prompt import render_skill_manifest
+from kokoro_agent.skills import SKILLS_ROOT
+from kokoro_agent.skills.hub import LocalPackageStore, SkillHub, seed_official
+from kokoro_agent.tools.skills import make_skill_tool
+from test_skill_hub import PDF_MD, STYLE_MD, scan, write_skill_dir
+
+_MONGO_URL = "mongodb://127.0.0.1:27017"
+SCOPES = ("ns1", "official")
 
 
-def _library() -> SkillLibrary:
-    return SkillLibrary({
-        "style": SkillPackage(
-            name="style", description="写作风格指南",
-            files={"SKILL.md": "---\nname: style\ndescription: 写作风格指南\n---\n正文A"},
-        ),
-        "pdf": SkillPackage(
-            name="pdf", description="PDF 处理流程",
-            files={
-                "SKILL.md": "---\nname: pdf\ndescription: PDF 处理流程\n---\n用 tool.py 处理",
-                "tool.py": "print('pdf')",
-            },
-        ),
-        "tone": SkillPackage(
-            name="tone", description="语气调整",
-            files={"SKILL.md": "---\nname: tone\ndescription: 语气调整\n---\n正文B"},
-        ),
-    })
+@pytest.fixture
+async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
+    suffix = uuid.uuid4().hex[:8]
+    database = client["kokoro_test"]
+    skills = database[f"skills_{suffix}"]
+    state = database[f"skill_state_{suffix}"]
+    src = tmp_path / "seed"
+    write_skill_dir(src, "style", STYLE_MD)
+    write_skill_dir(src, "pdf", PDF_MD, extra={"make_report.py": "print('report')"})
+    instance = SkillHub(skills, state, LocalPackageStore(str(tmp_path / "packages")))
+    await seed_official(instance, scan(src))
+    try:
+        yield instance
+    finally:
+        await skills.drop()
+        await state.drop()
+        await client.close()
 
 
 class _RecordingBackend:
@@ -41,63 +53,66 @@ class _RecordingBackend:
         return []
 
 
-async def test_find_lists_only_granted_and_filters_by_query() -> None:
-    find, _ = make_skill_tools(["style", "pdf"], _library(), None)
-    all_cards = await find.ainvoke({"query": ""})
-    assert "style" in all_cards and "pdf" in all_cards
-    assert "tone" not in all_cards  # 库里有但本 run 未授权：find 面不可见。
-    filtered = await find.ainvoke({"query": "PDF"})
-    assert "pdf" in filtered and "style" not in filtered
-    assert "没有匹配" in await find.ainvoke({"query": "ghost"})
+# --- 清单（发现=阅读，无检索）---
 
 
-async def test_find_empty_pool_says_so() -> None:
-    find, _ = make_skill_tools([], _library(), None)
-    assert "没有可用技能" in await find.ainvoke({"query": ""})
+async def test_manifest_renders_granted_in_order(hub: SkillHub) -> None:
+    cards = await hub.resolve_cards(SCOPES, ["pdf", "style"])
+    rendered = render_skill_manifest("base", cards)
+    assert rendered.index("pdf") < rendered.index("style")  # 授权序=清单序（prompt 字节稳定）。
+    assert "写作风格指南" in rendered
 
 
-async def test_read_fails_closed_outside_run_pool() -> None:
-    _, read = make_skill_tools(["style"], _library(), None)
-    assert "error" in await read.ainvoke({"name": "tone"})  # 未授权
-    assert "error" in await read.ainvoke({"name": "ghost"})  # 不存在
+def test_manifest_empty_pool_keeps_base_untouched() -> None:
+    assert render_skill_manifest("base prompt", []) == "base prompt"
 
 
-async def test_read_plain_skill_returns_body_without_upload() -> None:
+async def test_manifest_same_input_identical_bytes(hub: SkillHub) -> None:
+    cards = await hub.resolve_cards(SCOPES, ["style", "pdf"])
+    assert render_skill_manifest("base", cards) == render_skill_manifest("base", list(cards))
+
+
+# --- skill(name) 单工具 ---
+
+
+async def test_skill_fails_closed_outside_run_pool(hub: SkillHub) -> None:
+    tool = make_skill_tool(["style"], SCOPES, hub, None)
+    assert "error" in await tool.ainvoke({"name": "pdf"})  # 库里有但本 run 未授权。
+    assert "error" in await tool.ainvoke({"name": "ghost"})  # 不存在。
+
+
+async def test_skill_plain_package_returns_body_without_upload(hub: SkillHub) -> None:
     backend = _RecordingBackend()
-    _, read = make_skill_tools(["style"], _library(), backend)
-    body = await read.ainvoke({"name": "style"})
-    assert "正文A" in body
-    assert backend.uploads == []  # 纯文档包：零物化。
+    tool = make_skill_tool(["style"], SCOPES, hub, backend)
+    body = await tool.ainvoke({"name": "style"})
+    assert "先结论后论据" in body
+    assert backend.uploads == []  # 纯知识包零物化。
 
 
-async def test_read_asset_skill_supplies_whole_package_idempotently() -> None:
+async def test_skill_asset_package_supplies_whole_package_idempotently(hub: SkillHub) -> None:
     backend = _RecordingBackend()
-    _, read = make_skill_tools(["pdf"], _library(), backend)
-    first = await read.ainvoke({"name": "pdf"})
-    assert f"{SKILLS_ROOT}pdf/tool.py" in first  # 资产路径告知模型。
-    assert len(backend.uploads) == 1
+    tool = make_skill_tool(["pdf"], SCOPES, hub, backend)
+    first = await tool.ainvoke({"name": "pdf"})
+    assert f"{SKILLS_ROOT}pdf/make_report.py" in first  # 附件路径告知模型。
     assert [p for p, _ in backend.uploads[0]] == [
         f"{SKILLS_ROOT}pdf/SKILL.md",
-        f"{SKILLS_ROOT}pdf/tool.py",
+        f"{SKILLS_ROOT}pdf/make_report.py",
     ]  # 整包供给，保持包内相对引用。
-    await read.ainvoke({"name": "pdf"})
-    assert len(backend.uploads) == 1  # run 内幂等：不重传。
+    await tool.ainvoke({"name": "pdf"})
+    assert len(backend.uploads) == 1  # run 内幂等。
 
 
-async def test_read_asset_skill_without_backend_degrades_explicitly() -> None:
-    _, read = make_skill_tools(["pdf"], _library(), None)
-    body = await read.ainvoke({"name": "pdf"})
-    assert "无法执行技能资产" in body  # state 档显式降级，不静默。
+async def test_skill_asset_without_backend_degrades_explicitly(hub: SkillHub) -> None:
+    tool = make_skill_tool(["pdf"], SCOPES, hub, None)
+    assert "无法执行技能资产" in await tool.ainvoke({"name": "pdf"})
 
 
-def test_skill_pool_change_keeps_tool_surface_identical() -> None:
-    # 块3 核心断言：skill 池 A/B 切换，工具面（name/description/schema）逐字节相同——前缀恒定。
-    def surface(names: list[str]) -> list[tuple[str, str, str]]:
-        out: list[tuple[str, str, str]] = []
-        for tool in make_skill_tools(names, _library(), None):
-            schema = tool.args_schema
-            assert isinstance(schema, type) and issubclass(schema, BaseModel)
-            out.append((tool.name, tool.description, str(schema.model_json_schema())))
-        return out
+async def test_skill_pool_change_keeps_tool_schema_identical(hub: SkillHub) -> None:
+    # D9：池 A/B/空 切换，工具 schema 逐字节相同（清单在 prompt 侧且随会话快照恒定）。
+    def surface(names: list[str]) -> tuple[str, str, str]:
+        tool = make_skill_tool(names, SCOPES, hub, None)
+        schema = tool.args_schema
+        assert isinstance(schema, type) and issubclass(schema, BaseModel)
+        return (tool.name, tool.description, str(schema.model_json_schema()))
 
-    assert surface(["style"]) == surface(["pdf", "tone"]) == surface([])
+    assert surface(["style"]) == surface(["pdf", "style"]) == surface([])

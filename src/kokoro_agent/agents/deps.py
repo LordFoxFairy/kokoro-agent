@@ -18,7 +18,7 @@ from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.prompts import PromptLibrary
-from kokoro_agent.skills import SkillLibrary
+from kokoro_agent.skills.hub import SkillHub
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
@@ -49,7 +49,8 @@ class AssembleDeps:
     checkpointer: BaseCheckpointSaver[str]
     ledger: RunLedger
     memory_store: BaseStore
-    skills: SkillLibrary
+    # skills hub（池的读面）：清单查询与 skill 工具读取共用；官方与用户同链路。
+    skill_hub: SkillHub
     prompts: PromptLibrary
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
     mcp_servers: Mapping[str, McpServerConfig] = field(default_factory=dict[str, McpServerConfig])

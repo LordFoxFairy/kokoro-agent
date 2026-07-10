@@ -18,14 +18,17 @@ from kokoro_agent.observability import trace_config
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
 from kokoro_agent.contract import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
+from kokoro_agent.sandbox.archive import LocalWorkspace, load_storage_file
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
-from kokoro_agent.content_source import load_asset_libraries
+from kokoro_agent.content_source import make_asset_source
+from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.mcp.config import load_mcp_servers
+from kokoro_agent.skills.hub import SkillHubSettings, make_skill_hub, seed_official
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -53,6 +56,24 @@ def _sandbox_teardown(config: AppConfig) -> "Callable[[Backend, str | None], Awa
     return teardown
 
 
+def skill_hub_settings(config: AppConfig) -> SkillHubSettings:
+    """hub 存储位形取 ADR-009 文件 hub 节；缺省=local ./kokoro_hub（dev 零配置可跑）。
+    s3 凭据复用 workspace 对（同一对象存储集群，env-only）。"""
+    storage = load_storage_file(config.workspace_config)
+    packages = (
+        storage.hub
+        if storage is not None and storage.hub is not None
+        else LocalWorkspace(type="local", root="./kokoro_hub")
+    )
+    return SkillHubSettings(
+        mongo_url=config.ledger.mongo_url,
+        mongo_db=config.ledger.mongo_db,
+        packages=packages,
+        s3_access_key=config.workspace_s3_access_key,
+        s3_secret_key=config.workspace_s3_secret_key,
+    )
+
+
 def _consumer_name() -> str:
     # consumer-group 内的成员身份：主机+pid 保多 pod/多进程不撞名。
     return f"{socket.gethostname()}-{os.getpid()}"
@@ -61,14 +82,19 @@ def _consumer_name() -> str:
 async def _serve(config: AppConfig) -> None:
     bus = make_stream(config.stream)
     catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
-    # 启动一次装载资产快照（local/s3 同口）：装不到 fail-loud，不带残库开工。
-    skills, prompts = load_asset_libraries(config.assets)
+    # 启动装载部署资产（local/s3 同口）：prompts 进内存（部署级人格）；skills 目录只是
+    # seed 输入——真源是 Mongo（多租户），启动 upsert 幂等同步（hash 未变不写）。
+    asset_source = make_asset_source(config.assets)
+    raw_skills = asset_source.load_skills()
+    prompts = PromptLibrary(asset_source.load_personas())
     # 进程级共享 checkpointer + run 状态存储：mongo 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
         make_ledger(config.ledger) as store,
         make_memory_store(config.checkpoint) as memory_store,
+        make_skill_hub(skill_hub_settings(config)) as skill_hub,
     ):
+        await seed_official(skill_hub, raw_skills)
         deps = AssembleDeps(
             model=config.model,
             sandbox=config.sandbox,
@@ -78,7 +104,7 @@ async def _serve(config: AppConfig) -> None:
             checkpointer=saver,
             ledger=store,
             memory_store=memory_store,
-            skills=skills,
+            skill_hub=skill_hub,
             prompts=prompts,
             # MCP server 定义住部署侧：启动即加载校验（含 ${ENV} 凭据展开），fail-loud。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),

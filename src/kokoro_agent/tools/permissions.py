@@ -9,10 +9,13 @@ from kokoro_agent.hitl import APPROVAL_DECISIONS, QUESTION_DECISIONS
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
-# 三预设决策词汇的单一事实源在 hitl.presets（kind=question / kind=approval 形态）。
-# ask_user 是 question 预设（语义暂停点，只人工作答）；普通工具审批是 approval 预设（放行/改参/拒绝）。
-_ASK_USER_DECISIONS: list[DecisionType] = list(QUESTION_DECISIONS)
-_APPROVAL_DECISIONS: list[DecisionType] = list(APPROVAL_DECISIONS)
+# langchain HITL 面（DecisionType）是 wire 词汇 AllowedDecision 的子集：不含 submit（那是 kind=input
+# 分支的决策，不经 interrupt_on）。此处显式列出 DecisionType 子集与 wire 侧解耦，并断言与 hitl.presets
+# 同值防漂移——presets 仍是 wire 决策词汇的单一事实源。
+_ASK_USER_DECISIONS: list[DecisionType] = ["respond"]
+_APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject"]
+assert set(_ASK_USER_DECISIONS) == set(QUESTION_DECISIONS)
+assert set(_APPROVAL_DECISIONS) == set(APPROVAL_DECISIONS)
 
 
 def build_interrupt_on(

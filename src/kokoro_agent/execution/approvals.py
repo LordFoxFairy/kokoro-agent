@@ -12,13 +12,15 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 
 from kokoro_agent.contract import (
     AllowedDecision,
+    RejectDecision,
     ResumeDecision,
+    SubmitDecision,
     ToolAwaitingApprovalPayload,
     ToolReturnedPayload,
 )
 from kokoro_agent.execution.events import clip_result
 from kokoro_agent.execution.protocols import StateView
-from kokoro_agent.hitl import REVIEW_DECISIONS, HumanRequest
+from kokoro_agent.hitl import INPUT_DECISIONS, REVIEW_DECISIONS, HumanRequest
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
@@ -90,6 +92,68 @@ def review_entries(interrupts: tuple[Interrupt, ...]) -> list[ReviewEntry] | Non
             is_error=ctx.is_error,
         )
     ]
+
+
+class InputContext(BaseModel):
+    """input 预设的 HumanRequest.context 约定字段：结构化请求的展示载荷。
+
+    name=发起方展示名（如 MCP 工具名）；args=展示细节（elicitation message 等）；
+    validation_error=上一次回灌不合法时的重问文案（缺席=首次请求）。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str
+    args: dict[str, JsonValue] = {}
+    validation_error: str | None = None
+
+
+class InputEntry(BaseModel):
+    """结构化请求的应用视图：request_id + 展示载荷 + 期待回应的 JSON Schema。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    request_id: str
+    name: str
+    args: dict[str, JsonValue]
+    input_schema: dict[str, JsonValue] | None
+
+
+def input_entries(interrupts: tuple[Interrupt, ...]) -> list[InputEntry] | None:
+    """全帧 input 预设则返回条目；无 input 返回 None（让位审批路径）；混帧 fail-loud。"""
+    # 同 review_entries：反解本原语信封按 kind 分拣，input 与其它 kind 混帧属 V1 不支持。
+    requests = [HumanRequest.from_interrupt_value(i.value) for i in interrupts]
+    is_input = [req is not None and req.kind == "input" for req in requests]
+    if not any(is_input):
+        return None
+    if not all(is_input):
+        raise ValueError("mixed input/other interrupts in one frame is unsupported (V1)")
+    entries: list[InputEntry] = []
+    for req in requests:
+        if req is None:  # is_input 已保证非空；显式收窄给类型检查器。
+            raise ValueError("input interrupt missing human request envelope")
+        ctx = InputContext.model_validate(req.context)
+        args = dict(ctx.args)
+        if ctx.validation_error is not None:
+            # 重问文案随 args 上 wire：web 的 schema 表单据此提示人重填。
+            args["validation_error"] = ctx.validation_error
+        entries.append(
+            InputEntry(
+                request_id=req.request_id,
+                name=ctx.name,
+                args=args,
+                input_schema=req.response_schema,
+            )
+        )
+    return entries
+
+
+def input_frame(snapshot: StateView, entries: Sequence[InputEntry]) -> PendingFrame:
+    # input 帧归属段=发起请求的工具调用所在 AIMessage（request_id=该工具 tool_id）；
+    # 条目顺序即 interrupt 顺序。
+    raw: Any = snapshot.values.get("messages") or []
+    last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
+    segment = (last_ai.id or "") if last_ai is not None else ""
+    return PendingFrame(segment, tuple((e.request_id, e.name) for e in entries))
 
 
 def has_pending_interrupt(snapshot: StateView) -> bool:
@@ -200,6 +264,27 @@ def awaiting_payloads(
             )
             for entry in entries
         ]
+    inputs = input_entries(snapshot.interrupts)
+    if inputs is not None:
+        iframe = input_frame(snapshot, inputs)
+        input_ids = iframe.tool_ids
+        return [
+            ToolAwaitingApprovalPayload(
+                segment_id=iframe.segment_id,
+                # 工具边界二者同值：pause 锚 request_id 承在 tool_id 槽（web 据此关联发起工具卡）。
+                tool_id=entry.request_id,
+                name=entry.name,
+                args=entry.args,
+                description=describe_tool(entry.name) or "",
+                allowed_decisions=list(INPUT_DECISIONS),
+                kind="input",
+                editable=False,
+                # schema 驱动表单的真源：web 按 JSON Schema 自动渲染回应控件。
+                input_schema=entry.input_schema,
+                pending_tool_ids=input_ids,
+            )
+            for entry in inputs
+        ]
     frame, requests = approval_frame(snapshot, approval_tool_names)
     pending_ids = frame.tool_ids
     payloads: list[ToolAwaitingApprovalPayload] = []
@@ -255,12 +340,20 @@ def _nested_frame(snapshot: StateView) -> PendingFrame:
     return PendingFrame(segment_id, tuple(tools), nested=True)
 
 
+def _decision_id(decision: ResumeDecision) -> str:
+    # 帧锚统一取值：submit 用 request_id，其余四型用 tool_id（工具边界场景二者同值）。
+    # 审批/审核路径不会收到 submit（走 input 分支），此处仅为消解 union 扩张后的类型歧义。
+    if isinstance(decision, SubmitDecision):
+        return decision.request_id
+    return decision.tool_id
+
+
 def align_decisions(
     decisions: Sequence[ResumeDecision], frame: PendingFrame
 ) -> list[ResumeDecision]:
     # 按 tool_id 重排到 pending 顺序（langgraph 按序匹配 decisions↔interrupt）；
     # 缺/多/重复/未知 tool_id 一律 fail-loud。
-    by_id: dict[str, ResumeDecision] = {d.tool_id: d for d in decisions}
+    by_id: dict[str, ResumeDecision] = {_decision_id(d): d for d in decisions}
     if len(by_id) != len(decisions):
         raise ValueError("resume decisions contain duplicate tool_id")
     if set(by_id) != set(frame.tool_ids):
@@ -269,12 +362,12 @@ def align_decisions(
         )
     name_by_id = dict(frame.tools)
     for decision in decisions:
-        is_ask_user = name_by_id[decision.tool_id] == ASK_USER_TOOL_NAME
+        is_ask_user = name_by_id[_decision_id(decision)] == ASK_USER_TOOL_NAME
         # respond 是 ask_user 专属人工作答；普通审批工具只接 approve/edit/reject。双向越界即 fail-loud。
         if decision.type == "respond" and not is_ask_user:
             raise ValueError(f"respond decision not allowed for tool {decision.tool_id!r}")
         if decision.type != "respond" and is_ask_user:
-            raise ValueError(f"ask_user tool {decision.tool_id!r} accepts only respond")
+            raise ValueError(f"ask_user tool {_decision_id(decision)!r} accepts only respond")
     return [by_id[tool_id] for tool_id in frame.tool_ids]
 
 
@@ -283,7 +376,7 @@ def align_review_decisions(
 ) -> list[ResumeDecision]:
     # 与审批帧同一对齐纪律（缺/多/重复/未知 fail-loud）；决策集为 approve/respond/reject，
     # respond=人工替换结果（不绑 ask_user），edit 对已执行结果无意义。
-    by_id: dict[str, ResumeDecision] = {d.tool_id: d for d in decisions}
+    by_id: dict[str, ResumeDecision] = {_decision_id(d): d for d in decisions}
     if len(by_id) != len(decisions):
         raise ValueError("resume decisions contain duplicate tool_id")
     if set(by_id) != set(frame.tool_ids):
@@ -293,9 +386,46 @@ def align_review_decisions(
     for decision in decisions:
         if decision.type not in REVIEW_DECISIONS:
             raise ValueError(
-                f"decision {decision.type!r} not allowed for result review tool {decision.tool_id!r}"
+                f"decision {decision.type!r} not allowed for result review tool "
+                f"{_decision_id(decision)!r}"
             )
     return [by_id[tool_id] for tool_id in frame.tool_ids]
+
+
+def align_input_decisions(
+    decisions: Sequence[ResumeDecision], frame: PendingFrame
+) -> list[ResumeDecision]:
+    # 与审批/审核帧同一对齐纪律（缺/多/重复/未知 fail-loud）；决策集为 submit/reject。
+    by_id: dict[str, ResumeDecision] = {}
+    for decision in decisions:
+        if decision.type not in INPUT_DECISIONS:
+            raise ValueError(f"decision {decision.type!r} not allowed for input request")
+        # submit 用 request_id，reject 沿用 tool_id 槽（工具边界二者同值）。
+        by_id[_decision_id(decision)] = decision
+    if len(by_id) != len(decisions):
+        raise ValueError("resume decisions contain duplicate request_id")
+    if set(by_id) != set(frame.tool_ids):
+        raise ValueError(
+            f"resume decisions {sorted(by_id)} != pending input requests {sorted(frame.tool_ids)}"
+        )
+    return [by_id[request_id] for request_id in frame.tool_ids]
+
+
+def submit_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, JsonValue]]:
+    # kind=input 的 resume 契约：list[{request_id, type, value?/reason?}]，request_input 按 request_id 自取。
+    out: list[dict[str, JsonValue]] = []
+    for decision in decisions:
+        if isinstance(decision, SubmitDecision):
+            out.append(
+                {"request_id": decision.request_id, "type": "submit", "value": decision.value}
+            )
+        elif isinstance(decision, RejectDecision):
+            out.append(
+                {"request_id": decision.tool_id, "type": "reject", "reason": decision.reason}
+            )
+        else:
+            raise ValueError(f"decision {decision.type!r} not allowed for input request")
+    return out
 
 
 def review_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, JsonValue]]:
@@ -331,7 +461,7 @@ def review_resolution_payloads(
     name_by_id = dict(frame.tools)
     payloads: list[ToolReturnedPayload] = []
     for decision in decisions:
-        tool_id = decision.tool_id
+        tool_id = _decision_id(decision)
         if decision.type == "approve":
             cached = results.get(tool_id)
             if cached is None:
@@ -383,8 +513,8 @@ def nested_approved_payloads(
     return [
         ToolReturnedPayload(
             segment_id=frame.segment_id,
-            tool_id=decision.tool_id,
-            name=name_by_id[decision.tool_id],
+            tool_id=_decision_id(decision),
+            name=name_by_id[_decision_id(decision)],
             result="已批准，已在子代理内执行。",
             is_error=False,
         )
@@ -420,8 +550,11 @@ def resume_command_decisions(
             )
         elif decision.type == "reject":
             out.append({"type": "reject", "message": decision.reason or _DEFAULT_REJECT_MESSAGE})
-        else:
+        elif decision.type == "respond":
             out.append({"type": "respond", "message": decision.response})
+        else:
+            # submit 不经审批帧的 langgraph resume（走 input 分支的 submit_resume_value）。
+            raise ValueError(f"decision {decision.type!r} not allowed for approval resume")
     return out
 
 

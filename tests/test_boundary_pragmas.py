@@ -9,6 +9,10 @@ from pathlib import Path
 ALLOWED: dict[str, frozenset[str]] = {
     # deepagents create_deep_agent 返回未解 ResponseT 泛型。
     "src/kokoro_agent/execution/build_agent.py": frozenset({"reportUnknownVariableType"}),
+    # jsonschema 无 py.typed：kind=input 的 resume value 校验属未解上游类型（隔离于 _schema_error）。
+    "src/kokoro_agent/hitl/input.py": frozenset(
+        {"reportUnknownMemberType", "reportUnknownArgumentType", "reportUnknownVariableType"}
+    ),
     # langchain-core BaseTool.ainvoke/tool_call_schema 未解泛型（MCP 稳定面转发调用）。
     "src/kokoro_agent/mcp/tools.py": frozenset({"reportUnknownMemberType"}),
     # langchain-core BaseTool.ainvoke 注解含裸 dict。

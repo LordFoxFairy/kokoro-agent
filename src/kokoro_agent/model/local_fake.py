@@ -81,6 +81,19 @@ def hitl_script() -> list[AIMessage]:
             ],
         ),
         AIMessage(content=_FINAL_TEXT),
+        # 第三次 run（E2E-32）：mcp_call 中途被服务器 elicit → kind=input 暂停 → submit 回灌续跑。
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "mcp_call",
+                    "args": {"server": "e2e-elicit", "tool": "verify", "arguments": {}},
+                    "id": "local_mcp",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content=_FINAL_TEXT),
     ]
 
 

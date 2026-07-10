@@ -182,7 +182,11 @@ async def _consume_tools(
             continue
         await queue.put(tool_invoked_payload(tc))
         await _pump_tool_output(tc, queue)
-        await queue.put(tool_returned_payload(tc))
+        returned = tool_returned_payload(tc)
+        if returned is None:
+            # 工具执行中途 interrupt（如 request_input）：不发伪 returned，等 resume replay 出真值。
+            continue
+        await queue.put(returned)
         # deliver 成功归档时紧随 tool.returned 追发 delivery.created（同 emitter 统一序号）。
         delivery = delivery_created_payload(tc)
         if delivery is not None:

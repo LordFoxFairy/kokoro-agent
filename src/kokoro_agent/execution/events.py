@@ -248,8 +248,22 @@ def output_delta_text(chunk: object) -> str:
     return text if isinstance(text, str) else ""
 
 
-def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload:
+# langgraph v3 把执行中途 interrupt 的工具浮现为 error=Interrupt 元组/列表的 repr；按其前缀识别。
+_INTERRUPT_REPR_PREFIXES = ("Interrupt(", "(Interrupt(", "[Interrupt(")
+
+
+def _interrupted(tc: ToolCallInfo) -> bool:
+    # 工具执行中途 interrupt（request_input/request_human 等）时，langgraph v3 把该工具浮现为
+    # error=Interrupt 元组的 repr（并非真错误）：这是暂停而非返回，其真正的 returned 由 resume
+    # replay 产出。此处按 langgraph Interrupt repr 标记识别并抑制伪 returned（真错误文本无此标记）。
+    error = tc.error
+    return error is not None and error.startswith(_INTERRUPT_REPR_PREFIXES)
+
+
+def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload | None:
     # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
+    if _interrupted(tc):
+        return None
     result, truncated = _result_text(tc)
     return ToolReturnedPayload(
         segment_id=tc.tool_call_id,

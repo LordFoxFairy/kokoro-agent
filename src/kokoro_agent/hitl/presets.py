@@ -15,3 +15,5 @@ APPROVAL_DECISIONS: tuple[AllowedDecision, ...] = ("approve", "edit", "reject")
 QUESTION_DECISIONS: tuple[AllowedDecision, ...] = ("respond",)
 # kind=review：采纳 / 人工替换 / 废弃（工具后结果审核；edit 对已执行结果无意义）。
 REVIEW_DECISIONS: tuple[AllowedDecision, ...] = ("approve", "respond", "reject")
+# kind=input：回灌结构化 value / 拒绝（工具执行中途请求人；MCP elicitation 桥的决策集）。
+INPUT_DECISIONS: tuple[AllowedDecision, ...] = ("submit", "reject")

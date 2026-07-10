@@ -11,9 +11,12 @@ from kokoro_agent.contract import ResumeDecision
 from kokoro_agent.execution.approvals import (
     PendingFrame,
     align_decisions,
+    align_input_decisions,
     approval_requests,
     awaiting_payloads,
     has_pending_interrupt,
+    input_entries,
+    input_frame,
     pending_frame,
     align_review_decisions,
     resolution_payloads,
@@ -21,6 +24,7 @@ from kokoro_agent.execution.approvals import (
     review_entries,
     review_frame,
     review_resume_value,
+    submit_resume_value,
 )
 from fakes import FakeState
 
@@ -29,6 +33,11 @@ _DECISION: TypeAdapter[ResumeDecision] = TypeAdapter(ResumeDecision)
 
 def _decision(raw: dict[str, JsonValue]) -> ResumeDecision:
     return _DECISION.validate_python(raw)
+
+
+def _tid(decision: ResumeDecision) -> str:
+    # 帧锚：submit 用 request_id，其余四型用 tool_id（union 扩张后测试侧统一取值）。
+    return decision.request_id if decision.type == "submit" else decision.tool_id
 
 
 def _interrupt(names: list[str]) -> Interrupt:
@@ -169,7 +178,7 @@ def test_align_decisions_reorders_by_pending() -> None:
         ],
         _FRAME,
     )
-    assert [d.tool_id for d in ordered] == ["call-A", "call-B"]
+    assert [_tid(d) for d in ordered] == ["call-A", "call-B"]
 
 
 @pytest.mark.parametrize(
@@ -342,7 +351,7 @@ def test_align_review_decisions_matrix() -> None:
     assert entries is not None
     frame = review_frame(_review_state(), entries)
     ordered = align_review_decisions([_decision({"type": "approve", "tool_id": "call-R"})], frame)
-    assert ordered[0].tool_id == "call-R"
+    assert _tid(ordered[0]) == "call-R"
     with pytest.raises(ValueError):
         align_review_decisions([_decision({"type": "approve", "tool_id": "other"})], frame)
     with pytest.raises(ValueError, match="not allowed"):
@@ -364,3 +373,145 @@ def test_review_resume_value_shapes() -> None:
         {"tool_id": "b", "type": "reject", "reason": "rejected by user"},
         {"tool_id": "c", "type": "approve"},
     ]
+
+
+# --- kind=input 暂停帧（工具执行中途结构化请求；MCP elicitation 桥的落点） ---
+
+_OTP_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "properties": {"otp": {"type": "string"}},
+    "required": ["otp"],
+}
+
+
+def _input_interrupt(
+    request_id: str,
+    *,
+    name: str = "mcp__fx__ask",
+    schema: dict[str, JsonValue] | None = None,
+    message: str = "需要验证码",
+    validation_error: str | None = None,
+) -> Interrupt:
+    # input 预设的 HumanRequest 信封（request_id=发起工具 tool_id）：与 request_input 经
+    # request_human(kind="input") 发出的 interrupt.value 同构。
+    args: dict[str, JsonValue] = {"message": message}
+    context: dict[str, JsonValue] = {"name": name, "args": args}
+    if validation_error is not None:
+        context["validation_error"] = validation_error
+    return Interrupt(
+        value={
+            "kokoro_human_request": {
+                "request_id": request_id,
+                "kind": "input",
+                "response_schema": schema,
+                "context": context,
+            }
+        }
+    )
+
+
+def _input_state(
+    request_id: str = "call-I",
+    *,
+    schema: dict[str, JsonValue] | None = None,
+    validation_error: str | None = None,
+) -> FakeState:
+    ai = AIMessage(
+        content="", id="seg-i", tool_calls=[{"name": "mcp_call", "args": {}, "id": request_id}]
+    )
+    return FakeState(
+        interrupts=(
+            _input_interrupt(request_id, schema=schema, validation_error=validation_error),
+        ),
+        values={"messages": [HumanMessage(content="go"), ai]},
+    )
+
+
+def test_input_entries_none_for_approval_and_review_shapes() -> None:
+    assert input_entries(_TWO_TOOL_STATE.interrupts) is None
+    assert input_entries(_review_state().interrupts) is None
+
+
+def test_input_entries_parse_carries_schema() -> None:
+    entries = input_entries(_input_state(schema=_OTP_SCHEMA).interrupts)
+    assert entries is not None and len(entries) == 1
+    assert entries[0].request_id == "call-I"
+    assert entries[0].name == "mcp__fx__ask"
+    assert entries[0].input_schema == _OTP_SCHEMA
+    assert entries[0].args == {"message": "需要验证码"}
+
+
+def test_input_entries_mixed_frame_fails_loud() -> None:
+    with pytest.raises(ValueError, match="mixed"):
+        input_entries((_interrupt(["danger"]), _input_interrupt("call-I")))
+
+
+def test_input_awaiting_payload_shape() -> None:
+    payloads = awaiting_payloads(_input_state(schema=_OTP_SCHEMA), frozenset())
+    assert len(payloads) == 1
+    payload = payloads[0]
+    assert payload.kind == "input"
+    assert payload.tool_id == "call-I"
+    assert payload.segment_id == "seg-i"
+    assert payload.editable is False
+    assert payload.allowed_decisions == ["submit", "reject"]
+    assert payload.input_schema == _OTP_SCHEMA
+    assert payload.pending_tool_ids == ["call-I"]
+
+
+def test_input_awaiting_payload_surfaces_validation_error() -> None:
+    # 重问：上一轮回灌不合法时 validation_error 随 args 上 wire，web 表单据此提示重填。
+    payloads = awaiting_payloads(
+        _input_state(schema=_OTP_SCHEMA, validation_error="'otp' is a required property"),
+        frozenset(),
+    )
+    assert payloads[0].args["validation_error"] == "'otp' is a required property"
+
+
+_INPUT_FRAME = PendingFrame("seg-i", (("call-I", "mcp_call"),))
+
+
+def test_align_input_decisions_submit_and_reject() -> None:
+    submit = align_input_decisions(
+        [_decision({"type": "submit", "request_id": "call-I", "value": {"otp": "123456"}})],
+        _INPUT_FRAME,
+    )
+    assert submit[0].type == "submit"
+    reject = align_input_decisions(
+        [_decision({"type": "reject", "tool_id": "call-I", "reason": "no"})], _INPUT_FRAME
+    )
+    assert reject[0].type == "reject"
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {"type": "submit", "request_id": "ghost", "value": {}},  # 未知锚
+        {"type": "approve", "tool_id": "call-I"},  # 越界决策型
+    ],
+)
+def test_align_input_decisions_fail_loud(decision: dict[str, JsonValue]) -> None:
+    with pytest.raises(ValueError):
+        align_input_decisions([_decision(decision)], _INPUT_FRAME)
+
+
+def test_submit_resume_value_shapes() -> None:
+    value = submit_resume_value(
+        [
+            _decision({"type": "submit", "request_id": "a", "value": {"otp": "1"}}),
+            _decision({"type": "reject", "tool_id": "b", "reason": "no"}),
+        ]
+    )
+    assert value == [
+        {"request_id": "a", "type": "submit", "value": {"otp": "1"}},
+        {"request_id": "b", "type": "reject", "reason": "no"},
+    ]
+
+
+def test_input_frame_segment_from_triggering_ai() -> None:
+    entries = input_entries(_input_state().interrupts)
+    assert entries is not None
+    frame = input_frame(_input_state(), entries)
+    assert frame.segment_id == "seg-i"
+    # 帧内名取 context 展示名（发起方，如 MCP 工具名）；input 分支不发 resolution，名仅供展示。
+    assert frame.tools == (("call-I", "mcp__fx__ask"),)

@@ -29,11 +29,15 @@ from kokoro_agent.contract import (
 from kokoro_agent.execution.approvals import (
     approval_frame,
     nested_approved_payloads,
+    align_input_decisions,
     align_review_decisions,
+    input_entries,
+    input_frame,
     review_entries,
     review_frame,
     review_resolution_payloads,
     review_resume_value,
+    submit_resume_value,
     align_decisions,
     has_pending_interrupt,
     resolution_payloads,
@@ -258,6 +262,12 @@ class RunSupervisor:
             for resolution in review_resolution_payloads(ordered, rframe, results):
                 await emitter.emit(resolution)
             command = Command(resume=review_resume_value(ordered))
+        elif (input_ents := input_entries(snapshot.interrupts)) is not None:
+            # kind=input（如 MCP elicitation）：value 回灌到 request_input 调用点续跑。
+            # 不直发 tool.returned——发起工具在 resume 后原地续跑，其 returned 走正常投影浮现。
+            iframe = input_frame(snapshot, input_ents)
+            ordered = align_input_decisions(msg.decisions, iframe)
+            command = Command(resume=submit_resume_value(ordered))
         else:
             frame, _requests = approval_frame(snapshot, names)
             # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。

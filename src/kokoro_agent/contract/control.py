@@ -84,8 +84,14 @@ class RespondDecision(StrictModel):
     response: NonEmptyStr
 
 
+class SubmitDecision(StrictModel):
+    type: Literal["submit"]
+    request_id: NonEmptyStr
+    value: dict[str, JsonValue]
+
+
 ResumeDecision = Annotated[
-    Union[ApproveDecision, EditDecision, RejectDecision, RespondDecision],
+    Union[ApproveDecision, EditDecision, RejectDecision, RespondDecision, SubmitDecision],
     Field(discriminator="type"),
 ]
 

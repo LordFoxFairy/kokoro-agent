@@ -155,9 +155,11 @@ def _tool_call_info(output: object) -> _StubToolCall:
 def test_tool_returned_truncated_absent_when_complete() -> None:
     # 契约语义：truncated 缺席 = 结果完整；截断时 = True（exclude_none 上 wire）。
     short = tool_returned_payload(_tool_call_info(output="ok"))
+    assert short is not None  # 非 interrupt 工具：恒有 returned 载荷。
     assert short.truncated is None
     assert "truncated" not in short.model_dump(exclude_none=True)
     long = tool_returned_payload(_tool_call_info(output="c" * 5000))
+    assert long is not None
     assert long.truncated is True
     assert long.model_dump(exclude_none=True)["truncated"] is True
 
@@ -624,6 +626,7 @@ def test_tool_returned_renders_content_blocks_readably() -> None:
         {"type": "image", "data": "..."},
     ]
     payload = tool_returned_payload(_tool_call_info(output=blocks))
+    assert payload is not None
     assert payload.result == "第一段\n第二段\n[1 non-text block(s) omitted]"
     assert "{'type'" not in payload.result
 

@@ -30,6 +30,12 @@ class ModelConfig(StrictModel):
     thinking: bool | None = None
 
 
+class SkillGrant(StrictModel):
+    name: NonEmptyStr
+    content_hash: NonEmptyStr
+    description: NonEmptyStr
+
+
 class Permissions(StrictModel):
     approval_tools: list[NonEmptyStr]
     review_tools: list[NonEmptyStr]
@@ -42,7 +48,7 @@ class RuntimeConfig(StrictModel):
     agent: NonEmptyStr | None = None
     model: ModelConfig
     tools: list[NonEmptyStr]
-    skills: list[NonEmptyStr]
+    skills: list[SkillGrant]
     mcp_servers: list[NonEmptyStr]
     subagents: list[NonEmptyStr]
     backend: Backend

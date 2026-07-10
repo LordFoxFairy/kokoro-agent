@@ -43,7 +43,7 @@ async def assemble_agent(
     graph = build_agent(
         model=make_chat_model(deps.model, runtime.model),
         tools=toolset.tools,
-        system_prompt=await build_system_prompt(request, deps, default=policy.default_prompt),
+        system_prompt=build_system_prompt(request, deps, default=policy.default_prompt),
         subagents=delegates.subagents,
         checkpointer=deps.checkpointer,
         permissions=build_filesystem_permissions(runtime.permissions.filesystem),

@@ -24,3 +24,4 @@ tmp/
 
 # 本地产物库缺省根（KOKORO_ARTIFACTS_DIR）
 kokoro_artifacts/
+kokoro_hub/

@@ -9,8 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from kokoro_agent.agents.deps import AssembleDeps
-from kokoro_agent.contract import RunRequest, RuntimeConfig
-from kokoro_agent.contract.storage import SkillCard
+from kokoro_agent.contract import RunRequest, RuntimeConfig, SkillGrant
 from kokoro_agent.skills.hub import OFFICIAL_SCOPE
 
 
@@ -31,19 +30,19 @@ def skill_scopes(request: RunRequest) -> tuple[str, ...]:
     return (request.context.namespace, OFFICIAL_SCOPE)
 
 
-def render_skill_manifest(base: str, cards: Sequence[SkillCard]) -> str:
-    """清单段拼装（纯函数）：卡片序=授权序，同输入字节恒等（前缀稳定的可测面）。"""
-    if not cards:
+def render_skill_manifest(base: str, grants: Sequence[SkillGrant]) -> str:
+    """清单段拼装（纯函数）：卡片序=授权序（=wire 序），同输入字节恒等（前缀稳定的可测面）。"""
+    if not grants:
         return base
-    lines = "\n".join(f"- {card.name}: {card.description}" for card in cards)
+    lines = "\n".join(f"- {grant.name}: {grant.description}" for grant in grants)
     return (
         f"{base}\n\n## 可用技能\n{lines}\n"
         "（动手前浏览清单；对得上任务的，用 skill 工具读取完整指南后照做。）"
     )
 
 
-async def build_system_prompt(request: RunRequest, deps: AssembleDeps, *, default: str) -> str:
-    """基础 prompt + 可用技能清单段（name+description 常驻，正文经 skill 工具按需读取）。"""
+def build_system_prompt(request: RunRequest, deps: AssembleDeps, *, default: str) -> str:
+    """基础 prompt + 可用技能清单段：清单零查询，直接渲染会话快照 grants（name+description
+    常驻，正文经 skill 工具按快照 hash 按需读取）。"""
     base = resolve_system_prompt(request.runtime, deps, default=default)
-    cards = await deps.skill_hub.resolve_cards(skill_scopes(request), request.runtime.skills)
-    return render_skill_manifest(base, cards)
+    return render_skill_manifest(base, request.runtime.skills)

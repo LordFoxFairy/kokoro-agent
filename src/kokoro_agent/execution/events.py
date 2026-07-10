@@ -9,6 +9,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
+    DeliveryCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
@@ -40,6 +41,7 @@ from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.streams.protocol import StreamProtocol
+from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
 SourceResolver = Callable[[str], SubagentSource]
 
@@ -60,6 +62,7 @@ AgentEventPayload = (
     | SubagentTextCompletedPayload
     | SubagentToolInvokedPayload
     | SubagentToolReturnedPayload
+    | DeliveryCreatedPayload
     | RunCompletedPayload
     | RunFailedPayload
 )
@@ -81,6 +84,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     SubagentTextCompletedPayload: "subagent.text.completed",
     SubagentToolInvokedPayload: "subagent.tool.invoked",
     SubagentToolReturnedPayload: "subagent.tool.returned",
+    DeliveryCreatedPayload: "delivery.created",
     RunCompletedPayload: "run.completed",
     RunFailedPayload: "run.failed",
 }
@@ -362,17 +366,47 @@ def clip_result(text: str) -> tuple[str, bool]:
     return f"{text[:TOOL_RESULT_MAX_CHARS]}…[truncated {omitted} chars]", True
 
 
-def _result_text(tc: ToolCallInfo) -> tuple[str, bool]:
+def _raw_result_text(tc: ToolCallInfo) -> str:
+    """工具终值的完整文本（未截断）：error 优先，其次原生 .text，再次 content blocks，兜底 str。"""
     if tc.error is not None:
-        return clip_result(tc.error)
+        return tc.error
     output = tc.output
     if output is None:
-        return "", False
+        return ""
     text = getattr(output, "text", None)
     if isinstance(text, str):
-        return clip_result(text)
+        return text
     blocks = _render_content_blocks(output)
-    return clip_result(blocks if blocks is not None else str(output))
+    return blocks if blocks is not None else str(output)
+
+
+def _result_text(tc: ToolCallInfo) -> tuple[str, bool]:
+    return clip_result(_raw_result_text(tc))
+
+
+_DELIVER_RESULT_ADAPTER: TypeAdapter[DeliverResult] = TypeAdapter(DeliverResult)
+
+
+def delivery_created_payload(tc: ToolCallInfo) -> DeliveryCreatedPayload | None:
+    """deliver 成功归档后追发：tool.returned 之后紧跟 delivery.created（同 emitter，序号统一）。
+
+    非 deliver 工具 / 工具异常 / 非 delivered JSON（含降级 error 文本）→ None（不追发）。
+    解析未截断原文（大 note 也不丢事件）；note 空串省略（payload 局部可选）。
+    """
+    if tc.tool_name != DELIVER_TOOL_NAME or tc.error is not None:
+        return None
+    try:
+        result = _DELIVER_RESULT_ADAPTER.validate_json(_raw_result_text(tc))
+    except ValidationError:
+        return None
+    return DeliveryCreatedPayload(
+        path=result.path,
+        title=result.title,
+        mime=result.mime,
+        size=result.size,
+        content_hash=result.content_hash,
+        note=result.note or None,
+    )
 
 
 _BLOCKS_ADAPTER: TypeAdapter[list[dict[str, object]]] = TypeAdapter(list[dict[str, object]])

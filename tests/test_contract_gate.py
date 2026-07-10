@@ -74,6 +74,16 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
     ("subagent.text.delta", {"segment_id": "seg", "subagent_id": "sub1", "text": "x"}),
     ("subagent.text.completed", {"segment_id": "seg", "subagent_id": "sub1", "text": "xy"}),
     (
+        "delivery.created",
+        {
+            "path": "/report.pdf",
+            "title": "Report",
+            "mime": "application/pdf",
+            "size": 12,
+            "content_hash": "abc123",
+        },
+    ),
+    (
         "run.completed",
         {"status": "completed", "token_usage": {"input_tokens": 1, "output_tokens": 2}},
     ),

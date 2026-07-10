@@ -28,7 +28,14 @@ from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.content_source import make_asset_source
 from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.mcp.config import load_mcp_servers
-from kokoro_agent.skills.hub import SkillHubSettings, make_skill_hub, seed_official
+from kokoro_agent.skills.hub import (
+    PackageStore,
+    S3Credentials,
+    SkillHubSettings,
+    make_package_store,
+    make_skill_hub,
+    seed_official,
+)
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -74,6 +81,25 @@ def skill_hub_settings(config: AppConfig) -> SkillHubSettings:
     )
 
 
+def deliveries_store(config: AppConfig) -> PackageStore | None:
+    """交付冻结件存储位形取 ADR-009 文件 deliveries 节；缺省=None（deliver 工具降级不炸）。
+    s3 凭据复用 workspace 对（同集群，env-only，同 skill_hub_settings 做法）。"""
+    storage = load_storage_file(config.workspace_config)
+    location = storage.deliveries if storage is not None else None
+    if location is None:
+        return None
+    credentials = (
+        S3Credentials(
+            access_key=config.workspace_s3_access_key,
+            secret_key=config.workspace_s3_secret_key,
+        )
+        if config.workspace_s3_access_key is not None
+        and config.workspace_s3_secret_key is not None
+        else None
+    )
+    return make_package_store(location, credentials)
+
+
 def _consumer_name() -> str:
     # consumer-group 内的成员身份：主机+pid 保多 pod/多进程不撞名。
     return f"{socket.gethostname()}-{os.getpid()}"
@@ -108,6 +134,8 @@ async def _serve(config: AppConfig) -> None:
             prompts=prompts,
             # MCP server 定义住部署侧：启动即加载校验（含 ${ENV} 凭据展开），fail-loud。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
+            # 交付冻结件存储（deliveries 节）；缺省=None → deliver 工具恒挂但调用降级。
+            deliveries=deliveries_store(config),
         )
         supervisor = RunSupervisor(
             agent_builder=functools.partial(assemble, deps),

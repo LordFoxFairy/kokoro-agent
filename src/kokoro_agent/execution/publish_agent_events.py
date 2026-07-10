@@ -16,6 +16,7 @@ from kokoro_agent.execution.events import (
     AgentEventPayload,
     RunEmitter,
     SourceResolver,
+    delivery_created_payload,
     message_completed_payload,
     message_delta_payload,
     subagent_finished_payload,
@@ -182,6 +183,10 @@ async def _consume_tools(
         await queue.put(tool_invoked_payload(tc))
         await _pump_tool_output(tc, queue)
         await queue.put(tool_returned_payload(tc))
+        # deliver 成功归档时紧随 tool.returned 追发 delivery.created（同 emitter 统一序号）。
+        delivery = delivery_created_payload(tc)
+        if delivery is not None:
+            await queue.put(delivery)
 
 
 async def _consume_subagents(

@@ -18,7 +18,7 @@ from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.prompts import PromptLibrary
-from kokoro_agent.skills.hub import SkillHub
+from kokoro_agent.skills.hub import PackageStore, SkillHub
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
@@ -54,6 +54,8 @@ class AssembleDeps:
     prompts: PromptLibrary
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
     mcp_servers: Mapping[str, McpServerConfig] = field(default_factory=dict[str, McpServerConfig])
+    # 交付冻结件存储（deliveries 节，content-hash keyed 不可变写）；缺省=None → deliver 工具降级。
+    deliveries: PackageStore | None = None
 
 
 class AgentPolicy(Protocol):

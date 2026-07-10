@@ -44,6 +44,7 @@ def _script() -> list[AIMessage]:
 
 def hitl_script() -> list[AIMessage]:
     # 跨栈 e2e 脚本：一次 ask_user_question 暂停 → 一次审批工具（write_file）暂停 → 正常文本流。
+    # 尾部 deliver 轮只被同线程的第二次 run 消费（单 run 在首个纯文本帧收束）——驱动 E2E-31 成果交付链。
     return [
         AIMessage(
             content="",
@@ -63,6 +64,18 @@ def hitl_script() -> list[AIMessage]:
                     "name": "write_file",
                     "args": {"file_path": "/plan.md", "content": "# 计划\n本地预览"},
                     "id": "local_write",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content=_FINAL_TEXT),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "deliver",
+                    "args": {"path": "/plan.md", "title": "执行计划"},
+                    "id": "local_deliver",
                     "type": "tool_call",
                 }
             ],

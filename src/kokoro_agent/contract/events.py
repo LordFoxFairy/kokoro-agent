@@ -166,6 +166,16 @@ class SubagentToolReturnedPayload(StrictModel):
     truncated: bool | None = None
 
 
+class DeliveryCreatedPayload(StrictModel):
+    path: NonEmptyStr
+    title: NonEmptyStr
+    mime: NonEmptyStr
+    size: int
+    # 成果冻结键：deliveries/<namespace>/<content_hash> 内容寻址,永不漂移；由 deliver 工具归档时计算,emitter 在 tool.returned 后追发本事件。
+    content_hash: NonEmptyStr
+    note: str | None = None
+
+
 class RunCompletedPayload(StrictModel):
     status: RunCompletedStatus
     # agent 认真算的用量全链路贯通；无用量时为 null。
@@ -307,6 +317,14 @@ class SubagentToolReturned(StrictModel):
     payload: SubagentToolReturnedPayload
 
 
+class DeliveryCreated(StrictModel):
+    kind: Literal["delivery.created"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: DeliveryCreatedPayload
+
+
 class RunCompleted(StrictModel):
     kind: Literal["run.completed"]
     run_id: NonEmptyStr
@@ -341,6 +359,7 @@ AgentEvent = Annotated[
         SubagentTextCompleted,
         SubagentToolInvoked,
         SubagentToolReturned,
+        DeliveryCreated,
         RunCompleted,
         RunFailed,
     ],

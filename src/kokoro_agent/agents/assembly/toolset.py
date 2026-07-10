@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -12,6 +13,7 @@ from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.skills.supply import UploadCapableBackend
+from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.skills import make_skill_tool
 
@@ -41,6 +43,7 @@ async def build_toolset(
     ② 内置底座（恒挂，toolbox 一口出）：租户态 memory + 进程配置态 web_search/web_fetch
     ③ 技能工具（恒挂单工具，schema 不随池变）：清单在 prompt，正文经 skill(name) 按需读
     ④ MCP 稳定三工具（恒挂，schema 不随 server 集/远端漂移变）：list/describe/call
+    ⑤ deliver 工具（恒挂，schema 不随配置变 D9）：无 workspace/无 deliveries 调用时降级
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
@@ -49,9 +52,21 @@ async def build_toolset(
     )
     # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析；连接惰性化。
     tools.extend(make_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
+    tools.append(_deliver_tool(request, deps))
     return Toolset(
         tools=tuple(tools),
         authorized=frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES,
         by_name={tool.name: tool for tool in tools},
         descriptions={tool.name: tool.description for tool in tools if tool.description},
     )
+
+
+def _deliver_tool(request: RunRequest, deps: AssembleDeps) -> StructuredTool:
+    """deliver 恒挂：工作区目录 = {local_shell_root}/{namespace:session_id}（同 backend 装配约定），
+    root 缺省则无文件面 → workspace_dir=None（调用时降级）。deliveries 存储缺省=None 同理。"""
+    root = deps.sandbox.local_shell_root
+    namespace = request.context.namespace
+    workspace_dir = (
+        Path(root) / f"{namespace}:{request.context.session_id}" if root is not None else None
+    )
+    return make_deliver_tool(workspace_dir, deps.deliveries, namespace)

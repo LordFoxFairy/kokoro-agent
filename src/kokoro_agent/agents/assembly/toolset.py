@@ -12,7 +12,6 @@ from kokoro_agent.agents.assembly.prompt import skill_scopes
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.mcp.tools import make_mcp_tools
-from kokoro_agent.skills.supply import UploadCapableBackend
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.skills import make_skill_tool
@@ -36,20 +35,18 @@ async def build_toolset(
     deps: AssembleDeps,
     *,
     core: tuple[StructuredTool, ...],
-    backend: UploadCapableBackend | None = None,
 ) -> Toolset:
     """四路工具来源合流（顺序即挂载序）：
     ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user）
     ② 内置底座（恒挂，toolbox 一口出）：租户态 memory + 进程配置态 web_search/web_fetch
-    ③ 技能工具（恒挂单工具，schema 不随池变）：清单在 prompt，正文经 skill(name) 按需读
+    ③ 技能工具（恒挂单工具，schema 不随池变）：清单在 prompt，正文经 skill(name) 按需读；
+       附件物化由装配期 reconcile 中间件负责，工具只读账本判断就绪与否
     ④ MCP 稳定三工具（恒挂，schema 不随 server 集/远端漂移变）：list/describe/call
     ⑤ deliver 工具（恒挂，schema 不随配置变 D9）：无 workspace/无 deliveries 调用时降级
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
-    tools.append(
-        make_skill_tool(request.runtime.skills, skill_scopes(request), deps.skill_hub, backend)
-    )
+    tools.append(make_skill_tool(request.runtime.skills, skill_scopes(request), deps.skill_hub))
     # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析；连接惰性化。
     tools.extend(make_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
     tools.append(_deliver_tool(request, deps))

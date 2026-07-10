@@ -11,15 +11,21 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware
+
 from kokoro_agent.agents.assembly.delegates import build_delegates
 from kokoro_agent.agents.assembly.guardrails import build_guard_chains
-from kokoro_agent.agents.assembly.prompt import build_system_prompt
+from kokoro_agent.agents.assembly.prompt import build_system_prompt, skill_scopes
 from kokoro_agent.agents.assembly.toolset import build_toolset
 from kokoro_agent.agents.deps import AgentPolicy, AssembleDeps, AssembledAgent
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
+from kokoro_agent.skills import SkillMaterializerMiddleware
+from kokoro_agent.skills.supply import MaterializeBackend
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
 
@@ -37,9 +43,16 @@ async def assemble_agent(
         run_id=request.run_id,
         binding=deps.ledger,
     )
-    toolset = await build_toolset(request, deps, core=policy.core_tools, backend=backend)
+    toolset = await build_toolset(request, deps, core=policy.core_tools)
     chains = build_guard_chains(deps, request)
     delegates = build_delegates(request, toolset, deps, chains.subagent)
+    main_chain = chains.main(
+        ToolPolicyMiddleware(
+            toolset.authorized,
+            declared_subagents=delegates.declared,
+            subagent_create=runtime.permissions.subagent_create,
+        )
+    )
     graph = build_agent(
         model=make_chat_model(deps.model, runtime.model),
         tools=toolset.tools,
@@ -52,15 +65,29 @@ async def assemble_agent(
             subagent_create=runtime.permissions.subagent_create,
             pause_tools=policy.pause_tools,
         ),
-        middleware=chains.main(
-            ToolPolicyMiddleware(
-                toolset.authorized,
-                declared_subagents=delegates.declared,
-                subagent_create=runtime.permissions.subagent_create,
-            )
-        ),
+        # 技能资产物化对账（before_agent，恒早于模型）：账本进 checkpoint,附件按 hash 增量落沙箱。
+        # backend 缺省档（state）无沙箱面 → 无附件可物化 → 不挂对账中间件。
+        middleware=_with_materializer(main_chain, request, deps, backend),
         backend=backend,
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
         store=deps.memory_store,
     )
     return AssembledAgent(agent=graph, tool_descriptions=toolset.descriptions)
+
+
+def _with_materializer(
+    chain: tuple[AgentMiddleware, ...],
+    request: RunRequest,
+    deps: AssembleDeps,
+    backend: MaterializeBackend | None,
+) -> tuple[AgentMiddleware[Any, Any, Any], ...]:
+    """无沙箱（state 档 backend=None）时不挂对账；有沙箱则追加 before_agent 物化中间件。"""
+    if backend is None:
+        return chain
+    materializer = SkillMaterializerMiddleware(
+        grants=request.runtime.skills,
+        scopes=skill_scopes(request),
+        hub=deps.skill_hub,
+        backend=backend,
+    )
+    return (*chain, materializer)

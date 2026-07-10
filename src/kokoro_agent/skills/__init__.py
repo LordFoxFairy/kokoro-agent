@@ -15,25 +15,31 @@ from kokoro_agent.skills.hub import (
     seed_official,
     validate_package,
 )
+from kokoro_agent.skills.materialize import (
+    SkillMaterializerMiddleware,
+    reconcile_skill_assets,
+)
 from kokoro_agent.skills.package import (
     SkillAssetError,
     SkillFrontmatter,
     parse_frontmatter,
 )
-from kokoro_agent.skills.supply import SKILLS_ROOT, UploadCapableBackend
+from kokoro_agent.skills.supply import SKILLS_ROOT, MaterializeBackend
 
 __all__ = [
     "OFFICIAL_SCOPE",
     "SKILLS_ROOT",
+    "MaterializeBackend",
     "SkillAssetError",
     "SkillFrontmatter",
     "SkillHub",
     "SkillHubError",
     "SkillHubSettings",
-    "UploadCapableBackend",
+    "SkillMaterializerMiddleware",
     "content_hash_of",
     "make_skill_hub",
     "parse_frontmatter",
+    "reconcile_skill_assets",
     "seed_official",
     "validate_package",
 ]

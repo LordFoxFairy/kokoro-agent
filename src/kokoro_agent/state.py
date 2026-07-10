@@ -13,11 +13,16 @@ from deepagents.graph import DeepAgentState
 from kokoro_agent.contract import RunRequest
 
 SCOPE_STATE_KEY = "scope"
+SKILLS_MATERIALIZED_STATE_KEY = "skills_materialized"
 
 
 class KokoroAgentState(DeepAgentState):
     # 纯 dict 载荷（checkpoint 序列化安全）；读写经 RunScope.as_state/from_state 收口。
     scope: dict[str, str]
+    # 技能资产物化账本 {skill_name: content_hash}：装配期 reconcile 写、skill 工具读。
+    # 无 reducer → LastValue 覆盖：reconcile 每 run 算全量账本整体落回,GC/自愈即删项/清空天然生效；
+    # 落 checkpoint → resume/跨 worker 认账（取代冻结代码的闭包 `supplied` 局部变量）。
+    skills_materialized: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)

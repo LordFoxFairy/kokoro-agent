@@ -90,7 +90,7 @@ async def test_seed_then_cards_and_body(hub: SkillHub, tmp_path: Path) -> None:
 
     cards = await hub.resolve_cards(["official"], ["pdf", "style"])
     assert [card.name for card in cards] == ["pdf", "style"]  # 授权序（清单字节稳定）。
-    body = await hub.read_body(["official"], "style", cards[1].content_hash)
+    body = await hub.read_body("official", "style", cards[1].content_hash)
     assert "先结论后论据" in body
 
 
@@ -119,7 +119,7 @@ async def test_content_lock_old_hash_survives_upgrade(hub: SkillHub, tmp_path: P
     new_card = (await hub.resolve_cards(["official"], ["pdf"]))[0]
     assert new_card.content_hash != old_card.content_hash
     # 旧 hash 双路：正文与整包都按内容寻址取回（进行中会话不受升级影响）。
-    old_body = await hub.read_body(["official"], "pdf", old_card.content_hash)
+    old_body = await hub.read_body("official", "pdf", old_card.content_hash)
     assert "（v2 流程）" not in old_body
     old_files = await hub.load_package("official", "pdf", old_card.content_hash)
     assert old_files["make_report.py"] == "print('v1')"
@@ -139,6 +139,42 @@ async def test_namespace_overrides_official(hub: SkillHub, tmp_path: Path) -> No
     assert official_only[0].description == "写作风格指南"
 
 
+async def test_same_name_cross_scope_reads_pinned_scope(hub: SkillHub, tmp_path: Path) -> None:
+    """P1 边角回归：同名跨 scope 时，读正文/取包按快照卡的 scope 定死归属——
+    快照 official 旧版即便被 namespace 同名上传遮蔽、且官方后续升级，仍命中 official 旧内容；反向亦然。"""
+    # official 发布 v1（含附件）→ 会话此刻快照卡 = {scope: official, hash A}。
+    off_v1 = tmp_path / "off_v1"
+    write_skill_dir(off_v1, "pdf", PDF_MD, extra={"make_report.py": "print('official-v1')"})
+    await seed_official(hub, scan(off_v1))
+    snapshot = (await hub.resolve_cards(["official"], ["pdf"]))[0]  # official hash A
+
+    # namespace 上传同名 pdf（hash B，Mongo (official,pdf) 与 (ns1,pdf) 双文档并存）。
+    user = tmp_path / "user"
+    write_skill_dir(user, "pdf", PDF_MD.replace("处理数据", "命名空间流程"),
+                    extra={"make_report.py": "print('ns')"})
+    await hub.upsert("ns1", "pdf", scan(user)["pdf"], source="upload")
+    ns_card = (await hub.resolve_cards(["ns1"], ["pdf"]))[0]  # ns hash B
+    assert ns_card.content_hash != snapshot.content_hash
+
+    # official 再升级 v2 → snapshot 变旧 hash（触发正文/取包的 zip 旧版路径）。
+    off_v2 = tmp_path / "off_v2"
+    write_skill_dir(off_v2, "pdf", PDF_MD.replace("处理数据", "官方v2"),
+                    extra={"make_report.py": "print('official-v2')"})
+    await seed_official(hub, scan(off_v2))
+
+    # 快照卡 scope=official：命中 official 旧版 A，既不被 namespace 遮蔽也不随官方升级漂移。
+    off_body = await hub.read_body("official", "pdf", snapshot.content_hash)
+    assert "命名空间流程" not in off_body and "官方v2" not in off_body
+    off_files = await hub.load_package_if_assets("official", "pdf", snapshot.content_hash)
+    assert off_files is not None and off_files["make_report.py"] == "print('official-v1')"
+
+    # 反向：快照卡 scope=ns1 → 命中 namespace 版，不被 official 遮蔽。
+    ns_body = await hub.read_body("ns1", "pdf", ns_card.content_hash)
+    assert "命名空间流程" in ns_body
+    ns_files = await hub.load_package_if_assets("ns1", "pdf", ns_card.content_hash)
+    assert ns_files is not None and ns_files["make_report.py"] == "print('ns')"
+
+
 async def test_assets_probe_skips_plain_packages(hub: SkillHub, tmp_path: Path) -> None:
     src = tmp_path / "src"
     write_skill_dir(src, "style", STYLE_MD)
@@ -146,8 +182,8 @@ async def test_assets_probe_skips_plain_packages(hub: SkillHub, tmp_path: Path) 
     await seed_official(hub, scan(src))
     style = (await hub.resolve_cards(["official"], ["style"]))[0]
     pdf = (await hub.resolve_cards(["official"], ["pdf"]))[0]
-    assert await hub.load_package_if_assets(["official"], "style", style.content_hash) is None
-    files = await hub.load_package_if_assets(["official"], "pdf", pdf.content_hash)
+    assert await hub.load_package_if_assets("official", "style", style.content_hash) is None
+    files = await hub.load_package_if_assets("official", "pdf", pdf.content_hash)
     assert files is not None and "make_report.py" in files
 
 

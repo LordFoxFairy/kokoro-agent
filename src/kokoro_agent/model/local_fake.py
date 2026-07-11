@@ -144,7 +144,8 @@ class LocalFakeChatModel(BaseChatModel):
             reply = reply.model_copy(
                 update={
                     "usage_metadata": {"input_tokens": 120, "output_tokens": 45, "total_tokens": 165},
-                    "response_metadata": {**reply.response_metadata, "model_name": "kokoro-local-fake"},
+                    # 脚本消息不带 response_metadata,直接置值(spread 上游裸 dict 注解会污染类型面)。
+                    "response_metadata": {"model_name": "kokoro-local-fake"},
                 }
             )
         return ChatResult(generations=[ChatGeneration(message=reply)])

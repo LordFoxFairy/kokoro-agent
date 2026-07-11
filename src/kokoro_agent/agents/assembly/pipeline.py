@@ -17,7 +17,7 @@ from langchain.agents.middleware import AgentMiddleware
 
 from kokoro_agent.agents.assembly.delegates import build_delegates
 from kokoro_agent.agents.assembly.guardrails import build_guard_chains
-from kokoro_agent.agents.assembly.prompt import build_system_prompt, skill_scopes
+from kokoro_agent.agents.assembly.prompt import build_system_prompt
 from kokoro_agent.agents.assembly.toolset import build_toolset
 from kokoro_agent.agents.deps import AgentPolicy, AssembleDeps, AssembledAgent
 from kokoro_agent.contract import RunRequest
@@ -86,7 +86,6 @@ def _with_materializer(
         return chain
     materializer = SkillMaterializerMiddleware(
         grants=request.runtime.skills,
-        scopes=skill_scopes(request),
         hub=deps.skill_hub,
         backend=backend,
     )

@@ -31,10 +31,10 @@ _MONGO_URL = "mongodb://127.0.0.1:27017"
 SCOPES = ("ns1", "official")
 
 
-async def grant_for(hub: SkillHub, name: str) -> SkillGrant:
-    """会话快照那一刻的授权卡（session 侧消费 list_pool 产出的同形）。"""
-    card = (await hub.resolve_cards(SCOPES, [name]))[0]
-    return SkillGrant(name=name, content_hash=card.content_hash, description=card.description)
+async def grant_for(hub: SkillHub, name: str, scope: str = "official") -> SkillGrant:
+    """会话快照那一刻的授权卡（session 侧消费 list_pool 产出的同形，scope 定死归属）。"""
+    card = (await hub.resolve_cards([scope], [name]))[0]
+    return SkillGrant(name=name, content_hash=card.content_hash, description=card.description, scope=scope)
 
 
 async def _read(tool: StructuredTool, name: str, ledger: dict[str, str]) -> str:
@@ -83,8 +83,8 @@ async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
 def test_manifest_renders_granted_in_order() -> None:
     # 零查询：清单直接渲染会话快照 grants（wire 序=清单序）。
     grants = [
-        SkillGrant(name="pdf", content_hash="h-pdf", description="PDF 报告生成流程"),
-        SkillGrant(name="style", content_hash="h-style", description="写作风格指南"),
+        SkillGrant(name="pdf", content_hash="h-pdf", description="PDF 报告生成流程", scope="official"),
+        SkillGrant(name="style", content_hash="h-style", description="写作风格指南", scope="official"),
     ]
     rendered = render_skill_manifest("base", grants)
     assert rendered.index("pdf") < rendered.index("style")  # 授权序=清单序（prompt 字节稳定）。
@@ -97,8 +97,8 @@ def test_manifest_empty_pool_keeps_base_untouched() -> None:
 
 def test_manifest_same_grants_identical_bytes() -> None:
     grants = [
-        SkillGrant(name="style", content_hash="h-style", description="写作风格指南"),
-        SkillGrant(name="pdf", content_hash="h-pdf", description="PDF 报告生成流程"),
+        SkillGrant(name="style", content_hash="h-style", description="写作风格指南", scope="official"),
+        SkillGrant(name="pdf", content_hash="h-pdf", description="PDF 报告生成流程", scope="official"),
     ]
     assert render_skill_manifest("base", grants) == render_skill_manifest("base", list(grants))
 
@@ -107,20 +107,20 @@ def test_manifest_same_grants_identical_bytes() -> None:
 
 
 async def test_skill_fails_closed_outside_run_pool(hub: SkillHub) -> None:
-    tool = make_skill_tool([await grant_for(hub, "style")], SCOPES, hub)
+    tool = make_skill_tool([await grant_for(hub, "style")], hub)
     assert "error" in await _read(tool, "pdf", {})  # 库里有但本 run 未授权。
     assert "error" in await _read(tool, "ghost", {})  # 不存在。
 
 
 async def test_skill_plain_package_returns_body(hub: SkillHub) -> None:
-    tool = make_skill_tool([await grant_for(hub, "style")], SCOPES, hub)
+    tool = make_skill_tool([await grant_for(hub, "style")], hub)
     body = await _read(tool, "style", {})
     assert "先结论后论据" in body  # 纯知识包：正文即全部，不涉物化账本。
 
 
 async def test_skill_asset_ready_when_ledger_has_hash(hub: SkillHub) -> None:
     grant = await grant_for(hub, "pdf")
-    tool = make_skill_tool([grant], SCOPES, hub)
+    tool = make_skill_tool([grant], hub)
     # 账本记 pdf→快照 hash（reconcile 已物化）→ 工具告知附件就绪与路径。
     result = await _read(tool, "pdf", {"pdf": grant.content_hash})
     assert f"{SKILLS_ROOT}pdf/make_report.py" in result
@@ -129,7 +129,7 @@ async def test_skill_asset_ready_when_ledger_has_hash(hub: SkillHub) -> None:
 
 async def test_skill_asset_unavailable_when_not_in_ledger(hub: SkillHub) -> None:
     grant = await grant_for(hub, "pdf")
-    tool = make_skill_tool([grant], SCOPES, hub)
+    tool = make_skill_tool([grant], hub)
     # 账本无 pdf（未物化/物化失败）→ 正文可用但标记附件不可用（不谎报就绪）。
     result = await _read(tool, "pdf", {})
     assert "不可用" in result
@@ -150,7 +150,7 @@ async def test_skill_tool_reads_snapshot_hash_after_official_upgrade(
     new_hash = (await hub.resolve_cards(SCOPES, ["pdf"]))[0].content_hash
     assert new_hash != v1_grant.content_hash
 
-    tool = make_skill_tool([v1_grant], SCOPES, hub)
+    tool = make_skill_tool([v1_grant], hub)
     body = await _read(tool, "pdf", {"pdf": v1_grant.content_hash})
     assert "（v2 流程）" not in body  # 旧正文（快照锁定），不随官方升级漂移。
 
@@ -158,12 +158,12 @@ async def test_skill_tool_reads_snapshot_hash_after_official_upgrade(
 async def test_skill_pool_change_keeps_tool_schema_identical(hub: SkillHub) -> None:
     # D9：池 A/B/空 切换，工具 schema 逐字节相同（清单在 prompt 侧且随会话快照恒定）。
     def surface(grants: list[SkillGrant]) -> tuple[str, str, str]:
-        tool = make_skill_tool(grants, SCOPES, hub)
+        tool = make_skill_tool(grants, hub)
         schema = tool.args_schema
         assert isinstance(schema, type) and issubclass(schema, BaseModel)
         return (tool.name, tool.description, str(schema.model_json_schema()))
 
     def g(name: str) -> SkillGrant:
-        return SkillGrant(name=name, content_hash="h", description="d")
+        return SkillGrant(name=name, content_hash="h", description="d", scope="official")
 
     assert surface([g("style")]) == surface([g("pdf"), g("style")]) == surface([])

@@ -31,30 +31,28 @@ def _ledger_from_state(runtime: ToolRuntime[None, KokoroAgentState]) -> dict[str
 
 def make_skill_tool(
     grants: Sequence[SkillGrant],
-    scopes: Sequence[str],
     hub: SkillHub,
 ) -> StructuredTool:
-    """per-run 闭包：授权集（name→快照 hash）/查询范围/hub 在装配期捕获。"""
+    """per-run 闭包：授权集（name→快照卡，含 scope 与 hash）/hub 在装配期捕获。"""
 
-    # 内容锁：授权按 (name→content_hash) 快照，正文/附件永远按此 hash 读，官方升级不影响本会话。
-    granted: dict[str, str] = {grant.name: grant.content_hash for grant in grants}
-    resolved_scopes: tuple[str, ...] = tuple(scopes)
+    # 内容锁：授权按快照卡（scope+content_hash）定死，正文/附件永远按卡片归属读，官方升级不影响本会话。
+    granted: dict[str, SkillGrant] = {grant.name: grant for grant in grants}
 
     async def read(name: str, runtime: ToolRuntime[None, KokoroAgentState]) -> str:
-        granted_hash = granted.get(name)
-        if granted_hash is None:
+        grant = granted.get(name)
+        if grant is None:
             # 模型可读的纠错信息（不炸 run）；内容面 fail-closed。
             return f"error: skill {name!r} 不在本次运行的技能集内（见 system prompt 清单）。"
         try:
-            body = await hub.read_body(resolved_scopes, name, granted_hash)
-            files = await hub.load_package_if_assets(resolved_scopes, name, granted_hash)
+            body = await hub.read_body(grant.scope, name, grant.content_hash)
+            files = await hub.load_package_if_assets(grant.scope, name, grant.content_hash)
         except SkillHubError as exc:
             return f"error: {exc}"
         if files is None:
             return body  # 纯知识包：无附件，正文即全部。
         assets = sorted(rel for rel in files if rel != "SKILL.md")
         # 附件是否已物化：查装配期 reconcile 写下的 graph state 账本（按快照 hash 归属）。
-        if _ledger_from_state(runtime).get(name) != granted_hash:
+        if _ledger_from_state(runtime).get(name) != grant.content_hash:
             return body + "\n\n[附带文件本次运行不可用：技能资产未物化到沙盒，仅正文可用。]"
         listing = "\n".join(f"- {SKILLS_ROOT}{name}/{rel}" for rel in assets)
         return body + f"\n\n[技能附带文件已就绪，可直接读取/执行：]\n{listing}"

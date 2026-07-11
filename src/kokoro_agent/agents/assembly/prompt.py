@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest, RuntimeConfig, SkillGrant
-from kokoro_agent.skills.hub import OFFICIAL_SCOPE
 
 
 def resolve_system_prompt(runtime: RuntimeConfig, deps: AssembleDeps, *, default: str) -> str:
@@ -23,11 +22,6 @@ def resolve_system_prompt(runtime: RuntimeConfig, deps: AssembleDeps, *, default
         if prompt is not None:
             return prompt
     return default
-
-
-def skill_scopes(request: RunRequest) -> tuple[str, ...]:
-    """技能查询范围（优先级序）：本 namespace 的包覆盖同名 official 包。"""
-    return (request.context.namespace, OFFICIAL_SCOPE)
 
 
 def render_skill_manifest(base: str, grants: Sequence[SkillGrant]) -> str:

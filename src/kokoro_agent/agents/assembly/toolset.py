@@ -8,7 +8,6 @@ from pathlib import Path
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from kokoro_agent.agents.assembly.prompt import skill_scopes
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.mcp.tools import make_mcp_tools
@@ -46,7 +45,7 @@ async def build_toolset(
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
-    tools.append(make_skill_tool(request.runtime.skills, skill_scopes(request), deps.skill_hub))
+    tools.append(make_skill_tool(request.runtime.skills, deps.skill_hub))
     # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析；连接惰性化。
     tools.extend(make_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
     tools.append(_deliver_tool(request, deps))

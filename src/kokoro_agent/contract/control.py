@@ -34,6 +34,7 @@ class SkillGrant(StrictModel):
     name: NonEmptyStr
     content_hash: NonEmptyStr
     description: NonEmptyStr
+    scope: NonEmptyStr
 
 
 class Permissions(StrictModel):

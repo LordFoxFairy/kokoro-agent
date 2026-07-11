@@ -362,14 +362,15 @@ class SkillHub:
                 ))
         return out
 
-    async def read_body(self, scopes: Sequence[str], name: str, content_hash: str | None = None) -> str:
-        """SKILL.md 正文双路：hash 缺省/等于当前版 → Mongo 快读；旧版 → 包体 zip 取回。"""
-        doc = await self._find_in_scopes(scopes, name)
+    async def read_body(self, scope: str, name: str, content_hash: str | None = None) -> str:
+        """SKILL.md 正文双路：hash 缺省/等于当前版 → Mongo 快读；旧版 → 包体 zip 取回。
+        scope 由会话快照卡定死（同名跨 scope 不再猜测），取包按此 scope 拼 ref。"""
+        doc = await self._find_one(scope, name)
         if doc is None:
-            raise SkillHubError(f"skill {name!r} not found in scopes {list(scopes)}")
+            raise SkillHubError(f"skill {scope}/{name} not found")
         if content_hash is None or content_hash == doc.get("content_hash"):
             return str(doc["skill_md"])
-        files = await self.load_package(str(doc["scope"]), name, content_hash)
+        files = await self.load_package(scope, name, content_hash)
         return files["SKILL.md"]
 
     async def load_package(self, scope: str, name: str, content_hash: str) -> dict[str, str]:
@@ -378,22 +379,29 @@ class SkillHub:
         return _unzip_files(data)
 
     async def load_package_if_assets(
-        self, scopes: Sequence[str], name: str, content_hash: str
+        self, scope: str, name: str, content_hash: str
     ) -> dict[str, str] | None:
-        """有附件（非 SKILL.md 文件）才取整包；纯文档包返回 None（不白走包体存储）。"""
-        doc = await self._find_in_scopes(scopes, name)
+        """有附件（非 SKILL.md 文件）才取整包；纯文档包返回 None（不白走包体存储）。
+        scope 由会话快照卡定死，取包按此 scope 拼 ref（同名跨 scope 归属不错位）。"""
+        doc = await self._find_one(scope, name)
         if doc is None:
-            raise SkillHubError(f"skill {name!r} not found in scopes {list(scopes)}")
+            raise SkillHubError(f"skill {scope}/{name} not found")
         if content_hash == doc.get("content_hash"):
             entries = _MANIFEST_ADAPTER.validate_python(doc.get("files_manifest") or [])
             if sorted(entry.path for entry in entries) == ["SKILL.md"]:
                 return None
-            return await self.load_package(str(doc["scope"]), name, content_hash)
+            return await self.load_package(scope, name, content_hash)
         # 旧版（会话内容锁场景）：manifest 只反映当前版，直接取包判断。
-        files = await self.load_package(str(doc["scope"]), name, content_hash)
+        files = await self.load_package(scope, name, content_hash)
         return None if sorted(files) == ["SKILL.md"] else files
 
+    async def _find_one(self, scope: str, name: str) -> dict[str, object] | None:
+        """(scope,name) 直取活文档（快照卡定死归属的读路径）。"""
+        await self._ensure_indexes()
+        return await self._skills.find_one({"scope": scope, "name": name, "deleted_at": None})
+
     async def _find_in_scopes(self, scopes: Sequence[str], name: str) -> dict[str, object] | None:
+        """跨 scope 优先级解析（namespace 覆盖 official）——仅 resolve_cards 的无快照卡场景用。"""
         await self._ensure_indexes()
         for scope in scopes:  # 传入序=优先级序（namespace 覆盖 official）。
             doc = await self._skills.find_one({"scope": scope, "name": name, "deleted_at": None})

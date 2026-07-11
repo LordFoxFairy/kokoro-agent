@@ -76,7 +76,6 @@ async def reconcile_skill_assets(
     *,
     ledger: Mapping[str, str],
     grants: Sequence[SkillGrant],
-    scopes: Sequence[str],
     hub: SkillHub,
     backend: MaterializeBackend,
     skills_root: str = SKILLS_ROOT,
@@ -92,7 +91,8 @@ async def reconcile_skill_assets(
     new_ledger: dict[str, str] = {}
     for grant in grants:
         try:
-            files = await hub.load_package_if_assets(scopes, grant.name, grant.content_hash)
+            # 取包按快照卡的 scope 定死归属（同名跨 scope 不错位）。
+            files = await hub.load_package_if_assets(grant.scope, grant.name, grant.content_hash)
         except SkillHubError:
             LOGGER.warning("skill %r package unavailable; skipped", grant.name, exc_info=True)
             continue  # 取包失败：不落账本 → 工具标记不可用；不阻断其余
@@ -119,14 +119,12 @@ class SkillMaterializerMiddleware(AgentMiddleware[KokoroAgentState, Any]):
         self,
         *,
         grants: Sequence[SkillGrant],
-        scopes: Sequence[str],
         hub: SkillHub,
         backend: MaterializeBackend,
         skills_root: str = SKILLS_ROOT,
     ) -> None:
         super().__init__()
         self._grants = tuple(grants)
-        self._scopes = tuple(scopes)
         self._hub = hub
         self._backend = backend
         self._skills_root = skills_root
@@ -137,7 +135,6 @@ class SkillMaterializerMiddleware(AgentMiddleware[KokoroAgentState, Any]):
         new_ledger = await reconcile_skill_assets(
             ledger=state.get("skills_materialized") or {},
             grants=self._grants,
-            scopes=self._scopes,
             hub=self._hub,
             backend=self._backend,
             skills_root=self._skills_root,

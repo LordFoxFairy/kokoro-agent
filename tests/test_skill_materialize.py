@@ -36,7 +36,6 @@ from kokoro_agent.streams.redis import RedisStream
 from test_skill_hub import PDF_MD, STYLE_MD, scan, write_skill_dir
 
 _MONGO_URL = "mongodb://127.0.0.1:27017"
-SCOPES = ("ns1", "official")
 
 
 class _SpyBackend(LocalShellBackend):
@@ -71,9 +70,9 @@ async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
         await client.close()
 
 
-async def grant_for(hub: SkillHub, name: str) -> SkillGrant:
-    card = (await hub.resolve_cards(SCOPES, [name]))[0]
-    return SkillGrant(name=name, content_hash=card.content_hash, description=card.description)
+async def grant_for(hub: SkillHub, name: str, scope: str = "official") -> SkillGrant:
+    card = (await hub.resolve_cards([scope], [name]))[0]
+    return SkillGrant(name=name, content_hash=card.content_hash, description=card.description, scope=scope)
 
 
 def _skill_file(root: Path, name: str, rel: str) -> Path:
@@ -86,7 +85,7 @@ def _skill_file(root: Path, name: str, rel: str) -> Path:
 async def test_plain_package_not_materialized(hub: SkillHub, tmp_path: Path) -> None:
     backend = _SpyBackend(tmp_path / "ws")
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[await grant_for(hub, "style")], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[await grant_for(hub, "style")], hub=hub, backend=backend
     )
     assert ledger == {}  # 纯包不进账本
     assert backend.uploads == []  # 零物化
@@ -97,7 +96,7 @@ async def test_asset_package_materialized_and_recorded(hub: SkillHub, tmp_path: 
     backend = _SpyBackend(ws)
     grant = await grant_for(hub, "pdf")
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[grant], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[grant], hub=hub, backend=backend
     )
     assert ledger == {"pdf": grant.content_hash}  # 账本记 name→hash
     assert len(backend.uploads) == 1
@@ -114,11 +113,11 @@ async def test_unchanged_hash_skips_second_reconcile(hub: SkillHub, tmp_path: Pa
     backend = _SpyBackend(tmp_path / "ws")
     grant = await grant_for(hub, "pdf")
     first = await reconcile_skill_assets(
-        ledger={}, grants=[grant], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[grant], hub=hub, backend=backend
     )
     # 第二次对账：账本相符 + 目录在 → 跳过上传（间谍计数不增）。
     second = await reconcile_skill_assets(
-        ledger=first, grants=[grant], scopes=SCOPES, hub=hub, backend=backend
+        ledger=first, grants=[grant], hub=hub, backend=backend
     )
     assert second == first
     assert len(backend.uploads) == 1  # 仅首次上传
@@ -129,7 +128,7 @@ async def test_changed_hash_rewrites(hub: SkillHub, tmp_path: Path) -> None:
     backend = _SpyBackend(ws)
     v1 = await grant_for(hub, "pdf")
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[v1], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[v1], hub=hub, backend=backend
     )
     v2_src = tmp_path / "v2"
     write_skill_dir(v2_src, "pdf", PDF_MD, extra={"make_report.py": "print('v2')"})
@@ -137,7 +136,7 @@ async def test_changed_hash_rewrites(hub: SkillHub, tmp_path: Path) -> None:
     v2 = await grant_for(hub, "pdf")
     assert v2.content_hash != v1.content_hash
     ledger = await reconcile_skill_assets(
-        ledger=ledger, grants=[v2], scopes=SCOPES, hub=hub, backend=backend
+        ledger=ledger, grants=[v2], hub=hub, backend=backend
     )
     assert ledger == {"pdf": v2.content_hash}  # 账本换 hash
     assert len(backend.uploads) == 2  # hash 变 → 重写
@@ -149,12 +148,12 @@ async def test_missing_dir_forces_full_rewrite(hub: SkillHub, tmp_path: Path) ->
     backend = _SpyBackend(ws)
     grant = await grant_for(hub, "pdf")
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[grant], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[grant], hub=hub, backend=backend
     )
     shutil.rmtree(ws / ".skills")  # 沙箱重建：目录被销毁
     # 账本仍认 pdf，但目录已缺 → 不信账本 → 强制重写自愈。
     ledger = await reconcile_skill_assets(
-        ledger=ledger, grants=[grant], scopes=SCOPES, hub=hub, backend=backend
+        ledger=ledger, grants=[grant], hub=hub, backend=backend
     )
     assert ledger == {"pdf": grant.content_hash}
     assert len(backend.uploads) == 2  # 自愈再次上传
@@ -165,12 +164,12 @@ async def test_gc_removes_stale_dir(hub: SkillHub, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[await grant_for(hub, "pdf")], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[await grant_for(hub, "pdf")], hub=hub, backend=backend
     )
     assert _skill_file(ws, "pdf", "SKILL.md").exists()
     # 会话不再含 pdf（改为纯包 style）→ 旧 pdf 目录 GC 删除。
     ledger = await reconcile_skill_assets(
-        ledger=ledger, grants=[await grant_for(hub, "style")], scopes=SCOPES, hub=hub, backend=backend
+        ledger=ledger, grants=[await grant_for(hub, "style")], hub=hub, backend=backend
     )
     assert ledger == {}
     assert not (ws / ".skills" / "pdf").exists()  # 残留目录被清
@@ -180,9 +179,9 @@ async def test_single_package_failure_does_not_block_others(hub: SkillHub, tmp_p
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
     good = await grant_for(hub, "pdf")
-    ghost = SkillGrant(name="ghost", content_hash="deadbeef", description="不存在")  # 取包必抛错
+    ghost = SkillGrant(name="ghost", content_hash="deadbeef", description="不存在", scope="official")  # 取包必抛错
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[ghost, good], scopes=SCOPES, hub=hub, backend=backend
+        ledger={}, grants=[ghost, good], hub=hub, backend=backend
     )
     assert ledger == {"pdf": good.content_hash}  # 坏包跳过，好包照常
     assert "ghost" not in ledger
@@ -225,7 +224,7 @@ async def test_ledger_survives_resume_zero_reupload(
 
     def assemble() -> InvokableAgent:
         materializer: list[AgentMiddleware[Any, Any, Any]] = [
-            SkillMaterializerMiddleware(grants=[grant], scopes=SCOPES, hub=hub, backend=backend)
+            SkillMaterializerMiddleware(grants=[grant], hub=hub, backend=backend)
         ]
         return build_agent(
             model=LocalFakeChatModel.with_script(script),

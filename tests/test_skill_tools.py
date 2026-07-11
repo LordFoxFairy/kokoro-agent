@@ -25,16 +25,20 @@ from kokoro_agent.skills import SKILLS_ROOT
 from kokoro_agent.skills.hub import LocalPackageStore, SkillHub, seed_official
 from kokoro_agent.state import KokoroAgentState
 from kokoro_agent.tools.skills import make_skill_tool
-from test_skill_hub import PDF_MD, STYLE_MD, scan, write_skill_dir
+from test_skill_hub import PDF_MD, STYLE_MD, scan, snapshot_grant, write_skill_dir
 
 _MONGO_URL = "mongodb://127.0.0.1:27017"
-SCOPES = ("ns1", "official")
+
+# 与 hub fixture seed 的包内容一致（池查询权威在 kokoro-hub，测试按已知内容构快照卡）。
+SEED: dict[str, dict[str, str]] = {
+    "style": {"SKILL.md": STYLE_MD},
+    "pdf": {"SKILL.md": PDF_MD, "make_report.py": "print('report')"},
+}
 
 
-async def grant_for(hub: SkillHub, name: str, scope: str = "official") -> SkillGrant:
-    """会话快照那一刻的授权卡（session 侧消费 list_pool 产出的同形，scope 定死归属）。"""
-    card = (await hub.resolve_cards([scope], [name]))[0]
-    return SkillGrant(name=name, content_hash=card.content_hash, description=card.description, scope=scope)
+def grant_for(name: str, scope: str = "official") -> SkillGrant:
+    """会话快照那一刻的授权卡（session 侧从 kokoro-hub 池产出的同形，scope 定死归属）。"""
+    return snapshot_grant(SEED[name], name, scope)
 
 
 async def _read(tool: StructuredTool, name: str, ledger: dict[str, str]) -> str:
@@ -107,19 +111,19 @@ def test_manifest_same_grants_identical_bytes() -> None:
 
 
 async def test_skill_fails_closed_outside_run_pool(hub: SkillHub) -> None:
-    tool = make_skill_tool([await grant_for(hub, "style")], hub)
+    tool = make_skill_tool([grant_for("style")], hub)
     assert "error" in await _read(tool, "pdf", {})  # 库里有但本 run 未授权。
     assert "error" in await _read(tool, "ghost", {})  # 不存在。
 
 
 async def test_skill_plain_package_returns_body(hub: SkillHub) -> None:
-    tool = make_skill_tool([await grant_for(hub, "style")], hub)
+    tool = make_skill_tool([grant_for("style")], hub)
     body = await _read(tool, "style", {})
     assert "先结论后论据" in body  # 纯知识包：正文即全部，不涉物化账本。
 
 
 async def test_skill_asset_ready_when_ledger_has_hash(hub: SkillHub) -> None:
-    grant = await grant_for(hub, "pdf")
+    grant = grant_for("pdf")
     tool = make_skill_tool([grant], hub)
     # 账本记 pdf→快照 hash（reconcile 已物化）→ 工具告知附件就绪与路径。
     result = await _read(tool, "pdf", {"pdf": grant.content_hash})
@@ -128,7 +132,7 @@ async def test_skill_asset_ready_when_ledger_has_hash(hub: SkillHub) -> None:
 
 
 async def test_skill_asset_unavailable_when_not_in_ledger(hub: SkillHub) -> None:
-    grant = await grant_for(hub, "pdf")
+    grant = grant_for("pdf")
     tool = make_skill_tool([grant], hub)
     # 账本无 pdf（未物化/物化失败）→ 正文可用但标记附件不可用（不谎报就绪）。
     result = await _read(tool, "pdf", {})
@@ -140,14 +144,14 @@ async def test_skill_tool_reads_snapshot_hash_after_official_upgrade(
     hub: SkillHub, tmp_path: Path
 ) -> None:
     # 会话快照旧 hash 生效：官方升级后，工具按 v1 grant 读回 v1 正文（内容锁走工具层，正文双路）。
-    v1_grant = await grant_for(hub, "pdf")
+    v1_grant = grant_for("pdf")
     v2 = tmp_path / "v2"
     write_skill_dir(
         v2, "pdf", PDF_MD.replace("处理数据", "处理数据（v2 流程）"),
         extra={"make_report.py": "print('v2')"},
     )
     await seed_official(hub, scan(v2))  # 官方升级。
-    new_hash = (await hub.resolve_cards(SCOPES, ["pdf"]))[0].content_hash
+    new_hash = snapshot_grant(scan(v2)["pdf"], "pdf").content_hash
     assert new_hash != v1_grant.content_hash
 
     tool = make_skill_tool([v1_grant], hub)

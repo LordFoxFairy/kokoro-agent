@@ -10,10 +10,11 @@ S3/local 内容寻址 zip 包体权威源）、装配期把有附件的包物化
 - `hub.py`
   - `SkillHub`：写面 `upsert`（校验清单强制、hash 未变幂等不写、文档级 revision CAS）、
     `mark_deleted`、`set_official_flags`（enabled=上架 / required=恒注入拒关）、
-    `set_enabled`（per-namespace 启停偏好，独立表）；读面 `list_pool`（namespace 覆盖
-    official；session 建会话查此面做快照）、`resolve_cards`（保 names 序，prompt 字节稳定）、
-    `read_body`（正文双路：当前版 Mongo 快读 / 旧 hash 走 zip 取回）、`load_package`、
+    `set_enabled`（per-namespace 启停偏好，独立表）；读面只按会话快照卡 (scope,name,hash)
+    直读：`read_body`（正文双路：当前版 Mongo 快读 / 旧 hash 走 zip 取回）、`load_package`、
     `load_package_if_assets`（纯文档包返 None 不白走包体存储）。
+    池查询/管理面权威在 kokoro-hub（TS）；本仓不提供池枚举/跨 scope 解析面
+    （原 `list_pool`/`resolve_cards` 已删除）。
   - `make_skill_hub(settings)` 异步上下文装配；`SkillHubSettings`；`seed_official`
     （部署目录只是 seed 输入，真源是库+包体）；`validate_package`（名称/保留名/文件数/
     体积/路径穿越/尖括号注入，fail-loud）；`content_hash_of`；`PackageStore` 协议与
@@ -29,9 +30,10 @@ S3/local 内容寻址 zip 包体权威源）、装配期把有附件的包物化
 
 ## 关键协作者
 
-- 消费面：`agents/`（装配清单 resolve_cards + 挂 SkillMaterializerMiddleware）、
+- 消费面：`agents/`（清单直接渲染会话快照 grants + 挂 SkillMaterializerMiddleware）、
   `tools/skills.py`（正文双路读取）、`worker/main.py`（seed_official/deliveries 存储）。
-- 跨仓：kokoro-session 直读同一 Mongo skills 集合做授权池（skills/pool）。
+- 跨仓：池查询/管理面权威在 kokoro-hub（TS，同一 Mongo skills 集合）；session 建会话时
+  从 kokoro-hub 取池做快照，run 装配按快照卡 (scope,name,hash) 直读本仓读面。
 - 下游：pymongo async、boto3（经 to_thread）、`contract/storage`（SkillCard/SkillDoc）。
 
 ## 运行时约束

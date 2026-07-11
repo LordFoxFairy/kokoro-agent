@@ -1,6 +1,7 @@
 """skills 一等域：包契约（package）+ hub（池的读写面）+ 资产供给布局（supply）。
 
-消费面：装配清单（hub.resolve_cards）与 skill 工具（tools/skills.py，正文双路+附件按需物化）。
+池查询/管理面权威在 kokoro-hub（TS）；agent 只按会话快照卡 (scope,name,hash) 直读。
+消费面：skill 工具（tools/skills.py，正文双路）与装配期物化（materialize.py，附件按需）。
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ import json
 import re
 import time
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Protocol
@@ -30,7 +30,6 @@ from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 from kokoro_agent.contract.storage import (
     SKILL_STATE_COLLECTION,
     SKILLS_COLLECTION,
-    SkillCard,
     SkillDoc,
     SkillFileEntry,
     skills_doc_adapter,
@@ -310,57 +309,7 @@ class SkillHub:
             upsert=True,
         )
 
-    # --- 读面 ---
-
-    async def list_pool(self, namespace: str) -> list[SkillCard]:
-        """该主体的可用池：official（enabled 位 ∧ 用户偏好；required 恒含）+ 本 namespace 的包。
-        session 创建会话时消费此面做快照。"""
-        await self._ensure_indexes()
-        disabled = {
-            str(doc["name"])
-            async for doc in self._state.find({"namespace": namespace, "enabled": False})
-        }
-        cards: list[SkillCard] = []
-        seen: set[str] = set()
-        # namespace 覆盖 official：先收自有包。
-        for scope in (namespace, OFFICIAL_SCOPE):
-            cursor = self._skills.find(
-                {"scope": scope, "deleted_at": None},
-                projection={"name": 1, "description": 1, "content_hash": 1,
-                            "official_enabled": 1, "official_required": 1},
-                sort=[("name", 1)],
-            )
-            async for doc in cursor:
-                name = str(doc["name"])
-                if name in seen:
-                    continue
-                if scope == OFFICIAL_SCOPE:
-                    required = bool(doc.get("official_required"))
-                    if not bool(doc.get("official_enabled")) and not required:
-                        continue
-                    if name in disabled and not required:
-                        continue
-                cards.append(SkillCard(
-                    name=name,
-                    description=str(doc["description"]),
-                    content_hash=str(doc["content_hash"]),
-                ))
-                seen.add(name)
-        return cards
-
-    async def resolve_cards(self, scopes: Sequence[str], names: Sequence[str]) -> list[SkillCard]:
-        """按授权 names 取卡片（清单渲染面）；输出保持 names 序（prompt 字节稳定）。"""
-        await self._ensure_indexes()
-        out: list[SkillCard] = []
-        for name in dict.fromkeys(names):
-            doc = await self._find_in_scopes(scopes, name)
-            if doc is not None:
-                out.append(SkillCard(
-                    name=str(doc["name"]),
-                    description=str(doc["description"]),
-                    content_hash=str(doc["content_hash"]),
-                ))
-        return out
+    # --- 读面（池查询/管理面权威在 kokoro-hub；agent 只按会话快照卡 (scope,name,hash) 直读）---
 
     async def read_body(self, scope: str, name: str, content_hash: str | None = None) -> str:
         """SKILL.md 正文双路：hash 缺省/等于当前版 → Mongo 快读；旧版 → 包体 zip 取回。
@@ -399,15 +348,6 @@ class SkillHub:
         """(scope,name) 直取活文档（快照卡定死归属的读路径）。"""
         await self._ensure_indexes()
         return await self._skills.find_one({"scope": scope, "name": name, "deleted_at": None})
-
-    async def _find_in_scopes(self, scopes: Sequence[str], name: str) -> dict[str, object] | None:
-        """跨 scope 优先级解析（namespace 覆盖 official）——仅 resolve_cards 的无快照卡场景用。"""
-        await self._ensure_indexes()
-        for scope in scopes:  # 传入序=优先级序（namespace 覆盖 official）。
-            doc = await self._skills.find_one({"scope": scope, "name": name, "deleted_at": None})
-            if doc is not None:
-                return doc
-        return None
 
 
 def _strip_id(doc: Mapping[str, object]) -> dict[str, object]:

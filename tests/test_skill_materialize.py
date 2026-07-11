@@ -33,7 +33,7 @@ from kokoro_agent.skills import SkillMaterializerMiddleware, reconcile_skill_ass
 from kokoro_agent.skills.hub import LocalPackageStore, SkillHub, seed_official
 from kokoro_agent.state import RunScope
 from kokoro_agent.streams.redis import RedisStream
-from test_skill_hub import PDF_MD, STYLE_MD, scan, write_skill_dir
+from test_skill_hub import PDF_MD, STYLE_MD, scan, snapshot_grant, write_skill_dir
 
 _MONGO_URL = "mongodb://127.0.0.1:27017"
 
@@ -70,9 +70,15 @@ async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
         await client.close()
 
 
-async def grant_for(hub: SkillHub, name: str, scope: str = "official") -> SkillGrant:
-    card = (await hub.resolve_cards([scope], [name]))[0]
-    return SkillGrant(name=name, content_hash=card.content_hash, description=card.description, scope=scope)
+# 与 hub fixture seed 的包内容一致（池查询权威在 kokoro-hub，测试按已知内容构快照卡）。
+SEED: dict[str, dict[str, str]] = {
+    "style": {"SKILL.md": STYLE_MD},
+    "pdf": {"SKILL.md": PDF_MD, "make_report.py": "print('report')"},
+}
+
+
+def grant_for(name: str, scope: str = "official") -> SkillGrant:
+    return snapshot_grant(SEED[name], name, scope)
 
 
 def _skill_file(root: Path, name: str, rel: str) -> Path:
@@ -85,7 +91,7 @@ def _skill_file(root: Path, name: str, rel: str) -> Path:
 async def test_plain_package_not_materialized(hub: SkillHub, tmp_path: Path) -> None:
     backend = _SpyBackend(tmp_path / "ws")
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[await grant_for(hub, "style")], hub=hub, backend=backend
+        ledger={}, grants=[grant_for("style")], hub=hub, backend=backend
     )
     assert ledger == {}  # 纯包不进账本
     assert backend.uploads == []  # 零物化
@@ -94,7 +100,7 @@ async def test_plain_package_not_materialized(hub: SkillHub, tmp_path: Path) -> 
 async def test_asset_package_materialized_and_recorded(hub: SkillHub, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
-    grant = await grant_for(hub, "pdf")
+    grant = grant_for("pdf")
     ledger = await reconcile_skill_assets(
         ledger={}, grants=[grant], hub=hub, backend=backend
     )
@@ -111,7 +117,7 @@ def _resolved(ws: Path, virtual_paths: list[str]) -> list[str]:
 
 async def test_unchanged_hash_skips_second_reconcile(hub: SkillHub, tmp_path: Path) -> None:
     backend = _SpyBackend(tmp_path / "ws")
-    grant = await grant_for(hub, "pdf")
+    grant = grant_for("pdf")
     first = await reconcile_skill_assets(
         ledger={}, grants=[grant], hub=hub, backend=backend
     )
@@ -126,14 +132,14 @@ async def test_unchanged_hash_skips_second_reconcile(hub: SkillHub, tmp_path: Pa
 async def test_changed_hash_rewrites(hub: SkillHub, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
-    v1 = await grant_for(hub, "pdf")
+    v1 = grant_for("pdf")
     ledger = await reconcile_skill_assets(
         ledger={}, grants=[v1], hub=hub, backend=backend
     )
     v2_src = tmp_path / "v2"
     write_skill_dir(v2_src, "pdf", PDF_MD, extra={"make_report.py": "print('v2')"})
     await seed_official(hub, scan(v2_src))  # 官方升级
-    v2 = await grant_for(hub, "pdf")
+    v2 = snapshot_grant(scan(v2_src)["pdf"], "pdf")
     assert v2.content_hash != v1.content_hash
     ledger = await reconcile_skill_assets(
         ledger=ledger, grants=[v2], hub=hub, backend=backend
@@ -146,7 +152,7 @@ async def test_changed_hash_rewrites(hub: SkillHub, tmp_path: Path) -> None:
 async def test_missing_dir_forces_full_rewrite(hub: SkillHub, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
-    grant = await grant_for(hub, "pdf")
+    grant = grant_for("pdf")
     ledger = await reconcile_skill_assets(
         ledger={}, grants=[grant], hub=hub, backend=backend
     )
@@ -164,12 +170,12 @@ async def test_gc_removes_stale_dir(hub: SkillHub, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
     ledger = await reconcile_skill_assets(
-        ledger={}, grants=[await grant_for(hub, "pdf")], hub=hub, backend=backend
+        ledger={}, grants=[grant_for("pdf")], hub=hub, backend=backend
     )
     assert _skill_file(ws, "pdf", "SKILL.md").exists()
     # 会话不再含 pdf（改为纯包 style）→ 旧 pdf 目录 GC 删除。
     ledger = await reconcile_skill_assets(
-        ledger=ledger, grants=[await grant_for(hub, "style")], hub=hub, backend=backend
+        ledger=ledger, grants=[grant_for("style")], hub=hub, backend=backend
     )
     assert ledger == {}
     assert not (ws / ".skills" / "pdf").exists()  # 残留目录被清
@@ -178,7 +184,7 @@ async def test_gc_removes_stale_dir(hub: SkillHub, tmp_path: Path) -> None:
 async def test_single_package_failure_does_not_block_others(hub: SkillHub, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
-    good = await grant_for(hub, "pdf")
+    good = grant_for("pdf")
     ghost = SkillGrant(name="ghost", content_hash="deadbeef", description="不存在", scope="official")  # 取包必抛错
     ledger = await reconcile_skill_assets(
         ledger={}, grants=[ghost, good], hub=hub, backend=backend
@@ -218,7 +224,7 @@ async def test_ledger_survives_resume_zero_reupload(
 ) -> None:
     # 同一真 backend 目录 + 同一 checkpointer/thread；两次独立装配（新 graph + 新中间件实例）。
     backend = _SpyBackend(tmp_path / "ws")
-    grant = await grant_for(hub, "pdf")
+    grant = grant_for("pdf")
     scope = _scope()
     script = [AIMessage(content="done"), AIMessage(content="done2")]
 

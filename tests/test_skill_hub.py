@@ -16,7 +16,10 @@ from mypy_boto3_s3 import S3Client
 from pydantic import SecretStr
 from pymongo import AsyncMongoClient
 
+from collections.abc import Mapping
+
 from kokoro_agent.content_source import LocalAssets, LocalAssetSource
+from kokoro_agent.contract import SkillGrant
 from kokoro_agent.sandbox.archive import LocalWorkspace, S3Workspace
 from kokoro_agent.skills.hub import (
     LocalPackageStore,
@@ -24,9 +27,11 @@ from kokoro_agent.skills.hub import (
     SkillHub,
     SkillHubError,
     S3Credentials,
+    content_hash_of,
     seed_official,
     validate_package,
 )
+from kokoro_agent.skills.package import parse_frontmatter
 
 _MONGO_URL = "mongodb://127.0.0.1:27017"
 _MINIO_ENDPOINT = "http://127.0.0.1:9100"
@@ -62,6 +67,14 @@ def scan(root: Path) -> dict[str, dict[str, str]]:
     return {name: dict(files) for name, files in source.load_skills().items()}
 
 
+def snapshot_grant(files: Mapping[str, str], name: str, scope: str = "official") -> SkillGrant:
+    """会话快照卡的同形（池查询权威在 kokoro-hub；agent 侧测试按已知包内容构快照卡）。"""
+    meta = parse_frontmatter(name, files["SKILL.md"])
+    return SkillGrant(
+        name=name, content_hash=content_hash_of(files), description=meta.description, scope=scope
+    )
+
+
 STYLE_MD = """\
 ---
 name: style
@@ -82,26 +95,26 @@ description: PDF 报告生成流程
 # --- seed 与读面 ---
 
 
-async def test_seed_then_cards_and_body(hub: SkillHub, tmp_path: Path) -> None:
+async def test_seed_then_body_reads_by_snapshot_hash(hub: SkillHub, tmp_path: Path) -> None:
     src = tmp_path / "src"
     write_skill_dir(src, "style", STYLE_MD)
     write_skill_dir(src, "pdf", PDF_MD, extra={"make_report.py": "print('report')"})
     await seed_official(hub, scan(src))
 
-    cards = await hub.resolve_cards(["official"], ["pdf", "style"])
-    assert [card.name for card in cards] == ["pdf", "style"]  # 授权序（清单字节稳定）。
-    body = await hub.read_body("official", "style", cards[1].content_hash)
+    # 快照卡 hash（session 侧定死）命中当前版 → Mongo 快读；缺省 hash 亦走当前版。
+    body = await hub.read_body("official", "style", content_hash_of(scan(src)["style"]))
     assert "先结论后论据" in body
+    assert "处理数据" in await hub.read_body("official", "pdf")
 
 
 async def test_reseed_is_idempotent(hub: SkillHub, tmp_path: Path) -> None:
     src = tmp_path / "src"
     write_skill_dir(src, "style", STYLE_MD)
     await seed_official(hub, scan(src))
-    first = await hub.resolve_cards(["official"], ["style"])
     await seed_official(hub, scan(src))  # worker 重启重 seed。
-    second = await hub.resolve_cards(["official"], ["style"])
-    assert first == second
+    # hash 未变不写：重 seed 后 revision 仍为 1（幂等 upsert 直接返回现有文档）。
+    doc = await hub.upsert("official", "style", scan(src)["style"], source="deploy")
+    assert doc.revision == 1
 
 
 async def test_content_lock_old_hash_survives_upgrade(hub: SkillHub, tmp_path: Path) -> None:
@@ -109,34 +122,19 @@ async def test_content_lock_old_hash_survives_upgrade(hub: SkillHub, tmp_path: P
     v1 = tmp_path / "v1"
     write_skill_dir(v1, "pdf", PDF_MD, extra={"make_report.py": "print('v1')"})
     await seed_official(hub, scan(v1))
-    old_card = (await hub.resolve_cards(["official"], ["pdf"]))[0]
+    old_hash = content_hash_of(scan(v1)["pdf"])  # 会话快照那一刻的 hash。
 
     v2 = tmp_path / "v2"
     write_skill_dir(v2, "pdf", PDF_MD.replace("处理数据", "处理数据（v2 流程）"),
                     extra={"make_report.py": "print('v2')"})
     await seed_official(hub, scan(v2))  # 官方升级。
 
-    new_card = (await hub.resolve_cards(["official"], ["pdf"]))[0]
-    assert new_card.content_hash != old_card.content_hash
+    assert content_hash_of(scan(v2)["pdf"]) != old_hash
     # 旧 hash 双路：正文与整包都按内容寻址取回（进行中会话不受升级影响）。
-    old_body = await hub.read_body("official", "pdf", old_card.content_hash)
+    old_body = await hub.read_body("official", "pdf", old_hash)
     assert "（v2 流程）" not in old_body
-    old_files = await hub.load_package("official", "pdf", old_card.content_hash)
+    old_files = await hub.load_package("official", "pdf", old_hash)
     assert old_files["make_report.py"] == "print('v1')"
-
-
-async def test_namespace_overrides_official(hub: SkillHub, tmp_path: Path) -> None:
-    src = tmp_path / "src"
-    write_skill_dir(src, "style", STYLE_MD)
-    await seed_official(hub, scan(src))
-    user = tmp_path / "user"
-    write_skill_dir(user, "style", STYLE_MD.replace("写作风格指南", "我的定制风格"))
-    await hub.upsert("ns1", "style", scan(user)["style"], source="upload")
-
-    mine = await hub.resolve_cards(["ns1", "official"], ["style"])
-    assert mine[0].description == "我的定制风格"
-    official_only = await hub.resolve_cards(["official"], ["style"])
-    assert official_only[0].description == "写作风格指南"
 
 
 async def test_same_name_cross_scope_reads_pinned_scope(hub: SkillHub, tmp_path: Path) -> None:
@@ -146,14 +144,14 @@ async def test_same_name_cross_scope_reads_pinned_scope(hub: SkillHub, tmp_path:
     off_v1 = tmp_path / "off_v1"
     write_skill_dir(off_v1, "pdf", PDF_MD, extra={"make_report.py": "print('official-v1')"})
     await seed_official(hub, scan(off_v1))
-    snapshot = (await hub.resolve_cards(["official"], ["pdf"]))[0]  # official hash A
+    snapshot = snapshot_grant(scan(off_v1)["pdf"], "pdf")  # official hash A
 
     # namespace 上传同名 pdf（hash B，Mongo (official,pdf) 与 (ns1,pdf) 双文档并存）。
     user = tmp_path / "user"
     write_skill_dir(user, "pdf", PDF_MD.replace("处理数据", "命名空间流程"),
                     extra={"make_report.py": "print('ns')"})
     await hub.upsert("ns1", "pdf", scan(user)["pdf"], source="upload")
-    ns_card = (await hub.resolve_cards(["ns1"], ["pdf"]))[0]  # ns hash B
+    ns_card = snapshot_grant(scan(user)["pdf"], "pdf", scope="ns1")  # ns hash B
     assert ns_card.content_hash != snapshot.content_hash
 
     # official 再升级 v2 → snapshot 变旧 hash（触发正文/取包的 zip 旧版路径）。
@@ -180,26 +178,24 @@ async def test_assets_probe_skips_plain_packages(hub: SkillHub, tmp_path: Path) 
     write_skill_dir(src, "style", STYLE_MD)
     write_skill_dir(src, "pdf", PDF_MD, extra={"make_report.py": "print('x')"})
     await seed_official(hub, scan(src))
-    style = (await hub.resolve_cards(["official"], ["style"]))[0]
-    pdf = (await hub.resolve_cards(["official"], ["pdf"]))[0]
-    assert await hub.load_package_if_assets("official", "style", style.content_hash) is None
-    files = await hub.load_package_if_assets("official", "pdf", pdf.content_hash)
+    style_hash = content_hash_of(scan(src)["style"])
+    pdf_hash = content_hash_of(scan(src)["pdf"])
+    assert await hub.load_package_if_assets("official", "style", style_hash) is None
+    files = await hub.load_package_if_assets("official", "pdf", pdf_hash)
     assert files is not None and "make_report.py" in files
 
 
-# --- 池（启停/required）---
+# --- 写面（启停/required/软删；池的读面权威在 kokoro-hub，此处只测本仓写语义）---
 
 
-async def test_pool_respects_state_and_required(hub: SkillHub, tmp_path: Path) -> None:
+async def test_required_skill_refuses_disable(hub: SkillHub, tmp_path: Path) -> None:
     src = tmp_path / "src"
     write_skill_dir(src, "style", STYLE_MD)
     write_skill_dir(src, "pdf", PDF_MD)
     await seed_official(hub, scan(src))
     await hub.set_official_flags("pdf", required=True)  # 管理面动作。
 
-    await hub.set_enabled("ns1", "style", enabled=False)
-    pool = await hub.list_pool("ns1")
-    assert [card.name for card in pool] == ["pdf"]  # style 被用户关闭。
+    await hub.set_enabled("ns1", "style", enabled=False)  # 普通技能允许关闭（写偏好成功）。
     with pytest.raises(SkillHubError, match="required"):
         await hub.set_enabled("ns1", "pdf", enabled=False)  # required 拒绝关闭。
 
@@ -209,8 +205,8 @@ async def test_soft_deleted_is_invisible(hub: SkillHub, tmp_path: Path) -> None:
     write_skill_dir(src, "style", STYLE_MD)
     await seed_official(hub, scan(src))
     await hub.mark_deleted("official", "style")
-    assert await hub.resolve_cards(["official"], ["style"]) == []
-    assert await hub.list_pool("ns1") == []
+    with pytest.raises(SkillHubError, match="not found"):
+        await hub.read_body("official", "style")
 
 
 # --- 校验清单（安全边界逐条负向）---

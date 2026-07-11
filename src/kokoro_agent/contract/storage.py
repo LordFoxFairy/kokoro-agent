@@ -51,11 +51,24 @@ class SkillStateDoc(StrictModel):
     updated_at: int
 
 
+class SkillRevisionDoc(StrictModel):
+    scope: NonEmptyStr
+    name: NonEmptyStr
+    revision: int
+    content_hash: NonEmptyStr
+    package_size: int
+    source: SkillSource
+    created_at: int
+
+
+SKILL_REVISIONS_COLLECTION = "skill_revisions"
+SKILL_REVISIONS_UNIQUE: tuple[str, ...] = ("scope", "name", "content_hash",)
 SKILL_STATE_COLLECTION = "skill_state"
 SKILL_STATE_UNIQUE: tuple[str, ...] = ("namespace", "name",)
 SKILLS_COLLECTION = "skills"
 SKILLS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 
+skill_revisions_doc_adapter: TypeAdapter[SkillRevisionDoc] = TypeAdapter(SkillRevisionDoc)
 skill_state_doc_adapter: TypeAdapter[SkillStateDoc] = TypeAdapter(SkillStateDoc)
 skills_doc_adapter: TypeAdapter[SkillDoc] = TypeAdapter(SkillDoc)
 

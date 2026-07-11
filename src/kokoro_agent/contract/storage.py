@@ -58,3 +58,11 @@ SKILLS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 
 skill_state_doc_adapter: TypeAdapter[SkillStateDoc] = TypeAdapter(SkillStateDoc)
 skills_doc_adapter: TypeAdapter[SkillDoc] = TypeAdapter(SkillDoc)
+
+
+WORKSPACE_KEY_TEMPLATE = "{namespace}:{session_id}"
+
+
+def workspace_key(namespace: str, session_id: str) -> str:
+    """会话工作区键（本地目录名 / S3 归档前缀）：单源模板，双语言同构，禁手拼。"""
+    return WORKSPACE_KEY_TEMPLATE.format(namespace=namespace, session_id=session_id)

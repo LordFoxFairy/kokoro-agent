@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
+from kokoro_agent.contract.storage import workspace_key
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
@@ -63,6 +64,6 @@ def _deliver_tool(request: RunRequest, deps: AssembleDeps) -> StructuredTool:
     root = deps.sandbox.local_shell_root
     namespace = request.context.namespace
     workspace_dir = (
-        Path(root) / f"{namespace}:{request.context.session_id}" if root is not None else None
+        Path(root) / workspace_key(namespace, request.context.session_id) if root is not None else None
     )
     return make_deliver_tool(workspace_dir, deps.deliveries, namespace)

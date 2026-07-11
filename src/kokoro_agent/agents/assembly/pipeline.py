@@ -21,6 +21,7 @@ from kokoro_agent.agents.assembly.prompt import build_system_prompt
 from kokoro_agent.agents.assembly.toolset import build_toolset
 from kokoro_agent.agents.deps import AgentPolicy, AssembleDeps, AssembledAgent
 from kokoro_agent.contract import RunRequest
+from kokoro_agent.contract.storage import workspace_key
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
@@ -39,7 +40,7 @@ async def assemble_agent(
     backend = await make_backend_for_run(
         runtime.backend,
         deps.sandbox,
-        workspace=f"{request.context.namespace}:{request.context.session_id}",
+        workspace=workspace_key(request.context.namespace, request.context.session_id),
         run_id=request.run_id,
         binding=deps.ledger,
     )

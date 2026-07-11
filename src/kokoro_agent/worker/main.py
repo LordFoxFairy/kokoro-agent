@@ -28,6 +28,7 @@ from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.content_source import make_asset_source
 from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.mcp.config import load_mcp_servers
+from kokoro_agent.mcp.registry import McpRegistrySettings, make_mcp_registry
 from kokoro_agent.skills.hub import (
     PackageStore,
     S3Credentials,
@@ -119,6 +120,11 @@ async def _serve(config: AppConfig) -> None:
         make_ledger(config.ledger) as store,
         make_memory_store(config.checkpoint) as memory_store,
         make_skill_hub(skill_hub_settings(config)) as skill_hub,
+        # MCP Mongo 注册表读路（hub 同库）：env 在此显式注入（进程环境只在本模块读取）。
+        make_mcp_registry(
+            McpRegistrySettings(mongo_url=config.ledger.mongo_url, mongo_db=config.ledger.mongo_db),
+            os.environ,
+        ) as mcp_registry,
     ):
         await seed_official(skill_hub, raw_skills)
         deps = AssembleDeps(
@@ -132,8 +138,10 @@ async def _serve(config: AppConfig) -> None:
             memory_store=memory_store,
             skill_hub=skill_hub,
             prompts=prompts,
-            # MCP server 定义住部署侧：启动即加载校验（含 ${ENV} 凭据展开），fail-loud。
+            # MCP server 定义双源：部署 yaml 启动即加载校验（含 ${ENV} 凭据展开，fail-loud）
+            # 为 official 基线；Mongo 注册表（hub 写面）在装配期 per-run 合并覆盖。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
+            mcp_registry=mcp_registry,
             # 交付冻结件存储（deliveries 节）；缺省=None → deliver 工具恒挂但调用降级。
             deliveries=deliveries_store(config),
         )

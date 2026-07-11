@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
 SkillSource = Literal["deploy", "upload", "github"]
+McpTransport = Literal["http", "streamable_http"]
+ReviewStatus = Literal["pending", "approved", "rejected"]
 
 
 class StrictModel(BaseModel):
@@ -38,6 +40,10 @@ class SkillDoc(StrictModel):
     package_ref: NonEmptyStr
     source: SkillSource
     revision: int
+    display_weight: int | None = None
+    pinned: bool | None = None
+    category: NonEmptyStr | None = None
+    review_status: ReviewStatus | None = None
     official_enabled: bool
     official_required: bool
     updated_at: int
@@ -61,6 +67,20 @@ class SkillRevisionDoc(StrictModel):
     created_at: int
 
 
+class McpServerDoc(StrictModel):
+    scope: NonEmptyStr
+    name: NonEmptyStr
+    transport: McpTransport
+    url: NonEmptyStr
+    allowed_tools: list[NonEmptyStr]
+    secret_ref: NonEmptyStr | None
+    enabled: bool
+    updated_at: int
+    deleted_at: int | None
+
+
+MCP_SERVERS_COLLECTION = "mcp_servers"
+MCP_SERVERS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 SKILL_REVISIONS_COLLECTION = "skill_revisions"
 SKILL_REVISIONS_UNIQUE: tuple[str, ...] = ("scope", "name", "content_hash",)
 SKILL_STATE_COLLECTION = "skill_state"
@@ -68,6 +88,7 @@ SKILL_STATE_UNIQUE: tuple[str, ...] = ("namespace", "name",)
 SKILLS_COLLECTION = "skills"
 SKILLS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 
+mcp_servers_doc_adapter: TypeAdapter[McpServerDoc] = TypeAdapter(McpServerDoc)
 skill_revisions_doc_adapter: TypeAdapter[SkillRevisionDoc] = TypeAdapter(SkillRevisionDoc)
 skill_state_doc_adapter: TypeAdapter[SkillStateDoc] = TypeAdapter(SkillStateDoc)
 skills_doc_adapter: TypeAdapter[SkillDoc] = TypeAdapter(SkillDoc)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeVar
 
 import yaml
 from pydantic import BaseModel, ConfigDict, StringConstraints
@@ -33,6 +33,24 @@ class McpServerConfig(BaseModel):
     allowed_tools: list[_NonEmpty]
     timeout_s: int | None = None
     headers: dict[str, str] | None = None
+
+
+class McpServerUnavailable(BaseModel):
+    """已占名但不可用的定义位：名字是已知的（不触发未知名 fail-loud），定义不可用。
+
+    来源（mcp/registry.py 双源合并）：
+    - 活跃禁用文档遮蔽同名低层定义、不回退（对齐 kokoro-hub 侧语义：绝不静默回退到官方凭据）；
+    - secret_ref=secret:path V1 不支持（P2：secret 管理器网关侧解析）。
+    装配不炸；list 标注不可用，describe/call 返回 error 文本（不可达降级同轴）。
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    reason: _NonEmpty
+
+
+# run 装配用的定义表值型：可连接配置 或 占名不可用位。
+McpServerEntry = McpServerConfig | McpServerUnavailable
 
 
 class _McpServersFile(BaseModel):
@@ -67,9 +85,10 @@ def load_mcp_servers(path: str | None, env: Mapping[str, str]) -> Mapping[str, M
     return registry
 
 
-def select_servers(
-    registry: Mapping[str, McpServerConfig], names: Sequence[str]
-) -> dict[str, McpServerConfig]:
+_EntryT = TypeVar("_EntryT")
+
+
+def select_servers(registry: Mapping[str, _EntryT], names: Sequence[str]) -> dict[str, _EntryT]:
     """wire names → 配置子集：未知名 fail-loud（配置即授权边界，绝不静默跳过）。"""
     unknown = sorted(set(names) - set(registry))
     if unknown:

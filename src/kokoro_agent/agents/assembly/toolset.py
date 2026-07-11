@@ -11,6 +11,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.contract.storage import workspace_key
+from kokoro_agent.mcp.config import McpServerEntry
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
@@ -47,8 +48,16 @@ async def build_toolset(
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
     tools.append(make_skill_tool(request.runtime.skills, deps.skill_hub))
-    # wire 只传 server names；完整配置（url/headers）从 agent 侧部署注册表解析；连接惰性化。
-    tools.extend(make_mcp_tools(request.runtime.mcp_servers, deps.mcp_servers))
+    # wire 只传 server names；定义双源合并（部署 yaml < Mongo official < Mongo namespace，
+    # 每 run 按 names 精确查一次）；未知名 fail-loud 与连接惰性化不变。
+    mcp_definitions: Mapping[str, McpServerEntry] = (
+        deps.mcp_servers
+        if deps.mcp_registry is None
+        else await deps.mcp_registry.resolve(
+            request.runtime.mcp_servers, request.context.namespace, deps.mcp_servers
+        )
+    )
+    tools.extend(make_mcp_tools(request.runtime.mcp_servers, mcp_definitions))
     tools.append(_deliver_tool(request, deps))
     return Toolset(
         tools=tuple(tools),

@@ -28,7 +28,12 @@ from mcp.types import ElicitRequestFormParams, ElicitRequestParams, ElicitResult
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from kokoro_agent.hitl import InputRejected, request_input
-from kokoro_agent.mcp.config import McpServerConfig, select_servers
+from kokoro_agent.mcp.config import (
+    McpServerConfig,
+    McpServerEntry,
+    McpServerUnavailable,
+    select_servers,
+)
 from kokoro_agent.mcp.servers import McpConnectionError, build_connections
 
 
@@ -168,17 +173,20 @@ class CallToolArgs(BaseModel):
 
 def make_mcp_tools(
     server_names: Sequence[str],
-    registry: Mapping[str, McpServerConfig],
+    registry: Mapping[str, McpServerEntry],
 ) -> tuple[StructuredTool, StructuredTool, StructuredTool]:
-    """per-run 闭包三工具。装配期校验名字但不连接；run 内按 server 缓存 tools/list。"""
+    """per-run 闭包三工具。装配期校验名字但不连接；run 内按 server 缓存 tools/list。
+
+    定义表可含占名不可用位（McpServerUnavailable：注册表禁用遮蔽 / secret:path P2）：
+    装配不炸，list 标注不可用，describe/call 返回 error 文本（同不可达降级轴）。
+    """
 
     # 未知名在装配期 fail-loud（配置即授权边界）；连接推迟到首次使用。
     granted = select_servers(registry, server_names)
     tools_cache: dict[str, list[BaseTool]] = {}
 
-    async def _server_tools(server: str) -> list[BaseTool]:
+    async def _server_tools(server: str, config: McpServerConfig) -> list[BaseTool]:
         if server not in tools_cache:
-            config = granted[server]
             # elicitation callback 随 client 烘进每个工具：ainvoke 建会话时用它把中途请求桥给执行任务。
             client = MultiServerMCPClient(
                 build_connections({server: config}),
@@ -196,9 +204,12 @@ def make_mcp_tools(
         if not granted:
             return "本次运行没有可用的 MCP server。"
         lines: list[str] = []
-        for server in granted:
+        for server, entry in granted.items():
+            if isinstance(entry, McpServerUnavailable):
+                lines.append(f"{server}: [不可用] {entry.reason}")
+                continue
             try:
-                tools = await _server_tools(server)
+                tools = await _server_tools(server, entry)
             except McpConnectionError as exc:
                 lines.append(f"{server}: [不可达] {exc}")
                 continue
@@ -210,10 +221,13 @@ def make_mcp_tools(
         return "\n".join(lines)
 
     async def _find_tool(server: str, tool: str) -> BaseTool | str:
-        if server not in granted:
+        entry = granted.get(server)
+        if entry is None:
             return f"error: MCP server {server!r} 不在本次运行的授权集内（用 mcp_list_tools 查看）。"
+        if isinstance(entry, McpServerUnavailable):
+            return f"error: MCP server {server!r} 不可用：{entry.reason}"
         try:
-            tools = await _server_tools(server)
+            tools = await _server_tools(server, entry)
         except McpConnectionError as exc:
             return f"error: {exc}"
         for candidate in tools:

@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, Field, JsonValue
 
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.contract import (
@@ -61,6 +61,11 @@ class OtpForm(BaseModel):
     otp: str
 
 
+class PatternOtpForm(BaseModel):
+    # pattern 让 agent 侧 jsonschema 校验有拒绝空间：非六位数字必被拒（复现"非法→重问"分支）。
+    otp: str = Field(pattern=r"^[0-9]{6}$")
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -95,6 +100,38 @@ def mcp_base_url() -> Iterator[str]:
         time.sleep(0.05)
     if not server.started:
         raise RuntimeError("fixture mcp server failed to start")
+    yield f"http://127.0.0.1:{port}/mcp"
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+def _build_pattern_fixture_app() -> FastMCP:
+    # 同 _build_fixture_app，唯 elicit schema 带 pattern 约束（agent 侧校验有拒绝空间）。
+    server = FastMCP("fixture-pattern", stateless_http=False)
+
+    async def verify(ctx: Context[ServerSession, None, None]) -> str:
+        result = await ctx.elicit(message="请输入验证码", schema=PatternOtpForm)
+        if result.action == "accept":
+            return f"verified:{result.data.otp}"
+        return f"declined:{result.action}"
+
+    server.add_tool(verify, name="verify")
+    return server
+
+
+@pytest.fixture(scope="module")
+def pattern_mcp_base_url() -> Iterator[str]:
+    port = _free_port()
+    app = _build_pattern_fixture_app().streamable_http_app()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 15
+    while time.time() < deadline and not server.started:
+        time.sleep(0.05)
+    if not server.started:
+        raise RuntimeError("pattern fixture mcp server failed to start")
     yield f"http://127.0.0.1:{port}/mcp"
     server.should_exit = True
     thread.join(timeout=5)
@@ -352,5 +389,55 @@ async def test_elicitation_invalid_value_reprompts_then_submits(
         assert (await _read_kinds(stream, run.run_id))[-1] == "run.completed"
         returned = await _mcp_returned(stream, run.run_id)
         assert "verified:111" in str(returned["result"])
+    finally:
+        await _stop(serve_task)
+
+
+async def test_elicitation_pattern_revalidation_double_submit_reaches_terminal(
+    stream: RedisStream,
+    ledger: RunLedger,
+    checkpointer: BaseCheckpointSaver[str],
+    pattern_mcp_base_url: str,
+) -> None:
+    # MCP-REVALIDATION-HANG 回归钉：pattern 夹具下 abc(非法)→246810(合法) 双 control 回灌后，
+    # 每次 resume 都 teardown 连接重放 mcp_call（新 bridge+新连接），末轮桥/连接生命周期须收束到终态，
+    # 不悬挂。锁死 _ElicitBridge 与 adapter receive-loop 在多重重放下的配对正确性。
+    run = _request(f"e2e-revalidate-{uuid4().hex[:8]}")
+    serve_task, awaiting = await _run_until_input(
+        stream, ledger, checkpointer, pattern_mcp_base_url, run
+    )
+    try:
+        assert awaiting["tool_id"] == _MCP_TOOL_ID
+
+        # ① 非法回灌（pattern 不匹配 "abc"）：不炸 run，重新 interrupt 带 validation_error。
+        await _publish_resume(
+            stream, run, {"type": "submit", "request_id": _MCP_TOOL_ID, "value": {"otp": "abc"}}
+        )
+
+        async def _reprompted() -> dict[str, JsonValue]:
+            while True:
+                for item in await stream.read_all(run_events_stream(run.run_id)):
+                    if item.event.get("kind") != "tool.awaiting_approval":
+                        continue
+                    payload = item.event.get("payload")
+                    if not isinstance(payload, dict) or payload.get("kind") != "input":
+                        continue
+                    args = payload.get("args")
+                    if isinstance(args, dict) and "validation_error" in args:
+                        return payload
+                if "run.failed" in await _read_kinds(stream, run.run_id):
+                    raise AssertionError("run failed before reprompt")
+                await asyncio.sleep(0.02)
+
+        await asyncio.wait_for(_reprompted(), timeout=40.0)
+
+        # ② 合法六位数字：通过校验 → server accept 续跑 → 必须到终态并回携人给的 otp 的真实结果。
+        await _publish_resume(
+            stream, run, {"type": "submit", "request_id": _MCP_TOOL_ID, "value": {"otp": "246810"}}
+        )
+        await _wait_terminal(stream, run.run_id)
+        assert (await _read_kinds(stream, run.run_id))[-1] == "run.completed"
+        returned = await _mcp_returned(stream, run.run_id)
+        assert "verified:246810" in str(returned["result"])
     finally:
         await _stop(serve_task)

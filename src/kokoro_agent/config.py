@@ -116,6 +116,14 @@ class AppConfig(BaseModel):
 
     # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
     mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
+    # MCP 凭据句柄解析出口（hub runtime resolve）与连接期 egress 防线（mcp/egress.py）。
+    # 声明于此供启动期配置快照可见（log_config_summary，secret 掩码）；功能消费在 mcp 层——
+    # make_mcp_registry / build_connections 读同一注入 env（写区不含 worker/main，暂不经此穿透）。
+    hub_base_url: OptStr = Field(default=None, validation_alias="KOKORO_HUB_BASE_URL")
+    internal_secret_agent: OptSecret = Field(
+        default=None, validation_alias="KOKORO_INTERNAL_SECRET_AGENT"
+    )
+    mcp_egress_mode: str = Field(default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE")
 
     # --- web_tools 域 ---
     fetch_allow_private: bool = Field(

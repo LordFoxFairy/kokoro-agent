@@ -42,6 +42,7 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.mcp.config import McpServerConfig
+from kokoro_agent.mcp.egress import configure_egress_mode, current_egress_mode
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.model.local_fake import make_local_fake_chat_model
 from kokoro_agent.prompts import GENERAL_PROMPT
@@ -55,6 +56,17 @@ from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.worker.supervisor import RunSupervisor
 
 _MCP_TOOL_ID = "local_mcp"
+
+
+@pytest.fixture(autouse=True)
+def egress_off() -> Iterator[None]:
+    # 本地 127.0.0.1 fixture：关连接期 egress 防线放行环回（strict 缺省会拒 loopback）。
+    previous = current_egress_mode()
+    configure_egress_mode("off")
+    try:
+        yield
+    finally:
+        configure_egress_mode(previous)
 
 
 class OtpForm(BaseModel):
@@ -255,6 +267,7 @@ async def _publish_resume(
 ) -> None:
     event: dict[str, JsonValue] = {
         "kind": "run.resume",
+        "decision_id": "dec_wire",
         "run_id": run.run_id,
         "thread_id": run.thread_id,
         "decisions": [decision],

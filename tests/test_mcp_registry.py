@@ -1,14 +1,16 @@
 """MCP Mongo 注册表读路规格（真 Mongo）：双源合并 / namespace 覆盖 / 禁用遮蔽不回退 /
-软删回退 / secret_ref env 展开与 fail-loud / secret:path 占名不可用 / 未知名 fail-loud 不变。"""
+软删回退 / secret_ref env 展开与 fail-loud / handle 批解进 header 与失败占名 /
+secret:path 废除 fail-loud（D1）/ 明文不落日志 / 未知名 fail-loud 不变。"""
 
 # BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，test_mcp_tools 同款豁免）。
 # pyright: reportUnknownMemberType=false
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping, Sequence
 
 import pytest
 from pymongo import AsyncMongoClient
@@ -21,10 +23,34 @@ from kokoro_agent.mcp.config import (
     select_servers,
 )
 from kokoro_agent.mcp.registry import McpRegistry
+from kokoro_agent.mcp.secret_client import SecretResolveError
 from kokoro_agent.mcp.tools import make_mcp_tools
 
 _MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 _NS = "ns1"
+# 合法句柄形状（srt_ + 32 hex，与 hub SELF_SECRET_REF_RE 同构）。
+_HANDLE_A = "srt_" + "a1b2c3d4" * 4
+_HANDLE_B = "srt_" + "0f1e2d3c" * 4
+
+
+class _FakeResolver:
+    """替身 SecretResolver：记录批解调用，返回预置明文或抛 SecretResolveError（模拟 hub 全有或全无）。"""
+
+    def __init__(
+        self, secrets: Mapping[str, str] | None = None, *, fail: bool = False
+    ) -> None:
+        self._secrets = dict(secrets or {})
+        self._fail = fail
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def resolve(self, namespace: str, handles: Sequence[str]) -> Mapping[str, str]:
+        self.calls.append((namespace, tuple(handles)))
+        if self._fail:
+            raise SecretResolveError("simulated hub failure")
+        # 全有或全无：任一请求句柄不在预置集即视作 404（该批失败）。
+        if any(h not in self._secrets for h in handles):
+            raise SecretResolveError("simulated 404")
+        return {h: self._secrets[h] for h in handles}
 
 
 @pytest.fixture
@@ -154,16 +180,95 @@ async def test_secret_ref_env_missing_fails_loud(
         await McpRegistry(collection, {}).resolve(["a"], _NS, {})
 
 
-async def test_secret_ref_vault_marks_server_unavailable_not_crash(
+async def test_secret_ref_vault_ref_fails_loud(
     collection: AsyncCollection[dict[str, object]],
 ) -> None:
-    # secret:path V1 不支持（P2 网关侧解析）：装配不炸，调用时 error 文本。
+    # D1：secret:path 留位废除（不留兼容轴）——装配期即 fail-loud，不再占名降级。
     await collection.insert_one(_doc(_NS, "a", url="https://ns/a", secret_ref="secret:team/gh"))
+    with pytest.raises(McpConfigError, match="已废除"):
+        await McpRegistry(collection, {}).resolve(["a"], _NS, {})
+
+
+async def test_secret_ref_handle_resolves_into_authorization_header(
+    collection: AsyncCollection[dict[str, object]],
+) -> None:
+    # handle:srt_... → 一次批解换明文，整值进 authorization（明文只驻内存）。
+    await collection.insert_one(
+        _doc(_NS, "a", url="https://ns/a", secret_ref=f"handle:{_HANDLE_A}")
+    )
+    resolver = _FakeResolver({_HANDLE_A: "Bearer resolved-token"})
+    merged = await McpRegistry(collection, {}, resolver).resolve(["a"], _NS, {})
+    entry = merged["a"]
+    assert isinstance(entry, McpServerConfig)
+    assert entry.headers == {"authorization": "Bearer resolved-token"}
+    # 批解 caller 传入已验 namespace，句柄为 bare srt_（无 handle: 前缀）。
+    assert resolver.calls == [(_NS, (_HANDLE_A,))]
+
+
+async def test_multiple_handles_batched_in_single_resolve_call(
+    collection: AsyncCollection[dict[str, object]],
+) -> None:
+    # 本 run 多个句柄一次批解（每 run 至多一批），非逐 server 各发一次。
+    await collection.insert_many(
+        [
+            _doc(_NS, "a", url="https://ns/a", secret_ref=f"handle:{_HANDLE_A}"),
+            _doc("official", "b", url="https://official/b", secret_ref=f"handle:{_HANDLE_B}"),
+        ]
+    )
+    resolver = _FakeResolver({_HANDLE_A: "Bearer aa", _HANDLE_B: "Bearer bb"})
+    merged = await McpRegistry(collection, {}, resolver).resolve(["a", "b"], _NS, {})
+    assert isinstance(merged["a"], McpServerConfig) and merged["a"].headers == {
+        "authorization": "Bearer aa"
+    }
+    assert isinstance(merged["b"], McpServerConfig) and merged["b"].headers == {
+        "authorization": "Bearer bb"
+    }
+    assert len(resolver.calls) == 1  # 单次批解
+    assert resolver.calls[0] == (_NS, tuple(sorted((_HANDLE_A, _HANDLE_B))))
+
+
+async def test_handle_resolve_failure_marks_server_unavailable_not_crash(
+    collection: AsyncCollection[dict[str, object]],
+) -> None:
+    # 批解失败（hub 不可达/跨 namespace/未配出口）：该 server 占名不可用，装配不炸。
+    await collection.insert_one(
+        _doc(_NS, "a", url="https://ns/a", secret_ref=f"handle:{_HANDLE_A}")
+    )
+    merged = await McpRegistry(collection, {}, _FakeResolver(fail=True)).resolve(["a"], _NS, {})
+    assert isinstance(merged["a"], McpServerUnavailable)
+    # 穿过恒定工具面：list 标注不可用，call 是 error 文本（不可达降级同轴）。
+    list_tool, _, call_tool = make_mcp_tools(["a"], merged)
+    assert "a: [不可用]" in await list_tool.ainvoke({})
+    result = await call_tool.ainvoke({"server": "a", "tool": "t", "arguments": {}})
+    assert result.startswith("error:") and "不可用" in result
+
+
+async def test_handle_without_resolver_marks_unavailable(
+    collection: AsyncCollection[dict[str, object]],
+) -> None:
+    # 未配置 hub 解析出口（secret_resolver=None）：handle 引用无从解析 → 占名不可用不炸 run。
+    await collection.insert_one(
+        _doc(_NS, "a", url="https://ns/a", secret_ref=f"handle:{_HANDLE_A}")
+    )
     merged = await McpRegistry(collection, {}).resolve(["a"], _NS, {})
     assert isinstance(merged["a"], McpServerUnavailable)
-    _, describe_tool, call_tool = make_mcp_tools(["a"], merged)
-    assert "error" in await describe_tool.ainvoke({"server": "a", "tool": "t"})
-    assert "error" in await call_tool.ainvoke({"server": "a", "tool": "t", "arguments": {}})
+
+
+async def test_resolved_secret_plaintext_never_logged(
+    collection: AsyncCollection[dict[str, object]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # 明文绝不落日志：批解成功后明文进 header，但任何日志（含 DEBUG）都不得出现明文。
+    secret = "Bearer top-secret-plaintext-should-never-log"
+    await collection.insert_one(
+        _doc(_NS, "a", url="https://ns/a", secret_ref=f"handle:{_HANDLE_A}")
+    )
+    resolver = _FakeResolver({_HANDLE_A: secret})
+    with caplog.at_level(logging.DEBUG):
+        merged = await McpRegistry(collection, {}, resolver).resolve(["a"], _NS, {})
+    entry = merged["a"]
+    assert isinstance(entry, McpServerConfig) and entry.headers == {"authorization": secret}
+    assert "top-secret-plaintext-should-never-log" not in caplog.text
 
 
 async def test_unknown_name_still_fails_loud_after_merge(

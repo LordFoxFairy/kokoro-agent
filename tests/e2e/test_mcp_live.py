@@ -13,13 +13,26 @@ import asyncio
 import socket
 import threading
 import time
+from collections.abc import Iterator
 
 import pytest
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from kokoro_agent.mcp.config import McpServerConfig
+from kokoro_agent.mcp.egress import configure_egress_mode, current_egress_mode
 from kokoro_agent.mcp.tools import make_mcp_tools
+
+
+@pytest.fixture(autouse=True)
+def egress_off() -> Iterator[None]:
+    # 本地 127.0.0.1 fixture：关连接期 egress 防线放行环回（strict 缺省会拒 loopback）。
+    previous = current_egress_mode()
+    configure_egress_mode("off")
+    try:
+        yield
+    finally:
+        configure_egress_mode(previous)
 
 
 def _free_port() -> int:

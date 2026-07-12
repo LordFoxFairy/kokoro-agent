@@ -207,6 +207,7 @@ async def _publish_resume(
 ) -> None:
     event: dict[str, JsonValue] = {
         "kind": "run.resume",
+        "decision_id": "dec_wire",
         "run_id": run.run_id,
         "thread_id": run.thread_id,
         "decisions": [decision],

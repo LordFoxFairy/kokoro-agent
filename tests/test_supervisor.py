@@ -173,7 +173,7 @@ async def test_resume_with_pending_invokes_command() -> None:
     agent.seen_payloads.clear()
 
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "r2", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "r2", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup.dispatch(bus, resume)
     await _drain(sup)
@@ -198,6 +198,7 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
     edit = _inbound(
         {
             "kind": "run.resume",
+            "decision_id": "dec_wire",
             "run_id": "r4",
             "decisions": [{"type": "edit", "tool_id": _TID, "args": {"x": 1}}],
         }
@@ -214,6 +215,7 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
     reject = _inbound(
         {
             "kind": "run.resume",
+            "decision_id": "dec_wire",
             "run_id": "r4",
             "decisions": [{"type": "reject", "tool_id": _TID, "reason": "no"}],
         }
@@ -239,7 +241,7 @@ async def test_resume_without_pending_is_dropped() -> None:
     agent.seen_payloads.clear()
 
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "r3", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "r3", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup.dispatch(bus, resume)
     await _drain(sup)
@@ -252,7 +254,7 @@ async def test_resume_unknown_run_dropped() -> None:
     bus = FakeBus()
     sup, _store = _supervisor(agent)
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "ghost", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "ghost", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup.dispatch(bus, resume)
     await _drain(sup)
@@ -307,7 +309,7 @@ async def test_cancel_running_emits_cancelled() -> None:
     await sup.dispatch(bus, request("r5"))
     await asyncio.sleep(0)
 
-    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "run_id": "r5"}))
+    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "r5"}))
     await _drain(sup)
 
     completed = find_event(bus.run_events("r5"), RunCompleted)
@@ -319,7 +321,7 @@ async def test_cancel_running_emits_cancelled() -> None:
 async def test_cancel_unknown_run_dropped() -> None:
     bus = FakeBus()
     sup, _store = _supervisor(FakeAgent(run=text_run("hi")))
-    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "run_id": "gone"}))
+    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "gone"}))
     assert bus.published == []
 
 
@@ -329,7 +331,7 @@ async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
     sup, _store = _supervisor(agent)
     await sup.dispatch(bus, request("rc1"))
     await _drain(sup)
-    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "run_id": "rc1"}))
+    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "rc1"}))
 
     terminals = [e for e in bus.run_events("rc1") if e.kind in {"run.completed", "run.failed"}]
     assert len(terminals) == 1
@@ -343,7 +345,7 @@ async def test_cancel_after_pause_emits_cancelled() -> None:
     sup, _store = _supervisor(agent)
     await sup.dispatch(bus, request("rc2"))
     await _drain(sup)
-    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "run_id": "rc2"}))
+    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "rc2"}))
     completed = find_event(bus.run_events("rc2"), RunCompleted)
     assert completed.payload.status == "cancelled"
 
@@ -354,12 +356,12 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
     sup, _store = _supervisor(agent)
     await sup.dispatch(bus, request("rc4"))
     await _drain(sup)
-    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "run_id": "rc4"}))
+    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "rc4"}))
     before = len(bus.published)
     agent.seen_payloads.clear()
 
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "rc4", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "rc4", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup.dispatch(bus, resume)
     await _drain(sup)
@@ -388,7 +390,7 @@ async def test_builder_failure_emits_run_failed_once() -> None:
     assert failed.payload.message == "bad model"
 
     # 构建失败已认领终态：cancel 不补发第二终态。
-    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "run_id": "rbf"}))
+    await sup.dispatch(bus, _inbound({"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "rbf"}))
     terminals = [e for e in bus.run_events("rbf") if e.kind in {"run.completed", "run.failed"}]
     assert len(terminals) == 1
 
@@ -402,7 +404,7 @@ async def test_control_stream_delivers_cancel() -> None:
             run_control_stream("cx"): (
                 StreamItem(
                     cursor="1",
-                    event={"kind": "run.cancel", "run_id": "cx", "thread_id": "c1"},
+                    event={"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "cx", "thread_id": "c1"},
                 ),
             )
         }
@@ -431,7 +433,7 @@ async def test_task_handle_popped_by_identity_not_run_id() -> None:
     await asyncio.sleep(0)  # task1 阻塞在 gate1
 
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "race", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "race", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup.dispatch(bus, resume)  # task2 覆盖同 run_id 句柄，阻塞在 gate2
     await asyncio.sleep(0)
@@ -459,6 +461,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
         cursor="3",
         event={
             "kind": "run.resume",
+            "decision_id": "dec_wire",
             "run_id": "rx",
             "thread_id": "c1",
             "decisions": [{"type": "approve", "tool_id": _TID}],
@@ -541,7 +544,7 @@ async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
     sup_b, _ = _supervisor(agent, store=store)
     agent.seen_payloads.clear()
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "rx2", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "rx2", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup_b.dispatch(bus, resume)
     await _drain(sup_b)
@@ -571,7 +574,7 @@ async def test_heartbeat_adopts_control_listener_for_paused_run() -> None:
             run_control_stream("orphan-hitl"): (
                 StreamItem(
                     cursor="1",
-                    event={"kind": "run.cancel", "run_id": "orphan-hitl", "thread_id": "t1"},
+                    event={"kind": "run.cancel", "decision_id": "dec_wire", "run_id": "orphan-hitl", "thread_id": "t1"},
                 ),
             )
         }
@@ -666,7 +669,7 @@ async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
     agent.seen_payloads.clear()
 
     resume = _inbound(
-        {"kind": "run.resume", "run_id": "rc", "decisions": [{"type": "approve", "tool_id": _TID}]}
+        {"kind": "run.resume", "decision_id": "dec_wire", "run_id": "rc", "decisions": [{"type": "approve", "tool_id": _TID}]}
     )
     await sup.dispatch(bus, resume)
     await _drain(sup)

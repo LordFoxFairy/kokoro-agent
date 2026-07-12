@@ -40,7 +40,8 @@ class McpServerUnavailable(BaseModel):
 
     来源（mcp/registry.py 双源合并）：
     - 活跃禁用文档遮蔽同名低层定义、不回退（对齐 kokoro-hub 侧语义：绝不静默回退到官方凭据）；
-    - secret_ref=secret:path V1 不支持（P2：secret 管理器网关侧解析）。
+    - secret_ref=`handle:srt_...` 但本 run 批解失败（hub 不可达/跨 namespace/未配解析出口）。
+    （`secret:path` 已废除为 fail-loud，不再降级为本位——见 mcp/registry.py D1。）
     装配不炸；list 标注不可用，describe/call 返回 error 文本（不可达降级同轴）。
     """
 

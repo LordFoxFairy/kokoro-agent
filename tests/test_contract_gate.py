@@ -182,7 +182,7 @@ def _request(**extra: JsonValue) -> dict[str, JsonValue]:
 
 
 def _control(kind: str, **extra: JsonValue) -> dict[str, JsonValue]:
-    return {"kind": kind, "run_id": "r1", "thread_id": "c1", **extra}
+    return {"kind": kind, "run_id": "r1", "thread_id": "c1", "decision_id": "dec_wire", **extra}
 
 
 def test_run_request_parses() -> None:

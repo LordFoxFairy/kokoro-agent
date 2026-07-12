@@ -13,6 +13,7 @@ TodoStatus = Literal["pending", "in_progress", "completed"]
 AllowedDecision = Literal["approve", "edit", "reject", "respond", "submit"]
 AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review", "input"]
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
+ControlReceiptStatus = Literal["persisted", "applied"]
 RunCompletedStatus = Literal["completed", "cancelled"]
 RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "enqueue_failed", "dispatch_exhausted", "internal_error"]
 
@@ -176,6 +177,11 @@ class DeliveryCreatedPayload(StrictModel):
     note: str | None = None
 
 
+class RunControlReceiptPayload(StrictModel):
+    decision_id: NonEmptyStr
+    control_status: ControlReceiptStatus
+
+
 class RunCompletedPayload(StrictModel):
     status: RunCompletedStatus
     # agent 认真算的用量全链路贯通；无用量时为 null。
@@ -325,6 +331,14 @@ class DeliveryCreated(StrictModel):
     payload: DeliveryCreatedPayload
 
 
+class RunControlReceipt(StrictModel):
+    kind: Literal["run.control.receipt"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    payload: RunControlReceiptPayload
+
+
 class RunCompleted(StrictModel):
     kind: Literal["run.completed"]
     run_id: NonEmptyStr
@@ -360,6 +374,7 @@ AgentEvent = Annotated[
         SubagentToolInvoked,
         SubagentToolReturned,
         DeliveryCreated,
+        RunControlReceipt,
         RunCompleted,
         RunFailed,
     ],

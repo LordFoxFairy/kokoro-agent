@@ -13,12 +13,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
+from kokoro_agent.contract.storage import RUN_DISPATCHES_COLLECTION
 from kokoro_agent.storage.ledger import (
     LedgerSettings,
     RunLedger,
     make_ledger,
 )
-from kokoro_agent.storage.mongo import MongoLedger
+from kokoro_agent.storage.mongo import DISPATCH_DLQ_COLLECTION, MongoLedger
 
 _MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 _TTL_MS = 1000
@@ -333,3 +334,112 @@ async def test_factory_mongo_persists_across_cycles() -> None:
     finally:
         await client.close()
 
+
+
+# --- Wave2 R1：dispatch CAS（run_dispatches pending→claimed）+ run.started outbox + DLQ ---
+
+
+@asynccontextmanager
+async def _mongo_ledger_with_dispatches(
+    clock: FakeClock,
+) -> AsyncGenerator[tuple[MongoLedger, AsyncCollection[dict[str, object]]]]:
+    # 同库兄弟集合：run_dispatches 由 session 写、agent CAS 读（此处直接 seed 模拟 session）。
+    client, coll = await _mongo_collection()
+    dispatches = coll.database[RUN_DISPATCHES_COLLECTION]
+    try:
+        yield MongoLedger(coll, ttl_ms=_TTL_MS, clock=clock), dispatches
+    finally:
+        await coll.drop()
+        await dispatches.drop()
+        await coll.database[DISPATCH_DLQ_COLLECTION].drop()
+        await client.close()
+
+
+async def _seed_dispatch(
+    dispatches: AsyncCollection[dict[str, object]],
+    run_id: str,
+    status: str,
+    deadline_at: int,
+) -> None:
+    await dispatches.insert_one(
+        {
+            "run_id": run_id,
+            "session_id": "s1",
+            "namespace": "local:s1",
+            "fence": f"fence-{run_id}",
+            "status": status,
+            "deadline_at": deadline_at,
+            "created_at": 0,
+            "updated_at": 0,
+        }
+    )
+
+
+async def test_claim_dispatch_pending_wins_and_flips_claimed() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        await _seed_dispatch(dispatches, "run-win", "pending", deadline_at=clock.now + 1000)
+        assert await store.claim_dispatch("run-win", OWNER) is True
+        doc = await dispatches.find_one({"run_id": "run-win"})
+        assert doc is not None and doc["status"] == "claimed"
+        assert doc["claimed_by"] == OWNER
+        # 已 claimed：重复投递帧 CAS 输，丢弃不执行（§8.3 claim 后 ACK 前崩溃重投）。
+        assert await store.claim_dispatch("run-win", OTHER) is False
+
+
+async def test_claim_dispatch_expired_and_deadline_passed_lose() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        # session reconciler 已转 expired：迟到帧永不执行。
+        await _seed_dispatch(dispatches, "run-exp", "expired", deadline_at=clock.now + 1000)
+        assert await store.claim_dispatch("run-exp", OWNER) is False
+        # pending 但 deadline 已过（reconciler 尚未跑）：agent 不认领，交 reconciler 转 expired。
+        await _seed_dispatch(dispatches, "run-late", "pending", deadline_at=clock.now - 1)
+        assert await store.claim_dispatch("run-late", OWNER) is False
+        doc = await dispatches.find_one({"run_id": "run-late"})
+        assert doc is not None and doc["status"] == "pending"  # 未被 agent 篡改
+
+
+async def test_claim_dispatch_missing_intent_is_permissive() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        # 无 intent 记录（迁移/无 dispatch 期）：放行，执行去重由 try_claim 兜底。
+        assert await store.claim_dispatch("run-norecord", OWNER) is True
+
+
+async def test_claim_dispatch_concurrent_race_single_winner() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        await _seed_dispatch(dispatches, "run-race", "pending", deadline_at=clock.now + 1000)
+        # 单文档 CAS：多 pod 并发抢同一 pending intent，恰一个赢。
+        results = await asyncio.gather(
+            *(store.claim_dispatch("run-race", f"w{i}") for i in range(8))
+        )
+        assert results.count(True) == 1
+        assert results.count(False) == 7
+
+
+async def test_run_started_outbox_scan_and_mark() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        req = request("run-outbox")
+        await store.try_claim(req, OWNER)  # claim 写 run_started_published=False
+        assert await store.list_unpublished_started() == ["run-outbox"]
+        await store.mark_started_published("run-outbox")
+        assert await store.list_unpublished_started() == []
+        # 终态 run 不再补发 run.started。
+        req2 = request("run-terminal")
+        await store.try_claim(req2, OWNER)
+        await store.try_mark_terminal("run-terminal")
+        assert await store.list_unpublished_started() == []
+
+
+async def test_quarantine_dispatch_records_dlq_row() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        await store.quarantine_dispatch("deadbeef", source="requests", reason="unparseable")
+        dlq = dispatches.database[DISPATCH_DLQ_COLLECTION]
+        doc = await dlq.find_one({"raw_hash": "deadbeef"})
+        assert doc is not None
+        assert doc["source"] == "requests" and doc["reason"] == "unparseable"
+        assert isinstance(doc["at"], int)

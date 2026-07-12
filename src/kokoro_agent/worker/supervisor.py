@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 
@@ -21,6 +23,7 @@ from kokoro_agent.contract import (
     RunErrorCode,
     RunRequest,
     RunResume,
+    RunStartedPayload,
     RunSteer,
     SubagentSource,
     run_events_stream,
@@ -54,6 +57,15 @@ from kokoro_agent.worker.messages import parse_inbound
 LOGGER = logging.getLogger(__name__)
 
 MAX_CONCURRENT_RUNS = 8
+
+
+def _raw_hash(event: Mapping[str, object]) -> str:
+    # 坏帧内容指纹（DLQ 去重/溯源）：稳定 JSON 序列化后 sha256；不可序列化则回退 repr。
+    try:
+        canonical = json.dumps(event, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        canonical = repr(event)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 AgentBuilder = Callable[[RunRequest], Awaitable[AssembledAgent]]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
@@ -110,19 +122,35 @@ class RunSupervisor:
         return self._tasks
 
     async def serve(self, bus: StreamProtocol) -> None:
+        # run.started 最小 outbox 补发：启动即扫 claim 落库但发布未确认的 run（幂等重发）。
+        await self._republish_unpublished_started(bus)
         heartbeat = asyncio.create_task(self._heartbeat_loop(bus))
         try:
             async for item in bus.subscribe(
                 REQUESTS_STREAM, group=CONSUMER_GROUP, consumer=self._consumer
             ):
                 msg = parse_inbound(item.event)
-                # parse 后即 ack：坏帧不重投；崩溃窗口的恢复权在 TTL 租约重拾，不在 PEL 重放。
-                await bus.ack(REQUESTS_STREAM, CONSUMER_GROUP, item.cursor)
                 if msg is None:
+                    # 不可解析帧：DLQ 记录后 ACK（坏帧无 identity 不重投，不冒泡杀循环）。
+                    with contextlib.suppress(Exception):
+                        await self._store.quarantine_dispatch(
+                            _raw_hash(item.event), source=REQUESTS_STREAM, reason="unparseable"
+                        )
+                    await bus.ack(REQUESTS_STREAM, CONSUMER_GROUP, item.cursor)
                     continue
-                # per-message 隔离：单条消息 dispatch 失败绝不冒泡杀死长驻循环；
+                if isinstance(msg, RunRequest):
+                    # dispatch 序：CAS claim→赢才执行→ACK 后置到 durable claim 之后。
+                    # claim 落库前崩溃 → 不 ACK、不合成终态：留 PEL 重投（§8.3 首行）。
+                    try:
+                        await self._consume_request(bus, msg)
+                    except Exception:  # noqa: BLE001 — 认领落库前故障：不 ACK 留重投，保长驻循环
+                        LOGGER.exception("dispatch claim failed run_id=%s", msg.run_id)
+                        continue
+                    await bus.ack(REQUESTS_STREAM, CONSUMER_GROUP, item.cursor)
+                    continue
+                # 非 RunRequest 帧（control 流误投/测试直投）：既有语义——先 ACK 再 dispatch，
                 # 失败收口为该 run 的 run.failed（claim 守护，不与正常终态双发）。
-                # CancelledError 是 BaseException 不被捕获，优雅停机照常生效。
+                await bus.ack(REQUESTS_STREAM, CONSUMER_GROUP, item.cursor)
                 try:
                     await self.dispatch(bus, msg)
                 except Exception as error:  # noqa: BLE001 — 单消息容错：隔离故障，保长驻循环
@@ -134,6 +162,28 @@ class RunSupervisor:
             heartbeat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat
+
+    async def _consume_request(self, bus: StreamProtocol, request: RunRequest) -> None:
+        # dispatch CAS（D5）：pending→claimed。输（已 claimed=重复投递 / expired=迟到帧）→丢弃不执行；
+        # 赢（或无 intent 兼容路径）→ durable 执行认领（try_claim）+ 启动。ACK 由 serve 后置于此之后。
+        if not await self._store.claim_dispatch(request.run_id, self._consumer):
+            LOGGER.debug("dropping late/duplicate dispatch run_id=%s", request.run_id)
+            return
+        await self._on_request(bus, request)
+
+    async def _republish_unpublished_started(self, bus: StreamProtocol) -> None:
+        # 崩溃前 claim 已落库但 run.started 未确认发布：补发（幂等，session 不投影 run.started）。
+        try:
+            run_ids = await self._store.list_unpublished_started()
+        except Exception:  # noqa: BLE001 — 补发扫描降级不阻断 serve 启动
+            LOGGER.exception("run.started outbox scan failed")
+            return
+        for run_id in run_ids:
+            emitter = await self._emitter(bus, run_id)
+            if emitter.at_start:
+                await emitter.emit(RunStartedPayload())
+            self._emitters.pop(run_id, None)
+            await self._store.mark_started_published(run_id)
 
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):
@@ -376,6 +426,8 @@ class RunSupervisor:
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
                 # 用量跨段累计真源：run.completed 报累计而非末段。
                 record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
+                # run.started outbox：at_start emit 成功后置 published（幂等，补发 scanner 收口）。
+                mark_started=lambda: self._store.mark_started_published(run_id),
             )
         if terminal:
             self._emitters.pop(run_id, None)

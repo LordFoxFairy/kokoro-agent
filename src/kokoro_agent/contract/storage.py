@@ -22,6 +22,7 @@ BsonInt = Annotated[int, BeforeValidator(_int_from_bson_number)]
 SkillSource = Literal["deploy", "upload", "github"]
 McpTransport = Literal["http", "streamable_http"]
 ReviewStatus = Literal["pending", "approved", "rejected"]
+DispatchStatus = Literal["pending", "claimed", "expired"]
 
 
 class StrictModel(BaseModel):
@@ -90,8 +91,34 @@ class McpServerDoc(StrictModel):
     deleted_at: BsonInt | None
 
 
+class RunDispatchDoc(StrictModel):
+    run_id: NonEmptyStr
+    session_id: NonEmptyStr
+    namespace: NonEmptyStr
+    fence: NonEmptyStr
+    status: DispatchStatus
+    deadline_at: BsonInt
+    claimed_by: NonEmptyStr | None = None
+    created_at: BsonInt
+    updated_at: BsonInt
+
+
+class McpSecretDoc(StrictModel):
+    scope: NonEmptyStr
+    handle: NonEmptyStr
+    name: NonEmptyStr
+    ciphertext: NonEmptyStr
+    key_id: NonEmptyStr
+    created_at: BsonInt
+    deleted_at: BsonInt | None
+
+
+MCP_SECRETS_COLLECTION = "mcp_secrets"
+MCP_SECRETS_UNIQUE: tuple[str, ...] = ("scope", "handle",)
 MCP_SERVERS_COLLECTION = "mcp_servers"
 MCP_SERVERS_UNIQUE: tuple[str, ...] = ("scope", "name",)
+RUN_DISPATCHES_COLLECTION = "run_dispatches"
+RUN_DISPATCHES_UNIQUE: tuple[str, ...] = ("run_id",)
 SKILL_REVISIONS_COLLECTION = "skill_revisions"
 SKILL_REVISIONS_UNIQUE: tuple[str, ...] = ("scope", "name", "content_hash",)
 SKILL_STATE_COLLECTION = "skill_state"
@@ -99,7 +126,9 @@ SKILL_STATE_UNIQUE: tuple[str, ...] = ("namespace", "name",)
 SKILLS_COLLECTION = "skills"
 SKILLS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 
+mcp_secrets_doc_adapter: TypeAdapter[McpSecretDoc] = TypeAdapter(McpSecretDoc)
 mcp_servers_doc_adapter: TypeAdapter[McpServerDoc] = TypeAdapter(McpServerDoc)
+run_dispatches_doc_adapter: TypeAdapter[RunDispatchDoc] = TypeAdapter(RunDispatchDoc)
 skill_revisions_doc_adapter: TypeAdapter[SkillRevisionDoc] = TypeAdapter(SkillRevisionDoc)
 skill_state_doc_adapter: TypeAdapter[SkillStateDoc] = TypeAdapter(SkillStateDoc)
 skills_doc_adapter: TypeAdapter[SkillDoc] = TypeAdapter(SkillDoc)

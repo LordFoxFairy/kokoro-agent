@@ -19,6 +19,23 @@ class RunLedger(Protocol):
         # 原子认领新 run：首个认领者持有 TTL 租约并返 True，重复广播去重返 False。
         ...
 
+    async def claim_dispatch(self, run_id: str, consumer: str) -> bool:
+        # dispatch CAS（D5）：run_dispatches pending→claimed。True=授权执行；False=迟到(expired)
+        # /重复(claimed)帧丢弃不执行。无 intent 记录=兼容放行（执行去重仍由 try_claim 兜底）。
+        ...
+
+    async def quarantine_dispatch(self, raw_hash: str, source: str, reason: str) -> None:
+        # 不可解析帧死信：记 {raw_hash,source,reason,at} 后由调用方 ACK（坏帧无 identity 不重投）。
+        ...
+
+    async def list_unpublished_started(self) -> list[str]:
+        # run.started 最小 outbox 补发扫描：claim 落库但发布未确认且非终态的 run。
+        ...
+
+    async def mark_started_published(self, run_id: str) -> None:
+        # run.started 发布确认：emit 成功后置 outbox 行为已发布，scanner 不再补发。
+        ...
+
     async def renew(self, run_id: str, owner: str) -> bool:
         # 严格属主续租（fencing）：仅当前 owner 可续；False=所有权已被他处夺走，
         # 调用方必须让渡本地执行（裂脑双跑收窄到一个心跳窗）。

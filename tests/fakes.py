@@ -119,6 +119,12 @@ class FakeLedger:
         self.sandbox_ids: dict[str, str] = {}
         self.terminal_at: dict[str, int] = {}
         self.clock_ms = 0
+        # dispatch CAS 记录（run_id → status）：默认无记录=放行；测试可预置 pending/claimed/expired。
+        self.dispatches: dict[str, str] = {}
+        self.dispatch_deadlines: dict[str, int] = {}
+        self.dlq: list[tuple[str, str, str]] = []
+        # run.started outbox：claim 即 False，emit/scanner 置 True。
+        self.started_published: dict[str, bool] = {}
 
     async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
         if request.run_id in self.requests:
@@ -126,7 +132,35 @@ class FakeLedger:
         self.requests[request.run_id] = request
         self.leases[request.run_id] = 1
         self.owners[request.run_id] = owner
+        self.started_published[request.run_id] = False
         return True
+
+    async def claim_dispatch(self, run_id: str, consumer: str = "test-consumer") -> bool:
+        # 无 intent 记录=放行（与 MongoLedger 同语义）；pending 且未过期=赢转 claimed；
+        # 已 claimed/expired 或已过 deadline=丢弃。
+        status = self.dispatches.get(run_id)
+        if status is None:
+            return True
+        deadline = self.dispatch_deadlines.get(run_id)
+        if status == "pending" and (deadline is None or deadline > self.clock_ms):
+            self.dispatches[run_id] = "claimed"
+            return True
+        return False
+
+    async def quarantine_dispatch(
+        self, raw_hash: str, source: str, reason: str
+    ) -> None:
+        self.dlq.append((raw_hash, source, reason))
+
+    async def list_unpublished_started(self) -> list[str]:
+        return sorted(
+            run_id
+            for run_id, published in self.started_published.items()
+            if not published and run_id not in self.terminals
+        )
+
+    async def mark_started_published(self, run_id: str) -> None:
+        self.started_published[run_id] = True
 
     async def renew(self, run_id: str, owner: str = "test-consumer") -> bool:
         self.renewed.append(run_id)

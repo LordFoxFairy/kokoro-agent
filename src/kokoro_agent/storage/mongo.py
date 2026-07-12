@@ -14,6 +14,10 @@ from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from kokoro_agent.contract import RunRequest
+from kokoro_agent.contract.storage import RUN_DISPATCHES_COLLECTION
+
+# 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
+DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 
 
 def _now_ms() -> int:
@@ -55,6 +59,10 @@ class MongoLedger:
         self._coll = collection
         self._ttl_ms = ttl_ms
         self._clock = clock
+        # dispatch CAS 与死信同库兄弟集合（session 在 message-store 库写 run_dispatches；
+        # gate/closure env 令两库同名同实例，单文档 CAS 跨进程可见）。
+        self._dispatches = collection.database[RUN_DISPATCHES_COLLECTION]
+        self._dlq = collection.database[DISPATCH_DLQ_COLLECTION]
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # $setOnInsert + upsert：仅 _id 不存在时写入；并发 upsert 撞 _id 抛 DuplicateKeyError
@@ -68,6 +76,9 @@ class MongoLedger:
                         "terminal": False,
                         "lease_expires_ms": self._clock() + self._ttl_ms,
                         "owner": owner,
+                        # run.started 最小 outbox（R1）：claim 即写未发布行，emit 后置 True，
+                        # 启动 scanner 补发 unpublished（幂等：session 不投影 run.started）。
+                        "run_started_published": False,
                     }
                 },
                 upsert=True,
@@ -75,6 +86,40 @@ class MongoLedger:
         except DuplicateKeyError:
             return False
         return result.upserted_id is not None
+
+    async def claim_dispatch(self, run_id: str, consumer: str) -> bool:
+        # dispatch CAS（D5）：pending→claimed 单文档条件转移。赢=授权执行；已 claimed/expired
+        # =重复投递/迟到帧丢弃；无记录=兼容放行（迁移/无 intent 期不误杀 run，执行去重仍由
+        # try_claim 兜底）。deadline_at>now 是与 session 超时 reconciler 的赛跑闸：deadline 已过
+        # 只能被 reconciler 转 expired，agent 不再认领。
+        now = self._clock()
+        won = await self._dispatches.find_one_and_update(
+            {"run_id": run_id, "status": "pending", "deadline_at": {"$gt": now}},
+            {"$set": {"status": "claimed", "claimed_by": consumer, "updated_at": now}},
+        )
+        if won is not None:
+            return True
+        exists = await self._dispatches.find_one({"run_id": run_id}, {"_id": 1})
+        return exists is None
+
+    async def quarantine_dispatch(self, raw_hash: str, source: str, reason: str) -> None:
+        # 不可解析帧死信：记录后由调用方 ACK（坏帧无 identity 不重投）。schema 局部定义（R5 重整）。
+        await self._dlq.insert_one(
+            {"raw_hash": raw_hash, "source": source, "reason": reason, "at": self._clock()}
+        )
+
+    async def list_unpublished_started(self) -> list[str]:
+        # run.started outbox 补发扫描：claim 落库但发布未确认且非终态的 run。
+        cursor = self._coll.find(
+            {"terminal": {"$ne": True}, "run_started_published": False},
+            {"_id": 1},
+        ).sort("_id", 1)
+        return [str(doc["_id"]) async for doc in cursor]
+
+    async def mark_started_published(self, run_id: str) -> None:
+        await self._coll.update_one(
+            {"_id": run_id}, {"$set": {"run_started_published": True}}
+        )
 
     async def renew(self, run_id: str, owner: str) -> bool:
         # 严格属主续租（fencing）：owner 不符即失败——假死副本苏醒后据此让渡。

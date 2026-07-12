@@ -21,6 +21,7 @@ from fakes import (
 )
 from kokoro_agent.contract import (
     InboundMessage,
+    REQUESTS_STREAM,
     RunCompleted,
     RunFailed,
     RunRequest,
@@ -792,3 +793,93 @@ async def test_fencing_yields_local_task_when_ownership_lost() -> None:
     # 本 worker 让渡：未发任何终态事件（终态权归新属主）；run 也未被本地标终态。
     assert all(kind != "run.completed" and kind != "run.failed" for kind in bus.kinds("split"))
     assert "split" not in store.terminals
+
+
+# --- Wave2 R1：serve dispatch CAS 序（claim→ACK 后置）+ 迟到/重复帧丢弃 + DLQ + outbox ---
+
+
+async def test_dispatch_win_executes_and_acks_after_claim() -> None:
+    # pending intent → CAS 赢 → 执行到终态 → ACK（ACK 后置于 durable claim 之后）。
+    store = FakeLedger()
+    store.dispatches["r-go"] = "pending"
+    store.dispatch_deadlines["r-go"] = 10**15
+    frame = StreamItem(cursor="1", event=dict(request("r-go").model_dump()))
+    bus = FakeBus(inbound=(frame,))
+    sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
+    await sup.serve(bus)
+    await _drain(sup)
+    assert bus.acked == ["1"]
+    assert bus.kinds("r-go")[-1] == "run.completed"
+    assert store.dispatches["r-go"] == "claimed"
+
+
+async def test_redelivered_dispatch_after_claim_is_discarded_not_double_executed() -> None:
+    # §8.3「claim 后 ACK 前崩溃」：重投同帧 CAS 输（已 claimed）→ ACK 丢弃，不二次执行。
+    store = FakeLedger()
+    store.dispatches["r-dup"] = "pending"
+    store.dispatch_deadlines["r-dup"] = 10**15
+    frame = StreamItem(cursor="1", event=dict(request("r-dup").model_dump()))
+    sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
+    await sup.serve(FakeBus(inbound=(frame,)))
+    await _drain(sup)
+    # 重投：dispatch 已 claimed，第二次 serve 丢弃不执行。
+    bus2 = FakeBus(inbound=(frame,))
+    await sup.serve(bus2)
+    await _drain(sup)
+    assert bus2.acked == ["1"]  # 迟到帧仍 ACK（不再重投）
+    assert bus2.kinds("r-dup") == []  # 未二次执行（bus2 上无新事件）
+
+
+async def test_expired_dispatch_frame_never_executes() -> None:
+    # session reconciler 已转 expired：迟到帧永不执行，仅 ACK 丢弃。
+    store = FakeLedger()
+    store.dispatches["r-exp"] = "expired"
+    frame = StreamItem(cursor="1", event=dict(request("r-exp").model_dump()))
+    bus = FakeBus(inbound=(frame,))
+    sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
+    await sup.serve(bus)
+    await _drain(sup)
+    assert bus.acked == ["1"]
+    assert bus.kinds("r-exp") == []
+
+
+async def test_crash_before_durable_claim_leaves_frame_unacked() -> None:
+    # §8.3「request 读出后 claim 前崩溃」：durable claim 未落地 → 不 ACK，留 PEL 重投。
+    class _CrashClaim(FakeLedger):
+        async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
+            raise RuntimeError("crash before durable claim")
+
+    store = _CrashClaim()
+    store.dispatches["r-crash"] = "pending"
+    store.dispatch_deadlines["r-crash"] = 10**15
+    frame = StreamItem(cursor="1", event=dict(request("r-crash").model_dump()))
+    bus = FakeBus(inbound=(frame,))
+    sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
+    await sup.serve(bus)  # 不冒泡杀循环
+    assert bus.acked == []  # 未 ACK
+    # 崩溃前不合成终态（留重投，而非误判失败）。
+    assert bus.kinds("r-crash") == []
+
+
+async def test_malformed_frame_quarantined_to_dlq_and_acked() -> None:
+    # 不可解析帧：DLQ 记录后 ACK（坏帧无 identity 不重投）。
+    store = FakeLedger()
+    malformed = StreamItem(cursor="1", event={"kind": "run.request", "run_id": ""})
+    bus = FakeBus(inbound=(malformed,))
+    sup, _ = _supervisor(FakeAgent(), store=store)
+    await sup.serve(bus)
+    assert bus.acked == ["1"]
+    assert len(store.dlq) == 1
+    _raw, source, reason = store.dlq[0]
+    assert source == REQUESTS_STREAM and reason == "unparseable"
+
+
+async def test_serve_republishes_unpublished_run_started() -> None:
+    # run.started 最小 outbox：claim 落库但发布未确认 → 启动 scanner 补发（幂等）。
+    store = FakeLedger()
+    store.started_published["r-orphan"] = False
+    bus = FakeBus(inbound=())
+    sup, _ = _supervisor(FakeAgent(), store=store)
+    await sup.serve(bus)
+    assert "run.started" in bus.kinds("r-orphan")
+    assert store.started_published["r-orphan"] is True

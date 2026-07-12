@@ -43,19 +43,12 @@ def _source(_name: str) -> SubagentSource:
 
 
 # ---------------------------------------------------------------------------
-# 钉 1（归属 R1）：request 在 durable claim 前 ACK。
-#   注入点：worker/supervisor.py:118-120 `serve` parse 后即 `bus.ack`，早于
-#   dispatch→_on_request→`store.try_claim`（durable claim，supervisor.py:198）。
-#   纲领 §2.3「request/control 在 durable claim/inbox 前 ACK」、
-#         §8.3「request 读出后 claim 前…ACK 前」。
-#   缺陷：崩溃于 parse 后、claim 持久化前时，消息已 ACK 即从 PEL 消失，永不重投。
-#   期望语义（修复后成立）：durable claim 未落地 → 请求消息不得 ACK（留 PEL 可重投）。
+# 钉 1（归属 R1，已收口·绿钉）：request 必须在 durable claim 落地后才 ACK。
+#   R1 实现：`serve` 对 RunRequest 走 CAS claim→try_claim(durable)→ACK 后置序
+#   （worker/supervisor.py `_consume_request`）；claim 持久化前崩溃 → 不 ACK，留 PEL 重投。
+#   纲领 §2.3「request/control 在 durable claim/inbox 前 ACK」、§8.3「request 读出后 claim 前…ACK 前」。
+#   本钉由 R0 的 strict xfail（红）收口为正式绿钉：注入 durable claim 崩溃，断言消息未 ACK。
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Wave2 R0/R1: request 在 durable claim 前 ACK(supervisor.py:120 bus.ack 早于 "
-    "try_claim:198);claim 持久化前崩溃则消息已 ACK 即丢。期望:durable claim 落地后才 ACK。",
-)
 async def test_request_not_acked_before_durable_claim_persists() -> None:
     class _CrashBeforeClaimLedger(FakeLedger):
         async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:

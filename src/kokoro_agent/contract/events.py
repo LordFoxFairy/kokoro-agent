@@ -14,7 +14,7 @@ AllowedDecision = Literal["approve", "edit", "reject", "respond", "submit"]
 AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review", "input"]
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 RunCompletedStatus = Literal["completed", "cancelled"]
-RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "enqueue_failed", "internal_error"]
+RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "enqueue_failed", "dispatch_exhausted", "internal_error"]
 
 
 class StrictModel(BaseModel):

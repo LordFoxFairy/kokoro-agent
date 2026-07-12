@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
+from pydantic import BaseModel, BeforeValidator, ConfigDict, StringConstraints, TypeAdapter
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+
+
+def _int_from_bson_number(value: object) -> object:
+    # BSON 数字模型:JS 写者(hub TS/mongosh)的整数落库为 double;整值 float 视为 int,其余交 strict 报错。
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+# 存储文档专用 int:跨语言写者容忍(仅此镜像;wire JSON 面仍纯 strict int)。
+BsonInt = Annotated[int, BeforeValidator(_int_from_bson_number)]
 
 SkillSource = Literal["deploy", "upload", "github"]
 McpTransport = Literal["http", "streamable_http"]
@@ -25,7 +36,7 @@ class SkillCard(StrictModel):
 
 class SkillFileEntry(StrictModel):
     path: NonEmptyStr
-    size: int
+    size: BsonInt
 
 
 class SkillDoc(StrictModel):
@@ -34,37 +45,37 @@ class SkillDoc(StrictModel):
     description: NonEmptyStr
     skill_md: NonEmptyStr
     files_manifest: list[SkillFileEntry]
-    file_count: int
-    package_size: int
+    file_count: BsonInt
+    package_size: BsonInt
     content_hash: NonEmptyStr
     package_ref: NonEmptyStr
     source: SkillSource
-    revision: int
-    display_weight: int | None = None
+    revision: BsonInt
+    display_weight: BsonInt | None = None
     pinned: bool | None = None
     category: NonEmptyStr | None = None
     review_status: ReviewStatus | None = None
     official_enabled: bool
     official_required: bool
-    updated_at: int
-    deleted_at: int | None = None
+    updated_at: BsonInt
+    deleted_at: BsonInt | None = None
 
 
 class SkillStateDoc(StrictModel):
     namespace: NonEmptyStr
     name: NonEmptyStr
     enabled: bool
-    updated_at: int
+    updated_at: BsonInt
 
 
 class SkillRevisionDoc(StrictModel):
     scope: NonEmptyStr
     name: NonEmptyStr
-    revision: int
+    revision: BsonInt
     content_hash: NonEmptyStr
-    package_size: int
+    package_size: BsonInt
     source: SkillSource
-    created_at: int
+    created_at: BsonInt
 
 
 class McpServerDoc(StrictModel):
@@ -75,8 +86,8 @@ class McpServerDoc(StrictModel):
     allowed_tools: list[NonEmptyStr]
     secret_ref: NonEmptyStr | None
     enabled: bool
-    updated_at: int
-    deleted_at: int | None
+    updated_at: BsonInt
+    deleted_at: BsonInt | None
 
 
 MCP_SERVERS_COLLECTION = "mcp_servers"

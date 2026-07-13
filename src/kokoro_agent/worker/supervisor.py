@@ -92,6 +92,8 @@ class RunSupervisor:
         recursion_limit: int = 100,
         events_ttl_s: int = 0,
         run_ttl_s: int = 0,
+        # R4：published 但回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
+        outbox_republish_ms: int = 30_000,
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
         sandbox_teardown: Callable[[Backend, str | None], Awaitable[None]] | None = None,
     ) -> None:
@@ -106,6 +108,7 @@ class RunSupervisor:
         # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
         self._events_ttl_s = events_ttl_s
         self._run_ttl_s = run_ttl_s
+        self._outbox_republish_ms = outbox_republish_ms
         self._sandbox_teardown = sandbox_teardown
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -252,10 +255,22 @@ class RunSupervisor:
 
     async def _reconcile_run_receipts(self, bus: StreamProtocol, run_id: str) -> None:
         try:
-            outcome = await self._store.reconcile_receipts(run_id)
+            outcome = await self._store.reconcile_receipts(run_id, self._outbox_republish_ms)
         except Exception:  # noqa: BLE001 — 单 run 对账降级不杀心跳，下一拍重试
             LOGGER.exception("receipt reconcile failed run_id=%s", run_id)
             return
+        # published 无回执超宽限期：复用固定 durable_seq/event_id 重发（session 去重幂等无害）。
+        for frame in outcome.republish:
+            try:
+                await bus.publish(
+                    run_events_stream(frame.run_id),
+                    outbox_wire_event(frame),
+                    maxlen=RUN_EVENTS_MAXLEN,
+                )
+            except Exception:  # noqa: BLE001 — 单帧重发失败下一宽限窗再试，不阻断其余
+                LOGGER.exception(
+                    "stale outbox republish failed run_id=%s seq=%s", run_id, frame.durable_seq
+                )
         if outcome.rejected_seq is not None:
             await self._terminate_contract_incompatible(bus, run_id, outcome.rejected_seq)
         elif outcome.receipt_state_lost:

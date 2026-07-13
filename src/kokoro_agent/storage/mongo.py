@@ -12,7 +12,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.contract.storage import (
@@ -131,6 +131,8 @@ class _OutboxEntry(BaseModel):
     index: int | None = None
     timestamp: int | None = None
     payload_json: str | None = None
+    # publish 落定时刻（回执一直不来时按此判宽限期超时重发；queued/superseded 缺席）。
+    published_at: int | None = None
 
 
 _OUTBOX_ADAPTER: TypeAdapter[list[_OutboxEntry]] = TypeAdapter(list[_OutboxEntry])
@@ -172,6 +174,8 @@ class ReceiptReconcile(BaseModel):
     consumed_through: int | None = None
     # 本次经握手置下 producer_close_requested。
     close_requested: bool = False
+    # published 但回执一直不来、超宽限期的行：交 supervisor 复用固定身份重发（session 去重幂等）。
+    republish: list[OutboxFrame] = Field(default_factory=list["OutboxFrame"])
 
 
 class MongoLedger:
@@ -320,10 +324,10 @@ class MongoLedger:
         return StagedFrame(durable_seq=seq, event_id=event_id)
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
-        # publish 确认：queued→published（positional $ 命中 elemMatch 元素）。补发前崩溃留 queued。
+        # publish 确认：queued→published + 记 published_at（回执超时重发的计时锚）。补发前崩溃留 queued。
         await self._coll.update_one(
             {"_id": run_id, "outbox": {"$elemMatch": {"durable_seq": durable_seq, "status": "queued"}}},
-            {"$set": {"outbox.$.status": "published"}},
+            {"$set": {"outbox.$.status": "published", "outbox.$.published_at": self._clock()}},
         )
 
     async def list_unpublished_outbox(self) -> list[OutboxFrame]:
@@ -359,9 +363,14 @@ class MongoLedger:
         ).sort("_id", 1)
         return [str(doc["_id"]) async for doc in cursor]
 
-    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+    async def reconcile_receipts(
+        self, run_id: str, republish_grace_ms: int = 30_000
+    ) -> ReceiptReconcile:
         # R4 consume/close 握手：读 session 回执→推进 consumed→硬删已确认 outbox 行→
         # rejected NACK / receipt_state_lost / producer_close_requested 各自收口（写者分域 CAS）。
+        # 另：published 但回执一直不来、超宽限期的行（events 流被修剪/丢失致 session 从未见帧）→
+        # 交 supervisor 复用固定身份重发，避免连续性水位永久卡死。
+        now = self._clock()
         doc = await self._coll.find_one(
             {"_id": run_id}, {"outbox": 1, "terminal_fence_seq": 1}
         )
@@ -380,10 +389,37 @@ class MongoLedger:
         if rejected:
             await self._sync_local_fence(run_id, rejected[0])
             return ReceiptReconcile(rejected_seq=rejected[0])
+        # 回执超时重发候选：published、无回执、published_at 超宽限期。重发前 touch published_at
+        # 复位计时（下一宽限窗才再试，不每拍狂刷）。
+        stale = [
+            e
+            for e in live
+            if e.status == "published"
+            and e.durable_seq not in receipts
+            and e.published_at is not None
+            and now - e.published_at >= republish_grace_ms
+            and e.index is not None
+            and e.timestamp is not None
+            and e.payload_json is not None
+        ]
+        republish = [
+            OutboxFrame(
+                run_id=run_id,
+                durable_seq=e.durable_seq,
+                event_id=e.event_id,
+                kind=e.kind,
+                index=e.index or 0,
+                timestamp=e.timestamp or 0,
+                payload_json=e.payload_json or "",
+            )
+            for e in stale
+        ]
+        if stale:
+            await self._touch_published(run_id, [e.durable_seq for e in stale], now)
         manifest = await self._manifests.find_one({"run_id": run_id})
         if manifest is None:
             # 有 published 行待确认却无 manifest 且未 close：receipt_state_lost，绝不删 outbox。
-            return ReceiptReconcile(receipt_state_lost=True)
+            return ReceiptReconcile(receipt_state_lost=True, republish=republish)
         consumed = manifest.get("consumed_seq")
         consumed = consumed if isinstance(consumed, int) else 0
         by_seq = {e.durable_seq: e for e in entries}
@@ -407,6 +443,15 @@ class MongoLedger:
         return ReceiptReconcile(
             consumed_through=advanced if advanced > consumed else None,
             close_requested=close_requested,
+            republish=republish,
+        )
+
+    async def _touch_published(self, run_id: str, seqs: list[int], now: int) -> None:
+        # 重发候选 published_at 复位为 now：下一宽限窗才再评估，避免每拍重复重发。
+        await self._coll.update_one(
+            {"_id": run_id},
+            {"$set": {"outbox.$[e].published_at": now}},
+            array_filters=[{"e.durable_seq": {"$in": seqs}}],
         )
 
     async def _sync_local_fence(self, run_id: str, seq: int) -> None:

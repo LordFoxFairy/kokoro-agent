@@ -161,6 +161,10 @@ class AppConfig(BaseModel):
     drain_timeout_s: float = Field(default=60.0, gt=0, validation_alias="KOKORO_DRAIN_TIMEOUT_S")
     # run 级 token 预算（0=关闭）：跨 HITL 段累计，超限 run.failed(TokenBudgetExceeded)。
     run_token_budget: int = Field(default=0, ge=0, validation_alias="KOKORO_RUN_TOKEN_BUDGET")
+    # R4：critical 帧 published 后回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
+    outbox_republish_ms: int = Field(
+        default=30_000, gt=0, validation_alias="KOKORO_OUTBOX_REPUBLISH_MS"
+    )
 
     # --- retention 域（0=关，保留期限是产品决策不擅代）---
     retention_events_ttl_s: int = Field(

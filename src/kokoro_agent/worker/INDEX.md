@@ -19,8 +19,8 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
     （keep-first；注入由 SteeringMiddleware 下一模型轮消费）/ RunCancel→原子认领终态补发 cancelled。
   - `heartbeat_once`：活跃 run 续租；续租失败即 fencing（让渡本地执行，终态权归新属主）；
     重拾他处过期 run；收养暂停 run 的 control 监听；R4 回执对账（`_reconcile_run_receipts`：
-    推进 consumed/GC 已确认行、rejected NACK 按 contract_incompatible 终局、receipt_state_lost 告警）；
-    retention 清扫终态 run。
+    推进 consumed/GC 已确认行、rejected NACK 按 contract_incompatible 终局、receipt_state_lost 告警、
+    published 无回执超宽限期 `outbox_republish_ms` 复用固定身份重发）；retention 清扫终态 run。
   - `drain(timeout_s)`：优雅停机（暂停 run 不算活跃，不阻塞退出）。
 - `messages.py`：`parse_inbound(raw) → InboundMessage | None`（contract 校验，坏帧警告丢弃）。
 

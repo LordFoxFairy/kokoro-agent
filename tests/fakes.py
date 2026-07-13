@@ -210,6 +210,7 @@ class FakeLedger:
         for row in self.outbox.get(run_id, []):
             if row["durable_seq"] == durable_seq and row["status"] == "queued":
                 row["status"] = "published"
+                row["published_at"] = self.clock_ms
                 return
 
     async def list_unpublished_outbox(self) -> list[OutboxFrame]:
@@ -239,7 +240,10 @@ class FakeLedger:
             if any(row["status"] in ("queued", "published") for row in rows)
         )
 
-    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+    async def reconcile_receipts(
+        self, run_id: str, republish_grace_ms: int = 30_000
+    ) -> ReceiptReconcile:
+        now = self.clock_ms
         rows = self.outbox.get(run_id, [])
         live = [r for r in rows if r["status"] in ("queued", "published")]
         if not live:
@@ -252,9 +256,32 @@ class FakeLedger:
             if fence is None or fence > seq:
                 self.terminal_fence[run_id] = seq
             return ReceiptReconcile(rejected_seq=seq)
+        # published 无回执且超宽限期 → 重发候选（touch published_at 复位计时）。
+        stale = [
+            r
+            for r in live
+            if r["status"] == "published"
+            and _as_int(r["durable_seq"]) not in receipts
+            and r.get("published_at") is not None
+            and now - _as_int(r["published_at"]) >= republish_grace_ms
+        ]
+        republish = [
+            OutboxFrame(
+                run_id=run_id,
+                durable_seq=_as_int(r["durable_seq"]),
+                event_id=str(r["event_id"]),
+                kind=str(r["kind"]),
+                index=_as_int(r["index"]),
+                timestamp=_as_int(r["timestamp"]),
+                payload_json=str(r["payload_json"]),
+            )
+            for r in stale
+        ]
+        for r in stale:
+            r["published_at"] = now
         manifest = self.manifests.get(run_id)
         if manifest is None:
-            return ReceiptReconcile(receipt_state_lost=True)
+            return ReceiptReconcile(receipt_state_lost=True, republish=republish)
         consumed = _as_int(manifest.get("consumed_seq") or 0)
         by_seq = {_as_int(r["durable_seq"]): r for r in rows}
         advanced = consumed
@@ -278,6 +305,7 @@ class FakeLedger:
         return ReceiptReconcile(
             consumed_through=advanced if advanced > consumed else None,
             close_requested=close_requested,
+            republish=republish,
         )
 
     async def record_control_inbox(

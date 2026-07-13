@@ -75,9 +75,12 @@ class RunLedger(Protocol):
         # 回执对账扫描：仍有 queued/published（未 consumed 收敛）outbox 行的 run。
         ...
 
-    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+    async def reconcile_receipts(
+        self, run_id: str, republish_grace_ms: int = 30_000
+    ) -> ReceiptReconcile:
         # consume/close 握手：读 session 回执→推进 consumed→硬删已确认行；rejected NACK /
-        # receipt_state_lost / producer_close_requested 各自收口（写者分域 CAS）。
+        # receipt_state_lost / producer_close_requested 各自收口（写者分域 CAS）。published 无回执
+        # 且超 republish_grace_ms 的行→republish 列表交调用方复用固定身份重发（session 去重幂等）。
         ...
 
     async def record_control_inbox(

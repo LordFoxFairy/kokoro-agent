@@ -922,3 +922,27 @@ async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatibl
     # 终态认领 + fence 同步到 rejected_seq（其后 critical 帧一律 superseded）。
     assert await store.is_terminal("r-nack") is True
     assert store.terminal_fence["r-nack"] == 1
+
+
+async def test_heartbeat_republishes_stale_published_outbox() -> None:
+    # published 后回执一直不来、超宽限期（events 流被修剪/丢失）→ 心跳重发（复用固定身份）。
+    store = FakeLedger()
+    await store.try_claim(request("r-stale"))
+    store.outbox["r-stale"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "e1",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 0,
+            "payload_json": "{}",
+            "status": "published",
+            "published_at": 0,
+        }
+    ]
+    store.clock_ms = 60_000  # 远超默认宽限期 30s；无回执、无 manifest。
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+    await sup.heartbeat_once(bus)
+    started = [e for e in bus.run_events("r-stale") if e.kind == "run.started"]
+    assert len(started) == 1 and started[0].durable_seq == 1 and started[0].event_id == "e1"

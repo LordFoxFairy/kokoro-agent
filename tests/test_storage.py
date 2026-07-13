@@ -535,6 +535,51 @@ async def test_reconcile_receipts_manifest_missing_is_receipt_state_lost() -> No
         assert await store.list_open_outbox_runs() == ["run-lost"]
 
 
+async def test_reconcile_republishes_stale_published_without_receipt() -> None:
+    # published 后回执一直不来、超宽限期 → 重发候选（复用固定 durable_seq/event_id）；touch 后不重复。
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        await store.try_claim(request("run-stale"), OWNER)
+        s1 = await store.stage_critical_frame("run-stale", "run.started", 0, 1, '{"x":1}', terminal=False)
+        assert s1 is not None
+        await store.mark_critical_published("run-stale", 1)  # published_at = clock.now
+        # 宽限期内：不重发。
+        assert (await store.reconcile_receipts("run-stale", republish_grace_ms=10_000)).republish == []
+        # 超宽限期且无回执：重发候选。
+        clock.advance_ms(20_000)
+        out = await store.reconcile_receipts("run-stale", republish_grace_ms=10_000)
+        assert [(f.durable_seq, f.event_id, f.kind) for f in out.republish] == [
+            (1, s1.event_id, "run.started")
+        ]
+        # touch 复位 published_at（clock 未再前进）→ 下一拍不重复重发。
+        assert (await store.reconcile_receipts("run-stale", republish_grace_ms=10_000)).republish == []
+
+
+async def test_reconcile_no_stale_republish_when_receipt_present() -> None:
+    # 有回执的 published 行绝不重发（即便远超宽限期）。
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        db = dispatches.database
+        receipts = db[RUN_EVENT_RECEIPTS_COLLECTION]
+        manifests = db[RUN_RECEIPT_MANIFESTS_COLLECTION]
+        await store.try_claim(request("run-ok"), OWNER)
+        s1 = await store.stage_critical_frame("run-ok", "run.started", 0, 1, "{}", terminal=False)
+        assert s1 is not None
+        await store.mark_critical_published("run-ok", 1)
+        await receipts.insert_one(
+            {"run_id": "run-ok", "durable_seq": 1, "event_id": s1.event_id, "status": "persisted", "created_at": 0}
+        )
+        await manifests.insert_one(
+            {
+                "run_id": "run-ok", "persisted_seq": 1, "projected_seq": 0, "consumed_seq": 0,
+                "producer_close_requested": False, "producer_closed": False, "updated_at": 0,
+            }
+        )
+        clock.advance_ms(60_000)  # 远超宽限期
+        out = await store.reconcile_receipts("run-ok", republish_grace_ms=10_000)
+        assert out.republish == [] and out.consumed_through == 1
+
+
 async def test_control_inbox_keep_first_advance_and_scan() -> None:
     clock = FakeClock()
     async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):

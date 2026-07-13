@@ -156,6 +156,7 @@ async def _serve(config: AppConfig) -> None:
             recursion_limit=config.recursion_limit,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
+            outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())

@@ -12,8 +12,9 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
   SIGTERM 优雅停机：停消费新请求，`drain` 限时等活跃 run 收尾，超时交 TTL 租约重拾。
 - `supervisor.py`：`RunSupervisor`（注入式装配；RunLedger 持有去重/租约/原 request/终态认领
   四类真相）。
-  - `serve(bus)`：consumer group 消费 REQUESTS_STREAM；parse 后即 ack（坏帧不重投，恢复权
-    在 TTL 租约不在 PEL）；per-message 隔离，单条 dispatch 失败收口为该 run 的 run.failed。
+  - `serve(bus)`：consumer group 消费 REQUESTS_STREAM；RunRequest 走 CAS claim→durable claim
+    后 ACK（R1）；启动即跑 `_republish_unpublished_started`（run.started outbox 补发）与
+    `_reapply_pending_control`（R2 control inbox 续办）。per-message 隔离，单条失败收口 run.failed。
   - `dispatch(bus, msg)`：RunRequest→认领起跑 / RunResume→帧对齐续跑 / RunSteer→信箱入账
     （keep-first；注入由 SteeringMiddleware 下一模型轮消费）/ RunCancel→原子认领终态补发 cancelled。
   - `heartbeat_once`：活跃 run 续租；续租失败即 fencing（让渡本地执行，终态权归新属主）；

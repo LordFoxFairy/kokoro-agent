@@ -13,6 +13,7 @@ from kokoro_agent.contract import (
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
+    RunControlReceiptPayload,
     RunErrorCode,
     RunFailedPayload,
     RunStartedPayload,
@@ -65,6 +66,7 @@ AgentEventPayload = (
     | DeliveryCreatedPayload
     | RunCompletedPayload
     | RunFailedPayload
+    | RunControlReceiptPayload
 )
 
 _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
@@ -87,6 +89,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     DeliveryCreatedPayload: "delivery.created",
     RunCompletedPayload: "run.completed",
     RunFailedPayload: "run.failed",
+    RunControlReceiptPayload: "run.control.receipt",
 }
 
 

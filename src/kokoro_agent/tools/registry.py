@@ -67,6 +67,9 @@ JOURNAL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         SEARCH_MEMORY_TOOL_NAME,
         TODO_TOOL_NAME,
         SUBAGENT_TOOL_NAME,
+        # handoff（swarm 移交，见 agents/assembly/swarm.py）：Command 形态纯状态覆盖，无文本可短路，
+        # 重放归 langgraph checkpoint（active_agent LastValue 幂等）——入豁免表不双写 journal。
+        "handoff",
     }
 )
 

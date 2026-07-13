@@ -18,6 +18,7 @@ from langchain.agents.middleware import AgentMiddleware
 from kokoro_agent.agents.assembly.delegates import build_delegates
 from kokoro_agent.agents.assembly.guardrails import build_guard_chains
 from kokoro_agent.agents.assembly.prompt import build_system_prompt
+from kokoro_agent.agents.assembly.swarm import build_swarm_middleware, swarm_candidates
 from kokoro_agent.agents.assembly.toolset import build_toolset
 from kokoro_agent.agents.deps import AgentPolicy, AssembleDeps, AssembledAgent
 from kokoro_agent.contract import RunRequest
@@ -54,10 +55,18 @@ async def assemble_agent(
             subagent_create=runtime.permissions.subagent_create,
         )
     )
+    # 装配期人格前缀（=切轨定点）：单人格链路直用它作 system prompt；候选>1 时另挂人格中间件，
+    # 按 graph state 的 active_agent 在此前缀上定点换轨（移交后人格），底座/技能清单原样保留。
+    system_prompt = build_system_prompt(request, deps, default=policy.default_prompt)
+    if len(swarm_candidates(deps.prompts)) > 1:
+        main_chain = (
+            *main_chain,
+            build_swarm_middleware(request, deps.prompts, initial_prompt=system_prompt),
+        )
     graph = build_agent(
         model=make_chat_model(deps.model, runtime.model),
         tools=toolset.tools,
-        system_prompt=build_system_prompt(request, deps, default=policy.default_prompt),
+        system_prompt=system_prompt,
         subagents=delegates.subagents,
         checkpointer=deps.checkpointer,
         permissions=build_filesystem_permissions(runtime.permissions.filesystem),

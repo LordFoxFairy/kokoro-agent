@@ -97,6 +97,25 @@ def hitl_script() -> list[AIMessage]:
     ]
 
 
+def handoff_script(target: str = "researcher") -> list[AIMessage]:
+    # swarm 移交脚本：一次 handoff 切主导人格 → 移交后人格的一段纯文本收束。
+    # 驱动「双 persona fixture 模型驱动移交」实测（active_agent 落 checkpoint、恢复重放仍在后轨）。
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "handoff",
+                    "args": {"agent_name": target},
+                    "id": "local_handoff",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content=_FINAL_TEXT),
+    ]
+
+
 class LocalFakeChatModel(BaseChatModel):
     """支持工具调用的确定性、免凭证假模型。
 

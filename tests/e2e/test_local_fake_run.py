@@ -26,12 +26,18 @@ from kokoro_agent.contract import (
     run_control_stream,
     run_events_stream,
 )
+from kokoro_agent.agents.assembly.swarm import (
+    SwarmPersonaMiddleware,
+    make_handoff_tool,
+)
 from kokoro_agent.execution.build_agent import build_agent
-from kokoro_agent.prompts import GENERAL_PROMPT
+from kokoro_agent.execution.protocols import InvokableAgent, StateView
+from kokoro_agent.prompts import GENERAL_PROMPT, PromptLibrary
 from kokoro_agent.agents.base import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.runnables.config import RunnableConfig
 
-from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
+from kokoro_agent.model.local_fake import handoff_script, hitl_script, make_local_fake_chat_model
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 from kokoro_agent.sandbox import build_filesystem_permissions
 from kokoro_agent.storage.ledger import RunLedger
@@ -307,6 +313,72 @@ async def test_local_fake_result_review_over_control_stream(
     returned = await _tool_returned_payload(bus, run.run_id, str(awaiting["tool_id"]))
     assert returned["result"] == "curated result"
     assert returned["responded"] is True
+
+
+def _build_swarm_supervisor(
+    store: RunLedger, saver: BaseCheckpointSaver[str]
+) -> tuple[RunSupervisor, InvokableAgent]:
+    """双 persona 部署：挂 handoff 工具 + 人格中间件，驱动模型自判移交（active_agent 落 checkpoint）。"""
+    catalog = build_catalog(None)
+    library = PromptLibrary({"poet": "你是诗人。", "researcher": "你是严谨研究员。"})
+    initial_prompt = "你是诗人。"
+    agent = build_agent(
+        model=make_local_fake_chat_model(handoff_script("researcher")),
+        tools=[make_handoff_tool(library.names())],
+        system_prompt=initial_prompt,
+        subagents=catalog.definitions(),
+        checkpointer=saver,
+        permissions=build_filesystem_permissions("read_only"),
+        interrupt_on=build_interrupt_on(frozenset()),
+        middleware=[
+            SwarmPersonaMiddleware(
+                library=library, grants=[], initial_prompt=initial_prompt, initial_name="poet"
+            )
+        ],
+    )
+
+    async def build(_request: RunRequest) -> AssembledAgent:
+        return AssembledAgent(agent=agent, tool_descriptions={})
+
+    supervisor = RunSupervisor(
+        agent_builder=build,
+        store=store,
+        approval_tool_names=lambda request: (
+            frozenset(request.runtime.permissions.approval_tools) | {ASK_USER_TOOL_NAME}
+        ),
+        trace_factory=lambda _request: None,
+        source_for=catalog.source_for,
+        consumer="e2e-consumer",
+        heartbeat_s=60.0,
+    )
+    return supervisor, agent
+
+
+async def test_local_fake_model_driven_handoff_persists_active_agent(
+    stream: RedisStream, ledger: RunLedger, checkpointer: BaseCheckpointSaver[str]
+) -> None:
+    """模型自判调 handoff → active_agent 落 checkpoint；恢复重取 state 仍在移交后轨。"""
+    bus = stream
+    store = ledger
+    await bus.delete(REQUESTS_STREAM)
+    run = _request(f"e2e-swarm-{uuid4().hex[:8]}")
+    supervisor, agent = _build_swarm_supervisor(store, checkpointer)
+    serve_task = asyncio.create_task(supervisor.serve(bus))
+    await bus.publish(REQUESTS_STREAM, dict(run.model_dump()), maxlen=REQUESTS_MAXLEN)
+
+    await _wait_for(bus, run.run_id, {"run.completed", "run.failed"})
+    serve_task.cancel()
+    try:
+        await serve_task
+    except asyncio.CancelledError:
+        pass
+
+    kinds = await _read_kinds(bus, run.run_id)
+    assert kinds[-1] == "run.completed"
+    # active_agent 落 checkpoint（scoped_thread_id=namespace:thread_id）：恢复重取仍是移交后人格。
+    config: RunnableConfig = {"configurable": {"thread_id": f"e2e:{run.thread_id}"}}
+    snapshot: StateView = await agent.aget_state(config)
+    assert snapshot.values["active_agent"] == "researcher"
 
 
 def _calls_tool(turn: AIMessage, name: str) -> bool:

@@ -23,6 +23,10 @@ class KokoroAgentState(DeepAgentState):
     # 无 reducer → LastValue 覆盖：reconcile 每 run 算全量账本整体落回,GC/自愈即删项/清空天然生效；
     # 落 checkpoint → resume/跨 worker 认账（取代冻结代码的闭包 `supplied` 局部变量）。
     skills_materialized: dict[str, str]
+    # swarm 当前主导人格名（handoff 工具落此，dynamic prompt 中间件读此切 system prompt 轨）：
+    # 未设=沿用装配期 preset（runtime.agent）；无 reducer→LastValue 覆盖，落 checkpoint→resume
+    # 重放后仍在移交后轨（模型驱动移交，session/wire 不参与切换）。
+    active_agent: str
 
 
 @dataclass(frozen=True, slots=True)

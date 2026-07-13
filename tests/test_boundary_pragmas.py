@@ -35,10 +35,14 @@ _IGNORE = re.compile(r"#\s*type:\s*ignore|#\s*pyright:\s*ignore")
 
 def _iter_sources() -> list[Path]:
     root = Path(__file__).resolve().parents[1]
+    # 只扫本仓自有源；跳过 .venv/build，以及嵌套 git worktree（.wt/*，并行 worker 的隔离副本，
+    # 不是本仓源树的一部分——否则并行 worktree 的 pragma 会误入清单）。
     return [
         p
         for p in root.glob("**/*.py")
-        if ".venv" not in p.parts and not p.parts[len(root.parts)] == "build"
+        if ".venv" not in p.parts
+        and ".wt" not in p.parts
+        and not p.parts[len(root.parts)] == "build"
     ]
 
 

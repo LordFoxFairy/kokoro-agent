@@ -37,6 +37,13 @@ class SkillGrant(StrictModel):
     scope: NonEmptyStr
 
 
+class McpGrant(StrictModel):
+    scope: NonEmptyStr
+    name: NonEmptyStr
+    revision: int
+    config_hash: NonEmptyStr
+
+
 class Permissions(StrictModel):
     approval_tools: list[NonEmptyStr]
     review_tools: list[NonEmptyStr]
@@ -50,7 +57,7 @@ class RuntimeConfig(StrictModel):
     model: ModelConfig
     tools: list[NonEmptyStr]
     skills: list[SkillGrant]
-    mcp_servers: list[NonEmptyStr]
+    mcp_servers: list[McpGrant]
     subagents: list[NonEmptyStr]
     backend: Backend
     permissions: Permissions

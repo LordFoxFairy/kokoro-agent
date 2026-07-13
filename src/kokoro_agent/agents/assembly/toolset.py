@@ -48,16 +48,17 @@ async def build_toolset(
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
     tools.append(make_skill_tool(request.runtime.skills, deps.skill_hub))
-    # wire 只传 server names；定义双源合并（部署 yaml < Mongo official < Mongo namespace，
-    # 每 run 按 names 精确查一次）；未知名 fail-loud 与连接惰性化不变。
+    # wire 传 McpGrant[]（scope,name,revision,config_hash）；registry 按 (scope,name,revision) 取
+    # 不可变快照 + 校验 config_hash + 活文档 fail-closed（无 registry 时退回 yaml 部署基线）。
+    mcp_grants = request.runtime.mcp_servers
     mcp_definitions: Mapping[str, McpServerEntry] = (
         deps.mcp_servers
         if deps.mcp_registry is None
         else await deps.mcp_registry.resolve(
-            request.runtime.mcp_servers, request.context.namespace, deps.mcp_servers
+            mcp_grants, request.context.namespace, deps.mcp_servers
         )
     )
-    tools.extend(make_mcp_tools(request.runtime.mcp_servers, mcp_definitions))
+    tools.extend(make_mcp_tools([grant.name for grant in mcp_grants], mcp_definitions))
     tools.append(_deliver_tool(request, deps))
     return Toolset(
         tools=tuple(tools),

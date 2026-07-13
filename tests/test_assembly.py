@@ -15,6 +15,7 @@ from kokoro_agent.config import AppConfig
 from fakes import FakeLedger
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
+    McpGrant,
     ModelConfig,
     Permissions,
     RunInput,
@@ -202,7 +203,8 @@ def test_wire_rejects_inline_definitions() -> None:
         model=ModelConfig(provider="anthropic", name="claude"),
         tools=[],
         skills=[],
-        mcp_servers=["docs"],  # names 合法
+        # McpGrant 授权卡（scope,name,revision,config_hash）合法；一切内联定义/凭据被拒。
+        mcp_servers=[McpGrant(scope="official", name="docs", revision=1, config_hash="a" * 64)],
         subagents=["web-researcher"],
         backend="state",
         permissions=Permissions(

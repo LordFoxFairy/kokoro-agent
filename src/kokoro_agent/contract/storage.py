@@ -82,6 +82,7 @@ class SkillRevisionDoc(StrictModel):
 class McpServerDoc(StrictModel):
     scope: NonEmptyStr
     name: NonEmptyStr
+    revision: BsonInt
     transport: McpTransport
     url: NonEmptyStr
     allowed_tools: list[NonEmptyStr]
@@ -89,6 +90,18 @@ class McpServerDoc(StrictModel):
     enabled: bool
     updated_at: BsonInt
     deleted_at: BsonInt | None
+
+
+class McpServerRevisionDoc(StrictModel):
+    scope: NonEmptyStr
+    name: NonEmptyStr
+    revision: BsonInt
+    config_hash: NonEmptyStr
+    transport: McpTransport
+    url: NonEmptyStr
+    allowed_tools: list[NonEmptyStr]
+    secret_ref: NonEmptyStr | None
+    created_at: BsonInt
 
 
 class RunDispatchDoc(StrictModel):
@@ -115,6 +128,8 @@ class McpSecretDoc(StrictModel):
 
 MCP_SECRETS_COLLECTION = "mcp_secrets"
 MCP_SECRETS_UNIQUE: tuple[str, ...] = ("scope", "handle",)
+MCP_SERVER_REVISIONS_COLLECTION = "mcp_server_revisions"
+MCP_SERVER_REVISIONS_UNIQUE: tuple[str, ...] = ("scope", "name", "revision",)
 MCP_SERVERS_COLLECTION = "mcp_servers"
 MCP_SERVERS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 RUN_DISPATCHES_COLLECTION = "run_dispatches"
@@ -127,6 +142,7 @@ SKILLS_COLLECTION = "skills"
 SKILLS_UNIQUE: tuple[str, ...] = ("scope", "name",)
 
 mcp_secrets_doc_adapter: TypeAdapter[McpSecretDoc] = TypeAdapter(McpSecretDoc)
+mcp_server_revisions_doc_adapter: TypeAdapter[McpServerRevisionDoc] = TypeAdapter(McpServerRevisionDoc)
 mcp_servers_doc_adapter: TypeAdapter[McpServerDoc] = TypeAdapter(McpServerDoc)
 run_dispatches_doc_adapter: TypeAdapter[RunDispatchDoc] = TypeAdapter(RunDispatchDoc)
 skill_revisions_doc_adapter: TypeAdapter[SkillRevisionDoc] = TypeAdapter(SkillRevisionDoc)

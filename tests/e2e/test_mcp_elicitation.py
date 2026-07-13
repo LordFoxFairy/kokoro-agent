@@ -31,6 +31,7 @@ from kokoro_agent.contract import (
     REQUESTS_STREAM,
     RUN_CONTROL_MAXLEN,
     FilesystemPerm,
+    McpGrant,
     ModelConfig,
     Permissions,
     RunInput,
@@ -160,7 +161,8 @@ def _request(run_id: str, *, filesystem: FilesystemPerm = "read_only") -> RunReq
             model=ModelConfig(provider="anthropic", name="claude"),
             tools=[],
             skills=[],
-            mcp_servers=["fx"],
+            # wire 是 McpGrant 授权卡；本 e2e 用 build() 里的 hardcoded registry 装配，grant 只需过契约校验。
+            mcp_servers=[McpGrant(scope="official", name="fx", revision=1, config_hash="f" * 64)],
             subagents=[],
             backend="state",
             permissions=Permissions(

@@ -738,6 +738,13 @@ class MongoLedger:
             },
         )
 
+    async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
+        # 工具内 interrupt（HITL 暂停，非崩溃）：撤销本次 started 行（视同无行），resume 按设计
+        # 重进不被守门误判 unknown-outcome。真进程死不走此路，守门语义不变。
+        await self._coll.update_one(
+            {"_id": run_id}, {"$unset": {f"tool_journal.{tool_call_id}": ""}}
+        )
+
     async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
         doc = await self._coll.find_one({"_id": run_id}, {f"tool_journal.{tool_call_id}": 1})
         if doc is None:

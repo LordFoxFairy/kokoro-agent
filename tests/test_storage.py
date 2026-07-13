@@ -661,3 +661,15 @@ async def test_tool_journal_failed_status_and_missing_row() -> None:
         rec = await store.get_tool_journal("run-j", "call-err")
         assert rec is not None and rec.status == "failed" and rec.is_error is True
         assert rec.result == "boom"
+
+
+async def test_tool_journal_clear_removes_started_row() -> None:
+    # 工具内 interrupt 撤销 started 行：清后视同无行，重进正常执行（不被守门误拦）。
+    clock = FakeClock()
+    async with _mongo_store(clock) as store:
+        await store.try_claim(request("run-j"), OWNER)
+        await store.journal_tool_started("run-j", "call-i", "mcp_call")
+        started = await store.get_tool_journal("run-j", "call-i")
+        assert started is not None and started.status == "started"
+        await store.clear_tool_journal("run-j", "call-i")
+        assert await store.get_tool_journal("run-j", "call-i") is None

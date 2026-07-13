@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 from fakes import FakeLedger
@@ -117,7 +119,8 @@ async def test_replay_failed_short_circuits_as_error() -> None:
 
 
 async def test_replay_unknown_outcome_started_does_not_reexecute() -> None:
-    # started 行=上次崩在执行中（unknown-outcome）：非幂等工具默认不自动重放，返回 is_error 交决策。
+    # started 行=上次进程死在执行中（unknown-outcome，未走 except 撤销路径）：非幂等工具默认不自动
+    # 重放，返回 is_error 交决策——真崩溃窗口守门语义不变。
     store = FakeLedger()
     store.tool_journal[("rn", "c1")] = {
         "name": "write_file",
@@ -130,3 +133,24 @@ async def test_replay_unknown_outcome_started_does_not_reexecute() -> None:
     assert isinstance(result, ToolMessage) and result.status == "error"
     assert "unknown_outcome" in result.text
     assert handler.calls == 0
+
+
+async def test_tool_internal_interrupt_clears_started_then_resume_reenters() -> None:
+    # 工具内 GraphInterrupt（MCP elicitation / request_input 等 HITL 暂停）≠崩溃：撤销 started 行、
+    # 原样重抛 interrupt；resume 后工具从头重进不被守门拦，正常执行并记账。
+    store = FakeLedger()
+
+    async def interrupting(_request: ToolCallRequest) -> ToolMessage:
+        raise GraphInterrupt()
+
+    with pytest.raises(GraphInterrupt):
+        await _mw(store).awrap_tool_call(_request(), interrupting)
+    # started 行已撤销（视同无行）。
+    assert ("rn", "c1") not in store.tool_journal
+
+    # resume 重进：守门无行 → 正常执行并落 succeeded（合法重入未被误判 unknown-outcome）。
+    handler = _Handler("wrote after resume")
+    result = await _mw(store).awrap_tool_call(_request(), handler)
+    assert isinstance(result, ToolMessage) and result.text == "wrote after resume"
+    assert handler.calls == 1
+    assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"

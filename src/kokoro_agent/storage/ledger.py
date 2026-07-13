@@ -178,6 +178,10 @@ class RunLedger(Protocol):
         # 工具返回后 started→succeeded|failed（附记录结果供重放短路）；仅推进 started 行。
         ...
 
+    async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
+        # 工具内 interrupt（HITL 暂停≠崩溃）：撤销本次 started 行（视同无行），resume 重进不被误拦。
+        ...
+
     async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
         # 重放守门读侧：无行=正常执行；succeeded/failed=短路记录结果；started=unknown-outcome。
         ...

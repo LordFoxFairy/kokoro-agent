@@ -9,6 +9,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
@@ -254,7 +255,14 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         if recorded is not None:
             return self._replay(recorded, tool_id=tool_id, name=name)
         await self._store.journal_tool_started(self._run_id, tool_id, name)
-        result = await handler(request)
+        try:
+            result = await handler(request)
+        except GraphInterrupt:
+            # 工具内 interrupt（MCP elicitation / request_input 等 HITL 暂停）≠崩溃：GraphInterrupt
+            # 穿透中间件、resume 后工具按设计从头重进。撤销本次 started 行（视同无行）再原样重抛，
+            # 否则合法重入会被守门误判 unknown-outcome。真进程死不走 except 路径，守门语义不变。
+            await self._store.clear_tool_journal(self._run_id, tool_id)
+            raise
         if isinstance(result, ToolMessage):
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。

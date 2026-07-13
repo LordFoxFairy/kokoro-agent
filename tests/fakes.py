@@ -462,6 +462,9 @@ class FakeLedger:
         entry["result"] = result
         entry["is_error"] = is_error
 
+    async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
+        self.tool_journal.pop((run_id, tool_call_id), None)
+
     async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
         entry = self.tool_journal.get((run_id, tool_call_id))
         if entry is None:

@@ -12,19 +12,24 @@ from kokoro_agent.contract import RunRequest
 from kokoro_agent.storage.mongo import (
     ControlInboxRecord,
     MongoLedger,
+    OutboxFrame,
+    ReceiptReconcile,
+    StagedFrame,
     ToolJournalRecord,
     make_mongo_collection,
 )
 
 DEFAULT_LEASE_TTL_S = 90
 
-# ControlInboxRecord/ToolJournalRecord 定义在低层 mongo 模块（避免 ledger↔mongo 循环）；
-# 此处再导出为 ledger 面契约。
+# 这些记录类型定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
 __all__ = [
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
     "LedgerSettings",
+    "OutboxFrame",
+    "ReceiptReconcile",
     "RunLedger",
+    "StagedFrame",
     "ToolJournalRecord",
     "make_ledger",
 ]
@@ -44,12 +49,35 @@ class RunLedger(Protocol):
         # 不可解析帧死信：记 {raw_hash,source,reason,at} 后由调用方 ACK（坏帧无 identity 不重投）。
         ...
 
-    async def list_unpublished_started(self) -> list[str]:
-        # run.started 最小 outbox 补发扫描：claim 落库但发布未确认且非终态的 run。
+    async def stage_critical_frame(
+        self,
+        run_id: str,
+        kind: str,
+        index: int,
+        timestamp: int,
+        payload_json: str,
+        *,
+        terminal: bool,
+    ) -> StagedFrame | None:
+        # R4：分配 per-run durable_seq（从 1）+ event_id，落 outbox queued 行；终态帧 CAS 设
+        # local fence。返回 None=post-fence（seq>fence）→superseded 摘要落库、caller 不发布。
         ...
 
-    async def mark_started_published(self, run_id: str) -> None:
-        # run.started 发布确认：emit 成功后置 outbox 行为已发布，scanner 不再补发。
+    async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
+        # publish 确认：outbox 行 queued→published。补发前崩溃留 queued，scanner 幂等补发。
+        ...
+
+    async def list_unpublished_outbox(self) -> list[OutboxFrame]:
+        # 补发扫描：queued 的 critical 行（落库但发布未确认）——重建 wire 帧按 seq 序补发。
+        ...
+
+    async def list_open_outbox_runs(self) -> list[str]:
+        # 回执对账扫描：仍有 queued/published（未 consumed 收敛）outbox 行的 run。
+        ...
+
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+        # consume/close 握手：读 session 回执→推进 consumed→硬删已确认行；rejected NACK /
+        # receipt_state_lost / producer_close_requested 各自收口（写者分域 CAS）。
         ...
 
     async def record_control_inbox(

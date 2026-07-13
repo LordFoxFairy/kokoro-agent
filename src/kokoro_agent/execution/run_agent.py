@@ -28,7 +28,6 @@ async def invoke_once(
     describe_tool: Callable[[str], str | None] = lambda _name: None,
     claim_terminal: Callable[[], Awaitable[bool]],
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
-    mark_started: Callable[[], Awaitable[None]] | None = None,
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
 ) -> bool:
@@ -39,10 +38,8 @@ async def invoke_once(
     """
     config = _config(thread_id, trace, recursion_limit)
     if emitter.at_start:
+        # run.started 收编进 critical outbox（emitter 内分配 durable_seq=1、落 queued、发布后 published）。
         await emitter.emit(RunStartedPayload())
-        # run.started 最小 outbox：发布确认后置 published，启动 scanner 不再补发。
-        if mark_started is not None:
-            await mark_started()
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
     with get_usage_metadata_callback() as usage_cb:
         try:

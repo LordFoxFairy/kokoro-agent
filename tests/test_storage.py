@@ -13,7 +13,11 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
-from kokoro_agent.contract.storage import RUN_DISPATCHES_COLLECTION
+from kokoro_agent.contract.storage import (
+    RUN_DISPATCHES_COLLECTION,
+    RUN_EVENT_RECEIPTS_COLLECTION,
+    RUN_RECEIPT_MANIFESTS_COLLECTION,
+)
 from kokoro_agent.storage.ledger import (
     LedgerSettings,
     RunLedger,
@@ -352,6 +356,9 @@ async def _mongo_ledger_with_dispatches(
         await coll.drop()
         await dispatches.drop()
         await coll.database[DISPATCH_DLQ_COLLECTION].drop()
+        # R4 回执/清单是同库固定名兄弟集合（跨测试共享）：逐测试清空，串行安全。
+        await coll.database[RUN_EVENT_RECEIPTS_COLLECTION].drop()
+        await coll.database[RUN_RECEIPT_MANIFESTS_COLLECTION].drop()
         await client.close()
 
 
@@ -419,19 +426,113 @@ async def test_claim_dispatch_concurrent_race_single_winner() -> None:
         assert results.count(False) == 7
 
 
-async def test_run_started_outbox_scan_and_mark() -> None:
+async def test_critical_outbox_stage_publish_scan() -> None:
+    # R4：run.started 收编进 critical outbox（seq 1 惯例）；stage→queued→publish 确认→不再补发。
     clock = FakeClock()
     async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
-        req = request("run-outbox")
-        await store.try_claim(req, OWNER)  # claim 写 run_started_published=False
-        assert await store.list_unpublished_started() == ["run-outbox"]
-        await store.mark_started_published("run-outbox")
-        assert await store.list_unpublished_started() == []
-        # 终态 run 不再补发 run.started。
-        req2 = request("run-terminal")
-        await store.try_claim(req2, OWNER)
-        await store.try_mark_terminal("run-terminal")
-        assert await store.list_unpublished_started() == []
+        await store.try_claim(request("run-outbox"), OWNER)
+        staged = await store.stage_critical_frame(
+            "run-outbox", "run.started", 0, 111, '{"x":1}', terminal=False
+        )
+        assert staged is not None and staged.durable_seq == 1
+        # 未 publish → scanner 见 queued 行（完整重建元数据）。
+        frames = await store.list_unpublished_outbox()
+        assert [(f.run_id, f.durable_seq, f.kind) for f in frames] == [
+            ("run-outbox", 1, "run.started")
+        ]
+        assert frames[0].event_id == staged.event_id and frames[0].payload_json == '{"x":1}'
+        # publish 确认（queued→published）→ 不再补发。
+        await store.mark_critical_published("run-outbox", 1)
+        assert await store.list_unpublished_outbox() == []
+
+
+async def test_critical_outbox_first_terminal_fence_supersedes_suffix() -> None:
+    # 终态帧 CAS 设 local fence；其后更大 seq 一律 superseded（None 返回），永不发布。
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        await store.try_claim(request("run-fence"), OWNER)
+        s1 = await store.stage_critical_frame("run-fence", "run.started", 0, 1, "{}", terminal=False)
+        assert s1 is not None and s1.durable_seq == 1
+        # 首个终态帧=fence（seq 2）。
+        s2 = await store.stage_critical_frame(
+            "run-fence", "run.completed", 1, 2, "{}", terminal=True
+        )
+        assert s2 is not None and s2.durable_seq == 2
+        # fence 后的 critical 帧（seq 3）：post-fence → superseded，返回 None、不入补发。
+        s3 = await store.stage_critical_frame(
+            "run-fence", "run.control.receipt", 2, 3, "{}", terminal=False
+        )
+        assert s3 is None
+        await store.mark_critical_published("run-fence", 1)
+        await store.mark_critical_published("run-fence", 2)
+        # 补发扫描只见非 superseded 的 queued（此处均已 published）→ 空。
+        assert await store.list_unpublished_outbox() == []
+
+
+async def test_reconcile_receipts_consumes_gcs_and_requests_close() -> None:
+    # session 落 persisted 回执 + manifest → agent 推进 consumed、硬删已确认行、终态请求 close。
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        db = dispatches.database
+        receipts = db[RUN_EVENT_RECEIPTS_COLLECTION]
+        manifests = db[RUN_RECEIPT_MANIFESTS_COLLECTION]
+        await store.try_claim(request("run-rc"), OWNER)
+        s1 = await store.stage_critical_frame("run-rc", "run.started", 0, 1, "{}", terminal=False)
+        s2 = await store.stage_critical_frame("run-rc", "run.completed", 1, 2, "{}", terminal=True)
+        assert s1 is not None and s2 is not None
+        await store.mark_critical_published("run-rc", 1)
+        await store.mark_critical_published("run-rc", 2)
+        await receipts.insert_many(
+            [
+                {"run_id": "run-rc", "durable_seq": 1, "event_id": s1.event_id, "status": "persisted", "created_at": 0},
+                {"run_id": "run-rc", "durable_seq": 2, "event_id": s2.event_id, "status": "persisted", "created_at": 0},
+            ]
+        )
+        await manifests.insert_one(
+            {
+                "run_id": "run-rc", "persisted_seq": 2, "projected_seq": 0, "consumed_seq": 0,
+                "producer_close_requested": False, "producer_closed": False, "updated_at": 0,
+            }
+        )
+        outcome = await store.reconcile_receipts("run-rc")
+        assert outcome.consumed_through == 2 and outcome.close_requested is True
+        # 已确认行硬删 → 无 open outbox。
+        assert await store.list_open_outbox_runs() == []
+        manifest = await manifests.find_one({"run_id": "run-rc"})
+        assert manifest is not None
+        assert manifest["consumed_seq"] == 2 and manifest["producer_close_requested"] is True
+
+
+async def test_reconcile_receipts_rejected_nack_syncs_fence() -> None:
+    # session NACK（rejected 回执）：同步 local fence=rejected_seq，交 supervisor 终局。
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        receipts = dispatches.database[RUN_EVENT_RECEIPTS_COLLECTION]
+        await store.try_claim(request("run-nack"), OWNER)
+        s1 = await store.stage_critical_frame("run-nack", "run.started", 0, 1, "{}", terminal=False)
+        assert s1 is not None
+        await store.mark_critical_published("run-nack", 1)
+        await receipts.insert_one(
+            {"run_id": "run-nack", "durable_seq": 1, "event_id": s1.event_id, "status": "rejected", "reason": "schema", "created_at": 0}
+        )
+        outcome = await store.reconcile_receipts("run-nack")
+        assert outcome.rejected_seq == 1
+        # fence 同步到 rejected_seq：其后 critical 帧一律 superseded。
+        s2 = await store.stage_critical_frame("run-nack", "run.completed", 1, 2, "{}", terminal=True)
+        assert s2 is None
+
+
+async def test_reconcile_receipts_manifest_missing_is_receipt_state_lost() -> None:
+    # published 行待确认却无 manifest 且未 close：receipt_state_lost，绝不删 outbox。
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        await store.try_claim(request("run-lost"), OWNER)
+        await store.stage_critical_frame("run-lost", "run.started", 0, 1, "{}", terminal=False)
+        await store.mark_critical_published("run-lost", 1)
+        outcome = await store.reconcile_receipts("run-lost")
+        assert outcome.receipt_state_lost is True
+        # outbox 行未被删（仍 open）。
+        assert await store.list_open_outbox_runs() == ["run-lost"]
 
 
 async def test_control_inbox_keep_first_advance_and_scan() -> None:

@@ -15,7 +15,7 @@ AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review", "i
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 ControlReceiptStatus = Literal["persisted", "applied"]
 RunCompletedStatus = Literal["completed", "cancelled"]
-RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "enqueue_failed", "dispatch_exhausted", "internal_error"]
+RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "enqueue_failed", "dispatch_exhausted", "contract_incompatible", "internal_error"]
 
 
 class StrictModel(BaseModel):
@@ -200,6 +200,9 @@ class RunStarted(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: RunStartedPayload
 
 
@@ -208,6 +211,9 @@ class ThinkingDelta(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: ThinkingDeltaPayload
 
 
@@ -216,6 +222,9 @@ class MessageDelta(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: MessageDeltaPayload
 
 
@@ -224,6 +233,9 @@ class MessageCompleted(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: MessageCompletedPayload
 
 
@@ -232,6 +244,9 @@ class ToolInvoked(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: ToolInvokedPayload
 
 
@@ -240,6 +255,9 @@ class ToolOutputDelta(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: ToolOutputDeltaPayload
 
 
@@ -248,6 +266,9 @@ class ToolAwaitingApproval(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: ToolAwaitingApprovalPayload
 
 
@@ -256,6 +277,9 @@ class ToolReturned(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: ToolReturnedPayload
 
 
@@ -264,6 +288,9 @@ class TodoUpdated(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: TodoUpdatedPayload
 
 
@@ -272,6 +299,9 @@ class SubagentStarted(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentStartedPayload
 
 
@@ -280,6 +310,9 @@ class SubagentFinished(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentFinishedPayload
 
 
@@ -288,6 +321,9 @@ class SubagentThinkingDelta(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentThinkingDeltaPayload
 
 
@@ -296,6 +332,9 @@ class SubagentTextDelta(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentTextDeltaPayload
 
 
@@ -304,6 +343,9 @@ class SubagentTextCompleted(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentTextCompletedPayload
 
 
@@ -312,6 +354,9 @@ class SubagentToolInvoked(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentToolInvokedPayload
 
 
@@ -320,6 +365,9 @@ class SubagentToolReturned(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: SubagentToolReturnedPayload
 
 
@@ -328,6 +376,9 @@ class DeliveryCreated(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: DeliveryCreatedPayload
 
 
@@ -336,6 +387,9 @@ class RunControlReceipt(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: RunControlReceiptPayload
 
 
@@ -344,6 +398,9 @@ class RunCompleted(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: RunCompletedPayload
 
 
@@ -352,6 +409,9 @@ class RunFailed(StrictModel):
     run_id: NonEmptyStr
     index: NonNegInt
     timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
     payload: RunFailedPayload
 
 

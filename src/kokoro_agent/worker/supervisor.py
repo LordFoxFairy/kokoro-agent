@@ -18,6 +18,7 @@ from kokoro_agent.contract import (
     Backend,
     ControlReceiptStatus,
     REQUESTS_STREAM,
+    RUN_EVENTS_MAXLEN,
     InboundMessage,
     RunCancel,
     RunCompletedPayload,
@@ -25,7 +26,6 @@ from kokoro_agent.contract import (
     RunErrorCode,
     RunRequest,
     RunResume,
-    RunStartedPayload,
     RunSteer,
     SubagentSource,
     run_events_stream,
@@ -48,7 +48,7 @@ from kokoro_agent.execution.approvals import (
     resolution_payloads,
     resume_command_decisions,
 )
-from kokoro_agent.execution.events import RunEmitter, run_failed_payload
+from kokoro_agent.execution.events import RunEmitter, outbox_wire_event, run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.state import RunScope
@@ -124,8 +124,8 @@ class RunSupervisor:
         return self._tasks
 
     async def serve(self, bus: StreamProtocol) -> None:
-        # run.started 最小 outbox 补发：启动即扫 claim 落库但发布未确认的 run（幂等重发）。
-        await self._republish_unpublished_started(bus)
+        # critical outbox 补发：启动即扫 queued（落库但发布未确认）行，按 seq 序补发（幂等）。
+        await self._republish_outbox(bus)
         # control inbox 续办（R2）：persisted 未 applied 的 resume/cancel——fingerprint 匹配才续 apply。
         await self._reapply_pending_control(bus)
         heartbeat = asyncio.create_task(self._heartbeat_loop(bus))
@@ -175,19 +175,26 @@ class RunSupervisor:
             return
         await self._on_request(bus, request)
 
-    async def _republish_unpublished_started(self, bus: StreamProtocol) -> None:
-        # 崩溃前 claim 已落库但 run.started 未确认发布：补发（幂等，session 不投影 run.started）。
+    async def _republish_outbox(self, bus: StreamProtocol) -> None:
+        # 崩溃/瞬时故障后 queued 的 critical 行：按 seq 序补发到事件流（复用固定 event_id/durable_seq，
+        # session 按 [run_id,durable_seq] unique 去重）。补发成功后置 published。
         try:
-            run_ids = await self._store.list_unpublished_started()
+            frames = await self._store.list_unpublished_outbox()
         except Exception:  # noqa: BLE001 — 补发扫描降级不阻断 serve 启动
-            LOGGER.exception("run.started outbox scan failed")
+            LOGGER.exception("critical outbox scan failed")
             return
-        for run_id in run_ids:
-            emitter = await self._emitter(bus, run_id)
-            if emitter.at_start:
-                await emitter.emit(RunStartedPayload())
-            self._emitters.pop(run_id, None)
-            await self._store.mark_started_published(run_id)
+        for frame in frames:
+            try:
+                await bus.publish(
+                    run_events_stream(frame.run_id),
+                    outbox_wire_event(frame),
+                    maxlen=RUN_EVENTS_MAXLEN,
+                )
+                await self._store.mark_critical_published(frame.run_id, frame.durable_seq)
+            except Exception:  # noqa: BLE001 — 单帧补发失败留 queued，下一拍再试，不阻断其余
+                LOGGER.exception(
+                    "outbox republish failed run_id=%s seq=%s", frame.run_id, frame.durable_seq
+                )
 
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):
@@ -234,10 +241,45 @@ class RunSupervisor:
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
         for run_id in await self._store.list_paused():
             self._ensure_control_listener(bus, run_id)
+        # R4 critical outbox 回执对账：推进 consumed/GC 已确认行，rejected NACK 终局，
+        # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
+        for run_id in await self._store.list_open_outbox_runs():
+            await self._reconcile_run_receipts(bus, run_id)
         if self._run_ttl_s > 0:
             purged = await self._store.purge_terminal(self._run_ttl_s * 1000)
             if purged:
                 LOGGER.info("retention purged %d terminal runs", purged)
+
+    async def _reconcile_run_receipts(self, bus: StreamProtocol, run_id: str) -> None:
+        try:
+            outcome = await self._store.reconcile_receipts(run_id)
+        except Exception:  # noqa: BLE001 — 单 run 对账降级不杀心跳，下一拍重试
+            LOGGER.exception("receipt reconcile failed run_id=%s", run_id)
+            return
+        if outcome.rejected_seq is not None:
+            await self._terminate_contract_incompatible(bus, run_id, outcome.rejected_seq)
+        elif outcome.receipt_state_lost:
+            # manifest 行缺失且未 close：不删 outbox（reconcile 已保守跳过），ERROR 告警待排查。
+            LOGGER.error("receipt_state_lost: manifest missing before close, run_id=%s", run_id)
+
+    async def _terminate_contract_incompatible(
+        self, bus: StreamProtocol, run_id: str, rejected_seq: int
+    ) -> None:
+        # session NACK（quarantine）：停止执行——cancel 在跑任务；分配已被 local fence（=rejected_seq）
+        # 冻结，其后 critical 帧一律 superseded 不上 wire。原子认领终态后收束（与自然完成/cancel 互斥）。
+        task = self._tasks.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        if await self._store.try_mark_terminal(run_id):
+            LOGGER.error(
+                "run terminated contract_incompatible: session NACK at seq=%s run_id=%s",
+                rejected_seq,
+                run_id,
+            )
+            self._emitters.pop(run_id, None)
+            await self._teardown_control(bus, run_id)
 
     async def _heartbeat_loop(self, bus: StreamProtocol) -> None:
         while True:
@@ -430,8 +472,6 @@ class RunSupervisor:
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
                 # 用量跨段累计真源：run.completed 报累计而非末段。
                 record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
-                # run.started outbox：at_start emit 成功后置 published（幂等，补发 scanner 收口）。
-                mark_started=lambda: self._store.mark_started_published(run_id),
             )
         if terminal:
             self._emitters.pop(run_id, None)
@@ -608,7 +648,9 @@ class RunSupervisor:
                 frozenset() if request is None
                 else frozenset(request.runtime.permissions.review_tools)
             )
-            emitter = await RunEmitter.attach(bus, run_id, review)
+            # store 作 critical outbox 端口：run.started/receipt/completed/failed 经其分配
+            # durable_seq/event_id 并落 queued 行；live 帧仍直发。
+            emitter = await RunEmitter.attach(bus, run_id, review, self._store)
             self._emitters[run_id] = emitter
         return emitter
 

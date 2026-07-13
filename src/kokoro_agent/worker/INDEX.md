@@ -13,12 +13,14 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 - `supervisor.py`：`RunSupervisor`（注入式装配；RunLedger 持有去重/租约/原 request/终态认领
   四类真相）。
   - `serve(bus)`：consumer group 消费 REQUESTS_STREAM；RunRequest 走 CAS claim→durable claim
-    后 ACK（R1）；启动即跑 `_republish_unpublished_started`（run.started outbox 补发）与
+    后 ACK（R1）；启动即跑 `_republish_outbox`（R4 critical outbox queued 行按 seq 序幂等补发）与
     `_reapply_pending_control`（R2 control inbox 续办）。per-message 隔离，单条失败收口 run.failed。
   - `dispatch(bus, msg)`：RunRequest→认领起跑 / RunResume→帧对齐续跑 / RunSteer→信箱入账
     （keep-first；注入由 SteeringMiddleware 下一模型轮消费）/ RunCancel→原子认领终态补发 cancelled。
   - `heartbeat_once`：活跃 run 续租；续租失败即 fencing（让渡本地执行，终态权归新属主）；
-    重拾他处过期 run；收养暂停 run 的 control 监听；retention 清扫终态 run。
+    重拾他处过期 run；收养暂停 run 的 control 监听；R4 回执对账（`_reconcile_run_receipts`：
+    推进 consumed/GC 已确认行、rejected NACK 按 contract_incompatible 终局、receipt_state_lost 告警）；
+    retention 清扫终态 run。
   - `drain(timeout_s)`：优雅停机（暂停 run 不算活跃，不阻塞退出）。
 - `messages.py`：`parse_inbound(raw) → InboundMessage | None`（contract 校验，坏帧警告丢弃）。
 

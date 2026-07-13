@@ -877,12 +877,48 @@ async def test_malformed_frame_quarantined_to_dlq_and_acked() -> None:
     assert source == REQUESTS_STREAM and reason == "unparseable"
 
 
-async def test_serve_republishes_unpublished_run_started() -> None:
-    # run.started 最小 outbox：claim 落库但发布未确认 → 启动 scanner 补发（幂等）。
+async def test_serve_republishes_queued_outbox() -> None:
+    # R4 critical outbox：stage 落库但发布未确认（崩在 publish 前）→ 启动 scanner 补发（幂等）。
     store = FakeLedger()
-    store.started_published["r-orphan"] = False
+    store.outbox["r-orphan"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "evt_orphan_1",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 5,
+            "payload_json": "{}",
+            "status": "queued",
+        }
+    ]
     bus = FakeBus(inbound=())
     sup, _ = _supervisor(FakeAgent(), store=store)
     await sup.serve(bus)
-    assert "run.started" in bus.kinds("r-orphan")
-    assert store.started_published["r-orphan"] is True
+    # 补发到事件流，复用固定 event_id/durable_seq；补发后置 published，不再补发。
+    started = [e for e in bus.run_events("r-orphan") if e.kind == "run.started"]
+    assert len(started) == 1 and started[0].durable_seq == 1 and started[0].event_id == "evt_orphan_1"
+    assert store.outbox["r-orphan"][0]["status"] == "published"
+
+
+async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatible() -> None:
+    # session NACK（rejected 回执）：心跳对账 → 同步 fence + 原子认领终态（停止执行与分配）。
+    store = FakeLedger()
+    await store.try_claim(request("r-nack"))
+    store.outbox["r-nack"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "e1",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 0,
+            "payload_json": "{}",
+            "status": "published",
+        }
+    ]
+    store.receipts["r-nack"] = [{"durable_seq": 1, "event_id": "e1", "status": "rejected"}]
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+    await sup.heartbeat_once(bus)
+    # 终态认领 + fence 同步到 rejected_seq（其后 critical 帧一律 superseded）。
+    assert await store.is_terminal("r-nack") is True
+    assert store.terminal_fence["r-nack"] == 1

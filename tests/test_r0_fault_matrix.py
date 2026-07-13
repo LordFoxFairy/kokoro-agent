@@ -11,13 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 
-import pytest
 from pydantic import JsonValue
 
 from fakes import FakeAgent, FakeBus, FakeLedger, request, text_run, usage_recorder
 from kokoro_agent.agents.base import AssembledAgent
-from kokoro_agent.contract import RunRequest, SubagentSource
-from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.contract import RUN_EVENTS_MAXLEN, RunRequest, SubagentSource, run_events_stream
+from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -71,14 +70,13 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 钉 2（归属 R4）：agent terminal 在事件发布前消耗终态权，发布失败即丢弃。
-#   注入点：execution/run_agent.py:62-76 `invoke_once` —— claim_terminal()（line 62）
-#   先消耗终态权，emitter.emit(RunCompletedPayload)（line 69）后发布；publish 抛错被
-#   line 73 顶层 except 吞掉（再 claim 得 False → 什么都不发），终态帧永失、无补发。
-#   纲领 §2.3「agent terminal 在事件发布前消耗终态权；关键状态帧发布失败可直接丢弃」、
-#         §7「critical publish 失败 → agent outbox pending 自动补发；固定 event_id/durable_seq」。
-#   期望语义（修复后成立）：终态 publish 瞬时失败不得静默丢弃——要么经 durable outbox 补发到
-#   事件流，要么上抛触发重投；二者居一即可。
+# 钉 2（归属 R4，已收口·绿钉）：agent terminal publish 瞬时失败不得静默丢弃。
+#   R4 实现：critical 帧（run.completed 等）经 durable outbox——emitter 先 stage_critical_frame
+#   落 queued 行（固定 durable_seq/event_id），再 publish；publish 抛错被 invoke_once 顶层 except
+#   吞掉后，outbox 行仍留 queued，scanner（supervisor._republish_outbox）按 seq 序幂等补发到事件流。
+#   纲领 §2.3 / §7「critical publish 失败 → agent outbox pending 自动补发；固定 event_id/durable_seq」。
+#   本钉由 R0 的 strict xfail（红）收口为正式绿钉：注入首次终态 publish 故障，断言终态帧经 outbox
+#   补发落 wire 且身份（durable_seq/event_id）不漂移。
 # ---------------------------------------------------------------------------
 class _FlakyTerminalBus(FakeBus):
     """终态帧首次 publish 抛错（注入关键状态帧发布瞬时故障）；其余帧正常。"""
@@ -96,41 +94,36 @@ class _FlakyTerminalBus(FakeBus):
         return await super().publish(stream, event, maxlen=maxlen)
 
 
-def _one_shot_claim() -> Callable[[], Awaitable[bool]]:
-    # 忠实复刻 supervisor 的 try_mark_terminal：终态权一次性，第二次认领即 False。
-    consumed = {"v": False}
-
-    async def claim() -> bool:
-        if consumed["v"]:
-            return False
-        consumed["v"] = True
-        return True
-
-    return claim
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Wave2 R0/R4: agent terminal 在发布前消耗终态权,关键帧 publish 失败被 run_agent.py:73 "
-    "broad except 吞掉即丢(无 durable outbox/补发)。期望:终态 publish 故障经补发投递或上抛,不静默丢弃。",
-)
-async def test_terminal_frame_not_silently_dropped_on_publish_failure() -> None:
+async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> None:
     bus = _FlakyTerminalBus()
-    emitter = await RunEmitter.attach(bus, "term-drop")
-    raised = False
-    try:
-        await invoke_once(
-            emitter,
-            FakeAgent(run=text_run("hi")),
-            "c1",
-            {"messages": []},
-            approval_tool_names=frozenset(),
-            source_for=_source,
-            claim_terminal=_one_shot_claim(),
-            record_usage=usage_recorder()[0],
+    store = FakeLedger()
+    await store.try_claim(request("term-drop"))  # 建 run 文档：stage 落 outbox 行的前提
+    emitter = await RunEmitter.attach(bus, "term-drop", frozenset(), store)
+    await invoke_once(
+        emitter,
+        FakeAgent(run=text_run("hi")),
+        "c1",
+        {"messages": []},
+        approval_tool_names=frozenset(),
+        source_for=_source,
+        claim_terminal=lambda: store.try_mark_terminal("term-drop"),
+        record_usage=usage_recorder()[0],
+    )
+    # 首次 publish 失败被顶层 except 吞掉 → run.completed 未上 wire，但 outbox 行留 queued。
+    on_wire = [e for e in bus.run_events("term-drop") if e.kind in {"run.completed", "run.failed"}]
+    assert on_wire == []
+    queued = [f for f in await store.list_unpublished_outbox() if f.kind == "run.completed"]
+    assert len(queued) == 1
+    seq, event_id = queued[0].durable_seq, queued[0].event_id
+
+    # scanner 补发（FlakyBus 只失败一次）：终态帧落 wire，复用固定 durable_seq/event_id（不漂移）。
+    for frame in await store.list_unpublished_outbox():
+        await bus.publish(
+            run_events_stream(frame.run_id), outbox_wire_event(frame), maxlen=RUN_EVENTS_MAXLEN
         )
-    except Exception:  # noqa: BLE001 — 上抛也是「不静默丢弃」的一种合规收口
-        raised = True
-    terminal = [e for e in bus.run_events("term-drop") if e.kind in {"run.completed", "run.failed"}]
-    # 期望：终态帧未被静默丢弃——补发到事件流，或上抛触发重投。
-    assert raised or len(terminal) >= 1
+        await store.mark_critical_published(frame.run_id, frame.durable_seq)
+    republished = [e for e in bus.run_events("term-drop") if e.kind == "run.completed"]
+    assert len(republished) == 1
+    assert republished[0].durable_seq == seq and republished[0].event_id == event_id
+    # 补发后无残留 queued（幂等收敛）。
+    assert await store.list_unpublished_outbox() == []

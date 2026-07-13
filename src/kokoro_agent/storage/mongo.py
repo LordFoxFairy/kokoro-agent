@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import time
 from collections.abc import Callable
 from typing import Any
@@ -14,7 +15,13 @@ from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.contract.storage import RUN_DISPATCHES_COLLECTION
+from kokoro_agent.contract.storage import (
+    RUN_DISPATCHES_COLLECTION,
+    RUN_EVENT_RECEIPTS_COLLECTION,
+    RUN_RECEIPT_MANIFESTS_COLLECTION,
+    RunEventReceiptDoc,
+    run_event_receipts_doc_adapter,
+)
 
 # 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
@@ -22,6 +29,11 @@ DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _event_id() -> str:
+    # critical 帧稳定身份（evt_ 前缀 + 128bit 随机）：崩溃补发复用同 event_id，session 去重不漂移。
+    return f"evt_{secrets.token_hex(16)}"
 
 
 class _ToolResultEntry(BaseModel):
@@ -108,6 +120,60 @@ class ToolJournalRecord(BaseModel):
     is_error: bool
 
 
+class _OutboxEntry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    durable_seq: int
+    event_id: str
+    kind: str
+    status: str  # queued | published | superseded
+    # queued/published 携完整重建元数据；superseded 只留 kind+event_id 摘要（payload 删）。
+    index: int | None = None
+    timestamp: int | None = None
+    payload_json: str | None = None
+
+
+_OUTBOX_ADAPTER: TypeAdapter[list[_OutboxEntry]] = TypeAdapter(list[_OutboxEntry])
+
+
+class StagedFrame(BaseModel):
+    """critical 帧 durable 身份分配结果：seq 独立于 live index，崩溃补发复用同一对。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    durable_seq: int
+    event_id: str
+
+
+class OutboxFrame(BaseModel):
+    """queued outbox 行的重建视图（scanner 补发用）：完整还原 wire 帧。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    run_id: str
+    durable_seq: int
+    event_id: str
+    kind: str
+    index: int
+    timestamp: int
+    payload_json: str
+
+
+class ReceiptReconcile(BaseModel):
+    """一次 per-run 回执对账结果：供 supervisor 决定终局收口/告警。"""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    # session NACK（quarantine）：非空即须停止执行与分配、按 contract_incompatible 终局。
+    rejected_seq: int | None = None
+    # manifest 行缺失且未 close：不删 outbox，ERROR 告警。
+    receipt_state_lost: bool = False
+    # 本次推进到的 consumed_seq（None=未推进）。
+    consumed_through: int | None = None
+    # 本次经握手置下 producer_close_requested。
+    close_requested: bool = False
+
+
 class MongoLedger:
     """单 collection、以 run_id 为 _id：upsert 与条件 update 提供跨 pod 原子认领。"""
 
@@ -125,6 +191,10 @@ class MongoLedger:
         # gate/closure env 令两库同名同实例，单文档 CAS 跨进程可见）。
         self._dispatches = collection.database[RUN_DISPATCHES_COLLECTION]
         self._dlq = collection.database[DISPATCH_DLQ_COLLECTION]
+        # R4 critical outbox 回执/清单同库兄弟集合（同库部署，写者分域见 contract/spec/storage.yaml）：
+        # run_event_receipts 由 session 写、agent 读；run_receipt_manifests 双方 CAS 各自字段。
+        self._receipts = collection.database[RUN_EVENT_RECEIPTS_COLLECTION]
+        self._manifests = collection.database[RUN_RECEIPT_MANIFESTS_COLLECTION]
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # $setOnInsert + upsert：仅 _id 不存在时写入；并发 upsert 撞 _id 抛 DuplicateKeyError
@@ -138,9 +208,8 @@ class MongoLedger:
                         "terminal": False,
                         "lease_expires_ms": self._clock() + self._ttl_ms,
                         "owner": owner,
-                        # run.started 最小 outbox（R1）：claim 即写未发布行，emit 后置 True，
-                        # 启动 scanner 补发 unpublished（幂等：session 不投影 run.started）。
-                        "run_started_published": False,
+                        # R4：run.started 收编进 critical outbox（seq 1 惯例），claim 不再写
+                        # run_started_published 布尔位——身份/补发一律走 outbox（stage→publish→scanner）。
                     }
                 },
                 upsert=True,
@@ -170,18 +239,205 @@ class MongoLedger:
             {"raw_hash": raw_hash, "source": source, "reason": reason, "at": self._clock()}
         )
 
-    async def list_unpublished_started(self) -> list[str]:
-        # run.started outbox 补发扫描：claim 落库但发布未确认且非终态的 run。
+    async def stage_critical_frame(
+        self,
+        run_id: str,
+        kind: str,
+        index: int,
+        timestamp: int,
+        payload_json: str,
+        *,
+        terminal: bool,
+    ) -> StagedFrame | None:
+        # R4：原子分配 per-run durable_seq（从 1 连续）+ event_id，落 outbox queued 行。
+        # 终态帧 CAS 设 local terminal_fence_seq（仅当未设，first-terminal 赢）。返回 None=
+        # 该 seq>fence（post-fence）→行以 superseded 摘要落库、永不发布，caller 不上 wire。
+        event_id = _event_id()
+        queued_row: dict[str, object] = {
+            "durable_seq": "$durable_counter",
+            "event_id": {"$literal": event_id},
+            "kind": {"$literal": kind},
+            "index": index,
+            "timestamp": timestamp,
+            "payload_json": {"$literal": payload_json},
+            "status": {"$literal": "queued"},
+        }
+        superseded_row: dict[str, object] = {
+            "durable_seq": "$durable_counter",
+            "event_id": {"$literal": event_id},
+            "kind": {"$literal": kind},
+            "status": {"$literal": "superseded"},
+        }
+        # $ifNull 归一：未设的 terminal_fence_seq（缺席字段）在聚合里须显式当作 null，
+        # 否则 missing≠null 会误判 post-fence（把无 fence 的首帧错标 superseded）。
+        post_fence = {
+            "$and": [
+                {"$ne": [{"$ifNull": ["$terminal_fence_seq", None]}, None]},
+                {"$gt": ["$durable_counter", {"$ifNull": ["$terminal_fence_seq", -1]}]},
+            ]
+        }
+        doc = await self._coll.find_one_and_update(
+            {"_id": run_id},
+            [
+                {"$set": {"durable_counter": {"$add": [{"$ifNull": ["$durable_counter", 0]}, 1]}}},
+                {
+                    "$set": {
+                        "terminal_fence_seq": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        terminal,
+                                        {"$eq": [{"$ifNull": ["$terminal_fence_seq", None]}, None]},
+                                    ]
+                                },
+                                "$durable_counter",
+                                "$terminal_fence_seq",
+                            ]
+                        }
+                    }
+                },
+                {
+                    "$set": {
+                        "outbox": {
+                            "$concatArrays": [
+                                {"$ifNull": ["$outbox", []]},
+                                [{"$cond": [post_fence, superseded_row, queued_row]}],
+                            ]
+                        }
+                    }
+                },
+            ],
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is None:
+            return None
+        seq = doc.get("durable_counter")
+        fence = doc.get("terminal_fence_seq")
+        if not isinstance(seq, int):
+            raise TypeError(f"durable_counter for {run_id!r} is not an int: {seq!r}")
+        if isinstance(fence, int) and seq > fence:
+            return None
+        return StagedFrame(durable_seq=seq, event_id=event_id)
+
+    async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
+        # publish 确认：queued→published（positional $ 命中 elemMatch 元素）。补发前崩溃留 queued。
+        await self._coll.update_one(
+            {"_id": run_id, "outbox": {"$elemMatch": {"durable_seq": durable_seq, "status": "queued"}}},
+            {"$set": {"outbox.$.status": "published"}},
+        )
+
+    async def list_unpublished_outbox(self) -> list[OutboxFrame]:
+        # 补发扫描：queued（落库但发布未确认）的 critical 行——崩溃/瞬时故障后按 seq 序补发（幂等）。
+        cursor = self._coll.find({"outbox.status": "queued"}, {"_id": 1, "outbox": 1}).sort("_id", 1)
+        frames: list[OutboxFrame] = []
+        async for doc in cursor:
+            run_id = str(doc["_id"])
+            entries = _OUTBOX_ADAPTER.validate_python(doc.get("outbox") or [])
+            for entry in entries:
+                if entry.status != "queued":
+                    continue
+                if entry.index is None or entry.timestamp is None or entry.payload_json is None:
+                    continue
+                frames.append(
+                    OutboxFrame(
+                        run_id=run_id,
+                        durable_seq=entry.durable_seq,
+                        event_id=entry.event_id,
+                        kind=entry.kind,
+                        index=entry.index,
+                        timestamp=entry.timestamp,
+                        payload_json=entry.payload_json,
+                    )
+                )
+        frames.sort(key=lambda f: (f.run_id, f.durable_seq))
+        return frames
+
+    async def list_open_outbox_runs(self) -> list[str]:
+        # 回执对账扫描：仍有 queued/published（未 consumed 收敛）outbox 行的 run。
         cursor = self._coll.find(
-            {"terminal": {"$ne": True}, "run_started_published": False},
-            {"_id": 1},
+            {"outbox.status": {"$in": ["queued", "published"]}}, {"_id": 1}
         ).sort("_id", 1)
         return [str(doc["_id"]) async for doc in cursor]
 
-    async def mark_started_published(self, run_id: str) -> None:
-        await self._coll.update_one(
-            {"_id": run_id}, {"$set": {"run_started_published": True}}
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+        # R4 consume/close 握手：读 session 回执→推进 consumed→硬删已确认 outbox 行→
+        # rejected NACK / receipt_state_lost / producer_close_requested 各自收口（写者分域 CAS）。
+        doc = await self._coll.find_one(
+            {"_id": run_id}, {"outbox": 1, "terminal_fence_seq": 1}
         )
+        if doc is None:
+            return ReceiptReconcile()
+        entries = _OUTBOX_ADAPTER.validate_python(doc.get("outbox") or [])
+        live = [e for e in entries if e.status in ("queued", "published")]
+        if not live:
+            return ReceiptReconcile()
+        receipts: dict[int, RunEventReceiptDoc] = {}
+        async for raw in self._receipts.find({"run_id": run_id}, {"_id": 0}):
+            rec = run_event_receipts_doc_adapter.validate_python(raw)
+            receipts[int(rec.durable_seq)] = rec
+        # rejected NACK 最高优先：同步 local fence=min(existing, rejected_seq)，交 supervisor 终局。
+        rejected = sorted(s for s, r in receipts.items() if r.status == "rejected")
+        if rejected:
+            await self._sync_local_fence(run_id, rejected[0])
+            return ReceiptReconcile(rejected_seq=rejected[0])
+        manifest = await self._manifests.find_one({"run_id": run_id})
+        if manifest is None:
+            # 有 published 行待确认却无 manifest 且未 close：receipt_state_lost，绝不删 outbox。
+            return ReceiptReconcile(receipt_state_lost=True)
+        consumed = manifest.get("consumed_seq")
+        consumed = consumed if isinstance(consumed, int) else 0
+        by_seq = {e.durable_seq: e for e in entries}
+        advanced = consumed
+        seq = consumed + 1
+        while seq in receipts and receipts[seq].status == "persisted":
+            row = by_seq.get(seq)
+            if row is not None and row.event_id != receipts[seq].event_id:
+                # event_id 不一致（身份漂移）：停在此处，不 GC（fail-safe，交人排查）。
+                break
+            advanced = seq
+            seq += 1
+        if advanced > consumed:
+            await self._advance_manifest_consumed(run_id, advanced)
+            await self._gc_outbox_through(run_id, advanced)
+        fence = doc.get("terminal_fence_seq")
+        remaining = [e for e in live if e.durable_seq > advanced]
+        close_requested = False
+        if isinstance(fence, int) and advanced >= fence and not remaining:
+            close_requested = await self._request_producer_close(run_id)
+        return ReceiptReconcile(
+            consumed_through=advanced if advanced > consumed else None,
+            close_requested=close_requested,
+        )
+
+    async def _sync_local_fence(self, run_id: str, seq: int) -> None:
+        await self._coll.update_one(
+            {
+                "_id": run_id,
+                "$or": [{"terminal_fence_seq": None}, {"terminal_fence_seq": {"$gt": seq}}],
+            },
+            {"$set": {"terminal_fence_seq": seq}},
+        )
+
+    async def _advance_manifest_consumed(self, run_id: str, seq: int) -> None:
+        # agent 写域：consumed_seq 单调前向 CAS（仅推进，绝不回退）。
+        await self._manifests.update_one(
+            {"run_id": run_id, "consumed_seq": {"$lt": seq}},
+            {"$set": {"consumed_seq": seq, "updated_at": self._clock()}},
+        )
+
+    async def _gc_outbox_through(self, run_id: str, seq: int) -> None:
+        # 已 consumed 确认的行硬删（payload 随之回收）。
+        await self._coll.update_one(
+            {"_id": run_id}, {"$pull": {"outbox": {"durable_seq": {"$lte": seq}}}}
+        )
+
+    async def _request_producer_close(self, run_id: str) -> bool:
+        # agent 写域：终态 consumed 且无可发布行→请求 close（producer_closed 归 session 终设）。
+        result = await self._manifests.update_one(
+            {"run_id": run_id, "producer_close_requested": {"$ne": True}},
+            {"$set": {"producer_close_requested": True, "updated_at": self._clock()}},
+        )
+        return result.modified_count == 1
 
     async def record_control_inbox(
         self, run_id: str, decision_id: str, fingerprint: str | None, body: str

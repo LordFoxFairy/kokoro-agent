@@ -24,7 +24,13 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.contract import REQUESTS_STREAM
-from kokoro_agent.storage.ledger import ControlInboxRecord, ToolJournalRecord
+from kokoro_agent.storage.ledger import (
+    ControlInboxRecord,
+    OutboxFrame,
+    ReceiptReconcile,
+    StagedFrame,
+    ToolJournalRecord,
+)
 from kokoro_agent.streams.protocol import StreamItem
 
 _T = TypeVar("_T")
@@ -34,6 +40,12 @@ _E = TypeVar("_E")
 async def aiter_items(items: Sequence[_T]) -> AsyncIterator[_T]:
     for item in items:
         yield item
+
+
+def _as_int(value: object) -> int:
+    # 内存 fake 的 outbox/manifest 行值是 object：断言收窄为 int（脏形状 fail-loud）。
+    assert isinstance(value, int)
+    return value
 
 
 def find_events(events: Sequence[AgentEvent], cls: type[_E]) -> list[_E]:
@@ -124,8 +136,13 @@ class FakeLedger:
         self.dispatches: dict[str, str] = {}
         self.dispatch_deadlines: dict[str, int] = {}
         self.dlq: list[tuple[str, str, str]] = []
-        # run.started outbox：claim 即 False，emit/scanner 置 True。
-        self.started_published: dict[str, bool] = {}
+        # R4 critical outbox：per-run durable_seq 计数、local fence、outbox 行；回执/清单由测试 seed。
+        self.durable_counter: dict[str, int] = {}
+        self.terminal_fence: dict[str, int] = {}
+        self.outbox: dict[str, list[dict[str, object]]] = {}
+        # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
+        self.receipts: dict[str, list[dict[str, object]]] = {}
+        self.manifests: dict[str, dict[str, object]] = {}
         # control inbox（R2）：run_id → [{decision_id,fingerprint,status,body}]，keep-first。
         self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
@@ -137,7 +154,6 @@ class FakeLedger:
         self.requests[request.run_id] = request
         self.leases[request.run_id] = 1
         self.owners[request.run_id] = owner
-        self.started_published[request.run_id] = False
         return True
 
     async def claim_dispatch(self, run_id: str, consumer: str = "test-consumer") -> bool:
@@ -157,15 +173,112 @@ class FakeLedger:
     ) -> None:
         self.dlq.append((raw_hash, source, reason))
 
-    async def list_unpublished_started(self) -> list[str]:
+    async def stage_critical_frame(
+        self,
+        run_id: str,
+        kind: str,
+        index: int,
+        timestamp: int,
+        payload_json: str,
+        *,
+        terminal: bool,
+    ) -> StagedFrame | None:
+        seq = self.durable_counter.get(run_id, 0) + 1
+        self.durable_counter[run_id] = seq
+        if terminal and run_id not in self.terminal_fence:
+            self.terminal_fence[run_id] = seq
+        fence = self.terminal_fence.get(run_id)
+        event_id = f"evt_fake_{run_id}_{seq}"
+        rows = self.outbox.setdefault(run_id, [])
+        if fence is not None and seq > fence:
+            rows.append({"durable_seq": seq, "event_id": event_id, "kind": kind, "status": "superseded"})
+            return None
+        rows.append(
+            {
+                "durable_seq": seq,
+                "event_id": event_id,
+                "kind": kind,
+                "index": index,
+                "timestamp": timestamp,
+                "payload_json": payload_json,
+                "status": "queued",
+            }
+        )
+        return StagedFrame(durable_seq=seq, event_id=event_id)
+
+    async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
+        for row in self.outbox.get(run_id, []):
+            if row["durable_seq"] == durable_seq and row["status"] == "queued":
+                row["status"] = "published"
+                return
+
+    async def list_unpublished_outbox(self) -> list[OutboxFrame]:
+        frames: list[OutboxFrame] = []
+        for run_id, rows in self.outbox.items():
+            for row in rows:
+                if row["status"] != "queued":
+                    continue
+                frames.append(
+                    OutboxFrame(
+                        run_id=run_id,
+                        durable_seq=_as_int(row["durable_seq"]),
+                        event_id=str(row["event_id"]),
+                        kind=str(row["kind"]),
+                        index=_as_int(row["index"]),
+                        timestamp=_as_int(row["timestamp"]),
+                        payload_json=str(row["payload_json"]),
+                    )
+                )
+        frames.sort(key=lambda f: (f.run_id, f.durable_seq))
+        return frames
+
+    async def list_open_outbox_runs(self) -> list[str]:
         return sorted(
             run_id
-            for run_id, published in self.started_published.items()
-            if not published and run_id not in self.terminals
+            for run_id, rows in self.outbox.items()
+            if any(row["status"] in ("queued", "published") for row in rows)
         )
 
-    async def mark_started_published(self, run_id: str) -> None:
-        self.started_published[run_id] = True
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+        rows = self.outbox.get(run_id, [])
+        live = [r for r in rows if r["status"] in ("queued", "published")]
+        if not live:
+            return ReceiptReconcile()
+        receipts = {_as_int(r["durable_seq"]): r for r in self.receipts.get(run_id, [])}
+        rejected = sorted(s for s, r in receipts.items() if r["status"] == "rejected")
+        if rejected:
+            seq = rejected[0]
+            fence = self.terminal_fence.get(run_id)
+            if fence is None or fence > seq:
+                self.terminal_fence[run_id] = seq
+            return ReceiptReconcile(rejected_seq=seq)
+        manifest = self.manifests.get(run_id)
+        if manifest is None:
+            return ReceiptReconcile(receipt_state_lost=True)
+        consumed = _as_int(manifest.get("consumed_seq") or 0)
+        by_seq = {_as_int(r["durable_seq"]): r for r in rows}
+        advanced = consumed
+        seq = consumed + 1
+        while seq in receipts and receipts[seq]["status"] == "persisted":
+            row = by_seq.get(seq)
+            if row is not None and row["event_id"] != receipts[seq]["event_id"]:
+                break
+            advanced = seq
+            seq += 1
+        if advanced > consumed:
+            manifest["consumed_seq"] = advanced
+            self.outbox[run_id] = [r for r in rows if _as_int(r["durable_seq"]) > advanced]
+        fence = self.terminal_fence.get(run_id)
+        remaining = [r for r in self.outbox.get(run_id, []) if r["status"] in ("queued", "published")]
+        close_requested = False
+        if fence is not None and advanced >= fence and not remaining:
+            if not manifest.get("producer_close_requested"):
+                manifest["producer_close_requested"] = True
+                close_requested = True
+        return ReceiptReconcile(
+            consumed_through=advanced if advanced > consumed else None,
+            close_requested=close_requested,
+        )
 
     async def record_control_inbox(
         self, run_id: str, decision_id: str, fingerprint: str | None, body: str

@@ -7,6 +7,7 @@ resume 不重供仍保持；工具/中间件经 ToolRuntime.state 读取。法�
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NotRequired
 
 from deepagents.graph import DeepAgentState
 
@@ -26,7 +27,8 @@ class KokoroAgentState(DeepAgentState):
     # swarm 当前主导人格名（handoff 工具落此，dynamic prompt 中间件读此切 system prompt 轨）：
     # 未设=沿用装配期 preset（runtime.agent）；无 reducer→LastValue 覆盖，落 checkpoint→resume
     # 重放后仍在移交后轨（模型驱动移交，session/wire 不参与切换）。
-    active_agent: str
+    # NotRequired：channel 未写即缺席（未移交的 run 与 SWARM 前旧 checkpoint 都没有此键）。
+    active_agent: NotRequired[str]
 
 
 @dataclass(frozen=True, slots=True)

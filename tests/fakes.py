@@ -24,7 +24,7 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.contract import REQUESTS_STREAM
-from kokoro_agent.storage.ledger import ControlInboxRecord
+from kokoro_agent.storage.ledger import ControlInboxRecord, ToolJournalRecord
 from kokoro_agent.streams.protocol import StreamItem
 
 _T = TypeVar("_T")
@@ -128,6 +128,8 @@ class FakeLedger:
         self.started_published: dict[str, bool] = {}
         # control inbox（R2）：run_id → [{decision_id,fingerprint,status,body}]，keep-first。
         self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
+        # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
+        self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
 
     async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
         if request.run_id in self.requests:
@@ -272,6 +274,7 @@ class FakeLedger:
             self.usage_totals.pop(run_id, None)
             self.steers.pop(run_id, None)
             self.tool_results = {k: v for k, v in self.tool_results.items() if k[0] != run_id}
+            self.tool_journal = {k: v for k, v in self.tool_journal.items() if k[0] != run_id}
         return len(stale)
 
     async def is_terminal(self, run_id: str) -> bool:
@@ -300,6 +303,34 @@ class FakeLedger:
 
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
         return self.tool_results.get((run_id, tool_id))
+
+    async def journal_tool_started(self, run_id: str, tool_call_id: str, name: str) -> bool:
+        key = (run_id, tool_call_id)
+        if key in self.tool_journal:
+            return False
+        self.tool_journal[key] = {"name": name, "status": "started", "result": None, "is_error": None}
+        return True
+
+    async def journal_tool_finished(
+        self, run_id: str, tool_call_id: str, result: str, is_error: bool
+    ) -> None:
+        entry = self.tool_journal.get((run_id, tool_call_id))
+        if entry is None or entry["status"] != "started":
+            return
+        entry["status"] = "failed" if is_error else "succeeded"
+        entry["result"] = result
+        entry["is_error"] = is_error
+
+    async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
+        entry = self.tool_journal.get((run_id, tool_call_id))
+        if entry is None:
+            return None
+        return ToolJournalRecord(
+            name=str(entry["name"]),
+            status=str(entry["status"]),
+            result=str(entry["result"] or ""),
+            is_error=bool(entry["is_error"]),
+        )
 
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
         self.sandbox_ids.setdefault(run_id, sandbox_id)

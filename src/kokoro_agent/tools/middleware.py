@@ -18,7 +18,7 @@ from langgraph.runtime import Runtime
 
 from kokoro_agent.hitl import request_human
 from kokoro_agent.storage.ledger import RunLedger
-from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
+from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
 
@@ -212,6 +212,79 @@ def _apply_review_decision(
             content=f"[result rejected by user{suffix}]", tool_call_id=tool_id, name=name
         )
     raise ValueError(f"result review got unsupported decision type {mine.type!r}")
+
+
+_UNKNOWN_OUTCOME_PREFIX = "[unknown_outcome]"
+
+
+class ToolEffectJournalMiddleware(AgentMiddleware):
+    """R3 tool effect journal：副作用工具的执行前记账 + checkpoint 重放守门。
+
+    最靠近副作用发生处（tool-call 链最内层）：执行前落 started 行（keep-first，锚=tool_call_id），
+    返回后置 succeeded|failed。checkpoint takeover/resume 重放到工具节点时先查 journal：
+      无行         → 正常执行（先落 started）。
+      succeeded/failed → 不重执行，以记录结果短路（幂等重放，绝不双写）。
+      started（unknown-outcome：上次崩在执行中）→ 默认不自动重放：返回 is_error 结果交模型/HITL 决策。
+    纯读/幂等工具经 JOURNAL_EXEMPT_TOOLS 整体豁免（白名单即豁免表，重执行天然收敛）；
+    MCP 工具不在表内 = 一律按非幂等守门。
+    """
+
+    def __init__(
+        self,
+        *,
+        store: RunLedger,
+        run_id: str,
+        exempt: frozenset[str] = JOURNAL_EXEMPT_TOOLS,
+    ) -> None:
+        super().__init__()
+        self._store = store
+        self._run_id = run_id
+        self._exempt = exempt
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest, handler: _ToolHandler
+    ) -> ToolMessage | Command[Any]:
+        call = request.tool_call
+        name = call["name"]
+        if name in self._exempt:
+            # 纯读/幂等 / Command 形态工具：不落 journal，直接放行（重执行安全）。
+            return await handler(request)
+        tool_id = call["id"] or ""
+        recorded = await self._store.get_tool_journal(self._run_id, tool_id)
+        if recorded is not None:
+            return self._replay(recorded, tool_id=tool_id, name=name)
+        await self._store.journal_tool_started(self._run_id, tool_id, name)
+        result = await handler(request)
+        if isinstance(result, ToolMessage):
+            # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
+            # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
+            await self._store.journal_tool_finished(
+                self._run_id, tool_id, result.text, result.status == "error"
+            )
+        return result
+
+    def _replay(self, recorded: object, *, tool_id: str, name: str) -> ToolMessage:
+        # recorded: ToolJournalRecord（storage 层导出）——按状态短路。
+        status = getattr(recorded, "status", "started")
+        if status == "started":
+            return ToolMessage(
+                content=(
+                    f"{_UNKNOWN_OUTCOME_PREFIX} tool {name!r} started but its outcome was never "
+                    "recorded (crash mid-execution); not re-executed automatically to avoid a "
+                    "duplicate side effect. Decide whether to retry or take another path."
+                ),
+                tool_call_id=tool_id,
+                name=name,
+                status="error",
+            )
+        result = getattr(recorded, "result", "")
+        is_error = bool(getattr(recorded, "is_error", False))
+        return ToolMessage(
+            content=result,
+            tool_call_id=tool_id,
+            name=name,
+            status="error" if is_error else "success",
+        )
 
 
 class SteeringMiddleware(AgentMiddleware):

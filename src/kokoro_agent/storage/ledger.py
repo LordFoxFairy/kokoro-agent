@@ -9,16 +9,23 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.storage.mongo import ControlInboxRecord, MongoLedger, make_mongo_collection
+from kokoro_agent.storage.mongo import (
+    ControlInboxRecord,
+    MongoLedger,
+    ToolJournalRecord,
+    make_mongo_collection,
+)
 
 DEFAULT_LEASE_TTL_S = 90
 
-# ControlInboxRecord 定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
+# ControlInboxRecord/ToolJournalRecord 定义在低层 mongo 模块（避免 ledger↔mongo 循环）；
+# 此处再导出为 ledger 面契约。
 __all__ = [
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
     "LedgerSettings",
     "RunLedger",
+    "ToolJournalRecord",
     "make_ledger",
 ]
 
@@ -128,6 +135,21 @@ class RunLedger(Protocol):
         ...
 
     async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None: ...
+
+    async def journal_tool_started(self, run_id: str, tool_call_id: str, name: str) -> bool:
+        # R3 tool effect journal：副作用工具执行前落 started 行（keep-first，锚=tool_call_id）。
+        # True=首次落库（续执行）；False=行已存在（重入/并发，不覆盖）。
+        ...
+
+    async def journal_tool_finished(
+        self, run_id: str, tool_call_id: str, result: str, is_error: bool
+    ) -> None:
+        # 工具返回后 started→succeeded|failed（附记录结果供重放短路）；仅推进 started 行。
+        ...
+
+    async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
+        # 重放守门读侧：无行=正常执行；succeeded/failed=短路记录结果；started=unknown-outcome。
+        ...
 
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
         # e2b run 级箱绑定（keep-first）：HITL resume 重连既往 sandbox，暂停期文件不丢。

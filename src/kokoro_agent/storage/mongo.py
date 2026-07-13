@@ -77,6 +77,37 @@ class ControlInboxRecord(BaseModel):
     body: str
 
 
+class _ToolJournalEntry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str
+    # started | succeeded | failed（started=unknown-outcome：落 started 后崩在执行中）。
+    status: str
+    # 终态结果（succeeded/failed 才有；started 时缺席）：重放短路直接回灌，不重执行副作用。
+    result: str | None = None
+    is_error: bool | None = None
+
+
+_TOOL_JOURNAL_ADAPTER: TypeAdapter[dict[str, _ToolJournalEntry]] = TypeAdapter(
+    dict[str, _ToolJournalEntry]
+)
+
+
+class ToolJournalRecord(BaseModel):
+    """R3 tool effect journal 行（副作用工具锚=tool_call_id）：重放守门读此判是否短路/重执行。
+
+    定义在低层 mongo 模块以避免 ledger↔mongo 循环；ledger 面再导出为契约类型。
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    name: str
+    status: str
+    # started 时为空串（无结果）；succeeded/failed 为记录结果。
+    result: str
+    is_error: bool
+
+
 class MongoLedger:
     """单 collection、以 run_id 为 _id：upsert 与条件 update 提供跨 pod 原子认领。"""
 
@@ -380,6 +411,49 @@ class MongoLedger:
         if entry is None:
             return None
         return (entry.result, entry.is_error)
+
+    async def journal_tool_started(self, run_id: str, tool_call_id: str, name: str) -> bool:
+        # R3：副作用工具执行前落 started 行（keep-first，锚=tool_call_id）。已存在（重入/并发）
+        # 不覆盖，返回 False；首次落库返回 True。行随 run 终态由 purge_terminal 整文档回收。
+        result = await self._coll.update_one(
+            {"_id": run_id, f"tool_journal.{tool_call_id}": {"$exists": False}},
+            {"$set": {f"tool_journal.{tool_call_id}": {"name": name, "status": "started"}}},
+        )
+        return result.modified_count == 1
+
+    async def journal_tool_finished(
+        self, run_id: str, tool_call_id: str, result: str, is_error: bool
+    ) -> None:
+        # started→succeeded|failed 前向推进（仅命中 started 行）：附记录结果供重放短路。
+        status = "failed" if is_error else "succeeded"
+        await self._coll.update_one(
+            {"_id": run_id, f"tool_journal.{tool_call_id}.status": "started"},
+            {
+                "$set": {
+                    f"tool_journal.{tool_call_id}.status": status,
+                    f"tool_journal.{tool_call_id}.result": result,
+                    f"tool_journal.{tool_call_id}.is_error": is_error,
+                }
+            },
+        )
+
+    async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
+        doc = await self._coll.find_one({"_id": run_id}, {f"tool_journal.{tool_call_id}": 1})
+        if doc is None:
+            return None
+        raw: Any = doc.get("tool_journal")
+        if raw is None:
+            return None
+        entries = _TOOL_JOURNAL_ADAPTER.validate_python(raw)
+        entry = entries.get(tool_call_id)
+        if entry is None:
+            return None
+        return ToolJournalRecord(
+            name=entry.name,
+            status=entry.status,
+            result=entry.result or "",
+            is_error=bool(entry.is_error),
+        )
 
 
 def make_mongo_collection(

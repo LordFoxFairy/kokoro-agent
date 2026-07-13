@@ -50,6 +50,26 @@ KNOWN_TOOL_NAMES: frozenset[str] = (
     frozenset(KOKORO_TOOLS) | ASSEMBLY_TOOL_NAMES | DEEPAGENTS_BUILTIN_TOOLS
 )
 
+# R3 tool effect journal 豁免表（一处维护）：这些工具不落 journal、可自由重执行/重放。
+#   ① 纯读工具（幂等，重执行天然收敛）：ls/read_file/glob/grep + web_fetch/web_search/search_memory。
+#   ② Command 形态 / 框架自重放工具（journal 无法短路 Command 结果，其重放归 langgraph checkpoint）：
+#      write_todos（纯状态覆盖，幂等）、task（子代理委派，重放安全由子图 checkpoint 兜底）。
+# 不在此集 = 按副作用工具走 journal 守门（write_file/edit_file/execute/deliver/save_memory
+# 及全部 MCP 工具——「MCP 一律按非幂等处理」，绝不入表）。
+JOURNAL_EXEMPT_TOOLS: frozenset[str] = frozenset(
+    {
+        "ls",
+        "read_file",
+        "glob",
+        "grep",
+        WEB_FETCH_TOOL_NAME,
+        WEB_SEARCH_TOOL_NAME,
+        SEARCH_MEMORY_TOOL_NAME,
+        TODO_TOOL_NAME,
+        SUBAGENT_TOOL_NAME,
+    }
+)
+
 
 def resolve_tools(
     names: Sequence[str], *, core: Sequence[StructuredTool] = CORE_TOOLS

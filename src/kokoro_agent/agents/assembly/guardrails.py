@@ -12,6 +12,7 @@ from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.middleware import (
     SteeringMiddleware,
     TerminalGuardMiddleware,
+    ToolEffectJournalMiddleware,
     TokenBudgetMiddleware,
     ToolPolicyMiddleware,
     ToolResultReviewMiddleware,
@@ -20,20 +21,23 @@ from kokoro_agent.tools.middleware import (
 
 @dataclass(frozen=True, slots=True)
 class GuardChains:
-    """子代理链=守卫+审核（缺一即 task 委派旁路政策）；主链另有 steering 与 policy——
+    """子代理链=守卫+审核+journal（缺一即 task 委派旁路政策）；主链另有 steering 与 policy——
     插话是用户↔主 agent 的对话（注入子代理即语义污染），policy 待工具面定型后由调用方注入。"""
 
     subagent: tuple[AgentMiddleware, ...]
     guards: tuple[AgentMiddleware, ...]
     steering: AgentMiddleware
     review: AgentMiddleware | None
+    # R3 tool effect journal：恒挂在 tool-call 链最内层（最靠近副作用），主链与子代理链同下发。
+    journal: AgentMiddleware
 
     def main(self, policy: ToolPolicyMiddleware) -> tuple[AgentMiddleware, ...]:
-        # 主链顺序：守卫 → steering → policy → review。policy 在 review 外层：
-        # 先拦未授权调用，才轮到已授权调用的结果送审。
+        # 主链顺序：守卫 → steering → policy → review → journal。policy 在 review 外层：
+        # 先拦未授权调用，才轮到已授权调用的结果送审；journal 最内层守门真正的工具执行。
         chain: list[AgentMiddleware] = [*self.guards, self.steering, policy]
         if self.review is not None:
             chain.append(self.review)
+        chain.append(self.journal)
         return tuple(chain)
 
 
@@ -59,9 +63,16 @@ def build_guard_chains(deps: AssembleDeps, request: RunRequest) -> GuardChains:
         if review_tools
         else None
     )
+    journal = ToolEffectJournalMiddleware(store=deps.ledger, run_id=request.run_id)
+    # 子代理链：守卫 →（审核）→ journal（最内层）。子代理内工具同经 backend 执行，同守门。
+    subagent_guards: tuple[AgentMiddleware, ...] = tuple(guards)
+    if review is not None:
+        subagent_guards = (*subagent_guards, review)
+    subagent_guards = (*subagent_guards, journal)
     return GuardChains(
-        subagent=tuple(guards) if review is None else (*guards, review),
+        subagent=subagent_guards,
         guards=tuple(guards),
         steering=SteeringMiddleware(store=deps.ledger, run_id=request.run_id),
         review=review,
+        journal=journal,
     )

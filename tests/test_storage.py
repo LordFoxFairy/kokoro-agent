@@ -477,3 +477,41 @@ async def test_quarantine_dispatch_records_dlq_row() -> None:
         assert doc is not None
         assert doc["source"] == "requests" and doc["reason"] == "unparseable"
         assert isinstance(doc["at"], int)
+
+
+# --- Wave2 R3：tool effect journal（started keep-first → succeeded|failed，重放守门读侧）---
+
+
+async def test_tool_journal_started_keep_first_then_finished() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as store:
+        await store.try_claim(request("run-j"), OWNER)  # journal 落法要求 run 文档已存在
+        # 首次落 started（True）；重复落同 tool_call_id 不覆盖（False）。
+        assert await store.journal_tool_started("run-j", "call-1", "write_file") is True
+        assert await store.journal_tool_started("run-j", "call-1", "write_file") is False
+        rec = await store.get_tool_journal("run-j", "call-1")
+        assert rec is not None and rec.status == "started" and rec.name == "write_file"
+        assert rec.result == "" and rec.is_error is False
+
+        # started→succeeded 附结果。
+        await store.journal_tool_finished("run-j", "call-1", "wrote 3 bytes", is_error=False)
+        rec = await store.get_tool_journal("run-j", "call-1")
+        assert rec is not None and rec.status == "succeeded"
+        assert rec.result == "wrote 3 bytes" and rec.is_error is False
+
+        # 已 succeeded 不再被 finished 改写（仅推进 started 行）。
+        await store.journal_tool_finished("run-j", "call-1", "clobber", is_error=True)
+        rec = await store.get_tool_journal("run-j", "call-1")
+        assert rec is not None and rec.status == "succeeded" and rec.result == "wrote 3 bytes"
+
+
+async def test_tool_journal_failed_status_and_missing_row() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as store:
+        await store.try_claim(request("run-j"), OWNER)
+        assert await store.get_tool_journal("run-j", "absent") is None
+        await store.journal_tool_started("run-j", "call-err", "execute")
+        await store.journal_tool_finished("run-j", "call-err", "boom", is_error=True)
+        rec = await store.get_tool_journal("run-j", "call-err")
+        assert rec is not None and rec.status == "failed" and rec.is_error is True
+        assert rec.result == "boom"

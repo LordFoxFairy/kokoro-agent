@@ -207,7 +207,9 @@ async def _publish_resume(
 ) -> None:
     event: dict[str, JsonValue] = {
         "kind": "run.resume",
-        "decision_id": "dec_wire",
+        # 每次 resume 是一次不同的用户裁决 → 独立 decision_id（R2 inbox 按此去重；
+        # 同 id 视作重发被丢弃，故 ask_user 后再 approval 的多轮 resume 必须各自唯一）。
+        "decision_id": f"dec-{uuid4().hex}",
         "run_id": run.run_id,
         "thread_id": run.thread_id,
         "decisions": [decision],

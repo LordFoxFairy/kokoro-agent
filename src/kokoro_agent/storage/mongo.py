@@ -46,6 +46,37 @@ class _SteerEntry(BaseModel):
 _STEERS_ADAPTER: TypeAdapter[list[_SteerEntry]] = TypeAdapter(list[_SteerEntry])
 
 
+class _ControlInboxEntry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    decision_id: str
+    fingerprint: str | None
+    status: str
+    body: str
+
+
+_CONTROL_INBOX_ADAPTER: TypeAdapter[list[_ControlInboxEntry]] = TypeAdapter(
+    list[_ControlInboxEntry]
+)
+
+
+class ControlInboxRecord(BaseModel):
+    """R2 control inbox 待续办条目：persisted 未 applied 的 resume/cancel（重启 scanner 消费）。
+
+    定义在低层 mongo 模块以避免 ledger↔mongo 循环；ledger 面再导出为契约类型。
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    run_id: str
+    decision_id: str
+    # 记录时的 interrupt 指纹（resume 有值；cancel 无 interrupt 依赖=None）：
+    # 重启续办按此校验当前 interrupt 是否仍匹配，不匹配即 stale→superseded。
+    fingerprint: str | None
+    # 待续办的 control 帧原文（JSON）：重启逐字重放 apply。
+    body: str
+
+
 class MongoLedger:
     """单 collection、以 run_id 为 _id：upsert 与条件 update 提供跨 pod 原子认领。"""
 
@@ -120,6 +151,67 @@ class MongoLedger:
         await self._coll.update_one(
             {"_id": run_id}, {"$set": {"run_started_published": True}}
         )
+
+    async def record_control_inbox(
+        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+    ) -> bool:
+        # keep-first：$ne 数组守卫（同 add_steer 模式）——仅当无同 decision_id 条目时 push。
+        # modified_count==1=首次落库（persisted）；0=重复 decision_id 或 run 文档缺失→丢弃不重放。
+        result = await self._coll.update_one(
+            {"_id": run_id, "control_inbox.decision_id": {"$ne": decision_id}},
+            {
+                "$push": {
+                    "control_inbox": {
+                        "decision_id": decision_id,
+                        "fingerprint": fingerprint,
+                        "status": "persisted",
+                        "body": body,
+                    }
+                }
+            },
+        )
+        return result.modified_count == 1
+
+    async def mark_control_applied(self, run_id: str, decision_id: str) -> None:
+        # 仅 persisted→applied 前向推进（positional $ 命中 elemMatch 元素）。
+        await self._coll.update_one(
+            {
+                "_id": run_id,
+                "control_inbox": {"$elemMatch": {"decision_id": decision_id, "status": "persisted"}},
+            },
+            {"$set": {"control_inbox.$.status": "applied"}},
+        )
+
+    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None:
+        await self._coll.update_one(
+            {
+                "_id": run_id,
+                "control_inbox": {"$elemMatch": {"decision_id": decision_id, "status": "persisted"}},
+            },
+            {"$set": {"control_inbox.$.status": "superseded"}},
+        )
+
+    async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
+        # 重启补办扫描：非终态 run 里 persisted 未 applied 的 control 条目。
+        cursor = self._coll.find(
+            {"terminal": {"$ne": True}, "control_inbox.status": "persisted"},
+            {"_id": 1, "control_inbox": 1},
+        ).sort("_id", 1)
+        records: list[ControlInboxRecord] = []
+        async for doc in cursor:
+            entries = _CONTROL_INBOX_ADAPTER.validate_python(doc.get("control_inbox") or [])
+            for entry in entries:
+                if entry.status != "persisted":
+                    continue
+                records.append(
+                    ControlInboxRecord(
+                        run_id=str(doc["_id"]),
+                        decision_id=entry.decision_id,
+                        fingerprint=entry.fingerprint,
+                        body=entry.body,
+                    )
+                )
+        return records
 
     async def renew(self, run_id: str, owner: str) -> bool:
         # 严格属主续租（fencing）：owner 不符即失败——假死副本苏醒后据此让渡。

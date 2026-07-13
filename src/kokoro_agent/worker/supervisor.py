@@ -16,10 +16,12 @@ from langgraph.types import Command
 from kokoro_agent.contract import (
     CONSUMER_GROUP,
     Backend,
+    ControlReceiptStatus,
     REQUESTS_STREAM,
     InboundMessage,
     RunCancel,
     RunCompletedPayload,
+    RunControlReceiptPayload,
     RunErrorCode,
     RunRequest,
     RunResume,
@@ -124,6 +126,8 @@ class RunSupervisor:
     async def serve(self, bus: StreamProtocol) -> None:
         # run.started 最小 outbox 补发：启动即扫 claim 落库但发布未确认的 run（幂等重发）。
         await self._republish_unpublished_started(bus)
+        # control inbox 续办（R2）：persisted 未 applied 的 resume/cancel——fingerprint 匹配才续 apply。
+        await self._reapply_pending_control(bus)
         heartbeat = asyncio.create_task(self._heartbeat_loop(bus))
         try:
             async for item in bus.subscribe(
@@ -455,15 +459,17 @@ class RunSupervisor:
         try:
             async for item in bus.subscribe(stream, group=CONSUMER_GROUP, consumer=self._consumer):
                 msg = parse_inbound(item.event)
-                await bus.ack(stream, CONSUMER_GROUP, item.cursor)
-                # control 流按 run 隔离：只认本 run 的 resume/cancel，异帧安全丢弃。
+                # control 流按 run 隔离：只认本 run 的 resume/cancel，异帧 ACK 丢弃（无 inbox）。
                 if msg is None or msg.run_id != run_id or isinstance(msg, RunRequest):
+                    await bus.ack(stream, CONSUMER_GROUP, item.cursor)
                     continue
-                try:
-                    await self.dispatch(bus, msg)
-                except Exception as error:  # noqa: BLE001 — 单控制帧容错：隔离故障，保 control 循环
-                    LOGGER.exception("control dispatch failed: run_id=%s", run_id)
-                    await self._fail_terminal(bus, run_id, error)
+                if isinstance(msg, RunSteer):
+                    # steer 无 decision_id（message_id 幂等）：既有语义，先 ACK 再入信箱，不走 inbox。
+                    await bus.ack(stream, CONSUMER_GROUP, item.cursor)
+                    await self._guarded_control_apply(bus, run_id, msg)
+                    continue
+                # resume/cancel：durable inbox 先于 ACK（§8.3「control 在 inbox 前 ACK」翻绿）。
+                await self._consume_control_frame(bus, run_id, msg, stream, item.cursor)
         except Exception:
             # 终态清理删流先于 cancel（监听可能是当前任务）：删流后阻塞读抛 NOGROUP 属干净收束；
             # 非终态的订阅异常才是真故障，fail-loud。
@@ -471,6 +477,104 @@ class RunSupervisor:
                 LOGGER.debug("control listener closed after terminal teardown: run_id=%s", run_id)
                 return
             raise
+
+    async def _guarded_control_apply(
+        self, bus: StreamProtocol, run_id: str, msg: InboundMessage
+    ) -> None:
+        # 单控制帧容错：隔离故障收口为 run.failed，保 control 循环（既有 dispatch 语义）。
+        try:
+            await self.dispatch(bus, msg)
+        except Exception as error:  # noqa: BLE001
+            LOGGER.exception("control dispatch failed: run_id=%s", run_id)
+            await self._fail_terminal(bus, run_id, error)
+
+    async def _consume_control_frame(
+        self, bus: StreamProtocol, run_id: str, msg: RunResume | RunCancel, stream: str, cursor: str
+    ) -> None:
+        # 落 ledger inbox{decision_id,fingerprint,status:persisted}→ACK→apply（durable claim 后 ACK）。
+        fingerprint = await self._control_fingerprint(run_id, msg)
+        first = await self._store.record_control_inbox(
+            run_id, msg.decision_id, fingerprint, msg.model_dump_json()
+        )
+        await bus.ack(stream, CONSUMER_GROUP, cursor)
+        if not first:
+            # 重复 decision_id（重发/重投）→ inbox 命中 → ACK 丢弃不重放（不双放）。
+            LOGGER.debug("dropping duplicate control decision_id=%s run_id=%s", msg.decision_id, run_id)
+            return
+        # persisted 时点回执。
+        await self._emit_control_receipt(bus, run_id, msg.decision_id, "persisted")
+        await self._apply_recorded_control(bus, run_id, msg)
+
+    async def _apply_recorded_control(
+        self, bus: StreamProtocol, run_id: str, msg: RunResume | RunCancel
+    ) -> None:
+        # persisted 已发；此处 apply + applied 时点回执。restart 续办亦经此路（不重发 persisted）。
+        if isinstance(msg, RunCancel):
+            # cancel：apply 即终态，applied 回执须先于 run.completed——session relayRun 遇终态即
+            # 收束，其后帧不再消费；且 _on_cancel 的 teardown 会 cancel 本 control 任务，后置回执会被吞。
+            await self._store.mark_control_applied(run_id, msg.decision_id)
+            await self._emit_control_receipt(bus, run_id, msg.decision_id, "applied")
+            await self._guarded_control_apply(bus, run_id, msg)
+            return
+        # resume：apply（spawn）后 run 续跑、control 任务存活，可安全后置 applied 回执。
+        await self._guarded_control_apply(bus, run_id, msg)
+        await self._store.mark_control_applied(run_id, msg.decision_id)
+        await self._emit_control_receipt(bus, run_id, msg.decision_id, "applied")
+
+    async def _emit_control_receipt(
+        self, bus: StreamProtocol, run_id: str, decision_id: str, status: ControlReceiptStatus
+    ) -> None:
+        # 内部 raw kind（走既有 run events 流）：session 消费进 receipt 存储，永不投影浏览器。
+        emitter = await self._emitter(bus, run_id)
+        await emitter.emit(RunControlReceiptPayload(decision_id=decision_id, control_status=status))
+
+    async def _control_fingerprint(self, run_id: str, msg: RunResume | RunCancel) -> str | None:
+        # resume 绑定当前 interrupt 指纹（重启续办据此判 stale）；cancel 无 interrupt 依赖=None。
+        if isinstance(msg, RunResume):
+            return await self._interrupt_fingerprint(run_id)
+        return None
+
+    async def _interrupt_fingerprint(self, run_id: str) -> str | None:
+        # 当前 interrupt 指纹：稳定 interrupt.id 集合的 sha256；无 interrupt/取不到=None。
+        request = await self._store.get_request(run_id)
+        if request is None:
+            return None
+        try:
+            assembled = await self._build(request)
+            scope = RunScope.of(request)
+            config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
+            snapshot = await assembled.agent.aget_state(config)
+        except Exception:  # noqa: BLE001 — 指纹是 stale 判定辅助，取不到降级 None（续办侧按不匹配处理）
+            LOGGER.exception("interrupt fingerprint build failed run_id=%s", run_id)
+            return None
+        interrupts = snapshot.interrupts
+        if not interrupts:
+            return None
+        joined = ",".join(sorted(str(interrupt.id) for interrupt in interrupts))
+        return hashlib.sha256(joined.encode()).hexdigest()
+
+    async def _reapply_pending_control(self, bus: StreamProtocol) -> None:
+        # 重启续办：persisted 未 applied 的 control——fingerprint 匹配当前 interrupt 才 apply，
+        # 不匹配/已终态=stale→superseded 不 apply（§8.3「inbox 后 apply 前崩溃」翻绿）。
+        try:
+            entries = await self._store.list_pending_control_inbox()
+        except Exception:  # noqa: BLE001 — 续办扫描降级不阻断 serve 启动
+            LOGGER.exception("control inbox scan failed")
+            return
+        for entry in entries:
+            msg = parse_inbound(json.loads(entry.body))
+            if not isinstance(msg, RunResume | RunCancel):
+                await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                continue
+            if await self._store.is_terminal(entry.run_id):
+                await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                continue
+            if isinstance(msg, RunResume):
+                current = await self._interrupt_fingerprint(entry.run_id)
+                if entry.fingerprint is None or current != entry.fingerprint:
+                    await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                    continue
+            await self._apply_recorded_control(bus, entry.run_id, msg)
 
     async def _teardown_sandbox(self, run_id: str) -> None:
         if self._sandbox_teardown is None:

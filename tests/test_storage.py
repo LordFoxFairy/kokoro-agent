@@ -434,6 +434,40 @@ async def test_run_started_outbox_scan_and_mark() -> None:
         assert await store.list_unpublished_started() == []
 
 
+async def test_control_inbox_keep_first_advance_and_scan() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        req = request("run-ci")
+        await store.try_claim(req, OWNER)  # inbox 落法要求 run 文档已存在
+
+        # keep-first：首次落库 True（persisted），重复 decision_id False 且不覆盖。
+        assert await store.record_control_inbox("run-ci", "dec_1", "fp_a", '{"k":1}') is True
+        assert await store.record_control_inbox("run-ci", "dec_1", "fp_b", '{"k":2}') is False
+
+        pending = await store.list_pending_control_inbox()
+        assert [(r.run_id, r.decision_id, r.fingerprint, r.body) for r in pending] == [
+            ("run-ci", "dec_1", "fp_a", '{"k":1}')
+        ]
+
+        # persisted→applied 前向推进后不再入 pending。
+        await store.mark_control_applied("run-ci", "dec_1")
+        assert await store.list_pending_control_inbox() == []
+        # applied 后再 mark 无副作用（仅 persisted→applied）。
+        await store.mark_control_applied("run-ci", "dec_1")
+
+        # 第二条 cancel（fingerprint=None）：superseded 后移出 pending。
+        assert await store.record_control_inbox("run-ci", "dec_2", None, "{}") is True
+        await store.mark_control_superseded("run-ci", "dec_2")
+        assert await store.list_pending_control_inbox() == []
+
+        # 终态 run 的 persisted 条目不入续办扫描。
+        req2 = request("run-ci-term")
+        await store.try_claim(req2, OWNER)
+        await store.record_control_inbox("run-ci-term", "dec_x", "fp", "{}")
+        await store.try_mark_terminal("run-ci-term")
+        assert [r.run_id for r in await store.list_pending_control_inbox()] == []
+
+
 async def test_quarantine_dispatch_records_dlq_row() -> None:
     clock = FakeClock()
     async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):

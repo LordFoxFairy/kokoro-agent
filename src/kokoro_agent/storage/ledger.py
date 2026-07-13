@@ -9,9 +9,18 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.storage.mongo import MongoLedger, make_mongo_collection
+from kokoro_agent.storage.mongo import ControlInboxRecord, MongoLedger, make_mongo_collection
 
 DEFAULT_LEASE_TTL_S = 90
+
+# ControlInboxRecord 定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
+__all__ = [
+    "ControlInboxRecord",
+    "DEFAULT_LEASE_TTL_S",
+    "LedgerSettings",
+    "RunLedger",
+    "make_ledger",
+]
 
 
 class RunLedger(Protocol):
@@ -34,6 +43,25 @@ class RunLedger(Protocol):
 
     async def mark_started_published(self, run_id: str) -> None:
         # run.started 发布确认：emit 成功后置 outbox 行为已发布，scanner 不再补发。
+        ...
+
+    async def record_control_inbox(
+        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+    ) -> bool:
+        # R2 control inbox：keep-first 落 {decision_id,fingerprint,status:persisted,body}。
+        # 首次落库返 True（persisted，续 apply）；重复 decision_id（重发/重投）返 False（丢弃不重放）。
+        ...
+
+    async def mark_control_applied(self, run_id: str, decision_id: str) -> None:
+        # apply（Command resume/cancel）+ checkpoint 后置 applied：仅 persisted→applied 前向推进。
+        ...
+
+    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None:
+        # 重启续办发现 stale（fingerprint 不匹配/已终态）：标 superseded 不 apply。
+        ...
+
+    async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
+        # 重启补办扫描：persisted 未 applied 且非终态的 control 条目。
         ...
 
     async def renew(self, run_id: str, owner: str) -> bool:

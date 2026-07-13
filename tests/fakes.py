@@ -24,6 +24,7 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.contract import REQUESTS_STREAM
+from kokoro_agent.storage.ledger import ControlInboxRecord
 from kokoro_agent.streams.protocol import StreamItem
 
 _T = TypeVar("_T")
@@ -125,6 +126,8 @@ class FakeLedger:
         self.dlq: list[tuple[str, str, str]] = []
         # run.started outbox：claim 即 False，emit/scanner 置 True。
         self.started_published: dict[str, bool] = {}
+        # control inbox（R2）：run_id → [{decision_id,fingerprint,status,body}]，keep-first。
+        self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
 
     async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
         if request.run_id in self.requests:
@@ -161,6 +164,48 @@ class FakeLedger:
 
     async def mark_started_published(self, run_id: str) -> None:
         self.started_published[run_id] = True
+
+    async def record_control_inbox(
+        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+    ) -> bool:
+        # 与 MongoLedger 同语义：run 文档须存在（try_claim 后），keep-first 去重。
+        if run_id not in self.requests:
+            return False
+        box = self.control_inbox.setdefault(run_id, [])
+        if any(entry["decision_id"] == decision_id for entry in box):
+            return False
+        box.append(
+            {"decision_id": decision_id, "fingerprint": fingerprint, "status": "persisted", "body": body}
+        )
+        return True
+
+    async def mark_control_applied(self, run_id: str, decision_id: str) -> None:
+        for entry in self.control_inbox.get(run_id, []):
+            if entry["decision_id"] == decision_id and entry["status"] == "persisted":
+                entry["status"] = "applied"
+
+    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None:
+        for entry in self.control_inbox.get(run_id, []):
+            if entry["decision_id"] == decision_id and entry["status"] == "persisted":
+                entry["status"] = "superseded"
+
+    async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
+        records: list[ControlInboxRecord] = []
+        for run_id, box in sorted(self.control_inbox.items()):
+            if run_id in self.terminals:
+                continue
+            for entry in box:
+                if entry["status"] != "persisted":
+                    continue
+                records.append(
+                    ControlInboxRecord(
+                        run_id=run_id,
+                        decision_id=str(entry["decision_id"]),
+                        fingerprint=entry["fingerprint"],
+                        body=str(entry["body"]),
+                    )
+                )
+        return records
 
     async def renew(self, run_id: str, owner: str = "test-consumer") -> bool:
         self.renewed.append(run_id)

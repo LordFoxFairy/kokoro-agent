@@ -495,6 +495,67 @@ def test_resolve_tools_empty_core_for_studio_types() -> None:
 # --- 资产化：skills 按名 + prompt 按名（配置引用资产，不内联资产） ---
 
 
+def _runtime_with_agent(agent: str | None) -> RuntimeConfig:
+    return RuntimeConfig(
+        agent_type="general",
+        agent=agent,
+        model=ModelConfig(provider="anthropic", name="claude"),
+        tools=[],
+        skills=[],
+        mcp_servers=[],
+        subagents=[],
+        backend="state",
+        permissions=Permissions(
+            approval_tools=[], review_tools=[], subagent_create="deny", filesystem="read_only"
+        ),
+    )
+
+
+def test_named_preset_resolves_to_its_persona() -> None:
+    # preset=资产库里的具名 persona；装配 prompt 取它，不取类型缺省。
+    from kokoro_agent.agents.assembly import resolve_system_prompt
+    from kokoro_agent.prompts import PromptLibrary
+
+    library = PromptLibrary({"researcher": "你是严谨的研究员。"})
+    resolved = resolve_system_prompt(
+        _runtime_with_agent("researcher"), library, default="通用缺省"
+    )
+    assert resolved == "你是严谨的研究员。"
+
+
+def test_unknown_preset_fails_loud_not_silent_general() -> None:
+    # 名字带了却无资产 = fail-loud（supervisor 收口 assembly_failed），绝不静默回退 general。
+    from kokoro_agent.agents.assembly import PresetNotFoundError, resolve_system_prompt
+    from kokoro_agent.prompts import PromptLibrary
+
+    with pytest.raises(PresetNotFoundError, match="ghost"):
+        resolve_system_prompt(_runtime_with_agent("ghost"), PromptLibrary({}), default="通用缺省")
+
+
+def test_absent_agent_keeps_type_default_general() -> None:
+    # 缺省缺席（未带 agent 名）= 类型工厂末级缺省，general 行为不变。
+    from kokoro_agent.agents.assembly import resolve_system_prompt
+    from kokoro_agent.prompts import PromptLibrary
+
+    resolved = resolve_system_prompt(_runtime_with_agent(None), PromptLibrary({}), default="通用缺省")
+    assert resolved == "通用缺省"
+
+
+def test_preset_file_on_disk_flows_into_assembly(tmp_path: Path) -> None:
+    # 目录即配置：往 personas_dir 丢一个 <agent>.md（零代码），装配即走它的 system prompt。
+    from kokoro_agent.agents.assembly import resolve_system_prompt
+    from kokoro_agent.content_source import LocalAssets, LocalAssetSource
+    from kokoro_agent.prompts import PromptLibrary
+
+    (tmp_path / "researcher.md").write_text("你是严谨的研究员。", encoding="utf-8")
+    source = LocalAssetSource(LocalAssets(type="local", personas_dir=str(tmp_path)))
+    library = PromptLibrary(source.load_personas())
+    resolved = resolve_system_prompt(
+        _runtime_with_agent("researcher"), library, default="通用缺省"
+    )
+    assert resolved == "你是严谨的研究员。"
+
+
 def test_prompt_library_deploy_dir_overrides_builtin(tmp_path: Path) -> None:
     from kokoro_agent.content_source import LocalAssets, LocalAssetSource
     from kokoro_agent.prompts import PromptLibrary

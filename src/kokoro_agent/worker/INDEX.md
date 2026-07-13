@@ -31,6 +31,8 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
   `mcp/config`、`contract`。
 - 上游：kokoro-session 经 redis streams 投递 RunRequest（REQUESTS_STREAM）与 per-run
   control 流（resume/cancel/steer）。
+- `metrics`（OBS-1）：claim 胜负/inbox 相位/outbox 相位/租约 gauge 埋点（fail-open，只观测）；
+  `main` 在 `KOKORO_AGENT_METRICS_PORT` 配置时起 prometheus_client 端点（缺省关）。
 
 ## 运行时约束
 

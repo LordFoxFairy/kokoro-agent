@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig, log_config_summary
 from kokoro_agent.contract import REQUESTS_STREAM
+from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
 from kokoro_agent.contract import Backend
@@ -107,6 +108,9 @@ def _consumer_name() -> str:
 
 
 async def _serve(config: AppConfig) -> None:
+    # OBS-1 metrics 端点（缺省关）：显式配置端口才起，绝不阻断 worker 主职。
+    if config.metrics_port is not None:
+        start_metrics_server(config.metrics_port)
     bus = make_stream(config.stream)
     catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
     # 启动装载部署资产（local/s3 同口）：prompts 进内存（部署级人格）；skills 目录只是

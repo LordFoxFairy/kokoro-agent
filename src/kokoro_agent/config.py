@@ -165,6 +165,10 @@ class AppConfig(BaseModel):
     outbox_republish_ms: int = Field(
         default=30_000, gt=0, validation_alias="KOKORO_OUTBOX_REPUBLISH_MS"
     )
+    # OBS-1 metrics 端点端口（None=关，缺省关：worker 无常驻 HTTP 面，仅 e2e/部署显式开）。
+    metrics_port: int | None = Field(
+        default=None, ge=1, le=65535, validation_alias="KOKORO_AGENT_METRICS_PORT"
+    )
 
     # --- retention 域（0=关，保留期限是产品决策不擅代）---
     retention_events_ttl_s: int = Field(

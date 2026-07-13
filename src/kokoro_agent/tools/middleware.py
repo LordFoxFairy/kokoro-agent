@@ -17,6 +17,7 @@ from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 
+from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
@@ -275,6 +276,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         # recorded: ToolJournalRecord（storage 层导出）——按状态短路。
         status = getattr(recorded, "status", "started")
         if status == "started":
+            metrics.record_tool_unknown_outcome()
             return ToolMessage(
                 content=(
                     f"{_UNKNOWN_OUTCOME_PREFIX} tool {name!r} started but its outcome was never "

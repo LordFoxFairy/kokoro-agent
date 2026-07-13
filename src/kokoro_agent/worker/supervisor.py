@@ -31,6 +31,7 @@ from kokoro_agent.contract import (
     run_events_stream,
     run_control_stream,
 )
+from kokoro_agent import metrics
 from kokoro_agent.execution.approvals import (
     approval_frame,
     nested_approved_payloads,
@@ -174,8 +175,10 @@ class RunSupervisor:
         # dispatch CAS（D5）：pending→claimed。输（已 claimed=重复投递 / expired=迟到帧）→丢弃不执行；
         # 赢（或无 intent 兼容路径）→ durable 执行认领（try_claim）+ 启动。ACK 由 serve 后置于此之后。
         if not await self._store.claim_dispatch(request.run_id, self._consumer):
+            metrics.record_dispatch_claim(won=False)
             LOGGER.debug("dropping late/duplicate dispatch run_id=%s", request.run_id)
             return
+        metrics.record_dispatch_claim(won=True)
         await self._on_request(bus, request)
 
     async def _republish_outbox(self, bus: StreamProtocol) -> None:
@@ -194,6 +197,7 @@ class RunSupervisor:
                     maxlen=RUN_EVENTS_MAXLEN,
                 )
                 await self._store.mark_critical_published(frame.run_id, frame.durable_seq)
+                metrics.record_outbox("republished")
             except Exception:  # noqa: BLE001 — 单帧补发失败留 queued，下一拍再试，不阻断其余
                 LOGGER.exception(
                     "outbox republish failed run_id=%s seq=%s", frame.run_id, frame.durable_seq
@@ -252,6 +256,9 @@ class RunSupervisor:
             purged = await self._store.purge_terminal(self._run_ttl_s * 1000)
             if purged:
                 LOGGER.info("retention purged %d terminal runs", purged)
+        # OBS-1：本 worker 活跃 run 与租约持有面（活跃 run + 收养的 control 监听）每心跳刷新。
+        active = sum(1 for task in self._tasks.values() if not task.done())
+        metrics.set_lease_gauges(active_runs=active, lease_held=active + len(self._control))
 
     async def _reconcile_run_receipts(self, bus: StreamProtocol, run_id: str) -> None:
         try:
@@ -267,6 +274,7 @@ class RunSupervisor:
                     outbox_wire_event(frame),
                     maxlen=RUN_EVENTS_MAXLEN,
                 )
+                metrics.record_outbox("republished")
             except Exception:  # noqa: BLE001 — 单帧重发失败下一宽限窗再试，不阻断其余
                 LOGGER.exception(
                     "stale outbox republish failed run_id=%s seq=%s", run_id, frame.durable_seq
@@ -275,6 +283,7 @@ class RunSupervisor:
             await self._terminate_contract_incompatible(bus, run_id, outcome.rejected_seq)
         elif outcome.receipt_state_lost:
             # manifest 行缺失且未 close：不删 outbox（reconcile 已保守跳过），ERROR 告警待排查。
+            metrics.record_outbox("receipt_state_lost")
             LOGGER.error("receipt_state_lost: manifest missing before close, run_id=%s", run_id)
 
     async def _terminate_contract_incompatible(
@@ -557,6 +566,7 @@ class RunSupervisor:
             LOGGER.debug("dropping duplicate control decision_id=%s run_id=%s", msg.decision_id, run_id)
             return
         # persisted 时点回执。
+        metrics.record_control_inbox("persisted")
         await self._emit_control_receipt(bus, run_id, msg.decision_id, "persisted")
         await self._apply_recorded_control(bus, run_id, msg)
 
@@ -568,12 +578,14 @@ class RunSupervisor:
             # cancel：apply 即终态，applied 回执须先于 run.completed——session relayRun 遇终态即
             # 收束，其后帧不再消费；且 _on_cancel 的 teardown 会 cancel 本 control 任务，后置回执会被吞。
             await self._store.mark_control_applied(run_id, msg.decision_id)
+            metrics.record_control_inbox("applied")
             await self._emit_control_receipt(bus, run_id, msg.decision_id, "applied")
             await self._guarded_control_apply(bus, run_id, msg)
             return
         # resume：apply（spawn）后 run 续跑、control 任务存活，可安全后置 applied 回执。
         await self._guarded_control_apply(bus, run_id, msg)
         await self._store.mark_control_applied(run_id, msg.decision_id)
+        metrics.record_control_inbox("applied")
         await self._emit_control_receipt(bus, run_id, msg.decision_id, "applied")
 
     async def _emit_control_receipt(
@@ -620,14 +632,17 @@ class RunSupervisor:
             msg = parse_inbound(json.loads(entry.body))
             if not isinstance(msg, RunResume | RunCancel):
                 await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                metrics.record_control_inbox("superseded")
                 continue
             if await self._store.is_terminal(entry.run_id):
                 await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                metrics.record_control_inbox("superseded")
                 continue
             if isinstance(msg, RunResume):
                 current = await self._interrupt_fingerprint(entry.run_id)
                 if entry.fingerprint is None or current != entry.fingerprint:
                     await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                    metrics.record_control_inbox("superseded")
                     continue
             await self._apply_recorded_control(bus, entry.run_id, msg)
 

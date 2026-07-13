@@ -41,6 +41,7 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 
 from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
+from kokoro_agent import metrics
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
 from kokoro_agent.streams.protocol import StreamProtocol
@@ -204,6 +205,7 @@ class RunEmitter:
             if staged is None:
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
                 return
+            metrics.record_outbox("queued")
             event = agent_event_adapter.validate_python(
                 {**base, "durable_seq": staged.durable_seq, "event_id": staged.event_id}
             )
@@ -214,6 +216,7 @@ class RunEmitter:
                 maxlen=RUN_EVENTS_MAXLEN,
             )
             await self._outbox.mark_critical_published(self._run_id, staged.durable_seq)
+            metrics.record_outbox("published")
             return
         event = agent_event_adapter.validate_python(base)
         self._next_index += 1

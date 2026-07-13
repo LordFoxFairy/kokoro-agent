@@ -20,6 +20,8 @@ import httpx
 
 from mcp.shared._httpx_utils import McpHttpClientFactory
 
+from kokoro_agent import metrics
+
 _STRICT = "strict"
 _OFF = "off"
 _EGRESS_MODE_ENV = "KOKORO_MCP_EGRESS_MODE"
@@ -36,6 +38,11 @@ _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 class EgressBlocked(Exception):
     """目标落在禁网段 / 无法解析：连接期 fail-closed。绝不含凭据，只述及 host/网段。"""
+
+    def __init__(self, *args: object) -> None:
+        # 每次构造即一次 egress 拒绝（全部实例都是 raise 现场）：单点计数，fail-open。
+        super().__init__(*args)
+        metrics.record_egress_blocked()
 
 
 def _parse_ip(text: str) -> _IpAddress | None:

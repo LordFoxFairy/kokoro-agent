@@ -13,6 +13,7 @@ from collections.abc import Mapping
 
 from langchain_mcp_adapters.sessions import Connection, StreamableHttpConnection
 
+from kokoro_agent import metrics
 from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.mcp.egress import (
     AddressResolver,
@@ -22,7 +23,10 @@ from kokoro_agent.mcp.egress import (
 
 
 class McpConnectionError(Exception):
-    pass
+    def __init__(self, *args: object) -> None:
+        # 每次构造即一次 MCP 连接失败（全部实例都是 raise 现场）：单点计数，fail-open。
+        super().__init__(*args)
+        metrics.record_mcp_unavailable()
 
 
 # 返回 Connection 联合别名以匹配 MultiServerMCPClient 的不变 dict 参数。

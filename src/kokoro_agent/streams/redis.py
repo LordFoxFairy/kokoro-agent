@@ -196,6 +196,22 @@ class RedisStream:
                 if not items:
                     # 空转间隙才做死信收养：不占热路径。
                     items = await self._autoclaim_stale(stream, group, consumer)
+            except ResponseError as error:
+                # 组消失（空流被 redis 回收 key → 组随之没）→ NOGROUP。此非致命：重建组（mkstream）
+                # 后重读，绝不冒泡杀死订阅流。流已空无历史条目，重建从 "0" 起不会重放旧消息；
+                # 下游幂等去重兜正确性。其余 ResponseError 是真 bug，照常上抛。
+                if "NOGROUP" not in str(error):
+                    raise
+                LOGGER.warning(
+                    "redis group missing on %s (NOGROUP), recreating in %.1fs: %s",
+                    stream,
+                    backoff,
+                    error,
+                )
+                group_ready = False
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)
+                continue
             except (RedisConnectionError, RedisTimeoutError) as error:
                 # 断线/抖动绝不冒泡杀死订阅流；group 游标在 redis 侧存活，重连不重放已投递消息。
                 LOGGER.warning(

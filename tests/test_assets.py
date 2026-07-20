@@ -28,7 +28,10 @@ from kokoro_agent.content_source import (
 from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.skills import SkillAssetError, parse_frontmatter
 
-MINIO_URL = "http://127.0.0.1:9100"
+from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
+
+_CREDS_RAW = minio_creds()
+_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
 BUCKET = f"kokoro-assets-test-{int(time.time())}"
 
 
@@ -184,8 +187,8 @@ def _probe_minio() -> S3Client | None:
         "s3",
         endpoint_url=MINIO_URL,
         region_name="us-east-1",
-        aws_access_key_id="kokoro",
-        aws_secret_access_key="kokoro-secret",
+        aws_access_key_id=_ACCESS,
+        aws_secret_access_key=_SECRET,
         config=BotoConfig(
             s3={"addressing_style": "path"},
             connect_timeout=1,
@@ -212,8 +215,8 @@ class TestS3AssetSource:
     def _source(self, prefix: str) -> S3AssetSource:
         return S3AssetSource(
             S3Assets(type="s3", endpoint=MINIO_URL, bucket=BUCKET, prefix=prefix),
-            access_key=SecretStr("kokoro"),
-            secret_key=SecretStr("kokoro-secret"),
+            access_key=SecretStr(_ACCESS),
+            secret_key=SecretStr(_SECRET),
         )
 
     def test_loads_full_packages_under_prefix(self) -> None:
@@ -236,8 +239,8 @@ class TestS3AssetSource:
         source = make_asset_source(
             AssetSettings(
                 source=S3Assets(type="s3", endpoint=MINIO_URL, bucket=BUCKET, prefix="e2e"),
-                s3_access_key=SecretStr("kokoro"),
-                s3_secret_key=SecretStr("kokoro-secret"),
+                s3_access_key=SecretStr(_ACCESS),
+                s3_secret_key=SecretStr(_SECRET),
             )
         )
         raw = source.load_skills()

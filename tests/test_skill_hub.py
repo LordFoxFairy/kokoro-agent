@@ -12,6 +12,10 @@ from pathlib import Path
 
 import boto3
 import pytest
+from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
+
+_CREDS_RAW = minio_creds()
+_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
 from mypy_boto3_s3 import S3Client
 from pydantic import SecretStr
 from pymongo import AsyncMongoClient
@@ -34,7 +38,7 @@ from kokoro_agent.skills.hub import (
 from kokoro_agent.skills.package import parse_frontmatter
 
 _MONGO_URL = "mongodb://127.0.0.1:27017"
-_MINIO_ENDPOINT = "http://127.0.0.1:9100"
+_MINIO_ENDPOINT = MINIO_URL
 
 
 @pytest.fixture
@@ -256,7 +260,7 @@ async def test_concurrent_write_conflict_fails_loud(hub: SkillHub, tmp_path: Pat
 def _probe_minio() -> S3Client | None:
     client: S3Client = boto3.client(
         "s3", endpoint_url=_MINIO_ENDPOINT,
-        aws_access_key_id="kokoro", aws_secret_access_key="kokoro-secret",
+        aws_access_key_id=_ACCESS, aws_secret_access_key=_SECRET,
         region_name="us-east-1",
     )
     try:
@@ -275,7 +279,7 @@ async def test_s3_package_store_roundtrip_and_idempotency(tmp_path: Path) -> Non
     try:
         store = S3PackageStore(
             S3Workspace(type="s3", endpoint=_MINIO_ENDPOINT, bucket=bucket),
-            S3Credentials(access_key=SecretStr("kokoro"), secret_key=SecretStr("kokoro-secret")),
+            S3Credentials(access_key=SecretStr(_ACCESS), secret_key=SecretStr(_SECRET)),
         )
         await store.put("skills/official/x/abc.zip", b"payload")
         await store.put("skills/official/x/abc.zip", b"ignored")  # 内容寻址：已存在跳过。

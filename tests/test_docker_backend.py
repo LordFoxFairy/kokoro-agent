@@ -10,6 +10,10 @@ import uuid
 from pathlib import Path
 
 import pytest
+from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
+
+_CREDS_RAW = minio_creds()
+_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
 
 from fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
@@ -167,8 +171,8 @@ class TestDockerWithS3Archive:
         from kokoro_agent.sandbox.docker_backend import ArchivingDockerShellBackend
 
         minio = boto3.client(
-            "s3", endpoint_url="http://127.0.0.1:9100", region_name="us-east-1",
-            aws_access_key_id="kokoro", aws_secret_access_key="kokoro-secret",
+            "s3", endpoint_url=MINIO_URL, region_name="us-east-1",
+            aws_access_key_id=_ACCESS, aws_secret_access_key=_SECRET,
             config=BotoConfig(s3={"addressing_style": "path"}, connect_timeout=1,
                               retries={"max_attempts": 1}),
         )
@@ -176,14 +180,14 @@ class TestDockerWithS3Archive:
         try:
             minio.create_bucket(Bucket=bucket)
         except Exception:
-            pytest.skip("minio unreachable at :9100")
+            pytest.skip(SKIP_REASON)
         plain = _connect(tmp_path, run_id="run_ds3")
         backend = ArchivingDockerShellBackend(
             root=tmp_path,
             container_id=plain.container_id,
             archiver=S3Archiver(
-                S3Workspace(type="s3", endpoint="http://127.0.0.1:9100", bucket=bucket),
-                access_key=SecretStr("kokoro"), secret_key=SecretStr("kokoro-secret"),
+                S3Workspace(type="s3", endpoint=MINIO_URL, bucket=bucket),
+                access_key=SecretStr(_ACCESS), secret_key=SecretStr(_SECRET),
             ),
             prefix="ns:ds3",
             timeout=30,

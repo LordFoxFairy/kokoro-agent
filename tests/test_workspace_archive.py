@@ -18,9 +18,11 @@ from pydantic import SecretStr, ValidationError
 from kokoro_agent.sandbox import load_workspace_config, make_backend
 from kokoro_agent.sandbox.archive import ArchivingLocalShellBackend, S3Archiver, S3Workspace
 from kokoro_agent.sandbox.backend import SandboxSettings
+from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
 
-MINIO_URL = "http://127.0.0.1:9100"
-CREDS = {"access_key": SecretStr("kokoro"), "secret_key": SecretStr("kokoro-secret")}
+_CREDS_RAW = minio_creds()
+_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
+CREDS = {"access_key": SecretStr(_ACCESS), "secret_key": SecretStr(_SECRET)}
 BUCKET = f"kokoro-agent-test-{int(time.time())}"
 
 
@@ -32,8 +34,8 @@ def _sandbox_settings(root: str | None, workspace: object = None) -> SandboxSett
             "local_shell_timeout": 30,
             "local_shell_max_output_bytes": 100000,
             "workspace": workspace,
-            "workspace_s3_access_key": SecretStr("kokoro") if workspace else None,
-            "workspace_s3_secret_key": SecretStr("kokoro-secret") if workspace else None,
+            "workspace_s3_access_key": SecretStr(_ACCESS) if workspace else None,
+            "workspace_s3_secret_key": SecretStr(_SECRET) if workspace else None,
             "e2b": {"api_key": None, "template": None, "timeout": 1800},
             "docker": {"image": None, "ttl": 1800},
             "custom": {"factory_ref": None, "config_path": None},
@@ -46,8 +48,8 @@ def _probe_minio() -> S3Client | None:
         "s3",
         endpoint_url=MINIO_URL,
         region_name="us-east-1",
-        aws_access_key_id="kokoro",
-        aws_secret_access_key="kokoro-secret",
+        aws_access_key_id=_ACCESS,
+        aws_secret_access_key=_SECRET,
         config=BotoConfig(
             s3={"addressing_style": "path"},
             connect_timeout=1,

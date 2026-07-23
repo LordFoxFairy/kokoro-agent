@@ -122,5 +122,9 @@ def _build_litellm_model(settings: ChatModelSettings, model: ModelConfig) -> Bas
         api_key=settings.litellm_api_key,
         base_url=settings.litellm_base_url,
         disable_streaming=settings.disable_streaming,
+        # 流式下也回 usage（stream_options.include_usage=true）：否则 usage_metadata 空 →
+        # 终态 token_usage=None → session settle 捕获 0 → 计费不扣。对所有经网关的 OpenAI 兼容
+        # 后端(生产 GLM/openai 及 dev ollama)一致生效，是计费闭环所需，非本地专用。
+        stream_usage=True,
         reasoning_effort=_thinking_effort(model, off="minimal"),
     )

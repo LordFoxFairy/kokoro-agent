@@ -7,20 +7,15 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 
 import boto3
 import pytest
-from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
-
-_CREDS_RAW = minio_creds()
-_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
+from dev_minio import MINIO_URL, minio_creds
 from mypy_boto3_s3 import S3Client
 from pydantic import SecretStr
 from pymongo import AsyncMongoClient
-
-from collections.abc import Mapping
 
 from kokoro_agent.content_source import LocalAssets, LocalAssetSource
 from kokoro_agent.contract import SkillGrant
@@ -37,6 +32,8 @@ from kokoro_agent.skills.hub import (
 )
 from kokoro_agent.skills.package import parse_frontmatter
 
+_CREDS_RAW = minio_creds()
+_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
 _MONGO_URL = "mongodb://127.0.0.1:27017"
 _MINIO_ENDPOINT = MINIO_URL
 

@@ -11,10 +11,6 @@ from pathlib import Path
 
 import pytest
 from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
-
-_CREDS_RAW = minio_creds()
-_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
-
 from fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.docker_backend import (
@@ -24,6 +20,8 @@ from kokoro_agent.sandbox.docker_backend import (
 )
 from kokoro_agent.storage.ledger import RunLedger
 
+_CREDS_RAW = minio_creds()
+_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
 IMAGE = "busybox"
 
 

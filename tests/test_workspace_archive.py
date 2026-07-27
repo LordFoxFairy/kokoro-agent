@@ -18,7 +18,7 @@ from pydantic import SecretStr, ValidationError
 from kokoro_agent.sandbox import load_workspace_config, make_backend
 from kokoro_agent.sandbox.archive import ArchivingLocalShellBackend, S3Archiver, S3Workspace
 from kokoro_agent.sandbox.backend import SandboxSettings
-from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
+from dev_minio import MINIO_URL, minio_creds
 
 _CREDS_RAW = minio_creds()
 _ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")

@@ -7,7 +7,7 @@ on:
 jobs:
   gates:
     runs-on: ubuntu-latest
-    # redis 集成测试(stream_port_redis)需真实 redis：提供服务容器，测试实跑而非跳过。
+    # Runtime tests require both durable backends and fail loudly when either is absent.
     services:
       redis:
         image: redis:7
@@ -15,6 +15,15 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5

@@ -28,7 +28,7 @@ from kokoro_agent.content_source import (
 from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.skills import SkillAssetError, parse_frontmatter
 
-from dev_minio import MINIO_URL, SKIP_REASON, minio_creds
+from dev_minio import MINIO_URL, minio_creds
 
 _CREDS_RAW = minio_creds()
 _ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
@@ -245,5 +245,4 @@ class TestS3AssetSource:
         )
         raw = source.load_skills()
         assert "via-s3-skill" in raw["tone"]["SKILL.md"]
-
 

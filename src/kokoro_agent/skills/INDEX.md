@@ -18,7 +18,7 @@ S3/local 内容寻址 zip 包体权威源）、装配期把有附件的包物化
 
 ## Public boundary
 
-`__init__.py` re-export 即公开面：
+公开面 = `__init__.py` 的 `__all__`（15 个符号），按定义模块列：
 
 - `hub.py`
   - `SkillHub`：写面 `upsert`（校验清单强制、hash 未变幂等不写、文档级 revision CAS）、
@@ -26,20 +26,25 @@ S3/local 内容寻址 zip 包体权威源）、装配期把有附件的包物化
     `set_enabled`（per-namespace 启停偏好，独立表）；读面只按会话快照卡 (scope,name,hash)
     直读：`read_body`（正文双路：当前版 Mongo 快读 / 旧 hash 走 zip 取回）、`load_package`、
     `load_package_if_assets`（纯文档包返 None 不白走包体存储）。
-    池查询/管理面权威在 kokoro-hub（TS）；本仓不提供池枚举/跨 scope 解析面
-    （原 `list_pool`/`resolve_cards` 已删除）。
+    池查询/管理面权威在 kokoro-hub（TS）；本仓不提供池枚举/跨 scope 解析面。
   - `make_skill_hub(settings)` 异步上下文装配；`SkillHubSettings`；`seed_official`
     （部署目录只是 seed 输入，真源是库+包体）；`validate_package`（名称/保留名/文件数/
-    体积/路径穿越/尖括号注入，fail-loud）；`content_hash_of`；`PackageStore` 协议与
-    `make_package_store`（local/s3；worker/main 借它做 deliveries 存储）；`OFFICIAL_SCOPE`。
+    体积/路径穿越/尖括号注入，fail-loud）；`content_hash_of`；`SkillHubError`
+    （校验失败/CAS 冲突/包体缺失的统一失败类型，消费侧按它兜底转工具错误）；`OFFICIAL_SCOPE`。
 - `materialize.py`：`SkillMaterializerMiddleware`（before_agent 一次对账）、
   `reconcile_skill_assets`（graph state 账本 {name: content_hash} 驱动增量：目录缺失自愈
   全量重写、残留 GC、单包失败不阻断只不落账本）。
 - `package.py`：`parse_frontmatter`（YAML 头 fail-loud：name 与目录同名、description 非空）、
   `SkillFrontmatter`、`SkillAssetError`。
 - `supply.py`：`SKILLS_ROOT`（"/.skills/"，点前缀=能力供给不进用户文件清单）、
-  `MaterializeBackend`/`ExecCapableBackend`（物化所需 backend 能力面；GC 删除按
-  isinstance 探测降级）。
+  `MaterializeBackend`（物化 reconcile 所需的 backend 能力面：upload 写包体 + als 探目录）。
+
+包内私有（不在 `__all__`，外部只能深导入）：`hub.py` 的 `PackageStore` /
+`make_package_store` / `LocalPackageStore` / `S3PackageStore`，`supply.py` 的
+`ExecCapableBackend`（GC 删除按 isinstance 探测降级，仅 materialize.py 内用）。
+`PackageStore` / `make_package_store` 当前被 `worker/main.py`、`agents/deps.py`、
+`tools/deliver.py` 深导入复用为 deliveries 存储——这是未收口的边界缺口，扩大跨包用法前
+必须先把它们提升进 `__init__.py` 并在此登记。
 
 ## Callers and dependencies
 

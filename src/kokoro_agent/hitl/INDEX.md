@@ -21,11 +21,14 @@ owners:
 - `request_human(*, kind, request_id, schema=None, context=None) -> JsonValue`
   人机暂停原语。同步调用（与 `langgraph.interrupt` 一致，async 工具体内无需 await）。
   首跑挂起、resume 后原地返回回应值续跑。
-- `request_input(*, request_id, schema=None, context=None) -> InputSubmitted | InputRejected`
+- `request_input(*, request_id, schema=None, context=None) -> HumanInput`
   kind=input 的消费侧包装：request_human(kind="input") + jsonschema 校验 + 重问循环。
   submit 通过校验 → `InputSubmitted(value)`；reject → `InputRejected(reason)`；submit 不合法 →
   附 `validation_error` 原地重新 interrupt（同 request_id，人重填）。MCP elicitation 桥的消费点。
   resume 载荷形态 = `list[{request_id, type, value?/reason?}]`（supervisor 的 `submit_resume_value` 产出）。
+- `HumanInput = InputSubmitted | InputRejected`：`request_input` 返回值的具名联合，消费方
+  按分支穷尽；`InputSubmitted(value: dict[str, JsonValue])` 与 `InputRejected(reason: str | None)`
+  都是 strict/frozen/extra=forbid 的边界模型。
 - `HumanRequest`：统一载荷（`request_id` 幂等锚 / `kind` / `response_schema` / `context`）。
   `to_interrupt_value()` 生成 interrupt 信封，`from_interrupt_value()` 供投影层反解（非本信封返回 None）。
 - `HumanKind = Literal["approval", "question", "review", "input"]`。

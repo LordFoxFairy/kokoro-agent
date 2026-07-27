@@ -17,7 +17,7 @@ Agent does not own Site identity, accounts, pricing, plans, credit deduction, Se
 
 ## Public boundary
 
-The process entrypoint is `kokoro_agent.worker.main`; public Python exports are limited by package `__init__.py` files and adjacent component INDEX files.
+The process entrypoint is `kokoro_agent.worker.main`. `skills` and `hitl` bound their public surface with `__init__.py` re-exports; `execution` and `worker` re-export nothing, so their public surface is the module-level symbols listed in their component INDEX files.
 
 ## Callers and dependencies
 
@@ -30,6 +30,8 @@ Agent owns execution checkpoints, run leases, control/outbox state, and raw Agen
 ## Runtime and security
 
 Namespace is opaque and is the only GA isolation key. Provider credentials remain adapter-side and untrusted tool/artifact content is sandboxed and bounded.
+
+The interpreter is pinned by `.python-version` (3.11), matching `requires-python` and the Pyright `pythonVersion`. CI installs uv without a Python version input, so without this file `uv sync --locked` resolves whichever interpreter the runner offers and the same lock runs under different interpreters.
 
 ## Idempotency, failure, and recovery
 

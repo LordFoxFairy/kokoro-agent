@@ -1,11 +1,22 @@
+---
+architectureIndex: 1
+rootId: agent.worker
+owners:
+  - "@LordFoxFairy"
+---
+
 # worker — 进程入口与长驻调度
 
-## 职责
+## Responsibilities
 
 kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervisor 长驻消费请求流。
 持有 run 生命周期的调度真相（去重认领、TTL 租约心跳、过期重拾、优雅停机、终态清理）。
 
-## 公开 API
+## Non-responsibilities
+
+进程域不拥有会话消息、商业准入、Site 身份、模型定价或浏览器 SSE。
+
+## Public boundary
 
 - `main.py`：`main()` 进程入口（`AppConfig.from_env` 单点读 env → make_stream/checkpointer/
   ledger/memory_store/skill_hub → `seed_official` → `AssembleDeps` → `RunSupervisor.serve`）。
@@ -24,7 +35,7 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
   - `drain(timeout_s)`：优雅停机（暂停 run 不算活跃，不阻塞退出）。
 - `messages.py`：`parse_inbound(raw) → InboundMessage | None`（contract 校验，坏帧警告丢弃）。
 
-## 关键协作者
+## Callers and dependencies
 
 - 下游依赖：`execution/`（invoke_once/RunEmitter/approvals 全套）、`storage/ledger`（RunLedger）、
   `streams/`（StreamProtocol）、`agents/`（assemble 配方）、`skills/hub`、`sandbox/`、
@@ -34,7 +45,11 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 - `metrics`（OBS-1）：claim 胜负/inbox 相位/outbox 相位/租约 gauge 埋点（fail-open，只观测）；
   `main` 在 `KOKORO_AGENT_METRICS_PORT` 配置时起 prometheus_client 端点（缺省关）。
 
-## 运行时约束
+## Data ownership and events
+
+worker 通过 RunLedger 拥有 run lease、control inbox、critical outbox 与 terminal claim；业务会话和额度记录不在本服务。
+
+## Runtime and security
 
 - resume 路径的多重护栏：is_terminal 闸（stale resume 不续跑）→ has_pending_interrupt 幂等闸
   → adopt 交接租约 → 再查 is_terminal（build 长窗内他处 cancel）→ spawn 前 entry gate。
@@ -44,12 +59,20 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 - 终态统一漏斗 `_teardown_control`：沙箱回收 → 事件流 TTL → 删 control 流 → 收监听。
 - emitter 缓存 per-run；miss 时 `RunEmitter.attach` 从流重建 index 续接（幂等链不碰撞）。
 
-## 扩展规则
+## Idempotency, failure, and recovery
+
+CAS claim、TTL lease、fencing、固定 outbox identity 与 control keep-first 语义覆盖重复消息、进程崩溃和重拾。
+
+## Extension rules and forbidden dependencies
 
 - 新入站消息 kind：contract 扩 InboundMessage → dispatch 加分支；不得绕 parse_inbound。
 - 调度依赖一律构造注入（agent_builder/trace_factory/sandbox_teardown 模式），supervisor 不读 env。
 
-## 当前陷阱
+## Current gotchas
 
 - steer 持久化失败只记日志不判死 run（插话可由用户重发）。
 - task done-callback 按任务身份弹出：resume 覆盖同 run_id 新句柄时旧回调不误删。
+
+## Verification
+
+运行 `uv run pytest tests/test_invoke.py tests/test_control_inbox.py -q`、`uv run pyright` 与 `uv run ruff check src tests`。

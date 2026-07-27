@@ -1,11 +1,22 @@
+---
+architectureIndex: 1
+rootId: agent.hitl
+owners:
+  - "@LordFoxFairy"
+---
+
 # hitl —— 通用人机暂停原语
 
-## 职责
+## Responsibilities
 
 一切人机暂停的统一抽象与原语。把"工具在任意执行点请求人"收敛为一个 `request_human`
 调用（包装 langgraph 原生 interrupt/resume）；现状三场景（approval/question/review）是其预设形态。
 
-## 公开 API
+## Non-responsibilities
+
+本包不拥有浏览器交互、Session control receipt、权限策略或 Agent 执行编排。
+
+## Public boundary
 
 - `request_human(*, kind, request_id, schema=None, context=None) -> JsonValue`
   人机暂停原语。同步调用（与 `langgraph.interrupt` 一致，async 工具体内无需 await）。
@@ -20,7 +31,7 @@
 - `HumanKind = Literal["approval", "question", "review", "input"]`。
 - 预设决策词汇：`APPROVAL_DECISIONS` / `QUESTION_DECISIONS` / `REVIEW_DECISIONS` / `INPUT_DECISIONS`。
 
-## 关键协作者
+## Callers and dependencies
 
 - 下游消费：`tools/permissions.py`（interrupt_on 声明取 approval/question 决策集）、
   `tools/middleware.py`（`ToolResultReviewMiddleware` 经 `request_human(kind="review")` 发起审核暂停）、
@@ -28,13 +39,29 @@
   `execution/approvals.py`（`review_entries`/`input_entries` 经 `HumanRequest.from_interrupt_value` 反解信封投影 wire）。
 - 上游依赖：`contract`（`AllowedDecision` 词汇）、`langgraph`（`interrupt`）、`jsonschema`（input 校验）。
 
-## 运行时约束
+## Data ownership and events
+
+`HumanRequest` 只拥有 checkpoint 中的暂停信封；Session 拥有用户决策记录和浏览器可见状态。
+
+## Runtime and security
 
 - `request_human` 必须在带 checkpointer 的 langgraph 图执行上下文内调用（挂起点由 checkpoint 承载）。
 - 本包是依赖叶子：只依赖 `contract` 与 `langgraph`，不得反向依赖 `execution` / `tools`。
 
-## 扩展规则
+## Idempotency, failure, and recovery
+
+`request_id` 是同一暂停的幂等锚；无效 input 保持同一 request 原地重问，resume 由 checkpoint 恢复。
+
+## Extension rules and forbidden dependencies
 
 - 新暂停场景优先表达为 `request_human` 的 kind 预设，不新造独立 interrupt 载荷形态。
 - wire 兼容期：新 kind 的 wire 投影是契约变更（`contract` 的 `AwaitingKind` 闭集），须走契约流程，
   不在本包私自扩 wire。
+
+## Current gotchas
+
+`request_human` 是同步 checkpoint 原语；async 工具内不得误加 `await` 或创建第二种暂停信封。
+
+## Verification
+
+运行 `uv run pytest tests/test_hitl.py tests/e2e/test_mcp_elicitation.py -q`、`uv run pyright` 与 `uv run ruff check src tests`。

@@ -1,11 +1,22 @@
+---
+architectureIndex: 1
+rootId: agent.execution
+owners:
+  - "@LordFoxFairy"
+---
+
 # execution — 执行链路域（装配、编排、投影泵、事件发射、HITL 应用层）
 
-## 职责
+## Responsibilities
 
 单次 run 的执行核心：DeepAgents 装配收窄为窄端口、v3 四投影并发消费合流、
 wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 resume 对齐。
 
-## 公开 API
+## Non-responsibilities
+
+本域不拥有会话、Site、计费、模型路由策略、浏览器投影或跨服务鉴权事实。
+
+## Public boundary
 
 - `build_agent.py`：`build_agent(**deps) → InvokableAgent`。包住 `create_deep_agent`
   的未解泛型（object 边界 + TypeGuard 一次收窄），state_schema=KokoroAgentState。
@@ -31,21 +42,37 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   `AgentRunStream`、`ModelStream`、`ToolCallView`、`SubagentRunStream`、`StateView`）——
   框架私有泛型止步于此。
 
-## 关键协作者
+## Callers and dependencies
 
 - 上游调用：`worker/supervisor.py`（dispatch/resume/cancel 全经此域）、`agents/`（装配配方）。
 - 下游依赖：`contract`（wire payload strict 模型）、`hitl`（HumanRequest 信封反解）、
   `streams/protocol`（StreamProtocol 发布）、deepagents/langgraph/langchain。
 
-## 运行时约束
+## Data ownership and events
+
+本域构造 raw Agent wire events，并通过 ledger/outbox 管理 critical frame 交付状态；Session 拥有浏览器消息与投影。
+
+## Runtime and security
 
 - v3 四路投影必须并发消费：任一通道缓冲满会回压整图直至死锁；queue 只为合流保序。
 - 终态发射前必经 `claim_terminal` 原子认领：cancel/自然完成/异常三路共用认领键，多 pod 恰好一个终态。
 - emit 用 `exclude_none` 上 wire：null 会被 session 的 zod `.optional()` 拒收。
 - 工具中途 interrupt 被 langgraph 浮现为 error=Interrupt repr：按前缀识别、抑制伪 returned。
 
-## 扩展规则
+## Idempotency, failure, and recovery
+
+per-run index、durable sequence、terminal claim 与固定 event identity 共同处理重放、补发、竞态终态和 worker 恢复。
+
+## Extension rules and forbidden dependencies
 
 - 新 wire kind：contract 定 payload → events.py 扩联合与 `_KIND_BY_PAYLOAD` → 泵/映射函数。
 - 新 HITL 形态优先表达为 `hitl.request_human` 的 kind 预设，awaiting/align 在 approvals.py 加分支。
 - 不得绕过 RunEmitter 直接 publish 事件（index 单点递增是幂等链前提）。
+
+## Current gotchas
+
+四路投影必须并发抽干；任何串行消费都可能因框架缓冲回压而锁死整次执行。
+
+## Verification
+
+运行 `uv run pytest tests/test_invoke.py tests/test_deliver_event.py -q`、`uv run pyright` 与 `uv run ruff check src tests`。

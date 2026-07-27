@@ -34,7 +34,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      # 锁定依赖安装：uv.lock 用官方源锁定（UV_NO_CONFIG），CI 无本地镜像配置，直接走锁文件。
+          # uv 也会自己读 .python-version；写在这里是为了让解释器版本在 workflow 里可见，
+          # 因为此前既无这个 input 也无该文件，CI 跑在 runner 恰好提供的任意解释器上。
+          python-version-file: .python-version
+      # uv.lock 的制品 URL 目前指向本地镜像而非官方源，UV_NO_CONFIG 改不了已写死的地址；
+      # 修法见根仓待办（需在版本约束下对官方源重解析并证明零漂移），本步骤依赖网络可达。
       - run: uv sync --locked
       - name: ruff
         run: uv run ruff check src tests

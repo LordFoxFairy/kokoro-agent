@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import mimetypes
+import os
+import stat
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Literal
 
@@ -22,11 +25,72 @@ DELIVER_TOOL_NAME = "deliver"
 MAX_DELIVERY_BYTES = 25 * 1024 * 1024
 
 
-def _read_delivery_bytes(target: Path) -> bytes:
-    # limit + 1 distinguishes an exact-boundary file from a growing/oversized file
-    # without ever loading the whole source into memory.
-    with target.open("rb") as source:
-        return source.read(MAX_DELIVERY_BYTES + 1)
+class DeliveryPathError(Exception):
+    """The requested path cannot be opened beneath the workspace without following links."""
+
+
+class _DeliveryTooLarge(Exception):
+    """The source exceeded the delivery byte limit before or during the bounded read."""
+
+
+def _secure_open_flags() -> tuple[int, int]:
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
+    values = [getattr(os, name, None) for name in required]
+    if (
+        any(value is None for value in values)
+        or not hasattr(os, "supports_dir_fd")
+        or os.open not in os.supports_dir_fd
+    ):
+        raise DeliveryPathError("secure open-beneath is unavailable")
+    directory, nofollow, cloexec = values
+    assert isinstance(directory, int)
+    assert isinstance(nofollow, int)
+    assert isinstance(cloexec, int)
+    return os.O_RDONLY | directory | nofollow | cloexec, os.O_RDONLY | nofollow | cloexec
+
+
+def _relative_components(relative_path: Path) -> tuple[str, ...]:
+    if relative_path.is_absolute() or not relative_path.parts:
+        raise DeliveryPathError("delivery path must be relative and non-empty")
+    parts = tuple(relative_path.parts)
+    if any(part in {"", ".", ".."} for part in parts):
+        raise DeliveryPathError("delivery path contains an unsafe component")
+    return parts
+
+
+def read_delivery_bytes_beneath(workspace_root: Path, relative_path: Path) -> bytes:
+    """Open beneath one trusted dirfd, then validate and read the same final fd."""
+    parts = _relative_components(relative_path)
+    directory_flags, file_flags = _secure_open_flags()
+    with ExitStack() as opened:
+        current_fd = os.open(workspace_root, directory_flags)
+        opened.callback(os.close, current_fd)
+        for component in parts[:-1]:
+            current_fd = os.open(component, directory_flags, dir_fd=current_fd)
+            opened.callback(os.close, current_fd)
+
+        file_fd = os.open(
+            parts[-1], file_flags | getattr(os, "O_NONBLOCK", 0), dir_fd=current_fd
+        )
+        opened.callback(os.close, file_fd)
+        source_stat = os.fstat(file_fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise DeliveryPathError("delivery source is not a regular file")
+        if source_stat.st_size > MAX_DELIVERY_BYTES:
+            raise _DeliveryTooLarge
+
+        remaining = MAX_DELIVERY_BYTES + 1
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(file_fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > MAX_DELIVERY_BYTES:
+            raise _DeliveryTooLarge
+        return data
 
 
 class DeliverArgs(BaseModel):
@@ -68,20 +132,20 @@ def make_deliver_tool(
             return "error: 当前后端不支持交付（无工作区文件面）。"
         if deliveries is None:
             return "error: 未配置交付存储（storage yaml deliveries 节）。"
-        # 虚拟根绝对路径映射进工作区（同归档 _archive_file 的 lstrip("/") 约定）。
-        root = workspace_dir.resolve()
-        target = (workspace_dir / path.lstrip("/")).resolve()
-        if not target.is_relative_to(root):  # resolve 后仍在工作区内，否则拒（路径穿越/符号链接越界）。
+        # 虚拟根绝对路径映射为相对组件；secure-open helper 不重新解析 pathname。
+        relative_path = Path(path.lstrip("/"))
+        try:
+            data = await asyncio.to_thread(
+                read_delivery_bytes_beneath, workspace_dir, relative_path
+            )
+        except _DeliveryTooLarge:
+            return f"error: 文件 {path!r} 超过交付上限（25 MiB）。"
+        except DeliveryPathError:
             return f"error: 路径 {path!r} 越出工作区，拒绝交付。"
-        if not target.is_file():
+        except (OSError, ValueError):
             return f"error: 文件 {path!r} 不存在或不是常规文件。"
-        if target.stat().st_size > MAX_DELIVERY_BYTES:
-            return f"error: 文件 {path!r} 超过交付上限（25 MiB）。"
-        data = await asyncio.to_thread(_read_delivery_bytes, target)
-        if len(data) > MAX_DELIVERY_BYTES:
-            return f"error: 文件 {path!r} 超过交付上限（25 MiB）。"
         content_hash = hashlib.sha256(data).hexdigest()
-        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        mime = mimetypes.guess_type(relative_path.name)[0] or "application/octet-stream"
         try:
             await deliveries.put(delivery_ref(namespace, content_hash), data)
         except SkillHubError as exc:

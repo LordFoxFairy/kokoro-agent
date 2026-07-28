@@ -19,6 +19,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from kokoro_agent.skills.hub import PackageStore, SkillHubError
 
 DELIVER_TOOL_NAME = "deliver"
+MAX_DELIVERY_BYTES = 25 * 1024 * 1024
+
+
+def _read_delivery_bytes(target: Path) -> bytes:
+    # limit + 1 distinguishes an exact-boundary file from a growing/oversized file
+    # without ever loading the whole source into memory.
+    with target.open("rb") as source:
+        return source.read(MAX_DELIVERY_BYTES + 1)
 
 
 class DeliverArgs(BaseModel):
@@ -67,7 +75,11 @@ def make_deliver_tool(
             return f"error: 路径 {path!r} 越出工作区，拒绝交付。"
         if not target.is_file():
             return f"error: 文件 {path!r} 不存在或不是常规文件。"
-        data = await asyncio.to_thread(target.read_bytes)
+        if target.stat().st_size > MAX_DELIVERY_BYTES:
+            return f"error: 文件 {path!r} 超过交付上限（25 MiB）。"
+        data = await asyncio.to_thread(_read_delivery_bytes, target)
+        if len(data) > MAX_DELIVERY_BYTES:
+            return f"error: 文件 {path!r} 超过交付上限（25 MiB）。"
         content_hash = hashlib.sha256(data).hexdigest()
         mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         try:

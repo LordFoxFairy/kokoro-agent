@@ -84,6 +84,11 @@ def _coro(tool: StructuredTool):
         "http://[::1]/",
         "http://10.0.0.5/",
         "http://169.254.169.254/latest/meta-data/",
+        # 100.64/10 CGNAT 共享段：ipaddress 的 is_private 不覆盖它，只靠属性判定会漏放。
+        # 在云上这一段就是运营商内网面与相邻租户，与私网同等危险（MCP egress 侧一直拒）。
+        "http://100.64.0.1/",
+        "http://100.127.255.254/",
+        "http://[::ffff:100.64.0.1]/",  # IPv4-mapped 写法不得绕过。
         "not a url",
     ],
 )

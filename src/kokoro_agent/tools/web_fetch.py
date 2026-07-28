@@ -18,6 +18,7 @@ FETCH_MAX_CHARS = 24_000
 _FETCH_MAX_BYTES = 1_000_000
 _FETCH_TIMEOUT_S = 15.0
 _MAX_REDIRECTS = 5
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 
 class WebFetchArgs(BaseModel):
@@ -33,6 +34,8 @@ async def _assert_public_target(url: str) -> None:
     infos = await asyncio.get_running_loop().getaddrinfo(parts.hostname, None)
     for info in infos:
         address = ipaddress.ip_address(info[4][0])
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
         if (
             address.is_private
             or address.is_loopback
@@ -40,6 +43,7 @@ async def _assert_public_target(url: str) -> None:
             or address.is_reserved
             or address.is_multicast
             or address.is_unspecified
+            or address in _CGNAT_NETWORK
         ):
             raise ValueError(f"unsafe fetch target (non-public address): {url!r}")
 

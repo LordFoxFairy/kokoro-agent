@@ -7,12 +7,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from kokoro_agent.skills.hub import LocalPackageStore
-from kokoro_agent.tools.deliver import DeliverResult, delivery_ref, make_deliver_tool
+from kokoro_agent.tools.deliver import (
+    MAX_DELIVERY_BYTES,
+    DeliverResult,
+    delivery_ref,
+    make_deliver_tool,
+)
 
 _NS = "local:s1"
 
@@ -82,6 +89,59 @@ async def test_deliver_rejects_path_traversal(tmp_path: Path) -> None:
     tool = make_deliver_tool(ws, _store(tmp_path), _NS)
     out = await tool.ainvoke({"path": "../secret.txt", "title": "X"})
     assert "越出工作区" in out
+
+
+def test_delivery_cap_matches_the_session_reader() -> None:
+    # kokoro-session src/workspace/files.ts MAX_READ_BYTES 同数：那侧超限拒读，
+    # 这侧再冻结更大的成果也是死件。两侧同数才不会存得进去、下不回来。
+    assert MAX_DELIVERY_BYTES == 25 * 1024 * 1024
+
+
+async def test_deliver_rejects_oversized_file(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    (ws / "huge.bin").write_bytes(b"x" * (MAX_DELIVERY_BYTES + 1))
+    store = _store(tmp_path)
+    tool = make_deliver_tool(ws, store, _NS)
+
+    out = await tool.ainvoke({"path": "/huge.bin", "title": "Huge"})
+    assert "超过交付上限" in out
+    assert not list((tmp_path / "deliveries").rglob("*"))  # 超限件不得落进冻结存储。
+
+
+async def test_deliver_caps_the_read_when_stat_under_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # stat 只是廉价预筛：沙箱后台进程（如 `curl -o big.bin &`）可以在 stat 之后继续写。
+    # 用一个只谎报 st_size 的 stat 模拟这个窗口——真正的封顶必须发生在读的时候。
+    ws = _workspace(tmp_path)
+    (ws / "grows.bin").write_bytes(b"x" * (MAX_DELIVERY_BYTES + 1))
+    real_stat = Path.stat
+
+    def under_reporting_stat(self: Path, **kwargs: object) -> os.stat_result:
+        fields = list(real_stat(self, **kwargs))  # pyright: ignore[reportArgumentType]
+        fields[6] = 1  # st_size：只改尺寸，st_mode 等保真（is_file 仍需正确判定）。
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "stat", under_reporting_stat)
+    tool = make_deliver_tool(ws, _store(tmp_path), _NS)
+
+    out = await tool.ainvoke({"path": "/grows.bin", "title": "Grows"})
+    assert "超过交付上限" in out
+
+
+async def test_deliver_accepts_file_at_the_cap(tmp_path: Path) -> None:
+    # 上限是含边界的：恰好等于上限的成果必须交付成功（封顶不得多截一字节）。
+    ws = _workspace(tmp_path)
+    payload = b"y" * MAX_DELIVERY_BYTES
+    (ws / "edge.bin").write_bytes(payload)
+    store = _store(tmp_path)
+    tool = make_deliver_tool(ws, store, _NS)
+
+    result = DeliverResult.model_validate_json(
+        await tool.ainvoke({"path": "/edge.bin", "title": "Edge"})
+    )
+    assert result.size == MAX_DELIVERY_BYTES
+    assert await store.get(delivery_ref(_NS, result.content_hash)) == payload
 
 
 async def test_deliver_missing_file_returns_error(tmp_path: Path) -> None:

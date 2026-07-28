@@ -150,6 +150,36 @@ def test_secure_reader_fails_closed_without_required_flags(
         read_delivery_bytes_beneath(ws, Path("report.txt"))
 
 
+def test_secure_reader_fails_closed_without_nonblock_before_opening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = _workspace(tmp_path)
+    (ws / "report.txt").write_bytes(b"safe")
+    open_called = False
+    read_called = False
+
+    def forbidden_open(*_args: object, **_kwargs: object) -> int:
+        nonlocal open_called
+        open_called = True
+        raise AssertionError("os.open called without O_NONBLOCK")
+
+    def forbidden_read(*_args: object, **_kwargs: object) -> bytes:
+        nonlocal read_called
+        read_called = True
+        raise AssertionError("os.read called without O_NONBLOCK")
+
+    monkeypatch.delattr(os, "O_NONBLOCK")
+    monkeypatch.setattr(os, "open", forbidden_open)
+    monkeypatch.setattr(os, "read", forbidden_read)
+    monkeypatch.setattr(os, "supports_dir_fd", {*os.supports_dir_fd, forbidden_open})
+
+    with pytest.raises(DeliveryPathError):
+        read_delivery_bytes_beneath(ws, Path("report.txt"))
+
+    assert not open_called
+    assert not read_called
+
+
 def test_secure_reader_closes_root_parent_and_file_descriptors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

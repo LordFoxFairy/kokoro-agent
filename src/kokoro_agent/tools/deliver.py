@@ -34,7 +34,7 @@ class _DeliveryTooLarge(Exception):
 
 
 def _secure_open_flags() -> tuple[int, int]:
-    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK")
     values = [getattr(os, name, None) for name in required]
     if (
         any(value is None for value in values)
@@ -42,11 +42,15 @@ def _secure_open_flags() -> tuple[int, int]:
         or os.open not in os.supports_dir_fd
     ):
         raise DeliveryPathError("secure open-beneath is unavailable")
-    directory, nofollow, cloexec = values
+    directory, nofollow, cloexec, nonblock = values
     assert isinstance(directory, int)
     assert isinstance(nofollow, int)
     assert isinstance(cloexec, int)
-    return os.O_RDONLY | directory | nofollow | cloexec, os.O_RDONLY | nofollow | cloexec
+    assert isinstance(nonblock, int)
+    return (
+        os.O_RDONLY | directory | nofollow | cloexec,
+        os.O_RDONLY | nofollow | cloexec | nonblock,
+    )
 
 
 def _relative_components(relative_path: Path) -> tuple[str, ...]:
@@ -69,9 +73,7 @@ def read_delivery_bytes_beneath(workspace_root: Path, relative_path: Path) -> by
             current_fd = os.open(component, directory_flags, dir_fd=current_fd)
             opened.callback(os.close, current_fd)
 
-        file_fd = os.open(
-            parts[-1], file_flags | getattr(os, "O_NONBLOCK", 0), dir_fd=current_fd
-        )
+        file_fd = os.open(parts[-1], file_flags, dir_fd=current_fd)
         opened.callback(os.close, file_fd)
         source_stat = os.fstat(file_fd)
         if not stat.S_ISREG(source_stat.st_mode):

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -112,21 +111,45 @@ async def test_deliver_caps_the_read_when_stat_under_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # stat 只是廉价预筛：沙箱后台进程（如 `curl -o big.bin &`）可以在 stat 之后继续写。
-    # 用一个只谎报 st_size 的 stat 模拟这个窗口——真正的封顶必须发生在读的时候。
+    # 磁盘文件保持很小让 stat 通过，随后 open 返回远大于上限的增长后来源。
     ws = _workspace(tmp_path)
-    (ws / "grows.bin").write_bytes(b"x" * (MAX_DELIVERY_BYTES + 1))
-    real_stat = Path.stat
+    target = ws / "grows.bin"
+    target.write_bytes(b"x")
 
-    def under_reporting_stat(self: Path, **kwargs: object) -> os.stat_result:
-        fields = list(real_stat(self, **kwargs))  # pyright: ignore[reportArgumentType]
-        fields[6] = 1  # st_size：只改尺寸，st_mode 等保真（is_file 仍需正确判定）。
-        return os.stat_result(fields)
+    class ObservedGrowingSource:
+        def __init__(self, total_bytes: int) -> None:
+            self.remaining = total_bytes
+            self.read_sizes: list[int] = []
 
-    monkeypatch.setattr(Path, "stat", under_reporting_stat)
+        def __enter__(self) -> ObservedGrowingSource:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_sizes.append(size)
+            consumed = self.remaining if size < 0 else min(size, self.remaining)
+            self.remaining -= consumed
+            return b"x" * consumed
+
+    total_bytes = MAX_DELIVERY_BYTES * 4
+    source = ObservedGrowingSource(total_bytes)
+
+    def controlled_open(
+        self: Path, mode: str = "r", *args: object, **kwargs: object
+    ) -> ObservedGrowingSource:
+        assert self == target
+        assert mode == "rb"
+        return source
+
+    monkeypatch.setattr(Path, "open", controlled_open)
     tool = make_deliver_tool(ws, _store(tmp_path), _NS)
 
     out = await tool.ainvoke({"path": "/grows.bin", "title": "Grows"})
     assert "超过交付上限" in out
+    assert source.read_sizes == [MAX_DELIVERY_BYTES + 1]
+    assert source.remaining == total_bytes - (MAX_DELIVERY_BYTES + 1)
 
 
 async def test_deliver_accepts_file_at_the_cap(tmp_path: Path) -> None:

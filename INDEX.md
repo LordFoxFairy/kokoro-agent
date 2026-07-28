@@ -19,6 +19,8 @@ Agent does not own Site identity, accounts, pricing, plans, credit deduction, Se
 
 The process entrypoint is `kokoro_agent.worker.main`. `skills` and `hitl` bound their public surface with `__init__.py` re-exports; `execution` and `worker` re-export nothing, so their public surface is the module-level symbols listed in their component INDEX files.
 
+Root compatibility gates invoke `scripts/compat/hub_runtime_consumer.py` as the child-owned live Hub secret consumer. The command wraps the production `HubSecretResolver`; its argv carries only the Hub URL, namespace, handle, and expected SHA-256 digest, while the Agent caller secret remains environment-only.
+
 ## Callers and dependencies
 
 Session submits durable run/control messages. Agent consumes opaque `namespace` and calls model/capability/storage adapters through declared boundaries.
@@ -30,6 +32,8 @@ Agent owns execution checkpoints, run leases, control/outbox state, and raw Agen
 ## Runtime and security
 
 Namespace is opaque and is the only GA isolation key. Provider credentials remain adapter-side and untrusted tool/artifact content is sandboxed and bounded.
+
+The Hub compatibility consumer emits only a closed success count and never emits caller credentials, resolved values, response bodies, or exception details.
 
 The interpreter is pinned by `.python-version` (3.11), matching `requires-python` and the Pyright `pythonVersion`. CI installs uv without a Python version input, so without this file `uv sync --locked` resolves whichever interpreter the runner offers and the same lock runs under different interpreters.
 

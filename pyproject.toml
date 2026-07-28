@@ -47,7 +47,7 @@ build-backend = "setuptools.build_meta"
 kokoro_agent = ["run/*.md"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 
 [tool.pyright]

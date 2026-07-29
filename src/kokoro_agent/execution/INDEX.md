@@ -21,7 +21,8 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 - `build_agent.py`：`build_agent(**deps) → InvokableAgent`。包住 `create_deep_agent`
   的未解泛型（object 边界 + TypeGuard 一次收窄），state_schema=KokoroAgentState。
 - `run_agent.py`：`invoke_once(emitter, agent, thread_id, payload, ...) → bool`。
-  run.started（仅 index==0）→ pump_run → interrupt 则发 awaiting 并入账用量返 False；
+  run.started（仅 index==0）→ pump_run → interrupt 则发 generic awaiting 或专用 plan.proposed
+  owner，并入账用量返 False；
   否则 claim_terminal 原子认领后发 run.completed/failed 返 True。recursion_limit 熔断失控循环。
 - `events.py`：`RunEmitter`（一次 run 的唯一发射口；`attach()` 从流重建 index 续段与
   tool_id→segment 归属；审核工具 raw returned 按名抑制）；`AgentEventPayload` 联合；
@@ -31,9 +32,12 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   `stage_critical_frame` 分配 durable_seq/event_id、落 queued 行、发布后 published；live 序（index）
   不动、durable_seq 独立并行（浏览器面透明）；post-fence superseded 不发布、index 不前进。
   `outbox_wire_event(frame)`：queued 行→补发 wire 帧（复用固定身份，幂等不漂移）。
+  `plan.proposed` 额外以 `plan.proposed:<tool_call_id>` 作 semantic key；marker 不随 receipt GC 删除，
+  同 key 同 payload 返回 duplicate/no-publish，同 key异 payload fail-loud。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布。
 - `approvals.py`：HITL 权威唯一实现。`awaiting_payloads`（review/input/approval 三分支）、
+  `plan_proposed_payload`（只读真实主图 interrupt，owner_ref=tool_call_id，拒 nested/mixed）、
   `approval_frame`/`review_frame`/`input_frame`/`PendingFrame`（nested=子代理内暂停合成帧）、
   `align_decisions`/`align_review_decisions`/`align_input_decisions`（缺/多/重复/越界 fail-loud）、
   `resume_command_decisions`/`submit_resume_value`/`review_resume_value`（契约词汇→框架词汇）、
@@ -67,6 +71,8 @@ per-run index、durable sequence、terminal claim 与固定 event identity 共�
 
 - 新 wire kind：contract 定 payload → events.py 扩联合与 `_KIND_BY_PAYLOAD` → 泵/映射函数。
 - 新 HITL 形态优先表达为 `hitl.request_human` 的 kind 预设，awaiting/align 在 approvals.py 加分支。
+- 计划 proposal 不走 todo.updated 推断；`propose_plan` 必须是主 agent 的唯一 tool call，模型响应
+  守卫在 ToolNode/HITL 前 fail-loud，子代理不挂此工具。
 - 不得绕过 RunEmitter 直接 publish 事件（index 单点递增是幂等链前提）。
 
 ## Current gotchas

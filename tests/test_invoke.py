@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -20,6 +21,7 @@ from pydantic import BaseModel as PydanticBaseModel
 from fakes import (
     FakeAgent,
     FakeBus,
+    FakeLedger,
     FakeModel,
     FakeRunStream,
     FakeState,
@@ -30,10 +32,15 @@ from fakes import (
     text_model,
     text_run,
     usage_recorder,
+    request,
 )
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
     MessageCompleted,
+    PlanProposed,
+    PlanProposal,
+    PlanProposedPayload,
+    PlanStep,
     RunCompleted,
     RunFailed,
     RunStartedPayload,
@@ -52,6 +59,7 @@ from kokoro_agent.contract import (
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
+from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamProtocol
@@ -68,7 +76,7 @@ async def _always_claim() -> bool:
 
 async def _invoke(
     bus: FakeBus,
-    agent: FakeAgent,
+    agent: InvokableAgent,
     run_id: str = "r1",
     *,
     approval_tool_names: frozenset[str] = frozenset(),
@@ -469,6 +477,219 @@ async def test_pending_interrupt_emits_awaiting_no_terminal() -> None:
     awaiting = find_event(bus.run_events("r1"), ToolAwaitingApproval)
     assert awaiting.payload.tool_id == "call-A"
     assert awaiting.payload.pending_tool_ids == ["call-A"]
+
+
+def _plan_interrupt_state(*, mixed: bool = False) -> FakeState:
+    tool_calls: list[dict[str, Any]] = [
+        {
+            "name": "propose_plan",
+            "args": {
+                "summary": "Ship the audited change",
+                "steps": [{"label": "Inspect"}, {"label": "Implement"}],
+            },
+            "id": "call-plan-A",
+        }
+    ]
+    actions: list[dict[str, Any]] = [
+        {
+            "name": "propose_plan",
+            "args": tool_calls[0]["args"],
+            "description": "propose a plan",
+        }
+    ]
+    configs: list[dict[str, Any]] = [
+        {"action_name": "propose_plan", "allowed_decisions": ["approve", "reject"]}
+    ]
+    if mixed:
+        tool_calls.append({"name": "danger", "args": {"x": 1}, "id": "call-danger"})
+        actions.append({"name": "danger", "args": {"x": 1}, "description": "do danger"})
+        configs.append(
+            {
+                "action_name": "danger",
+                "allowed_decisions": ["approve", "edit", "reject"],
+            }
+        )
+    ai = AIMessage(content="", id="seg-plan", tool_calls=tool_calls)
+    interrupt = Interrupt(value={"action_requests": actions, "review_configs": configs})
+    return FakeState(interrupts=(interrupt,), values={"messages": [HumanMessage(content="go"), ai]})
+
+
+async def test_plan_interrupt_emits_dedicated_owner_without_generic_awaiting() -> None:
+    bus = FakeBus()
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=_plan_interrupt_state())
+    done = await _invoke(bus, agent, approval_tool_names=frozenset({"propose_plan"}))
+
+    assert done is False
+    assert bus.kinds("r1") == ["run.started", "plan.proposed"]
+    proposed = find_event(bus.run_events("r1"), PlanProposed)
+    assert proposed.payload.segment_id == "seg-plan"
+    assert proposed.payload.owner_ref == "call-plan-A"
+    assert proposed.payload.owner_version == 1
+    assert proposed.payload.proposal.summary == "Ship the audited change"
+    assert [step.label for step in proposed.payload.proposal.steps] == ["Inspect", "Implement"]
+    assert len({step.step_ref for step in proposed.payload.proposal.steps}) == 2
+    assert {step.status for step in proposed.payload.proposal.steps} == {"pending"}
+    assert proposed.payload.proposal.allowed_actions == ["accept", "reject"]
+
+
+async def test_plan_interrupt_mixed_with_another_tool_fails_loud() -> None:
+    bus = FakeBus()
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=_plan_interrupt_state(mixed=True))
+    done = await _invoke(
+        bus,
+        agent,
+        approval_tool_names=frozenset({"propose_plan", "danger"}),
+    )
+
+    assert done is True
+    failed = find_event(bus.run_events("r1"), RunFailed)
+    assert "only tool call" in failed.payload.message
+
+
+async def test_plan_model_guard_blocks_nonapproval_side_effect_in_same_frame() -> None:
+    from kokoro_agent.tools.permissions import build_interrupt_on
+    from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL, PROPOSE_PLAN_TOOL_NAME
+    from kokoro_agent.tools.middleware import PlanProposalCallGuardMiddleware
+
+    called = 0
+
+    class SideEffectArgs(PydanticBaseModel):
+        value: str
+
+    def side_effect(value: str) -> str:
+        nonlocal called
+        called += 1
+        return value
+
+    side_effect_tool = StructuredTool(
+        name="side_effect",
+        description="mutates external state",
+        args_schema=SideEffectArgs,
+        func=side_effect,
+    )
+    model = LocalFakeChatModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": PROPOSE_PLAN_TOOL_NAME,
+                        "args": {"summary": "Ship", "steps": [{"label": "Implement"}]},
+                        "id": "call-plan",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "side_effect",
+                        "args": {"value": "mutated"},
+                        "id": "call-side",
+                        "type": "tool_call",
+                    },
+                ],
+            )
+        ]
+    )
+    agent = build_agent(
+        model=model,
+        tools=[PROPOSE_PLAN_TOOL, side_effect_tool],
+        system_prompt="x",
+        subagents=[],
+        checkpointer=None,
+        permissions=[],
+        interrupt_on=build_interrupt_on(
+            frozenset(), plan_tools=frozenset({PROPOSE_PLAN_TOOL_NAME})
+        ),
+        middleware=[PlanProposalCallGuardMiddleware()],
+    )
+    bus = FakeBus()
+
+    done = await _invoke(
+        bus,
+        agent,
+        approval_tool_names=frozenset({PROPOSE_PLAN_TOOL_NAME}),
+    )
+
+    assert done is True
+    assert called == 0
+    failed = find_event(bus.run_events("r1"), RunFailed)
+    assert "only tool call" in failed.payload.message
+
+
+async def test_nested_plan_interrupt_cannot_mint_a_synthetic_owner() -> None:
+    task = AIMessage(
+        content="",
+        id="seg-task",
+        tool_calls=[
+            {
+                "name": "task",
+                "args": {"description": "delegate", "subagent_type": "general-purpose"},
+                "id": "call-task",
+            }
+        ],
+    )
+    interrupt = Interrupt(
+        value={
+            "action_requests": [
+                {
+                    "name": "propose_plan",
+                    "args": {"summary": "Nested", "steps": [{"label": "Do it"}]},
+                    "description": "nested plan",
+                }
+            ],
+            "review_configs": [
+                {
+                    "action_name": "propose_plan",
+                    "allowed_decisions": ["approve", "reject"],
+                }
+            ],
+        }
+    )
+    state = FakeState(
+        interrupts=(interrupt,), values={"messages": [HumanMessage(content="go"), task]}
+    )
+    bus = FakeBus()
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=state)
+
+    done = await _invoke(bus, agent, approval_tool_names=frozenset({"propose_plan"}))
+
+    assert done is True
+    assert "plan.proposed" not in bus.kinds("r1")
+    failed = find_event(bus.run_events("r1"), RunFailed)
+    assert "main agent" in failed.payload.message
+
+
+async def test_plan_proposal_critical_identity_is_semantically_idempotent() -> None:
+    bus = FakeBus()
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-plan"))
+    emitter = RunEmitter(bus, "r-plan", outbox=ledger)
+    payload = PlanProposedPayload(
+        segment_id="seg-plan",
+        owner_ref="call-plan-A",
+        owner_version=1,
+        proposal=PlanProposal(
+            summary="Ship it",
+            steps=[PlanStep(step_ref="pstep_1", label="Implement", status="pending")],
+            allowed_actions=["accept", "reject"],
+        ),
+    )
+
+    await emitter.emit(payload)
+    await emitter.emit(payload)
+
+    proposed = find_events(bus.run_events("r-plan"), PlanProposed)
+    assert len(proposed) == 1
+    assert proposed[0].durable_seq == 1
+    assert proposed[0].event_id == "evt_fake_r-plan_1"
+    assert ledger.durable_counter["r-plan"] == 1
+
+    with pytest.raises(ValueError, match="semantic critical frame conflict"):
+        await emitter.emit(
+            payload.model_copy(
+                update={
+                    "proposal": payload.proposal.model_copy(update={"summary": "Changed"})
+                }
+            )
+        )
 
 
 async def test_exception_emits_run_failed() -> None:

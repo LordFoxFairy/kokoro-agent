@@ -33,6 +33,6 @@ def build_delegates(
 ) -> Delegates:
     catalog_defs, catalog_names = catalog_subagents(deps.catalog, toolset.by_name, chain)
     return Delegates(
-        subagents=(general_purpose_subagent(chain), *catalog_defs),
+        subagents=(general_purpose_subagent(chain, toolset.tools), *catalog_defs),
         declared=catalog_names | frozenset(request.runtime.subagents),
     )

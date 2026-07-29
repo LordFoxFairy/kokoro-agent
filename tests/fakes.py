@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeVar
@@ -140,6 +141,7 @@ class FakeLedger:
         self.durable_counter: dict[str, int] = {}
         self.terminal_fence: dict[str, int] = {}
         self.outbox: dict[str, list[dict[str, object]]] = {}
+        self.semantic_critical: dict[tuple[str, str], tuple[str, str, int, str]] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
         self.manifests: dict[str, dict[str, object]] = {}
@@ -182,13 +184,32 @@ class FakeLedger:
         payload_json: str,
         *,
         terminal: bool,
+        semantic_key: str | None = None,
     ) -> StagedFrame | None:
+        if semantic_key is not None:
+            identity = (run_id, semantic_key)
+            digest = hashlib.sha256(payload_json.encode()).hexdigest()
+            existing = self.semantic_critical.get(identity)
+            if existing is not None:
+                existing_kind, existing_digest, seq, event_id = existing
+                if existing_kind != kind or existing_digest != digest:
+                    raise ValueError(
+                        f"semantic critical frame conflict for {semantic_key!r}"
+                    )
+                return StagedFrame(durable_seq=seq, event_id=event_id, created=False)
         seq = self.durable_counter.get(run_id, 0) + 1
         self.durable_counter[run_id] = seq
         if terminal and run_id not in self.terminal_fence:
             self.terminal_fence[run_id] = seq
         fence = self.terminal_fence.get(run_id)
         event_id = f"evt_fake_{run_id}_{seq}"
+        if semantic_key is not None:
+            self.semantic_critical[(run_id, semantic_key)] = (
+                kind,
+                hashlib.sha256(payload_json.encode()).hexdigest(),
+                seq,
+                event_id,
+            )
         rows = self.outbox.setdefault(run_id, [])
         if fence is not None and seq > fence:
             rows.append({"durable_seq": seq, "event_id": event_id, "kind": kind, "status": "superseded"})
@@ -204,7 +225,7 @@ class FakeLedger:
                 "status": "queued",
             }
         )
-        return StagedFrame(durable_seq=seq, event_id=event_id)
+        return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         for row in self.outbox.get(run_id, []):
@@ -675,4 +696,3 @@ def usage_recorder() -> tuple[Callable[[int, int], Awaitable[tuple[int, int]]], 
         return (seen["input"], seen["output"])
 
     return record, seen
-

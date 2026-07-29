@@ -13,11 +13,15 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
 from kokoro_agent.subagents.catalog import SubagentCatalog
+from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL_NAME
 
 LOGGER = logging.getLogger(__name__)
 
 
-def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent:
+def general_purpose_subagent(
+    guards: Sequence[AgentMiddleware] = (),
+    tools: Sequence[BaseTool] | None = None,
+) -> SubAgent:
     """deepagents 自动注入的 general-purpose 不带本仓守卫（allow 档可达即旁路预算/终态/审核）
     ——传同名 spec 显式覆盖：tools/model 缺省即继承主 agent（GP 语义不变），middleware 挂满守卫。"""
     sub: SubAgent = {
@@ -27,6 +31,10 @@ def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent
     }
     if guards:
         sub["middleware"] = list(guards)
+    if tools is not None:
+        # plan owner 只允许主 agent 生产；子图 interrupt 会生成 nested synthetic id，不能作为
+        # Session resume 的真实 tool_call_id owner。
+        sub["tools"] = [tool for tool in tools if tool.name != PROPOSE_PLAN_TOOL_NAME]
     return sub
 
 
@@ -40,6 +48,11 @@ def catalog_subagents(
     subs: list[SubAgent] = []
     mounted: set[str] = set()
     for spec in catalog.specs():
+        if PROPOSE_PLAN_TOOL_NAME in spec.tools:
+            raise ValueError(
+                f"subagent {spec.name!r} cannot mount main-agent-only tool "
+                f"{PROPOSE_PLAN_TOOL_NAME!r}"
+            )
         missing = sorted(set(spec.tools) - set(tool_index))
         if missing:
             LOGGER.info(

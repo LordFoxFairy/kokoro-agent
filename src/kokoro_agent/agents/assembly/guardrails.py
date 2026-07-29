@@ -9,8 +9,10 @@ from langchain.agents.middleware import AgentMiddleware
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL_NAME
 from kokoro_agent.tools.middleware import (
     SteeringMiddleware,
+    PlanProposalCallGuardMiddleware,
     TerminalGuardMiddleware,
     ToolEffectJournalMiddleware,
     TokenBudgetMiddleware,
@@ -49,8 +51,13 @@ def build_guard_chains(deps: AssembleDeps, request: RunRequest) -> GuardChains:
         # review_tools=结果须人工复核后才继续的工具集；ask_user 的结果本身就是人工答复，
         # 再送人工复核=人审人答死循环，装配期即拒绝。
         raise ValueError("ask_user cannot be a result-review tool")
+    if PROPOSE_PLAN_TOOL_NAME in review_tools:
+        # proposal 已在执行前经过专用 approve/reject；放进结果审核会在 accept 后二次暂停。
+        raise ValueError("propose_plan cannot be a result-review tool")
     guards: list[AgentMiddleware] = [
-        TerminalGuardMiddleware(store=deps.ledger, run_id=request.run_id)
+        TerminalGuardMiddleware(store=deps.ledger, run_id=request.run_id),
+        # 模型结果一出即检查完整 tool_calls，早于 tail HITL 与 ToolNode；混帧任何工具都不执行。
+        PlanProposalCallGuardMiddleware(),
     ]
     if deps.run_token_budget > 0:
         guards.append(

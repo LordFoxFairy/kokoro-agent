@@ -6,7 +6,7 @@
   guardrails ③ 中间件链：守卫/审批的主链与子代理链
   delegates  ④ 可委派子代理：内生 + catalog（wire 只传 names）
   prompt     ⑤ system prompt：agent（preset）名两级解析，恒定不随能力集变
-类型专属只剩政策（core_tools/pause_tools/default_prompt），经 AgentPolicy 传入。
+类型专属只剩政策（core_tools/pause_tools/plan_tools/default_prompt），经 AgentPolicy 传入。
 """
 
 from __future__ import annotations
@@ -74,6 +74,7 @@ async def assemble_agent(
             frozenset(runtime.permissions.approval_tools),
             subagent_create=runtime.permissions.subagent_create,
             pause_tools=policy.pause_tools,
+            plan_tools=policy.plan_tools,
         ),
         # 技能资产物化对账（before_agent，恒早于模型）：账本进 checkpoint,附件按 hash 增量落沙箱。
         # backend 缺省档（state）无沙箱面 → 无附件可物化 → 不挂对账中间件。

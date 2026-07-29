@@ -39,7 +39,7 @@ async def build_toolset(
     core: tuple[StructuredTool, ...],
 ) -> Toolset:
     """四路工具来源合流（顺序即挂载序）：
-    ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user）
+    ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user + propose_plan）
     ② 内置底座（恒挂，toolbox 一口出）：租户态 memory + 进程配置态 web_search/web_fetch
     ③ 技能工具（恒挂单工具，schema 不随池变）：清单在 prompt，正文经 skill(name) 按需读；
        附件物化由装配期 reconcile 中间件负责，工具只读账本判断就绪与否

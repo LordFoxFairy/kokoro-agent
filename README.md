@@ -1,8 +1,8 @@
 # kokoro-agent
 
 Kokoro 三仓里的**执行层**：DeepAgents + LangChain worker。以 consumer-group 消费 run 请求流，
-跑 agent 循环，产出契约事件（`run.* / message.* / thinking.* / tool.* / todo.* / subagent.*`，
-共 14 kind），写入 per-run 事件流。**不面向浏览器**，只供 `kokoro-session` 消费。
+跑 agent 循环，产出契约事件（`run.* / message.* / thinking.* / tool.* / todo.* / plan.* / subagent.*`，
+共 21 kind），写入 per-run 事件流。**不面向浏览器**，只供 `kokoro-session` 消费。
 
 > 全局架构与起栈见 [根 README](../README.md)；技术法律见根仓 `docs/kokoro-handbook/`；
 > 协议单源见根仓 `contract/`（本仓 `src/kokoro_agent/contract/` 是生成镜像，勿手改）。
@@ -27,7 +27,7 @@ src/kokoro_agent/
 ├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
 │                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
 ├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake
-├── tools/            底层工具与治理：ask_user_question、memory（save/search，scope 装配注入）、
+├── tools/            底层工具与治理：ask_user_question、propose_plan、memory（save/search，scope 装配注入）、
 │                     web_fetch（SSRF 防御）、web_search（协议+provider 注册表同文件）、
 │                     registry（名字治理）、permissions（interrupt_on 构造）、
 │                     middleware（工具授权 fail-closed / 委派执法 / 结果审核）
@@ -62,7 +62,8 @@ GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ow
 ## 能力面（全部经 单测 → 跨栈 e2e → 真模型 验证）
 
 - **HITL 双拦截**：工具前审批（approve/edit/reject）+ 工具后结果审核（approve/respond/reject，
-  keep-first 缓存防双跑）；`ask_user_question` 恒为 respond 暂停点。
+  keep-first 缓存防双跑）；`ask_user_question` 恒为 respond 暂停点；`propose_plan` 恒为主 agent
+  独占 tool-call 帧的 approve/reject 暂停点，产出 immutable durable `plan.proposed` owner。
 - **长期记忆**：`save_memory`/`search_memory`，store 前缀 =(namespace, "memories")，
   隔离政策装配注入，工具体零租户概念。
 - **web 双件**：`web_fetch` 恒挂载（SSRF：DNS 解析后拒非公网/逐跳复检/15s/1MB/24k）；
@@ -95,6 +96,8 @@ python3 ../scripts/real-model-verify.py   # 真模型五场景（thinking/subage
 - claim-before-emit：cancel/自然完成/异常三路共用同一原子认领键，恰好一个终态事件。
 - HITL 帧构造唯一在 `execution/approvals.py`：resume 按 tool_id fail-loud 对齐，
   `tool.awaiting_approval` 携带 `pending_tool_ids`（同帧凑齐才提交的契约依据）。
+- `plan.proposed.owner_ref` 逐字等于主 agent 的真实 tool_call_id；同 owner 的 durable semantic marker
+  保留到 run retention，outbox receipt GC 后重拾也不得换 event identity 或覆盖 proposal。
 - 第三方类型豁免锁死于 `tests/test_boundary_pragmas.py` allowlist（现仅 2 处），
   行内 `type: ignore` 全仓为零（同测执法）。
 - 异常 → `run.failed` 终态 fail-loud，worker 存活（单消息隔离，不崩调度循环）。

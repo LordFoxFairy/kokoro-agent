@@ -13,6 +13,7 @@ from kokoro_agent.contract import (
     DeliveryCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
+    PlanProposedPayload,
     RunCompletedPayload,
     RunControlReceiptPayload,
     RunErrorCode,
@@ -52,7 +53,7 @@ SourceResolver = Callable[[str], SubagentSource]
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
 # 其余 live 帧（delta/tool 过程帧）不占 seq、丢了由 checkpoint 重建。
 CRITICAL_KINDS: frozenset[str] = frozenset(
-    {"run.started", "run.control.receipt", "run.completed", "run.failed"}
+    {"run.started", "plan.proposed", "run.control.receipt", "run.completed", "run.failed"}
 )
 # 终态帧：分配时 CAS 设 local fence（first-terminal），其后更大 seq 一律 superseded。
 TERMINAL_KINDS: frozenset[str] = frozenset({"run.completed", "run.failed"})
@@ -67,6 +68,7 @@ AgentEventPayload = (
     | ToolAwaitingApprovalPayload
     | ToolReturnedPayload
     | TodoUpdatedPayload
+    | PlanProposedPayload
     | SubagentStartedPayload
     | SubagentFinishedPayload
     | SubagentThinkingDeltaPayload
@@ -90,6 +92,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     ToolAwaitingApprovalPayload: "tool.awaiting_approval",
     ToolReturnedPayload: "tool.returned",
     TodoUpdatedPayload: "todo.updated",
+    PlanProposedPayload: "plan.proposed",
     SubagentStartedPayload: "subagent.started",
     SubagentThinkingDeltaPayload: "subagent.thinking.delta",
     SubagentFinishedPayload: "subagent.finished",
@@ -201,9 +204,18 @@ class RunEmitter:
                 timestamp,
                 payload_json,
                 terminal=kind in TERMINAL_KINDS,
+                semantic_key=(
+                    f"plan.proposed:{payload.owner_ref}"
+                    if isinstance(payload, PlanProposedPayload)
+                    else None
+                ),
             )
             if staged is None:
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
+                return
+            if not staged.created:
+                # semantic owner 已有固定 durable identity（即使 outbox 已收据 GC）；不重发、
+                # 不推进 live index。不同 payload 已由 ledger fail-loud。
                 return
             metrics.record_outbox("queued")
             event = agent_event_adapter.validate_python(

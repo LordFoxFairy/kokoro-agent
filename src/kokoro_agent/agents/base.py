@@ -1,7 +1,7 @@
 """AgentFactory 模板（Template Method）：一个类型一个 py 一个工厂类，政策即类属性。
 
-看一个文件懂一个类型：挂什么核心工具（core_tools）、哪些工具是 respond 语义暂停点
-（pause_tools）、末级缺省 prompt（default_prompt）。装配管线共享（create=模板方法委派
+看一个文件懂一个类型：挂什么核心工具（core_tools）、哪些工具是 respond / plan 语义暂停点
+（pause_tools / plan_tools）、末级缺省 prompt（default_prompt）。装配管线共享（create=模板方法委派
 assemble_agent），未来 swarm/handoff（langgraph-swarm）在注册表之上组合各工厂产物，
 工厂形状不变。
 """
@@ -28,6 +28,8 @@ class AgentFactory(ABC):
     core_tools: ClassVar[tuple[StructuredTool, ...]]
     # respond 语义暂停点（进 interrupt 与 pending 识别集；studio 类型为空集）。
     pause_tools: ClassVar[frozenset[str]]
+    # 计划 proposal 的 approve/reject 专用暂停点。
+    plan_tools: ClassVar[frozenset[str]]
     # system prompt 三级解析的末级缺省。
     default_prompt: ClassVar[str]
 

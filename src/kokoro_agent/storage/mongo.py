@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import time
 from collections.abc import Callable
@@ -138,6 +139,21 @@ class _OutboxEntry(BaseModel):
 _OUTBOX_ADAPTER: TypeAdapter[list[_OutboxEntry]] = TypeAdapter(list[_OutboxEntry])
 
 
+class _SemanticCriticalFrame(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    semantic_key: str
+    kind: str
+    payload_sha256: str
+    durable_seq: int
+    event_id: str
+
+
+_SEMANTIC_CRITICAL_ADAPTER: TypeAdapter[list[_SemanticCriticalFrame]] = TypeAdapter(
+    list[_SemanticCriticalFrame]
+)
+
+
 class StagedFrame(BaseModel):
     """critical 帧 durable 身份分配结果：seq 独立于 live index，崩溃补发复用同一对。"""
 
@@ -145,6 +161,8 @@ class StagedFrame(BaseModel):
 
     durable_seq: int
     event_id: str
+    # False=semantic duplicate：既有 durable identity 已落定，caller 不再 publish/index++。
+    created: bool = True
 
 
 class OutboxFrame(BaseModel):
@@ -252,11 +270,13 @@ class MongoLedger:
         payload_json: str,
         *,
         terminal: bool,
+        semantic_key: str | None = None,
     ) -> StagedFrame | None:
         # R4：原子分配 per-run durable_seq（从 1 连续）+ event_id，落 outbox queued 行。
         # 终态帧 CAS 设 local terminal_fence_seq（仅当未设，first-terminal 赢）。返回 None=
         # 该 seq>fence（post-fence）→行以 superseded 摘要落库、永不发布，caller 不上 wire。
         event_id = _event_id()
+        payload_sha256 = hashlib.sha256(payload_json.encode()).hexdigest()
         queued_row: dict[str, object] = {
             "durable_seq": "$durable_counter",
             "event_id": {"$literal": event_id},
@@ -280,9 +300,7 @@ class MongoLedger:
                 {"$gt": ["$durable_counter", {"$ifNull": ["$terminal_fence_seq", -1]}]},
             ]
         }
-        doc = await self._coll.find_one_and_update(
-            {"_id": run_id},
-            [
+        pipeline: list[dict[str, object]] = [
                 {"$set": {"durable_counter": {"$add": [{"$ifNull": ["$durable_counter", 0]}, 1]}}},
                 {
                     "$set": {
@@ -310,10 +328,60 @@ class MongoLedger:
                         }
                     }
                 },
-            ],
+            ]
+        if semantic_key is not None:
+            pipeline.append(
+                {
+                    "$set": {
+                        "semantic_critical_frames": {
+                            "$concatArrays": [
+                                {"$ifNull": ["$semantic_critical_frames", []]},
+                                [
+                                    {
+                                        "semantic_key": {"$literal": semantic_key},
+                                        "kind": {"$literal": kind},
+                                        "payload_sha256": {"$literal": payload_sha256},
+                                        "durable_seq": "$durable_counter",
+                                        "event_id": {"$literal": event_id},
+                                    }
+                                ],
+                            ]
+                        }
+                    }
+                }
+            )
+        query: dict[str, object] = {"_id": run_id}
+        if semantic_key is not None:
+            query["semantic_critical_frames.semantic_key"] = {"$ne": semantic_key}
+        doc = await self._coll.find_one_and_update(
+            query,
+            pipeline,
             return_document=ReturnDocument.AFTER,
         )
         if doc is None:
+            if semantic_key is not None:
+                existing_doc = await self._coll.find_one(
+                    {"_id": run_id}, {"semantic_critical_frames": 1}
+                )
+                if existing_doc is None:
+                    return None
+                entries = _SEMANTIC_CRITICAL_ADAPTER.validate_python(
+                    existing_doc.get("semantic_critical_frames") or []
+                )
+                existing = next(
+                    (entry for entry in entries if entry.semantic_key == semantic_key), None
+                )
+                if existing is None:
+                    return None
+                if existing.kind != kind or existing.payload_sha256 != payload_sha256:
+                    raise ValueError(
+                        f"semantic critical frame conflict for {semantic_key!r}"
+                    )
+                return StagedFrame(
+                    durable_seq=existing.durable_seq,
+                    event_id=existing.event_id,
+                    created=False,
+                )
             return None
         seq = doc.get("durable_counter")
         fence = doc.get("terminal_fence_seq")
@@ -321,7 +389,7 @@ class MongoLedger:
             raise TypeError(f"durable_counter for {run_id!r} is not an int: {seq!r}")
         if isinstance(fence, int) and seq > fence:
             return None
-        return StagedFrame(durable_seq=seq, event_id=event_id)
+        return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         # publish 确认：queued→published + 记 published_at（回执超时重发的计时锚）。补发前崩溃留 queued。

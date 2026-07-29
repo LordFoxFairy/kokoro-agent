@@ -11,7 +11,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
 from kokoro_agent.contract import RunCompletedPayload, RunStartedPayload, TokenUsage
-from kokoro_agent.execution.approvals import awaiting_payloads
+from kokoro_agent.execution.approvals import awaiting_payloads, plan_proposed_payload
 from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.publish_agent_events import pump_run
@@ -53,10 +53,15 @@ async def invoke_once(
                 await pump_run(emitter, run, source_for=source_for)
                 if await run.interrupted():
                     snapshot = await agent.aget_state(config)
-                    for awaiting in awaiting_payloads(
-                        snapshot, approval_tool_names, describe_tool=describe_tool
-                    ):
-                        await emitter.emit(awaiting)
+                    proposal = plan_proposed_payload(snapshot, approval_tool_names)
+                    if proposal is not None:
+                        # 专用 owner 事件取代 generic awaiting，避免浏览器出现两个决策 owner。
+                        await emitter.emit(proposal)
+                    else:
+                        for awaiting in awaiting_payloads(
+                            snapshot, approval_tool_names, describe_tool=describe_tool
+                        ):
+                            await emitter.emit(awaiting)
                     # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
                     await _record(record_usage, usage_cb.usage_metadata)
                     return False
@@ -102,4 +107,3 @@ def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) 
         if metadata is not None:
             config["metadata"] = metadata
     return config
-

@@ -51,6 +51,19 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
     ),
     ("todo.updated", {"todos": [{"content": "plan", "status": "pending"}]}),
     (
+        "plan.proposed",
+        {
+            "segment_id": "seg",
+            "owner_ref": "call-plan-A",
+            "owner_version": 1,
+            "proposal": {
+                "summary": "Ship it",
+                "steps": [{"step_ref": "pstep_1", "label": "Implement", "status": "pending"}],
+                "allowed_actions": ["accept", "reject"],
+            },
+        },
+    ),
+    (
         "subagent.started",
         {
             "segment_id": "seg",

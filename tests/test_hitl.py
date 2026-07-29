@@ -17,6 +17,7 @@ from kokoro_agent.execution.approvals import (
     has_pending_interrupt,
     input_entries,
     input_frame,
+    plan_proposed_payload,
     pending_frame,
     align_review_decisions,
     resolution_payloads,
@@ -346,6 +347,10 @@ def test_review_awaiting_payload_carries_result() -> None:
     assert payload.pending_tool_ids == ["call-R"]
 
 
+def test_review_interrupt_is_not_parsed_as_plan_proposal() -> None:
+    assert plan_proposed_payload(_review_state(), frozenset({"propose_plan"})) is None
+
+
 def test_align_review_decisions_matrix() -> None:
     entries = review_entries(_review_state().interrupts)
     assert entries is not None
@@ -457,6 +462,10 @@ def test_input_awaiting_payload_shape() -> None:
     assert payload.allowed_decisions == ["submit", "reject"]
     assert payload.input_schema == _OTP_SCHEMA
     assert payload.pending_tool_ids == ["call-I"]
+
+
+def test_input_interrupt_is_not_parsed_as_plan_proposal() -> None:
+    assert plan_proposed_payload(_input_state(), frozenset({"propose_plan"})) is None
 
 
 def test_input_awaiting_payload_surfaces_validation_error() -> None:

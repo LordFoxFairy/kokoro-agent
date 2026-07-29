@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from deepagents.backends.local_shell import LocalShellBackend
@@ -12,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
-from fakes import FakeLedger
+from fakes import FakeLedger, request
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
     McpGrant,
@@ -102,6 +103,22 @@ def test_interrupt_on_ask_user_stays_respond_only() -> None:
     # ask_user 即便被误列进审批集合，也不得降级为 approve/edit/reject。
     interrupt_on = build_interrupt_on(frozenset({"ask_user_question"}))
     assert interrupt_on["ask_user_question"]["allowed_decisions"] == ["respond"]
+
+
+def test_interrupt_on_plan_is_forced_to_approve_or_reject() -> None:
+    interrupt_on = build_interrupt_on(
+        frozenset({"propose_plan"}),
+        plan_tools=frozenset({"propose_plan"}),
+    )
+    assert interrupt_on["propose_plan"]["allowed_decisions"] == ["approve", "reject"]
+
+
+def test_propose_plan_cannot_be_a_result_review_tool() -> None:
+    from kokoro_agent.agents.assembly.guardrails import build_guard_chains
+
+    deps: Any = object()
+    with pytest.raises(ValueError, match="propose_plan cannot be a result-review tool"):
+        build_guard_chains(deps, request("r-plan", review_tools=("propose_plan",)))
 
 
 def test_filesystem_permissions_by_perm() -> None:
@@ -239,11 +256,23 @@ def test_interrupt_on_subagent_create_ask_gates_task() -> None:
 
 
 def test_core_tools_always_mounted() -> None:
-    # ask_user（handbook 12 号）恒挂载；记忆工具由 worker 装配点按 run scope 创建。
-    assert [tool.name for tool in resolve_tools([])] == ["ask_user_question"]
+    # ask_user + 专用计划 proposal 恒挂载；记忆工具由 worker 装配点按 run scope 创建。
+    assert [tool.name for tool in resolve_tools([])] == ["ask_user_question", "propose_plan"]
     # 名单里出现记忆工具名不报未知也不重复挂载（实例只来自 make_memory_tools）。
-    assert [tool.name for tool in resolve_tools(["save_memory"])] == ["ask_user_question"]
+    assert [tool.name for tool in resolve_tools(["save_memory"])] == [
+        "ask_user_question",
+        "propose_plan",
+    ]
     assert [tool.name for tool in make_memory_tools("ns")] == ["save_memory", "search_memory"]
+
+
+def test_general_prompt_separates_user_plan_from_internal_todos() -> None:
+    from kokoro_agent.prompts import GENERAL_PROMPT
+
+    assert "propose_plan" in GENERAL_PROMPT
+    assert "write_todos" in GENERAL_PROMPT
+    assert "唯一工具调用" in GENERAL_PROMPT
+    assert "不能替代" in GENERAL_PROMPT
 
 
 def test_openai_reasoning_switch_selects_deepseek_wrapper() -> None:
@@ -401,6 +430,33 @@ def test_general_purpose_override_carries_guards_and_inherits() -> None:
     assert "tools" not in spec and "model" not in spec
 
 
+def test_general_purpose_never_inherits_plan_owner_tool() -> None:
+    from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
+    from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL
+
+    spec = general_purpose_subagent(tools=[ASK_USER_TOOL, PROPOSE_PLAN_TOOL])
+    assert dict(spec).get("tools") == [ASK_USER_TOOL]
+
+
+def test_catalog_subagent_cannot_mount_plan_owner_tool() -> None:
+    from kokoro_agent.subagents import RegisteredSubagent, SubagentCatalog
+    from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL
+
+    catalog = SubagentCatalog(
+        (
+            RegisteredSubagent(
+                name="planner",
+                description="bad nested planner",
+                system_prompt="plan",
+                source="config-custom",
+                tools=("propose_plan",),
+            ),
+        )
+    )
+    with pytest.raises(ValueError, match="cannot mount main-agent-only tool 'propose_plan'"):
+        catalog_subagents(catalog, {"propose_plan": PROPOSE_PLAN_TOOL})
+
+
 def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
     guard = TerminalGuardMiddleware(store=FakeLedger(), run_id="r1")
@@ -452,6 +508,7 @@ def test_general_package_pause_policy_includes_ask_user() -> None:
     from kokoro_agent.agents import FACTORIES
 
     assert FACTORIES["general"].pause_tools == frozenset({"ask_user_question"})
+    assert FACTORIES["general"].plan_tools == frozenset({"propose_plan"})
 
 
 def test_approval_names_unions_wire_and_package_policy() -> None:
@@ -477,7 +534,9 @@ def test_approval_names_unions_wire_and_package_policy() -> None:
         ),
         context=RuntimeContext(namespace="ns", session_id="s1"),
     )
-    assert approval_names(request) == frozenset({"execute", "ask_user_question", "task"})
+    assert approval_names(request) == frozenset(
+        {"execute", "ask_user_question", "propose_plan", "task"}
+    )
 
 
 def test_interrupt_on_empty_pause_tools_for_studio_types() -> None:

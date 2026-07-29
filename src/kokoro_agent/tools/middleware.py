@@ -20,6 +20,7 @@ from langgraph.runtime import Runtime
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
 from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL_NAME
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
@@ -118,6 +119,24 @@ class TerminalGuardMiddleware(AgentMiddleware):
 
 class TokenBudgetExceeded(RuntimeError):
     """run 级 token 预算超限：fail-loud 收口为 run.failed，绝不静默继续烧钱。"""
+
+
+class PlanProposalCallGuardMiddleware(AgentMiddleware):
+    """模型响应守卫：proposal 必须独占完整 tool-call 帧，早于 HITL/ToolNode 执法。"""
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelResponse:
+        response = await handler(request)
+        for message in response.result:
+            if not isinstance(message, AIMessage):
+                continue
+            calls = message.tool_calls
+            if not any(call["name"] == PROPOSE_PLAN_TOOL_NAME for call in calls):
+                continue
+            if len(calls) != 1:
+                raise ValueError("propose_plan must be the only tool call in its model response")
+        return response
 
 
 class TokenBudgetMiddleware(AgentMiddleware):
@@ -330,4 +349,3 @@ class SteeringMiddleware(AgentMiddleware):
                 HumanMessage(content=content, id=message_id) for message_id, content in fresh
             ]
         }
-

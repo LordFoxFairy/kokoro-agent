@@ -69,5 +69,7 @@ class AgentPolicy(Protocol):
     core_tools: ClassVar[tuple[StructuredTool, ...]]
     # respond 语义暂停点（进 interrupt 与 pending 识别集；studio 类型为空集）。
     pause_tools: ClassVar[frozenset[str]]
+    # 计划 proposal 的 approve/reject 专用暂停点（不接受 edit/respond）。
+    plan_tools: ClassVar[frozenset[str]]
     # system prompt 三级解析的末级缺省。
     default_prompt: ClassVar[str]

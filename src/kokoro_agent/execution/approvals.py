@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -12,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 
 from kokoro_agent.contract import (
     AllowedDecision,
+    PlanProposal,
+    PlanProposedPayload,
+    PlanStep,
     RejectDecision,
     ResumeDecision,
     SubmitDecision,
@@ -22,6 +26,7 @@ from kokoro_agent.execution.events import clip_result
 from kokoro_agent.execution.protocols import StateView
 from kokoro_agent.hitl import INPUT_DECISIONS, REVIEW_DECISIONS, HumanRequest
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL_NAME, ProposePlanArgs
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 _DEFAULT_REJECT_MESSAGE = "rejected by user"
@@ -304,6 +309,58 @@ def awaiting_payloads(
             )
         )
     return payloads
+
+
+def plan_proposed_payload(
+    snapshot: StateView,
+    approval_tool_names: frozenset[str],
+) -> PlanProposedPayload | None:
+    """从真实 pending interrupt 构造 immutable plan owner；绝不读取 todo state。"""
+    # result-review / structured-input 使用 Kokoro 自有 HumanRequest 信封，不是 LangChain
+    # approval interrupt；必须先分流，否则会被 _ApprovalInterrupt 严格校验误报为坏帧。
+    if review_entries(snapshot.interrupts) is not None:
+        return None
+    if input_entries(snapshot.interrupts) is not None:
+        return None
+    frame, requests = approval_frame(snapshot, approval_tool_names)
+    plan_indexes = [
+        index for index, request in enumerate(requests) if request.name == PROPOSE_PLAN_TOOL_NAME
+    ]
+    if not plan_indexes:
+        return None
+    if len(plan_indexes) != 1 or len(frame.tools) != 1 or len(requests) != 1:
+        raise ValueError("propose_plan must be the only tool call in its interrupt frame")
+    if frame.nested:
+        raise ValueError("propose_plan owner must originate from the main agent tool_call_id")
+    index = plan_indexes[0]
+    owner_ref, name = frame.tools[index]
+    if name != PROPOSE_PLAN_TOOL_NAME:
+        raise ValueError("propose_plan interrupt identity alignment mismatch")
+    if requests[index].allowed_decisions != ["approve", "reject"]:
+        raise ValueError("propose_plan interrupt decisions must be approve/reject")
+    args = ProposePlanArgs.model_validate(requests[index].args)
+    return PlanProposedPayload(
+        segment_id=frame.segment_id,
+        owner_ref=owner_ref,
+        owner_version=1,
+        proposal=PlanProposal(
+            summary=args.summary,
+            steps=[
+                PlanStep(
+                    step_ref=_plan_step_ref(owner_ref, ordinal),
+                    label=step.label,
+                    status="pending",
+                )
+                for ordinal, step in enumerate(args.steps, start=1)
+            ],
+            allowed_actions=["accept", "reject"],
+        ),
+    )
+
+
+def _plan_step_ref(owner_ref: str, ordinal: int) -> str:
+    digest = hashlib.sha256(f"plan-step:v1\0{owner_ref}\0{ordinal}".encode()).hexdigest()
+    return f"pstep_{digest[:32]}"
 
 
 def approval_frame(

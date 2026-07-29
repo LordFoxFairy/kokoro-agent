@@ -446,6 +446,84 @@ async def test_critical_outbox_stage_publish_scan() -> None:
         assert await store.list_unpublished_outbox() == []
 
 
+async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        await store.try_claim(request("run-plan"), OWNER)
+        key = "plan.proposed:call-plan-A"
+        attempts = await asyncio.gather(
+            *(
+                store.stage_critical_frame(
+                    "run-plan",
+                    "plan.proposed",
+                    1,
+                    111,
+                    '{"owner_ref":"call-plan-A"}',
+                    terminal=False,
+                    semantic_key=key,
+                )
+                for _ in range(8)
+            )
+        )
+        staged = [item for item in attempts if item is not None]
+        assert len(staged) == 8
+        assert sum(item.created for item in staged) == 1
+        assert {(item.durable_seq, item.event_id) for item in staged} == {
+            (staged[0].durable_seq, staged[0].event_id)
+        }
+
+        first = staged[0]
+        await store.mark_critical_published("run-plan", first.durable_seq)
+        db = dispatches.database
+        await db[RUN_EVENT_RECEIPTS_COLLECTION].insert_one(
+            {
+                "run_id": "run-plan",
+                "durable_seq": first.durable_seq,
+                "event_id": first.event_id,
+                "status": "persisted",
+                "created_at": 0,
+            }
+        )
+        await db[RUN_RECEIPT_MANIFESTS_COLLECTION].insert_one(
+            {
+                "run_id": "run-plan",
+                "persisted_seq": first.durable_seq,
+                "projected_seq": first.durable_seq,
+                "consumed_seq": 0,
+                "producer_close_requested": False,
+                "producer_closed": False,
+                "updated_at": 0,
+            }
+        )
+        outcome = await store.reconcile_receipts("run-plan")
+        assert outcome.consumed_through == first.durable_seq
+        assert await store.list_open_outbox_runs() == []
+
+        replay = await store.stage_critical_frame(
+            "run-plan",
+            "plan.proposed",
+            99,
+            999,
+            '{"owner_ref":"call-plan-A"}',
+            terminal=False,
+            semantic_key=key,
+        )
+        assert replay is not None and replay.created is False
+        assert (replay.durable_seq, replay.event_id) == (first.durable_seq, first.event_id)
+        assert await store.list_open_outbox_runs() == []
+
+        with pytest.raises(ValueError, match="semantic critical frame conflict"):
+            await store.stage_critical_frame(
+                "run-plan",
+                "plan.proposed",
+                100,
+                1000,
+                '{"owner_ref":"different"}',
+                terminal=False,
+                semantic_key=key,
+            )
+
+
 async def test_critical_outbox_first_terminal_fence_supersedes_suffix() -> None:
     # 终态帧 CAS 设 local fence；其后更大 seq 一律 superseded（None 返回），永不发布。
     clock = FakeClock()

@@ -58,9 +58,12 @@ class RunLedger(Protocol):
         payload_json: str,
         *,
         terminal: bool,
+        semantic_key: str | None = None,
     ) -> StagedFrame | None:
         # R4：分配 per-run durable_seq（从 1）+ event_id，落 outbox queued 行；终态帧 CAS 设
-        # local fence。返回 None=post-fence（seq>fence）→superseded 摘要落库、caller 不发布。
+        # local fence。semantic_key 非空时同 key+同 payload 原子复用既有身份，不同 payload
+        # fail-loud；marker 保留到 run retention，不随 outbox receipt GC 删除。
+        # 返回 None=post-fence（seq>fence）→superseded 摘要落库、caller 不发布。
         ...
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:

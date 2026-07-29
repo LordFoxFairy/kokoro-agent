@@ -8,8 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints,
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 NonNegInt = Annotated[int, Field(ge=0)]
+PositiveInt = Annotated[int, Field(gt=0)]
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
+PlanAction = Literal["accept", "reject"]
 AllowedDecision = Literal["approve", "edit", "reject", "respond", "submit"]
 AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review", "input"]
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
@@ -36,6 +38,18 @@ class Risk(StrictModel):
     level: NonEmptyStr
     source: NonEmptyStr
     reason: NonEmptyStr
+
+
+class PlanStep(StrictModel):
+    step_ref: NonEmptyStr
+    label: NonEmptyStr
+    status: TodoStatus
+
+
+class PlanProposal(StrictModel):
+    summary: NonEmptyStr
+    steps: list[PlanStep]
+    allowed_actions: list[PlanAction]
 
 
 class RunStartedPayload(StrictModel):
@@ -108,6 +122,16 @@ class ToolReturnedPayload(StrictModel):
 
 class TodoUpdatedPayload(StrictModel):
     todos: list[Todo]
+
+
+class PlanProposedPayload(StrictModel):
+    segment_id: NonEmptyStr
+    # 计划 owner 的唯一身份；必须逐字等于真实 LangGraph tool_call_id，Session resume 用它回填 decision.tool_id。
+    owner_ref: NonEmptyStr
+    # V1 immutable proposal 恒为 1；修订必须创建新的 propose_plan tool call/owner_ref，禁止原位覆盖。
+    owner_version: PositiveInt
+    # 专用计划提案；与 todo.updated 的内部进度清单语义严格分离，禁止互相推断。
+    proposal: PlanProposal
 
 
 class SubagentStartedPayload(StrictModel):
@@ -294,6 +318,17 @@ class TodoUpdated(StrictModel):
     payload: TodoUpdatedPayload
 
 
+class PlanProposed(StrictModel):
+    kind: Literal["plan.proposed"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
+    payload: PlanProposedPayload
+
+
 class SubagentStarted(StrictModel):
     kind: Literal["subagent.started"]
     run_id: NonEmptyStr
@@ -426,6 +461,7 @@ AgentEvent = Annotated[
         ToolAwaitingApproval,
         ToolReturned,
         TodoUpdated,
+        PlanProposed,
         SubagentStarted,
         SubagentFinished,
         SubagentThinkingDelta,

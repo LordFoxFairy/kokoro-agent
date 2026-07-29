@@ -14,6 +14,7 @@ from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 # 同值防漂移——presets 仍是 wire 决策词汇的单一事实源。
 _ASK_USER_DECISIONS: list[DecisionType] = ["respond"]
 _APPROVAL_DECISIONS: list[DecisionType] = ["approve", "edit", "reject"]
+_PLAN_DECISIONS: list[DecisionType] = ["approve", "reject"]
 assert set(_ASK_USER_DECISIONS) == set(QUESTION_DECISIONS)
 assert set(_APPROVAL_DECISIONS) == set(APPROVAL_DECISIONS)
 
@@ -23,6 +24,7 @@ def build_interrupt_on(
     *,
     subagent_create: str = "deny",
     pause_tools: frozenset[str] = frozenset({ASK_USER_TOOL_NAME}),
+    plan_tools: frozenset[str] = frozenset(),
 ) -> dict[str, InterruptOnConfig]:
     """pause_tools=类型包的 respond 语义暂停点（对话型={ask_user}，studio 类型=∅）；
     approval_tools 挂 approve/edit/reject；subagent_create=ask 时委派工具同样进审批门控。"""
@@ -33,8 +35,11 @@ def build_interrupt_on(
         {
             tool: InterruptOnConfig(allowed_decisions=_APPROVAL_DECISIONS)
             for tool in approval_tools
-            if tool not in pause_tools
+            if tool not in pause_tools and tool not in plan_tools
         }
+    )
+    interrupt_on.update(
+        {tool: InterruptOnConfig(allowed_decisions=_PLAN_DECISIONS) for tool in plan_tools}
     )
     if subagent_create == "ask":
         interrupt_on[SUBAGENT_TOOL_NAME] = InterruptOnConfig(

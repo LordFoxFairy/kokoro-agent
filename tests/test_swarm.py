@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from kokoro_agent.agents.assembly.swarm import (
@@ -15,7 +17,10 @@ from kokoro_agent.agents.assembly.swarm import (
     swap_persona_prompt,
     swarm_candidates,
 )
+from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.prompts import PromptLibrary
+from kokoro_agent.state import KokoroAgentState
+from kokoro_agent.tools.middleware import PlanProposalCallGuardMiddleware
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS
 
 
@@ -70,6 +75,38 @@ async def test_handoff_unknown_name_fails_closed_without_state_change() -> None:
 def test_handoff_is_journal_exempt() -> None:
     # Command 形态：不落 journal（重放归 checkpoint 的 active_agent LastValue）。
     assert HANDOFF_TOOL_NAME in JOURNAL_EXEMPT_TOOLS
+
+
+async def test_handed_off_swarm_persona_can_propose_plan_as_top_level_owner() -> None:
+    guard = PlanProposalCallGuardMiddleware()
+    request = ModelRequest(
+        model=LocalFakeChatModel.with_script([]),
+        messages=[],
+        state=KokoroAgentState(
+            messages=[], scope={}, skills_materialized={}, active_agent="researcher"
+        ),
+    )
+
+    async def respond(_request: ModelRequest) -> ModelResponse[object]:
+        return ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "propose_plan",
+                            "args": {"summary": "Research", "steps": [{"label": "Inspect"}]},
+                            "id": "call-plan",
+                        }
+                    ],
+                )
+            ]
+        )
+
+    response = await guard.awrap_model_call(request, respond)
+    result = response.result[0]
+    assert isinstance(result, AIMessage)
+    assert result.tool_calls[0]["id"] == "call-plan"
 
 
 # --- 人格切轨（swap_persona_prompt 纯函数）：定点换前缀，保留底座/技能清单 ---

@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
 from kokoro_agent.tools.memory import SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME
+from kokoro_agent.tools.propose_plan import PROPOSE_PLAN_TOOL, PROPOSE_PLAN_TOOL_NAME
 from kokoro_agent.tools.web_fetch import WEB_FETCH_TOOL_NAME
 from kokoro_agent.tools.web_search import WEB_SEARCH_TOOL_NAME
 
@@ -36,10 +37,13 @@ def assert_tool_names_allowed(names: Iterable[str]) -> None:
             raise ValueError(f"duplicate tool name {name!r}")
         seen.add(name)
 
-KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {ASK_USER_TOOL.name: ASK_USER_TOOL}
-# 恒挂载核心工具：ask_user（handbook 12 号）。记忆/联网工具是带参内置件
+KOKORO_TOOLS: Final[dict[str, StructuredTool]] = {
+    ASK_USER_TOOL.name: ASK_USER_TOOL,
+    PROPOSE_PLAN_TOOL.name: PROPOSE_PLAN_TOOL,
+}
+# 恒挂载核心工具：ask_user + propose_plan。记忆/联网工具是带参内置件
 # （租户 scope / 进程配置），归 tools/toolbox.py 的 ProcessToolbox，不入常量表。
-CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL,)
+CORE_TOOLS: Final[tuple[StructuredTool, ...]] = (ASK_USER_TOOL, PROPOSE_PLAN_TOOL)
 ASSEMBLY_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {SAVE_MEMORY_TOOL_NAME, SEARCH_MEMORY_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME}
 )
@@ -67,6 +71,7 @@ JOURNAL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         SEARCH_MEMORY_TOOL_NAME,
         TODO_TOOL_NAME,
         SUBAGENT_TOOL_NAME,
+        PROPOSE_PLAN_TOOL_NAME,
         # handoff（swarm 移交，见 agents/assembly/swarm.py）：Command 形态纯状态覆盖，无文本可短路，
         # 重放归 langgraph checkpoint（active_agent LastValue 幂等）——入豁免表不双写 journal。
         "handoff",

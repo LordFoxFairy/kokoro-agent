@@ -2,7 +2,7 @@
 
 web 传 entry → session 解析 agent_type 上 wire → FACTORIES 分派。新增 studio 类型 =
 新 <type>.py 工厂 + 注册一行（+契约枚举一值），机制零改动；类型的工具面政策
-（core_tools/pause_tools）是工厂类属性，看一个文件懂一个类型。
+（core_tools/pause_tools/plan_tools）是工厂类属性，看一个文件懂一个类型。
 
 升级路径（P2 swarm/handoff）：langgraph-swarm 在本注册表之上组合各工厂产物成
 handoff 图（general ⇄ studio 类型控制权转移），工厂形状不变。
@@ -35,8 +35,13 @@ async def assemble(deps: AssembleDeps, request: RunRequest) -> AssembledAgent:
 
 
 def approval_names(request: RunRequest) -> frozenset[str]:
-    """pending 识别集 = wire 审批集 + 类型工厂 pause_tools（+ask 档委派工具）。"""
-    names = frozenset(request.runtime.permissions.approval_tools) | _factory_for(request).pause_tools
+    """pending 识别集 = wire 审批集 + 类型工厂 pause/plan tools（+ask 档委派工具）。"""
+    policy = _factory_for(request)
+    names = (
+        frozenset(request.runtime.permissions.approval_tools)
+        | policy.pause_tools
+        | policy.plan_tools
+    )
     if request.runtime.permissions.subagent_create == "ask":
         names |= {SUBAGENT_TOOL_NAME}
     return names

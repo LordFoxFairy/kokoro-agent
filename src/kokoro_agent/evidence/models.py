@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping
 from typing import Literal, cast
@@ -164,8 +165,10 @@ def _safe_json_value(
 ) -> object:
     if depth > _MAX_SAFE_JSON_DEPTH:
         return "[REDACTED_DEPTH]"
-    if value is None or isinstance(value, bool | int | float):
+    if value is None or isinstance(value, bool | int):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else "[REDACTED_NON_FINITE_NUMBER]"
     if isinstance(value, str):
         return _safe_text(value, _MAX_SAFE_JSON_STRING_CHARS)
     if isinstance(value, list):

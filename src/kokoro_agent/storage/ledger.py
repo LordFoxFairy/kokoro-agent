@@ -9,6 +9,7 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
+from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
     ControlInboxRecord,
@@ -28,6 +29,7 @@ __all__ = [
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
     "LedgerSettings",
+    "EvidenceLedger",
     "OutboxFrame",
     "ReceiptReconcile",
     "RunLedger",
@@ -198,6 +200,10 @@ class RunLedger(ExecutionContextStore, Protocol):
     async def get_sandbox_id(self, run_id: str) -> str | None: ...
 
 
+class EvidenceLedger(RunLedger, ExecutionEvidenceReader, Protocol):
+    """Concrete ledger capability returned by the factory without widening RunLedger fakes."""
+
+
 class LedgerSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -211,7 +217,7 @@ class LedgerSettings(BaseModel):
 @asynccontextmanager
 async def make_ledger(
     settings: LedgerSettings,
-) -> AsyncGenerator[RunLedger, None]:
+) -> AsyncGenerator[EvidenceLedger, None]:
     client, collection = make_mongo_collection(settings.mongo_url, settings.mongo_db)
     try:
         await collection.create_index(

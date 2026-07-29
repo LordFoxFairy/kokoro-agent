@@ -175,6 +175,39 @@ def test_plan_owner_is_the_complete_typed_render_source() -> None:
     ]
 
 
+def test_safe_action_json_never_serializes_nonstandard_numbers() -> None:
+    payload = {
+        "segment_id": "seg-action",
+        "tool_id": "call-action",
+        "name": "calculate",
+        "args": {"nan": float("nan"), "positive": float("inf"), "negative": -float("inf")},
+        "description": "Review numbers",
+        "allowed_decisions": ["approve", "reject"],
+        "kind": "tool_approval",
+        "editable": False,
+        "pending_tool_ids": ["call-action"],
+    }
+    evidence = make_durable_execution_evidence(
+        run_id="run-numbers",
+        durable_seq=1,
+        event_id="evt-numbers",
+        event_kind="tool.awaiting_approval",
+        payload_json=json.dumps(payload),
+        recorded_at_ms=10,
+        producer_instance_ref="agent-pod-a",
+        producer_generation=1,
+    )
+    safe = evidence_pb2.DurableExecutionCanonicalPayloadV1.FromString(
+        evidence.canonical_payload
+    ).action_owner.safe_request_json
+    assert b"NaN" not in safe and b"Infinity" not in safe
+    assert json.loads(safe) == {
+        "nan": "[REDACTED_NON_FINITE_NUMBER]",
+        "negative": "[REDACTED_NON_FINITE_NUMBER]",
+        "positive": "[REDACTED_NON_FINITE_NUMBER]",
+    }
+
+
 def test_evidence_rejects_invalid_event_payloads() -> None:
     with pytest.raises(ValueError, match="EVIDENCE_PAYLOAD_INVALID"):
         make_durable_execution_evidence(

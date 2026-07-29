@@ -87,6 +87,27 @@ class AppConfig(BaseModel):
         default=1, gt=0, validation_alias="KOKORO_AGENT_PRODUCER_GENERATION"
     )
 
+    # --- Agent-owned execution-evidence ConnectRPC provider ---
+    evidence_host: str = Field(
+        default="0.0.0.0", validation_alias="KOKORO_AGENT_EVIDENCE_HOST"
+    )
+    evidence_port: int = Field(
+        default=8443, ge=1, le=65535, validation_alias="KOKORO_AGENT_EVIDENCE_PORT"
+    )
+    evidence_tls_cert: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_EVIDENCE_TLS_CERT"
+    )
+    evidence_tls_key: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_EVIDENCE_TLS_KEY"
+    )
+    evidence_caller_ca_bundle: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_EVIDENCE_CALLER_CA_BUNDLE"
+    )
+    evidence_allowed_callers: str = Field(
+        default="kokoro-session,kokoro-platform",
+        validation_alias="KOKORO_AGENT_EVIDENCE_ALLOWED_CALLERS",
+    )
+
     # --- sandbox 域 ---
     local_shell_root: OptStr = Field(default=None, validation_alias="KOKORO_AGENT_LOCAL_SHELL_ROOT")
     local_shell_inherit_env: bool = Field(

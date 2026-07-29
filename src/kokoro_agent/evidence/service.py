@@ -72,7 +72,7 @@ class AgentExecutionEvidenceConnectService:
     async def pull_durable_execution_evidence(
         self,
         request: wire.PullDurableExecutionEvidenceRequest,
-        _ctx: RequestContext[
+        ctx: RequestContext[
             wire.PullDurableExecutionEvidenceRequest,
             wire.PullDurableExecutionEvidenceResponse,
         ],
@@ -95,7 +95,7 @@ class AgentExecutionEvidenceConnectService:
     async def get_durable_execution_evidence(
         self,
         request: wire.GetDurableExecutionEvidenceRequest,
-        _ctx: RequestContext[
+        ctx: RequestContext[
             wire.GetDurableExecutionEvidenceRequest,
             wire.GetDurableExecutionEvidenceResponse,
         ],
@@ -119,7 +119,7 @@ class AgentExecutionEvidenceConnectService:
     async def get_run_durable_checkpoint(
         self,
         request: wire.GetRunDurableCheckpointRequest,
-        _ctx: RequestContext[
+        ctx: RequestContext[
             wire.GetRunDurableCheckpointRequest,
             wire.GetRunDurableCheckpointResponse,
         ],

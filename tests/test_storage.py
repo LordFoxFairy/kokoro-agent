@@ -13,7 +13,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
-from kokoro_agent.contract import RunCompletedPayload, RunOwnerCompletedPayload
+from kokoro_agent.contract import (
+    PlanProposal,
+    PlanProposedPayload,
+    PlanStep,
+    RunCompletedPayload,
+    RunOwnerCompletedPayload,
+)
 from kokoro_agent.contract.storage import (
     RUN_DISPATCHES_COLLECTION,
     RUN_EVENT_RECEIPTS_COLLECTION,
@@ -36,6 +42,19 @@ _MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 _TTL_MS = 1000
 OWNER = "worker-a"
 OTHER = "worker-b"
+
+
+def _plan_payload(owner_ref: str) -> str:
+    return PlanProposedPayload(
+        segment_id="seg-plan",
+        owner_ref=owner_ref,
+        owner_version=1,
+        proposal=PlanProposal(
+            summary="Plan",
+            steps=[PlanStep(step_ref="step-1", label="Do", status="pending")],
+            allowed_actions=["accept", "reject"],
+        ),
+    ).model_dump_json()
 
 
 class FakeClock:
@@ -439,7 +458,7 @@ async def test_critical_outbox_stage_publish_scan() -> None:
     async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
         await store.try_claim(request("run-outbox"), OWNER)
         staged = await store.stage_critical_frame(
-            "run-outbox", "run.started", 0, 111, '{"x":1}', terminal=False
+            "run-outbox", "run.started", 0, 111, "{}", terminal=False
         )
         assert staged is not None and staged.durable_seq == 1
         # 未 publish → scanner 见 queued 行（完整重建元数据）。
@@ -447,7 +466,11 @@ async def test_critical_outbox_stage_publish_scan() -> None:
         assert [(f.run_id, f.durable_seq, f.kind) for f in frames] == [
             ("run-outbox", 1, "run.started")
         ]
-        assert frames[0].event_id == staged.event_id and frames[0].payload_json == '{"x":1}'
+        assert frames[0].event_id == staged.event_id and frames[0].payload_json == "{}"
+        evidence = await store.pull_durable_execution_evidence("run-outbox", 0, 10)
+        assert [(row.durable_seq, row.event_id, row.kind) for row in evidence] == [
+            (1, staged.event_id, "run.started")
+        ]
         # publish 确认（queued→published）→ 不再补发。
         await store.mark_critical_published("run-outbox", 1)
         assert await store.list_unpublished_outbox() == []
@@ -508,6 +531,12 @@ async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
             "run.owner.completed",
             "run.completed",
         ]
+        evidence = await store.pull_durable_execution_evidence(req.run_id, 0, 10)
+        assert [row.kind for row in evidence] == [
+            "run.owner.completed",
+            "run.completed",
+        ]
+        assert await store.get_run_durable_checkpoint(req.run_id) == evidence[0]
 
         # A published-but-unreceipted owner blocks the queued terminal.
         await store.mark_critical_published(req.run_id, claimed.owner.durable_seq)
@@ -576,7 +605,7 @@ async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> Non
                     "plan.proposed",
                     1,
                     111,
-                    '{"owner_ref":"call-plan-A"}',
+                    _plan_payload("call-plan-A"),
                     terminal=False,
                     semantic_key=key,
                 )
@@ -622,7 +651,7 @@ async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> Non
             "plan.proposed",
             99,
             999,
-            '{"owner_ref":"call-plan-A"}',
+            _plan_payload("call-plan-A"),
             terminal=False,
             semantic_key=key,
         )
@@ -636,7 +665,7 @@ async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> Non
                 "plan.proposed",
                 100,
                 1000,
-                '{"owner_ref":"different"}',
+                _plan_payload("different"),
                 terminal=False,
                 semantic_key=key,
             )
@@ -651,7 +680,7 @@ async def test_critical_outbox_first_terminal_fence_supersedes_suffix() -> None:
         assert s1 is not None and s1.durable_seq == 1
         # 首个终态帧=fence（seq 2）。
         s2 = await store.stage_critical_frame(
-            "run-fence", "run.completed", 1, 2, "{}", terminal=True
+            "run-fence", "run.completed", 1, 2, '{"status":"completed"}', terminal=True
         )
         assert s2 is not None and s2.durable_seq == 2
         # fence 后的 critical 帧（seq 3）：post-fence → superseded，返回 None、不入补发。
@@ -674,7 +703,9 @@ async def test_reconcile_receipts_consumes_gcs_and_requests_close() -> None:
         manifests = db[RUN_RECEIPT_MANIFESTS_COLLECTION]
         await store.try_claim(request("run-rc"), OWNER)
         s1 = await store.stage_critical_frame("run-rc", "run.started", 0, 1, "{}", terminal=False)
-        s2 = await store.stage_critical_frame("run-rc", "run.completed", 1, 2, "{}", terminal=True)
+        s2 = await store.stage_critical_frame(
+            "run-rc", "run.completed", 1, 2, '{"status":"completed"}', terminal=True
+        )
         assert s1 is not None and s2 is not None
         await store.mark_critical_published("run-rc", 1)
         await store.mark_critical_published("run-rc", 2)
@@ -714,7 +745,9 @@ async def test_reconcile_receipts_rejected_nack_syncs_fence() -> None:
         outcome = await store.reconcile_receipts("run-nack")
         assert outcome.rejected_seq == 1
         # fence 同步到 rejected_seq：其后 critical 帧一律 superseded。
-        s2 = await store.stage_critical_frame("run-nack", "run.completed", 1, 2, "{}", terminal=True)
+        s2 = await store.stage_critical_frame(
+            "run-nack", "run.completed", 1, 2, '{"status":"completed"}', terminal=True
+        )
         assert s2 is None
 
 
@@ -736,7 +769,9 @@ async def test_reconcile_republishes_stale_published_without_receipt() -> None:
     clock = FakeClock()
     async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
         await store.try_claim(request("run-stale"), OWNER)
-        s1 = await store.stage_critical_frame("run-stale", "run.started", 0, 1, '{"x":1}', terminal=False)
+        s1 = await store.stage_critical_frame(
+            "run-stale", "run.started", 0, 1, "{}", terminal=False
+        )
         assert s1 is not None
         await store.mark_critical_published("run-stale", 1)  # published_at = clock.now
         # 宽限期内：不重发。

@@ -32,6 +32,11 @@ from kokoro_agent.contract.storage import (
     RunEventReceiptDoc,
     run_event_receipts_doc_adapter,
 )
+from kokoro_agent.evidence.models import (
+    DurableExecutionEvidence,
+    evidence_kind_for_event,
+    make_durable_execution_evidence,
+)
 
 # 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
@@ -161,6 +166,19 @@ class _SemanticCriticalFrame(BaseModel):
 _SEMANTIC_CRITICAL_ADAPTER: TypeAdapter[list[_SemanticCriticalFrame]] = TypeAdapter(
     list[_SemanticCriticalFrame]
 )
+_DURABLE_EVIDENCE_ADAPTER: TypeAdapter[list[DurableExecutionEvidence]] = TypeAdapter(
+    list[DurableExecutionEvidence]
+)
+
+
+def _evidence_pipeline_row(
+    evidence: DurableExecutionEvidence, durable_seq: object
+) -> dict[str, object]:
+    """Encode constants as literals while allowing Mongo to resolve the sequence expression."""
+    return {
+        key: durable_seq if key == "durable_seq" else {"$literal": value}
+        for key, value in evidence.model_dump(mode="python").items()
+    }
 
 _EXECUTION_BINDING_ADAPTER: TypeAdapter[ExecutionContextBinding] = TypeAdapter(
     ExecutionContextBinding
@@ -221,10 +239,14 @@ class MongoLedger:
         *,
         ttl_ms: int,
         clock: Callable[[], int] = _now_ms,
+        producer_instance_ref: str = "agent-runtime",
+        producer_generation: int = 1,
     ) -> None:
         self._coll = collection
         self._ttl_ms = ttl_ms
         self._clock = clock
+        self._producer_instance_ref = producer_instance_ref
+        self._producer_generation = producer_generation
         # dispatch CAS 与死信同库兄弟集合（session 在 message-store 库写 run_dispatches；
         # gate/closure env 令两库同名同实例，单文档 CAS 跨进程可见）。
         self._dispatches = collection.database[RUN_DISPATCHES_COLLECTION]
@@ -293,6 +315,20 @@ class MongoLedger:
         # 该 seq>fence（post-fence）→行以 superseded 摘要落库、永不发布，caller 不上 wire。
         event_id = _event_id()
         payload_sha256 = hashlib.sha256(payload_json.encode()).hexdigest()
+        evidence = (
+            make_durable_execution_evidence(
+                run_id=run_id,
+                durable_seq=1,
+                event_id=event_id,
+                event_kind=kind,
+                payload_json=payload_json,
+                recorded_at_ms=self._clock(),
+                producer_instance_ref=self._producer_instance_ref,
+                producer_generation=self._producer_generation,
+            )
+            if evidence_kind_for_event(kind) is not None
+            else None
+        )
         queued_row: dict[str, object] = {
             "durable_seq": "$durable_counter",
             "event_id": {"$literal": event_id},
@@ -345,6 +381,20 @@ class MongoLedger:
                     }
                 },
             ]
+        if evidence is not None:
+            evidence_row = _evidence_pipeline_row(evidence, "$durable_counter")
+            pipeline.append(
+                {
+                    "$set": {
+                        "durable_evidence": {
+                            "$concatArrays": [
+                                {"$ifNull": ["$durable_evidence", []]},
+                                {"$cond": [post_fence, [], [evidence_row]]},
+                            ]
+                        }
+                    }
+                }
+            )
         if semantic_key is not None:
             pipeline.append(
                 {
@@ -406,6 +456,51 @@ class MongoLedger:
         if isinstance(fence, int) and seq > fence:
             return None
         return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
+
+    async def pull_durable_execution_evidence(
+        self, run_id: str, after_durable_seq: int, limit: int
+    ) -> list[DurableExecutionEvidence]:
+        if limit < 1 or limit > 257 or after_durable_seq < 0:
+            raise ValueError("EVIDENCE_CURSOR_INVALID")
+        doc = await self._coll.find_one({"_id": run_id}, {"durable_evidence": 1})
+        if doc is None:
+            return []
+        rows = _DURABLE_EVIDENCE_ADAPTER.validate_python(
+            doc.get("durable_evidence") or []
+        )
+        return sorted(
+            (row for row in rows if row.durable_seq > after_durable_seq),
+            key=lambda row: row.durable_seq,
+        )[:limit]
+
+    async def get_durable_execution_evidence(
+        self, run_id: str, evidence_ref: str
+    ) -> DurableExecutionEvidence | None:
+        doc = await self._coll.find_one({"_id": run_id}, {"durable_evidence": 1})
+        if doc is None:
+            return None
+        rows = _DURABLE_EVIDENCE_ADAPTER.validate_python(
+            doc.get("durable_evidence") or []
+        )
+        return next((row for row in rows if row.evidence_ref == evidence_ref), None)
+
+    async def get_run_durable_checkpoint(
+        self, run_id: str
+    ) -> DurableExecutionEvidence | None:
+        doc = await self._coll.find_one({"_id": run_id}, {"durable_evidence": 1})
+        if doc is None:
+            return None
+        rows = _DURABLE_EVIDENCE_ADAPTER.validate_python(
+            doc.get("durable_evidence") or []
+        )
+        return next(
+            (
+                row
+                for row in sorted(rows, key=lambda item: item.durable_seq, reverse=True)
+                if row.kind == "run.owner.completed"
+            ),
+            None,
+        )
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         # publish 确认：queued→published + 记 published_at（回执超时重发的计时锚）。补发前崩溃留 queued。
@@ -852,6 +947,26 @@ class MongoLedger:
         terminal_event_id = _event_id()
         owner_payload_sha256 = hashlib.sha256(owner_event.payload_json.encode()).hexdigest()
         now = self._clock()
+        owner_evidence = make_durable_execution_evidence(
+            run_id=completion.run_id,
+            durable_seq=1,
+            event_id=owner_event_id,
+            event_kind=owner_event.kind,
+            payload_json=owner_event.payload_json,
+            recorded_at_ms=now,
+            producer_instance_ref=self._producer_instance_ref,
+            producer_generation=self._producer_generation,
+        )
+        terminal_evidence = make_durable_execution_evidence(
+            run_id=completion.run_id,
+            durable_seq=1,
+            event_id=terminal_event_id,
+            event_kind=terminal_event.kind,
+            payload_json=terminal_event.payload_json,
+            recorded_at_ms=now,
+            producer_instance_ref=self._producer_instance_ref,
+            producer_generation=self._producer_generation,
+        )
         owner_row: dict[str, object] = {
             "durable_seq": {"$subtract": ["$durable_counter", 1]},
             "event_id": {"$literal": owner_event_id},
@@ -890,6 +1005,20 @@ class MongoLedger:
                         "$concatArrays": [
                             {"$ifNull": ["$outbox", []]},
                             [owner_row, terminal_row],
+                        ]
+                    },
+                    "durable_evidence": {
+                        "$concatArrays": [
+                            {"$ifNull": ["$durable_evidence", []]},
+                            [
+                                _evidence_pipeline_row(
+                                    owner_evidence,
+                                    {"$subtract": ["$durable_counter", 1]},
+                                ),
+                                _evidence_pipeline_row(
+                                    terminal_evidence, "$durable_counter"
+                                ),
+                            ],
                         ]
                     },
                     "semantic_critical_frames": {

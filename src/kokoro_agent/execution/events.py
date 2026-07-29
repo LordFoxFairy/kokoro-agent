@@ -61,6 +61,7 @@ SourceResolver = Callable[[str], SubagentSource]
 CRITICAL_KINDS: frozenset[str] = frozenset(
     {
         "run.started",
+        "tool.awaiting_approval",
         "plan.proposed",
         "run.control.receipt",
         "run.owner.completed",
@@ -220,7 +221,9 @@ class RunEmitter:
                 payload_json,
                 terminal=kind in TERMINAL_KINDS,
                 semantic_key=(
-                    f"plan.proposed:{payload.owner_ref}"
+                    f"action_owner:{payload.tool_id}"
+                    if isinstance(payload, ToolAwaitingApprovalPayload)
+                    else f"plan.proposed:{payload.owner_ref}"
                     if isinstance(payload, PlanProposedPayload)
                     else "run.owner.completed"
                     if isinstance(payload, RunOwnerCompletedPayload)

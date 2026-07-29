@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
+from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
@@ -40,6 +41,9 @@ from kokoro_agent.evidence.models import (
 
 # 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
+AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
+
+_T = TypeVar("_T")
 
 
 def _now_ms() -> int:
@@ -166,19 +170,9 @@ class _SemanticCriticalFrame(BaseModel):
 _SEMANTIC_CRITICAL_ADAPTER: TypeAdapter[list[_SemanticCriticalFrame]] = TypeAdapter(
     list[_SemanticCriticalFrame]
 )
-_DURABLE_EVIDENCE_ADAPTER: TypeAdapter[list[DurableExecutionEvidence]] = TypeAdapter(
-    list[DurableExecutionEvidence]
+_DURABLE_EVIDENCE_ADAPTER: TypeAdapter[DurableExecutionEvidence] = TypeAdapter(
+    DurableExecutionEvidence
 )
-
-
-def _evidence_pipeline_row(
-    evidence: DurableExecutionEvidence, durable_seq: object
-) -> dict[str, object]:
-    """Encode constants as literals while allowing Mongo to resolve the sequence expression."""
-    return {
-        key: durable_seq if key == "durable_seq" else {"$literal": value}
-        for key, value in evidence.model_dump(mode="python").items()
-    }
 
 _EXECUTION_BINDING_ADAPTER: TypeAdapter[ExecutionContextBinding] = TypeAdapter(
     ExecutionContextBinding
@@ -241,12 +235,16 @@ class MongoLedger:
         clock: Callable[[], int] = _now_ms,
         producer_instance_ref: str = "agent-runtime",
         producer_generation: int = 1,
+        allow_nontransactional_evidence_for_tests: bool = False,
     ) -> None:
         self._coll = collection
         self._ttl_ms = ttl_ms
         self._clock = clock
         self._producer_instance_ref = producer_instance_ref
         self._producer_generation = producer_generation
+        self._allow_nontransactional_evidence_for_tests = (
+            allow_nontransactional_evidence_for_tests
+        )
         # dispatch CAS 与死信同库兄弟集合（session 在 message-store 库写 run_dispatches；
         # gate/closure env 令两库同名同实例，单文档 CAS 跨进程可见）。
         self._dispatches = collection.database[RUN_DISPATCHES_COLLECTION]
@@ -255,6 +253,18 @@ class MongoLedger:
         # run_event_receipts 由 session 写、agent 读；run_receipt_manifests 双方 CAS 各自字段。
         self._receipts = collection.database[RUN_EVENT_RECEIPTS_COLLECTION]
         self._manifests = collection.database[RUN_RECEIPT_MANIFESTS_COLLECTION]
+        # Evidence is one document per durable fact. It must never grow the run document;
+        # the write is committed with the outbox allocation in one Mongo transaction.
+        self._evidence = collection.database[AGENT_EXECUTION_EVIDENCE_COLLECTION]
+
+    async def _run_evidence_transaction(
+        self,
+        callback: Callable[[AsyncClientSession | None], Awaitable[_T]],
+    ) -> _T:
+        if self._allow_nontransactional_evidence_for_tests:
+            return await callback(None)
+        async with self._coll.database.client.start_session() as session:
+            return await session.with_transaction(callback)
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # $setOnInsert + upsert：仅 _id 不存在时写入；并发 upsert 撞 _id 抛 DuplicateKeyError
@@ -381,20 +391,6 @@ class MongoLedger:
                     }
                 },
             ]
-        if evidence is not None:
-            evidence_row = _evidence_pipeline_row(evidence, "$durable_counter")
-            pipeline.append(
-                {
-                    "$set": {
-                        "durable_evidence": {
-                            "$concatArrays": [
-                                {"$ifNull": ["$durable_evidence", []]},
-                                {"$cond": [post_fence, [], [evidence_row]]},
-                            ]
-                        }
-                    }
-                }
-            )
         if semantic_key is not None:
             pipeline.append(
                 {
@@ -419,87 +415,111 @@ class MongoLedger:
         query: dict[str, object] = {"_id": run_id}
         if semantic_key is not None:
             query["semantic_critical_frames.semantic_key"] = {"$ne": semantic_key}
-        doc = await self._coll.find_one_and_update(
-            query,
-            pipeline,
-            return_document=ReturnDocument.AFTER,
-        )
-        if doc is None:
-            if semantic_key is not None:
-                existing_doc = await self._coll.find_one(
-                    {"_id": run_id}, {"semantic_critical_frames": 1}
-                )
-                if existing_doc is None:
-                    return None
-                entries = _SEMANTIC_CRITICAL_ADAPTER.validate_python(
-                    existing_doc.get("semantic_critical_frames") or []
-                )
-                existing = next(
-                    (entry for entry in entries if entry.semantic_key == semantic_key), None
-                )
-                if existing is None:
-                    return None
-                if existing.kind != kind or existing.payload_sha256 != payload_sha256:
-                    raise ValueError(
-                        f"semantic critical frame conflict for {semantic_key!r}"
+        async def stage(
+            session: AsyncClientSession | None,
+        ) -> StagedFrame | None:
+            doc = await self._coll.find_one_and_update(
+                query,
+                pipeline,
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
+            if doc is None:
+                if semantic_key is not None:
+                    existing_doc = await self._coll.find_one(
+                        {"_id": run_id},
+                        {"semantic_critical_frames": 1},
+                        session=session,
                     )
-                return StagedFrame(
-                    durable_seq=existing.durable_seq,
-                    event_id=existing.event_id,
-                    created=False,
+                    if existing_doc is None:
+                        return None
+                    entries = _SEMANTIC_CRITICAL_ADAPTER.validate_python(
+                        existing_doc.get("semantic_critical_frames") or []
+                    )
+                    existing = next(
+                        (
+                            entry
+                            for entry in entries
+                            if entry.semantic_key == semantic_key
+                        ),
+                        None,
+                    )
+                    if existing is None:
+                        return None
+                    if (
+                        existing.kind != kind
+                        or existing.payload_sha256 != payload_sha256
+                    ):
+                        raise ValueError(
+                            f"semantic critical frame conflict for {semantic_key!r}"
+                        )
+                    return StagedFrame(
+                        durable_seq=existing.durable_seq,
+                        event_id=existing.event_id,
+                        created=False,
+                    )
+                return None
+            seq = doc.get("durable_counter")
+            fence = doc.get("terminal_fence_seq")
+            if not isinstance(seq, int):
+                raise TypeError(
+                    f"durable_counter for {run_id!r} is not an int: {seq!r}"
                 )
-            return None
-        seq = doc.get("durable_counter")
-        fence = doc.get("terminal_fence_seq")
-        if not isinstance(seq, int):
-            raise TypeError(f"durable_counter for {run_id!r} is not an int: {seq!r}")
-        if isinstance(fence, int) and seq > fence:
-            return None
-        return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
+            if isinstance(fence, int) and seq > fence:
+                return None
+            if evidence is not None:
+                record = evidence.model_copy(update={"durable_seq": seq})
+                await self._evidence.insert_one(
+                    {"_id": record.evidence_ref, **record.model_dump(mode="python")},
+                    session=session,
+                )
+            return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
+
+        if evidence is None:
+            return await stage(None)
+        return await self._run_evidence_transaction(stage)
 
     async def pull_durable_execution_evidence(
         self, run_id: str, after_durable_seq: int, limit: int
     ) -> list[DurableExecutionEvidence]:
         if limit < 1 or limit > 257 or after_durable_seq < 0:
             raise ValueError("EVIDENCE_CURSOR_INVALID")
-        doc = await self._coll.find_one({"_id": run_id}, {"durable_evidence": 1})
-        if doc is None:
-            return []
-        rows = _DURABLE_EVIDENCE_ADAPTER.validate_python(
-            doc.get("durable_evidence") or []
+        cursor = (
+            self._evidence.find(
+                {"run_id": run_id, "durable_seq": {"$gt": after_durable_seq}},
+                {"_id": 0},
+            )
+            .sort("durable_seq", 1)
+            .limit(limit)
         )
-        return sorted(
-            (row for row in rows if row.durable_seq > after_durable_seq),
-            key=lambda row: row.durable_seq,
-        )[:limit]
+        return [
+            _DURABLE_EVIDENCE_ADAPTER.validate_python(row) async for row in cursor
+        ]
 
     async def get_durable_execution_evidence(
         self, run_id: str, evidence_ref: str
     ) -> DurableExecutionEvidence | None:
-        doc = await self._coll.find_one({"_id": run_id}, {"durable_evidence": 1})
-        if doc is None:
-            return None
-        rows = _DURABLE_EVIDENCE_ADAPTER.validate_python(
-            doc.get("durable_evidence") or []
+        row = await self._evidence.find_one(
+            {"run_id": run_id, "evidence_ref": evidence_ref}, {"_id": 0}
         )
-        return next((row for row in rows if row.evidence_ref == evidence_ref), None)
+        return (
+            None
+            if row is None
+            else _DURABLE_EVIDENCE_ADAPTER.validate_python(row)
+        )
 
     async def get_run_durable_checkpoint(
         self, run_id: str
     ) -> DurableExecutionEvidence | None:
-        doc = await self._coll.find_one({"_id": run_id}, {"durable_evidence": 1})
-        if doc is None:
-            return None
-        rows = _DURABLE_EVIDENCE_ADAPTER.validate_python(
-            doc.get("durable_evidence") or []
+        row = await self._evidence.find_one(
+            {"run_id": run_id, "kind": "run.owner.completed"},
+            {"_id": 0},
+            sort=[("durable_seq", -1)],
         )
-        return next(
-            (
-                row
-                for row in sorted(rows, key=lambda item: item.durable_seq, reverse=True)
-                if row.kind == "run.owner.completed"
-            ),
-            None,
+        return (
+            None
+            if row is None
+            else _DURABLE_EVIDENCE_ADAPTER.validate_python(row)
         )
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
@@ -1007,20 +1027,6 @@ class MongoLedger:
                             [owner_row, terminal_row],
                         ]
                     },
-                    "durable_evidence": {
-                        "$concatArrays": [
-                            {"$ifNull": ["$durable_evidence", []]},
-                            [
-                                _evidence_pipeline_row(
-                                    owner_evidence,
-                                    {"$subtract": ["$durable_counter", 1]},
-                                ),
-                                _evidence_pipeline_row(
-                                    terminal_evidence, "$durable_counter"
-                                ),
-                            ],
-                        ]
-                    },
                     "semantic_critical_frames": {
                         "$concatArrays": [
                             {"$ifNull": ["$semantic_critical_frames", []]},
@@ -1038,28 +1044,56 @@ class MongoLedger:
                 }
             },
         ]
-        try:
-            doc = await self._coll.find_one_and_update(
-                {
-                    "_id": completion.run_id,
-                    "terminal": {"$ne": True},
-                    "$or": [
-                        {"terminal_fence_seq": {"$exists": False}},
-                        {"terminal_fence_seq": None},
-                    ],
-                    "semantic_critical_frames.semantic_key": {
-                        "$ne": "run.owner.completed"
+        async def complete(
+            session: AsyncClientSession | None,
+        ) -> dict[str, object] | None:
+            try:
+                doc = await self._coll.find_one_and_update(
+                    {
+                        "_id": completion.run_id,
+                        "terminal": {"$ne": True},
+                        "$or": [
+                            {"terminal_fence_seq": {"$exists": False}},
+                            {"terminal_fence_seq": None},
+                        ],
+                        "semantic_critical_frames.semantic_key": {
+                            "$ne": "run.owner.completed"
+                        },
+                        "execution_context_binding.namespace": completion.namespace,
+                        "execution_context_binding.active_checkpoint.thread_id": checkpoint.thread_id,
+                        "execution_context_binding.active_checkpoint.checkpoint_ns": checkpoint.checkpoint_ns,
+                        "execution_context_binding.active_checkpoint.checkpoint_id": checkpoint.checkpoint_id,
                     },
-                    "execution_context_binding.namespace": completion.namespace,
-                    "execution_context_binding.active_checkpoint.thread_id": checkpoint.thread_id,
-                    "execution_context_binding.active_checkpoint.checkpoint_ns": checkpoint.checkpoint_ns,
-                    "execution_context_binding.active_checkpoint.checkpoint_id": checkpoint.checkpoint_id,
-                },
-                pipeline,
-                return_document=ReturnDocument.AFTER,
+                    pipeline,
+                    return_document=ReturnDocument.AFTER,
+                    session=session,
+                )
+            except DuplicateKeyError as error:
+                raise ExecutionContextConflict(
+                    "EXECUTION_CONTEXT_ANCHOR_COLLISION"
+                ) from error
+            if doc is None:
+                return None
+            final_seq = doc.get("durable_counter")
+            if not isinstance(final_seq, int) or final_seq < 2:
+                raise TypeError(
+                    f"durable_counter for {completion.run_id!r} is not an int: "
+                    f"{final_seq!r}"
+                )
+            records = [
+                owner_evidence.model_copy(update={"durable_seq": final_seq - 1}),
+                terminal_evidence.model_copy(update={"durable_seq": final_seq}),
+            ]
+            await self._evidence.insert_many(
+                [
+                    {"_id": record.evidence_ref, **record.model_dump(mode="python")}
+                    for record in records
+                ],
+                session=session,
             )
-        except DuplicateKeyError as error:
-            raise ExecutionContextConflict("EXECUTION_CONTEXT_ANCHOR_COLLISION") from error
+            return doc
+
+        doc = await self._run_evidence_transaction(complete)
         if doc is None:
             return None
         final_seq = doc.get("durable_counter")

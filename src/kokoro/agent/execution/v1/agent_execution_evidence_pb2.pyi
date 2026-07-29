@@ -21,6 +21,36 @@ class DurableExecutionEvidenceKind(int, metaclass=_enum_type_wrapper.EnumTypeWra
     DURABLE_EXECUTION_EVIDENCE_KIND_RUN_COMPLETED: _ClassVar[DurableExecutionEvidenceKind]
     DURABLE_EXECUTION_EVIDENCE_KIND_RUN_FAILED: _ClassVar[DurableExecutionEvidenceKind]
 
+class ActionAwaitingKindV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ACTION_AWAITING_KIND_V1_UNSPECIFIED: _ClassVar[ActionAwaitingKindV1]
+    ACTION_AWAITING_KIND_V1_TOOL_APPROVAL: _ClassVar[ActionAwaitingKindV1]
+    ACTION_AWAITING_KIND_V1_ASK_USER_QUESTION: _ClassVar[ActionAwaitingKindV1]
+    ACTION_AWAITING_KIND_V1_RESULT_REVIEW: _ClassVar[ActionAwaitingKindV1]
+    ACTION_AWAITING_KIND_V1_INPUT: _ClassVar[ActionAwaitingKindV1]
+
+class ActionDecisionV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ACTION_DECISION_V1_UNSPECIFIED: _ClassVar[ActionDecisionV1]
+    ACTION_DECISION_V1_APPROVE: _ClassVar[ActionDecisionV1]
+    ACTION_DECISION_V1_EDIT: _ClassVar[ActionDecisionV1]
+    ACTION_DECISION_V1_REJECT: _ClassVar[ActionDecisionV1]
+    ACTION_DECISION_V1_RESPOND: _ClassVar[ActionDecisionV1]
+    ACTION_DECISION_V1_SUBMIT: _ClassVar[ActionDecisionV1]
+
+class PlanStepStatusV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    PLAN_STEP_STATUS_V1_UNSPECIFIED: _ClassVar[PlanStepStatusV1]
+    PLAN_STEP_STATUS_V1_PENDING: _ClassVar[PlanStepStatusV1]
+    PLAN_STEP_STATUS_V1_IN_PROGRESS: _ClassVar[PlanStepStatusV1]
+    PLAN_STEP_STATUS_V1_COMPLETED: _ClassVar[PlanStepStatusV1]
+
+class PlanDecisionV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    PLAN_DECISION_V1_UNSPECIFIED: _ClassVar[PlanDecisionV1]
+    PLAN_DECISION_V1_ACCEPT: _ClassVar[PlanDecisionV1]
+    PLAN_DECISION_V1_REJECT: _ClassVar[PlanDecisionV1]
+
 class RunCompletedEvidenceStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     RUN_COMPLETED_EVIDENCE_STATUS_UNSPECIFIED: _ClassVar[RunCompletedEvidenceStatus]
@@ -33,6 +63,24 @@ DURABLE_EXECUTION_EVIDENCE_KIND_PLAN_OWNER: DurableExecutionEvidenceKind
 DURABLE_EXECUTION_EVIDENCE_KIND_RUN_OWNER_COMPLETED: DurableExecutionEvidenceKind
 DURABLE_EXECUTION_EVIDENCE_KIND_RUN_COMPLETED: DurableExecutionEvidenceKind
 DURABLE_EXECUTION_EVIDENCE_KIND_RUN_FAILED: DurableExecutionEvidenceKind
+ACTION_AWAITING_KIND_V1_UNSPECIFIED: ActionAwaitingKindV1
+ACTION_AWAITING_KIND_V1_TOOL_APPROVAL: ActionAwaitingKindV1
+ACTION_AWAITING_KIND_V1_ASK_USER_QUESTION: ActionAwaitingKindV1
+ACTION_AWAITING_KIND_V1_RESULT_REVIEW: ActionAwaitingKindV1
+ACTION_AWAITING_KIND_V1_INPUT: ActionAwaitingKindV1
+ACTION_DECISION_V1_UNSPECIFIED: ActionDecisionV1
+ACTION_DECISION_V1_APPROVE: ActionDecisionV1
+ACTION_DECISION_V1_EDIT: ActionDecisionV1
+ACTION_DECISION_V1_REJECT: ActionDecisionV1
+ACTION_DECISION_V1_RESPOND: ActionDecisionV1
+ACTION_DECISION_V1_SUBMIT: ActionDecisionV1
+PLAN_STEP_STATUS_V1_UNSPECIFIED: PlanStepStatusV1
+PLAN_STEP_STATUS_V1_PENDING: PlanStepStatusV1
+PLAN_STEP_STATUS_V1_IN_PROGRESS: PlanStepStatusV1
+PLAN_STEP_STATUS_V1_COMPLETED: PlanStepStatusV1
+PLAN_DECISION_V1_UNSPECIFIED: PlanDecisionV1
+PLAN_DECISION_V1_ACCEPT: PlanDecisionV1
+PLAN_DECISION_V1_REJECT: PlanDecisionV1
 RUN_COMPLETED_EVIDENCE_STATUS_UNSPECIFIED: RunCompletedEvidenceStatus
 RUN_COMPLETED_EVIDENCE_STATUS_COMPLETED: RunCompletedEvidenceStatus
 RUN_COMPLETED_EVIDENCE_STATUS_CANCELLED: RunCompletedEvidenceStatus
@@ -57,6 +105,16 @@ class RunStartedEvidenceV1(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
+class ActionRiskSummaryV1(_message.Message):
+    __slots__ = ()
+    LEVEL_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    level: str
+    source: str
+    reason: str
+    def __init__(self, level: _Optional[str] = ..., source: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
+
 class ActionOwnerEvidenceV1(_message.Message):
     __slots__ = ()
     OWNER_REF_FIELD_NUMBER: _ClassVar[int]
@@ -65,13 +123,41 @@ class ActionOwnerEvidenceV1(_message.Message):
     ACTION_NAME_FIELD_NUMBER: _ClassVar[int]
     AWAITING_KIND_FIELD_NUMBER: _ClassVar[int]
     ACTION_PAYLOAD_SHA256_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_DECISIONS_FIELD_NUMBER: _ClassVar[int]
+    PENDING_OWNER_REFS_FIELD_NUMBER: _ClassVar[int]
+    EDITABLE_FIELD_NUMBER: _ClassVar[int]
+    RISK_FIELD_NUMBER: _ClassVar[int]
+    SAFE_REQUEST_JSON_FIELD_NUMBER: _ClassVar[int]
+    INPUT_SCHEMA_REF_FIELD_NUMBER: _ClassVar[int]
+    SAFE_INPUT_SCHEMA_JSON_FIELD_NUMBER: _ClassVar[int]
+    SAFE_RESULT_PREVIEW_FIELD_NUMBER: _ClassVar[int]
     owner_ref: str
     owner_version: int
     segment_id: str
     action_name: str
-    awaiting_kind: str
+    awaiting_kind: ActionAwaitingKindV1
     action_payload_sha256: str
-    def __init__(self, owner_ref: _Optional[str] = ..., owner_version: _Optional[int] = ..., segment_id: _Optional[str] = ..., action_name: _Optional[str] = ..., awaiting_kind: _Optional[str] = ..., action_payload_sha256: _Optional[str] = ...) -> None: ...
+    description: str
+    allowed_decisions: _containers.RepeatedScalarFieldContainer[ActionDecisionV1]
+    pending_owner_refs: _containers.RepeatedScalarFieldContainer[str]
+    editable: bool
+    risk: ActionRiskSummaryV1
+    safe_request_json: bytes
+    input_schema_ref: str
+    safe_input_schema_json: bytes
+    safe_result_preview: str
+    def __init__(self, owner_ref: _Optional[str] = ..., owner_version: _Optional[int] = ..., segment_id: _Optional[str] = ..., action_name: _Optional[str] = ..., awaiting_kind: _Optional[_Union[ActionAwaitingKindV1, str]] = ..., action_payload_sha256: _Optional[str] = ..., description: _Optional[str] = ..., allowed_decisions: _Optional[_Iterable[_Union[ActionDecisionV1, str]]] = ..., pending_owner_refs: _Optional[_Iterable[str]] = ..., editable: _Optional[bool] = ..., risk: _Optional[_Union[ActionRiskSummaryV1, _Mapping]] = ..., safe_request_json: _Optional[bytes] = ..., input_schema_ref: _Optional[str] = ..., safe_input_schema_json: _Optional[bytes] = ..., safe_result_preview: _Optional[str] = ...) -> None: ...
+
+class PlanStepV1(_message.Message):
+    __slots__ = ()
+    STEP_REF_FIELD_NUMBER: _ClassVar[int]
+    LABEL_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    step_ref: str
+    label: str
+    status: PlanStepStatusV1
+    def __init__(self, step_ref: _Optional[str] = ..., label: _Optional[str] = ..., status: _Optional[_Union[PlanStepStatusV1, str]] = ...) -> None: ...
 
 class PlanOwnerEvidenceV1(_message.Message):
     __slots__ = ()
@@ -79,11 +165,17 @@ class PlanOwnerEvidenceV1(_message.Message):
     OWNER_VERSION_FIELD_NUMBER: _ClassVar[int]
     SEGMENT_ID_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_PAYLOAD_SHA256_FIELD_NUMBER: _ClassVar[int]
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    STEPS_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_DECISIONS_FIELD_NUMBER: _ClassVar[int]
     owner_ref: str
     owner_version: int
     segment_id: str
     proposal_payload_sha256: str
-    def __init__(self, owner_ref: _Optional[str] = ..., owner_version: _Optional[int] = ..., segment_id: _Optional[str] = ..., proposal_payload_sha256: _Optional[str] = ...) -> None: ...
+    summary: str
+    steps: _containers.RepeatedCompositeFieldContainer[PlanStepV1]
+    allowed_decisions: _containers.RepeatedScalarFieldContainer[PlanDecisionV1]
+    def __init__(self, owner_ref: _Optional[str] = ..., owner_version: _Optional[int] = ..., segment_id: _Optional[str] = ..., proposal_payload_sha256: _Optional[str] = ..., summary: _Optional[str] = ..., steps: _Optional[_Iterable[_Union[PlanStepV1, _Mapping]]] = ..., allowed_decisions: _Optional[_Iterable[_Union[PlanDecisionV1, str]]] = ...) -> None: ...
 
 class RunOwnerCompletedEvidenceV1(_message.Message):
     __slots__ = ()

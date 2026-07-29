@@ -83,6 +83,9 @@ class AppConfig(BaseModel):
 
     # --- ledger 域（lease_ttl_s → lease_ttl_ms×1000；gt=0 使 0 值构造期 fail-loud）---
     lease_ttl_s: int = Field(default=DEFAULT_LEASE_TTL_S, gt=0, validation_alias="KOKORO_LEASE_TTL_S")
+    producer_generation: int = Field(
+        default=1, gt=0, validation_alias="KOKORO_AGENT_PRODUCER_GENERATION"
+    )
 
     # --- sandbox 域 ---
     local_shell_root: OptStr = Field(default=None, validation_alias="KOKORO_AGENT_LOCAL_SHELL_ROOT")
@@ -223,6 +226,7 @@ class AppConfig(BaseModel):
             mongo_url=self.mongo_url,
             mongo_db=self.mongo_db,
             lease_ttl_ms=self.lease_ttl_s * 1000,
+            producer_generation=self.producer_generation,
         )
 
     @property

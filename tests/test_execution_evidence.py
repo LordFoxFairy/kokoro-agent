@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import cast
 
 import pytest
@@ -72,6 +73,106 @@ def test_only_agent_owned_durable_kinds_are_exposed(
 
 def test_control_receipts_are_not_execution_owner_evidence() -> None:
     assert evidence_kind_for_event("run.control.receipt") is None
+
+
+def test_action_owner_is_renderable_bounded_and_redacted() -> None:
+    payload = {
+        "segment_id": "seg-action",
+        "tool_id": "call-action",
+        "name": "deploy",
+        "args": {
+            "password": "do-not-expose",
+            "region": "us-east-1",
+            "headers": {"Authorization": "Bearer do-not-expose"},
+        },
+        "description": "Deploy with api_key=do-not-expose",
+        "allowed_decisions": ["approve", "edit", "reject"],
+        "kind": "tool_approval",
+        "risk": {"level": "high", "source": "policy", "reason": "writes prod"},
+        "editable": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {"password": {"default": "do-not-expose"}},
+        },
+        "pending_tool_ids": ["call-action", "call-next"],
+    }
+    evidence = make_durable_execution_evidence(
+        run_id="run-action",
+        durable_seq=2,
+        event_id="evt-action",
+        event_kind="tool.awaiting_approval",
+        payload_json=json.dumps(payload),
+        recorded_at_ms=10,
+        producer_instance_ref="agent-pod-a",
+        producer_generation=1,
+    )
+
+    canonical = evidence_pb2.DurableExecutionCanonicalPayloadV1.FromString(
+        evidence.canonical_payload
+    )
+    owner = canonical.action_owner
+    assert owner.owner_ref == "call-action"
+    assert owner.awaiting_kind == evidence_pb2.ACTION_AWAITING_KIND_V1_TOOL_APPROVAL
+    assert list(owner.pending_owner_refs) == ["call-action", "call-next"]
+    assert owner.risk.level == "high"
+    assert "do-not-expose" not in owner.description
+    assert json.loads(owner.safe_request_json) == {
+        "headers": {"Authorization": "[REDACTED]"},
+        "password": "[REDACTED]",
+        "region": "us-east-1",
+    }
+    assert len(owner.safe_request_json) <= 16 * 1024
+    assert len(owner.safe_input_schema_json) <= 16 * 1024
+    assert json.loads(owner.safe_input_schema_json) == {
+        "properties": {"password": {"default": "[REDACTED]"}},
+        "type": "object",
+    }
+    assert owner.input_schema_ref.startswith("sha256:")
+    assert not owner.HasField("safe_result_preview")
+
+
+def test_plan_owner_is_the_complete_typed_render_source() -> None:
+    evidence = make_durable_execution_evidence(
+        run_id="run-plan",
+        durable_seq=3,
+        event_id="evt-plan",
+        event_kind="plan.proposed",
+        payload_json=json.dumps(
+            {
+                "segment_id": "seg-plan",
+                "owner_ref": "call-plan",
+                "owner_version": 1,
+                "proposal": {
+                    "summary": "Ship safely",
+                    "steps": [
+                        {"step_ref": "step-1", "label": "Review", "status": "pending"},
+                        {
+                            "step_ref": "step-2",
+                            "label": "Release",
+                            "status": "in_progress",
+                        },
+                    ],
+                    "allowed_actions": ["accept", "reject"],
+                },
+            }
+        ),
+        recorded_at_ms=10,
+        producer_instance_ref="agent-pod-a",
+        producer_generation=1,
+    )
+
+    owner = evidence_pb2.DurableExecutionCanonicalPayloadV1.FromString(
+        evidence.canonical_payload
+    ).plan_owner
+    assert owner.summary == "Ship safely"
+    assert [(step.step_ref, step.label, step.status) for step in owner.steps] == [
+        ("step-1", "Review", evidence_pb2.PLAN_STEP_STATUS_V1_PENDING),
+        ("step-2", "Release", evidence_pb2.PLAN_STEP_STATUS_V1_IN_PROGRESS),
+    ]
+    assert list(owner.allowed_decisions) == [
+        evidence_pb2.PLAN_DECISION_V1_ACCEPT,
+        evidence_pb2.PLAN_DECISION_V1_REJECT,
+    ]
 
 
 def test_evidence_rejects_invalid_event_payloads() -> None:

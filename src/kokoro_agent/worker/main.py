@@ -113,6 +113,10 @@ async def _serve(config: AppConfig) -> None:
     if config.metrics_port is not None:
         start_metrics_server(config.metrics_port)
     bus = make_stream(config.stream)
+    consumer = _consumer_name()
+    ledger_settings = config.ledger.model_copy(
+        update={"producer_instance_ref": consumer}
+    )
     catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
     # 启动装载部署资产（local/s3 同口）：prompts 进内存（部署级人格）；skills 目录只是
     # seed 输入——真源是 Mongo（多租户），启动 upsert 幂等同步（hash 未变不写）。
@@ -122,7 +126,7 @@ async def _serve(config: AppConfig) -> None:
     # 进程级共享 checkpointer + run 状态存储：mongo 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
-        make_ledger(config.ledger) as store,
+        make_ledger(ledger_settings) as store,
         make_memory_store(config.checkpoint) as memory_store,
         make_skill_hub(skill_hub_settings(config)) as skill_hub,
         # MCP Mongo 注册表读路（hub 同库）：env 在此显式注入（进程环境只在本模块读取）。
@@ -157,7 +161,7 @@ async def _serve(config: AppConfig) -> None:
             approval_tool_names=approval_names,
             trace_factory=lambda request: trace_config(config.observability, request),
             source_for=catalog.source_for,
-            consumer=_consumer_name(),
+            consumer=consumer,
             heartbeat_s=config.lease_heartbeat_s,
             recursion_limit=config.recursion_limit,
             events_ttl_s=config.retention_events_ttl_s,
@@ -165,7 +169,7 @@ async def _serve(config: AppConfig) -> None:
             outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
         )
-        LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
+        LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, consumer)
         serve_task = asyncio.create_task(supervisor.serve(bus))
         loop = asyncio.get_running_loop()
         # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。

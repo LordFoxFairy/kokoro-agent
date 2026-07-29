@@ -30,7 +30,11 @@ from kokoro_agent.storage.ledger import (
     RunLedger,
     make_ledger,
 )
-from kokoro_agent.storage.mongo import DISPATCH_DLQ_COLLECTION, MongoLedger
+from kokoro_agent.storage.mongo import (
+    AGENT_EXECUTION_EVIDENCE_COLLECTION,
+    DISPATCH_DLQ_COLLECTION,
+    MongoLedger,
+)
 from kokoro_agent.storage.execution_context import (
     CompletionEventDraft,
     CompletedExecutionContext,
@@ -87,9 +91,15 @@ async def _mongo_collection() -> tuple[
 async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
     client, coll = await _mongo_collection()
     try:
-        yield MongoLedger(coll, ttl_ms=_TTL_MS, clock=clock)
+        yield MongoLedger(
+            coll,
+            ttl_ms=_TTL_MS,
+            clock=clock,
+            allow_nontransactional_evidence_for_tests=True,
+        )
     finally:
         await coll.drop()
+        await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await client.close()
 
 
@@ -377,11 +387,20 @@ async def _mongo_ledger_with_dispatches(
     client, coll = await _mongo_collection()
     dispatches = coll.database[RUN_DISPATCHES_COLLECTION]
     try:
-        yield MongoLedger(coll, ttl_ms=_TTL_MS, clock=clock), dispatches
+        yield (
+            MongoLedger(
+                coll,
+                ttl_ms=_TTL_MS,
+                clock=clock,
+                allow_nontransactional_evidence_for_tests=True,
+            ),
+            dispatches,
+        )
     finally:
         await coll.drop()
         await dispatches.drop()
         await coll.database[DISPATCH_DLQ_COLLECTION].drop()
+        await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         # R4 回执/清单是同库固定名兄弟集合（跨测试共享）：逐测试清空，串行安全。
         await coll.database[RUN_EVENT_RECEIPTS_COLLECTION].drop()
         await coll.database[RUN_RECEIPT_MANIFESTS_COLLECTION].drop()
@@ -669,6 +688,38 @@ async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> Non
                 terminal=False,
                 semantic_key=key,
             )
+
+
+async def test_execution_evidence_is_run_document_independent_and_page_bounded() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        run_id = "run-many-evidence"
+        await store.try_claim(request(run_id), OWNER)
+        for index in range(600):
+            owner_ref = f"call-plan-{index}"
+            staged = await store.stage_critical_frame(
+                run_id,
+                "plan.proposed",
+                index,
+                index + 1,
+                _plan_payload(owner_ref),
+                terminal=False,
+                semantic_key=f"plan.proposed:{owner_ref}",
+            )
+            assert staged is not None
+
+        run_collection: AsyncCollection[dict[str, object]] = object.__getattribute__(
+            store, "_coll"
+        )
+        run_doc = await run_collection.find_one(
+            {"_id": run_id}, {"durable_evidence": 1}
+        )
+        assert run_doc is not None and "durable_evidence" not in run_doc
+        evidence_collection = dispatches.database[AGENT_EXECUTION_EVIDENCE_COLLECTION]
+        assert await evidence_collection.count_documents({"run_id": run_id}) == 600
+
+        page = await store.pull_durable_execution_evidence(run_id, 500, 11)
+        assert [row.durable_seq for row in page] == list(range(501, 512))
 
 
 async def test_critical_outbox_first_terminal_fence_supersedes_suffix() -> None:

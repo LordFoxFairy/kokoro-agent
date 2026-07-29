@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.storage.mongo import (
+    AGENT_EXECUTION_EVIDENCE_COLLECTION,
     ControlInboxRecord,
     MongoLedger,
     OutboxFrame,
@@ -203,6 +204,8 @@ class LedgerSettings(BaseModel):
     mongo_url: str
     mongo_db: str
     lease_ttl_ms: Annotated[int, Field(gt=0)]
+    producer_instance_ref: Annotated[str, Field(min_length=1, max_length=256)] = "agent-runtime"
+    producer_generation: Annotated[int, Field(gt=0)] = 1
 
 
 @asynccontextmanager
@@ -217,6 +220,26 @@ async def make_ledger(
             unique=True,
             sparse=True,
         )
-        yield MongoLedger(collection, ttl_ms=settings.lease_ttl_ms)
+        evidence = collection.database[AGENT_EXECUTION_EVIDENCE_COLLECTION]
+        await evidence.create_index(
+            [("run_id", 1), ("durable_seq", 1)],
+            name="run_durable_seq_unique",
+            unique=True,
+        )
+        await evidence.create_index(
+            [("run_id", 1), ("evidence_ref", 1)],
+            name="run_evidence_ref_unique",
+            unique=True,
+        )
+        await evidence.create_index(
+            [("run_id", 1), ("kind", 1), ("durable_seq", -1)],
+            name="run_kind_latest",
+        )
+        yield MongoLedger(
+            collection,
+            ttl_ms=settings.lease_ttl_ms,
+            producer_instance_ref=settings.producer_instance_ref,
+            producer_generation=settings.producer_generation,
+        )
     finally:
         await client.close()

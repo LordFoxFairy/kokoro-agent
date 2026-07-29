@@ -54,6 +54,7 @@ from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.state import RunScope
 from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.storage.execution_context import ExecutionContextAuthorityPort
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 
@@ -84,6 +85,7 @@ class RunSupervisor:
         *,
         agent_builder: AgentBuilder,
         store: RunLedger,
+        execution_context: ExecutionContextAuthorityPort,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
         source_for: SourceResolver,
@@ -100,6 +102,7 @@ class RunSupervisor:
     ) -> None:
         self._build = agent_builder
         self._store = store
+        self._execution_context = execution_context
         self._approval_tool_names = approval_tool_names
         self._trace = trace_factory
         self._source_for = source_for
@@ -189,7 +192,10 @@ class RunSupervisor:
         except Exception:  # noqa: BLE001 — 补发扫描降级不阻断 serve 启动
             LOGGER.exception("critical outbox scan failed")
             return
+        blocked_runs: set[str] = set()
         for frame in frames:
+            if frame.run_id in blocked_runs:
+                continue
             try:
                 await bus.publish(
                     run_events_stream(frame.run_id),
@@ -202,6 +208,9 @@ class RunSupervisor:
                 LOGGER.exception(
                     "outbox republish failed run_id=%s seq=%s", frame.run_id, frame.durable_seq
                 )
+                # Per-run causal chain is strict: never publish N+1 after N failed. Other runs
+                # remain independent and continue replaying.
+                blocked_runs.add(frame.run_id)
 
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):
@@ -252,6 +261,9 @@ class RunSupervisor:
         # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
         for run_id in await self._store.list_open_outbox_runs():
             await self._reconcile_run_receipts(bus, run_id)
+        # Receipt GC can expose the next queued causal slot (for example owner persisted after a
+        # terminal publish failure). Scan every heartbeat so recovery never depends on restart.
+        await self._republish_outbox(bus)
         if self._run_ttl_s > 0:
             purged = await self._store.purge_terminal(self._run_ttl_s * 1000)
             if purged:
@@ -279,6 +291,7 @@ class RunSupervisor:
                 LOGGER.exception(
                     "stale outbox republish failed run_id=%s seq=%s", run_id, frame.durable_seq
                 )
+                break
         if outcome.rejected_seq is not None:
             await self._terminate_contract_incompatible(bus, run_id, outcome.rejected_seq)
         elif outcome.receipt_state_lost:
@@ -322,6 +335,11 @@ class RunSupervisor:
 
     async def _start_run(self, bus: StreamProtocol, request: RunRequest) -> None:
         try:
+            execution_config = await self._execution_context.open(request)
+        except Exception as error:  # noqa: BLE001 — opaque parent/binding invalid is terminal
+            await self._fail_terminal(bus, request.run_id, error)
+            return
+        try:
             assembled = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, request.run_id, error, code="assembly_failed")
@@ -337,7 +355,7 @@ class RunSupervisor:
             bus,
             assembled,
             request.run_id,
-            scope.scoped_thread_id,
+            execution_config,
             payload,
             self._approval_tool_names(request),
             trace=self._trace(request),
@@ -359,8 +377,11 @@ class RunSupervisor:
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, msg.run_id, error, code="assembly_failed")
             return
-        scope = RunScope.of(request)
-        config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
+        try:
+            config = await self._execution_context.config_for_run(msg.run_id)
+        except Exception as error:  # noqa: BLE001 — missing exact checkpoint binding is terminal
+            await self._fail_terminal(bus, msg.run_id, error)
+            return
         snapshot = await assembled.agent.aget_state(config)
         # 幂等护栏：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
         if not has_pending_interrupt(snapshot):
@@ -410,7 +431,7 @@ class RunSupervisor:
             LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
             return
         self._spawn_agent(
-            bus, assembled, msg.run_id, scope.scoped_thread_id, command, names,
+            bus, assembled, msg.run_id, config, command, names,
             trace=self._trace(request),
         )
 
@@ -438,14 +459,22 @@ class RunSupervisor:
         bus: StreamProtocol,
         assembled: AssembledAgent,
         run_id: str,
-        thread_id: str,
+        execution_config: RunnableConfig,
         payload: object,
         approval_tool_names: frozenset[str],
         *,
         trace: RunnableConfig | None,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(bus, assembled, run_id, thread_id, payload, approval_tool_names, trace)
+            self._guarded(
+                bus,
+                assembled,
+                run_id,
+                execution_config,
+                payload,
+                approval_tool_names,
+                trace,
+            )
         )
         self._tasks[run_id] = task
 
@@ -470,7 +499,7 @@ class RunSupervisor:
         bus: StreamProtocol,
         assembled: AssembledAgent,
         run_id: str,
-        thread_id: str,
+        execution_config: RunnableConfig,
         payload: object,
         approval_tool_names: frozenset[str],
         trace: RunnableConfig | None,
@@ -484,7 +513,7 @@ class RunSupervisor:
             terminal = await invoke_once(
                 emitter,
                 assembled.agent,
-                thread_id,
+                execution_config,
                 payload,
                 approval_tool_names=approval_tool_names,
                 # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
@@ -494,6 +523,7 @@ class RunSupervisor:
                 recursion_limit=self._recursion_limit,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
+                prepare_completed=lambda: self._execution_context.prepare_completion(run_id),
                 # 用量跨段累计真源：run.completed 报累计而非末段。
                 record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
             )
@@ -502,6 +532,11 @@ class RunSupervisor:
             await self._teardown_control(bus, run_id)
         else:
             # interrupt 暂停：租约置哨兵，HITL 等人期间不被过期重拾重跑；control 监听存活等 resume。
+            try:
+                await self._execution_context.capture(run_id)
+            except Exception as error:  # noqa: BLE001 — a pause without an exact checkpoint is unusable
+                await self._fail_terminal(bus, run_id, error)
+                return
             await self._store.pause(run_id)
 
     def _ensure_control_listener(self, bus: StreamProtocol, run_id: str) -> None:
@@ -608,8 +643,7 @@ class RunSupervisor:
             return None
         try:
             assembled = await self._build(request)
-            scope = RunScope.of(request)
-            config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
+            config = await self._execution_context.config_for_run(run_id)
             snapshot = await assembled.agent.aget_state(config)
         except Exception:  # noqa: BLE001 — 指纹是 stale 判定辅助，取不到降级 None（续办侧按不匹配处理）
             LOGGER.exception("interrupt fingerprint build failed run_id=%s", run_id)

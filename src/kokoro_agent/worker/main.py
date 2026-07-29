@@ -25,6 +25,7 @@ from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
+from kokoro_agent.storage.execution_context import ExecutionContextAuthority
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.content_source import make_asset_source
 from kokoro_agent.prompts import PromptLibrary
@@ -152,6 +153,7 @@ async def _serve(config: AppConfig) -> None:
         supervisor = RunSupervisor(
             agent_builder=functools.partial(assemble, deps),
             store=store,
+            execution_context=ExecutionContextAuthority(store=store, checkpointer=saver),
             approval_tool_names=approval_names,
             trace_factory=lambda request: trace_config(config.observability, request),
             source_for=catalog.source_for,

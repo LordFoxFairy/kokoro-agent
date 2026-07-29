@@ -190,6 +190,7 @@ def _request(**extra: JsonValue) -> dict[str, JsonValue]:
         "input": {"message_id": "m1", "content": "hi"},
         "runtime": _RUNTIME,
         "context": _CONTEXT,
+        "execution_context": {"mode": "root"},
         **extra,
     }
 

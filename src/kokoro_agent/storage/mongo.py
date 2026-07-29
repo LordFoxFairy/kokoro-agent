@@ -15,7 +15,16 @@ from pymongo.errors import DuplicateKeyError
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from kokoro_agent.contract import RunRequest
+from kokoro_agent.contract import RunCompletedPayload, RunOwnerCompletedPayload, RunRequest
+from kokoro_agent.storage.execution_context import (
+    ClaimedCompletionFrames,
+    CompletionEventDraft,
+    CompletedExecutionContext,
+    DurableCompletionFrame,
+    ExecutionCheckpoint,
+    ExecutionContextBinding,
+    ExecutionContextConflict,
+)
 from kokoro_agent.contract.storage import (
     RUN_DISPATCHES_COLLECTION,
     RUN_EVENT_RECEIPTS_COLLECTION,
@@ -151,6 +160,13 @@ class _SemanticCriticalFrame(BaseModel):
 
 _SEMANTIC_CRITICAL_ADAPTER: TypeAdapter[list[_SemanticCriticalFrame]] = TypeAdapter(
     list[_SemanticCriticalFrame]
+)
+
+_EXECUTION_BINDING_ADAPTER: TypeAdapter[ExecutionContextBinding] = TypeAdapter(
+    ExecutionContextBinding
+)
+_COMPLETED_EXECUTION_CONTEXT_ADAPTER: TypeAdapter[CompletedExecutionContext] = TypeAdapter(
+    CompletedExecutionContext
 )
 
 
@@ -405,11 +421,17 @@ class MongoLedger:
         async for doc in cursor:
             run_id = str(doc["_id"])
             entries = _OUTBOX_ADAPTER.validate_python(doc.get("outbox") or [])
-            for entry in entries:
+            live = sorted(
+                (entry for entry in entries if entry.status in ("queued", "published")),
+                key=lambda entry: entry.durable_seq,
+            )
+            for entry in live:
+                # Never jump an unresolved published predecessor or a queued gap. Once the first
+                # live non-queued row is reached, later seqs are not eligible for startup replay.
                 if entry.status != "queued":
-                    continue
+                    break
                 if entry.index is None or entry.timestamp is None or entry.payload_json is None:
-                    continue
+                    break
                 frames.append(
                     OutboxFrame(
                         run_id=run_id,
@@ -457,19 +479,33 @@ class MongoLedger:
         if rejected:
             await self._sync_local_fence(run_id, rejected[0])
             return ReceiptReconcile(rejected_seq=rejected[0])
-        # 回执超时重发候选：published、无回执、published_at 超宽限期。重发前 touch published_at
-        # 复位计时（下一宽限窗才再试，不每拍狂刷）。
-        stale = [
-            e
-            for e in live
-            if e.status == "published"
-            and e.durable_seq not in receipts
-            and e.published_at is not None
-            and now - e.published_at >= republish_grace_ms
-            and e.index is not None
-            and e.timestamp is not None
-            and e.payload_json is not None
-        ]
+        manifest = await self._manifests.find_one({"run_id": run_id})
+        raw_consumed = manifest.get("consumed_seq") if manifest is not None else 0
+        consumed = raw_consumed if isinstance(raw_consumed, int) else 0
+        by_seq = {e.durable_seq: e for e in entries}
+        # Republish only a contiguous causal prefix starting at the Session watermark. A queued
+        # predecessor, a not-yet-stale published predecessor, or an identity mismatch blocks all
+        # newer seqs even if they are independently stale.
+        stale: list[_OutboxEntry] = []
+        candidate_seq = consumed + 1
+        while (entry := by_seq.get(candidate_seq)) is not None:
+            receipt = receipts.get(candidate_seq)
+            if receipt is not None and receipt.status == "persisted":
+                if entry.event_id != receipt.event_id:
+                    break
+                candidate_seq += 1
+                continue
+            if (
+                entry.status != "published"
+                or entry.published_at is None
+                or now - entry.published_at < republish_grace_ms
+                or entry.index is None
+                or entry.timestamp is None
+                or entry.payload_json is None
+            ):
+                break
+            stale.append(entry)
+            candidate_seq += 1
         republish = [
             OutboxFrame(
                 run_id=run_id,
@@ -484,13 +520,9 @@ class MongoLedger:
         ]
         if stale:
             await self._touch_published(run_id, [e.durable_seq for e in stale], now)
-        manifest = await self._manifests.find_one({"run_id": run_id})
         if manifest is None:
             # 有 published 行待确认却无 manifest 且未 close：receipt_state_lost，绝不删 outbox。
             return ReceiptReconcile(receipt_state_lost=True, republish=republish)
-        consumed = manifest.get("consumed_seq")
-        consumed = consumed if isinstance(consumed, int) else 0
-        by_seq = {e.durable_seq: e for e in entries}
         advanced = consumed
         seq = consumed + 1
         while seq in receipts and receipts[seq].status == "persisted":
@@ -700,11 +732,266 @@ class MongoLedger:
             return None
         return RunRequest.model_validate_json(raw)
 
-    async def purge_terminal(self, max_age_ms: int) -> int:
-        result = await self._coll.delete_many(
-            {"terminal": True, "terminal_at_ms": {"$lte": self._clock() - max_age_ms}}
+    async def get_execution_context_binding(
+        self, run_id: str
+    ) -> ExecutionContextBinding | None:
+        doc = await self._coll.find_one(
+            {"_id": run_id}, {"execution_context_binding": 1}
         )
-        return int(result.deleted_count)
+        if doc is None or doc.get("execution_context_binding") is None:
+            return None
+        return _EXECUTION_BINDING_ADAPTER.validate_python(doc["execution_context_binding"])
+
+    async def bind_execution_context(
+        self, run_id: str, binding: ExecutionContextBinding
+    ) -> ExecutionContextBinding:
+        doc = await self._coll.find_one_and_update(
+            {
+                "_id": run_id,
+                "terminal": {"$ne": True},
+                "execution_context_binding": {"$exists": False},
+            },
+            {"$set": {"execution_context_binding": binding.model_dump(mode="json")}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is not None:
+            return _EXECUTION_BINDING_ADAPTER.validate_python(
+                doc["execution_context_binding"]
+            )
+        existing = await self.get_execution_context_binding(run_id)
+        if existing is None or existing != binding:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_BINDING_CONFLICT")
+        return existing
+
+    async def update_execution_checkpoint(
+        self, run_id: str, checkpoint: ExecutionCheckpoint
+    ) -> None:
+        result = await self._coll.update_one(
+            {
+                "_id": run_id,
+                "terminal": {"$ne": True},
+                "execution_context_binding": {"$exists": True},
+            },
+            {
+                "$set": {
+                    "execution_context_binding.active_checkpoint": checkpoint.model_dump(
+                        mode="json"
+                    )
+                }
+            },
+        )
+        if result.matched_count != 1:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_BINDING_CONFLICT")
+
+    async def resolve_execution_parent(
+        self,
+        *,
+        namespace: str,
+        anchor: str,
+        digest: str,
+        continuation_run_id: str | None,
+    ) -> ExecutionCheckpoint | None:
+        query: dict[str, object] = {
+            "terminal": True,
+            "execution_context_completion.anchor": anchor,
+            "execution_context_completion.digest": digest,
+            "execution_context_completion.namespace": namespace,
+            "execution_context_completion.owner_revision": 1,
+        }
+        if continuation_run_id is None:
+            doc = await self._coll.find_one(query, {"execution_context_completion": 1})
+        else:
+            query["$or"] = [
+                {"execution_context_completion.continuation_run_id": None},
+                {
+                    "execution_context_completion.continuation_run_id": continuation_run_id
+                },
+            ]
+            doc = await self._coll.find_one_and_update(
+                query,
+                {
+                    "$set": {
+                        "execution_context_completion.continuation_run_id": continuation_run_id
+                    }
+                },
+                projection={"execution_context_completion": 1},
+                return_document=ReturnDocument.AFTER,
+            )
+        if doc is None or doc.get("execution_context_completion") is None:
+            return None
+        completion = _COMPLETED_EXECUTION_CONTEXT_ADAPTER.validate_python(
+            doc["execution_context_completion"]
+        )
+        return completion.checkpoint
+
+    async def try_complete_execution_context(
+        self,
+        completion: CompletedExecutionContext,
+        owner_event: CompletionEventDraft,
+        terminal_event: CompletionEventDraft,
+    ) -> ClaimedCompletionFrames | None:
+        if completion.owner_revision != 1 or completion.continuation_run_id is not None:
+            raise ValueError("new completion owner must start at revision one")
+        if owner_event.kind != "run.owner.completed":
+            raise ValueError("completion owner event kind mismatch")
+        if terminal_event.kind != "run.completed" or terminal_event.index != owner_event.index + 1:
+            raise ValueError("completion terminal event must immediately follow owner")
+        owner_payload = RunOwnerCompletedPayload.model_validate_json(owner_event.payload_json)
+        if (
+            owner_payload.execution_context_anchor != completion.anchor
+            or owner_payload.execution_context_digest != completion.digest
+            or owner_payload.owner_revision != completion.owner_revision
+        ):
+            raise ValueError("completion owner payload mismatch")
+        terminal_payload = RunCompletedPayload.model_validate_json(terminal_event.payload_json)
+        if terminal_payload.status != "completed":
+            raise ValueError("execution context completion requires completed terminal")
+
+        checkpoint = completion.checkpoint
+        owner_event_id = _event_id()
+        terminal_event_id = _event_id()
+        owner_payload_sha256 = hashlib.sha256(owner_event.payload_json.encode()).hexdigest()
+        now = self._clock()
+        owner_row: dict[str, object] = {
+            "durable_seq": {"$subtract": ["$durable_counter", 1]},
+            "event_id": {"$literal": owner_event_id},
+            "kind": {"$literal": owner_event.kind},
+            "index": owner_event.index,
+            "timestamp": owner_event.timestamp,
+            "payload_json": {"$literal": owner_event.payload_json},
+            "status": {"$literal": "queued"},
+        }
+        terminal_row: dict[str, object] = {
+            "durable_seq": "$durable_counter",
+            "event_id": {"$literal": terminal_event_id},
+            "kind": {"$literal": terminal_event.kind},
+            "index": terminal_event.index,
+            "timestamp": terminal_event.timestamp,
+            "payload_json": {"$literal": terminal_event.payload_json},
+            "status": {"$literal": "queued"},
+        }
+        pipeline: list[dict[str, object]] = [
+            {
+                "$set": {
+                    "durable_counter": {
+                        "$add": [{"$ifNull": ["$durable_counter", 0]}, 2]
+                    }
+                }
+            },
+            {
+                "$set": {
+                    "terminal": True,
+                    "terminal_at_ms": now,
+                    "terminal_fence_seq": "$durable_counter",
+                    "execution_context_completion": {
+                        "$literal": completion.model_dump(mode="json")
+                    },
+                    "outbox": {
+                        "$concatArrays": [
+                            {"$ifNull": ["$outbox", []]},
+                            [owner_row, terminal_row],
+                        ]
+                    },
+                    "semantic_critical_frames": {
+                        "$concatArrays": [
+                            {"$ifNull": ["$semantic_critical_frames", []]},
+                            [
+                                {
+                                    "semantic_key": {"$literal": "run.owner.completed"},
+                                    "kind": {"$literal": owner_event.kind},
+                                    "payload_sha256": {"$literal": owner_payload_sha256},
+                                    "durable_seq": {"$subtract": ["$durable_counter", 1]},
+                                    "event_id": {"$literal": owner_event_id},
+                                }
+                            ],
+                        ]
+                    },
+                }
+            },
+        ]
+        try:
+            doc = await self._coll.find_one_and_update(
+                {
+                    "_id": completion.run_id,
+                    "terminal": {"$ne": True},
+                    "$or": [
+                        {"terminal_fence_seq": {"$exists": False}},
+                        {"terminal_fence_seq": None},
+                    ],
+                    "semantic_critical_frames.semantic_key": {
+                        "$ne": "run.owner.completed"
+                    },
+                    "execution_context_binding.namespace": completion.namespace,
+                    "execution_context_binding.active_checkpoint.thread_id": checkpoint.thread_id,
+                    "execution_context_binding.active_checkpoint.checkpoint_ns": checkpoint.checkpoint_ns,
+                    "execution_context_binding.active_checkpoint.checkpoint_id": checkpoint.checkpoint_id,
+                },
+                pipeline,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError as error:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_ANCHOR_COLLISION") from error
+        if doc is None:
+            return None
+        final_seq = doc.get("durable_counter")
+        if not isinstance(final_seq, int) or final_seq < 2:
+            raise TypeError(
+                f"durable_counter for {completion.run_id!r} is not an int: {final_seq!r}"
+            )
+        return ClaimedCompletionFrames(
+            owner=DurableCompletionFrame(
+                **owner_event.model_dump(),
+                durable_seq=final_seq - 1,
+                event_id=owner_event_id,
+            ),
+            terminal=DurableCompletionFrame(
+                **terminal_event.model_dump(),
+                durable_seq=final_seq,
+                event_id=terminal_event_id,
+            ),
+        )
+
+    async def purge_terminal(self, max_age_ms: int) -> int:
+        # Completed lineage is product state, not ephemeral worker state. Keep its binding and
+        # exact checkpoint owner for the same retention horizon as the checkpoint collection;
+        # only scrub operational payloads after all durable outbox rows have been consumed.
+        cutoff = self._clock() - max_age_ms
+        stale_without_live_outbox: dict[str, object] = {
+            "terminal": True,
+            "terminal_at_ms": {"$lte": cutoff},
+            "outbox.status": {"$nin": ["queued", "published"]},
+        }
+        archived = await self._coll.update_many(
+            {
+                **stale_without_live_outbox,
+                "execution_context_completion": {"$exists": True},
+                "retention_archived": {"$ne": True},
+            },
+            {
+                "$set": {"retention_archived": True},
+                "$unset": {
+                    "request_json": "",
+                    "lease_expires_ms": "",
+                    "owner": "",
+                    "usage_input": "",
+                    "usage_output": "",
+                    "token_total": "",
+                    "steers": "",
+                    "sandbox_id": "",
+                    "tool_results": "",
+                    "tool_journal": "",
+                    "control_inbox": "",
+                    "outbox": "",
+                },
+            },
+        )
+        deleted = await self._coll.delete_many(
+            {
+                **stale_without_live_outbox,
+                "execution_context_completion": {"$exists": False},
+            }
+        )
+        return int(archived.modified_count + deleted.deleted_count)
 
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 条件 update + upsert：已终态则过滤不中、upsert 撞 _id 抛 Duplicate → 已被认领。

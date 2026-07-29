@@ -13,7 +13,13 @@ from langchain.agents.middleware.types import AgentState
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.runtime import Runtime
 
-from fakes import FakeBus, FakeLedger, request, usage_recorder
+from fakes import (
+    FakeBus,
+    FakeLedger,
+    completed_execution_context,
+    request,
+    usage_recorder,
+)
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.contract.streams import run_events_stream
@@ -78,13 +84,17 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
 
     bus = FakeBus()
     terminal = await invoke_once(
-        RunEmitter(bus, "r-graph"),
+        RunEmitter(bus, "r-graph", outbox=ledger),
         agent,
-        "t-graph",
+        {
+            "configurable": {"thread_id": "t-graph"},
+            "metadata": {"kokoro_run_id": "r-graph"},
+        },
         {"messages": [HumanMessage(content="写调研报告", id="m0")]},
         approval_tool_names=frozenset(),
         source_for=lambda _n: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context("r-graph"),
         record_usage=usage_recorder()[0],
     )
     assert terminal is True

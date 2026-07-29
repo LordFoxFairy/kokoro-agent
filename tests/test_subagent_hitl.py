@@ -11,7 +11,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict
 
-from fakes import usage_recorder
+from fakes import FakeLedger, completed_execution_context, usage_recorder
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
@@ -72,11 +72,12 @@ async def test_subagent_approval_pauses_then_approve_completes(
     first = await invoke_once(
         RunEmitter(stream, run1),
         _build(saver),
-        "tsub",
+        {"configurable": {"thread_id": "tsub"}, "metadata": {"kokoro_run_id": run1}},
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run1),
         record_usage=recorder,
     )
     assert first is False  # 暂停成卡，而非 run.failed
@@ -94,14 +95,16 @@ async def test_subagent_approval_pauses_then_approve_completes(
 
     # 重读快照重建帧：合成 id 必须稳定（resume 对齐依据）。
     agent2 = _build(saver)
+    completion_ledger = FakeLedger()
     second = await invoke_once(
-        RunEmitter(stream, run2),
+        RunEmitter(stream, run2, outbox=completion_ledger),
         agent2,
-        "tsub",
+        {"configurable": {"thread_id": "tsub"}, "metadata": {"kokoro_run_id": run2}},
         Command(resume={"decisions": [{"type": "approve"}]}),
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run2),
         record_usage=recorder,
     )
     assert second is True
@@ -146,11 +149,12 @@ async def test_general_purpose_delegation_runs_inside_guards(
     terminal = await invoke_once(
         RunEmitter(stream, run_id),
         agent,
-        "tgp",
+        {"configurable": {"thread_id": "tgp"}, "metadata": {"kokoro_run_id": run_id}},
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=frozenset({"ask_user_question"}),
         source_for=lambda _n: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=recorder,
     )
     assert terminal is True
@@ -170,7 +174,6 @@ async def test_subagent_review_pauses_with_cached_result(
     stream: RedisStream, checkpointer: BaseCheckpointSaver[str]
 ) -> None:
     # 审核政策同样不可被委派旁路：子代理内 review 工具执行后暂停，结果进卡（keep-first 缓存）。
-    from fakes import FakeLedger
     from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
     _EXECUTED["n"] = 0
@@ -207,11 +210,12 @@ async def test_subagent_review_pauses_with_cached_result(
     paused = await invoke_once(
         RunEmitter(stream, run_id, review_tool_names=frozenset({"gated"})),
         agent,
-        "trev",
+        {"configurable": {"thread_id": "trev"}, "metadata": {"kokoro_run_id": run_id}},
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=frozenset({"ask_user_question"}),
         source_for=lambda _n: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=recorder,
     )
     assert paused is False

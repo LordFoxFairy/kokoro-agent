@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from fakes import FakeAgent, FakeBus, FakeRunStream, FakeToolCall, usage_recorder
+from fakes import (
+    FakeAgent,
+    FakeBus,
+    FakeLedger,
+    FakeRunStream,
+    FakeToolCall,
+    completed_execution_context,
+    usage_recorder,
+)
 
 from kokoro_agent.contract import DeliveryCreated, SubagentSource
 from kokoro_agent.execution.events import RunEmitter, delivery_created_payload
@@ -19,15 +27,17 @@ async def _always_claim() -> bool:
 
 
 async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
-    emitter = await RunEmitter.attach(bus, "r1")
+    ledger = FakeLedger()
+    emitter = await RunEmitter.attach(bus, "r1", outbox=ledger)
     await invoke_once(
         emitter,
         FakeAgent(run=run),
-        "c1",
+        {"configurable": {"thread_id": "c1"}, "metadata": {"kokoro_run_id": "r1"}},
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         claim_terminal=_always_claim,
+        prepare_completed=lambda: completed_execution_context("r1"),
         record_usage=usage_recorder()[0],
     )
 

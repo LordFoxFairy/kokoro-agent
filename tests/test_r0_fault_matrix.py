@@ -13,7 +13,16 @@ from collections.abc import Awaitable, Callable, Mapping
 
 from pydantic import JsonValue
 
-from fakes import FakeAgent, FakeBus, FakeLedger, request, text_run, usage_recorder
+from fakes import (
+    FakeAgent,
+    FakeBus,
+    FakeExecutionContextAuthority,
+    FakeLedger,
+    completed_execution_context,
+    request,
+    text_run,
+    usage_recorder,
+)
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.contract import RUN_EVENTS_MAXLEN, RunRequest, SubagentSource, run_events_stream
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
@@ -56,9 +65,11 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
 
     good = StreamItem(cursor="req-1", event=dict(request("req-crash").model_dump()))
     bus = FakeBus(inbound=(good,))
+    store = _CrashBeforeClaimLedger()
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
-        store=_CrashBeforeClaimLedger(),
+        store=store,
+        execution_context=FakeExecutionContextAuthority(store),
         approval_tool_names=_no_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -102,16 +113,28 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
     await invoke_once(
         emitter,
         FakeAgent(run=text_run("hi")),
-        "c1",
+        {"configurable": {"thread_id": "c1"}, "metadata": {"kokoro_run_id": "term-drop"}},
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
         claim_terminal=lambda: store.try_mark_terminal("term-drop"),
+        prepare_completed=lambda: completed_execution_context("term-drop"),
         record_usage=usage_recorder()[0],
     )
     # 首次 publish 失败被顶层 except 吞掉 → run.completed 未上 wire，但 outbox 行留 queued。
     on_wire = [e for e in bus.run_events("term-drop") if e.kind in {"run.completed", "run.failed"}]
     assert on_wire == []
+    published = [row for row in store.outbox["term-drop"] if row["status"] == "published"]
+    store.receipts["term-drop"] = [
+        {
+            "durable_seq": row["durable_seq"],
+            "event_id": row["event_id"],
+            "status": "persisted",
+        }
+        for row in published
+    ]
+    store.manifests["term-drop"] = {"consumed_seq": 0}
+    await store.reconcile_receipts("term-drop")
     queued = [f for f in await store.list_unpublished_outbox() if f.kind == "run.completed"]
     assert len(queued) == 1
     seq, event_id = queued[0].durable_seq, queued[0].event_id

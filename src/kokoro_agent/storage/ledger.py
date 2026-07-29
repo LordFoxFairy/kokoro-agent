@@ -18,6 +18,7 @@ from kokoro_agent.storage.mongo import (
     ToolJournalRecord,
     make_mongo_collection,
 )
+from kokoro_agent.storage.execution_context import ExecutionContextStore
 
 DEFAULT_LEASE_TTL_S = 90
 
@@ -35,7 +36,7 @@ __all__ = [
 ]
 
 
-class RunLedger(Protocol):
+class RunLedger(ExecutionContextStore, Protocol):
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # 原子认领新 run：首个认领者持有 TTL 租约并返 True，重复广播去重返 False。
         ...
@@ -210,6 +211,12 @@ async def make_ledger(
 ) -> AsyncGenerator[RunLedger, None]:
     client, collection = make_mongo_collection(settings.mongo_url, settings.mongo_db)
     try:
+        await collection.create_index(
+            "execution_context_completion.anchor",
+            name="execution_context_completion_anchor_unique",
+            unique=True,
+            sparse=True,
+        )
         yield MongoLedger(collection, ttl_ms=settings.lease_ttl_ms)
     finally:
         await client.close()

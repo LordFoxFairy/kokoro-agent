@@ -15,7 +15,7 @@ from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.state import RunScope
 from kokoro_agent.streams.redis import RedisStream
-from fakes import usage_recorder
+from fakes import FakeLedger, completed_execution_context, usage_recorder
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
 
@@ -41,14 +41,19 @@ async def _run(
     async def claim() -> bool:
         return True
 
+    ledger = FakeLedger()
     terminal = await invoke_once(
-        RunEmitter(bus, context.run_id),
+        RunEmitter(bus, context.run_id, outbox=ledger),
         agent,
-        context.scoped_thread_id,
+        {
+            "configurable": {"thread_id": context.scoped_thread_id},
+            "metadata": {"kokoro_run_id": context.run_id},
+        },
         {"messages": [HumanMessage(content="hi")], "scope": context.as_state()},
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(context.run_id),
         record_usage=usage_recorder()[0],
     )
     assert terminal is True

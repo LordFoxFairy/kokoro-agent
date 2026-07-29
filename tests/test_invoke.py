@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +16,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
-from pydantic import BaseModel as PydanticBaseModel
+from pydantic import BaseModel as PydanticBaseModel, JsonValue
 
 from fakes import (
     FakeAgent,
@@ -31,6 +31,7 @@ from fakes import (
     find_events,
     text_model,
     text_run,
+    completed_execution_context,
     usage_recorder,
     request,
 )
@@ -62,7 +63,7 @@ from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
-from kokoro_agent.streams.protocol import StreamProtocol
+from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
 
 
@@ -80,18 +81,25 @@ async def _invoke(
     run_id: str = "r1",
     *,
     approval_tool_names: frozenset[str] = frozenset(),
-    claim: Callable[[], Awaitable[bool]] = _always_claim,
+    claim: Callable[[], Awaitable[bool]] | None = None,
     trace: RunnableConfig | None = None,
+    ledger: FakeLedger | None = None,
 ) -> bool:
-    emitter = await RunEmitter.attach(bus, run_id)
+    ledger = ledger or FakeLedger()
+    await ledger.try_claim(request(run_id))
+    emitter = await RunEmitter.attach(bus, run_id, outbox=ledger)
     return await invoke_once(
         emitter,
         agent,
-        "c1",
+        {
+            "configurable": {"thread_id": "c1"},
+            "metadata": {"kokoro_run_id": run_id},
+        },
         {"messages": []},
         approval_tool_names=approval_tool_names,
         source_for=_runtime_custom,
-        claim_terminal=claim,
+        claim_terminal=claim or (lambda: ledger.try_mark_terminal(run_id)),
+        prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
         trace=trace,
     )
@@ -114,6 +122,31 @@ async def test_order_started_delta_completed_terminal() -> None:
     assert kinds[0] == "run.started"
     assert kinds[-1] == "run.completed"
     assert kinds.index("message.delta") < kinds.index("message.completed")
+    assert kinds[-2:] == ["run.owner.completed", "run.completed"]
+
+
+async def test_owner_publish_loss_keeps_both_slots_queued_for_causal_replay() -> None:
+    class OwnerFailingBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if event.get("kind") == "run.owner.completed":
+                raise ConnectionError("owner publish lost")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    bus = OwnerFailingBus()
+    ledger = FakeLedger()
+    done = await _invoke(bus, FakeAgent(run=text_run("hello")), ledger=ledger)
+
+    assert done is True
+    assert "run.completed" not in bus.kinds("r1")
+    owner = next(row for row in ledger.outbox["r1"] if row["kind"] == "run.owner.completed")
+    terminal = next(row for row in ledger.outbox["r1"] if row["kind"] == "run.completed")
+    assert owner["status"] == terminal["status"] == "queued"
+    owner_seq = owner["durable_seq"]
+    terminal_seq = terminal["durable_seq"]
+    assert isinstance(owner_seq, int) and isinstance(terminal_seq, int)
+    assert owner_seq + 1 == terminal_seq
 
 
 async def test_index_strictly_monotonic() -> None:
@@ -390,7 +423,7 @@ async def test_failed_subagent_flagged() -> None:
 async def test_custom_channel_drained_without_wire_events() -> None:
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(custom_items=({"telemetry": 1},))))
-    assert bus.kinds("r1") == ["run.started", "run.completed"]
+    assert bus.kinds("r1") == ["run.started", "run.owner.completed", "run.completed"]
 
 
 class _UsageFake(BaseChatModel):
@@ -710,12 +743,11 @@ async def test_empty_exception_message_falls_back_to_kind() -> None:
     assert failed.payload.message == "RuntimeError"
 
 
-async def test_claim_denied_suppresses_terminal() -> None:
-    async def deny() -> bool:
-        return False
-
+async def test_completion_claim_lost_suppresses_terminal() -> None:
     bus = FakeBus()
-    done = await _invoke(bus, FakeAgent(run=text_run("hi")), claim=deny)
+    ledger = FakeLedger()
+    await ledger.try_mark_terminal("r1")
+    done = await _invoke(bus, FakeAgent(run=text_run("hi")), ledger=ledger)
     assert done is True
     kinds = bus.kinds("r1")
     assert "run.completed" not in kinds
@@ -754,7 +786,7 @@ async def test_trace_none_config_only_configurable() -> None:
     await _invoke(bus, agent, trace=None)
     assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
     assert "callbacks" not in agent.seen_config
-    assert "metadata" not in agent.seen_config
+    assert agent.seen_config.get("metadata") == {"kokoro_run_id": "r1"}
 
 
 async def test_emitter_attach_continues_after_existing_events() -> None:
@@ -821,11 +853,12 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(stream: RedisStr
     terminal = await invoke_once(
         RunEmitter(stream, run_id),
         agent,
-        "tloop",
+        {"configurable": {"thread_id": "tloop"}, "metadata": {"kokoro_run_id": run_id}},
         {"messages": [HumanMessage(content="go")]},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
         recursion_limit=8,
     )
@@ -893,15 +926,17 @@ async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
         return (30 + input_tokens, 3 + output_tokens)  # 模拟前段已入账 30/3
 
     bus = FakeBus()
-    emitter = await RunEmitter.attach(bus, "racc")
+    ledger = FakeLedger()
+    emitter = await RunEmitter.attach(bus, "racc", outbox=ledger)
     await invoke_once(
         emitter,
         FakeAgent(run=text_run("hi")),
-        "c1",
+        {"configurable": {"thread_id": "c1"}, "metadata": {"kokoro_run_id": "racc"}},
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         claim_terminal=_always_claim,
+        prepare_completed=lambda: completed_execution_context("racc"),
         record_usage=preloaded_recorder,
     )
     completed = find_event(bus.run_events("racc"), RunCompleted)
@@ -925,10 +960,14 @@ async def test_pause_segment_records_usage_too() -> None:
     )
     emitter = await RunEmitter.attach(bus, "rpause")
     terminal = await invoke_once(
-        emitter, agent, "c1", {"messages": []},
+        emitter,
+        agent,
+        {"configurable": {"thread_id": "c1"}, "metadata": {"kokoro_run_id": "rpause"}},
+        {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         claim_terminal=_always_claim,
+        prepare_completed=lambda: completed_execution_context("rpause"),
         record_usage=recorder,
     )
     assert terminal is False

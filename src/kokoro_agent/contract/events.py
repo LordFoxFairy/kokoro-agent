@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, StringConstraints, TypeAdapter
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+
+def _trimmed_reference(value: str) -> str:
+    if value.strip() != value:
+        raise ValueError("reference must not have surrounding whitespace")
+    return value
+
+Sha256Str = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+Reference = Annotated[str, StringConstraints(min_length=1, max_length=256),
+    AfterValidator(_trimmed_reference)]
 NonNegInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 
@@ -204,6 +213,12 @@ class DeliveryCreatedPayload(StrictModel):
 class RunControlReceiptPayload(StrictModel):
     decision_id: NonEmptyStr
     control_status: ControlReceiptStatus
+
+
+class RunOwnerCompletedPayload(StrictModel):
+    execution_context_anchor: Reference
+    execution_context_digest: Sha256Str
+    owner_revision: PositiveInt
 
 
 class RunCompletedPayload(StrictModel):
@@ -428,6 +443,17 @@ class RunControlReceipt(StrictModel):
     payload: RunControlReceiptPayload
 
 
+class RunOwnerCompleted(StrictModel):
+    kind: Literal["run.owner.completed"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    # R4 durable 身份位:critical 帧必带(per-run 连续 seq 从 1 起),live 帧缺席。
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
+    payload: RunOwnerCompletedPayload
+
+
 class RunCompleted(StrictModel):
     kind: Literal["run.completed"]
     run_id: NonEmptyStr
@@ -471,6 +497,7 @@ AgentEvent = Annotated[
         SubagentToolReturned,
         DeliveryCreated,
         RunControlReceipt,
+        RunOwnerCompleted,
         RunCompleted,
         RunFailed,
     ],

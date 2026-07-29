@@ -15,6 +15,7 @@ from pydantic import JsonValue
 
 from kokoro_agent.contract import (
     AgentEvent,
+    ExecutionContextIntentRoot,
     ModelConfig,
     Permissions,
     RunInput,
@@ -31,6 +32,15 @@ from kokoro_agent.storage.ledger import (
     ReceiptReconcile,
     StagedFrame,
     ToolJournalRecord,
+)
+from kokoro_agent.storage.execution_context import (
+    ClaimedCompletionFrames,
+    CompletionEventDraft,
+    CompletedExecutionContext,
+    DurableCompletionFrame,
+    ExecutionCheckpoint,
+    ExecutionContextBinding,
+    ExecutionContextConflict,
 )
 from kokoro_agent.streams.protocol import StreamItem
 
@@ -149,6 +159,10 @@ class FakeLedger:
         self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
+        self.execution_bindings: dict[str, ExecutionContextBinding] = {}
+        self.execution_completions: dict[str, CompletedExecutionContext] = {}
+        self.execution_continuations: dict[str, str] = {}
+        self.retention_archived: set[str] = set()
 
     async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
         if request.run_id in self.requests:
@@ -237,9 +251,13 @@ class FakeLedger:
     async def list_unpublished_outbox(self) -> list[OutboxFrame]:
         frames: list[OutboxFrame] = []
         for run_id, rows in self.outbox.items():
-            for row in rows:
+            live = sorted(
+                (row for row in rows if row["status"] in ("queued", "published")),
+                key=lambda row: _as_int(row["durable_seq"]),
+            )
+            for row in live:
                 if row["status"] != "queued":
-                    continue
+                    break
                 frames.append(
                     OutboxFrame(
                         run_id=run_id,
@@ -277,15 +295,27 @@ class FakeLedger:
             if fence is None or fence > seq:
                 self.terminal_fence[run_id] = seq
             return ReceiptReconcile(rejected_seq=seq)
-        # published 无回执且超宽限期 → 重发候选（touch published_at 复位计时）。
-        stale = [
-            r
-            for r in live
-            if r["status"] == "published"
-            and _as_int(r["durable_seq"]) not in receipts
-            and r.get("published_at") is not None
-            and now - _as_int(r["published_at"]) >= republish_grace_ms
-        ]
+        manifest = self.manifests.get(run_id)
+        consumed = _as_int(manifest.get("consumed_seq") or 0) if manifest is not None else 0
+        by_seq = {_as_int(r["durable_seq"]): r for r in rows}
+        # Only the contiguous causal prefix from consumed+1 may be republished. A queued row,
+        # a not-yet-stale published row, or an identity mismatch blocks every successor.
+        stale: list[dict[str, object]] = []
+        seq = consumed + 1
+        while (row := by_seq.get(seq)) is not None:
+            receipt = receipts.get(seq)
+            if receipt is not None and receipt["status"] == "persisted":
+                if row["event_id"] != receipt["event_id"]:
+                    break
+                seq += 1
+                continue
+            if row["status"] != "published":
+                break
+            published_at = row.get("published_at")
+            if not isinstance(published_at, int) or now - published_at < republish_grace_ms:
+                break
+            stale.append(row)
+            seq += 1
         republish = [
             OutboxFrame(
                 run_id=run_id,
@@ -300,11 +330,8 @@ class FakeLedger:
         ]
         for r in stale:
             r["published_at"] = now
-        manifest = self.manifests.get(run_id)
         if manifest is None:
             return ReceiptReconcile(receipt_state_lost=True, republish=republish)
-        consumed = _as_int(manifest.get("consumed_seq") or 0)
-        by_seq = {_as_int(r["durable_seq"]): r for r in rows}
         advanced = consumed
         seq = consumed + 1
         while seq in receipts and receipts[seq]["status"] == "persisted":
@@ -408,6 +435,103 @@ class FakeLedger:
     async def get_request(self, run_id: str) -> RunRequest | None:
         return self.requests.get(run_id)
 
+    async def get_execution_context_binding(
+        self, run_id: str
+    ) -> ExecutionContextBinding | None:
+        return self.execution_bindings.get(run_id)
+
+    async def bind_execution_context(
+        self, run_id: str, binding: ExecutionContextBinding
+    ) -> ExecutionContextBinding:
+        current = self.execution_bindings.setdefault(run_id, binding)
+        if current != binding:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_BINDING_CONFLICT")
+        return current
+
+    async def update_execution_checkpoint(
+        self, run_id: str, checkpoint: ExecutionCheckpoint
+    ) -> None:
+        binding = self.execution_bindings.get(run_id)
+        if binding is None:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_BINDING_MISSING")
+        self.execution_bindings[run_id] = binding.model_copy(
+            update={"active_checkpoint": checkpoint}
+        )
+
+    async def resolve_execution_parent(
+        self,
+        *,
+        namespace: str,
+        anchor: str,
+        digest: str,
+        continuation_run_id: str | None,
+    ) -> ExecutionCheckpoint | None:
+        completion = self.execution_completions.get(anchor)
+        if completion is None or completion.namespace != namespace or completion.digest != digest:
+            return None
+        if continuation_run_id is not None:
+            current = self.execution_continuations.setdefault(anchor, continuation_run_id)
+            if current != continuation_run_id:
+                return None
+        return completion.checkpoint
+
+    async def try_complete_execution_context(
+        self,
+        completion: CompletedExecutionContext,
+        owner_event: CompletionEventDraft,
+        terminal_event: CompletionEventDraft,
+    ) -> ClaimedCompletionFrames | None:
+        if completion.owner_revision != 1 or completion.continuation_run_id is not None:
+            raise ValueError("new completion owner must start at revision one")
+        if owner_event.kind != "run.owner.completed":
+            raise ValueError("completion owner event kind mismatch")
+        if terminal_event.kind != "run.completed" or terminal_event.index != owner_event.index + 1:
+            raise ValueError("completion terminal event must immediately follow owner")
+        if completion.run_id in self.terminals:
+            return None
+        if completion.anchor in self.execution_completions:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_ANCHOR_COLLISION")
+        owner_seq = self.durable_counter.get(completion.run_id, 0) + 1
+        terminal_seq = owner_seq + 1
+        owner_id = f"evt_fake_{completion.run_id}_{owner_seq}"
+        terminal_id = f"evt_fake_{completion.run_id}_{terminal_seq}"
+        rows = self.outbox.setdefault(completion.run_id, [])
+        rows.extend(
+            [
+                {
+                    **owner_event.model_dump(),
+                    "durable_seq": owner_seq,
+                    "event_id": owner_id,
+                    "status": "queued",
+                },
+                {
+                    **terminal_event.model_dump(),
+                    "durable_seq": terminal_seq,
+                    "event_id": terminal_id,
+                    "status": "queued",
+                },
+            ]
+        )
+        self.durable_counter[completion.run_id] = terminal_seq
+        self.terminal_fence[completion.run_id] = terminal_seq
+        self.terminals.add(completion.run_id)
+        self.terminal_at[completion.run_id] = self.clock_ms
+        self.execution_completions[completion.anchor] = completion
+        self.semantic_critical[(completion.run_id, "run.owner.completed")] = (
+            owner_event.kind,
+            hashlib.sha256(owner_event.payload_json.encode()).hexdigest(),
+            owner_seq,
+            owner_id,
+        )
+        return ClaimedCompletionFrames(
+            owner=DurableCompletionFrame(
+                **owner_event.model_dump(), durable_seq=owner_seq, event_id=owner_id
+            ),
+            terminal=DurableCompletionFrame(
+                **terminal_event.model_dump(), durable_seq=terminal_seq, event_id=terminal_id
+            ),
+        )
+
     async def add_tokens(self, run_id: str, count: int) -> int:
         self.token_totals[run_id] = self.token_totals.get(run_id, 0) + count
         return self.token_totals[run_id]
@@ -426,8 +550,33 @@ class FakeLedger:
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self.clock_ms - max_age_ms
-        stale = [r for r in self.terminals if self.terminal_at.get(r, 0) <= cutoff]
+        stale = [
+            run_id
+            for run_id in self.terminals
+            if self.terminal_at.get(run_id, 0) <= cutoff
+            and not any(
+                row["status"] in ("queued", "published")
+                for row in self.outbox.get(run_id, [])
+            )
+        ]
+        changed = 0
+        completed_run_ids = {
+            completion.run_id for completion in self.execution_completions.values()
+        }
         for run_id in stale:
+            if run_id in completed_run_ids:
+                if run_id in self.retention_archived:
+                    continue
+                self.retention_archived.add(run_id)
+                self.requests.pop(run_id, None)
+                self.leases.pop(run_id, None)
+                self.token_totals.pop(run_id, None)
+                self.usage_totals.pop(run_id, None)
+                self.steers.pop(run_id, None)
+                self.tool_results = {k: v for k, v in self.tool_results.items() if k[0] != run_id}
+                self.tool_journal = {k: v for k, v in self.tool_journal.items() if k[0] != run_id}
+                changed += 1
+                continue
             self.terminals.discard(run_id)
             self.terminal_at.pop(run_id, None)
             self.requests.pop(run_id, None)
@@ -437,7 +586,8 @@ class FakeLedger:
             self.steers.pop(run_id, None)
             self.tool_results = {k: v for k, v in self.tool_results.items() if k[0] != run_id}
             self.tool_journal = {k: v for k, v in self.tool_journal.items() if k[0] != run_id}
-        return len(stale)
+            changed += 1
+        return changed
 
     async def is_terminal(self, run_id: str) -> bool:
         return run_id in self.terminals
@@ -502,6 +652,93 @@ class FakeLedger:
 
     async def get_sandbox_id(self, run_id: str) -> str | None:
         return self.sandbox_ids.get(run_id)
+
+
+class FakeExecutionContextAuthority:
+    """Supervisor fake that preserves opaque binding semantics without a real checkpointer."""
+
+    def __init__(self, store: FakeLedger) -> None:
+        self._store = store
+
+    async def open(self, request: RunRequest) -> RunnableConfig:
+        existing = await self._store.get_execution_context_binding(request.run_id)
+        if existing is None:
+            intent = request.execution_context
+            parent: ExecutionCheckpoint | None = None
+            if intent.mode == "root":
+                thread_id = f"thread_{request.run_id}"
+            else:
+                parent = await self._store.resolve_execution_parent(
+                    namespace=request.context.namespace,
+                    anchor=intent.parent_anchor,
+                    digest=intent.parent_digest,
+                    continuation_run_id=request.run_id if intent.mode == "continue" else None,
+                )
+                if parent is None:
+                    raise ExecutionContextConflict("EXECUTION_CONTEXT_PARENT_UNAVAILABLE")
+                thread_id = parent.thread_id
+            intent_digest = hashlib.sha256(
+                request.execution_context.model_dump_json().encode()
+            ).hexdigest()
+            existing = await self._store.bind_execution_context(
+                request.run_id,
+                ExecutionContextBinding(
+                    namespace=request.context.namespace,
+                    intent_digest=intent_digest,
+                    physical_thread_id=thread_id,
+                    base_checkpoint=parent,
+                ),
+            )
+        return self._config(request.run_id, existing)
+
+    async def config_for_run(self, run_id: str) -> RunnableConfig:
+        binding = await self._store.get_execution_context_binding(run_id)
+        if binding is None:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_BINDING_MISSING")
+        return self._config(run_id, binding)
+
+    async def capture(self, run_id: str) -> ExecutionCheckpoint:
+        binding = await self._store.get_execution_context_binding(run_id)
+        if binding is None:
+            raise ExecutionContextConflict("EXECUTION_CONTEXT_BINDING_MISSING")
+        checkpoint = ExecutionCheckpoint(
+            thread_id=binding.physical_thread_id,
+            checkpoint_ns="",
+            checkpoint_id=f"checkpoint_{run_id}",
+        )
+        await self._store.update_execution_checkpoint(run_id, checkpoint)
+        return checkpoint
+
+    async def prepare_completion(self, run_id: str) -> CompletedExecutionContext:
+        checkpoint = await self.capture(run_id)
+        binding = await self._store.get_execution_context_binding(run_id)
+        assert binding is not None
+        anchor = f"ctx_test_{run_id}"
+        digest = hashlib.sha256(
+            f"{binding.namespace}\0{anchor}\0{checkpoint.checkpoint_id}".encode()
+        ).hexdigest()
+        return CompletedExecutionContext(
+            run_id=run_id,
+            namespace=binding.namespace,
+            anchor=anchor,
+            digest=digest,
+            owner_revision=1,
+            checkpoint=checkpoint,
+        )
+
+    @staticmethod
+    def _config(run_id: str, binding: ExecutionContextBinding) -> RunnableConfig:
+        checkpoint = binding.active_checkpoint or binding.base_checkpoint
+        configurable: dict[str, object] = {"thread_id": binding.physical_thread_id}
+        if checkpoint is not None:
+            configurable.update(
+                checkpoint_ns=checkpoint.checkpoint_ns,
+                checkpoint_id=checkpoint.checkpoint_id,
+            )
+        return {
+            "configurable": configurable,
+            "metadata": {"kokoro_run_id": run_id},
+        }
 
 
 @dataclass
@@ -683,6 +920,7 @@ def request(
             ),
         ),
         context=RuntimeContext(namespace=namespace, session_id=session_id),
+        execution_context=ExecutionContextIntentRoot(mode="root"),
     )
 
 
@@ -696,3 +934,16 @@ def usage_recorder() -> tuple[Callable[[int, int], Awaitable[tuple[int, int]]], 
         return (seen["input"], seen["output"])
 
     return record, seen
+
+
+async def completed_execution_context(run_id: str = "r1") -> CompletedExecutionContext:
+    return CompletedExecutionContext(
+        run_id=run_id,
+        namespace="local:s1",
+        anchor=f"ctx_test_{run_id}",
+        digest="a" * 64,
+        owner_revision=1,
+        checkpoint=ExecutionCheckpoint(
+            thread_id=f"thread_{run_id}", checkpoint_ns="", checkpoint_id=f"checkpoint_{run_id}"
+        ),
+    )

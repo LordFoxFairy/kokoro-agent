@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from fakes import usage_recorder
+from fakes import FakeLedger, completed_execution_context, usage_recorder
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.events import RunEmitter
@@ -49,14 +49,19 @@ async def _invoke(
     async def claim() -> bool:
         return True
 
+    ledger = FakeLedger()
     return await invoke_once(
-        RunEmitter(bus, run_id),
+        RunEmitter(bus, run_id, outbox=ledger),
         agent,
-        _scope().scoped_thread_id,
+        {
+            "configurable": {"thread_id": _scope().scoped_thread_id},
+            "metadata": {"kokoro_run_id": run_id},
+        },
         payload,
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
     )
 

@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, StringConstraints, TypeAdapter
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+
+def _trimmed_reference(value: str) -> str:
+    if value.strip() != value:
+        raise ValueError("reference must not have surrounding whitespace")
+    return value
+
+Sha256Str = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+Reference = Annotated[str, StringConstraints(min_length=1, max_length=256), AfterValidator(_trimmed_reference)]
 
 SubagentCreate = Literal["deny", "ask", "allow"]
 FilesystemPerm = Literal["read_only", "workspace_write"]
@@ -68,6 +76,28 @@ class RuntimeContext(StrictModel):
     session_id: NonEmptyStr
 
 
+class ExecutionContextIntentRoot(StrictModel):
+    mode: Literal["root"]
+
+
+class ExecutionContextIntentContinue(StrictModel):
+    parent_anchor: Reference
+    parent_digest: Sha256Str
+    mode: Literal["continue"]
+
+
+class ExecutionContextIntentFork(StrictModel):
+    parent_anchor: Reference
+    parent_digest: Sha256Str
+    mode: Literal["fork"]
+
+
+ExecutionContextIntent = Annotated[
+    Union[ExecutionContextIntentRoot, ExecutionContextIntentContinue, ExecutionContextIntentFork],
+    Field(discriminator="mode"),
+]
+
+
 class ApproveDecision(StrictModel):
     type: Literal["approve"]
     tool_id: NonEmptyStr
@@ -111,6 +141,7 @@ class RunRequest(StrictModel):
     input: RunInput
     runtime: RuntimeConfig
     context: RuntimeContext
+    execution_context: ExecutionContextIntent
     trace: dict[str, JsonValue] | None = None
 
 

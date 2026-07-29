@@ -16,6 +16,7 @@ from kokoro_agent.contract import (
     PlanProposedPayload,
     RunCompletedPayload,
     RunControlReceiptPayload,
+    RunOwnerCompletedPayload,
     RunErrorCode,
     RunFailedPayload,
     RunStartedPayload,
@@ -45,6 +46,11 @@ from kokoro_agent.tools.middleware import TokenBudgetExceeded
 from kokoro_agent import metrics
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
+from kokoro_agent.storage.execution_context import (
+    CompletionEventDraft,
+    CompletedExecutionContext,
+    DurableCompletionFrame,
+)
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
@@ -53,7 +59,14 @@ SourceResolver = Callable[[str], SubagentSource]
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
 # 其余 live 帧（delta/tool 过程帧）不占 seq、丢了由 checkpoint 重建。
 CRITICAL_KINDS: frozenset[str] = frozenset(
-    {"run.started", "plan.proposed", "run.control.receipt", "run.completed", "run.failed"}
+    {
+        "run.started",
+        "plan.proposed",
+        "run.control.receipt",
+        "run.owner.completed",
+        "run.completed",
+        "run.failed",
+    }
 )
 # 终态帧：分配时 CAS 设 local fence（first-terminal），其后更大 seq 一律 superseded。
 TERMINAL_KINDS: frozenset[str] = frozenset({"run.completed", "run.failed"})
@@ -80,6 +93,7 @@ AgentEventPayload = (
     | RunCompletedPayload
     | RunFailedPayload
     | RunControlReceiptPayload
+    | RunOwnerCompletedPayload
 )
 
 _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
@@ -104,6 +118,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     RunCompletedPayload: "run.completed",
     RunFailedPayload: "run.failed",
     RunControlReceiptPayload: "run.control.receipt",
+    RunOwnerCompletedPayload: "run.owner.completed",
 }
 
 
@@ -207,6 +222,8 @@ class RunEmitter:
                 semantic_key=(
                     f"plan.proposed:{payload.owner_ref}"
                     if isinstance(payload, PlanProposedPayload)
+                    else "run.owner.completed"
+                    if isinstance(payload, RunOwnerCompletedPayload)
                     else None
                 ),
             )
@@ -238,6 +255,85 @@ class RunEmitter:
             event.model_dump(exclude_none=True),
             maxlen=RUN_EVENTS_MAXLEN,
         )
+
+    async def emit_completed(
+        self,
+        completion: CompletedExecutionContext,
+        payload: RunCompletedPayload,
+    ) -> bool:
+        """Atomically own completion and stage its private owner/public terminal pair.
+
+        Storage claims terminal ownership, persists the opaque checkpoint anchor, and creates
+        both durable outbox slots in one write. Publishing is deliberately best-effort per slot:
+        a loss on either slot leaves its queued row available to the normal replay scanner.
+        """
+        if self._outbox is None:
+            raise RuntimeError("completion requires durable outbox")
+        if completion.run_id != self._run_id:
+            raise ValueError("completion run_id mismatch")
+        owner_payload = RunOwnerCompletedPayload(
+            execution_context_anchor=completion.anchor,
+            execution_context_digest=completion.digest,
+            owner_revision=completion.owner_revision,
+        )
+        timestamp = _now_ms()
+        owner = CompletionEventDraft(
+            kind="run.owner.completed",
+            index=self._next_index,
+            timestamp=timestamp,
+            payload_json=json.dumps(owner_payload.model_dump(mode="json", exclude_none=True)),
+        )
+        terminal = CompletionEventDraft(
+            kind="run.completed",
+            index=self._next_index + 1,
+            timestamp=timestamp,
+            payload_json=json.dumps(payload.model_dump(mode="json", exclude_none=True)),
+        )
+        claimed = await self._outbox.try_complete_execution_context(
+            completion, owner, terminal
+        )
+        if claimed is None:
+            return False
+
+        self._next_index += 2
+        metrics.record_outbox("queued")
+        metrics.record_outbox("queued")
+        first_error: Exception | None = None
+        for frame in (claimed.owner, claimed.terminal):
+            try:
+                await self._publish_completion_frame(frame)
+            except Exception as error:  # noqa: BLE001 — leave this and later slots for replay
+                first_error = error
+                # Strict causal edge: Session must never observe terminal before the private
+                # owner milestone. Both rows remain queued when owner publish/mark is uncertain;
+                # the ordered scanner will replay owner before terminal.
+                break
+        if first_error is not None:
+            raise first_error
+        return True
+
+    async def _publish_completion_frame(self, frame: DurableCompletionFrame) -> None:
+        outbox = self._outbox
+        if outbox is None:
+            raise RuntimeError("completion requires durable outbox")
+        event = agent_event_adapter.validate_python(
+            {
+                "kind": frame.kind,
+                "run_id": self._run_id,
+                "index": frame.index,
+                "timestamp": frame.timestamp,
+                "durable_seq": frame.durable_seq,
+                "event_id": frame.event_id,
+                "payload": json.loads(frame.payload_json),
+            }
+        )
+        await self._bus.publish(
+            run_events_stream(self._run_id),
+            event.model_dump(exclude_none=True),
+            maxlen=RUN_EVENTS_MAXLEN,
+        )
+        await outbox.mark_critical_published(self._run_id, frame.durable_seq)
+        metrics.record_outbox("published")
 
 
 def outbox_wire_event(frame: OutboxFrame) -> dict[str, JsonValue]:

@@ -17,6 +17,7 @@ from fakes import FakeLedger, request
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.contract import (
     McpGrant,
+    ExecutionContextIntentRoot,
     ModelConfig,
     Permissions,
     RunInput,
@@ -533,6 +534,7 @@ def test_approval_names_unions_wire_and_package_policy() -> None:
             ),
         ),
         context=RuntimeContext(namespace="ns", session_id="s1"),
+        execution_context=ExecutionContextIntentRoot(mode="root"),
     )
     assert approval_names(request) == frozenset(
         {"execute", "ask_user_question", "propose_plan", "task"}

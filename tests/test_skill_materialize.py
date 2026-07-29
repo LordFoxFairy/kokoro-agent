@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pymongo import AsyncMongoClient
 
-from fakes import usage_recorder
+from fakes import FakeLedger, completed_execution_context, usage_recorder
 from kokoro_agent.contract import SkillGrant
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
@@ -207,14 +207,19 @@ async def _invoke(
     async def claim() -> bool:
         return True
 
+    ledger = FakeLedger()
     await invoke_once(
-        RunEmitter(bus, run_id),
+        RunEmitter(bus, run_id, outbox=ledger),
         agent,
-        thread_id,
+        {
+            "configurable": {"thread_id": thread_id},
+            "metadata": {"kokoro_run_id": run_id},
+        },
         payload,
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         claim_terminal=claim,
+        prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
     )
 

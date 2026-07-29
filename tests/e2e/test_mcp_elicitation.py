@@ -26,11 +26,13 @@ from mcp.server.session import ServerSession
 from pydantic import BaseModel, Field, JsonValue
 
 from kokoro_agent.agents.base import AssembledAgent
+from kokoro_agent.storage.execution_context import ExecutionContextAuthority
 from kokoro_agent.contract import (
     REQUESTS_MAXLEN,
     REQUESTS_STREAM,
     RUN_CONTROL_MAXLEN,
     FilesystemPerm,
+    ExecutionContextIntentRoot,
     McpGrant,
     ModelConfig,
     Permissions,
@@ -173,6 +175,7 @@ def _request(run_id: str, *, filesystem: FilesystemPerm = "read_only") -> RunReq
             ),
         ),
         context=RuntimeContext(namespace="e2e", session_id="e2e-session"),
+        execution_context=ExecutionContextIntentRoot(mode="root"),
     )
 
 
@@ -227,6 +230,7 @@ def _build_supervisor(
     return RunSupervisor(
         agent_builder=build,
         store=store,
+        execution_context=ExecutionContextAuthority(store=store, checkpointer=saver),
         approval_tool_names=approval_names,
         trace_factory=lambda _request: None,
         source_for=catalog.source_for,

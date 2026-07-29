@@ -10,23 +10,29 @@ from langchain_core.messages import UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
-from kokoro_agent.contract import RunCompletedPayload, RunStartedPayload, TokenUsage
+from kokoro_agent.contract import (
+    RunCompletedPayload,
+    RunStartedPayload,
+    TokenUsage,
+)
 from kokoro_agent.execution.approvals import awaiting_payloads, plan_proposed_payload
 from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.publish_agent_events import pump_run
+from kokoro_agent.storage.execution_context import CompletedExecutionContext
 
 
 async def invoke_once(
     emitter: RunEmitter,
     agent: InvokableAgent,
-    thread_id: str,
+    execution_config: RunnableConfig,
     payload: object,
     *,
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
     claim_terminal: Callable[[], Awaitable[bool]],
+    prepare_completed: Callable[[], Awaitable[CompletedExecutionContext]],
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
@@ -36,7 +42,7 @@ async def invoke_once(
     终态发射前先经 claim_terminal 原子认领：cancel/自然完成/异常三路共用同一认领键，
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
-    config = _config(thread_id, trace, recursion_limit)
+    config = _config(execution_config, trace, recursion_limit, run_id=emitter.run_id)
     if emitter.at_start:
         # run.started 收编进 critical outbox（emitter 内分配 durable_seq=1、落 queued、发布后 published）。
         await emitter.emit(RunStartedPayload())
@@ -65,16 +71,19 @@ async def invoke_once(
                     # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
                     await _record(record_usage, usage_cb.usage_metadata)
                     return False
-            if await claim_terminal():
-                total_in, total_out = await _record(record_usage, usage_cb.usage_metadata)
-                token_usage = (
-                    TokenUsage(input_tokens=total_in, output_tokens=total_out)
-                    if total_in or total_out
-                    else None
-                )
-                await emitter.emit(
-                    RunCompletedPayload(status="completed", token_usage=token_usage)
-                )
+            total_in, total_out = await _record(record_usage, usage_cb.usage_metadata)
+            token_usage = (
+                TokenUsage(input_tokens=total_in, output_tokens=total_out)
+                if total_in or total_out
+                else None
+            )
+            completed_context = await prepare_completed()
+            # One storage claim persists the exact checkpoint owner and creates both durable
+            # slots. There is intentionally no second claim_terminal on the success path.
+            await emitter.emit_completed(
+                completed_context,
+                RunCompletedPayload(status="completed", token_usage=token_usage),
+            )
             return True
         except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
             if await claim_terminal():
@@ -96,14 +105,33 @@ async def _record(
     return await record_usage(input_tokens, output_tokens)
 
 
-def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) -> RunnableConfig:
+def _config(
+    execution_config: RunnableConfig,
+    trace: RunnableConfig | None,
+    recursion_limit: int,
+    *,
+    run_id: str,
+) -> RunnableConfig:
     # 失控熔断：无限工具循环在限额处炸成 GraphRecursionError → run.failed fail-loud。
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit}
+    configurable = execution_config.get("configurable")
+    if not isinstance(configurable, dict):
+        raise ValueError("execution config missing configurable checkpoint identity")
+    config: RunnableConfig = {
+        "configurable": dict(configurable),
+        "recursion_limit": recursion_limit,
+    }
+    metadata: dict[str, object] = {}
     if trace is not None:
         callbacks = trace.get("callbacks")
-        metadata = trace.get("metadata")
         if callbacks is not None:
             config["callbacks"] = callbacks
-        if metadata is not None:
-            config["metadata"] = metadata
+        trace_metadata = trace.get("metadata")
+        if isinstance(trace_metadata, dict):
+            metadata.update(trace_metadata)
+    execution_metadata = execution_config.get("metadata")
+    if isinstance(execution_metadata, dict):
+        metadata.update(execution_metadata)
+    # Reserved run checkpoint selector is authority-owned; trace data cannot override it.
+    metadata["kokoro_run_id"] = run_id
+    config["metadata"] = metadata
     return config

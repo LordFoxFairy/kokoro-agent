@@ -13,6 +13,7 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from fakes import request
+from kokoro_agent.contract import RunCompletedPayload, RunOwnerCompletedPayload
 from kokoro_agent.contract.storage import (
     RUN_DISPATCHES_COLLECTION,
     RUN_EVENT_RECEIPTS_COLLECTION,
@@ -24,6 +25,12 @@ from kokoro_agent.storage.ledger import (
     make_ledger,
 )
 from kokoro_agent.storage.mongo import DISPATCH_DLQ_COLLECTION, MongoLedger
+from kokoro_agent.storage.execution_context import (
+    CompletionEventDraft,
+    CompletedExecutionContext,
+    ExecutionCheckpoint,
+    ExecutionContextBinding,
+)
 
 _MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
 _TTL_MS = 1000
@@ -444,6 +451,117 @@ async def test_critical_outbox_stage_publish_scan() -> None:
         # publish 确认（queued→published）→ 不再补发。
         await store.mark_critical_published("run-outbox", 1)
         assert await store.list_unpublished_outbox() == []
+
+
+async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
+        req = request("run-context", namespace="opaque-ns")
+        assert await store.try_claim(req, OWNER)
+        checkpoint = ExecutionCheckpoint(
+            thread_id="physical-thread", checkpoint_ns="", checkpoint_id="checkpoint-final"
+        )
+        await store.bind_execution_context(
+            req.run_id,
+            ExecutionContextBinding(
+                namespace=req.context.namespace,
+                intent_digest="b" * 64,
+                physical_thread_id=checkpoint.thread_id,
+                active_checkpoint=checkpoint,
+            ),
+        )
+        completion = CompletedExecutionContext(
+            run_id=req.run_id,
+            namespace=req.context.namespace,
+            anchor="ctx_retained",
+            digest="c" * 64,
+            owner_revision=1,
+            checkpoint=checkpoint,
+        )
+        owner = CompletionEventDraft(
+            kind="run.owner.completed",
+            index=0,
+            timestamp=1,
+            payload_json=RunOwnerCompletedPayload(
+                execution_context_anchor=completion.anchor,
+                execution_context_digest=completion.digest,
+                owner_revision=completion.owner_revision,
+            ).model_dump_json(),
+        )
+        terminal = CompletionEventDraft(
+            kind="run.completed",
+            index=1,
+            timestamp=1,
+            payload_json=RunCompletedPayload(status="completed").model_dump_json(
+                exclude_none=True
+            ),
+        )
+
+        attempts = await asyncio.gather(
+            *(store.try_complete_execution_context(completion, owner, terminal) for _ in range(8))
+        )
+        winners = [item for item in attempts if item is not None]
+        assert len(winners) == 1
+        claimed = winners[0]
+        assert claimed.owner.durable_seq + 1 == claimed.terminal.durable_seq
+        assert [frame.kind for frame in await store.list_unpublished_outbox()] == [
+            "run.owner.completed",
+            "run.completed",
+        ]
+
+        # A published-but-unreceipted owner blocks the queued terminal.
+        await store.mark_critical_published(req.run_id, claimed.owner.durable_seq)
+        assert await store.list_unpublished_outbox() == []
+        db = dispatches.database
+        await db[RUN_EVENT_RECEIPTS_COLLECTION].insert_one(
+            {
+                "run_id": req.run_id,
+                "durable_seq": claimed.owner.durable_seq,
+                "event_id": claimed.owner.event_id,
+                "status": "persisted",
+                "created_at": 0,
+            }
+        )
+        await db[RUN_RECEIPT_MANIFESTS_COLLECTION].insert_one(
+            {
+                "run_id": req.run_id,
+                "persisted_seq": claimed.owner.durable_seq,
+                "projected_seq": claimed.owner.durable_seq,
+                "consumed_seq": 0,
+                "producer_close_requested": False,
+                "producer_closed": False,
+                "updated_at": 0,
+            }
+        )
+        await store.reconcile_receipts(req.run_id)
+        eligible = await store.list_unpublished_outbox()
+        assert [frame.kind for frame in eligible] == ["run.completed"]
+
+        await store.mark_critical_published(req.run_id, claimed.terminal.durable_seq)
+        await db[RUN_EVENT_RECEIPTS_COLLECTION].insert_one(
+            {
+                "run_id": req.run_id,
+                "durable_seq": claimed.terminal.durable_seq,
+                "event_id": claimed.terminal.event_id,
+                "status": "persisted",
+                "created_at": 0,
+            }
+        )
+        await store.reconcile_receipts(req.run_id)
+        clock.advance_ms(10_000)
+        assert await store.purge_terminal(max_age_ms=5_000) == 1
+        assert await store.is_terminal(req.run_id) is True
+        assert await store.get_request(req.run_id) is None
+        assert await store.try_claim(req, OWNER) is False
+        assert (
+            await store.resolve_execution_parent(
+                namespace=req.context.namespace,
+                anchor=completion.anchor,
+                digest=completion.digest,
+                continuation_run_id=None,
+            )
+            == checkpoint
+        )
 
 
 async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> None:

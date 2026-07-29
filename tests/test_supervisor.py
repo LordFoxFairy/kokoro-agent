@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command, Interrupt
@@ -12,6 +12,7 @@ from pydantic import JsonValue, TypeAdapter
 from fakes import (
     FakeAgent,
     FakeBus,
+    FakeExecutionContextAuthority,
     FakeLedger,
     FakeRunStream,
     FakeState,
@@ -65,6 +66,7 @@ def _supervisor(
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=state_store,
+        execution_context=FakeExecutionContextAuthority(state_store),
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -138,13 +140,15 @@ async def test_request_dispatches_initial_invoke() -> None:
 
 
 # namespace：checkpoint thread_id 带 namespace 前缀，双 namespace 互不可见。
-async def test_thread_id_scoped_by_namespace() -> None:
+async def test_physical_thread_id_is_opaque_and_run_isolated() -> None:
     agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
     sup, _store = _supervisor(agent)
     await sup.dispatch(bus, request("rn", namespace="tenant-a", thread_id="c1"))
     await _drain(sup)
-    assert agent.seen_config.get("configurable") == {"thread_id": "tenant-a:c1"}
+    configurable = agent.seen_config.get("configurable")
+    assert isinstance(configurable, dict)
+    assert configurable["thread_id"] == "thread_rn"
 
 
 # ② 重复 run_id → 租约认领去重，不二次 invoke。
@@ -378,6 +382,7 @@ async def test_builder_failure_emits_run_failed_once() -> None:
     sup = RunSupervisor(
         agent_builder=boom,
         store=store,
+        execution_context=FakeExecutionContextAuthority(store),
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -472,6 +477,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
         store=store,
+        execution_context=FakeExecutionContextAuthority(store),
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -696,7 +702,8 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
     bus = FakeBus()
     store = FakeLedger()
     sup = RunSupervisor(
-        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_names,
+        agent_builder=_builder(agent), store=store,
+        execution_context=FakeExecutionContextAuthority(store), approval_tool_names=_gated_names,
         trace_factory=_no_trace, source_for=_source, consumer="t", events_ttl_s=3600,
     )
     await sup.dispatch(bus, request("rr1"))
@@ -704,19 +711,22 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
     assert ("kokoro:run:rr1:events", 3600) in bus.expired_streams
 
 
-async def test_retention_heartbeat_purges_terminal_runs() -> None:
+async def test_retention_heartbeat_preserves_completed_context_owner() -> None:
     agent = FakeAgent(run=text_run("x"))
     bus = FakeBus()
     store = FakeLedger()
     sup = RunSupervisor(
-        agent_builder=_builder(agent), store=store, approval_tool_names=_gated_names,
+        agent_builder=_builder(agent), store=store,
+        execution_context=FakeExecutionContextAuthority(store), approval_tool_names=_gated_names,
         trace_factory=_no_trace, source_for=_source, consumer="t", run_ttl_s=1,
     )
     await sup.dispatch(bus, request("rr2"))
     await _drain(sup)
     store.clock_ms = 10_000  # 终态已超龄
     await sup.heartbeat_once(bus)
-    assert await store.is_terminal("rr2") is False  # 已被清扫
+    # Completion-bearing rows remain authoritative and cannot be reused. Live outbox rows also
+    # prevent operational scrubbing until Session receipts advance.
+    assert await store.is_terminal("rr2") is True
 
 
 async def test_retention_off_by_default_no_side_effects() -> None:
@@ -765,6 +775,7 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=store,
+        execution_context=FakeExecutionContextAuthority(store),
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -898,6 +909,175 @@ async def test_serve_republishes_queued_outbox() -> None:
     started = [e for e in bus.run_events("r-orphan") if e.kind == "run.started"]
     assert len(started) == 1 and started[0].durable_seq == 1 and started[0].event_id == "evt_orphan_1"
     assert store.outbox["r-orphan"][0]["status"] == "published"
+
+
+async def test_scanner_stops_same_run_after_owner_gap_but_continues_other_runs() -> None:
+    class _OwnerGapBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if event.get("kind") == "run.owner.completed":
+                raise ConnectionError("owner unavailable")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    store = FakeLedger()
+    store.outbox["r-complete"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "evt_owner",
+            "kind": "run.owner.completed",
+            "index": 0,
+            "timestamp": 5,
+            "payload_json": (
+                '{"execution_context_anchor":"ctx_anchor",'
+                f'"execution_context_digest":"{"a" * 64}","owner_revision":1}}'
+            ),
+            "status": "queued",
+        },
+        {
+            "durable_seq": 2,
+            "event_id": "evt_terminal",
+            "kind": "run.completed",
+            "index": 1,
+            "timestamp": 5,
+            "payload_json": '{"status":"completed"}',
+            "status": "queued",
+        },
+    ]
+    store.outbox["r-independent"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "evt_started",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 5,
+            "payload_json": "{}",
+            "status": "queued",
+        }
+    ]
+    bus = _OwnerGapBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.serve(bus)
+
+    assert bus.kinds("r-complete") == []
+    assert [row["status"] for row in store.outbox["r-complete"]] == ["queued", "queued"]
+    assert bus.kinds("r-independent") == ["run.started"]
+
+
+async def test_heartbeat_gc_owner_receipt_then_publishes_queued_terminal() -> None:
+    store = FakeLedger()
+    store.outbox["r-causal"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "evt_owner",
+            "kind": "run.owner.completed",
+            "index": 0,
+            "timestamp": 5,
+            "payload_json": (
+                '{"execution_context_anchor":"ctx_anchor",'
+                f'"execution_context_digest":"{"a" * 64}","owner_revision":1}}'
+            ),
+            "status": "published",
+            "published_at": 0,
+        },
+        {
+            "durable_seq": 2,
+            "event_id": "evt_terminal",
+            "kind": "run.completed",
+            "index": 1,
+            "timestamp": 5,
+            "payload_json": '{"status":"completed"}',
+            "status": "queued",
+        },
+    ]
+    store.terminal_fence["r-causal"] = 2
+    store.receipts["r-causal"] = [
+        {"durable_seq": 1, "event_id": "evt_owner", "status": "persisted"}
+    ]
+    store.manifests["r-causal"] = {"consumed_seq": 0}
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.heartbeat_once(bus)
+
+    assert bus.kinds("r-causal") == ["run.completed"]
+    assert store.manifests["r-causal"]["consumed_seq"] == 1
+    assert store.outbox["r-causal"][0]["status"] == "published"
+
+
+async def test_heartbeat_does_not_cross_unreceipted_published_predecessor() -> None:
+    store = FakeLedger()
+    store.clock_ms = 50_000
+    store.outbox["r-blocked"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "evt_owner",
+            "kind": "run.owner.completed",
+            "index": 0,
+            "timestamp": 5,
+            "payload_json": (
+                '{"execution_context_anchor":"ctx_anchor",'
+                f'"execution_context_digest":"{"a" * 64}","owner_revision":1}}'
+            ),
+            "status": "published",
+            "published_at": 49_999,
+        },
+        {
+            "durable_seq": 2,
+            "event_id": "evt_terminal",
+            "kind": "run.completed",
+            "index": 1,
+            "timestamp": 5,
+            "payload_json": '{"status":"completed"}',
+            "status": "queued",
+        },
+    ]
+    store.manifests["r-blocked"] = {"consumed_seq": 0}
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.heartbeat_once(bus)
+
+    assert bus.kinds("r-blocked") == []
+    assert [row["status"] for row in store.outbox["r-blocked"]] == [
+        "published",
+        "queued",
+    ]
+
+
+async def test_stale_republish_does_not_cross_not_stale_published_predecessor() -> None:
+    store = FakeLedger()
+    store.clock_ms = 50_000
+    store.outbox["r-stale-gap"] = [
+        {
+            "durable_seq": 1,
+            "event_id": "evt_first",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 5,
+            "payload_json": "{}",
+            "status": "published",
+            "published_at": 49_999,
+        },
+        {
+            "durable_seq": 2,
+            "event_id": "evt_newer",
+            "kind": "run.completed",
+            "index": 1,
+            "timestamp": 5,
+            "payload_json": '{"status":"cancelled"}',
+            "status": "published",
+            "published_at": 0,
+        },
+    ]
+    store.manifests["r-stale-gap"] = {"consumed_seq": 0}
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.heartbeat_once(bus)
+
+    assert bus.kinds("r-stale-gap") == []
 
 
 async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatible() -> None:

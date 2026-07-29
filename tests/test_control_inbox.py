@@ -19,6 +19,7 @@ from pydantic import JsonValue
 from fakes import (
     FakeAgent,
     FakeBus,
+    FakeExecutionContextAuthority,
     FakeLedger,
     FakeRunStream,
     FakeState,
@@ -86,6 +87,7 @@ def _supervisor(agent: FakeAgent, store: FakeLedger) -> RunSupervisor:
     return RunSupervisor(
         agent_builder=_builder(agent),
         store=store,
+        execution_context=FakeExecutionContextAuthority(store),
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -165,7 +167,9 @@ async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
     # 崩溃前：inbox persisted 已落，fingerprint=当时 interrupt 指纹，apply 未跑。serve() 启动续办。
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     ledger = FakeLedger()
-    await ledger.try_claim(request("rf"))
+    req = request("rf")
+    await ledger.try_claim(req)
+    await FakeExecutionContextAuthority(ledger).open(req)
     await ledger.record_control_inbox("rf", "dec_1", _fingerprint_of(_PENDING_STATE), _resume_body("rf"))
 
     bus = FakeBus()  # 空请求流：serve 跑完 startup 续办即收束

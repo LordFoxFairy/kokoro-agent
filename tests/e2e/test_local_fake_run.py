@@ -16,6 +16,7 @@ from kokoro_agent.contract import (
     REQUESTS_STREAM,
     RUN_CONTROL_MAXLEN,
     FilesystemPerm,
+    ExecutionContextIntentRoot,
     ModelConfig,
     Permissions,
     RunInput,
@@ -32,6 +33,7 @@ from kokoro_agent.agents.assembly.swarm import (
 )
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent, StateView
+from kokoro_agent.storage.execution_context import ExecutionContextAuthority
 from kokoro_agent.prompts import GENERAL_PROMPT, PromptLibrary
 from kokoro_agent.agents.base import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
@@ -78,6 +80,7 @@ def _request(
             ),
         ),
         context=RuntimeContext(namespace="e2e", session_id="e2e-session"),
+        execution_context=ExecutionContextIntentRoot(mode="root"),
     )
 
 
@@ -112,6 +115,7 @@ def _build_supervisor(
     return RunSupervisor(
         agent_builder=build,
         store=store,
+        execution_context=ExecutionContextAuthority(store=store, checkpointer=saver),
         approval_tool_names=approval_names,
         trace_factory=lambda _request: None,
         source_for=catalog.source_for,
@@ -343,6 +347,7 @@ def _build_swarm_supervisor(
     supervisor = RunSupervisor(
         agent_builder=build,
         store=store,
+        execution_context=ExecutionContextAuthority(store=store, checkpointer=saver),
         approval_tool_names=lambda request: (
             frozenset(request.runtime.permissions.approval_tools) | {ASK_USER_TOOL_NAME}
         ),

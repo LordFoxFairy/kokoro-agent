@@ -850,6 +850,7 @@ class FakeAgent:
     raise_on_stream: Exception | None = None
     seen_payloads: list[object] = field(default_factory=list[object])
     seen_config: dict[str, object] = field(default_factory=dict[str, object])
+    seen_state_configs: list[RunnableConfig] = field(default_factory=list[RunnableConfig])
     # 每次 astream_events 依序消费一个 gate（不足则不阻塞）：模拟长时运行与任务竞态。
     gates: list[asyncio.Event] = field(default_factory=list[asyncio.Event])
     seen_contexts: list[object] = field(default_factory=list[object])
@@ -876,6 +877,7 @@ class FakeAgent:
         return self.run
 
     async def aget_state(self, config: RunnableConfig) -> FakeState:
+        self.seen_state_configs.append(config)
         return self.state
 
 

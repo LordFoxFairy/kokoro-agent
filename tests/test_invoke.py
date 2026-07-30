@@ -974,6 +974,47 @@ async def test_pause_segment_records_usage_too() -> None:
     assert len(calls) == 1  # 暂停路径恰好入账一次
 
 
+async def test_pause_projects_the_checkpoint_created_by_the_current_segment() -> None:
+    """A resume starts from a historical checkpoint but must project its new interrupt."""
+    bus = FakeBus()
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=FakeState())
+    emitter = await RunEmitter.attach(bus, "r-refresh")
+    refreshed: RunnableConfig = {
+        "configurable": {
+            "thread_id": "physical-thread",
+            "checkpoint_ns": "",
+            "checkpoint_id": "new-interrupt-checkpoint",
+        },
+        "metadata": {"kokoro_run_id": "r-refresh"},
+    }
+
+    async def capture_interrupted() -> RunnableConfig:
+        return refreshed
+
+    terminal = await invoke_once(
+        emitter,
+        agent,
+        {
+            "configurable": {
+                "thread_id": "physical-thread",
+                "checkpoint_ns": "",
+                "checkpoint_id": "historical-parent-checkpoint",
+            },
+            "metadata": {"kokoro_run_id": "r-refresh"},
+        },
+        {"messages": []},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        claim_terminal=_always_claim,
+        prepare_completed=lambda: completed_execution_context("r-refresh"),
+        capture_interrupted=capture_interrupted,
+        record_usage=usage_recorder()[0],
+    )
+
+    assert terminal is False
+    assert agent.seen_state_configs == [refreshed]
+
+
 def test_failure_code_classification_matrix() -> None:
     # 归码闭集：预算/熔断各归其码，其余兜底 internal_error；装配码由调用点显式指定。
     from langgraph.errors import GraphRecursionError

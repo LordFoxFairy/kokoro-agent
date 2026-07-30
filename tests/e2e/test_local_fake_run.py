@@ -380,8 +380,11 @@ async def test_local_fake_model_driven_handoff_persists_active_agent(
 
     kinds = await _read_kinds(bus, run.run_id)
     assert kinds[-1] == "run.completed"
-    # active_agent 落 checkpoint（scoped_thread_id=namespace:thread_id）：恢复重取仍是移交后人格。
-    config: RunnableConfig = {"configurable": {"thread_id": f"e2e:{run.thread_id}"}}
+    # Physical checkpoint identities are opaque. Re-read through the same authority boundary
+    # used by production resumes instead of reconstructing the retired logical thread key.
+    config: RunnableConfig = await ExecutionContextAuthority(
+        store=store, checkpointer=checkpointer
+    ).config_for_run(run.run_id)
     snapshot: StateView = await agent.aget_state(config)
     assert snapshot.values["active_agent"] == "researcher"
 

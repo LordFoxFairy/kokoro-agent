@@ -33,6 +33,7 @@ async def invoke_once(
     describe_tool: Callable[[str], str | None] = lambda _name: None,
     claim_terminal: Callable[[], Awaitable[bool]],
     prepare_completed: Callable[[], Awaitable[CompletedExecutionContext]],
+    capture_interrupted: Callable[[], Awaitable[RunnableConfig]] | None = None,
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
@@ -58,7 +59,16 @@ async def invoke_once(
             async with run:
                 await pump_run(emitter, run, source_for=source_for)
                 if await run.interrupted():
-                    snapshot = await agent.aget_state(config)
+                    # A resume is intentionally pinned to the exact historical parent checkpoint.
+                    # Its new interrupt is a child checkpoint, so projecting with the invocation
+                    # config would replay the previous pause. The execution-context authority
+                    # resolves and persists the exact checkpoint produced by this segment.
+                    state_config = (
+                        await capture_interrupted()
+                        if capture_interrupted is not None
+                        else config
+                    )
+                    snapshot = await agent.aget_state(state_config)
                     proposal = plan_proposed_payload(snapshot, approval_tool_names)
                     if proposal is not None:
                         # 专用 owner 事件取代 generic awaiting，避免浏览器出现两个决策 owner。

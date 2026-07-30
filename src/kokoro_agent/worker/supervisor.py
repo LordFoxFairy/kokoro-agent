@@ -524,6 +524,7 @@ class RunSupervisor:
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                 claim_terminal=lambda: self._store.try_mark_terminal(run_id),
                 prepare_completed=lambda: self._execution_context.prepare_completion(run_id),
+                capture_interrupted=lambda: self._capture_interrupted_config(run_id),
                 # 用量跨段累计真源：run.completed 报累计而非末段。
                 record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
             )
@@ -532,12 +533,12 @@ class RunSupervisor:
             await self._teardown_control(bus, run_id)
         else:
             # interrupt 暂停：租约置哨兵，HITL 等人期间不被过期重拾重跑；control 监听存活等 resume。
-            try:
-                await self._execution_context.capture(run_id)
-            except Exception as error:  # noqa: BLE001 — a pause without an exact checkpoint is unusable
-                await self._fail_terminal(bus, run_id, error)
-                return
             await self._store.pause(run_id)
+
+    async def _capture_interrupted_config(self, run_id: str) -> RunnableConfig:
+        """Fence a pause to the checkpoint created by the current invocation segment."""
+        await self._execution_context.capture(run_id)
+        return await self._execution_context.config_for_run(run_id)
 
     def _ensure_control_listener(self, bus: StreamProtocol, run_id: str) -> None:
         existing = self._control.get(run_id)

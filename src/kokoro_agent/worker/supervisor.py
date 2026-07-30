@@ -271,6 +271,15 @@ class RunSupervisor:
         # OBS-1：本 worker 活跃 run 与租约持有面（活跃 run + 收养的 control 监听）每心跳刷新。
         active = sum(1 for task in self._tasks.values() if not task.done())
         metrics.set_lease_gauges(active_runs=active, lease_held=active + len(self._control))
+        try:
+            retention = await self._store.get_durable_retention_stats()
+            metrics.set_durable_retention_gauges(
+                output_records=retention.output_records,
+                evidence_records=retention.evidence_records,
+                retention_seconds=self._run_ttl_s,
+            )
+        except Exception:  # noqa: BLE001 — metrics refresh is fail-open
+            LOGGER.debug("durable retention metrics refresh failed", exc_info=True)
 
     async def _reconcile_run_receipts(self, bus: StreamProtocol, run_id: str) -> None:
         try:

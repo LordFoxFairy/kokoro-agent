@@ -18,6 +18,8 @@ from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
 from pydantic import BaseModel as PydanticBaseModel, JsonValue
 
+from kokoro.agent.execution.v1 import agent_execution_evidence_pb2 as evidence_pb2
+
 from fakes import (
     FakeAgent,
     FakeBus,
@@ -38,6 +40,7 @@ from fakes import (
 from kokoro_agent.contract import (
     RUN_EVENTS_MAXLEN,
     MessageCompleted,
+    MessageDeltaPayload,
     PlanProposed,
     PlanProposal,
     PlanProposedPayload,
@@ -60,11 +63,17 @@ from kokoro_agent.contract import (
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
+from kokoro_agent.evidence.models import (
+    DurableOutputDraft,
+    DurableOutputRecord,
+    durable_output_drafts_for_event,
+)
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
+from kokoro_agent.storage.ledger import StagedFrame
 
 
 def _runtime_custom(_name: str) -> SubagentSource:
@@ -723,6 +732,227 @@ async def test_plan_proposal_critical_identity_is_semantically_idempotent() -> N
                 }
             )
         )
+
+
+async def test_all_durable_outputs_precede_live_publish_and_survive_publish_failure() -> (
+    None
+):
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-publish"))
+
+    class FailingBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            assert len(ledger.output_records["r-output-publish"]) == 2
+            raise RuntimeError("live publish failed")
+
+    bus = FailingBus()
+    emitter = RunEmitter(bus, "r-output-publish", outbox=ledger)
+    with pytest.raises(RuntimeError, match="live publish failed"):
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id="segment-1",
+                tool_id="tool-1",
+                name="search",
+                result="raw secret result",
+                is_error=True,
+            )
+        )
+
+    canonical = [
+        evidence_pb2.DurableOutputCanonicalPayloadV1.FromString(
+            record.canonical_payload
+        )
+        for record in ledger.output_records["r-output-publish"]
+    ]
+    assert [item.WhichOneof("payload") for item in canonical] == [
+        "tool_finished",
+        "error",
+    ]
+    assert bus.published == []
+
+
+async def test_noncritical_output_replay_after_publish_crash_is_keep_first() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-replay"))
+    payload = MessageDeltaPayload(segment_id="segment-replay", delta="same text")
+
+    class FailingBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            raise RuntimeError("crash after output append")
+
+    with pytest.raises(RuntimeError, match="crash after output append"):
+        await RunEmitter(FailingBus(), "r-output-replay", outbox=ledger).emit(payload)
+    assert len(ledger.output_records["r-output-replay"]) == 1
+
+    recovered_bus = FakeBus()
+    await RunEmitter(recovered_bus, "r-output-replay", outbox=ledger).emit(payload)
+
+    assert len(ledger.output_records["r-output-replay"]) == 1
+    assert recovered_bus.kinds("r-output-replay") == ["message.delta"]
+
+
+async def test_output_batch_conflict_is_fail_loud_without_partial_mutation() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-batch-conflict"))
+    original = durable_output_drafts_for_event(
+        ToolReturnedPayload(
+            segment_id="segment-1",
+            tool_id="tool-1",
+            name="search",
+            result="hidden",
+            is_error=True,
+        )
+    )
+    changed = durable_output_drafts_for_event(
+        ToolReturnedPayload(
+            segment_id="segment-1",
+            tool_id="tool-1",
+            name="search",
+            result="hidden",
+            is_error=False,
+        )
+    )
+    assert len(original) == 2 and len(changed) == 1
+    inserted = await ledger.append_durable_outputs(
+        "r-output-batch-conflict", "event-stable", original, recorded_at_ms=1
+    )
+    assert inserted is not None
+    before = list(ledger.output_records["r-output-batch-conflict"])
+
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+        await ledger.append_durable_outputs(
+            "r-output-batch-conflict", "event-stable", changed, recorded_at_ms=2
+        )
+
+    assert ledger.output_records["r-output-batch-conflict"] == before
+
+
+async def test_output_batch_replay_rejects_a_matching_shorter_prefix() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-batch-cardinality"))
+    original = durable_output_drafts_for_event(
+        ToolReturnedPayload(
+            segment_id="segment-1",
+            tool_id="tool-1",
+            name="search",
+            result="hidden",
+            is_error=True,
+        )
+    )
+    assert len(original) == 2
+    inserted = await ledger.append_durable_outputs(
+        "r-output-batch-cardinality", "event-stable", original, recorded_at_ms=1
+    )
+    assert inserted is not None
+    before = list(ledger.output_records["r-output-batch-cardinality"])
+
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+        await ledger.append_durable_outputs(
+            "r-output-batch-cardinality",
+            "event-stable",
+            original[:1],
+            recorded_at_ms=2,
+        )
+
+    assert ledger.output_records["r-output-batch-cardinality"] == before
+
+
+async def test_terminal_retention_purge_removes_durable_output_rows() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-retention"))
+    drafts = durable_output_drafts_for_event(
+        MessageDeltaPayload(segment_id="segment-retention", delta="expired text")
+    )
+    assert await ledger.append_durable_outputs(
+        "r-output-retention", "event-retention", drafts, recorded_at_ms=1
+    )
+    assert await ledger.try_mark_terminal("r-output-retention")
+    ledger.clock_ms = 10_000
+
+    assert await ledger.purge_terminal(5_000) == 1
+
+    assert await ledger.pull_durable_output_records("r-output-retention", 0, 64) == []
+
+
+async def test_durable_output_rejection_is_fail_loud_and_suppresses_live_publish() -> (
+    None
+):
+    class RejectingLedger(FakeLedger):
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            return None
+
+    ledger = RejectingLedger()
+    await ledger.try_claim(request("r-output-rejected"))
+    bus = FakeBus()
+    emitter = RunEmitter(bus, "r-output-rejected", outbox=ledger)
+
+    with pytest.raises(RuntimeError, match="DURABLE_OUTPUT_APPEND_REJECTED"):
+        await emitter.emit(MessageDeltaPayload(segment_id="segment-1", delta="hello"))
+    assert bus.published == []
+
+
+async def test_critical_output_recovers_if_process_dies_before_staging() -> None:
+    class CrashBeforeStageLedger(FakeLedger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.crash_once = True
+
+        async def stage_critical_frame(
+            self,
+            run_id: str,
+            kind: str,
+            index: int,
+            timestamp: int,
+            payload_json: str,
+            *,
+            terminal: bool,
+            semantic_key: str | None = None,
+        ) -> StagedFrame | None:
+            if self.crash_once:
+                self.crash_once = False
+                raise RuntimeError("crash after output before stage")
+            return await super().stage_critical_frame(
+                run_id,
+                kind,
+                index,
+                timestamp,
+                payload_json,
+                terminal=terminal,
+                semantic_key=semantic_key,
+            )
+
+    ledger = CrashBeforeStageLedger()
+    await ledger.try_claim(request("r-plan-crash"))
+    bus = FakeBus()
+    payload = PlanProposedPayload(
+        segment_id="seg-plan",
+        owner_ref="call-plan-crash",
+        owner_version=1,
+        proposal=PlanProposal(
+            summary="Ship it",
+            steps=[PlanStep(step_ref="step-1", label="Implement", status="pending")],
+            allowed_actions=["accept", "reject"],
+        ),
+    )
+    with pytest.raises(RuntimeError, match="crash after output before stage"):
+        await RunEmitter(bus, "r-plan-crash", outbox=ledger).emit(payload)
+    assert len(ledger.output_records["r-plan-crash"]) == 1
+    assert bus.published == []
+
+    await RunEmitter(bus, "r-plan-crash", outbox=ledger).emit(payload)
+    assert len(ledger.output_records["r-plan-crash"]) == 1
+    assert bus.kinds("r-plan-crash") == ["plan.proposed"]
 
 
 async def test_exception_emits_run_failed() -> None:

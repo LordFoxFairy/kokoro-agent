@@ -35,15 +35,27 @@ from kokoro_agent.contract.storage import (
 )
 from kokoro_agent.evidence.models import (
     DurableExecutionEvidence,
+    DurableOutputDraft,
+    DurableOutputRecord,
+    DurableRetentionStats,
+    append_output_digest,
     evidence_kind_for_event,
+    initial_output_digest,
+    make_durable_output_record,
     make_durable_execution_evidence,
 )
 
 # 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
+AGENT_DURABLE_OUTPUT_COLLECTION = "agent_durable_output"
 
 _T = TypeVar("_T")
+_OUTPUT_APPEND_MAX_ATTEMPTS = 64
+
+
+class _OutputAppendContention(RuntimeError):
+    """A live run advanced its output counter before this append CAS."""
 
 
 def _now_ms() -> int:
@@ -173,6 +185,9 @@ _SEMANTIC_CRITICAL_ADAPTER: TypeAdapter[list[_SemanticCriticalFrame]] = TypeAdap
 _DURABLE_EVIDENCE_ADAPTER: TypeAdapter[DurableExecutionEvidence] = TypeAdapter(
     DurableExecutionEvidence
 )
+_DURABLE_OUTPUT_ADAPTER: TypeAdapter[DurableOutputRecord] = TypeAdapter(
+    DurableOutputRecord
+)
 
 _EXECUTION_BINDING_ADAPTER: TypeAdapter[ExecutionContextBinding] = TypeAdapter(
     ExecutionContextBinding
@@ -256,6 +271,9 @@ class MongoLedger:
         # Evidence is one document per durable fact. It must never grow the run document;
         # the write is committed with the outbox allocation in one Mongo transaction.
         self._evidence = collection.database[AGENT_EXECUTION_EVIDENCE_COLLECTION]
+        # Output is an independent per-run append-only authority. Records never share the
+        # lifecycle durable counter and never grow the run document.
+        self._outputs = collection.database[AGENT_DURABLE_OUTPUT_COLLECTION]
 
     async def _run_evidence_transaction(
         self,
@@ -309,6 +327,234 @@ class MongoLedger:
             {"raw_hash": raw_hash, "source": source, "reason": reason, "at": self._clock()}
         )
 
+    async def append_durable_outputs(
+        self,
+        run_id: str,
+        source_event_ref: str,
+        drafts: tuple[DurableOutputDraft, ...],
+        *,
+        recorded_at_ms: int,
+    ) -> tuple[DurableOutputRecord, ...] | None:
+        """Allocate every output for one source event in a single transaction.
+
+        source_event_ref is the stable run-local event identity. Ordinals derive
+        keep-first row identities but are never returned by the public contract.
+        """
+        if not source_event_ref or len(source_event_ref) > 240:
+            raise ValueError("OUTPUT_SOURCE_REF_INVALID")
+        if not drafts:
+            return ()
+        source_refs = tuple(
+            f"{source_event_ref}:{ordinal}" for ordinal in range(len(drafts))
+        )
+        source_payload_sha256s = tuple(
+            draft.source_payload_sha256 for draft in drafts
+        )
+
+        async def append(
+            session: AsyncClientSession | None,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            existing_rows = [
+                row
+                async for row in self._outputs.find(
+                    {
+                        "run_id": run_id,
+                        "source_event_ref": {"$in": list(source_refs)},
+                    },
+                    session=session,
+                )
+            ]
+            if existing_rows:
+                if any(
+                    row.get("source_batch_size") != len(drafts)
+                    for row in existing_rows
+                ):
+                    raise ValueError("OUTPUT_SOURCE_BATCH_CONFLICT")
+                existing_by_source = {
+                    row.get("source_event_ref"): row for row in existing_rows
+                }
+                if len(existing_by_source) != len(source_refs):
+                    raise ValueError("OUTPUT_SOURCE_PARTIAL")
+                replayed: list[DurableOutputRecord] = []
+                for ordinal, (source_ref, payload_sha256) in enumerate(
+                    zip(source_refs, source_payload_sha256s, strict=True)
+                ):
+                    existing = existing_by_source.get(source_ref)
+                    if existing is None:
+                        raise ValueError("OUTPUT_SOURCE_PARTIAL")
+                    if existing.get("source_ordinal") != ordinal:
+                        raise ValueError("OUTPUT_SOURCE_BATCH_CONFLICT")
+                    if existing.get("source_payload_sha256") != payload_sha256:
+                        raise ValueError("OUTPUT_SOURCE_CONFLICT")
+                    public = {
+                        key: value
+                        for key, value in existing.items()
+                        if key
+                        not in {
+                            "_id",
+                            "source_event_ref",
+                            "source_payload_sha256",
+                            "source_batch_size",
+                            "source_ordinal",
+                            "text_part_ref_sha256",
+                        }
+                    }
+                    replayed.append(_DURABLE_OUTPUT_ADAPTER.validate_python(public))
+                return tuple(replayed)
+
+            run = await self._coll.find_one(
+                {"_id": run_id},
+                {
+                    "terminal": 1,
+                    "output_counter": 1,
+                    "output_digest_sha256": 1,
+                },
+                session=session,
+            )
+            if run is None or run.get("terminal") is True:
+                return None
+            current_seq = run.get("output_counter", 0)
+            if not isinstance(current_seq, int) or current_seq < 0:
+                raise TypeError("OUTPUT_COUNTER_INVALID")
+            previous_digest = run.get("output_digest_sha256")
+            if previous_digest is None:
+                previous_digest = initial_output_digest(run_id)
+            if not isinstance(previous_digest, str):
+                raise TypeError("OUTPUT_DIGEST_INVALID")
+
+            text_part_hashes = {
+                draft.text_part_ref: hashlib.sha256(draft.text_part_ref.encode()).hexdigest()
+                for draft in drafts
+                if draft.text_part_ref is not None
+            }
+            latest_text_seq: dict[str, int] = {}
+            for part_ref, part_hash in text_part_hashes.items():
+                previous_text = await self._outputs.find_one(
+                    {"run_id": run_id, "text_part_ref_sha256": part_hash},
+                    {"output_seq": 1},
+                    sort=[("output_seq", -1)],
+                    session=session,
+                )
+                if previous_text is None:
+                    continue
+                previous_seq = previous_text.get("output_seq")
+                if not isinstance(previous_seq, int) or previous_seq < 1:
+                    raise TypeError("OUTPUT_TEXT_SEQUENCE_INVALID")
+                latest_text_seq[part_ref] = previous_seq
+
+            records: list[DurableOutputRecord] = []
+            next_digest = previous_digest
+            for ordinal, draft in enumerate(drafts):
+                output_seq = current_seq + ordinal + 1
+                replaces_through_output_seq = (
+                    latest_text_seq.get(draft.text_part_ref, 0)
+                    if draft.is_text_snapshot and draft.text_part_ref is not None
+                    else 0
+                )
+                record = make_durable_output_record(
+                    run_id=run_id,
+                    output_seq=output_seq,
+                    draft=draft,
+                    replaces_through_output_seq=replaces_through_output_seq,
+                    recorded_at_ms=recorded_at_ms,
+                    producer_instance_ref=self._producer_instance_ref,
+                    producer_generation=self._producer_generation,
+                )
+                records.append(record)
+                next_digest = append_output_digest(
+                    next_digest, output_seq, record.payload_sha256
+                )
+                if draft.text_part_ref is not None:
+                    latest_text_seq[draft.text_part_ref] = output_seq
+
+            final_seq = current_seq + len(records)
+            run_filter: dict[str, object] = {
+                "_id": run_id,
+                "terminal": {"$ne": True},
+            }
+            if current_seq == 0:
+                run_filter["$or"] = [
+                    {"output_counter": {"$exists": False}},
+                    {"output_counter": 0},
+                ]
+            else:
+                run_filter["output_counter"] = current_seq
+            advanced = await self._coll.update_one(
+                run_filter,
+                {
+                    "$set": {
+                        "output_counter": final_seq,
+                        "output_digest_sha256": next_digest,
+                    }
+                },
+                session=session,
+            )
+            if advanced.modified_count != 1:
+                fence = await self._coll.find_one(
+                    {"_id": run_id}, {"terminal": 1}, session=session
+                )
+                if fence is None or fence.get("terminal") is True:
+                    return None
+                raise _OutputAppendContention
+            rows: list[dict[str, object]] = []
+            for ordinal, (
+                source_ref,
+                source_payload_sha256,
+                draft,
+                record,
+            ) in enumerate(
+                zip(source_refs, source_payload_sha256s, drafts, records, strict=True)
+            ):
+                row: dict[str, object] = {
+                    "_id": record.output_ref,
+                    **record.model_dump(mode="python"),
+                    "source_event_ref": source_ref,
+                    "source_payload_sha256": source_payload_sha256,
+                    "source_batch_size": len(records),
+                    "source_ordinal": ordinal,
+                }
+                if draft.text_part_ref is not None:
+                    row["text_part_ref_sha256"] = text_part_hashes[draft.text_part_ref]
+                rows.append(row)
+            await self._outputs.insert_many(rows, ordered=True, session=session)
+            return tuple(records)
+
+        for attempt in range(_OUTPUT_APPEND_MAX_ATTEMPTS):
+            try:
+                return await self._run_evidence_transaction(append)
+            except _OutputAppendContention:
+                if attempt + 1 == _OUTPUT_APPEND_MAX_ATTEMPTS:
+                    raise RuntimeError("OUTPUT_APPEND_CONTENTION") from None
+        raise AssertionError("unreachable output append retry")
+
+    async def pull_durable_output_records(
+        self, run_id: str, after_output_seq: int, limit: int
+    ) -> list[DurableOutputRecord]:
+        if limit < 1 or limit > 65 or after_output_seq < 0:
+            raise ValueError("OUTPUT_CURSOR_INVALID")
+        cursor = (
+            self._outputs.find(
+                {"run_id": run_id, "output_seq": {"$gt": after_output_seq}},
+                {
+                    "_id": 0,
+                    "source_event_ref": 0,
+                    "source_payload_sha256": 0,
+                    "source_batch_size": 0,
+                    "source_ordinal": 0,
+                    "text_part_ref_sha256": 0,
+                },
+            )
+            .sort("output_seq", 1)
+            .limit(limit)
+        )
+        return [_DURABLE_OUTPUT_ADAPTER.validate_python(row) async for row in cursor]
+
+    async def get_durable_retention_stats(self) -> DurableRetentionStats:
+        return DurableRetentionStats(
+            output_records=await self._outputs.estimated_document_count(),
+            evidence_records=await self._evidence.estimated_document_count(),
+        )
+
     async def stage_critical_frame(
         self,
         run_id: str,
@@ -325,20 +571,8 @@ class MongoLedger:
         # 该 seq>fence（post-fence）→行以 superseded 摘要落库、永不发布，caller 不上 wire。
         event_id = _event_id()
         payload_sha256 = hashlib.sha256(payload_json.encode()).hexdigest()
-        evidence = (
-            make_durable_execution_evidence(
-                run_id=run_id,
-                durable_seq=1,
-                event_id=event_id,
-                event_kind=kind,
-                payload_json=payload_json,
-                recorded_at_ms=self._clock(),
-                producer_instance_ref=self._producer_instance_ref,
-                producer_generation=self._producer_generation,
-            )
-            if evidence_kind_for_event(kind) is not None
-            else None
-        )
+        evidence_kind = evidence_kind_for_event(kind)
+        recorded_at_ms = self._clock()
         queued_row: dict[str, object] = {
             "durable_seq": "$durable_counter",
             "event_id": {"$literal": event_id},
@@ -467,15 +701,34 @@ class MongoLedger:
                 )
             if isinstance(fence, int) and seq > fence:
                 return None
-            if evidence is not None:
-                record = evidence.model_copy(update={"durable_seq": seq})
+            if evidence_kind is not None:
+                output_high_watermark = doc.get("output_sealed_high_watermark", 0)
+                output_digest_sha256 = doc.get(
+                    "output_sealed_digest_sha256", initial_output_digest(run_id)
+                )
+                if not isinstance(output_high_watermark, int) or not isinstance(
+                    output_digest_sha256, str
+                ):
+                    raise TypeError("OUTPUT_SEAL_INVALID")
+                record = make_durable_execution_evidence(
+                    run_id=run_id,
+                    durable_seq=seq,
+                    event_id=event_id,
+                    event_kind=kind,
+                    payload_json=payload_json,
+                    recorded_at_ms=recorded_at_ms,
+                    producer_instance_ref=self._producer_instance_ref,
+                    producer_generation=self._producer_generation,
+                    output_high_watermark=output_high_watermark,
+                    output_digest_sha256=output_digest_sha256,
+                )
                 await self._evidence.insert_one(
                     {"_id": record.evidence_ref, **record.model_dump(mode="python")},
                     session=session,
                 )
             return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
 
-        if evidence is None:
+        if evidence_kind is None:
             return await stage(None)
         return await self._run_evidence_transaction(stage)
 
@@ -977,16 +1230,6 @@ class MongoLedger:
             producer_instance_ref=self._producer_instance_ref,
             producer_generation=self._producer_generation,
         )
-        terminal_evidence = make_durable_execution_evidence(
-            run_id=completion.run_id,
-            durable_seq=1,
-            event_id=terminal_event_id,
-            event_kind=terminal_event.kind,
-            payload_json=terminal_event.payload_json,
-            recorded_at_ms=now,
-            producer_instance_ref=self._producer_instance_ref,
-            producer_generation=self._producer_generation,
-        )
         owner_row: dict[str, object] = {
             "durable_seq": {"$subtract": ["$durable_counter", 1]},
             "event_id": {"$literal": owner_event_id},
@@ -1018,6 +1261,13 @@ class MongoLedger:
                     "terminal": True,
                     "terminal_at_ms": now,
                     "terminal_fence_seq": "$durable_counter",
+                    "output_sealed_high_watermark": {"$ifNull": ["$output_counter", 0]},
+                    "output_sealed_digest_sha256": {
+                        "$ifNull": [
+                            "$output_digest_sha256",
+                            {"$literal": initial_output_digest(completion.run_id)},
+                        ]
+                    },
                     "execution_context_completion": {
                         "$literal": completion.model_dump(mode="json")
                     },
@@ -1080,9 +1330,27 @@ class MongoLedger:
                     f"durable_counter for {completion.run_id!r} is not an int: "
                     f"{final_seq!r}"
                 )
+            output_high_watermark = doc.get("output_sealed_high_watermark")
+            output_digest_sha256 = doc.get("output_sealed_digest_sha256")
+            if not isinstance(output_high_watermark, int) or not isinstance(
+                output_digest_sha256, str
+            ):
+                raise TypeError("OUTPUT_SEAL_INVALID")
+            terminal_evidence = make_durable_execution_evidence(
+                run_id=completion.run_id,
+                durable_seq=final_seq,
+                event_id=terminal_event_id,
+                event_kind=terminal_event.kind,
+                payload_json=terminal_event.payload_json,
+                recorded_at_ms=now,
+                producer_instance_ref=self._producer_instance_ref,
+                producer_generation=self._producer_generation,
+                output_high_watermark=output_high_watermark,
+                output_digest_sha256=output_digest_sha256,
+            )
             records = [
                 owner_evidence.model_copy(update={"durable_seq": final_seq - 1}),
-                terminal_evidence.model_copy(update={"durable_seq": final_seq}),
+                terminal_evidence,
             ]
             await self._evidence.insert_many(
                 [
@@ -1124,44 +1392,96 @@ class MongoLedger:
             "terminal_at_ms": {"$lte": cutoff},
             "outbox.status": {"$nin": ["queued", "published"]},
         }
-        archived = await self._coll.update_many(
+        candidates = self._coll.find(
             {
                 **stale_without_live_outbox,
-                "execution_context_completion": {"$exists": True},
-                "retention_archived": {"$ne": True},
+                "$or": [
+                    {"execution_context_completion": {"$exists": False}},
+                    {"retention_archived": {"$ne": True}},
+                ],
             },
-            {
-                "$set": {"retention_archived": True},
-                "$unset": {
-                    "request_json": "",
-                    "lease_expires_ms": "",
-                    "owner": "",
-                    "usage_input": "",
-                    "usage_output": "",
-                    "token_total": "",
-                    "steers": "",
-                    "sandbox_id": "",
-                    "tool_results": "",
-                    "tool_journal": "",
-                    "control_inbox": "",
-                    "outbox": "",
-                },
-            },
+            {"_id": 1, "execution_context_completion": 1},
         )
-        deleted = await self._coll.delete_many(
-            {
-                **stale_without_live_outbox,
-                "execution_context_completion": {"$exists": False},
-            }
-        )
-        return int(archived.modified_count + deleted.deleted_count)
+        changed = 0
+        async for candidate in candidates:
+            run_id = candidate.get("_id")
+            if not isinstance(run_id, str):
+                raise TypeError("RETENTION_RUN_ID_INVALID")
+            retains_completion = "execution_context_completion" in candidate
+
+            async def purge_one(session: AsyncClientSession | None) -> bool:
+                query: dict[str, object] = {
+                    "_id": run_id,
+                    **stale_without_live_outbox,
+                    "execution_context_completion": {
+                        "$exists": retains_completion
+                    },
+                }
+                if retains_completion:
+                    query["retention_archived"] = {"$ne": True}
+                current = await self._coll.find_one(
+                    query, {"_id": 1}, session=session
+                )
+                if current is None:
+                    return False
+
+                # Delete children before the parent/archive marker in nontransactional tests;
+                # production wraps all three collections in one transaction. A crash can only
+                # leave an eligible parent for an idempotent retry, never unreachable orphans.
+                await self._outputs.delete_many({"run_id": run_id}, session=session)
+                await self._evidence.delete_many({"run_id": run_id}, session=session)
+                if retains_completion:
+                    archived = await self._coll.update_one(
+                        query,
+                        {
+                            "$set": {"retention_archived": True},
+                            "$unset": {
+                                "request_json": "",
+                                "lease_expires_ms": "",
+                                "owner": "",
+                                "usage_input": "",
+                                "usage_output": "",
+                                "token_total": "",
+                                "steers": "",
+                                "sandbox_id": "",
+                                "tool_results": "",
+                                "tool_journal": "",
+                                "control_inbox": "",
+                                "outbox": "",
+                            },
+                        },
+                        session=session,
+                    )
+                    return archived.modified_count == 1
+                deleted = await self._coll.delete_one(query, session=session)
+                return deleted.deleted_count == 1
+
+            if await self._run_evidence_transaction(purge_one):
+                changed += 1
+        return changed
 
     async def try_mark_terminal(self, run_id: str) -> bool:
         # 条件 update + upsert：已终态则过滤不中、upsert 撞 _id 抛 Duplicate → 已被认领。
         try:
             result = await self._coll.update_one(
                 {"_id": run_id, "terminal": {"$ne": True}},
-                {"$set": {"terminal": True, "terminal_at_ms": self._clock()}},
+                [
+                    {
+                        "$set": {
+                            "terminal": True,
+                            "terminal_at_ms": self._clock(),
+                            "output_sealed_high_watermark": {
+                                "$ifNull": ["$output_counter", 0]
+                            },
+                            "output_sealed_digest_sha256": {
+                                "$ifNull": [
+                                    "$output_digest_sha256",
+                                    {"$literal": initial_output_digest(run_id)},
+                                ]
+                            },
+                        }
+                    }
+                ],
                 upsert=True,
             )
         except DuplicateKeyError:

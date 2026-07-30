@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command, Interrupt
 from pydantic import JsonValue, TypeAdapter
+import pytest
 
 from fakes import (
     FakeAgent,
@@ -35,6 +36,8 @@ from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
+from kokoro_agent import metrics
+from kokoro_agent.storage.ledger import DurableRetentionStats
 
 _GATED = "danger"
 _TID = "call-A"
@@ -520,6 +523,32 @@ async def test_heartbeat_renews_and_reclaims() -> None:
     await sup.heartbeat_once(bus)
     await _drain(sup)
     assert bus.kinds("orphan")[-1] == "run.completed"
+
+
+async def test_heartbeat_refreshes_durable_retention_gauges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RetentionLedger(FakeLedger):
+        async def get_durable_retention_stats(self) -> DurableRetentionStats:
+            return DurableRetentionStats(output_records=7, evidence_records=3)
+
+    seen: list[tuple[int, int, int]] = []
+
+    def capture(
+        *, output_records: int, evidence_records: int, retention_seconds: int
+    ) -> None:
+        seen.append((output_records, evidence_records, retention_seconds))
+
+    monkeypatch.setattr(
+        metrics,
+        "set_durable_retention_gauges",
+        capture,
+    )
+    sup, _store = _supervisor(FakeAgent(run=text_run("hi")), store=RetentionLedger())
+
+    await sup.heartbeat_once(FakeBus())
+
+    assert seen == [(7, 3, 0)]
 
 
 async def test_heartbeat_skips_reclaim_of_own_running_task() -> None:

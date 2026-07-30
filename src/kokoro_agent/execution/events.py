@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from collections.abc import Callable, Mapping
 
@@ -45,6 +46,7 @@ from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
+from kokoro_agent.evidence.models import durable_output_drafts_for_event
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
 from kokoro_agent.storage.execution_context import (
     CompletionEventDraft,
@@ -203,6 +205,39 @@ class RunEmitter:
         kind = _KIND_BY_PAYLOAD[type(payload)]
         index = self._next_index
         timestamp = _now_ms()
+        semantic_key = (
+            f"action_owner:{payload.tool_id}"
+            if isinstance(payload, ToolAwaitingApprovalPayload)
+            else f"plan.proposed:{payload.owner_ref}"
+            if isinstance(payload, PlanProposedPayload)
+            else "run.owner.completed"
+            if isinstance(payload, RunOwnerCompletedPayload)
+            else None
+        )
+        if self._outbox is not None:
+            drafts = durable_output_drafts_for_event(payload)
+            if drafts:
+                source_seed = "event:" + hashlib.sha256(
+                    (
+                        f"v1\0{self._run_id}\0{kind}\0"
+                        f"{semantic_key or f'index:{index}'}"
+                    ).encode()
+                ).hexdigest()
+                try:
+                    records = await self._outbox.append_durable_outputs(
+                        self._run_id,
+                        source_seed,
+                        drafts,
+                        recorded_at_ms=timestamp,
+                    )
+                except ValueError as error:
+                    if semantic_key is None or str(error) != "OUTPUT_SOURCE_CONFLICT":
+                        raise
+                    raise ValueError(
+                        f"semantic critical frame conflict for {semantic_key!r}"
+                    ) from error
+                if records is None:
+                    raise RuntimeError("DURABLE_OUTPUT_APPEND_REJECTED")
         base: dict[str, object] = {
             "kind": kind,
             "run_id": self._run_id,
@@ -220,15 +255,7 @@ class RunEmitter:
                 timestamp,
                 payload_json,
                 terminal=kind in TERMINAL_KINDS,
-                semantic_key=(
-                    f"action_owner:{payload.tool_id}"
-                    if isinstance(payload, ToolAwaitingApprovalPayload)
-                    else f"plan.proposed:{payload.owner_ref}"
-                    if isinstance(payload, PlanProposedPayload)
-                    else "run.owner.completed"
-                    if isinstance(payload, RunOwnerCompletedPayload)
-                    else None
-                ),
+                semantic_key=semantic_key,
             )
             if staged is None:
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。

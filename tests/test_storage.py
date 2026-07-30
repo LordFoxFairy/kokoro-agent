@@ -12,13 +12,22 @@ import pytest
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
+from kokoro.agent.execution.v1 import agent_execution_evidence_pb2 as evidence_pb2
+
 from fakes import request
 from kokoro_agent.contract import (
+    MessageDeltaPayload,
     PlanProposal,
     PlanProposedPayload,
     PlanStep,
     RunCompletedPayload,
+    RunFailedPayload,
     RunOwnerCompletedPayload,
+)
+from kokoro_agent.evidence.models import (
+    append_output_digest,
+    durable_output_draft_for_event,
+    initial_output_digest,
 )
 from kokoro_agent.contract.storage import (
     RUN_DISPATCHES_COLLECTION,
@@ -31,6 +40,7 @@ from kokoro_agent.storage.ledger import (
     make_ledger,
 )
 from kokoro_agent.storage.mongo import (
+    AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
     DISPATCH_DLQ_COLLECTION,
     MongoLedger,
@@ -100,6 +110,7 @@ async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
     finally:
         await coll.drop()
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
+        await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
         await client.close()
 
 
@@ -284,6 +295,13 @@ async def _assert_purge_terminal(store: RunLedger, clock: FakeClock) -> None:
     await store.add_tokens("run-old", 5)
     await store.add_usage("run-old", 1, 2)
     await store.put_tool_result("run-old", "t1", "r", False)
+    output_draft = durable_output_draft_for_event(
+        MessageDeltaPayload(segment_id="segment-retention", delta="old output")
+    )
+    assert output_draft is not None
+    assert await store.append_durable_outputs(
+        "run-old", "retention-event", (output_draft,), recorded_at_ms=clock.now
+    )
     await store.try_mark_terminal("run-old")
     clock.advance_ms(10_000)
     await store.try_mark_terminal("run-new")  # 新终态：未超龄
@@ -291,6 +309,7 @@ async def _assert_purge_terminal(store: RunLedger, clock: FakeClock) -> None:
     # 超龄终态被清：run 行与附属全消失，可再次认领（id 重用语义）。
     assert await store.is_terminal("run-old") is False
     assert await store.get_tool_result("run-old", "t1") is None
+    assert await store.pull_durable_output_records("run-old", 0, 64) == []
     assert await store.add_tokens("run-old", 1) == 1  # 计数从零（旧累计已清）
     # 未超龄/活跃不受影响。
     assert await store.is_terminal("run-new") is True
@@ -375,6 +394,165 @@ async def test_factory_mongo_persists_across_cycles() -> None:
         await client.close()
 
 
+async def test_output_authority_is_independent_idempotent_and_terminal_sealed() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as raw_store:
+        assert isinstance(raw_store, MongoLedger)
+        store = raw_store
+        req = request("run-output")
+        assert await store.try_claim(req, OWNER) is True
+        first_draft = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-1", delta="hello")
+        )
+        second_draft = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-1", delta=" world")
+        )
+        assert first_draft is not None and second_draft is not None
+
+        first_batch = await store.append_durable_outputs(
+            req.run_id, "event:0", (first_draft,), recorded_at_ms=clock.now
+        )
+        duplicate_batch = await store.append_durable_outputs(
+            req.run_id, "event:0", (first_draft,), recorded_at_ms=clock.now
+        )
+        with pytest.raises(ValueError, match="OUTPUT_SOURCE_CONFLICT"):
+            await store.append_durable_outputs(
+                req.run_id, "event:0", (second_draft,), recorded_at_ms=clock.now
+            )
+        second_batch = await store.append_durable_outputs(
+            req.run_id, "event:1", (second_draft,), recorded_at_ms=clock.now + 1
+        )
+        assert first_batch is not None and second_batch is not None
+        first, second = first_batch[0], second_batch[0]
+        assert duplicate_batch is not None
+        duplicate = duplicate_batch[0]
+        assert duplicate == first
+        assert [first.output_seq, second.output_seq] == [1, 2]
+
+        records = await store.pull_durable_output_records(req.run_id, 0, 64)
+        assert [record.output_seq for record in records] == [1, 2]
+        expected_digest = append_output_digest(
+            append_output_digest(
+                initial_output_digest(req.run_id), 1, first.payload_sha256
+            ),
+            2,
+            second.payload_sha256,
+        )
+
+        assert await store.try_mark_terminal(req.run_id) is True
+        terminal = await store.stage_critical_frame(
+            req.run_id,
+            "run.failed",
+            2,
+            clock.now + 2,
+            RunFailedPayload(
+                code="internal_error", error_kind="RuntimeError", message="failed"
+            ).model_dump_json(),
+            terminal=True,
+        )
+        assert terminal is not None and terminal.durable_seq == 1
+        evidence = await store.pull_durable_execution_evidence(req.run_id, 0, 10)
+        failed = evidence_pb2.DurableExecutionCanonicalPayloadV1.FromString(
+            evidence[-1].canonical_payload
+        ).run_failed
+        assert failed.output_high_watermark == 2
+        assert failed.output_digest_sha256 == expected_digest
+        assert (
+            await store.append_durable_outputs(
+                req.run_id, "event:3", (second_draft,), recorded_at_ms=clock.now + 3
+            )
+            is None
+        )
+
+
+async def test_output_authority_retries_contention_without_losing_records() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as raw_store:
+        assert isinstance(raw_store, MongoLedger)
+        store = raw_store
+        run_id = "run-output-race"
+        assert await store.try_claim(request(run_id), OWNER) is True
+        drafts = [
+            durable_output_draft_for_event(
+                MessageDeltaPayload(segment_id="segment-race", delta=f"delta-{index}")
+            )
+            for index in range(16)
+        ]
+        assert all(draft is not None for draft in drafts)
+        records = await asyncio.gather(
+            *(
+                store.append_durable_outputs(
+                    run_id,
+                    f"event:{index}",
+                    (draft,),
+                    recorded_at_ms=clock.now + index,
+                )
+                for index, draft in enumerate(drafts)
+                if draft is not None
+            )
+        )
+        assert all(record is not None for record in records)
+        assert sorted(
+            record[0].output_seq for record in records if record is not None
+        ) == list(range(1, 17))
+        page = await store.pull_durable_output_records(run_id, 0, 64)
+        assert [record.output_seq for record in page] == list(range(1, 17))
+
+
+async def test_output_authority_rejects_matching_shorter_batch_replay() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as raw_store:
+        assert isinstance(raw_store, MongoLedger)
+        store = raw_store
+        run_id = "run-output-batch-cardinality"
+        assert await store.try_claim(request(run_id), OWNER) is True
+        first = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-batch", delta="first")
+        )
+        second = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-batch", delta="second")
+        )
+        assert first is not None and second is not None
+        inserted = await store.append_durable_outputs(
+            run_id,
+            "event:stable",
+            (first, second),
+            recorded_at_ms=clock.now,
+        )
+        assert inserted is not None
+
+        with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+            await store.append_durable_outputs(
+                run_id,
+                "event:stable",
+                (first,),
+                recorded_at_ms=clock.now + 1,
+            )
+
+        page = await store.pull_durable_output_records(run_id, 0, 64)
+        assert [record.payload_sha256 for record in page] == [
+            record.payload_sha256 for record in inserted
+        ]
+
+
+async def test_output_factory_creates_unique_sequence_and_source_indexes() -> None:
+    settings = _settings(f"kokoro_output_index_{uuid.uuid4().hex}")
+    async with make_ledger(settings):
+        pass
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
+    try:
+        indexes = await client[settings.mongo_db][
+            AGENT_DURABLE_OUTPUT_COLLECTION
+        ].index_information()
+        assert indexes["run_output_seq_unique"]["unique"] is True
+        assert indexes["run_output_source_unique"]["unique"] is True
+        assert indexes["run_output_seq_unique"]["key"] == [
+            ("run_id", 1),
+            ("output_seq", 1),
+        ]
+    finally:
+        await client.drop_database(settings.mongo_db)
+        await client.close()
 
 # --- Wave2 R1：dispatch CAS（run_dispatches pending→claimed）+ run.started outbox + DLQ ---
 
@@ -401,6 +579,7 @@ async def _mongo_ledger_with_dispatches(
         await dispatches.drop()
         await coll.database[DISPATCH_DLQ_COLLECTION].drop()
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
+        await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
         # R4 回执/清单是同库固定名兄弟集合（跨测试共享）：逐测试清空，串行安全。
         await coll.database[RUN_EVENT_RECEIPTS_COLLECTION].drop()
         await coll.database[RUN_RECEIPT_MANIFESTS_COLLECTION].drop()
@@ -500,6 +679,21 @@ async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
     async with _mongo_ledger_with_dispatches(clock) as (store, dispatches):
         req = request("run-context", namespace="opaque-ns")
         assert await store.try_claim(req, OWNER)
+        output_draft = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-context", delta="durable answer")
+        )
+        assert output_draft is not None
+        output_batch = await store.append_durable_outputs(
+            req.run_id,
+            "completion:output:0",
+            (output_draft,),
+            recorded_at_ms=clock.now,
+        )
+        assert output_batch is not None
+        output = output_batch[0]
+        expected_output_digest = append_output_digest(
+            initial_output_digest(req.run_id), 1, output.payload_sha256
+        )
         checkpoint = ExecutionCheckpoint(
             thread_id="physical-thread", checkpoint_ns="", checkpoint_id="checkpoint-final"
         )
@@ -555,6 +749,11 @@ async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
             "run.owner.completed",
             "run.completed",
         ]
+        completed_evidence = evidence_pb2.DurableExecutionCanonicalPayloadV1.FromString(
+            evidence[-1].canonical_payload
+        ).run_completed
+        assert completed_evidence.output_high_watermark == 1
+        assert completed_evidence.output_digest_sha256 == expected_output_digest
         assert await store.get_run_durable_checkpoint(req.run_id) == evidence[0]
 
         # A published-but-unreceipted owner blocks the queued terminal.
@@ -598,6 +797,8 @@ async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
         await store.reconcile_receipts(req.run_id)
         clock.advance_ms(10_000)
         assert await store.purge_terminal(max_age_ms=5_000) == 1
+        assert await store.pull_durable_output_records(req.run_id, 0, 64) == []
+        assert await store.pull_durable_execution_evidence(req.run_id, 0, 10) == []
         assert await store.is_terminal(req.run_id) is True
         assert await store.get_request(req.run_id) is None
         assert await store.try_claim(req, OWNER) is False

@@ -37,6 +37,10 @@ tool construction and receives a verified immutable execution assembly.
 - Resume, cancel, and steer use keep-first durable control records and terminal rechecks.
 - Critical events keep stable outbox identity across retries and recovery.
 - SIGTERM stops intake, drains bounded active work, and leaves remaining recovery to leases.
+- Each heartbeat refreshes global retained output/evidence record gauges and the configured
+  replay-window-seconds gauge; terminal retention removes eligible run-local output and evidence
+  children atomically with run archive/deletion after that time-based window. Zero disables the
+  purge, and no consumer-ack gate exists yet.
 - Capability resolution is fail-closed. A missing or invalid Hub assembly cannot fall back to
   local configuration.
 - Model streaming is accepted only from Platform's private RPC. Agent verifies the invocation and

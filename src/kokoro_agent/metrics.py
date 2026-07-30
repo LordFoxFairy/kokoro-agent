@@ -64,6 +64,21 @@ LEASE_HELD = Gauge(
     "leases currently held by this worker",
 )
 
+# Agent-owned durable read collections. These gauges are refreshed from Mongo on each
+# heartbeat so retention leaks remain visible across worker restarts.
+DURABLE_OUTPUT_RETAINED = Gauge(
+    "kokoro_agent_durable_output_retained_records",
+    "estimated durable output records retained in Agent storage",
+)
+EXECUTION_EVIDENCE_RETAINED = Gauge(
+    "kokoro_agent_execution_evidence_retained_records",
+    "estimated durable execution evidence records retained in Agent storage",
+)
+DURABLE_REPLAY_RETENTION_SECONDS = Gauge(
+    "kokoro_agent_durable_replay_retention_seconds",
+    "configured minimum terminal replay window; zero means time purge is disabled",
+)
+
 
 def record_dispatch_claim(*, won: bool) -> None:
     try:
@@ -114,6 +129,17 @@ def set_lease_gauges(*, active_runs: int, lease_held: int) -> None:
         LEASE_HELD.set(lease_held)
     except Exception:  # noqa: BLE001 — 指标采集绝不影响主链路
         LOGGER.debug("metrics set_lease_gauges failed", exc_info=True)
+
+
+def set_durable_retention_gauges(
+    *, output_records: int, evidence_records: int, retention_seconds: int
+) -> None:
+    try:
+        DURABLE_OUTPUT_RETAINED.set(output_records)
+        EXECUTION_EVIDENCE_RETAINED.set(evidence_records)
+        DURABLE_REPLAY_RETENTION_SECONDS.set(retention_seconds)
+    except Exception:  # noqa: BLE001 — 指标采集绝不影响主链路
+        LOGGER.debug("metrics set_durable_retention_gauges failed", exc_info=True)
 
 
 def start_metrics_server(port: int) -> None:

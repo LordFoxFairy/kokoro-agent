@@ -25,6 +25,9 @@ def test_registry_exposes_kokoro_agent_metric_names() -> None:
         "kokoro_agent_egress_blocked_total",
         "kokoro_agent_active_runs",
         "kokoro_agent_lease_held",
+        "kokoro_agent_durable_output_retained_records",
+        "kokoro_agent_execution_evidence_retained_records",
+        "kokoro_agent_durable_replay_retention_seconds",
     ):
         assert name in body
 
@@ -57,3 +60,12 @@ def test_lease_gauges_set_current_value() -> None:
     metrics.set_lease_gauges(active_runs=3, lease_held=5)
     assert _value("kokoro_agent_active_runs") == 3
     assert _value("kokoro_agent_lease_held") == 5
+
+
+def test_durable_retention_gauges_set_current_value() -> None:
+    metrics.set_durable_retention_gauges(
+        output_records=7, evidence_records=3, retention_seconds=3600
+    )
+    assert _value("kokoro_agent_durable_output_retained_records") == 7
+    assert _value("kokoro_agent_execution_evidence_retained_records") == 3
+    assert _value("kokoro_agent_durable_replay_retention_seconds") == 3600

@@ -7,6 +7,7 @@ from typing import Protocol
 
 from connectrpc.client import ConnectClient, ConnectClientSync
 from connectrpc.code import Code
+from connectrpc.codec import Codec
 from connectrpc.compression import Compression
 from connectrpc.errors import ConnectError
 from connectrpc.interceptor import Interceptor, InterceptorSync
@@ -26,9 +27,12 @@ class AgentExecutionEvidenceService(Protocol):
     async def get_run_durable_checkpoint(self, request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.GetRunDurableCheckpointRequest, ctx: RequestContext) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.GetRunDurableCheckpointResponse:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
 
+    async def pull_durable_output_records(self, request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest, ctx: RequestContext) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
+
 
 class AgentExecutionEvidenceServiceASGIApplication(ConnectASGIApplication[AgentExecutionEvidenceService]):
-    def __init__(self, service: AgentExecutionEvidenceService | AsyncGenerator[AgentExecutionEvidenceService], *, interceptors: Iterable[Interceptor]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None) -> None:
+    def __init__(self, service: AgentExecutionEvidenceService | AsyncGenerator[AgentExecutionEvidenceService], *, interceptors: Iterable[Interceptor]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None, codecs: Iterable[Codec] | None = None) -> None:
         super().__init__(
             service=service,
             endpoints=lambda svc: {
@@ -62,10 +66,21 @@ class AgentExecutionEvidenceServiceASGIApplication(ConnectASGIApplication[AgentE
                     ),
                     function=svc.get_run_durable_checkpoint,
                 ),
+                "/kokoro.agent.execution.v1.AgentExecutionEvidenceService/PullDurableOutputRecords": Endpoint.unary(
+                    method=MethodInfo(
+                        name="PullDurableOutputRecords",
+                        service_name="kokoro.agent.execution.v1.AgentExecutionEvidenceService",
+                        input=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest,
+                        output=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.pull_durable_output_records,
+                ),
             },
             interceptors=interceptors,
             read_max_bytes=read_max_bytes,
             compressions=compressions,
+            codecs=codecs,
         )
 
     @property
@@ -135,6 +150,29 @@ class AgentExecutionEvidenceServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def pull_durable_output_records(
+        self,
+        request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="PullDurableOutputRecords",
+                service_name="kokoro.agent.execution.v1.AgentExecutionEvidenceService",
+                input=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest,
+                output=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+
+
+
 
 class AgentExecutionEvidenceServiceSync(Protocol):
     def pull_durable_execution_evidence(self, request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableExecutionEvidenceRequest, ctx: RequestContext) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableExecutionEvidenceResponse:
@@ -143,10 +181,12 @@ class AgentExecutionEvidenceServiceSync(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
     def get_run_durable_checkpoint(self, request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.GetRunDurableCheckpointRequest, ctx: RequestContext) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.GetRunDurableCheckpointResponse:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
+    def pull_durable_output_records(self, request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest, ctx: RequestContext) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
 
 
 class AgentExecutionEvidenceServiceWSGIApplication(ConnectWSGIApplication):
-    def __init__(self, service: AgentExecutionEvidenceServiceSync, interceptors: Iterable[InterceptorSync]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None) -> None:
+    def __init__(self, service: AgentExecutionEvidenceServiceSync, interceptors: Iterable[InterceptorSync]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None, codecs: Iterable[Codec] | None = None) -> None:
         super().__init__(
             endpoints={
                 "/kokoro.agent.execution.v1.AgentExecutionEvidenceService/PullDurableExecutionEvidence": EndpointSync.unary(
@@ -179,10 +219,21 @@ class AgentExecutionEvidenceServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.get_run_durable_checkpoint,
                 ),
+                "/kokoro.agent.execution.v1.AgentExecutionEvidenceService/PullDurableOutputRecords": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="PullDurableOutputRecords",
+                        service_name="kokoro.agent.execution.v1.AgentExecutionEvidenceService",
+                        input=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest,
+                        output=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.pull_durable_output_records,
+                ),
             },
             interceptors=interceptors,
             read_max_bytes=read_max_bytes,
             compressions=compressions,
+            codecs=codecs,
         )
 
     @property
@@ -246,6 +297,26 @@ class AgentExecutionEvidenceServiceClientSync(ConnectClientSync):
                 service_name="kokoro.agent.execution.v1.AgentExecutionEvidenceService",
                 input=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.GetRunDurableCheckpointRequest,
                 output=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.GetRunDurableCheckpointResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def pull_durable_output_records(
+        self,
+        request: kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="PullDurableOutputRecords",
+                service_name="kokoro.agent.execution.v1.AgentExecutionEvidenceService",
+                input=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsRequest,
+                output=kokoro_dot_agent_dot_execution_dot_v1_dot_agent__execution__evidence__pb2.PullDurableOutputRecordsResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

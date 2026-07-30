@@ -26,8 +26,14 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.contract import REQUESTS_STREAM
+from kokoro_agent.evidence.models import (
+    DurableOutputDraft,
+    DurableOutputRecord,
+    make_durable_output_record,
+)
 from kokoro_agent.storage.ledger import (
     ControlInboxRecord,
+    DurableRetentionStats,
     OutboxFrame,
     ReceiptReconcile,
     StagedFrame,
@@ -152,6 +158,12 @@ class FakeLedger:
         self.terminal_fence: dict[str, int] = {}
         self.outbox: dict[str, list[dict[str, object]]] = {}
         self.semantic_critical: dict[tuple[str, str], tuple[str, str, int, str]] = {}
+        self.output_records: dict[str, list[DurableOutputRecord]] = {}
+        self.output_sources: dict[tuple[str, str], tuple[str, DurableOutputRecord]] = {}
+        self.output_batches: dict[
+            tuple[str, str], tuple[tuple[str, DurableOutputRecord], ...]
+        ] = {}
+        self.output_text_seq: dict[tuple[str, str], int] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
         self.manifests: dict[str, dict[str, object]] = {}
@@ -240,6 +252,84 @@ class FakeLedger:
             }
         )
         return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
+
+    async def append_durable_outputs(
+        self,
+        run_id: str,
+        source_event_ref: str,
+        drafts: tuple[DurableOutputDraft, ...],
+        *,
+        recorded_at_ms: int,
+    ) -> tuple[DurableOutputRecord, ...] | None:
+        if not drafts:
+            return ()
+        batch_identity = (run_id, source_event_ref)
+        existing_batch = self.output_batches.get(batch_identity)
+        if existing_batch is not None:
+            if len(existing_batch) != len(drafts):
+                raise ValueError("OUTPUT_SOURCE_BATCH_CONFLICT")
+            replayed: list[DurableOutputRecord] = []
+            for (source_payload_sha256, record), draft in zip(
+                existing_batch, drafts, strict=True
+            ):
+                if source_payload_sha256 != draft.source_payload_sha256:
+                    raise ValueError("OUTPUT_SOURCE_CONFLICT")
+                replayed.append(record)
+            return tuple(replayed)
+        identities = [
+            (run_id, f"{source_event_ref}:{ordinal}")
+            for ordinal in range(len(drafts))
+        ]
+        existing = [self.output_sources.get(identity) for identity in identities]
+        if any(item is not None for item in existing):
+            raise ValueError("OUTPUT_SOURCE_PARTIAL")
+        if run_id in self.terminals:
+            return None
+        records = self.output_records.setdefault(run_id, [])
+        next_text_seq = dict(self.output_text_seq)
+        appended: list[DurableOutputRecord] = []
+        for offset, draft in enumerate(drafts, start=1):
+            replaces_through = (
+                next_text_seq.get((run_id, draft.text_part_ref), 0)
+                if draft.is_text_snapshot and draft.text_part_ref is not None
+                else 0
+            )
+            record = make_durable_output_record(
+                run_id=run_id,
+                output_seq=len(records) + offset,
+                draft=draft,
+                replaces_through_output_seq=replaces_through,
+                recorded_at_ms=recorded_at_ms,
+                producer_instance_ref="agent-test",
+                producer_generation=1,
+            )
+            appended.append(record)
+            if draft.text_part_ref is not None:
+                next_text_seq[(run_id, draft.text_part_ref)] = record.output_seq
+        records.extend(appended)
+        for identity, draft, record in zip(identities, drafts, appended, strict=True):
+            self.output_sources[identity] = (draft.source_payload_sha256, record)
+        self.output_batches[batch_identity] = tuple(
+            (draft.source_payload_sha256, record)
+            for draft, record in zip(drafts, appended, strict=True)
+        )
+        self.output_text_seq = next_text_seq
+        return tuple(appended)
+
+    async def pull_durable_output_records(
+        self, run_id: str, after_output_seq: int, limit: int
+    ) -> list[DurableOutputRecord]:
+        return [
+            record
+            for record in self.output_records.get(run_id, [])
+            if record.output_seq > after_output_seq
+        ][:limit]
+
+    async def get_durable_retention_stats(self) -> DurableRetentionStats:
+        return DurableRetentionStats(
+            output_records=sum(len(records) for records in self.output_records.values()),
+            evidence_records=0,
+        )
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         for row in self.outbox.get(run_id, []):
@@ -564,6 +654,16 @@ class FakeLedger:
             completion.run_id for completion in self.execution_completions.values()
         }
         for run_id in stale:
+            self.output_records.pop(run_id, None)
+            self.output_sources = {
+                key: value for key, value in self.output_sources.items() if key[0] != run_id
+            }
+            self.output_batches = {
+                key: value for key, value in self.output_batches.items() if key[0] != run_id
+            }
+            self.output_text_seq = {
+                key: value for key, value in self.output_text_seq.items() if key[0] != run_id
+            }
             if run_id in completed_run_ids:
                 if run_id in self.retention_archived:
                     continue

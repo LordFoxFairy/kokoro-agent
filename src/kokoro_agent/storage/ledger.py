@@ -9,8 +9,14 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
+from kokoro_agent.evidence.models import (
+    DurableOutputDraft,
+    DurableOutputRecord,
+    DurableRetentionStats,
+)
 from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
+    AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
     ControlInboxRecord,
     MongoLedger,
@@ -28,6 +34,7 @@ DEFAULT_LEASE_TTL_S = 90
 __all__ = [
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
+    "DurableRetentionStats",
     "LedgerSettings",
     "EvidenceLedger",
     "OutboxFrame",
@@ -69,6 +76,25 @@ class RunLedger(ExecutionContextStore, Protocol):
         # fail-loud；marker 保留到 run retention，不随 outbox receipt GC 删除。
         # 返回 None=post-fence（seq>fence）→superseded 摘要落库、caller 不发布。
         ...
+
+    async def append_durable_outputs(
+        self,
+        run_id: str,
+        source_event_ref: str,
+        drafts: tuple[DurableOutputDraft, ...],
+        *,
+        recorded_at_ms: int,
+    ) -> tuple[DurableOutputRecord, ...] | None:
+        # 一个 live event 的全部 outputs 在同一事务中分配连续 output_seq；stable source
+        # identity + 持久 batch cardinality/ordinal keep-first，增删/重排 fail-closed。
+        # 终态 fence 后返回 None。
+        ...
+
+    async def pull_durable_output_records(
+        self, run_id: str, after_output_seq: int, limit: int
+    ) -> list[DurableOutputRecord]: ...
+
+    async def get_durable_retention_stats(self) -> DurableRetentionStats: ...
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         # publish 确认：outbox 行 queued→published。补发前崩溃留 queued，scanner 幂等补发。
@@ -240,6 +266,17 @@ async def make_ledger(
         await evidence.create_index(
             [("run_id", 1), ("kind", 1), ("durable_seq", -1)],
             name="run_kind_latest",
+        )
+        outputs = collection.database[AGENT_DURABLE_OUTPUT_COLLECTION]
+        await outputs.create_index(
+            [("run_id", 1), ("output_seq", 1)],
+            name="run_output_seq_unique",
+            unique=True,
+        )
+        await outputs.create_index(
+            [("run_id", 1), ("source_event_ref", 1)],
+            name="run_output_source_unique",
+            unique=True,
         )
         yield MongoLedger(
             collection,

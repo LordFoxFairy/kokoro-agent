@@ -56,6 +56,30 @@ class RunCompletedEvidenceStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapp
     RUN_COMPLETED_EVIDENCE_STATUS_UNSPECIFIED: _ClassVar[RunCompletedEvidenceStatus]
     RUN_COMPLETED_EVIDENCE_STATUS_COMPLETED: _ClassVar[RunCompletedEvidenceStatus]
     RUN_COMPLETED_EVIDENCE_STATUS_CANCELLED: _ClassVar[RunCompletedEvidenceStatus]
+
+class SubagentProgressStatusV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SUBAGENT_PROGRESS_STATUS_V1_UNSPECIFIED: _ClassVar[SubagentProgressStatusV1]
+    SUBAGENT_PROGRESS_STATUS_V1_PENDING: _ClassVar[SubagentProgressStatusV1]
+    SUBAGENT_PROGRESS_STATUS_V1_RUNNING: _ClassVar[SubagentProgressStatusV1]
+    SUBAGENT_PROGRESS_STATUS_V1_COMPLETED: _ClassVar[SubagentProgressStatusV1]
+    SUBAGENT_PROGRESS_STATUS_V1_FAILED: _ClassVar[SubagentProgressStatusV1]
+    SUBAGENT_PROGRESS_STATUS_V1_CANCELED: _ClassVar[SubagentProgressStatusV1]
+
+class NoticeSeverityV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    NOTICE_SEVERITY_V1_UNSPECIFIED: _ClassVar[NoticeSeverityV1]
+    NOTICE_SEVERITY_V1_INFO: _ClassVar[NoticeSeverityV1]
+    NOTICE_SEVERITY_V1_WARNING: _ClassVar[NoticeSeverityV1]
+
+class OutputRetryClassV1(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    OUTPUT_RETRY_CLASS_V1_UNSPECIFIED: _ClassVar[OutputRetryClassV1]
+    OUTPUT_RETRY_CLASS_V1_NEVER: _ClassVar[OutputRetryClassV1]
+    OUTPUT_RETRY_CLASS_V1_IMMEDIATE: _ClassVar[OutputRetryClassV1]
+    OUTPUT_RETRY_CLASS_V1_AFTER_DELAY: _ClassVar[OutputRetryClassV1]
+    OUTPUT_RETRY_CLASS_V1_AFTER_USER_ACTION: _ClassVar[OutputRetryClassV1]
+    OUTPUT_RETRY_CLASS_V1_RECONCILE_RECEIPT: _ClassVar[OutputRetryClassV1]
 DURABLE_EXECUTION_EVIDENCE_KIND_UNSPECIFIED: DurableExecutionEvidenceKind
 DURABLE_EXECUTION_EVIDENCE_KIND_RUN_STARTED: DurableExecutionEvidenceKind
 DURABLE_EXECUTION_EVIDENCE_KIND_ACTION_OWNER: DurableExecutionEvidenceKind
@@ -84,6 +108,21 @@ PLAN_DECISION_V1_REJECT: PlanDecisionV1
 RUN_COMPLETED_EVIDENCE_STATUS_UNSPECIFIED: RunCompletedEvidenceStatus
 RUN_COMPLETED_EVIDENCE_STATUS_COMPLETED: RunCompletedEvidenceStatus
 RUN_COMPLETED_EVIDENCE_STATUS_CANCELLED: RunCompletedEvidenceStatus
+SUBAGENT_PROGRESS_STATUS_V1_UNSPECIFIED: SubagentProgressStatusV1
+SUBAGENT_PROGRESS_STATUS_V1_PENDING: SubagentProgressStatusV1
+SUBAGENT_PROGRESS_STATUS_V1_RUNNING: SubagentProgressStatusV1
+SUBAGENT_PROGRESS_STATUS_V1_COMPLETED: SubagentProgressStatusV1
+SUBAGENT_PROGRESS_STATUS_V1_FAILED: SubagentProgressStatusV1
+SUBAGENT_PROGRESS_STATUS_V1_CANCELED: SubagentProgressStatusV1
+NOTICE_SEVERITY_V1_UNSPECIFIED: NoticeSeverityV1
+NOTICE_SEVERITY_V1_INFO: NoticeSeverityV1
+NOTICE_SEVERITY_V1_WARNING: NoticeSeverityV1
+OUTPUT_RETRY_CLASS_V1_UNSPECIFIED: OutputRetryClassV1
+OUTPUT_RETRY_CLASS_V1_NEVER: OutputRetryClassV1
+OUTPUT_RETRY_CLASS_V1_IMMEDIATE: OutputRetryClassV1
+OUTPUT_RETRY_CLASS_V1_AFTER_DELAY: OutputRetryClassV1
+OUTPUT_RETRY_CLASS_V1_AFTER_USER_ACTION: OutputRetryClassV1
+OUTPUT_RETRY_CLASS_V1_RECONCILE_RECEIPT: OutputRetryClassV1
 
 class DurableExecutionCanonicalPayloadV1(_message.Message):
     __slots__ = ()
@@ -191,9 +230,13 @@ class RunCompletedEvidenceV1(_message.Message):
     __slots__ = ()
     STATUS_FIELD_NUMBER: _ClassVar[int]
     TOKEN_USAGE_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_HIGH_WATERMARK_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_DIGEST_SHA256_FIELD_NUMBER: _ClassVar[int]
     status: RunCompletedEvidenceStatus
     token_usage: TokenUsageEvidenceV1
-    def __init__(self, status: _Optional[_Union[RunCompletedEvidenceStatus, str]] = ..., token_usage: _Optional[_Union[TokenUsageEvidenceV1, _Mapping]] = ...) -> None: ...
+    output_high_watermark: int
+    output_digest_sha256: str
+    def __init__(self, status: _Optional[_Union[RunCompletedEvidenceStatus, str]] = ..., token_usage: _Optional[_Union[TokenUsageEvidenceV1, _Mapping]] = ..., output_high_watermark: _Optional[int] = ..., output_digest_sha256: _Optional[str] = ...) -> None: ...
 
 class TokenUsageEvidenceV1(_message.Message):
     __slots__ = ()
@@ -208,10 +251,186 @@ class RunFailedEvidenceV1(_message.Message):
     CODE_FIELD_NUMBER: _ClassVar[int]
     ERROR_KIND_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_HIGH_WATERMARK_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_DIGEST_SHA256_FIELD_NUMBER: _ClassVar[int]
     code: str
     error_kind: str
     message: str
-    def __init__(self, code: _Optional[str] = ..., error_kind: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
+    output_high_watermark: int
+    output_digest_sha256: str
+    def __init__(self, code: _Optional[str] = ..., error_kind: _Optional[str] = ..., message: _Optional[str] = ..., output_high_watermark: _Optional[int] = ..., output_digest_sha256: _Optional[str] = ...) -> None: ...
+
+class DurableOutputCanonicalPayloadV1(_message.Message):
+    __slots__ = ()
+    TEXT_DELTA_FIELD_NUMBER: _ClassVar[int]
+    TEXT_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    SAFE_REASONING_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    TOOL_STARTED_FIELD_NUMBER: _ClassVar[int]
+    TOOL_FINISHED_FIELD_NUMBER: _ClassVar[int]
+    PLAN_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    SUBAGENT_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_REFERENCE_FIELD_NUMBER: _ClassVar[int]
+    NOTICE_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    text_delta: TextDeltaOutputV1
+    text_snapshot: TextSnapshotOutputV1
+    safe_reasoning_summary: SafeReasoningSummaryOutputV1
+    tool_started: ToolStartedOutputV1
+    tool_finished: ToolFinishedOutputV1
+    plan_progress: PlanProgressOutputV1
+    subagent_progress: SubagentProgressOutputV1
+    artifact_reference: ArtifactReferenceOutputV1
+    notice: NoticeOutputV1
+    error: ErrorOutputV1
+    def __init__(self, text_delta: _Optional[_Union[TextDeltaOutputV1, _Mapping]] = ..., text_snapshot: _Optional[_Union[TextSnapshotOutputV1, _Mapping]] = ..., safe_reasoning_summary: _Optional[_Union[SafeReasoningSummaryOutputV1, _Mapping]] = ..., tool_started: _Optional[_Union[ToolStartedOutputV1, _Mapping]] = ..., tool_finished: _Optional[_Union[ToolFinishedOutputV1, _Mapping]] = ..., plan_progress: _Optional[_Union[PlanProgressOutputV1, _Mapping]] = ..., subagent_progress: _Optional[_Union[SubagentProgressOutputV1, _Mapping]] = ..., artifact_reference: _Optional[_Union[ArtifactReferenceOutputV1, _Mapping]] = ..., notice: _Optional[_Union[NoticeOutputV1, _Mapping]] = ..., error: _Optional[_Union[ErrorOutputV1, _Mapping]] = ...) -> None: ...
+
+class TextDeltaOutputV1(_message.Message):
+    __slots__ = ()
+    PART_REF_FIELD_NUMBER: _ClassVar[int]
+    DELTA_FIELD_NUMBER: _ClassVar[int]
+    part_ref: str
+    delta: str
+    def __init__(self, part_ref: _Optional[str] = ..., delta: _Optional[str] = ...) -> None: ...
+
+class TextSnapshotOutputV1(_message.Message):
+    __slots__ = ()
+    PART_REF_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    REPLACES_THROUGH_OUTPUT_SEQ_FIELD_NUMBER: _ClassVar[int]
+    part_ref: str
+    text: str
+    replaces_through_output_seq: int
+    def __init__(self, part_ref: _Optional[str] = ..., text: _Optional[str] = ..., replaces_through_output_seq: _Optional[int] = ...) -> None: ...
+
+class SafeReasoningSummaryOutputV1(_message.Message):
+    __slots__ = ()
+    PART_REF_FIELD_NUMBER: _ClassVar[int]
+    SAFE_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    part_ref: str
+    safe_summary: str
+    def __init__(self, part_ref: _Optional[str] = ..., safe_summary: _Optional[str] = ...) -> None: ...
+
+class ToolStartedOutputV1(_message.Message):
+    __slots__ = ()
+    TOOL_CALL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_LABEL_FIELD_NUMBER: _ClassVar[int]
+    REDACTED_INPUT_SUMMARY_JSON_FIELD_NUMBER: _ClassVar[int]
+    tool_call_id: str
+    tool_label: str
+    redacted_input_summary_json: bytes
+    def __init__(self, tool_call_id: _Optional[str] = ..., tool_label: _Optional[str] = ..., redacted_input_summary_json: _Optional[bytes] = ...) -> None: ...
+
+class ToolFinishedOutputV1(_message.Message):
+    __slots__ = ()
+    TOOL_CALL_ID_FIELD_NUMBER: _ClassVar[int]
+    SAFE_RESULT_PREVIEW_FIELD_NUMBER: _ClassVar[int]
+    IS_ERROR_FIELD_NUMBER: _ClassVar[int]
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    tool_call_id: str
+    safe_result_preview: str
+    is_error: bool
+    truncated: bool
+    def __init__(self, tool_call_id: _Optional[str] = ..., safe_result_preview: _Optional[str] = ..., is_error: _Optional[bool] = ..., truncated: _Optional[bool] = ...) -> None: ...
+
+class PlanProgressOutputV1(_message.Message):
+    __slots__ = ()
+    PLAN_REF_FIELD_NUMBER: _ClassVar[int]
+    SAFE_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    STEPS_FIELD_NUMBER: _ClassVar[int]
+    plan_ref: str
+    safe_summary: str
+    steps: _containers.RepeatedCompositeFieldContainer[PlanStepV1]
+    def __init__(self, plan_ref: _Optional[str] = ..., safe_summary: _Optional[str] = ..., steps: _Optional[_Iterable[_Union[PlanStepV1, _Mapping]]] = ...) -> None: ...
+
+class SubagentProgressOutputV1(_message.Message):
+    __slots__ = ()
+    SUBAGENT_REF_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    SAFE_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    subagent_ref: str
+    status: SubagentProgressStatusV1
+    safe_summary: str
+    def __init__(self, subagent_ref: _Optional[str] = ..., status: _Optional[_Union[SubagentProgressStatusV1, str]] = ..., safe_summary: _Optional[str] = ...) -> None: ...
+
+class ArtifactReferenceOutputV1(_message.Message):
+    __slots__ = ()
+    ARTIFACT_REF_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_VERSION_REF_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_TYPE_FIELD_NUMBER: _ClassVar[int]
+    SAFE_METADATA_JSON_FIELD_NUMBER: _ClassVar[int]
+    artifact_ref: str
+    artifact_version_ref: str
+    content_type: str
+    safe_metadata_json: bytes
+    def __init__(self, artifact_ref: _Optional[str] = ..., artifact_version_ref: _Optional[str] = ..., content_type: _Optional[str] = ..., safe_metadata_json: _Optional[bytes] = ...) -> None: ...
+
+class NoticeOutputV1(_message.Message):
+    __slots__ = ()
+    NOTICE_REF_FIELD_NUMBER: _ClassVar[int]
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    SEVERITY_FIELD_NUMBER: _ClassVar[int]
+    RETRY_CLASS_FIELD_NUMBER: _ClassVar[int]
+    notice_ref: str
+    code: str
+    message: str
+    severity: NoticeSeverityV1
+    retry_class: OutputRetryClassV1
+    def __init__(self, notice_ref: _Optional[str] = ..., code: _Optional[str] = ..., message: _Optional[str] = ..., severity: _Optional[_Union[NoticeSeverityV1, str]] = ..., retry_class: _Optional[_Union[OutputRetryClassV1, str]] = ...) -> None: ...
+
+class ErrorOutputV1(_message.Message):
+    __slots__ = ()
+    ERROR_REF_FIELD_NUMBER: _ClassVar[int]
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    RETRY_CLASS_FIELD_NUMBER: _ClassVar[int]
+    error_ref: str
+    code: str
+    message: str
+    retry_class: OutputRetryClassV1
+    def __init__(self, error_ref: _Optional[str] = ..., code: _Optional[str] = ..., message: _Optional[str] = ..., retry_class: _Optional[_Union[OutputRetryClassV1, str]] = ...) -> None: ...
+
+class DurableOutputRecord(_message.Message):
+    __slots__ = ()
+    OUTPUT_REF_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    RUN_ID_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_SEQ_FIELD_NUMBER: _ClassVar[int]
+    CANONICAL_PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_SHA256_FIELD_NUMBER: _ClassVar[int]
+    RECORDED_AT_FIELD_NUMBER: _ClassVar[int]
+    PRODUCER_INSTANCE_REF_FIELD_NUMBER: _ClassVar[int]
+    PRODUCER_GENERATION_FIELD_NUMBER: _ClassVar[int]
+    output_ref: str
+    output_version: int
+    run_id: str
+    output_seq: int
+    canonical_payload: bytes
+    payload_sha256: str
+    recorded_at: _timestamp_pb2.Timestamp
+    producer_instance_ref: str
+    producer_generation: int
+    def __init__(self, output_ref: _Optional[str] = ..., output_version: _Optional[int] = ..., run_id: _Optional[str] = ..., output_seq: _Optional[int] = ..., canonical_payload: _Optional[bytes] = ..., payload_sha256: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., producer_instance_ref: _Optional[str] = ..., producer_generation: _Optional[int] = ...) -> None: ...
+
+class PullDurableOutputRecordsRequest(_message.Message):
+    __slots__ = ()
+    RUN_ID_FIELD_NUMBER: _ClassVar[int]
+    AFTER_OUTPUT_SEQ_FIELD_NUMBER: _ClassVar[int]
+    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
+    run_id: str
+    after_output_seq: int
+    page_size: int
+    def __init__(self, run_id: _Optional[str] = ..., after_output_seq: _Optional[int] = ..., page_size: _Optional[int] = ...) -> None: ...
+
+class PullDurableOutputRecordsResponse(_message.Message):
+    __slots__ = ()
+    RECORDS_FIELD_NUMBER: _ClassVar[int]
+    NEXT_AFTER_OUTPUT_SEQ_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    records: _containers.RepeatedCompositeFieldContainer[DurableOutputRecord]
+    next_after_output_seq: int
+    has_more: bool
+    def __init__(self, records: _Optional[_Iterable[_Union[DurableOutputRecord, _Mapping]]] = ..., next_after_output_seq: _Optional[int] = ..., has_more: _Optional[bool] = ...) -> None: ...
 
 class DurableExecutionEvidence(_message.Message):
     __slots__ = ()

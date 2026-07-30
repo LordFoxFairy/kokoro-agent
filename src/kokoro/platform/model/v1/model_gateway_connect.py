@@ -7,6 +7,7 @@ from typing import Protocol
 
 from connectrpc.client import ConnectClient, ConnectClientSync
 from connectrpc.code import Code
+from connectrpc.codec import Codec
 from connectrpc.compression import Compression
 from connectrpc.errors import ConnectError
 from connectrpc.interceptor import Interceptor, InterceptorSync
@@ -20,9 +21,12 @@ class ModelGatewayService(Protocol):
     async def invoke_model(self, request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.InvokeModelRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.InvokeModelResponse:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
 
+    def stream_model(self, request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest, ctx: RequestContext) -> AsyncIterator[kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse]:
+        raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
+
 
 class ModelGatewayServiceASGIApplication(ConnectASGIApplication[ModelGatewayService]):
-    def __init__(self, service: ModelGatewayService | AsyncGenerator[ModelGatewayService], *, interceptors: Iterable[Interceptor]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None) -> None:
+    def __init__(self, service: ModelGatewayService | AsyncGenerator[ModelGatewayService], *, interceptors: Iterable[Interceptor]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None, codecs: Iterable[Codec] | None = None) -> None:
         super().__init__(
             service=service,
             endpoints=lambda svc: {
@@ -36,10 +40,21 @@ class ModelGatewayServiceASGIApplication(ConnectASGIApplication[ModelGatewayServ
                     ),
                     function=svc.invoke_model,
                 ),
+                "/kokoro.platform.model.v1.ModelGatewayService/StreamModel": Endpoint.server_stream(
+                    method=MethodInfo(
+                        name="StreamModel",
+                        service_name="kokoro.platform.model.v1.ModelGatewayService",
+                        input=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
+                        output=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.stream_model,
+                ),
             },
             interceptors=interceptors,
             read_max_bytes=read_max_bytes,
             compressions=compressions,
+            codecs=codecs,
         )
 
     @property
@@ -68,15 +83,38 @@ class ModelGatewayServiceClient(ConnectClient):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+    def stream_model(
+        self,
+        request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="StreamModel",
+                service_name="kokoro.platform.model.v1.ModelGatewayService",
+                input=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
+                output=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+
 
 
 class ModelGatewayServiceSync(Protocol):
     def invoke_model(self, request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.InvokeModelRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.InvokeModelResponse:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
+    def stream_model(self, request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest, ctx: RequestContext) -> Iterator[kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse]:
+        raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
 
 
 class ModelGatewayServiceWSGIApplication(ConnectWSGIApplication):
-    def __init__(self, service: ModelGatewayServiceSync, interceptors: Iterable[InterceptorSync]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None) -> None:
+    def __init__(self, service: ModelGatewayServiceSync, interceptors: Iterable[InterceptorSync]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None, codecs: Iterable[Codec] | None = None) -> None:
         super().__init__(
             endpoints={
                 "/kokoro.platform.model.v1.ModelGatewayService/InvokeModel": EndpointSync.unary(
@@ -89,10 +127,21 @@ class ModelGatewayServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.invoke_model,
                 ),
+                "/kokoro.platform.model.v1.ModelGatewayService/StreamModel": EndpointSync.server_stream(
+                    method=MethodInfo(
+                        name="StreamModel",
+                        service_name="kokoro.platform.model.v1.ModelGatewayService",
+                        input=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
+                        output=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.stream_model,
+                ),
             },
             interceptors=interceptors,
             read_max_bytes=read_max_bytes,
             compressions=compressions,
+            codecs=codecs,
         )
 
     @property
@@ -116,6 +165,26 @@ class ModelGatewayServiceClientSync(ConnectClientSync):
                 service_name="kokoro.platform.model.v1.ModelGatewayService",
                 input=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.InvokeModelRequest,
                 output=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.InvokeModelResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def stream_model(
+        self,
+        request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="StreamModel",
+                service_name="kokoro.platform.model.v1.ModelGatewayService",
+                input=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
+                output=kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

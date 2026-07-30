@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.parse import urlsplit, urlunsplit
@@ -28,7 +28,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool  # pyright: ignore[reportUnknownVariableType]
@@ -38,6 +38,14 @@ from kokoro.platform.model.v1 import model_gateway_pb2 as gateway_pb
 from kokoro.platform.model.v1.model_gateway_connect import (
     ModelGatewayServiceClient,
     ModelGatewayServiceClientSync,
+)
+from kokoro_agent.model.streaming import (
+    ModelStreamOutcomeUnknown,
+    ModelStreamProtocolError,
+    ModelStreamRejected,
+    ModelStreamTransportError,
+    aiter_verified_model_stream,
+    iter_verified_model_stream,
 )
 
 
@@ -49,6 +57,13 @@ class AsyncModelGatewayClient(Protocol):
         timeout_ms: int | None = None,
     ) -> gateway_pb.InvokeModelResponse: ...
 
+    def stream_model(
+        self,
+        request: gateway_pb.StreamModelRequest,
+        *,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[gateway_pb.StreamModelResponse]: ...
+
 
 class SyncModelGatewayClient(Protocol):
     def invoke_model(
@@ -57,6 +72,13 @@ class SyncModelGatewayClient(Protocol):
         *,
         timeout_ms: int | None = None,
     ) -> gateway_pb.InvokeModelResponse: ...
+
+    def stream_model(
+        self,
+        request: gateway_pb.StreamModelRequest,
+        *,
+        timeout_ms: int | None = None,
+    ) -> Iterator[gateway_pb.StreamModelResponse]: ...
 
 
 class ModelGatewayError(RuntimeError):
@@ -86,7 +108,7 @@ class ModelGatewayUnavailable(ModelGatewayError):
 
 
 class PlatformModelGatewayChatModel(BaseChatModel):
-    """A non-streaming BaseChatModel backed only by Platform's typed RPC."""
+    """LangChain adapter backed only by verified Platform unary/stream RPCs."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True, extra="forbid")
 
@@ -218,6 +240,68 @@ class PlatformModelGatewayChatModel(BaseChatModel):
         except Exception as error:
             raise ModelGatewayUnavailable(rpc_code=type(error).__name__) from None
         return self._result(response)
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        request = self._request(messages, stop, run_manager, kwargs)
+        try:
+            for chunk in iter_verified_model_stream(
+                self._sync_client,
+                request,
+                timeout_ms=self.timeout_ms,
+            ):
+                if run_manager is not None:
+                    run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+                yield chunk
+        except ModelStreamRejected as error:
+            raise ModelGatewayRejected(code=error.code, retryable=error.retryable) from None
+        except ModelStreamOutcomeUnknown as error:
+            raise ModelGatewayOutcomeUnknown(
+                invocation_ref=error.invocation_ref,
+                attempt_ref=error.attempt_ref,
+            ) from None
+        except ModelStreamTransportError as error:
+            raise ModelGatewayUnavailable(rpc_code=error.rpc_code) from None
+        except ModelStreamProtocolError:
+            raise ModelGatewayUnavailable(rpc_code="INVALID_STREAM") from None
+        except Exception as error:
+            raise ModelGatewayUnavailable(rpc_code=type(error).__name__) from None
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        request = self._request(messages, stop, run_manager, kwargs)
+        try:
+            async for chunk in aiter_verified_model_stream(
+                self._async_client,
+                request,
+                timeout_ms=self.timeout_ms,
+            ):
+                if run_manager is not None:
+                    await run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+                yield chunk
+        except ModelStreamRejected as error:
+            raise ModelGatewayRejected(code=error.code, retryable=error.retryable) from None
+        except ModelStreamOutcomeUnknown as error:
+            raise ModelGatewayOutcomeUnknown(
+                invocation_ref=error.invocation_ref,
+                attempt_ref=error.attempt_ref,
+            ) from None
+        except ModelStreamTransportError as error:
+            raise ModelGatewayUnavailable(rpc_code=error.rpc_code) from None
+        except ModelStreamProtocolError:
+            raise ModelGatewayUnavailable(rpc_code="INVALID_STREAM") from None
+        except Exception as error:
+            raise ModelGatewayUnavailable(rpc_code=type(error).__name__) from None
 
     def _request(
         self,

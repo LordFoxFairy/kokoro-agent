@@ -151,3 +151,67 @@ class InvokeModelResponse(_message.Message):
     failed: ModelFailed
     outcome_unknown: ModelOutcomeUnknown
     def __init__(self, invocation_ref: _Optional[str] = ..., attempt_ref: _Optional[str] = ..., replayed: _Optional[bool] = ..., completed: _Optional[_Union[ModelCompleted, _Mapping]] = ..., failed: _Optional[_Union[ModelFailed, _Mapping]] = ..., outcome_unknown: _Optional[_Union[ModelOutcomeUnknown, _Mapping]] = ...) -> None: ...
+
+class StreamModelRequest(_message.Message):
+    __slots__ = ("invocation", "after_sequence")
+    INVOCATION_FIELD_NUMBER: _ClassVar[int]
+    AFTER_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    invocation: InvokeModelRequest
+    after_sequence: int
+    def __init__(self, invocation: _Optional[_Union[InvokeModelRequest, _Mapping]] = ..., after_sequence: _Optional[int] = ...) -> None: ...
+
+class ModelAccepted(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class ModelContentDelta(_message.Message):
+    __slots__ = ("content",)
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    content: str
+    def __init__(self, content: _Optional[str] = ...) -> None: ...
+
+class ModelReasoningDelta(_message.Message):
+    __slots__ = ("content",)
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    content: str
+    def __init__(self, content: _Optional[str] = ...) -> None: ...
+
+class ModelToolCallDelta(_message.Message):
+    __slots__ = ("tool_index", "id", "name", "arguments_json_fragment")
+    TOOL_INDEX_FIELD_NUMBER: _ClassVar[int]
+    ID_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    ARGUMENTS_JSON_FRAGMENT_FIELD_NUMBER: _ClassVar[int]
+    tool_index: int
+    id: str
+    name: str
+    arguments_json_fragment: bytes
+    def __init__(self, tool_index: _Optional[int] = ..., id: _Optional[str] = ..., name: _Optional[str] = ..., arguments_json_fragment: _Optional[bytes] = ...) -> None: ...
+
+class StreamModelResponse(_message.Message):
+    __slots__ = ("invocation_ref", "attempt_ref", "sequence", "previous_frame_digest", "frame_digest", "accepted", "content_delta", "reasoning_delta", "tool_call_delta", "completed", "failed", "outcome_unknown")
+    INVOCATION_REF_FIELD_NUMBER: _ClassVar[int]
+    ATTEMPT_REF_FIELD_NUMBER: _ClassVar[int]
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_FRAME_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    FRAME_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_DELTA_FIELD_NUMBER: _ClassVar[int]
+    REASONING_DELTA_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CALL_DELTA_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_FIELD_NUMBER: _ClassVar[int]
+    FAILED_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_UNKNOWN_FIELD_NUMBER: _ClassVar[int]
+    invocation_ref: str
+    attempt_ref: str
+    sequence: int
+    previous_frame_digest: str
+    frame_digest: str
+    accepted: ModelAccepted
+    content_delta: ModelContentDelta
+    reasoning_delta: ModelReasoningDelta
+    tool_call_delta: ModelToolCallDelta
+    completed: ModelCompleted
+    failed: ModelFailed
+    outcome_unknown: ModelOutcomeUnknown
+    def __init__(self, invocation_ref: _Optional[str] = ..., attempt_ref: _Optional[str] = ..., sequence: _Optional[int] = ..., previous_frame_digest: _Optional[str] = ..., frame_digest: _Optional[str] = ..., accepted: _Optional[_Union[ModelAccepted, _Mapping]] = ..., content_delta: _Optional[_Union[ModelContentDelta, _Mapping]] = ..., reasoning_delta: _Optional[_Union[ModelReasoningDelta, _Mapping]] = ..., tool_call_delta: _Optional[_Union[ModelToolCallDelta, _Mapping]] = ..., completed: _Optional[_Union[ModelCompleted, _Mapping]] = ..., failed: _Optional[_Union[ModelFailed, _Mapping]] = ..., outcome_unknown: _Optional[_Union[ModelOutcomeUnknown, _Mapping]] = ...) -> None: ...

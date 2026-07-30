@@ -39,6 +39,9 @@ tool construction and receives a verified immutable execution assembly.
 - SIGTERM stops intake, drains bounded active work, and leaves remaining recovery to leases.
 - Capability resolution is fail-closed. A missing or invalid Hub assembly cannot fall back to
   local configuration.
+- Model streaming is accepted only from Platform's private RPC. Agent verifies the invocation and
+  attempt identity, every sequence/hash-chain link, the aggregate terminal result, and resumes a
+  transient disconnect from the last verified sequence using the same immutable attempt.
 
 ## Public boundary
 

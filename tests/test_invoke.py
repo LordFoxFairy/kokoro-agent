@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -29,6 +29,7 @@ from fakes import (
     FakeState,
     FakeSubagentRun,
     FakeToolCall,
+    aiter_items,
     find_event,
     find_events,
     text_model,
@@ -53,6 +54,7 @@ from kokoro_agent.contract import (
     SubagentStarted,
     SubagentToolInvoked,
     SubagentToolReturned,
+    ThinkingDeltaPayload,
     ToolAwaitingApproval,
     ToolAwaitingApprovalPayload,
     ToolInvoked,
@@ -62,14 +64,25 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.local_fake import LocalFakeChatModel
-from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
+from kokoro_agent.execution.events import (
+    DurableOutputCommitError,
+    RunEmitter,
+    clip_result,
+    tool_returned_payload,
+)
 from kokoro_agent.execution.publish_agent_events import pump_run
 from kokoro_agent.evidence.models import (
     DurableOutputDraft,
     DurableOutputRecord,
     durable_output_drafts_for_event,
 )
-from kokoro_agent.execution.protocols import AgentRunStream, InvokableAgent
+from kokoro_agent.execution.protocols import (
+    AgentRunStream,
+    InvokableAgent,
+    ModelStream,
+    SubagentRunStream,
+    ToolCallView,
+)
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
@@ -126,6 +139,60 @@ async def _start_agent_run(agent: InvokableAgent) -> AgentRunStream:
         config={"configurable": {"thread_id": "pump-test"}},
         transformers=[],
     )
+
+
+class _DelayedEffectRun:
+    def __init__(self) -> None:
+        self.effects: list[str] = []
+        self.tool_closed = asyncio.Event()
+        self.custom_closed = asyncio.Event()
+        self._model: ModelStream = text_model("fatal output")
+        self._tool = FakeToolCall(
+            tool_call_id="tool-delayed",
+            tool_name="delayed_side_effect",
+            output="done",
+        )
+
+    @property
+    def messages(self) -> AsyncIterator[ModelStream]:
+        return aiter_items((self._model,))
+
+    @property
+    def tool_calls(self) -> AsyncIterator[ToolCallView]:
+        return self._delayed_tool()
+
+    @property
+    def subagents(self) -> AsyncIterator[SubagentRunStream]:
+        return aiter_items(())
+
+    @property
+    def custom(self) -> AsyncIterator[object]:
+        return self._delayed_custom()
+
+    async def _delayed_tool(self) -> AsyncIterator[ToolCallView]:
+        try:
+            await asyncio.sleep(0.1)
+            self.effects.append("tool")
+            yield cast(ToolCallView, self._tool)
+        finally:
+            self.tool_closed.set()
+
+    async def _delayed_custom(self) -> AsyncIterator[object]:
+        try:
+            await asyncio.sleep(0.1)
+            self.effects.append("custom")
+            yield "custom"
+        finally:
+            self.custom_closed.set()
+
+    async def interrupted(self) -> bool:
+        return False
+
+    async def __aenter__(self) -> _DelayedEffectRun:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
 
 
 async def test_first_event_is_run_started_index_zero() -> None:
@@ -588,6 +655,36 @@ async def test_plan_interrupt_emits_dedicated_owner_without_generic_awaiting() -
     assert proposed.payload.proposal.allowed_actions == ["accept", "reject"]
 
 
+async def test_plan_proposed_live_publish_failure_stays_paused_and_durable() -> None:
+    class FailPlanPublishBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if event.get("kind") == "plan.proposed":
+                raise ConnectionError("live plan publish unavailable")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    bus = FailPlanPublishBus()
+    ledger = FakeLedger()
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=_plan_interrupt_state())
+
+    done = await _invoke(
+        bus,
+        agent,
+        run_id="r-plan-live-loss",
+        approval_tool_names=frozenset({"propose_plan"}),
+        ledger=ledger,
+    )
+
+    assert done is False
+    assert "run.failed" not in bus.kinds("r-plan-live-loss")
+    assert len(ledger.output_records["r-plan-live-loss"]) == 1
+    plan_row = next(
+        row for row in ledger.outbox["r-plan-live-loss"] if row["kind"] == "plan.proposed"
+    )
+    assert plan_row["status"] == "queued"
+
+
 async def test_plan_interrupt_mixed_with_another_tool_fails_loud() -> None:
     bus = FakeBus()
     agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=_plan_interrupt_state(mixed=True))
@@ -748,7 +845,7 @@ async def test_plan_proposal_critical_identity_is_semantically_idempotent() -> N
         )
 
 
-async def test_all_durable_outputs_precede_live_publish_and_survive_publish_failure() -> (
+async def test_all_durable_outputs_precede_and_survive_isolated_live_publish_failure() -> (
     None
 ):
     ledger = FakeLedger()
@@ -763,16 +860,15 @@ async def test_all_durable_outputs_precede_live_publish_and_survive_publish_fail
 
     bus = FailingBus()
     emitter = RunEmitter(bus, "r-output-publish", outbox=ledger)
-    with pytest.raises(RuntimeError, match="live publish failed"):
-        await emitter.emit(
-            ToolReturnedPayload(
-                segment_id="segment-1",
-                tool_id="tool-1",
-                name="search",
-                result="raw secret result",
-                is_error=True,
-            )
+    await emitter.emit(
+        ToolReturnedPayload(
+            segment_id="segment-1",
+            tool_id="tool-1",
+            name="search",
+            result="raw secret result",
+            is_error=True,
         )
+    )
 
     canonical = [
         evidence_pb2.DurableOutputCanonicalPayloadV1.FromString(
@@ -787,7 +883,38 @@ async def test_all_durable_outputs_precede_live_publish_and_survive_publish_fail
     assert bus.published == []
 
 
-async def test_noncritical_output_replay_after_publish_crash_is_keep_first() -> None:
+async def test_live_publish_failure_without_outbox_propagates() -> None:
+    class FailingBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            raise ConnectionError("live-only publish unavailable")
+
+    with pytest.raises(ConnectionError, match="live-only publish unavailable"):
+        await RunEmitter(FailingBus(), "r-live-only").emit(
+            MessageDeltaPayload(segment_id="segment-live", delta="not durable")
+        )
+
+
+async def test_live_publish_failure_without_durable_mapping_propagates() -> None:
+    class FailingBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            raise ConnectionError("unmapped live publish unavailable")
+
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-unmapped-live"))
+
+    with pytest.raises(ConnectionError, match="unmapped live publish unavailable"):
+        await RunEmitter(FailingBus(), "r-unmapped-live", outbox=ledger).emit(
+            ThinkingDeltaPayload(segment_id="segment-thinking", delta="ephemeral")
+        )
+
+    assert ledger.output_records.get("r-unmapped-live", []) == []
+
+
+async def test_noncritical_output_replay_after_isolated_live_loss_is_keep_first() -> None:
     ledger = FakeLedger()
     await ledger.try_claim(request("r-output-replay"))
     payload = MessageDeltaPayload(segment_id="segment-replay", delta="same text")
@@ -798,8 +925,7 @@ async def test_noncritical_output_replay_after_publish_crash_is_keep_first() -> 
         ) -> StreamItem:
             raise RuntimeError("crash after output append")
 
-    with pytest.raises(RuntimeError, match="crash after output append"):
-        await RunEmitter(FailingBus(), "r-output-replay", outbox=ledger).emit(payload)
+    await RunEmitter(FailingBus(), "r-output-replay", outbox=ledger).emit(payload)
     assert len(ledger.output_records["r-output-replay"]) == 1
 
     recovered_bus = FakeBus()
@@ -916,6 +1042,152 @@ async def test_durable_output_rejection_is_fail_loud_and_suppresses_live_publish
     assert bus.published == []
 
 
+async def test_pump_cancels_delayed_producers_on_durable_append_rejection() -> None:
+    class RejectingLedger(FakeLedger):
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            return None
+
+    ledger = RejectingLedger()
+    await ledger.try_claim(request("r-output-cancel-producers"))
+    run = _DelayedEffectRun()
+
+    with pytest.raises(DurableOutputCommitError) as caught:
+        await asyncio.wait_for(
+            pump_run(
+                RunEmitter(
+                    FakeBus(),
+                    "r-output-cancel-producers",
+                    next_index=1,
+                    outbox=ledger,
+                ),
+                run,
+                source_for=_runtime_custom,
+            ),
+            timeout=1,
+        )
+
+    await asyncio.sleep(0)
+    assert type(caught.value) is DurableOutputCommitError
+    assert str(caught.value).endswith("DURABLE_OUTPUT_APPEND_REJECTED")
+    assert run.effects == []
+    assert run.tool_closed.is_set() and run.custom_closed.is_set()
+    task_names = {task.get_name() for task in asyncio.all_tasks()}
+    assert "kokoro-event-drainer:r-output-cancel-producers" not in task_names
+    assert "kokoro-projection-producer:r-output-cancel-producers" not in task_names
+
+
+async def test_pump_observes_drainer_fault_after_producer_finishes_first() -> None:
+    class SlowRejectingLedger(FakeLedger):
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            await asyncio.sleep(0.05)
+            return None
+
+    ledger = SlowRejectingLedger()
+    await ledger.try_claim(request("r-output-drainer-race"))
+
+    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_APPEND_REJECTED"):
+        await asyncio.wait_for(
+            pump_run(
+                RunEmitter(
+                    FakeBus(),
+                    "r-output-drainer-race",
+                    next_index=1,
+                    outbox=ledger,
+                ),
+                await _pump_text_run("producer finishes first"),
+                source_for=_runtime_custom,
+            ),
+            timeout=1,
+        )
+
+
+async def test_invoke_append_rejection_cannot_end_in_completed() -> None:
+    class RejectOnceLedger(FakeLedger):
+        rejected = False
+
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            if not self.rejected:
+                self.rejected = True
+                return None
+            return await super().append_durable_outputs(
+                run_id,
+                source_event_ref,
+                drafts,
+                recorded_at_ms=recorded_at_ms,
+            )
+
+    bus = FakeBus()
+    done = await _invoke(
+        bus,
+        FakeAgent(run=text_run("must not complete")),
+        run_id="r-output-invoke-rejection",
+        ledger=RejectOnceLedger(),
+    )
+
+    assert done is True
+    assert "run.completed" not in bus.kinds("r-output-invoke-rejection")
+    failed = find_event(bus.run_events("r-output-invoke-rejection"), RunFailed)
+    assert failed.payload.error_kind == "DurableOutputCommitError"
+    assert failed.payload.message.endswith("DURABLE_OUTPUT_APPEND_REJECTED")
+
+
+async def test_critical_stage_failure_is_fatal_after_output_commit() -> None:
+    class StageFailingLedger(FakeLedger):
+        async def stage_critical_frame(
+            self,
+            run_id: str,
+            kind: str,
+            index: int,
+            timestamp: int,
+            payload_json: str,
+            *,
+            terminal: bool,
+            semantic_key: str | None = None,
+        ) -> StagedFrame | None:
+            raise OSError("stage unavailable")
+
+    ledger = StageFailingLedger()
+    await ledger.try_claim(request("r-output-stage-failure"))
+    payload = PlanProposedPayload(
+        segment_id="seg-plan",
+        owner_ref="call-plan-stage",
+        owner_version=1,
+        proposal=PlanProposal(
+            summary="Persist before stage",
+            steps=[PlanStep(step_ref="step-1", label="Persist", status="pending")],
+            allowed_actions=["accept", "reject"],
+        ),
+    )
+
+    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_STAGE_FAILED"):
+        await RunEmitter(
+            FakeBus(), "r-output-stage-failure", outbox=ledger
+        ).emit(payload)
+
+    assert len(ledger.output_records["r-output-stage-failure"]) == 1
+
+
 async def test_durable_output_append_failure_cannot_end_in_completed() -> None:
     class FailOnceLedger(FakeLedger):
         failed = False
@@ -974,13 +1246,12 @@ async def test_durable_output_source_conflict_cannot_end_in_completed() -> None:
     await RunEmitter(bus, "r-output-pump-conflict", outbox=ledger).emit(
         RunStartedPayload()
     )
-    with pytest.raises(ConnectionError, match="live publish lost"):
-        await RunEmitter(
-            bus,
-            "r-output-pump-conflict",
-            next_index=1,
-            outbox=ledger,
-        ).emit(MessageDeltaPayload(segment_id="segment-1", delta="original"))
+    await RunEmitter(
+        bus,
+        "r-output-pump-conflict",
+        next_index=1,
+        outbox=ledger,
+    ).emit(MessageDeltaPayload(segment_id="segment-1", delta="original"))
 
     done = await _invoke(
         bus,
@@ -1061,7 +1332,7 @@ async def test_critical_output_recovers_if_process_dies_before_staging() -> None
             allowed_actions=["accept", "reject"],
         ),
     )
-    with pytest.raises(RuntimeError, match="crash after output before stage"):
+    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_STAGE_FAILED"):
         await RunEmitter(bus, "r-plan-crash", outbox=ledger).emit(payload)
     assert len(ledger.output_records["r-plan-crash"]) == 1
     assert bus.published == []

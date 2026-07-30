@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import logging
 import time
 from collections.abc import Callable, Mapping
 
@@ -57,6 +58,7 @@ from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
 SourceResolver = Callable[[str], SubagentSource]
+LOGGER = logging.getLogger(__name__)
 
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
 # 其余 live 帧（delta/tool 过程帧）不占 seq、丢了由 checkpoint 重建。
@@ -218,6 +220,7 @@ class RunEmitter:
             if isinstance(payload, RunOwnerCompletedPayload)
             else None
         )
+        durable_output_committed = False
         if self._outbox is not None:
             drafts = durable_output_drafts_for_event(payload)
             if drafts:
@@ -252,6 +255,7 @@ class RunEmitter:
                     raise DurableOutputCommitError(
                         "DURABLE_OUTPUT_COMMIT_FAILED: DURABLE_OUTPUT_APPEND_REJECTED"
                     )
+                durable_output_committed = True
         base: dict[str, object] = {
             "kind": kind,
             "run_id": self._run_id,
@@ -262,15 +266,20 @@ class RunEmitter:
         if self._outbox is not None and kind in CRITICAL_KINDS:
             # critical 帧：先分配 durable_seq/event_id + 落 queued 行，再发布（live），后置 published。
             payload_json = json.dumps(payload.model_dump(mode="json", exclude_none=True))
-            staged = await self._outbox.stage_critical_frame(
-                self._run_id,
-                kind,
-                index,
-                timestamp,
-                payload_json,
-                terminal=kind in TERMINAL_KINDS,
-                semantic_key=semantic_key,
-            )
+            try:
+                staged = await self._outbox.stage_critical_frame(
+                    self._run_id,
+                    kind,
+                    index,
+                    timestamp,
+                    payload_json,
+                    terminal=kind in TERMINAL_KINDS,
+                    semantic_key=semantic_key,
+                )
+            except Exception as error:
+                raise DurableOutputCommitError(
+                    "DURABLE_OUTPUT_STAGE_FAILED"
+                ) from error
             if staged is None:
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
                 return
@@ -283,22 +292,46 @@ class RunEmitter:
                 {**base, "durable_seq": staged.durable_seq, "event_id": staged.event_id}
             )
             self._next_index += 1
-            await self._bus.publish(
-                run_events_stream(self._run_id),
-                event.model_dump(exclude_none=True),
-                maxlen=RUN_EVENTS_MAXLEN,
-            )
-            await self._outbox.mark_critical_published(self._run_id, staged.durable_seq)
+            try:
+                await self._bus.publish(
+                    run_events_stream(self._run_id),
+                    event.model_dump(exclude_none=True),
+                    maxlen=RUN_EVENTS_MAXLEN,
+                )
+            except Exception:  # noqa: BLE001 — live bus loss leaves the critical frame queued
+                LOGGER.warning(
+                    "live event publish failed; durable frame remains queued: run_id=%s kind=%s",
+                    self._run_id,
+                    kind,
+                )
+                return
+            try:
+                await self._outbox.mark_critical_published(
+                    self._run_id, staged.durable_seq
+                )
+            except Exception as error:
+                raise DurableOutputCommitError(
+                    "DURABLE_OUTPUT_PUBLISH_MARK_FAILED"
+                ) from error
             metrics.record_outbox("published")
             return
         event = agent_event_adapter.validate_python(base)
         self._next_index += 1
         # exclude_none：契约 optional 字段的 None 即"缺席"；null 上 wire 会被 session 的 zod .optional() 拒收。
-        await self._bus.publish(
-            run_events_stream(self._run_id),
-            event.model_dump(exclude_none=True),
-            maxlen=RUN_EVENTS_MAXLEN,
-        )
+        try:
+            await self._bus.publish(
+                run_events_stream(self._run_id),
+                event.model_dump(exclude_none=True),
+                maxlen=RUN_EVENTS_MAXLEN,
+            )
+        except Exception:  # noqa: BLE001 — isolate only after this event is durable
+            if not durable_output_committed:
+                raise
+            LOGGER.warning(
+                "live event publish failed after durable output commit: run_id=%s kind=%s",
+                self._run_id,
+                kind,
+            )
 
     async def emit_completed(
         self,

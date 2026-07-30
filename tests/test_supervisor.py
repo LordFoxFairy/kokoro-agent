@@ -237,6 +237,45 @@ async def test_resume_edit_and_reject_decision_shapes() -> None:
     assert returned, "reject must emit snapshot tool.returned"
 
 
+async def test_resume_resolution_live_publish_failure_keeps_run_healthy() -> None:
+    class FailResolutionPublishBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if event.get("kind") == "tool.returned":
+                raise ConnectionError("live resolution publish unavailable")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
+    bus = FailResolutionPublishBus()
+    sup, store = _supervisor(agent)
+    await sup.dispatch(bus, request("r-resolution-live-loss"))
+    await _drain(sup)
+    before_outputs = len(store.output_records.get("r-resolution-live-loss", []))
+    agent.seen_payloads.clear()
+
+    await sup.dispatch(
+        bus,
+        _inbound(
+            {
+                "kind": "run.resume",
+                "decision_id": "dec-resolution-loss",
+                "run_id": "r-resolution-live-loss",
+                "decisions": [
+                    {"type": "reject", "tool_id": _TID, "reason": "not approved"}
+                ],
+            }
+        ),
+    )
+    await _drain(sup)
+
+    assert "run.failed" not in bus.kinds("r-resolution-live-loss")
+    assert len(store.output_records["r-resolution-live-loss"]) == before_outputs + 1
+    assert len(agent.seen_payloads) == 1
+    resumed = agent.seen_payloads[0]
+    assert isinstance(resumed, Command)
+
+
 # ④ resume：无 pending → 幂等护栏丢弃。
 async def test_resume_without_pending_is_dropped() -> None:
     agent = FakeAgent(run=text_run("hi"))

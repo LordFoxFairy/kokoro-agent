@@ -14,7 +14,6 @@ from kokoro_agent.execution.protocols import (
 )
 from kokoro_agent.execution.events import (
     AgentEventPayload,
-    DurableOutputCommitError,
     RunEmitter,
     SourceResolver,
     delivery_created_payload,
@@ -50,26 +49,48 @@ async def pump_run(emitter: RunEmitter, run: AgentRunStream, *, source_for: Sour
     try/finally 保证 None 哨兵必达、drainer 必被收束：上游崩溃也不泄漏后台协程。
     """
     queue: _EventQueue = asyncio.Queue()
-    drainer = asyncio.create_task(_drain(emitter, queue))
+    drainer = asyncio.create_task(
+        _drain(emitter, queue), name=f"kokoro-event-drainer:{emitter.run_id}"
+    )
+    producer = asyncio.create_task(
+        _consume(run, queue, subagent_id=None, source_for=source_for),
+        name=f"kokoro-projection-producer:{emitter.run_id}",
+    )
     try:
-        await _consume(run, queue, subagent_id=None, source_for=source_for)
+        done, _pending = await asyncio.wait(
+            {producer, drainer}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if drainer in done:
+            # The sentinel has not been sent yet, so an early drainer exit is an emitter
+            # failure. Await the task directly to preserve the original exception type.
+            await drainer
+        await producer
     finally:
-        await queue.put(None)
+        await _cancel_and_settle(producer)
+        if not drainer.done():
+            await queue.put(None)
         await drainer
 
 
+async def _cancel_and_settle(task: asyncio.Task[None]) -> None:
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:  # noqa: BLE001 — preserve the drainer's original fatal exception
+        LOGGER.exception("projection producer cleanup failed")
+
+
 async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
-    # 单一发布者：按入队序合流为一条有序 wire；单事件发布失败隔离，不毁整条流。
+    # 单一发布者：按入队序合流为一条有序 wire。RunEmitter 仅在已有 durable truth 时、
+    # 且只在 bus.publish 调用边界隔离 live failure；其余错误必须原样冒泡并取消 producer。
     while True:
         payload = await queue.get()
         if payload is None:
             return
-        try:
-            await emitter.emit(payload)
-        except DurableOutputCommitError:
-            raise
-        except Exception:  # noqa: BLE001 — 局部容错：单事件发布失败隔离，不毁整条流
-            LOGGER.warning("dropping event on publish failure: %s", type(payload).__name__)
+        await emitter.emit(payload)
 
 
 async def _consume(

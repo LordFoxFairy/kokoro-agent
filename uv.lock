@@ -95,6 +95,7 @@ constraints = [
     { name = "pluggy", specifier = "==1.6.0" },
     { name = "prometheus-client", specifier = "==0.25.0" },
     { name = "protobuf", specifier = "==6.33.6" },
+    { name = "protoc-gen-connectrpc", specifier = "==0.10.1" },
     { name = "pyasn1", specifier = "==0.6.3" },
     { name = "pyasn1-modules", specifier = "==0.4.2" },
     { name = "pycparser", specifier = "==3.0" },
@@ -1057,6 +1058,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "boto3-stubs-lite", extra = ["s3"] },
+    { name = "protoc-gen-connectrpc" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1092,6 +1094,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "boto3-stubs-lite", extras = ["s3"], specifier = ">=1.43.40" },
+    { name = "protoc-gen-connectrpc", specifier = "==0.10.1" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
@@ -1870,6 +1873,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/ca/25afc144934014700c52e05103c2421997482d561f3101ff352e1292fb81/protobuf-6.33.6-cp39-abi3-manylinux2014_s390x.whl", hash = "sha256:c96c37eec15086b79762ed265d59ab204dabc53056e3443e702d2681f4b39ce3", size = 339381, upload-time = "2026-03-18T19:04:54.616Z" },
     { url = "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593", size = 323436, upload-time = "2026-03-18T19:04:55.768Z" },
     { url = "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl", hash = "sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901", size = 170656, upload-time = "2026-03-18T19:04:59.826Z" },
+]
+
+[[package]]
+name = "protoc-gen-connectrpc"
+version = "0.10.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/05/d4b732a093dfa9afb7e9bba6a3440d9122be6340169cb27c99a8bb700a71/protoc_gen_connectrpc-0.10.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:70bff4efc929ef3b1ae0d503487bda9fe0a35c24384180ac6ff1dc4ef6e7c5eb", size = 1911564, upload-time = "2026-05-29T02:20:11.636Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/b8/018d86b3266cd22d4b8389c05310819d16001c21e73d01ad719c0f2ca4f7/protoc_gen_connectrpc-0.10.1-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:c8faee7beea74480961a6774b7f0236e4311597cc9aa998303c245b92c89dd3c", size = 2055544, upload-time = "2026-05-29T02:20:13.215Z" },
+    { url = "https://files.pythonhosted.org/packages/74/32/f29b0d467ed27a30eaab2b7b6aa602221127d39def3b592ffb1e10b5de8e/protoc_gen_connectrpc-0.10.1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:17f236ebed9faa127d470110cd35f306b68e510656839ccff0e26ebf6ec502b1", size = 1852404, upload-time = "2026-05-29T02:20:14.714Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/df/e14e92a2b564044974b4d72de35552308543154f4ed3cebd9107baa7af1b/protoc_gen_connectrpc-0.10.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:43c456a5f0f768083bbad3d878551019f771a5fe47f441e268c3238d7bd39b09", size = 2042539, upload-time = "2026-05-29T02:20:16.292Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/fb/52e77371ede74bff6123f747fc51fea0c7b3c23ccff3ed1504f4e5c789f4/protoc_gen_connectrpc-0.10.1-py3-none-win_amd64.whl", hash = "sha256:7515fb3a1679d3fccc613f3325557bb1c40533dba591ec5aa1fdf2edf1afacf1", size = 2092077, upload-time = "2026-05-29T02:20:18.125Z" },
+    { url = "https://files.pythonhosted.org/packages/59/5f/f6525c97daf10eba644c35497080340a359573f0752fca50af711b3cd154/protoc_gen_connectrpc-0.10.1-py3-none-win_arm64.whl", hash = "sha256:5675ff50db2c524e1993761b5334cff0f6d3ed24686180d2fa0bc4c3b8a9b04f", size = 1872468, upload-time = "2026-05-29T02:20:19.783Z" },
 ]
 
 [[package]]

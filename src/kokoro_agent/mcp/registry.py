@@ -10,8 +10,8 @@ HUB-CONSIST 语义（wire 从 names 切为 McpGrant{scope,name,revision,config_h
 - 版本锁定：快照行不可变，旧会话拿 revision=N 永远是那份 config；改版 bump 不影响旧会话。
 - secret_ref 三档（沿用 MCP-SECRET 半场；轮换不 bump revision）：
   - `env:VAR` → env 取整值进 authorization header（缺失 fail-loud）；
-  - `handle:srt_...` → 装配期收集本 run 全部句柄，一次批调 hub runtime resolve 换明文
-    （caller=agent 凭据）；批解失败 = 相关 server 占名不可用，不炸 run；
+  - `handle:srt_...` → 装配期收集本 run 全部句柄，一次批调 Agent-only Hub mTLS
+    ConnectRPC resolve 换明文；批解失败 = 相关 server 占名不可用，不炸 run；
   - `secret:path` → 留位废除（D1 不留兼容轴），遇到即 McpConfigError fail-loud。
 - yaml 兜底仅限无 grant 的部署级 server（E2E-33 死端口覆盖语义重述：真相在 grant/快照，
   yaml 不再参与 namespace 池——granted 名恒由 grant 覆盖 yaml 同名）。
@@ -104,7 +104,7 @@ def _headers_from_ref(
 class McpRegistry:
     """会话快照 McpGrant[] → per-run 装配定义表（写面/池查询/合并权威在 kokoro-hub）。
 
-    读 hub 同库两集合（读写分离，每 run 不跨服务 RPC）：mcp_server_revisions（不可变快照 =
+    读 hub 同库两集合（读写分离）：mcp_server_revisions（不可变快照 =
     授权内容）+ mcp_servers（活文档现况 = fail-closed 闸）。凭据明文经 hub runtime resolve 换。
     """
 
@@ -262,8 +262,8 @@ async def make_mcp_registry(
 ) -> AsyncGenerator[McpRegistry, None]:
     """与 skills/hub.py 同库同客户端形态：进程级一个连接，run 内只做精确读。
 
-    hub 凭据解析出口从同一注入 env 装配（KOKORO_HUB_BASE_URL + KOKORO_INTERNAL_SECRET_AGENT）；
-    缺任一 → 无 `handle:` 解析能力（占名不可用不炸 run）。同时把连接期 egress 模式
+    Hub 凭据解析出口从同一注入 env 装配：完整 RPC URL、精确 server name 与
+    mTLS CA/cert/key 齐全时启用；全缺即关闭，部分配置启动即 fail-closed。同时把连接期 egress 模式
     （KOKORO_MCP_EGRESS_MODE）从注入 env 配置为进程级策略——mcp 层唯一收到注入 env 的启动钩子，
     连接层 build_connections 据此设防（避免在连接层读进程环境，守 env 单点纪律）。"""
     configure_egress_mode(egress_mode_from_env(env))

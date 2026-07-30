@@ -150,12 +150,17 @@ class AppConfig(BaseModel):
 
     # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
     mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
-    # MCP 凭据句柄解析出口（hub runtime resolve）与连接期 egress 防线（mcp/egress.py）。
-    # 声明于此供启动期配置快照可见（log_config_summary，secret 掩码）；功能消费在 mcp 层——
-    # make_mcp_registry / build_connections 读同一注入 env（写区不含 worker/main，暂不经此穿透）。
-    hub_base_url: OptStr = Field(default=None, validation_alias="KOKORO_HUB_BASE_URL")
-    internal_secret_agent: OptSecret = Field(
-        default=None, validation_alias="KOKORO_INTERNAL_SECRET_AGENT"
+    # Agent-only Hub runtime ConnectRPC 出口：生产只接受显式 mTLS CA/cert/key 与精确服务身份。
+    # 功能消费仍由 mcp 层从启动期 env 快照构造，避免凭据进入配置日志或业务对象。
+    hub_rpc_url: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_URL")
+    hub_rpc_server_name: OptStr = Field(
+        default=None, validation_alias="KOKORO_HUB_RPC_SERVER_NAME"
+    )
+    hub_rpc_ca_file: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_CA_FILE")
+    hub_rpc_cert_file: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_CERT_FILE")
+    hub_rpc_key_file: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_KEY_FILE")
+    hub_rpc_timeout_ms: int = Field(
+        default=5_000, ge=100, le=5_000, validation_alias="KOKORO_HUB_RPC_TIMEOUT_MS"
     )
     mcp_egress_mode: str = Field(default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE")
 

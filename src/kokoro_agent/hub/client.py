@@ -138,6 +138,8 @@ class HubExecutionAssemblyClient:
             )
             client = HubRuntimeServiceClient(
                 address,
+                accept_compression=(),
+                send_compression=None,
                 timeout_ms=settings.timeout_ms,
                 read_max_bytes=_MAX_METADATA_BYTES,
                 http_client=pyqwest.Client(transport),

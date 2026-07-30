@@ -12,6 +12,7 @@ from zipfile import ZipFile
 import pytest
 
 from kokoro.platform.capability.v1 import capability_catalog_pb2 as capability_pb
+import kokoro_agent.hub.client as hub_client_module
 from kokoro_agent.contract import McpGrant, SkillGrant
 from kokoro_agent.hub import (
     ExecutionAssemblyError,
@@ -272,3 +273,48 @@ def test_rpc_identity_has_no_http_or_path_fallback(tmp_path: Path) -> None:
                 capability_pb.ResolveExecutionAssemblyResponse(), b"x"
             ),
         )
+
+
+def test_real_transport_disables_unnegotiated_compression(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ca = tmp_path / "ca.pem"
+    cert = tmp_path / "agent.pem"
+    key = tmp_path / "agent-key.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+    cert.write_text("-----BEGIN CERTIFICATE-----\nagent\n-----END CERTIFICATE-----\n")
+    key.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n")
+    key.chmod(0o600)
+    captured: dict[str, object] = {}
+
+    class FakeTransport:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+
+    class FakeHttpClient:
+        def __init__(self, transport: object) -> None:
+            del transport
+
+    class CapturingRuntimeClient:
+        def __init__(self, address: str, **kwargs: object) -> None:
+            captured.update(address=address, **kwargs)
+
+    monkeypatch.setattr(hub_client_module.pyqwest, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(hub_client_module.pyqwest, "Client", FakeHttpClient)
+    monkeypatch.setattr(
+        hub_client_module, "HubRuntimeServiceClient", CapturingRuntimeClient
+    )
+
+    HubExecutionAssemblyClient(
+        HubRuntimeSettings(
+            rpc_url="https://hub.internal:4252",
+            server_name="hub.internal",
+            ca_file=str(ca),
+            cert_file=str(cert),
+            key_file=str(key),
+            artifact_cache_dir=str(tmp_path / "cache"),
+        )
+    )
+
+    assert captured["accept_compression"] == ()
+    assert captured["send_compression"] is None

@@ -426,7 +426,11 @@ class RunEmitter:
             event.model_dump(exclude_none=True),
             maxlen=RUN_EVENTS_MAXLEN,
         )
-        await outbox.mark_critical_published(self._run_id, frame.durable_seq)
+        try:
+            await outbox.mark_critical_published(self._run_id, frame.durable_seq)
+        except Exception:  # noqa: BLE001 — ACK loss leaves the fixed frame queued for replay
+            self._record_delivery_failure("publish_ack", frame.kind)
+            return
         metrics.record_outbox("published")
 
 

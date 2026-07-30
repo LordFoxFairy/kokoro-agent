@@ -50,6 +50,7 @@ from kokoro_agent.contract import (
     PlanStep,
     RunCompleted,
     RunFailed,
+    RunOwnerCompleted,
     RunStarted,
     RunStartedPayload,
     SubagentFinished,
@@ -91,7 +92,7 @@ from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
-from kokoro_agent.storage.ledger import StagedFrame
+from kokoro_agent.storage.ledger import OutboxFrame, StagedFrame
 
 
 def _runtime_custom(_name: str) -> SubagentSource:
@@ -1544,6 +1545,142 @@ async def test_invoke_run_started_ack_failure_does_not_fail_run() -> None:
         if row["kind"] == "run.started"
     )
     assert started["status"] == "queued"
+
+
+class _CompletionAckFailingLedger(FakeLedger):
+    def __init__(self, *failure_kinds: str) -> None:
+        super().__init__()
+        self._failure_kinds = list(failure_kinds)
+
+    async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
+        row = next(
+            row
+            for row in self.outbox[run_id]
+            if row["durable_seq"] == durable_seq
+        )
+        kind = str(row["kind"])
+        if self._failure_kinds and kind == self._failure_kinds[0]:
+            self._failure_kinds.pop(0)
+            raise OSError(f"{kind} ack unavailable")
+        await super().mark_critical_published(run_id, durable_seq)
+
+
+async def test_completion_owner_ack_failure_still_publishes_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outbox_states: list[str] = []
+
+    def record_outbox(state: str, count: int = 1) -> None:
+        outbox_states.extend([state] * count)
+
+    monkeypatch.setattr(metrics, "record_outbox", record_outbox)
+    run_id = "r-owner-completion-ack-failure"
+    ledger = _CompletionAckFailingLedger("run.owner.completed")
+    bus = FakeBus()
+
+    done = await _invoke(
+        bus,
+        FakeAgent(run=text_run("owner ack lost")),
+        run_id=run_id,
+        ledger=ledger,
+    )
+
+    assert done is True
+    assert bus.kinds(run_id)[-2:] == ["run.owner.completed", "run.completed"]
+    assert "run.failed" not in bus.kinds(run_id)
+    owner, terminal = ledger.outbox[run_id][-2:]
+    assert owner["kind"] == "run.owner.completed"
+    assert owner["status"] == "queued"
+    assert terminal["kind"] == "run.completed"
+    assert terminal["status"] == "published"
+    assert outbox_states.count("publish_ack_failed") == 1
+
+
+async def test_completion_terminal_ack_failure_does_not_fail_completed_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outbox_states: list[str] = []
+
+    def record_outbox(state: str, count: int = 1) -> None:
+        outbox_states.extend([state] * count)
+
+    monkeypatch.setattr(metrics, "record_outbox", record_outbox)
+    run_id = "r-terminal-completion-ack-failure"
+    ledger = _CompletionAckFailingLedger("run.completed")
+    bus = FakeBus()
+
+    done = await _invoke(
+        bus,
+        FakeAgent(run=text_run("terminal ack lost")),
+        run_id=run_id,
+        ledger=ledger,
+    )
+
+    assert done is True
+    assert bus.kinds(run_id)[-2:] == ["run.owner.completed", "run.completed"]
+    assert "run.failed" not in bus.kinds(run_id)
+    owner, terminal = ledger.outbox[run_id][-2:]
+    assert owner["status"] == "published"
+    assert terminal["status"] == "queued"
+    completed = find_event(bus.run_events(run_id), RunCompleted)
+    assert terminal["event_id"] == completed.event_id
+    assert outbox_states.count("publish_ack_failed") == 1
+
+
+async def test_consecutive_completion_ack_failures_are_aggregated_and_replayable(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outbox_states: list[str] = []
+
+    def record_outbox(state: str, count: int = 1) -> None:
+        outbox_states.extend([state] * count)
+
+    monkeypatch.setattr(metrics, "record_outbox", record_outbox)
+    run_id = "r-consecutive-completion-ack-failure"
+    ledger = _CompletionAckFailingLedger("run.owner.completed", "run.completed")
+    bus = FakeBus()
+
+    with caplog.at_level("DEBUG", logger="kokoro_agent.execution.events"):
+        done = await _invoke(
+            bus,
+            FakeAgent(run=text_run("both acks lost")),
+            run_id=run_id,
+            ledger=ledger,
+        )
+
+    assert done is True
+    assert bus.kinds(run_id)[-2:] == ["run.owner.completed", "run.completed"]
+    assert "run.failed" not in bus.kinds(run_id)
+    completion_rows = ledger.outbox[run_id][-2:]
+    completion_queued = [
+        OutboxFrame(
+            run_id=run_id,
+            durable_seq=cast(int, row["durable_seq"]),
+            event_id=cast(str, row["event_id"]),
+            kind=cast(str, row["kind"]),
+            index=cast(int, row["index"]),
+            timestamp=cast(int, row["timestamp"]),
+            payload_json=cast(str, row["payload_json"]),
+        )
+        for row in completion_rows
+    ]
+    assert [frame.kind for frame in completion_queued] == [
+        "run.owner.completed",
+        "run.completed",
+    ]
+    owner = find_event(bus.run_events(run_id), RunOwnerCompleted)
+    terminal = find_event(bus.run_events(run_id), RunCompleted)
+    assert [outbox_wire_event(frame)["event_id"] for frame in completion_queued] == [
+        owner.event_id,
+        terminal.event_id,
+    ]
+    assert outbox_states.count("publish_ack_failed") == 2
+    ack_logs = [
+        record
+        for record in caplog.records
+        if "publish acknowledgement failed" in record.getMessage()
+    ]
+    assert [record.levelno for record in ack_logs] == [30, 10]
 
 
 async def test_durable_output_append_failure_cannot_end_in_completed() -> None:

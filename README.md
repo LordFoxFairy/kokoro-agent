@@ -31,9 +31,10 @@ src/kokoro_agent/
 │                     web_fetch（SSRF 防御）、web_search（协议+provider 注册表同文件）、
 │                     registry（名字治理）、permissions（interrupt_on 构造）、
 │                     middleware（工具授权 fail-closed / 委派执法 / 结果审核）
-├── skills/           SKILL.md lock 校验 + 全文渲染进 system prompt（backend 无关）
+├── hub/              Platform Hub mTLS RPC：精确 run assembly、Skill 流式校验与内容寻址缓存
+├── skills/           run-scoped immutable Skill 包读取、SKILL.md 校验与附件物化
 ├── subagents/        目录（内建=空，原则：只收带真实工具的真能力；预设走 namespace wire）
-├── mcp/              langchain-mcp-adapters 接入：白名单过滤 + mcp__{server}__{tool} 命名
+├── mcp/              Hub 下发的精确 MCP 定义接入：白名单过滤 + mcp__{server}__{tool} 命名
 ├── sandbox/          执行 backend 工厂（state / local_shell；e2b 待落地 fail-loud）
 ├── streams/          StreamProtocol（cursor 不透明）+ redis（XADD maxlen、XREADGROUP/XACK、
 │                     XAUTOCLAIM 死信收养）
@@ -49,6 +50,11 @@ uv sync
 # 本地假模型（凭据无关，离线可跑）：
 KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
   KOKORO_MONGO_URL=mongodb://127.0.0.1:27017 KOKORO_MONGO_DB=kokoro \
+  KOKORO_HUB_RPC_URL=https://hub.internal:9443 \
+  KOKORO_HUB_RPC_SERVER_NAME=hub.internal \
+  KOKORO_HUB_RPC_CA_FILE=/run/secrets/hub-ca.pem \
+  KOKORO_HUB_RPC_CERT_FILE=/run/secrets/agent.pem \
+  KOKORO_HUB_RPC_KEY_FILE=/run/secrets/agent-key.pem \
   KOKORO_LOCAL_FAKE_MODEL=1 uv run kokoro-agent-worker
 ```
 
@@ -68,7 +74,9 @@ GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ow
   隔离政策装配注入，工具体零租户概念。
 - **web 双件**：`web_fetch` 恒挂载（SSRF：DNS 解析后拒非公网/逐跳复检/15s/1MB/24k）；
   `web_search` 配置即挂载（tavily/searxng/zhipu 注册表，无 provider 不挂空壳）。
-- **skills**：namespace/入口级挂载，lock（sha256）fail-closed，全文注入 prompt。
+- **skills / MCP**：每次 run 在工具装配前经 Platform Hub mTLS RPC 解析一次精确 assembly；
+  `agent_catalog_ref`、grant revision/hash、assembly digest、Skill artifact hash 全链锁定，失配或撤销
+  fail-closed，不回退本地配置或共享数据库。
 - **子代理**：wire 预设（tools 按名解析实例、model 工厂化，未知名 fail-loud）；
   委派三档 `subagent_create=deny|ask|allow`（deny 只放行声明集）。
 - **thinking**：openai 兼容端点带 `reasoning_content` 时 `KOKORO_OPENAI_REASONING=1`

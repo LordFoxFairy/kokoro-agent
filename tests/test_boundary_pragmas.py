@@ -23,8 +23,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     "tests/test_deliver_tool.py": frozenset({"reportUnknownMemberType"}),
     # 同上：MCP 稳定三工具经 ainvoke 驱动断言。
     "tests/test_mcp_tools.py": frozenset({"reportUnknownMemberType"}),
-    # 同上：注册表合并结果经稳定三工具 ainvoke 驱动断言。
-    "tests/test_mcp_registry.py": frozenset({"reportUnknownMemberType"}),
     # StructuredTool.from_function 未解 Runnable 泛型（ToolRuntime 注入唯一构造路径）。
     "tests/test_run_scope_state.py": frozenset({"reportUnknownMemberType"}),
 }

@@ -159,12 +159,13 @@ def _request(run_id: str, *, filesystem: FilesystemPerm = "read_only") -> RunReq
         thread_id=f"{run_id}-thread",
         input=RunInput(message_id=f"{run_id}-m", content="验证一下"),
         runtime=RuntimeConfig(
+            agent_catalog_ref=f"agent-catalog:sha256:{'a' * 64}",
             agent_type="general",
-            model=ModelConfig(provider="anthropic", name="claude"),
+            model=ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"),
             tools=[],
             skills=[],
             # wire 是 McpGrant 授权卡；本 e2e 用 build() 里的 hardcoded registry 装配，grant 只需过契约校验。
-            mcp_servers=[McpGrant(scope="official", name="fx", revision=1, config_hash="f" * 64)],
+            mcp_servers=[McpGrant(option_ref="mcp:fx", scope="official", name="fx", revision=1, config_hash="f" * 64)],
             subagents=[],
             backend="state",
             permissions=Permissions(

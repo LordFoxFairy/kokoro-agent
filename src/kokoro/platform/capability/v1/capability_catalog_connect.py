@@ -56,6 +56,7 @@ class HubCatalogServiceASGIApplication(ConnectASGIApplication[HubCatalogService]
             compressions=compressions,
             codecs=codecs,
         )
+
     @property
     def path(self) -> str:
         """Returns the URL path to mount the application to when serving multiple applications."""
@@ -82,7 +83,6 @@ class HubCatalogServiceClient(ConnectClient):
             headers=headers,
             timeout_ms=timeout_ms,
         )
-
     async def get_catalog_publication(
         self,
         request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.GetCatalogPublicationRequest,
@@ -104,7 +104,10 @@ class HubCatalogServiceClient(ConnectClient):
         )
 
 class HubRuntimeService(Protocol):
-    async def resolve_mcp_secrets(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse:
+    async def resolve_execution_assembly(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
+
+    def fetch_skill_artifact(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest, ctx: RequestContext) -> AsyncIterator[kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse]:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
 
 
@@ -113,15 +116,25 @@ class HubRuntimeServiceASGIApplication(ConnectASGIApplication[HubRuntimeService]
         super().__init__(
             service=service,
             endpoints=lambda svc: {
-                "/kokoro.platform.capability.v1.HubRuntimeService/ResolveMcpSecrets": Endpoint.unary(
+                "/kokoro.platform.capability.v1.HubRuntimeService/ResolveExecutionAssembly": Endpoint.unary(
                     method=MethodInfo(
-                        name="ResolveMcpSecrets",
+                        name="ResolveExecutionAssembly",
                         service_name="kokoro.platform.capability.v1.HubRuntimeService",
-                        input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest,
-                        output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse,
+                        input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest,
+                        output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse,
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
-                    function=svc.resolve_mcp_secrets,
+                    function=svc.resolve_execution_assembly,
+                ),
+                "/kokoro.platform.capability.v1.HubRuntimeService/FetchSkillArtifact": Endpoint.server_stream(
+                    method=MethodInfo(
+                        name="FetchSkillArtifact",
+                        service_name="kokoro.platform.capability.v1.HubRuntimeService",
+                        input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest,
+                        output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.fetch_skill_artifact,
                 ),
             },
             interceptors=interceptors,
@@ -137,20 +150,40 @@ class HubRuntimeServiceASGIApplication(ConnectASGIApplication[HubRuntimeService]
 
 
 class HubRuntimeServiceClient(ConnectClient):
-    async def resolve_mcp_secrets(
+    async def resolve_execution_assembly(
         self,
-        request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest,
+        request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest,
         *,
         headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
-    ) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse:
+    ) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse:
         return await self.execute_unary(
             request=request,
             method=MethodInfo(
-                name="ResolveMcpSecrets",
+                name="ResolveExecutionAssembly",
                 service_name="kokoro.platform.capability.v1.HubRuntimeService",
-                input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest,
-                output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse,
+                input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest,
+                output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def fetch_skill_artifact(
+        self,
+        request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="FetchSkillArtifact",
+                service_name="kokoro.platform.capability.v1.HubRuntimeService",
+                input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest,
+                output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -246,7 +279,6 @@ class CapabilityCatalogProjectionServiceClient(ConnectClient):
 
 
 
-
 class HubCatalogServiceSync(Protocol):
     def freeze_catalog(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FreezeCatalogRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FreezeCatalogResponse:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
@@ -333,7 +365,9 @@ class HubCatalogServiceClientSync(ConnectClientSync):
         )
 
 class HubRuntimeServiceSync(Protocol):
-    def resolve_mcp_secrets(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse:
+    def resolve_execution_assembly(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest, ctx: RequestContext) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
+    def fetch_skill_artifact(self, request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest, ctx: RequestContext) -> Iterator[kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse]:
         raise ConnectError(Code.UNIMPLEMENTED, "Not implemented")
 
 
@@ -341,15 +375,25 @@ class HubRuntimeServiceWSGIApplication(ConnectWSGIApplication):
     def __init__(self, service: HubRuntimeServiceSync, interceptors: Iterable[InterceptorSync]=(), read_max_bytes: int | None = None, compressions: Iterable[Compression] | None = None, codecs: Iterable[Codec] | None = None) -> None:
         super().__init__(
             endpoints={
-                "/kokoro.platform.capability.v1.HubRuntimeService/ResolveMcpSecrets": EndpointSync.unary(
+                "/kokoro.platform.capability.v1.HubRuntimeService/ResolveExecutionAssembly": EndpointSync.unary(
                     method=MethodInfo(
-                        name="ResolveMcpSecrets",
+                        name="ResolveExecutionAssembly",
                         service_name="kokoro.platform.capability.v1.HubRuntimeService",
-                        input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest,
-                        output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse,
+                        input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest,
+                        output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse,
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
-                    function=service.resolve_mcp_secrets,
+                    function=service.resolve_execution_assembly,
+                ),
+                "/kokoro.platform.capability.v1.HubRuntimeService/FetchSkillArtifact": EndpointSync.server_stream(
+                    method=MethodInfo(
+                        name="FetchSkillArtifact",
+                        service_name="kokoro.platform.capability.v1.HubRuntimeService",
+                        input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest,
+                        output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.fetch_skill_artifact,
                 ),
             },
             interceptors=interceptors,
@@ -365,20 +409,40 @@ class HubRuntimeServiceWSGIApplication(ConnectWSGIApplication):
 
 
 class HubRuntimeServiceClientSync(ConnectClientSync):
-    def resolve_mcp_secrets(
+    def resolve_execution_assembly(
         self,
-        request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest,
+        request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest,
         *,
         headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
-    ) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse:
+    ) -> kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse:
         return self.execute_unary(
             request=request,
             method=MethodInfo(
-                name="ResolveMcpSecrets",
+                name="ResolveExecutionAssembly",
                 service_name="kokoro.platform.capability.v1.HubRuntimeService",
-                input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsRequest,
-                output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveMcpSecretsResponse,
+                input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyRequest,
+                output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.ResolveExecutionAssemblyResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def fetch_skill_artifact(
+        self,
+        request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="FetchSkillArtifact",
+                service_name="kokoro.platform.capability.v1.HubRuntimeService",
+                input=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactRequest,
+                output=kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.FetchSkillArtifactResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

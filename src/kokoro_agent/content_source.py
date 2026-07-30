@@ -1,7 +1,7 @@
-"""资产源（skills/prompts 从哪来）：与 workspace 同一套 type 判别配置心智。
+"""Deployment persona source; runtime Skills are resolved exclusively by Platform Hub.
 
-local=目录扫描（单机/共享卷）；s3=对象存储（多 pod 免分发、platform 后台管理落点）。
-凭据 env-only。装载即快照：源只在 worker 启动时被读一次，装不到 fail-loud 不降级。
+local scans a deployment directory; s3 reads a deployment prefix. Credentials are env-only.
+Personas are snapshotted once at worker startup and failures are fail-loud.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ class LocalAssets(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     type: Literal["local"]
-    skills_dir: str | None = None
     personas_dir: str | None = None
 
 
@@ -38,7 +37,7 @@ class S3Assets(BaseModel):
     bucket: str
     region: str = "us-east-1"
     force_path_style: bool = True
-    # 对象键布局：{prefix}skills/<name>/SKILL.md、{prefix}personas/<name>.md。
+    # Object layout: {prefix}personas/<name>.md.
     prefix: str = ""
 
 
@@ -52,7 +51,7 @@ _ASSETS_ADAPTER: TypeAdapter[_AssetsFile] = TypeAdapter(_AssetsFile)
 
 
 def load_assets_config(path: str | None) -> LocalAssets | S3Assets | None:
-    """KOKORO_ASSETS_CONFIG yaml；缺省 None=env 目录档（KOKORO_SKILLS_DIR/PERSONAS_DIR）。"""
+    """Load the optional deployment persona-source YAML."""
     if path is None or path == "":
         return None
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -76,33 +75,12 @@ class AssetSettings(BaseModel):
 
 
 class AssetSource(Protocol):
-    def load_skills(self) -> Mapping[str, Mapping[str, str]]: ...
     def load_personas(self) -> Mapping[str, str]: ...
 
 
 class LocalAssetSource:
     def __init__(self, config: LocalAssets) -> None:
         self._config = config
-
-    def load_skills(self) -> Mapping[str, Mapping[str, str]]:
-        """整包装载 {skills_dir}/<name>/**（文本文件）；缺 SKILL.md 的目录 fail-loud。"""
-        root = _existing_dir(self._config.skills_dir, "skills")
-        if root is None:
-            return {}
-        contents: dict[str, dict[str, str]] = {}
-        for child in sorted(root.iterdir()):
-            if not child.is_dir() or child.name.startswith("."):
-                continue
-            files: dict[str, str] = {}
-            for file in sorted(child.rglob("*")):
-                if not file.is_file() or file.name.startswith("."):
-                    continue
-                rel = file.relative_to(child).as_posix()
-                files[rel] = file.read_text(encoding="utf-8")
-            if "SKILL.md" not in files:
-                raise AssetSourceError(f"skill dir {child} has no SKILL.md")
-            contents[child.name] = files
-        return contents
 
     def load_personas(self) -> Mapping[str, str]:
         root = _existing_dir(self._config.personas_dir, "prompts")
@@ -125,7 +103,7 @@ def _existing_dir(raw: str | None, kind: str) -> Path | None:
 
 
 class S3AssetSource:
-    """启动装载全量资产（list + get），对象键 {prefix}skills/<name>/SKILL.md、{prefix}personas/<name>.md。"""
+    """Load deployment personas from `{prefix}personas/<name>.md` at startup."""
 
     def __init__(self, config: S3Assets, *, access_key: SecretStr, secret_key: SecretStr) -> None:
         self._bucket = config.bucket
@@ -161,25 +139,6 @@ class S3AssetSource:
     def _read(self, key: str) -> str:
         return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read().decode("utf-8")
 
-    def load_skills(self) -> Mapping[str, Mapping[str, str]]:
-        prefix = f"{self._base}skills/"
-        keys = sorted(set(self._list(prefix)))
-        contents: dict[str, dict[str, str]] = {}
-        for key in keys:
-            rel = key[len(prefix) :]
-            if "/" not in rel:
-                continue
-            name, path = rel.split("/", 1)
-            if path == "":
-                continue
-            contents.setdefault(name, {})[path] = self._read(key)
-        for name, files in contents.items():
-            if "SKILL.md" not in files:
-                raise AssetSourceError(
-                    f"skill {name!r} has no SKILL.md under s3://{self._bucket}/{prefix}"
-                )
-        return contents
-
     def load_personas(self) -> Mapping[str, str]:
         prefix = f"{self._base}personas/"
         contents: dict[str, str] = {}
@@ -202,5 +161,4 @@ def make_asset_source(settings: AssetSettings) -> AssetSource:
             secret_key=settings.s3_secret_key,
         )
     return LocalAssetSource(settings.source)
-
 

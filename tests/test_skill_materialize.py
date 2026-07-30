@@ -1,15 +1,11 @@
-"""技能资产物化 reconcile 与账本规格：真 Mongo hub + 真 LocalShellBackend（磁盘落盘）。
+"""技能资产物化 reconcile 与账本规格：immutable assembly + 真 LocalShellBackend。
 
-账本 = graph state（checkpoint 态），非闭包局部变量：resume/新实例/跨 worker 认账。
-覆盖：纯包不物化、增量物化、hash 未变跳过、hash 变更重写、缺目录自愈、GC、单包失败不阻断、
-以及跨 checkpoint 的 resume 认账（新起 graph + 新中间件实例，同 thread 从 checkpoint 恢复）。
+账本是 checkpoint graph state；覆盖增量、重写、自愈、GC 与 resume 认账。
 """
 
 from __future__ import annotations
 
 import shutil
-import uuid
-from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
@@ -20,7 +16,6 @@ from deepagents.backends.protocol import FileUploadResponse
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from pymongo import AsyncMongoClient
 
 from fakes import FakeLedger, completed_execution_context, usage_recorder
 from kokoro_agent.contract import SkillGrant
@@ -30,12 +25,10 @@ from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.skills import SkillMaterializerMiddleware, reconcile_skill_assets
-from kokoro_agent.skills.hub import LocalPackageStore, SkillHub, seed_official
+from kokoro_agent.skills.hub import SkillHub
 from kokoro_agent.state import RunScope
 from kokoro_agent.streams.redis import RedisStream
-from test_skill_hub import PDF_MD, STYLE_MD, scan, snapshot_grant, write_skill_dir
-
-_MONGO_URL = "mongodb://127.0.0.1:27017"
+from skill_fixtures import PDF_FILES, STYLE_FILES, make_skill_hub, snapshot_grant
 
 
 class _SpyBackend(LocalShellBackend):
@@ -51,30 +44,15 @@ class _SpyBackend(LocalShellBackend):
 
 
 @pytest.fixture
-async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
-    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
-    suffix = uuid.uuid4().hex[:8]
-    database = client["kokoro_test"]
-    skills = database[f"skills_{suffix}"]
-    state = database[f"skill_state_{suffix}"]
-    src = tmp_path / "seed"
-    write_skill_dir(src, "style", STYLE_MD)  # 纯知识包（无附件）
-    write_skill_dir(src, "pdf", PDF_MD, extra={"make_report.py": "print('report')"})  # 附件包
-    instance = SkillHub(skills, state, LocalPackageStore(str(tmp_path / "packages")))
-    await seed_official(instance, scan(src))
-    try:
-        yield instance
-    finally:
-        await skills.drop()
-        await state.drop()
-        await client.close()
+def hub() -> SkillHub:
+    return make_skill_hub(
+        ("official", "style", STYLE_FILES),
+        ("official", "pdf", PDF_FILES),
+    )
 
 
 # 与 hub fixture seed 的包内容一致（池查询权威在 kokoro-hub，测试按已知内容构快照卡）。
-SEED: dict[str, dict[str, str]] = {
-    "style": {"SKILL.md": STYLE_MD},
-    "pdf": {"SKILL.md": PDF_MD, "make_report.py": "print('report')"},
-}
+SEED = {"style": STYLE_FILES, "pdf": PDF_FILES}
 
 
 def grant_for(name: str, scope: str = "official") -> SkillGrant:
@@ -129,18 +107,21 @@ async def test_unchanged_hash_skips_second_reconcile(hub: SkillHub, tmp_path: Pa
     assert len(backend.uploads) == 1  # 仅首次上传
 
 
-async def test_changed_hash_rewrites(hub: SkillHub, tmp_path: Path) -> None:
+async def test_changed_hash_rewrites(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
     v1 = grant_for("pdf")
+    hub = make_skill_hub(("official", "pdf", PDF_FILES))
     ledger = await reconcile_skill_assets(
         ledger={}, grants=[v1], hub=hub, backend=backend
     )
-    v2_src = tmp_path / "v2"
-    write_skill_dir(v2_src, "pdf", PDF_MD, extra={"make_report.py": "print('v2')"})
-    await seed_official(hub, scan(v2_src))  # 官方升级
-    v2 = snapshot_grant(scan(v2_src)["pdf"], "pdf")
+    v2_files = {**PDF_FILES, "make_report.py": "print('v2')"}
+    v2 = snapshot_grant(v2_files, "pdf")
     assert v2.content_hash != v1.content_hash
+    hub = make_skill_hub(
+        ("official", "pdf", PDF_FILES),
+        ("official", "pdf", v2_files),
+    )
     ledger = await reconcile_skill_assets(
         ledger=ledger, grants=[v2], hub=hub, backend=backend
     )
@@ -185,7 +166,7 @@ async def test_single_package_failure_does_not_block_others(hub: SkillHub, tmp_p
     ws = tmp_path / "ws"
     backend = _SpyBackend(ws)
     good = grant_for("pdf")
-    ghost = SkillGrant(name="ghost", content_hash="deadbeef", description="不存在", scope="official")  # 取包必抛错
+    ghost = SkillGrant(option_ref="skill:ghost", name="ghost", content_hash="deadbeef", description="不存在", scope="official")  # 取包必抛错
     ledger = await reconcile_skill_assets(
         ledger={}, grants=[ghost, good], hub=hub, backend=backend
     )

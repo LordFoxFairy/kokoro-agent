@@ -1,7 +1,6 @@
-"""skill 工具与清单规格（真件：真文件 → seed → 真 Mongo + 包体存储驱动）。
+"""Skill 工具与清单规格：run-scoped immutable Hub assembly 驱动。
 
-工具不再上传附件（物化归装配期 reconcile 中间件，见 test_skill_materialize）；本文件覆盖
-清单渲染、授权 fail-closed、正文双路（含内容锁）、以及工具按 graph state 账本引导附件就绪与否。
+工具不上传附件；物化归装配期 reconcile 中间件。
 """
 
 # BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，e2e/test_mcp_live 同款豁免）。
@@ -9,31 +8,21 @@
 
 from __future__ import annotations
 
-import uuid
-from collections.abc import AsyncGenerator
-from pathlib import Path
-
 import pytest
 from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
-from pymongo import AsyncMongoClient
 
 from kokoro_agent.agents.assembly.prompt import render_skill_manifest
 from kokoro_agent.contract import SkillGrant
 from kokoro_agent.skills import SKILLS_ROOT
-from kokoro_agent.skills.hub import LocalPackageStore, SkillHub, seed_official
+from kokoro_agent.skills.hub import SkillHub
 from kokoro_agent.state import KokoroAgentState
 from kokoro_agent.tools.skills import make_skill_tool
-from test_skill_hub import PDF_MD, STYLE_MD, scan, snapshot_grant, write_skill_dir
-
-_MONGO_URL = "mongodb://127.0.0.1:27017"
+from skill_fixtures import PDF_FILES, STYLE_FILES, make_skill_hub, snapshot_grant
 
 # 与 hub fixture seed 的包内容一致（池查询权威在 kokoro-hub，测试按已知内容构快照卡）。
-SEED: dict[str, dict[str, str]] = {
-    "style": {"SKILL.md": STYLE_MD},
-    "pdf": {"SKILL.md": PDF_MD, "make_report.py": "print('report')"},
-}
+SEED = {"style": STYLE_FILES, "pdf": PDF_FILES}
 
 
 def grant_for(name: str, scope: str = "official") -> SkillGrant:
@@ -62,23 +51,11 @@ def _runtime(ledger: dict[str, str]) -> ToolRuntime[None, KokoroAgentState]:
 
 
 @pytest.fixture
-async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
-    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
-    suffix = uuid.uuid4().hex[:8]
-    database = client["kokoro_test"]
-    skills = database[f"skills_{suffix}"]
-    state = database[f"skill_state_{suffix}"]
-    src = tmp_path / "seed"
-    write_skill_dir(src, "style", STYLE_MD)
-    write_skill_dir(src, "pdf", PDF_MD, extra={"make_report.py": "print('report')"})
-    instance = SkillHub(skills, state, LocalPackageStore(str(tmp_path / "packages")))
-    await seed_official(instance, scan(src))
-    try:
-        yield instance
-    finally:
-        await skills.drop()
-        await state.drop()
-        await client.close()
+def hub() -> SkillHub:
+    return make_skill_hub(
+        ("official", "style", STYLE_FILES),
+        ("official", "pdf", PDF_FILES),
+    )
 
 
 # --- 清单（发现=阅读，无检索）---
@@ -87,8 +64,8 @@ async def hub(tmp_path: Path) -> AsyncGenerator[SkillHub, None]:
 def test_manifest_renders_granted_in_order() -> None:
     # 零查询：清单直接渲染会话快照 grants（wire 序=清单序）。
     grants = [
-        SkillGrant(name="pdf", content_hash="h-pdf", description="PDF 报告生成流程", scope="official"),
-        SkillGrant(name="style", content_hash="h-style", description="写作风格指南", scope="official"),
+        SkillGrant(option_ref="skill:pdf", name="pdf", content_hash="h-pdf", description="PDF 报告生成流程", scope="official"),
+        SkillGrant(option_ref="skill:style", name="style", content_hash="h-style", description="写作风格指南", scope="official"),
     ]
     rendered = render_skill_manifest("base", grants)
     assert rendered.index("pdf") < rendered.index("style")  # 授权序=清单序（prompt 字节稳定）。
@@ -101,8 +78,8 @@ def test_manifest_empty_pool_keeps_base_untouched() -> None:
 
 def test_manifest_same_grants_identical_bytes() -> None:
     grants = [
-        SkillGrant(name="style", content_hash="h-style", description="写作风格指南", scope="official"),
-        SkillGrant(name="pdf", content_hash="h-pdf", description="PDF 报告生成流程", scope="official"),
+        SkillGrant(option_ref="skill:style", name="style", content_hash="h-style", description="写作风格指南", scope="official"),
+        SkillGrant(option_ref="skill:pdf", name="pdf", content_hash="h-pdf", description="PDF 报告生成流程", scope="official"),
     ]
     assert render_skill_manifest("base", grants) == render_skill_manifest("base", list(grants))
 
@@ -140,20 +117,18 @@ async def test_skill_asset_unavailable_when_not_in_ledger(hub: SkillHub) -> None
     assert "已就绪" not in result  # 不出现就绪清单块（路径本身在正文里天然出现，故只查就绪标记）
 
 
-async def test_skill_tool_reads_snapshot_hash_after_official_upgrade(
-    hub: SkillHub, tmp_path: Path
-) -> None:
-    # 会话快照旧 hash 生效：官方升级后，工具按 v1 grant 读回 v1 正文（内容锁走工具层，正文双路）。
+async def test_skill_tool_reads_exact_snapshot_when_multiple_hashes_are_cached() -> None:
     v1_grant = grant_for("pdf")
-    v2 = tmp_path / "v2"
-    write_skill_dir(
-        v2, "pdf", PDF_MD.replace("处理数据", "处理数据（v2 流程）"),
-        extra={"make_report.py": "print('v2')"},
-    )
-    await seed_official(hub, scan(v2))  # 官方升级。
-    new_hash = snapshot_grant(scan(v2)["pdf"], "pdf").content_hash
+    v2_files = {
+        "SKILL.md": PDF_FILES["SKILL.md"].replace("处理数据", "处理数据（v2 流程）"),
+        "make_report.py": "print('v2')",
+    }
+    new_hash = snapshot_grant(v2_files, "pdf").content_hash
     assert new_hash != v1_grant.content_hash
-
+    hub = make_skill_hub(
+        ("official", "pdf", PDF_FILES),
+        ("official", "pdf", v2_files),
+    )
     tool = make_skill_tool([v1_grant], hub)
     body = await _read(tool, "pdf", {"pdf": v1_grant.content_hash})
     assert "（v2 流程）" not in body  # 旧正文（快照锁定），不随官方升级漂移。
@@ -168,6 +143,6 @@ async def test_skill_pool_change_keeps_tool_schema_identical(hub: SkillHub) -> N
         return (tool.name, tool.description, str(schema.model_json_schema()))
 
     def g(name: str) -> SkillGrant:
-        return SkillGrant(name=name, content_hash="h", description="d", scope="official")
+        return SkillGrant(option_ref=f"skill:{name}", name=name, content_hash="h", description="d", scope="official")
 
     assert surface([g("style")]) == surface([g("pdf"), g("style")]) == surface([])

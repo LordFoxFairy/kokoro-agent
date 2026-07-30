@@ -178,27 +178,125 @@ class GetCatalogPublicationResponse(_message.Message):
     last_projection_error_code: str
     def __init__(self, receipt: _Optional[_Union[_receipt_pb2.CommandReceipt, _Mapping]] = ..., publication: _Optional[_Union[FrozenCatalogPublication, _Mapping]] = ..., projection_state: _Optional[_Union[CatalogProjectionState, str]] = ..., last_projection_error_code: _Optional[str] = ...) -> None: ...
 
-class ResolveMcpSecretsRequest(_message.Message):
-    __slots__ = ("namespace", "handles")
+class SkillGrantSelection(_message.Message):
+    __slots__ = ("option_ref", "scope", "name", "content_hash", "description")
+    OPTION_REF_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_HASH_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    option_ref: str
+    scope: str
+    name: str
+    content_hash: str
+    description: str
+    def __init__(self, option_ref: _Optional[str] = ..., scope: _Optional[str] = ..., name: _Optional[str] = ..., content_hash: _Optional[str] = ..., description: _Optional[str] = ...) -> None: ...
+
+class McpGrantSelection(_message.Message):
+    __slots__ = ("option_ref", "scope", "name", "revision", "config_hash")
+    OPTION_REF_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    CONFIG_HASH_FIELD_NUMBER: _ClassVar[int]
+    option_ref: str
+    scope: str
+    name: str
+    revision: int
+    config_hash: str
+    def __init__(self, option_ref: _Optional[str] = ..., scope: _Optional[str] = ..., name: _Optional[str] = ..., revision: _Optional[int] = ..., config_hash: _Optional[str] = ...) -> None: ...
+
+class ResolveExecutionAssemblyRequest(_message.Message):
+    __slots__ = ("namespace", "agent_catalog_ref", "skill_grants", "mcp_grants")
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
-    HANDLES_FIELD_NUMBER: _ClassVar[int]
+    AGENT_CATALOG_REF_FIELD_NUMBER: _ClassVar[int]
+    SKILL_GRANTS_FIELD_NUMBER: _ClassVar[int]
+    MCP_GRANTS_FIELD_NUMBER: _ClassVar[int]
     namespace: str
-    handles: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, namespace: _Optional[str] = ..., handles: _Optional[_Iterable[str]] = ...) -> None: ...
+    agent_catalog_ref: str
+    skill_grants: _containers.RepeatedCompositeFieldContainer[SkillGrantSelection]
+    mcp_grants: _containers.RepeatedCompositeFieldContainer[McpGrantSelection]
+    def __init__(self, namespace: _Optional[str] = ..., agent_catalog_ref: _Optional[str] = ..., skill_grants: _Optional[_Iterable[_Union[SkillGrantSelection, _Mapping]]] = ..., mcp_grants: _Optional[_Iterable[_Union[McpGrantSelection, _Mapping]]] = ...) -> None: ...
 
-class McpSecretMaterial(_message.Message):
-    __slots__ = ("handle", "value")
-    HANDLE_FIELD_NUMBER: _ClassVar[int]
-    VALUE_FIELD_NUMBER: _ClassVar[int]
-    handle: str
-    value: str
-    def __init__(self, handle: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+class SkillArtifactManifest(_message.Message):
+    __slots__ = ("option_ref", "scope", "name", "content_hash", "description", "artifact_ref", "artifact_size", "artifact_sha256")
+    OPTION_REF_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_HASH_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_REF_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_SIZE_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_SHA256_FIELD_NUMBER: _ClassVar[int]
+    option_ref: str
+    scope: str
+    name: str
+    content_hash: str
+    description: str
+    artifact_ref: str
+    artifact_size: int
+    artifact_sha256: str
+    def __init__(self, option_ref: _Optional[str] = ..., scope: _Optional[str] = ..., name: _Optional[str] = ..., content_hash: _Optional[str] = ..., description: _Optional[str] = ..., artifact_ref: _Optional[str] = ..., artifact_size: _Optional[int] = ..., artifact_sha256: _Optional[str] = ...) -> None: ...
 
-class ResolveMcpSecretsResponse(_message.Message):
-    __slots__ = ("secrets",)
-    SECRETS_FIELD_NUMBER: _ClassVar[int]
-    secrets: _containers.RepeatedCompositeFieldContainer[McpSecretMaterial]
-    def __init__(self, secrets: _Optional[_Iterable[_Union[McpSecretMaterial, _Mapping]]] = ...) -> None: ...
+class McpAssemblyConfig(_message.Message):
+    __slots__ = ("option_ref", "scope", "name", "revision", "config_hash", "transport", "url", "allowed_tools", "authorization_value")
+    OPTION_REF_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    CONFIG_HASH_FIELD_NUMBER: _ClassVar[int]
+    TRANSPORT_FIELD_NUMBER: _ClassVar[int]
+    URL_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_TOOLS_FIELD_NUMBER: _ClassVar[int]
+    AUTHORIZATION_VALUE_FIELD_NUMBER: _ClassVar[int]
+    option_ref: str
+    scope: str
+    name: str
+    revision: int
+    config_hash: str
+    transport: str
+    url: str
+    allowed_tools: _containers.RepeatedScalarFieldContainer[str]
+    authorization_value: str
+    def __init__(self, option_ref: _Optional[str] = ..., scope: _Optional[str] = ..., name: _Optional[str] = ..., revision: _Optional[int] = ..., config_hash: _Optional[str] = ..., transport: _Optional[str] = ..., url: _Optional[str] = ..., allowed_tools: _Optional[_Iterable[str]] = ..., authorization_value: _Optional[str] = ...) -> None: ...
+
+class ResolveExecutionAssemblyResponse(_message.Message):
+    __slots__ = ("agent_catalog_ref", "assembly_digest", "skills", "mcp_servers")
+    AGENT_CATALOG_REF_FIELD_NUMBER: _ClassVar[int]
+    ASSEMBLY_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    SKILLS_FIELD_NUMBER: _ClassVar[int]
+    MCP_SERVERS_FIELD_NUMBER: _ClassVar[int]
+    agent_catalog_ref: str
+    assembly_digest: str
+    skills: _containers.RepeatedCompositeFieldContainer[SkillArtifactManifest]
+    mcp_servers: _containers.RepeatedCompositeFieldContainer[McpAssemblyConfig]
+    def __init__(self, agent_catalog_ref: _Optional[str] = ..., assembly_digest: _Optional[str] = ..., skills: _Optional[_Iterable[_Union[SkillArtifactManifest, _Mapping]]] = ..., mcp_servers: _Optional[_Iterable[_Union[McpAssemblyConfig, _Mapping]]] = ...) -> None: ...
+
+class FetchSkillArtifactRequest(_message.Message):
+    __slots__ = ("namespace", "agent_catalog_ref", "grant", "artifact_ref", "expected_size", "expected_sha256")
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    AGENT_CATALOG_REF_FIELD_NUMBER: _ClassVar[int]
+    GRANT_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_REF_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_SIZE_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_SHA256_FIELD_NUMBER: _ClassVar[int]
+    namespace: str
+    agent_catalog_ref: str
+    grant: SkillGrantSelection
+    artifact_ref: str
+    expected_size: int
+    expected_sha256: str
+    def __init__(self, namespace: _Optional[str] = ..., agent_catalog_ref: _Optional[str] = ..., grant: _Optional[_Union[SkillGrantSelection, _Mapping]] = ..., artifact_ref: _Optional[str] = ..., expected_size: _Optional[int] = ..., expected_sha256: _Optional[str] = ...) -> None: ...
+
+class FetchSkillArtifactResponse(_message.Message):
+    __slots__ = ("artifact_ref", "offset", "data")
+    ARTIFACT_REF_FIELD_NUMBER: _ClassVar[int]
+    OFFSET_FIELD_NUMBER: _ClassVar[int]
+    DATA_FIELD_NUMBER: _ClassVar[int]
+    artifact_ref: str
+    offset: int
+    data: bytes
+    def __init__(self, artifact_ref: _Optional[str] = ..., offset: _Optional[int] = ..., data: _Optional[bytes] = ...) -> None: ...
 
 class ProjectCatalogRequest(_message.Message):
     __slots__ = ("command", "publication")

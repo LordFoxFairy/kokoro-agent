@@ -907,8 +907,9 @@ def request(
         thread_id=thread_id,
         input=RunInput(message_id=f"{run_id}-m", content=content),
         runtime=RuntimeConfig(
-        agent_type="general",
-            model=ModelConfig(provider="anthropic", name="claude"),
+            agent_catalog_ref=f"agent-catalog:sha256:{'a' * 64}",
+            agent_type="general",
+            model=ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"),
             tools=[],
             skills=[],
             mcp_servers=[],

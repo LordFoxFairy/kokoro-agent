@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ClassVar, Protocol
 
 from langchain_core.tools import StructuredTool
@@ -15,11 +15,10 @@ from langgraph.store.base import BaseStore
 
 from kokoro_agent.contract import AgentType
 from kokoro_agent.execution.protocols import InvokableAgent
-from kokoro_agent.mcp.config import McpServerConfig
-from kokoro_agent.mcp.registry import McpRegistry
+from kokoro_agent.hub import ExecutionAssemblyResolver
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.prompts import PromptLibrary
-from kokoro_agent.skills.hub import PackageStore, SkillHub
+from kokoro_agent.skills.hub import PackageStore
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.storage.ledger import RunLedger
 from kokoro_agent.subagents import SubagentCatalog
@@ -50,13 +49,9 @@ class AssembleDeps:
     checkpointer: BaseCheckpointSaver[str]
     ledger: RunLedger
     memory_store: BaseStore
-    # skills hub（池的读面）：清单查询与 skill 工具读取共用；官方与用户同链路。
-    skill_hub: SkillHub
+    # Hub-owned exact runtime assembly consumer; one call per run, no Hub persistence access.
+    capabilities: ExecutionAssemblyResolver
     prompts: PromptLibrary
-    # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
-    mcp_servers: Mapping[str, McpServerConfig] = field(default_factory=dict[str, McpServerConfig])
-    # MCP Mongo 注册表读路（hub 写面）：per-run 与部署 yaml 双源合并；None=仅 yaml（测试直装）。
-    mcp_registry: McpRegistry | None = None
     # 交付冻结件存储（deliveries 节，content-hash keyed 不可变写）；缺省=None → deliver 工具降级。
     deliveries: PackageStore | None = None
 

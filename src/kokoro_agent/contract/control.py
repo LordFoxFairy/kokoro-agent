@@ -40,6 +40,7 @@ class ModelConfig(StrictModel):
 
 
 class SkillGrant(StrictModel):
+    option_ref: Reference
     name: NonEmptyStr
     content_hash: NonEmptyStr
     description: NonEmptyStr
@@ -47,6 +48,7 @@ class SkillGrant(StrictModel):
 
 
 class McpGrant(StrictModel):
+    option_ref: Reference
     scope: NonEmptyStr
     name: NonEmptyStr
     revision: int
@@ -61,6 +63,7 @@ class Permissions(StrictModel):
 
 
 class RuntimeConfig(StrictModel):
+    agent_catalog_ref: Reference
     agent_type: AgentType
     agent: NonEmptyStr | None = None
     model: ModelConfig

@@ -1,11 +1,12 @@
 """共享装配管线（Template Method 主体）：政策进、装配图出，各类型工厂复用。
 
 一步一模块，assemble_agent() 只是目录页：
-  backend    ① 沙箱后端（先建：skill 资产按需供给依赖它）
-  toolset    ② 工具面：注册表/底座/MCP/技能库四路合流 + 授权白名单
-  guardrails ③ 中间件链：守卫/审批的主链与子代理链
-  delegates  ④ 可委派子代理：内生 + catalog（wire 只传 names）
-  prompt     ⑤ system prompt：agent（preset）名两级解析，恒定不随能力集变
+  capability ① Hub 精确解析本 run 的 immutable Skill/MCP assembly
+  backend    ② 能力解析成功后才创建沙箱后端，避免无效请求占用外部资源
+  toolset    ③ 工具面：注册表/底座/MCP/技能库四路合流 + 授权白名单
+  guardrails ④ 中间件链：守卫/审批的主链与子代理链
+  delegates  ⑤ 可委派子代理：内生 + catalog（wire 只传 names）
+  prompt     ⑥ system prompt：agent（preset）名两级解析，恒定不随能力集变
 类型专属只剩政策（core_tools/pause_tools/plan_tools/default_prompt），经 AgentPolicy 传入。
 """
 
@@ -24,6 +25,7 @@ from kokoro_agent.agents.deps import AgentPolicy, AssembleDeps, AssembledAgent
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.contract.storage import workspace_key
 from kokoro_agent.execution.build_agent import build_agent
+from kokoro_agent.hub import ExecutionAssembly
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.skills import SkillMaterializerMiddleware
@@ -36,8 +38,15 @@ async def assemble_agent(
     policy: AgentPolicy, deps: AssembleDeps, request: RunRequest
 ) -> AssembledAgent:
     runtime = request.runtime
+    capabilities = await deps.capabilities.resolve(
+        request.context.namespace,
+        runtime.agent_catalog_ref,
+        runtime.skills,
+        runtime.mcp_servers,
+    )
     # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
     # docker/e2b 档带 run 级生命周期：resume 经 ledger 重连既往箱/容器。
+    # Hub 准入先于此处：无效/撤销 assembly 不得占用沙箱资源。
     backend = await make_backend_for_run(
         runtime.backend,
         deps.sandbox,
@@ -45,7 +54,7 @@ async def assemble_agent(
         run_id=request.run_id,
         binding=deps.ledger,
     )
-    toolset = await build_toolset(request, deps, core=policy.core_tools)
+    toolset = await build_toolset(request, deps, capabilities, core=policy.core_tools)
     chains = build_guard_chains(deps, request)
     delegates = build_delegates(request, toolset, deps, chains.subagent)
     main_chain = chains.main(
@@ -78,7 +87,7 @@ async def assemble_agent(
         ),
         # 技能资产物化对账（before_agent，恒早于模型）：账本进 checkpoint,附件按 hash 增量落沙箱。
         # backend 缺省档（state）无沙箱面 → 无附件可物化 → 不挂对账中间件。
-        middleware=_with_materializer(main_chain, request, deps, backend),
+        middleware=_with_materializer(main_chain, request, capabilities, backend),
         backend=backend,
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
         store=deps.memory_store,
@@ -89,7 +98,7 @@ async def assemble_agent(
 def _with_materializer(
     chain: tuple[AgentMiddleware, ...],
     request: RunRequest,
-    deps: AssembleDeps,
+    capabilities: ExecutionAssembly,
     backend: MaterializeBackend | None,
 ) -> tuple[AgentMiddleware[Any, Any, Any], ...]:
     """无沙箱（state 档 backend=None）时不挂对账；有沙箱则追加 before_agent 物化中间件。"""
@@ -97,7 +106,7 @@ def _with_materializer(
         return chain
     materializer = SkillMaterializerMiddleware(
         grants=request.runtime.skills,
-        hub=deps.skill_hub,
+        hub=capabilities.skills,
         backend=backend,
     )
     return (*chain, materializer)

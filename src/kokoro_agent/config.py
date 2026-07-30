@@ -19,6 +19,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 
 from kokoro_agent.config_file import load_config_file
 from kokoro_agent.content_source import AssetSettings, LocalAssets, load_assets_config
+from kokoro_agent.hub import HubRuntimeSettings
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
@@ -148,10 +149,7 @@ class AppConfig(BaseModel):
         default=None, validation_alias="KOKORO_CUSTOM_BACKEND_CONFIG"
     )
 
-    # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
-    mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
-    # Agent-only Hub runtime ConnectRPC 出口：生产只接受显式 mTLS CA/cert/key 与精确服务身份。
-    # 功能消费仍由 mcp 层从启动期 env 快照构造，避免凭据进入配置日志或业务对象。
+    # Agent-only Hub runtime boundary is mandatory: no HTTP/shared-secret/local-registry fallback.
     hub_rpc_url: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_URL")
     hub_rpc_server_name: OptStr = Field(
         default=None, validation_alias="KOKORO_HUB_RPC_SERVER_NAME"
@@ -159,8 +157,12 @@ class AppConfig(BaseModel):
     hub_rpc_ca_file: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_CA_FILE")
     hub_rpc_cert_file: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_CERT_FILE")
     hub_rpc_key_file: OptStr = Field(default=None, validation_alias="KOKORO_HUB_RPC_KEY_FILE")
+    hub_artifact_cache_dir: str = Field(
+        default="/tmp/kokoro-agent/hub-artifacts",
+        validation_alias="KOKORO_HUB_ARTIFACT_CACHE_DIR",
+    )
     hub_rpc_timeout_ms: int = Field(
-        default=5_000, ge=100, le=5_000, validation_alias="KOKORO_HUB_RPC_TIMEOUT_MS"
+        default=30_000, ge=100, le=30_000, validation_alias="KOKORO_HUB_RPC_TIMEOUT_MS"
     )
     mcp_egress_mode: str = Field(default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE")
 
@@ -172,9 +174,8 @@ class AppConfig(BaseModel):
     search_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_API_KEY")
     search_url: OptStr = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_URL")
 
-    # --- assets 域（skills/prompts 从哪来）：local 目录或 s3，配置引用名称、资产统一入库。---
+    # --- deployment personas: local directory or s3 prefix ---
     assets_config: OptStr = Field(default=None, validation_alias="KOKORO_ASSETS_CONFIG")
-    skills_dir: OptStr = Field(default=None, validation_alias="KOKORO_SKILLS_DIR")
     personas_dir: OptStr = Field(default=None, validation_alias="KOKORO_PERSONAS_DIR")
     assets_s3_access_key: OptSecret = Field(
         default=None, validation_alias="KOKORO_ASSETS_S3_ACCESS_KEY"
@@ -289,6 +290,31 @@ class AppConfig(BaseModel):
         )
 
     @property
+    def hub_runtime(self) -> HubRuntimeSettings:
+        rpc_url = self.hub_rpc_url
+        server_name = self.hub_rpc_server_name
+        ca_file = self.hub_rpc_ca_file
+        cert_file = self.hub_rpc_cert_file
+        key_file = self.hub_rpc_key_file
+        if (
+            rpc_url is None
+            or server_name is None
+            or ca_file is None
+            or cert_file is None
+            or key_file is None
+        ):
+            raise ValueError("HUB_RUNTIME_MTLS_CONFIGURATION_REQUIRED")
+        return HubRuntimeSettings(
+            rpc_url=rpc_url,
+            server_name=server_name,
+            ca_file=ca_file,
+            cert_file=cert_file,
+            key_file=key_file,
+            artifact_cache_dir=self.hub_artifact_cache_dir,
+            timeout_ms=self.hub_rpc_timeout_ms,
+        )
+
+    @property
     def web_tools(self) -> WebToolSettings:
         return WebToolSettings(
             fetch_allow_private=self.fetch_allow_private,
@@ -304,7 +330,6 @@ class AppConfig(BaseModel):
             source=load_assets_config(self.assets_config)
             or LocalAssets(
                 type="local",
-                skills_dir=self.skills_dir,
                 personas_dir=self.personas_dir,
             ),
             s3_access_key=self.assets_s3_access_key,

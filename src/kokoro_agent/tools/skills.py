@@ -1,6 +1,6 @@
 """技能调用工具（CC 的 Skill 同款单工具）：清单常驻 prompt，正文按调用读取。
 
-正文经 hub 双路直返（当前版 Mongo 快读/旧版包体 zip）。附件不在此上传——物化由装配期
+正文来自本 run 已验证的 immutable Hub assembly。附件不在此上传——物化由装配期
 reconcile 中间件按 graph state 账本完成；本工具读账本判断附件是否就绪，据此引导或标记不可用。
 工具恒挂：schema 不随池变（D9）。
 """
@@ -33,7 +33,7 @@ def make_skill_tool(
     grants: Sequence[SkillGrant],
     hub: SkillHub,
 ) -> StructuredTool:
-    """per-run 闭包：授权集（name→快照卡，含 scope 与 hash）/hub 在装配期捕获。"""
+    """per-run 闭包：授权集与已验证 SkillHub 在装配期一起捕获。"""
 
     # 内容锁：授权按快照卡（scope+content_hash）定死，正文/附件永远按卡片归属读，官方升级不影响本会话。
     granted: dict[str, SkillGrant] = {grant.name: grant for grant in grants}

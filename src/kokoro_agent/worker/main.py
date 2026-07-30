@@ -19,7 +19,7 @@ from kokoro_agent.observability import trace_config
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
 from kokoro_agent.contract import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
-from kokoro_agent.sandbox.archive import LocalWorkspace, load_storage_file
+from kokoro_agent.sandbox.archive import load_storage_file
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
@@ -29,15 +29,12 @@ from kokoro_agent.storage.execution_context import ExecutionContextAuthority
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.content_source import make_asset_source
 from kokoro_agent.prompts import PromptLibrary
-from kokoro_agent.mcp.config import load_mcp_servers
-from kokoro_agent.mcp.registry import McpRegistrySettings, make_mcp_registry
+from kokoro_agent.hub import HubExecutionAssemblyClient
+from kokoro_agent.mcp.egress import configure_egress_mode
 from kokoro_agent.skills.hub import (
     PackageStore,
     S3Credentials,
-    SkillHubSettings,
     make_package_store,
-    make_skill_hub,
-    seed_official,
 )
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -66,27 +63,9 @@ def _sandbox_teardown(config: AppConfig) -> "Callable[[Backend, str | None], Awa
     return teardown
 
 
-def skill_hub_settings(config: AppConfig) -> SkillHubSettings:
-    """hub 存储位形取 ADR-009 文件 hub 节；缺省=local ./kokoro_hub（dev 零配置可跑）。
-    s3 凭据复用 workspace 对（同一对象存储集群，env-only）。"""
-    storage = load_storage_file(config.workspace_config)
-    packages = (
-        storage.hub
-        if storage is not None and storage.hub is not None
-        else LocalWorkspace(type="local", root="./kokoro_hub")
-    )
-    return SkillHubSettings(
-        mongo_url=config.ledger.mongo_url,
-        mongo_db=config.ledger.mongo_db,
-        packages=packages,
-        s3_access_key=config.workspace_s3_access_key,
-        s3_secret_key=config.workspace_s3_secret_key,
-    )
-
-
 def deliveries_store(config: AppConfig) -> PackageStore | None:
     """交付冻结件存储位形取 ADR-009 文件 deliveries 节；缺省=None（deliver 工具降级不炸）。
-    s3 凭据复用 workspace 对（同集群，env-only，同 skill_hub_settings 做法）。"""
+    s3 凭据复用 workspace 对（同集群，env-only）。"""
     storage = load_storage_file(config.workspace_config)
     location = storage.deliveries if storage is not None else None
     if location is None:
@@ -118,24 +97,18 @@ async def _serve(config: AppConfig) -> None:
         update={"producer_instance_ref": consumer}
     )
     catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
-    # 启动装载部署资产（local/s3 同口）：prompts 进内存（部署级人格）；skills 目录只是
-    # seed 输入——真源是 Mongo（多租户），启动 upsert 幂等同步（hash 未变不写）。
+    configure_egress_mode(config.mcp_egress_mode)
+    # Deployment assets now contain personas only. Skill packages are Hub-owned and resolved
+    # exactly per run; the worker never seeds or reads Hub persistence.
     asset_source = make_asset_source(config.assets)
-    raw_skills = asset_source.load_skills()
     prompts = PromptLibrary(asset_source.load_personas())
+    capabilities = HubExecutionAssemblyClient(config.hub_runtime)
     # 进程级共享 checkpointer + run 状态存储：mongo 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
         make_ledger(ledger_settings) as store,
         make_memory_store(config.checkpoint) as memory_store,
-        make_skill_hub(skill_hub_settings(config)) as skill_hub,
-        # MCP Mongo 注册表读路（hub 同库）：env 在此显式注入（进程环境只在本模块读取）。
-        make_mcp_registry(
-            McpRegistrySettings(mongo_url=config.ledger.mongo_url, mongo_db=config.ledger.mongo_db),
-            os.environ,
-        ) as mcp_registry,
     ):
-        await seed_official(skill_hub, raw_skills)
         deps = AssembleDeps(
             model=config.model,
             sandbox=config.sandbox,
@@ -145,12 +118,8 @@ async def _serve(config: AppConfig) -> None:
             checkpointer=saver,
             ledger=store,
             memory_store=memory_store,
-            skill_hub=skill_hub,
+            capabilities=capabilities,
             prompts=prompts,
-            # MCP server 定义双源：部署 yaml 启动即加载校验（含 ${ENV} 凭据展开，fail-loud）
-            # 为 official 基线；Mongo 注册表（hub 写面）在装配期 per-run 合并覆盖。
-            mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
-            mcp_registry=mcp_registry,
             # 交付冻结件存储（deliveries 节）；缺省=None → deliver 工具恒挂但调用降级。
             deliveries=deliveries_store(config),
         )

@@ -19,7 +19,7 @@ Agent does not own Site identity, accounts, pricing, plans, credit deduction, Se
 
 The process entrypoint is `kokoro_agent.worker.main`. `skills` and `hitl` bound their public surface with `__init__.py` re-exports; `execution` and `worker` re-export nothing, so their public surface is the module-level symbols listed in their component INDEX files.
 
-Root compatibility gates invoke `scripts/compat/hub_runtime_consumer.py` as the child-owned live Hub secret consumer. The command wraps the production `HubSecretResolver`; its argv carries only the Hub URL, namespace, handle, and expected SHA-256 digest, while the Agent caller secret remains environment-only.
+Hub runtime consumption is implemented only by `kokoro_agent.hub.HubExecutionAssemblyClient` over mTLS ConnectRPC. Each run binds the exact `agent_catalog_ref`, ordered grants, streamed Skill artifacts, and MCP Authorization material; there is no compatibility CLI or Hub persistence access.
 
 ## Callers and dependencies
 

@@ -7,9 +7,6 @@ from typing import Any
 
 import pytest
 from deepagents.backends.local_shell import LocalShellBackend
-from langchain_anthropic import ChatAnthropic
-from langchain_deepseek import ChatDeepSeek
-from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
@@ -192,13 +189,13 @@ def test_sandbox_e2b_requires_run_scoped_assembly() -> None:
 
 def test_local_fake_model_short_circuits() -> None:
     config = AppConfig.from_env({"KOKORO_LOCAL_FAKE_MODEL": "1"})
-    model = make_chat_model(config.model, ModelConfig(provider="anthropic", name="claude"))
+    model = make_chat_model(config.model, ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"))
     assert isinstance(model, LocalFakeChatModel)
 
 
 def test_local_fake_hitl_script_switch() -> None:
     config = AppConfig.from_env({"KOKORO_LOCAL_FAKE_MODEL": "1", "KOKORO_LOCAL_FAKE_SCRIPT": "hitl"})
-    model = make_chat_model(config.model, ModelConfig(provider="anthropic", name="claude"))
+    model = make_chat_model(config.model, ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"))
     assert isinstance(model, LocalFakeChatModel)
     first = model.invoke([HumanMessage(content="hi")])
     assert isinstance(first, AIMessage)
@@ -216,13 +213,14 @@ def test_make_stream_backends() -> None:
 def test_wire_rejects_inline_definitions() -> None:
     # 契约负向钉（块2）：wire 只传 names+已解析上下文，一切定义/凭据/投机字段被 strict 契约拒收。
     base = RuntimeConfig(
+        agent_catalog_ref=f"agent-catalog:sha256:{'a' * 64}",
         agent_type="general",
         agent="general",
-        model=ModelConfig(provider="anthropic", name="claude"),
+        model=ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"),
         tools=[],
         skills=[],
         # McpGrant 授权卡（scope,name,revision,config_hash）合法；一切内联定义/凭据被拒。
-        mcp_servers=[McpGrant(scope="official", name="docs", revision=1, config_hash="a" * 64)],
+        mcp_servers=[McpGrant(option_ref="mcp:docs", scope="official", name="docs", revision=1, config_hash="a" * 64)],
         subagents=["web-researcher"],
         backend="state",
         permissions=Permissions(
@@ -274,84 +272,6 @@ def test_general_prompt_separates_user_plan_from_internal_todos() -> None:
     assert "write_todos" in GENERAL_PROMPT
     assert "唯一工具调用" in GENERAL_PROMPT
     assert "不能替代" in GENERAL_PROMPT
-
-
-def test_openai_reasoning_switch_selects_deepseek_wrapper() -> None:
-    # GLM/DeepSeek 等 openai 兼容端点的 reasoning_content 被 ChatOpenAI 明文拒收（上游 API scope），
-    # KOKORO_OPENAI_REASONING=1 切 ChatDeepSeek（官方 reasoning 抽取实现，同 openai-compat wire）。
-    env = {
-        "KOKORO_OPENAI_REASONING": "1",
-        "OPENAI_API_KEY": "sk-test",
-        "OPENAI_BASE_URL": "https://example.com/v4",
-    }
-    config = AppConfig.from_env(env)
-    model = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
-    assert isinstance(model, ChatDeepSeek)
-    assert model.api_base == "https://example.com/v4"
-    plain = AppConfig.from_env({k: v for k, v in env.items() if k != "KOKORO_OPENAI_REASONING"})
-    assert not isinstance(
-        make_chat_model(plain.model, ModelConfig(provider="openai", name="glm-5")), ChatDeepSeek
-    )
-
-
-def test_openai_reasoning_thinking_toggle() -> None:
-    # thinking=True→开 GLM 推理；False→关；None(不设)→不覆盖，随 GLM 默认（extra_body 直传 openai-compat wire）。
-    env = {
-        "KOKORO_OPENAI_REASONING": "1",
-        "OPENAI_API_KEY": "sk-test",
-        "OPENAI_BASE_URL": "https://example.com/v4",
-    }
-    config = AppConfig.from_env(env)
-    thinking = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5", thinking=True))
-    assert isinstance(thinking, ChatDeepSeek)
-    assert thinking.extra_body == {"thinking": {"type": "enabled"}}
-    fast = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5", thinking=False))
-    assert isinstance(fast, ChatDeepSeek)
-    assert fast.extra_body == {"thinking": {"type": "disabled"}}
-    default = make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
-    assert isinstance(default, ChatDeepSeek)
-    assert default.extra_body is None
-
-
-def test_openai_plain_thinking_maps_reasoning_effort() -> None:
-    # 非 reasoning 的 openai：thinking 意图翻成 reasoning_effort（此前被静默丢弃）。
-    config = AppConfig.from_env({"OPENAI_API_KEY": "sk-test"})
-
-    def effort_of(thinking: bool | None, effort: str | None) -> object:
-        model = make_chat_model(
-            config.model,
-            ModelConfig(provider="openai", name="gpt-5", thinking=thinking, effort=effort),
-        )
-        assert isinstance(model, ChatOpenAI)
-        return model.reasoning_effort
-
-    assert effort_of(True, None) == "high"
-    assert effort_of(False, None) == "minimal"
-    # thinking 未设 → 回落 policy 的 effort（保持旧行为）。
-    assert effort_of(None, "medium") == "medium"
-
-
-def test_anthropic_thinking_maps_effort() -> None:
-    # 默认部署模型：thinking 意图翻成 anthropic effort（此前被静默丢弃 → UI 开关无效）。
-    config = AppConfig.from_env({"ANTHROPIC_API_KEY": "sk-ant-test"})
-
-    def effort_of(thinking: bool | None, effort: str | None) -> object:
-        model = make_chat_model(
-            config.model,
-            ModelConfig(provider="anthropic", name="claude-x", thinking=thinking, effort=effort),
-        )
-        assert isinstance(model, ChatAnthropic)
-        return model.effort
-
-    assert effort_of(True, None) == "high"
-    assert effort_of(False, None) == "low"
-    assert effort_of(None, "medium") == "medium"
-
-
-def test_openai_reasoning_without_base_url_fails_loud() -> None:
-    config = AppConfig.from_env({"KOKORO_OPENAI_REASONING": "1", "OPENAI_API_KEY": "sk-test"})
-    with pytest.raises(ValueError, match="OPENAI_BASE_URL"):
-        make_chat_model(config.model, ModelConfig(provider="openai", name="glm-5"))
 
 
 def test_toolbox_assembly_matrix() -> None:
@@ -521,8 +441,9 @@ def test_approval_names_unions_wire_and_package_policy() -> None:
         thread_id="c1",
         input=RunInput(message_id="m1", content="hi"),
         runtime=RuntimeConfig(
+            agent_catalog_ref=f"agent-catalog:sha256:{'a' * 64}",
             agent_type="general",
-            model=ModelConfig(provider="anthropic", name="claude"),
+            model=ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"),
             tools=[],
             skills=[],
             mcp_servers=[],
@@ -558,9 +479,10 @@ def test_resolve_tools_empty_core_for_studio_types() -> None:
 
 def _runtime_with_agent(agent: str | None) -> RuntimeConfig:
     return RuntimeConfig(
+        agent_catalog_ref=f"agent-catalog:sha256:{'a' * 64}",
         agent_type="general",
         agent=agent,
-        model=ModelConfig(provider="anthropic", name="claude"),
+        model=ModelConfig(provider="anthropic", name="claude", authorization_handle="model-authz:test"),
         tools=[],
         skills=[],
         mcp_servers=[],

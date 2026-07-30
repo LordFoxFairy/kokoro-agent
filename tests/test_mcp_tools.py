@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,7 +15,6 @@ import kokoro_agent.mcp.tools as tools_mod
 from kokoro_agent.mcp.config import (
     McpConfigError,
     McpServerConfig,
-    load_mcp_servers,
     select_servers,
 )
 from kokoro_agent.mcp.servers import build_connections
@@ -156,51 +154,3 @@ def test_connection_carries_headers_and_timeout() -> None:
     assert conns["gh"].get("headers") == {"authorization": "Bearer tok"}
     assert conns["gh"].get("timeout") == 5.0
     assert "headers" not in conns["pub"]
-
-
-# --- 部署注册表加载（KOKORO_MCP_CONFIG yaml） ---
-
-
-def test_load_mcp_servers_resolves_env_placeholder(tmp_path: Path) -> None:
-    # 凭据只走 env：yaml 里只有 ${NAME} 引用名，加载时展开（env 显式注入，架构规则）。
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n"
-        "  gh:\n"
-        "    url: https://mcp.example/x\n"
-        "    allowed_tools: [t]\n"
-        "    headers:\n"
-        "      authorization: ${GH_MCP_TOKEN}\n",
-        encoding="utf-8",
-    )
-    registry = load_mcp_servers(str(config), {"GH_MCP_TOKEN": "Bearer real-token"})
-    assert registry["gh"].headers == {"authorization": "Bearer real-token"}
-
-
-def test_load_mcp_servers_missing_env_ref_fails_loud(tmp_path: Path) -> None:
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n"
-        "  gh:\n"
-        "    url: https://mcp.example/x\n"
-        "    allowed_tools: [t]\n"
-        "    headers: {authorization: '${NO_SUCH_TOKEN}'}\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(McpConfigError, match="NO_SUCH_TOKEN"):
-        load_mcp_servers(str(config), {})
-
-
-def test_load_mcp_servers_unknown_key_fails_loud(tmp_path: Path) -> None:
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n  gh:\n    url: https://x\n    allowed_tools: [t]\n    tokens: {a: b}\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(Exception):
-        load_mcp_servers(str(config), {})
-
-
-def test_load_mcp_servers_absent_path_is_empty_registry() -> None:
-    assert load_mcp_servers(None, {}) == {}
-    assert load_mcp_servers("", {}) == {}

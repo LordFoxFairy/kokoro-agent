@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any, cast
@@ -20,6 +21,7 @@ from pydantic import BaseModel as PydanticBaseModel, JsonValue
 
 from kokoro.agent.execution.v1 import agent_execution_evidence_pb2 as evidence_pb2
 
+from kokoro_agent import metrics
 from fakes import (
     FakeAgent,
     FakeBus,
@@ -48,6 +50,7 @@ from kokoro_agent.contract import (
     PlanStep,
     RunCompleted,
     RunFailed,
+    RunStarted,
     RunStartedPayload,
     SubagentFinished,
     SubagentSource,
@@ -68,6 +71,7 @@ from kokoro_agent.execution.events import (
     DurableOutputCommitError,
     RunEmitter,
     clip_result,
+    outbox_wire_event,
     tool_returned_payload,
 )
 from kokoro_agent.execution.publish_agent_events import pump_run
@@ -883,6 +887,46 @@ async def test_all_durable_outputs_precede_and_survive_isolated_live_publish_fai
     assert bus.published == []
 
 
+async def test_repeated_durable_live_publish_failures_emit_one_warning(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailingBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            raise ConnectionError("live publish outage")
+
+    outbox_states: list[str] = []
+
+    def record_outbox(state: str, count: int = 1) -> None:
+        outbox_states.extend([state] * count)
+
+    monkeypatch.setattr(
+        metrics,
+        "record_outbox",
+        record_outbox,
+    )
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-live-warning-aggregate"))
+    emitter = RunEmitter(FailingBus(), "r-live-warning-aggregate", outbox=ledger)
+
+    with caplog.at_level("DEBUG", logger="kokoro_agent.execution.events"):
+        await emitter.emit(RunStartedPayload())
+        for index in range(99):
+            await emitter.emit(
+                MessageDeltaPayload(segment_id=f"segment-{index}", delta="retained")
+            )
+
+    delivery_logs = [
+        record
+        for record in caplog.records
+        if "live event publish failed" in record.getMessage()
+    ]
+    assert len([record for record in delivery_logs if record.levelno >= 30]) == 1
+    assert len([record for record in delivery_logs if record.levelno == 10]) == 99
+    assert outbox_states.count("live_publish_failed") == 100
+
+
 async def test_live_publish_failure_without_outbox_propagates() -> None:
     class FailingBus(FakeBus):
         async def publish(
@@ -958,14 +1002,22 @@ async def test_output_batch_conflict_is_fail_loud_without_partial_mutation() -> 
     )
     assert len(original) == 2 and len(changed) == 1
     inserted = await ledger.append_durable_outputs(
-        "r-output-batch-conflict", "event-stable", original, recorded_at_ms=1
+        "r-output-batch-conflict",
+        "event-stable",
+        original,
+        recorded_at_ms=1,
+        source_payload_sha256="0" * 64,
     )
     assert inserted is not None
     before = list(ledger.output_records["r-output-batch-conflict"])
 
     with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
         await ledger.append_durable_outputs(
-            "r-output-batch-conflict", "event-stable", changed, recorded_at_ms=2
+            "r-output-batch-conflict",
+            "event-stable",
+            changed,
+            recorded_at_ms=2,
+            source_payload_sha256="0" * 64,
         )
 
     assert ledger.output_records["r-output-batch-conflict"] == before
@@ -985,7 +1037,11 @@ async def test_output_batch_replay_rejects_a_matching_shorter_prefix() -> None:
     )
     assert len(original) == 2
     inserted = await ledger.append_durable_outputs(
-        "r-output-batch-cardinality", "event-stable", original, recorded_at_ms=1
+        "r-output-batch-cardinality",
+        "event-stable",
+        original,
+        recorded_at_ms=1,
+        source_payload_sha256="0" * 64,
     )
     assert inserted is not None
     before = list(ledger.output_records["r-output-batch-cardinality"])
@@ -996,9 +1052,195 @@ async def test_output_batch_replay_rejects_a_matching_shorter_prefix() -> None:
             "event-stable",
             original[:1],
             recorded_at_ms=2,
+            source_payload_sha256="0" * 64,
         )
 
     assert ledger.output_records["r-output-batch-cardinality"] == before
+
+
+async def test_zero_cardinality_output_batch_is_idempotent_and_conflict_checked() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-zero-batch"))
+    drafts = durable_output_drafts_for_event(
+        ToolReturnedPayload(
+            segment_id="segment-zero",
+            tool_id="tool-zero",
+            name="search",
+            result="hidden",
+            is_error=True,
+        )
+    )
+    assert len(drafts) == 2
+
+    assert await ledger.append_durable_outputs(
+        "r-output-zero-batch",
+        "event-zero",
+        (),
+        recorded_at_ms=1,
+        source_payload_sha256="a" * 64,
+    ) == ()
+    assert await ledger.append_durable_outputs(
+        "r-output-zero-batch",
+        "event-zero",
+        (),
+        recorded_at_ms=2,
+        source_payload_sha256="a" * 64,
+    ) == ()
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_CONFLICT"):
+        await ledger.append_durable_outputs(
+            "r-output-zero-batch",
+            "event-zero",
+            (),
+            recorded_at_ms=3,
+            source_payload_sha256="b" * 64,
+        )
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+        await ledger.append_durable_outputs(
+            "r-output-zero-batch",
+            "event-zero",
+            drafts[:1],
+            recorded_at_ms=4,
+            source_payload_sha256="a" * 64,
+        )
+
+    inserted = await ledger.append_durable_outputs(
+        "r-output-zero-batch",
+        "event-nonzero",
+        drafts,
+        recorded_at_ms=5,
+        source_payload_sha256="c" * 64,
+    )
+    assert inserted is not None
+    assert [record.output_seq for record in inserted] == [1, 2]
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+        await ledger.append_durable_outputs(
+            "r-output-zero-batch",
+            "event-nonzero",
+            (),
+            recorded_at_ms=6,
+            source_payload_sha256="c" * 64,
+        )
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_CONFLICT"):
+        await ledger.append_durable_outputs(
+            "r-output-zero-batch",
+            "event-nonzero",
+            tuple(reversed(drafts)),
+            recorded_at_ms=7,
+            source_payload_sha256="d" * 64,
+        )
+
+    assert ledger.output_batches[("r-output-zero-batch", "event-zero")][1] == ()
+    assert ledger.output_records["r-output-zero-batch"] == list(inserted)
+
+    ledger.output_batches.pop(("r-output-zero-batch", "event-nonzero"))
+    with pytest.raises(ValueError, match="OUTPUT_SOURCE_PARTIAL"):
+        await ledger.append_durable_outputs(
+            "r-output-zero-batch",
+            "event-nonzero",
+            drafts,
+            recorded_at_ms=8,
+            source_payload_sha256="c" * 64,
+        )
+
+    assert await ledger.try_mark_terminal("r-output-zero-batch") is True
+    assert (
+        await ledger.append_durable_outputs(
+            "r-output-zero-batch",
+            "event-post-terminal-zero",
+            (),
+            recorded_at_ms=9,
+            source_payload_sha256="e" * 64,
+        )
+        is None
+    )
+
+
+async def test_emitter_records_zero_cardinality_source_batch() -> None:
+    class TrackingLedger(FakeLedger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.appended: list[
+                tuple[str, tuple[DurableOutputDraft, ...], str]
+            ] = []
+
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+            source_payload_sha256: str,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            self.appended.append((source_event_ref, drafts, source_payload_sha256))
+            return await super().append_durable_outputs(
+                run_id,
+                source_event_ref,
+                drafts,
+                recorded_at_ms=recorded_at_ms,
+                source_payload_sha256=source_payload_sha256,
+            )
+
+    ledger = TrackingLedger()
+    await ledger.try_claim(request("r-output-zero-emitter"))
+
+    await RunEmitter(FakeBus(), "r-output-zero-emitter", outbox=ledger).emit(
+        MessageDeltaPayload(segment_id="segment-empty", delta="")
+    )
+
+    assert len(ledger.appended) == 1
+    assert ledger.appended[0][1] == ()
+    assert ledger.output_records.get("r-output-zero-emitter", []) == []
+
+
+async def test_emitter_rejects_zero_batch_source_payload_drift() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-zero-drift"))
+    bus = FakeBus()
+
+    await RunEmitter(bus, "r-output-zero-drift", outbox=ledger).emit(
+        MessageDeltaPayload(segment_id="segment-empty-a", delta="")
+    )
+
+    with pytest.raises(DurableOutputCommitError, match="OUTPUT_SOURCE_CONFLICT"):
+        await RunEmitter(bus, "r-output-zero-drift", outbox=ledger).emit(
+            MessageDeltaPayload(segment_id="segment-empty-b", delta="")
+        )
+
+    assert len(bus.run_events("r-output-zero-drift")) == 1
+    assert ledger.output_records.get("r-output-zero-drift", []) == []
+
+
+async def test_emitter_does_not_record_batch_for_noncapable_thinking_event() -> None:
+    class TrackingLedger(FakeLedger):
+        append_calls = 0
+
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+            source_payload_sha256: str,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            self.append_calls += 1
+            return await super().append_durable_outputs(
+                run_id,
+                source_event_ref,
+                drafts,
+                recorded_at_ms=recorded_at_ms,
+                source_payload_sha256=source_payload_sha256,
+            )
+
+    ledger = TrackingLedger()
+    await ledger.try_claim(request("r-output-thinking-no-batch"))
+
+    await RunEmitter(FakeBus(), "r-output-thinking-no-batch", outbox=ledger).emit(
+        ThinkingDeltaPayload(segment_id="segment-thinking", delta="ephemeral")
+    )
+
+    assert ledger.append_calls == 0
 
 
 async def test_terminal_retention_purge_removes_durable_output_rows() -> None:
@@ -1008,7 +1250,11 @@ async def test_terminal_retention_purge_removes_durable_output_rows() -> None:
         MessageDeltaPayload(segment_id="segment-retention", delta="expired text")
     )
     assert await ledger.append_durable_outputs(
-        "r-output-retention", "event-retention", drafts, recorded_at_ms=1
+        "r-output-retention",
+        "event-retention",
+        drafts,
+        recorded_at_ms=1,
+        source_payload_sha256="0" * 64,
     )
     assert await ledger.try_mark_terminal("r-output-retention")
     ledger.clock_ms = 10_000
@@ -1029,6 +1275,7 @@ async def test_durable_output_rejection_is_fail_loud_and_suppresses_live_publish
             drafts: tuple[DurableOutputDraft, ...],
             *,
             recorded_at_ms: int,
+            source_payload_sha256: str,
         ) -> tuple[DurableOutputRecord, ...] | None:
             return None
 
@@ -1051,6 +1298,7 @@ async def test_pump_cancels_delayed_producers_on_durable_append_rejection() -> N
             drafts: tuple[DurableOutputDraft, ...],
             *,
             recorded_at_ms: int,
+            source_payload_sha256: str,
         ) -> tuple[DurableOutputRecord, ...] | None:
             return None
 
@@ -1092,6 +1340,7 @@ async def test_pump_observes_drainer_fault_after_producer_finishes_first() -> No
             drafts: tuple[DurableOutputDraft, ...],
             *,
             recorded_at_ms: int,
+            source_payload_sha256: str,
         ) -> tuple[DurableOutputRecord, ...] | None:
             await asyncio.sleep(0.05)
             return None
@@ -1115,6 +1364,54 @@ async def test_pump_observes_drainer_fault_after_producer_finishes_first() -> No
         )
 
 
+async def test_external_pump_cancellation_stops_blocked_emitter_immediately() -> None:
+    class BlockingBus(FakeBus):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+            self.publish_calls = 0
+
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            self.publish_calls += 1
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+    bus = BlockingBus()
+    pump = asyncio.create_task(
+        pump_run(
+            RunEmitter(bus, "r-output-external-cancel", next_index=1),
+            await _pump_text_run("buffered after first event"),
+            source_for=_runtime_custom,
+        )
+    )
+    await asyncio.wait_for(bus.started.wait(), timeout=0.5)
+
+    try:
+        pump.cancel()
+        await asyncio.wait_for(bus.cancelled.wait(), timeout=0.1)
+        assert pump.done()
+        with pytest.raises(asyncio.CancelledError):
+            await pump
+        await asyncio.sleep(0)
+        assert bus.publish_calls == 1
+        task_names = {task.get_name() for task in asyncio.all_tasks()}
+        assert "kokoro-event-drainer:r-output-external-cancel" not in task_names
+        assert "kokoro-projection-producer:r-output-external-cancel" not in task_names
+    finally:
+        if not pump.done():
+            pump.cancel()
+        with suppress(asyncio.CancelledError):
+            await pump
+
+
 async def test_invoke_append_rejection_cannot_end_in_completed() -> None:
     class RejectOnceLedger(FakeLedger):
         rejected = False
@@ -1126,6 +1423,7 @@ async def test_invoke_append_rejection_cannot_end_in_completed() -> None:
             drafts: tuple[DurableOutputDraft, ...],
             *,
             recorded_at_ms: int,
+            source_payload_sha256: str,
         ) -> tuple[DurableOutputRecord, ...] | None:
             if not self.rejected:
                 self.rejected = True
@@ -1135,6 +1433,7 @@ async def test_invoke_append_rejection_cannot_end_in_completed() -> None:
                 source_event_ref,
                 drafts,
                 recorded_at_ms=recorded_at_ms,
+                source_payload_sha256=source_payload_sha256,
             )
 
     bus = FakeBus()
@@ -1188,6 +1487,65 @@ async def test_critical_stage_failure_is_fatal_after_output_commit() -> None:
     assert len(ledger.output_records["r-output-stage-failure"]) == 1
 
 
+async def test_critical_publish_ack_failure_leaves_fixed_frame_queued(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class MarkFailingLedger(FakeLedger):
+        async def mark_critical_published(
+            self, run_id: str, durable_seq: int
+        ) -> None:
+            raise OSError("publish ack unavailable")
+
+    ledger = MarkFailingLedger()
+    await ledger.try_claim(request("r-started-ack-failure"))
+    bus = FakeBus()
+
+    with caplog.at_level("WARNING", logger="kokoro_agent.execution.events"):
+        await RunEmitter(bus, "r-started-ack-failure", outbox=ledger).emit(
+            RunStartedPayload()
+        )
+
+    published = find_event(bus.run_events("r-started-ack-failure"), RunStarted)
+    queued = await ledger.list_unpublished_outbox()
+    assert len(queued) == 1
+    assert queued[0].event_id == published.event_id
+    assert outbox_wire_event(queued[0])["event_id"] == published.event_id
+    assert "publish acknowledgement failed" in caplog.text
+
+
+async def test_invoke_run_started_ack_failure_does_not_fail_run() -> None:
+    class FailFirstMarkLedger(FakeLedger):
+        failed = False
+
+        async def mark_critical_published(
+            self, run_id: str, durable_seq: int
+        ) -> None:
+            if not self.failed:
+                self.failed = True
+                raise OSError("run.started ack unavailable")
+            await super().mark_critical_published(run_id, durable_seq)
+
+    ledger = FailFirstMarkLedger()
+    bus = FakeBus()
+
+    done = await _invoke(
+        bus,
+        FakeAgent(run=text_run("run survives ack loss")),
+        run_id="r-started-ack-invoke",
+        ledger=ledger,
+    )
+
+    assert done is True
+    assert "run.completed" in bus.kinds("r-started-ack-invoke")
+    assert "run.failed" not in bus.kinds("r-started-ack-invoke")
+    started = next(
+        row
+        for row in ledger.outbox["r-started-ack-invoke"]
+        if row["kind"] == "run.started"
+    )
+    assert started["status"] == "queued"
+
+
 async def test_durable_output_append_failure_cannot_end_in_completed() -> None:
     class FailOnceLedger(FakeLedger):
         failed = False
@@ -1199,6 +1557,7 @@ async def test_durable_output_append_failure_cannot_end_in_completed() -> None:
             drafts: tuple[DurableOutputDraft, ...],
             *,
             recorded_at_ms: int,
+            source_payload_sha256: str,
         ) -> tuple[DurableOutputRecord, ...] | None:
             if not self.failed:
                 self.failed = True
@@ -1208,6 +1567,7 @@ async def test_durable_output_append_failure_cannot_end_in_completed() -> None:
                 source_event_ref,
                 drafts,
                 recorded_at_ms=recorded_at_ms,
+                source_payload_sha256=source_payload_sha256,
             )
 
     bus = FakeBus()

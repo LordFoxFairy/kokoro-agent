@@ -7,11 +7,15 @@ outbox identity. Evidence never grows the run document and every read is a bound
 query. It is not a second event log, UI projection, or business-identity store.
 
 The same package also owns `agent_durable_output`: an append-only, per-run output sequence
-and digest chain independent of lifecycle `durable_seq`. `RunEmitter` persists all typed
-outputs for one source event in one transaction before live publication; stable event identity
-plus output ordinal gives keep-first replay and conflict detection. Every row repeats the source
-batch cardinality and ordinal, so a replay that adds, removes, or reorders drafts fails closed
-instead of accepting a matching prefix. Terminal-owner CAS freezes
+and digest chain independent of lifecycle `durable_seq`. The private
+`agent_durable_output_source_batch` collection stores one marker for every explicitly
+output-capable source event, including zero-cardinality safe projections. The marker binds the
+validated source payload's canonical JSON digest, cardinality, and ordered draft digest in the
+same transaction as output rows and the run counter. It is excluded from public output records,
+cursors, hash chains, and retention gauges. Missing markers are incomplete authority and fail
+closed; this version does not backfill ordinal-only rows. Exact replay is keep-first, while source
+payload drift, zero/nonzero transitions, additions, removals, and reordering are rejected.
+Terminal-owner CAS freezes
 the output high watermark and digest. Long text is split on UTF-8 boundaries without loss; a
 completed snapshot uses one replacement snapshot followed by delta chunks when necessary.
 Reasoning, tool arguments/results, executable schemas, and local delivery metadata are
@@ -23,8 +27,9 @@ hash is not promoted or relabeled as an Artifact/ArtifactVersion authority.
 output paging capped at 64 records. `server.py` builds the
 HTTP/2-only mTLS listener, and `main.py` is the independently deployable provider process.
 
-The storage adapter can delete output and evidence rows with an eligible run in one Mongo
-transaction, but that destructive path is not operationally enabled. `KOKORO_RETENTION_RUN_TTL_S`
+The storage adapter can delete output rows, private source-batch markers, and evidence rows with
+an eligible run in one Mongo transaction, but that destructive path is not operationally enabled.
+`KOKORO_RETENTION_RUN_TTL_S`
 and direct supervisor construction accept zero only; a nonzero value fails startup with
 `DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK`. Retained output/evidence counts remain visible
 as gauges. Root and Session must define a consumer ACK/tombstone contract before time-based

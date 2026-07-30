@@ -161,7 +161,8 @@ class FakeLedger:
         self.output_records: dict[str, list[DurableOutputRecord]] = {}
         self.output_sources: dict[tuple[str, str], tuple[str, DurableOutputRecord]] = {}
         self.output_batches: dict[
-            tuple[str, str], tuple[tuple[str, DurableOutputRecord], ...]
+            tuple[str, str],
+            tuple[str, tuple[tuple[str, DurableOutputRecord], ...]],
         ] = {}
         self.output_text_seq: dict[tuple[str, str], int] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
@@ -260,22 +261,40 @@ class FakeLedger:
         drafts: tuple[DurableOutputDraft, ...],
         *,
         recorded_at_ms: int,
+        source_payload_sha256: str,
     ) -> tuple[DurableOutputRecord, ...] | None:
-        if not drafts:
-            return ()
+        if len(source_payload_sha256) != 64 or any(
+            char not in "0123456789abcdef" for char in source_payload_sha256
+        ):
+            raise ValueError("OUTPUT_SOURCE_PAYLOAD_DIGEST_INVALID")
         batch_identity = (run_id, source_event_ref)
+        source_prefix = f"{source_event_ref}:"
+        persisted_source_rows = [
+            value
+            for (source_run_id, source_ref), value in self.output_sources.items()
+            if source_run_id == run_id
+            and source_ref.startswith(source_prefix)
+            and source_ref.removeprefix(source_prefix).isdigit()
+        ]
         existing_batch = self.output_batches.get(batch_identity)
         if existing_batch is not None:
-            if len(existing_batch) != len(drafts):
+            existing_source_payload_sha256, existing_records = existing_batch
+            if len(existing_records) != len(drafts):
                 raise ValueError("OUTPUT_SOURCE_BATCH_CONFLICT")
+            if existing_source_payload_sha256 != source_payload_sha256:
+                raise ValueError("OUTPUT_SOURCE_CONFLICT")
+            if len(persisted_source_rows) != len(existing_records):
+                raise ValueError("OUTPUT_SOURCE_PARTIAL")
             replayed: list[DurableOutputRecord] = []
-            for (source_payload_sha256, record), draft in zip(
-                existing_batch, drafts, strict=True
+            for (draft_payload_sha256, record), draft in zip(
+                existing_records, drafts, strict=True
             ):
-                if source_payload_sha256 != draft.source_payload_sha256:
+                if draft_payload_sha256 != draft.source_payload_sha256:
                     raise ValueError("OUTPUT_SOURCE_CONFLICT")
                 replayed.append(record)
             return tuple(replayed)
+        if persisted_source_rows:
+            raise ValueError("OUTPUT_SOURCE_PARTIAL")
         identities = [
             (run_id, f"{source_event_ref}:{ordinal}")
             for ordinal in range(len(drafts))
@@ -309,9 +328,12 @@ class FakeLedger:
         records.extend(appended)
         for identity, draft, record in zip(identities, drafts, appended, strict=True):
             self.output_sources[identity] = (draft.source_payload_sha256, record)
-        self.output_batches[batch_identity] = tuple(
-            (draft.source_payload_sha256, record)
-            for draft, record in zip(drafts, appended, strict=True)
+        self.output_batches[batch_identity] = (
+            source_payload_sha256,
+            tuple(
+                (draft.source_payload_sha256, record)
+                for draft, record in zip(drafts, appended, strict=True)
+            ),
         )
         self.output_text_seq = next_text_seq
         return tuple(appended)

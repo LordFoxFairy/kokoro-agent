@@ -47,7 +47,10 @@ from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.evidence.models import durable_output_drafts_for_event
+from kokoro_agent.evidence.models import (
+    durable_output_drafts_for_event,
+    is_durable_output_capable_event,
+)
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
 from kokoro_agent.storage.execution_context import (
     CompletionEventDraft,
@@ -159,6 +162,7 @@ class RunEmitter:
         # R4 durable outbox（None=纯 live 发布，向后兼容）：critical 帧经此分配 durable_seq/event_id、
         # 落 queued 行、发布后置 published。live 序（index）不动，durable_seq 独立并行。
         self._outbox = outbox
+        self._delivery_warning_phases: set[str] = set()
 
     @property
     def run_id(self) -> str:
@@ -198,6 +202,19 @@ class RunEmitter:
                 return payload.model_copy(update={"segment_id": owner})
         return payload
 
+    def _record_delivery_failure(self, phase: str, kind: str) -> None:
+        metrics.record_outbox(f"{phase}_failed")
+        first = phase not in self._delivery_warning_phases
+        self._delivery_warning_phases.add(phase)
+        if phase == "publish_ack":
+            message = (
+                "critical publish acknowledgement failed; durable frame remains queued: "
+                "run_id=%s kind=%s"
+            )
+        else:
+            message = "live event publish failed; durable truth retained: run_id=%s kind=%s"
+        LOGGER.log(logging.WARNING if first else logging.DEBUG, message, self._run_id, kind)
+
     async def emit(self, payload: AgentEventPayload) -> None:
         if (
             isinstance(payload, ToolReturnedPayload)
@@ -221,41 +238,50 @@ class RunEmitter:
             else None
         )
         durable_output_committed = False
-        if self._outbox is not None:
+        if self._outbox is not None and is_durable_output_capable_event(payload):
             drafts = durable_output_drafts_for_event(payload)
-            if drafts:
-                source_seed = "event:" + hashlib.sha256(
-                    (
-                        f"v1\0{self._run_id}\0{kind}\0"
-                        f"{semantic_key or f'index:{index}'}"
-                    ).encode()
-                ).hexdigest()
-                try:
-                    records = await self._outbox.append_durable_outputs(
-                        self._run_id,
-                        source_seed,
-                        drafts,
-                        recorded_at_ms=timestamp,
-                    )
-                except Exception as error:
-                    reason = str(error)
-                    detail = "APPEND_ERROR"
-                    if reason in {
-                        "OUTPUT_SOURCE_BATCH_CONFLICT",
-                        "OUTPUT_SOURCE_CONFLICT",
-                        "OUTPUT_SOURCE_PARTIAL",
-                    }:
-                        detail = reason
-                    if semantic_key is not None and reason == "OUTPUT_SOURCE_CONFLICT":
-                        detail = f"semantic critical frame conflict for {semantic_key!r}"
-                    raise DurableOutputCommitError(
-                        f"DURABLE_OUTPUT_COMMIT_FAILED: {detail}"
-                    ) from error
-                if records is None:
-                    raise DurableOutputCommitError(
-                        "DURABLE_OUTPUT_COMMIT_FAILED: DURABLE_OUTPUT_APPEND_REJECTED"
-                    )
-                durable_output_committed = True
+            source_payload_json = json.dumps(
+                payload.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            source_payload_sha256 = hashlib.sha256(
+                source_payload_json.encode()
+            ).hexdigest()
+            source_seed = "event:" + hashlib.sha256(
+                (
+                    f"v1\0{self._run_id}\0{kind}\0"
+                    f"{semantic_key or f'index:{index}'}"
+                ).encode()
+            ).hexdigest()
+            try:
+                records = await self._outbox.append_durable_outputs(
+                    self._run_id,
+                    source_seed,
+                    drafts,
+                    recorded_at_ms=timestamp,
+                    source_payload_sha256=source_payload_sha256,
+                )
+            except Exception as error:
+                reason = str(error)
+                detail = "APPEND_ERROR"
+                if reason in {
+                    "OUTPUT_SOURCE_BATCH_CONFLICT",
+                    "OUTPUT_SOURCE_CONFLICT",
+                    "OUTPUT_SOURCE_PARTIAL",
+                }:
+                    detail = reason
+                if semantic_key is not None and reason == "OUTPUT_SOURCE_CONFLICT":
+                    detail = f"semantic critical frame conflict for {semantic_key!r}"
+                raise DurableOutputCommitError(
+                    f"DURABLE_OUTPUT_COMMIT_FAILED: {detail}"
+                ) from error
+            if records is None:
+                raise DurableOutputCommitError(
+                    "DURABLE_OUTPUT_COMMIT_FAILED: DURABLE_OUTPUT_APPEND_REJECTED"
+                )
+            durable_output_committed = bool(drafts)
         base: dict[str, object] = {
             "kind": kind,
             "run_id": self._run_id,
@@ -299,20 +325,15 @@ class RunEmitter:
                     maxlen=RUN_EVENTS_MAXLEN,
                 )
             except Exception:  # noqa: BLE001 — live bus loss leaves the critical frame queued
-                LOGGER.warning(
-                    "live event publish failed; durable frame remains queued: run_id=%s kind=%s",
-                    self._run_id,
-                    kind,
-                )
+                self._record_delivery_failure("live_publish", kind)
                 return
             try:
                 await self._outbox.mark_critical_published(
                     self._run_id, staged.durable_seq
                 )
-            except Exception as error:
-                raise DurableOutputCommitError(
-                    "DURABLE_OUTPUT_PUBLISH_MARK_FAILED"
-                ) from error
+            except Exception:  # noqa: BLE001 — delivery ack loss leaves the staged row queued
+                self._record_delivery_failure("publish_ack", kind)
+                return
             metrics.record_outbox("published")
             return
         event = agent_event_adapter.validate_python(base)
@@ -327,11 +348,7 @@ class RunEmitter:
         except Exception:  # noqa: BLE001 — isolate only after this event is durable
             if not durable_output_committed:
                 raise
-            LOGGER.warning(
-                "live event publish failed after durable output commit: run_id=%s kind=%s",
-                self._run_id,
-                kind,
-            )
+            self._record_delivery_failure("live_publish", kind)
 
     async def emit_completed(
         self,

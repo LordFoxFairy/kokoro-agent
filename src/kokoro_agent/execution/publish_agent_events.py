@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncIterable
 
 from kokoro_agent.execution.protocols import (
@@ -36,8 +35,6 @@ from kokoro_agent.execution.events import (
 )
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME, TODO_TOOL_NAME
 
-LOGGER = logging.getLogger(__name__)
-
 _EventQueue = asyncio.Queue[AgentEventPayload | None]
 
 
@@ -46,7 +43,8 @@ async def pump_run(emitter: RunEmitter, run: AgentRunStream, *, source_for: Sour
 
     LangGraph v3 用 caller-driven single-flight pump 驱动全图，四路 typed 投影必须并发
     消费——任一通道缓冲满会回压整图直至死锁；queue 只为合流保序不为吞吐。
-    try/finally 保证 None 哨兵必达、drainer 必被收束：上游崩溃也不泄漏后台协程。
+    正常/普通上游错误以 None 哨兵收束 drainer；外部取消或 drainer 致命错误则立即取消并
+    await 两侧，既不继续发布缓冲帧，也不泄漏后台协程。
     """
     queue: _EventQueue = asyncio.Queue()
     drainer = asyncio.create_task(
@@ -64,23 +62,34 @@ async def pump_run(emitter: RunEmitter, run: AgentRunStream, *, source_for: Sour
             # The sentinel has not been sent yet, so an early drainer exit is an emitter
             # failure. Await the task directly to preserve the original exception type.
             await drainer
-        await producer
-    finally:
-        await _cancel_and_settle(producer)
+        try:
+            await producer
+        except Exception:
+            # Preserve already-produced frames on an ordinary upstream failure.
+            if not drainer.done():
+                queue.put_nowait(None)
+            await drainer
+            raise
         if not drainer.done():
-            await queue.put(None)
+            queue.put_nowait(None)
         await drainer
-
-
-async def _cancel_and_settle(task: asyncio.Task[None]) -> None:
-    if not task.done():
-        task.cancel()
-    try:
-        await task
     except asyncio.CancelledError:
-        pass
-    except Exception:  # noqa: BLE001 — preserve the drainer's original fatal exception
-        LOGGER.exception("projection producer cleanup failed")
+        # External cancellation is an abort, not an orderly EOF: stop both sides
+        # immediately and never continue draining buffered projections.
+        await _cancel_and_settle(producer, drainer)
+        raise
+    except BaseException:
+        await _cancel_and_settle(producer, drainer)
+        raise
+
+
+async def _cancel_and_settle(*tasks: asyncio.Task[None]) -> None:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    # return_exceptions keeps concurrent cleanup faults from replacing the primary
+    # cancellation or durable-output error already propagating from pump_run.
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:

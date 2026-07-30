@@ -41,6 +41,7 @@ from kokoro_agent.storage.ledger import (
 )
 from kokoro_agent.storage.mongo import (
     AGENT_DURABLE_OUTPUT_COLLECTION,
+    AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
     DISPATCH_DLQ_COLLECTION,
     MongoLedger,
@@ -111,6 +112,7 @@ async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
         await coll.drop()
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
+        await coll.database[AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION].drop()
         await client.close()
 
 
@@ -300,7 +302,11 @@ async def _assert_purge_terminal(store: RunLedger, clock: FakeClock) -> None:
     )
     assert output_draft is not None
     assert await store.append_durable_outputs(
-        "run-old", "retention-event", (output_draft,), recorded_at_ms=clock.now
+        "run-old",
+        "retention-event",
+        (output_draft,),
+        recorded_at_ms=clock.now,
+        source_payload_sha256="0" * 64,
     )
     await store.try_mark_terminal("run-old")
     clock.advance_ms(10_000)
@@ -310,6 +316,14 @@ async def _assert_purge_terminal(store: RunLedger, clock: FakeClock) -> None:
     assert await store.is_terminal("run-old") is False
     assert await store.get_tool_result("run-old", "t1") is None
     assert await store.pull_durable_output_records("run-old", 0, 64) == []
+    assert await store.try_claim(request("run-old"), OWNER) is True
+    assert await store.append_durable_outputs(
+        "run-old",
+        "retention-event",
+        (),
+        recorded_at_ms=clock.now,
+        source_payload_sha256="f" * 64,
+    ) == ()
     assert await store.add_tokens("run-old", 1) == 1  # 计数从零（旧累计已清）
     # 未超龄/活跃不受影响。
     assert await store.is_terminal("run-new") is True
@@ -410,17 +424,33 @@ async def test_output_authority_is_independent_idempotent_and_terminal_sealed() 
         assert first_draft is not None and second_draft is not None
 
         first_batch = await store.append_durable_outputs(
-            req.run_id, "event:0", (first_draft,), recorded_at_ms=clock.now
+            req.run_id,
+            "event:0",
+            (first_draft,),
+            recorded_at_ms=clock.now,
+            source_payload_sha256="0" * 64,
         )
         duplicate_batch = await store.append_durable_outputs(
-            req.run_id, "event:0", (first_draft,), recorded_at_ms=clock.now
+            req.run_id,
+            "event:0",
+            (first_draft,),
+            recorded_at_ms=clock.now,
+            source_payload_sha256="0" * 64,
         )
         with pytest.raises(ValueError, match="OUTPUT_SOURCE_CONFLICT"):
             await store.append_durable_outputs(
-                req.run_id, "event:0", (second_draft,), recorded_at_ms=clock.now
+                req.run_id,
+                "event:0",
+                (second_draft,),
+                recorded_at_ms=clock.now,
+                source_payload_sha256="0" * 64,
             )
         second_batch = await store.append_durable_outputs(
-            req.run_id, "event:1", (second_draft,), recorded_at_ms=clock.now + 1
+            req.run_id,
+            "event:1",
+            (second_draft,),
+            recorded_at_ms=clock.now + 1,
+            source_payload_sha256="1" * 64,
         )
         assert first_batch is not None and second_batch is not None
         first, second = first_batch[0], second_batch[0]
@@ -459,7 +489,11 @@ async def test_output_authority_is_independent_idempotent_and_terminal_sealed() 
         assert failed.output_digest_sha256 == expected_digest
         assert (
             await store.append_durable_outputs(
-                req.run_id, "event:3", (second_draft,), recorded_at_ms=clock.now + 3
+                req.run_id,
+                "event:3",
+                (second_draft,),
+                recorded_at_ms=clock.now + 3,
+                source_payload_sha256="3" * 64,
             )
             is None
         )
@@ -486,6 +520,7 @@ async def test_output_authority_retries_contention_without_losing_records() -> N
                     f"event:{index}",
                     (draft,),
                     recorded_at_ms=clock.now + index,
+                    source_payload_sha256=f"{index:064x}",
                 )
                 for index, draft in enumerate(drafts)
                 if draft is not None
@@ -518,6 +553,7 @@ async def test_output_authority_rejects_matching_shorter_batch_replay() -> None:
             "event:stable",
             (first, second),
             recorded_at_ms=clock.now,
+            source_payload_sha256="0" * 64,
         )
         assert inserted is not None
 
@@ -527,12 +563,100 @@ async def test_output_authority_rejects_matching_shorter_batch_replay() -> None:
                 "event:stable",
                 (first,),
                 recorded_at_ms=clock.now + 1,
+                source_payload_sha256="0" * 64,
             )
 
         page = await store.pull_durable_output_records(run_id, 0, 64)
         assert [record.payload_sha256 for record in page] == [
             record.payload_sha256 for record in inserted
         ]
+
+
+async def test_output_authority_persists_zero_cardinality_batch_identity() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as raw_store:
+        assert isinstance(raw_store, MongoLedger)
+        store = raw_store
+        run_id = "run-output-zero-batch"
+        assert await store.try_claim(request(run_id), OWNER) is True
+        first = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-zero", delta="first")
+        )
+        second = durable_output_draft_for_event(
+            MessageDeltaPayload(segment_id="segment-zero", delta="second")
+        )
+        assert first is not None and second is not None
+
+        assert await store.append_durable_outputs(
+            run_id,
+            "event-zero",
+            (),
+            recorded_at_ms=clock.now,
+            source_payload_sha256="a" * 64,
+        ) == ()
+        assert await store.append_durable_outputs(
+            run_id,
+            "event-zero",
+            (),
+            recorded_at_ms=clock.now + 1,
+            source_payload_sha256="a" * 64,
+        ) == ()
+        with pytest.raises(ValueError, match="OUTPUT_SOURCE_CONFLICT"):
+            await store.append_durable_outputs(
+                run_id,
+                "event-zero",
+                (),
+                recorded_at_ms=clock.now + 2,
+                source_payload_sha256="b" * 64,
+            )
+        with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+            await store.append_durable_outputs(
+                run_id,
+                "event-zero",
+                (first,),
+                recorded_at_ms=clock.now + 3,
+                source_payload_sha256="a" * 64,
+            )
+
+        inserted = await store.append_durable_outputs(
+            run_id,
+            "event-nonzero",
+            (first, second),
+            recorded_at_ms=clock.now + 4,
+            source_payload_sha256="c" * 64,
+        )
+        assert inserted is not None
+        assert [record.output_seq for record in inserted] == [1, 2]
+        with pytest.raises(ValueError, match="OUTPUT_SOURCE_BATCH_CONFLICT"):
+            await store.append_durable_outputs(
+                run_id,
+                "event-nonzero",
+                (),
+                recorded_at_ms=clock.now + 5,
+                source_payload_sha256="c" * 64,
+            )
+        with pytest.raises(ValueError, match="OUTPUT_SOURCE_CONFLICT"):
+            await store.append_durable_outputs(
+                run_id,
+                "event-nonzero",
+                (second, first),
+                recorded_at_ms=clock.now + 6,
+                source_payload_sha256="d" * 64,
+            )
+
+        page = await store.pull_durable_output_records(run_id, 0, 64)
+        assert page == list(inserted)
+        assert await store.try_mark_terminal(run_id) is True
+        assert (
+            await store.append_durable_outputs(
+                run_id,
+                "event-post-terminal-zero",
+                (),
+                recorded_at_ms=clock.now + 7,
+                source_payload_sha256="e" * 64,
+            )
+            is None
+        )
 
 
 async def test_output_factory_creates_unique_sequence_and_source_indexes() -> None:
@@ -544,11 +668,19 @@ async def test_output_factory_creates_unique_sequence_and_source_indexes() -> No
         indexes = await client[settings.mongo_db][
             AGENT_DURABLE_OUTPUT_COLLECTION
         ].index_information()
+        source_batch_indexes = await client[settings.mongo_db][
+            AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION
+        ].index_information()
         assert indexes["run_output_seq_unique"]["unique"] is True
         assert indexes["run_output_source_unique"]["unique"] is True
         assert indexes["run_output_seq_unique"]["key"] == [
             ("run_id", 1),
             ("output_seq", 1),
+        ]
+        assert source_batch_indexes["run_output_source_batch_unique"]["unique"] is True
+        assert source_batch_indexes["run_output_source_batch_unique"]["key"] == [
+            ("run_id", 1),
+            ("source_event_ref", 1),
         ]
     finally:
         await client.drop_database(settings.mongo_db)
@@ -580,6 +712,7 @@ async def _mongo_ledger_with_dispatches(
         await coll.database[DISPATCH_DLQ_COLLECTION].drop()
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
+        await coll.database[AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION].drop()
         # R4 回执/清单是同库固定名兄弟集合（跨测试共享）：逐测试清空，串行安全。
         await coll.database[RUN_EVENT_RECEIPTS_COLLECTION].drop()
         await coll.database[RUN_RECEIPT_MANIFESTS_COLLECTION].drop()
@@ -688,6 +821,7 @@ async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
             "completion:output:0",
             (output_draft,),
             recorded_at_ms=clock.now,
+            source_payload_sha256="0" * 64,
         )
         assert output_batch is not None
         output = output_batch[0]

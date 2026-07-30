@@ -31,14 +31,17 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   R4：`CRITICAL_KINDS`/`TERMINAL_KINDS` + emitter 注入 outbox（RunLedger）——critical 帧经
   `stage_critical_frame` 分配 durable_seq/event_id、落 queued 行、发布后 published；live 序（index）
   不动、durable_seq 独立并行（浏览器面透明）；post-fence superseded 不发布、index 不前进。
-  有 durable-output 映射的事件先以独立 output_seq/hash chain 落 Agent Mongo authority，再发布 live；
+  显式 durable-output-capable family 的事件先落 source-batch marker；安全投影为 0 条也绑定 canonical
+  source payload digest，非空 batch 再进入独立 output_seq/hash chain，thinking/lifecycle 不制造 marker。
   append/stage/replay conflict 统一抛 `DurableOutputCommitError`，该异常穿透 projection pump、立即取消并
   收束四路 producer，阻止成功终态；仅当本事件已 append output 或 staged critical frame 时，单纯 live bus
   publish 失败才在 publish 调用边界隔离且不回滚 durable truth；无 durable truth 时 publish error 原样传播。
+  live publish 与 publish-ack 故障按 run/phase 首次 WARNING、后续 DEBUG 聚合，但每次仍记 metric；
+  publish-ack 只是 transactional outbox delivery ack，失败保持 queued 供 scanner 固定身份补投，不杀 run。
   semantic 事件按语义身份，非 semantic 事件按 persisted live index
   派生 source identity；后者严格只保证 output append 成功、live publish 尚未成功这一崩溃窗口。
-  同一事件的多条 output 在一个事务内连续分配，并持久化 batch cardinality/ordinal，重放增删、
-  重排或 payload 漂移均 fail-closed，不重复、不产生半批 output。live 已发布后的 graph checkpoint
+  同一事件的多条 output 在一个事务内连续分配；独立 marker 持久 cardinality、canonical source digest
+  与 ordered draft digest，0↔N、重放增删、重排或 payload 漂移均 fail-closed，不产生半批 output。
   replay 尚无 persisted projection-event identity，因此不宣称去重；扩展该保证前必须由 Root contract
   提供 `projection_event_ref`，不得用内容 hash 猜测（相同 delta 可能是合法重复文本）。
   `outbox_wire_event(frame)`：queued 行→补发 wire 帧（复用固定身份，幂等不漂移）。
@@ -46,7 +49,8 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   同 key 同 payload 返回 duplicate/no-publish，同 key异 payload fail-loud。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布；drainer fatal 时立即取消并
-  await producer 树，且保留原始 `DurableOutputCommitError`。
+  await producer 树，且保留原始 `DurableOutputCommitError`；外部 `CancelledError` 同步取消并收束
+  producer/drainer，不投递新的 EOF sentinel、不继续处理已缓冲事件。
 - `approvals.py`：HITL 权威唯一实现。`awaiting_payloads`（review/input/approval 三分支）、
   `plan_proposed_payload`（只读真实主图 interrupt，owner_ref=tool_call_id，拒 nested/mixed）、
   `approval_frame`/`review_frame`/`input_frame`/`PendingFrame`（nested=子代理内暂停合成帧）、

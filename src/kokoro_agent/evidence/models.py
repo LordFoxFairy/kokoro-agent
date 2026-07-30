@@ -90,6 +90,30 @@ EvidenceKind = Literal[
     "run.failed",
 ]
 
+# Stable allow-list of event families that own durable-output projection identity.
+# A capable event must commit a source-batch marker even when safe projection yields zero
+# records; thinking/lifecycle/approval/control frames intentionally remain outside this set.
+DURABLE_OUTPUT_CAPABLE_PAYLOAD_TYPES: frozenset[type[BaseModel]] = frozenset(
+    {
+        DeliveryCreatedPayload,
+        MessageCompletedPayload,
+        MessageDeltaPayload,
+        PlanProposedPayload,
+        SubagentFinishedPayload,
+        SubagentStartedPayload,
+        SubagentTextCompletedPayload,
+        SubagentTextDeltaPayload,
+        SubagentToolInvokedPayload,
+        SubagentToolReturnedPayload,
+        ToolInvokedPayload,
+        ToolReturnedPayload,
+    }
+)
+
+
+def is_durable_output_capable_event(payload: BaseModel) -> bool:
+    return type(payload) in DURABLE_OUTPUT_CAPABLE_PAYLOAD_TYPES
+
 _EVIDENCE_KIND_BY_EVENT: dict[str, EvidenceKind] = {
     "run.started": "run.started",
     "tool.awaiting_approval": "action_owner",

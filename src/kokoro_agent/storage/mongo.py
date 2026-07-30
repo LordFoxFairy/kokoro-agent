@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -49,6 +50,7 @@ from kokoro_agent.evidence.models import (
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
 AGENT_DURABLE_OUTPUT_COLLECTION = "agent_durable_output"
+AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION = "agent_durable_output_source_batch"
 
 _T = TypeVar("_T")
 _OUTPUT_APPEND_MAX_ATTEMPTS = 64
@@ -56,6 +58,21 @@ _OUTPUT_APPEND_MAX_ATTEMPTS = 64
 
 class _OutputAppendContention(RuntimeError):
     """A live run advanced its output counter before this append CAS."""
+
+
+def _output_source_batch_digest(payload_sha256s: tuple[str, ...]) -> str:
+    digest = hashlib.sha256(b"kokoro-output-source-batch-v1\0")
+    digest.update(len(payload_sha256s).to_bytes(4, "big"))
+    for payload_sha256 in payload_sha256s:
+        encoded = payload_sha256.encode()
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _output_source_batch_id(run_id: str, source_event_ref: str) -> str:
+    identity = hashlib.sha256(f"v1\0{run_id}\0{source_event_ref}".encode()).hexdigest()
+    return f"output_batch_{identity}"
 
 
 def _now_ms() -> int:
@@ -274,6 +291,11 @@ class MongoLedger:
         # Output is an independent per-run append-only authority. Records never share the
         # lifecycle durable counter and never grow the run document.
         self._outputs = collection.database[AGENT_DURABLE_OUTPUT_COLLECTION]
+        # One private marker per source event records cardinality (including zero) and the
+        # ordered payload identity without polluting public output cursors or hash chains.
+        self._output_source_batches = collection.database[
+            AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION
+        ]
 
     async def _run_evidence_transaction(
         self,
@@ -334,6 +356,7 @@ class MongoLedger:
         drafts: tuple[DurableOutputDraft, ...],
         *,
         recorded_at_ms: int,
+        source_payload_sha256: str,
     ) -> tuple[DurableOutputRecord, ...] | None:
         """Allocate every output for one source event in a single transaction.
 
@@ -342,29 +365,55 @@ class MongoLedger:
         """
         if not source_event_ref or len(source_event_ref) > 240:
             raise ValueError("OUTPUT_SOURCE_REF_INVALID")
-        if not drafts:
-            return ()
+        if re.fullmatch(r"[0-9a-f]{64}", source_payload_sha256) is None:
+            raise ValueError("OUTPUT_SOURCE_PAYLOAD_DIGEST_INVALID")
         source_refs = tuple(
             f"{source_event_ref}:{ordinal}" for ordinal in range(len(drafts))
         )
         source_payload_sha256s = tuple(
             draft.source_payload_sha256 for draft in drafts
         )
+        source_batch_digest = _output_source_batch_digest(source_payload_sha256s)
+        source_batch_doc: dict[str, object] = {
+            "_id": _output_source_batch_id(run_id, source_event_ref),
+            "run_id": run_id,
+            "source_event_ref": source_event_ref,
+            "batch_size": len(drafts),
+            "source_payload_sha256": source_payload_sha256,
+            "ordered_payload_sha256": source_batch_digest,
+            "recorded_at_ms": recorded_at_ms,
+        }
 
         async def append(
             session: AsyncClientSession | None,
         ) -> tuple[DurableOutputRecord, ...] | None:
-            existing_rows = [
-                row
-                async for row in self._outputs.find(
-                    {
-                        "run_id": run_id,
-                        "source_event_ref": {"$in": list(source_refs)},
-                    },
-                    session=session,
-                )
-            ]
-            if existing_rows:
+            marker = await self._output_source_batches.find_one(
+                {"run_id": run_id, "source_event_ref": source_event_ref},
+                session=session,
+            )
+            if marker is not None:
+                if marker.get("batch_size") != len(drafts):
+                    raise ValueError("OUTPUT_SOURCE_BATCH_CONFLICT")
+                if marker.get("source_payload_sha256") != source_payload_sha256:
+                    raise ValueError("OUTPUT_SOURCE_CONFLICT")
+                if marker.get("ordered_payload_sha256") != source_batch_digest:
+                    raise ValueError("OUTPUT_SOURCE_CONFLICT")
+                existing_rows = [
+                    row
+                    async for row in self._outputs.find(
+                        {
+                            "run_id": run_id,
+                            "source_event_ref": {
+                                "$regex": f"^{re.escape(source_event_ref)}:[0-9]+$"
+                            },
+                        },
+                        session=session,
+                    )
+                ]
+                if not drafts:
+                    if existing_rows:
+                        raise ValueError("OUTPUT_SOURCE_PARTIAL")
+                    return ()
                 if any(
                     row.get("source_batch_size") != len(drafts)
                     for row in existing_rows
@@ -402,6 +451,21 @@ class MongoLedger:
                     replayed.append(_DURABLE_OUTPUT_ADAPTER.validate_python(public))
                 return tuple(replayed)
 
+            legacy_row = await self._outputs.find_one(
+                {
+                    "run_id": run_id,
+                    "source_event_ref": {
+                        "$regex": f"^{re.escape(source_event_ref)}:[0-9]+$"
+                    },
+                },
+                {"_id": 1},
+                session=session,
+            )
+            if legacy_row is not None:
+                # This version requires marker and rows to be born in one transaction.
+                # Rows without their marker are incomplete authority, never backfilled.
+                raise ValueError("OUTPUT_SOURCE_PARTIAL")
+
             run = await self._coll.find_one(
                 {"_id": run_id},
                 {
@@ -413,6 +477,18 @@ class MongoLedger:
             )
             if run is None or run.get("terminal") is True:
                 return None
+            if not drafts:
+                fenced = await self._coll.update_one(
+                    {"_id": run_id, "terminal": {"$ne": True}},
+                    {"$inc": {"output_source_batch_revision": 1}},
+                    session=session,
+                )
+                if fenced.modified_count != 1:
+                    return None
+                await self._output_source_batches.insert_one(
+                    source_batch_doc, session=session
+                )
+                return ()
             current_seq = run.get("output_counter", 0)
             if not isinstance(current_seq, int) or current_seq < 0:
                 raise TypeError("OUTPUT_COUNTER_INVALID")
@@ -499,7 +575,7 @@ class MongoLedger:
             rows: list[dict[str, object]] = []
             for ordinal, (
                 source_ref,
-                source_payload_sha256,
+                draft_payload_sha256,
                 draft,
                 record,
             ) in enumerate(
@@ -509,7 +585,7 @@ class MongoLedger:
                     "_id": record.output_ref,
                     **record.model_dump(mode="python"),
                     "source_event_ref": source_ref,
-                    "source_payload_sha256": source_payload_sha256,
+                    "source_payload_sha256": draft_payload_sha256,
                     "source_batch_size": len(records),
                     "source_ordinal": ordinal,
                 }
@@ -517,12 +593,15 @@ class MongoLedger:
                     row["text_part_ref_sha256"] = text_part_hashes[draft.text_part_ref]
                 rows.append(row)
             await self._outputs.insert_many(rows, ordered=True, session=session)
+            await self._output_source_batches.insert_one(
+                source_batch_doc, session=session
+            )
             return tuple(records)
 
         for attempt in range(_OUTPUT_APPEND_MAX_ATTEMPTS):
             try:
                 return await self._run_evidence_transaction(append)
-            except _OutputAppendContention:
+            except (_OutputAppendContention, DuplicateKeyError):
                 if attempt + 1 == _OUTPUT_APPEND_MAX_ATTEMPTS:
                     raise RuntimeError("OUTPUT_APPEND_CONTENTION") from None
         raise AssertionError("unreachable output append retry")
@@ -1426,9 +1505,12 @@ class MongoLedger:
                     return False
 
                 # Delete children before the parent/archive marker in nontransactional tests;
-                # production wraps all three collections in one transaction. A crash can only
-                # leave an eligible parent for an idempotent retry, never unreachable orphans.
+                # production wraps all private child collections in one transaction. A crash
+                # can only leave an eligible parent for an idempotent retry, never orphans.
                 await self._outputs.delete_many({"run_id": run_id}, session=session)
+                await self._output_source_batches.delete_many(
+                    {"run_id": run_id}, session=session
+                )
                 await self._evidence.delete_many({"run_id": run_id}, session=session)
                 if retains_completion:
                     archived = await self._coll.update_one(

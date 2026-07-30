@@ -105,6 +105,7 @@ constraints = [
     { name = "pyjwt", specifier = "==2.13.0" },
     { name = "pymongo", specifier = "==4.16.0" },
     { name = "pymongo-search-utils", specifier = "==0.3.0" },
+    { name = "pyqwest", specifier = "==0.7.0" },
     { name = "pyright", specifier = "==1.1.409" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
@@ -1048,6 +1049,7 @@ dependencies = [
     { name = "mypy-boto3-s3" },
     { name = "prometheus-client" },
     { name = "pydantic" },
+    { name = "pyqwest" },
     { name = "python-dotenv" },
     { name = "redis" },
 ]
@@ -1082,6 +1084,7 @@ requires-dist = [
     { name = "mypy-boto3-s3", specifier = ">=1.43.31" },
     { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "pyqwest", specifier = "==0.7.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "redis", specifier = ">=5" },
 ]

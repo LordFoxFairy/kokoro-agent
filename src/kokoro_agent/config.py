@@ -58,17 +58,27 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore", frozen=True)
 
     # --- model 域 ---
-    disable_streaming: bool = Field(default=False, validation_alias="KOKORO_DISABLE_STREAMING")
     local_fake: bool = Field(default=False, validation_alias="KOKORO_LOCAL_FAKE_MODEL")
     local_fake_script: str = Field(default="default", validation_alias="KOKORO_LOCAL_FAKE_SCRIPT")
-    openai_api_key: OptSecret = Field(default=None, validation_alias="OPENAI_API_KEY")
-    openai_base_url: OptStr = Field(default=None, validation_alias="OPENAI_BASE_URL")
-    openai_reasoning: bool = Field(default=False, validation_alias="KOKORO_OPENAI_REASONING")
-    anthropic_api_key: OptSecret = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    anthropic_base_url: OptStr = Field(default=None, validation_alias="ANTHROPIC_BASE_URL")
-    # litellm 网关档：agent 只持网关地址与网关 key（不存任何底层 provider 凭据）。
-    litellm_base_url: OptStr = Field(default=None, validation_alias="KOKORO_LITELLM_BASE_URL")
-    litellm_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_LITELLM_API_KEY")
+    model_gateway_url: OptStr = Field(default=None, validation_alias="KOKORO_MODEL_GATEWAY_URL")
+    model_gateway_ca_file: OptStr = Field(
+        default=None, validation_alias="KOKORO_MODEL_GATEWAY_CA_FILE"
+    )
+    model_gateway_cert_file: OptStr = Field(
+        default=None, validation_alias="KOKORO_MODEL_GATEWAY_CERT_FILE"
+    )
+    model_gateway_key_file: OptStr = Field(
+        default=None, validation_alias="KOKORO_MODEL_GATEWAY_KEY_FILE"
+    )
+    model_gateway_timeout_ms: int = Field(
+        default=120_000, ge=100, le=120_000, validation_alias="KOKORO_MODEL_GATEWAY_TIMEOUT_MS"
+    )
+    model_gateway_max_output_tokens: int = Field(
+        default=65_536,
+        ge=1,
+        le=1_000_000,
+        validation_alias="KOKORO_MODEL_GATEWAY_MAX_OUTPUT_TOKENS",
+    )
 
     # --- stream / mongo 域（mongo 为 checkpoint+ledger 共用真后端）---
     redis_url: str = Field(
@@ -214,16 +224,15 @@ class AppConfig(BaseModel):
     @property
     def model(self) -> ChatModelSettings:
         return ChatModelSettings(
-            disable_streaming=self.disable_streaming,
             local_fake=self.local_fake,
             local_fake_script=self.local_fake_script,
-            openai_api_key=self.openai_api_key,
-            openai_base_url=self.openai_base_url,
-            openai_reasoning=self.openai_reasoning,
-            anthropic_api_key=self.anthropic_api_key,
-            anthropic_base_url=self.anthropic_base_url,
-            litellm_base_url=self.litellm_base_url,
-            litellm_api_key=self.litellm_api_key,
+            model_gateway_url=self.model_gateway_url,
+            model_gateway_ca_file=self.model_gateway_ca_file,
+            model_gateway_cert_file=self.model_gateway_cert_file,
+            model_gateway_key_file=self.model_gateway_key_file,
+            model_gateway_timeout_ms=self.model_gateway_timeout_ms,
+            model_gateway_max_output_tokens=self.model_gateway_max_output_tokens,
+            producer_generation=self.producer_generation,
         )
 
     @property

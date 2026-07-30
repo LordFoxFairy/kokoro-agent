@@ -13,7 +13,7 @@ Execute approved Agent runs with LangGraph/DeepAgents, tools, HITL, durable cont
 
 ## Non-responsibilities
 
-Agent does not own Site identity, accounts, pricing, plans, credit deduction, Session messages, browser transport, or provider administration.
+Agent does not own Site identity, accounts, pricing, plans, credit deduction, Session messages, browser transport, provider routing, provider credentials, or model usage settlement.
 
 ## Public boundary
 
@@ -23,7 +23,7 @@ Root compatibility gates invoke `scripts/compat/hub_runtime_consumer.py` as the 
 
 ## Callers and dependencies
 
-Session submits durable run/control messages. Agent consumes opaque `namespace` and calls model/capability/storage adapters through declared boundaries.
+Session submits durable run/control messages. Agent consumes opaque `namespace` and calls model/capability/storage adapters through declared boundaries. Production model calls use only the typed Platform Model Gateway ConnectRPC; Admission supplies an opaque authorization handle inside the sealed RunRequest.
 
 ## Data ownership and events
 
@@ -31,7 +31,7 @@ Agent owns execution checkpoints, run leases, control/outbox state, and raw Agen
 
 ## Runtime and security
 
-Namespace is opaque and is the only GA isolation key. Provider credentials remain adapter-side and untrusted tool/artifact content is sandboxed and bounded.
+Namespace is opaque and is the only GA isolation key. GA holds no provider credential: the Model Gateway mTLS client sends stable call identities plus the opaque authorization handle, while Platform resolves the authorized model and settles usage. Untrusted tool/artifact content is sandboxed and bounded.
 
 The Hub compatibility consumer emits only a closed success count and never emits caller credentials, resolved values, response bodies, or exception details.
 
@@ -40,6 +40,8 @@ The interpreter is pinned by `.python-version` (3.11), matching `requires-python
 ## Idempotency, failure, and recovery
 
 Run claims, leases, terminal fencing, control inboxes, and critical-event outboxes support duplicate delivery, worker loss, resume, and deterministic recovery.
+
+Each LangGraph model task derives `logicalCallRef` from the durable checkpoint namespace and derives one `attemptRef` from that logical identity plus producer generation. GA makes one RPC call and never retries a provider effect. `outcome_unknown` permits only replay/reconciliation of that exact attempt.
 
 ## Extension rules and forbidden dependencies
 

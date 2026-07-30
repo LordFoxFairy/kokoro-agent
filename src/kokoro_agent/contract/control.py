@@ -34,6 +34,7 @@ class RunInput(StrictModel):
 class ModelConfig(StrictModel):
     provider: NonEmptyStr
     name: NonEmptyStr
+    authorization_handle: Reference
     effort: NonEmptyStr | None = None
     thinking: bool | None = None
 

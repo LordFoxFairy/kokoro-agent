@@ -64,7 +64,7 @@ async def assemble_agent(
             build_swarm_middleware(request, deps.prompts, initial_prompt=system_prompt),
         )
     graph = build_agent(
-        model=make_chat_model(deps.model, runtime.model),
+        model=make_chat_model(deps.model, runtime.model, run_id=request.run_id),
         tools=toolset.tools,
         system_prompt=system_prompt,
         subagents=delegates.subagents,

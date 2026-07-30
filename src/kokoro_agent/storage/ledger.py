@@ -285,6 +285,10 @@ async def make_ledger(
             name="run_output_source_unique",
             unique=True,
         )
+        await outputs.create_index(
+            [("run_id", 1), ("text_part_ref_sha256", 1), ("output_seq", -1)],
+            name="run_output_text_latest",
+        )
         output_source_batches = collection.database[
             AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION
         ]

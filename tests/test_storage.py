@@ -659,7 +659,7 @@ async def test_output_authority_persists_zero_cardinality_batch_identity() -> No
         )
 
 
-async def test_output_factory_creates_unique_sequence_and_source_indexes() -> None:
+async def test_output_factory_creates_canonical_output_indexes() -> None:
     settings = _settings(f"kokoro_output_index_{uuid.uuid4().hex}")
     async with make_ledger(settings):
         pass
@@ -676,6 +676,11 @@ async def test_output_factory_creates_unique_sequence_and_source_indexes() -> No
         assert indexes["run_output_seq_unique"]["key"] == [
             ("run_id", 1),
             ("output_seq", 1),
+        ]
+        assert indexes["run_output_text_latest"]["key"] == [
+            ("run_id", 1),
+            ("text_part_ref_sha256", 1),
+            ("output_seq", -1),
         ]
         assert source_batch_indexes["run_output_source_batch_unique"]["unique"] is True
         assert source_batch_indexes["run_output_source_batch_unique"]["key"] == [

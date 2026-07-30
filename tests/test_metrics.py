@@ -20,6 +20,7 @@ def test_registry_exposes_kokoro_agent_metric_names() -> None:
         "kokoro_agent_dispatch_claim_total",
         "kokoro_agent_control_inbox_total",
         "kokoro_agent_outbox_total",
+        "kokoro_agent_durable_output_delivery_total",
         "kokoro_agent_tool_unknown_outcome_total",
         "kokoro_agent_mcp_unavailable_total",
         "kokoro_agent_egress_blocked_total",
@@ -46,6 +47,20 @@ def test_outbox_transitions_increment_by_state() -> None:
     metrics.record_outbox("republished")
     metrics.record_outbox("queued", count=0)  # count<=0 不增量
     assert _value("kokoro_agent_outbox_total", state="republished") == before + 1
+
+
+def test_durable_output_delivery_failures_increment_separate_counter() -> None:
+    before = _value(
+        "kokoro_agent_durable_output_delivery_total", state="live_publish_failed"
+    )
+    metrics.record_durable_output_delivery("live_publish_failed")
+    assert (
+        _value(
+            "kokoro_agent_durable_output_delivery_total",
+            state="live_publish_failed",
+        )
+        == before + 1
+    )
 
 
 def test_egress_blocked_counts_on_exception_construction() -> None:

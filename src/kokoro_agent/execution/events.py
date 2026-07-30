@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
+from typing import Literal
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
@@ -202,8 +203,17 @@ class RunEmitter:
                 return payload.model_copy(update={"segment_id": owner})
         return payload
 
-    def _record_delivery_failure(self, phase: str, kind: str) -> None:
-        metrics.record_outbox(f"{phase}_failed")
+    def _record_delivery_failure(
+        self,
+        phase: str,
+        kind: str,
+        *,
+        metric_family: Literal["critical_outbox", "durable_output"],
+    ) -> None:
+        if metric_family == "critical_outbox":
+            metrics.record_outbox(f"{phase}_failed")
+        else:
+            metrics.record_durable_output_delivery(f"{phase}_failed")
         first = phase not in self._delivery_warning_phases
         self._delivery_warning_phases.add(phase)
         if phase == "publish_ack":
@@ -325,14 +335,18 @@ class RunEmitter:
                     maxlen=RUN_EVENTS_MAXLEN,
                 )
             except Exception:  # noqa: BLE001 — live bus loss leaves the critical frame queued
-                self._record_delivery_failure("live_publish", kind)
+                self._record_delivery_failure(
+                    "live_publish", kind, metric_family="critical_outbox"
+                )
                 return
             try:
                 await self._outbox.mark_critical_published(
                     self._run_id, staged.durable_seq
                 )
             except Exception:  # noqa: BLE001 — delivery ack loss leaves the staged row queued
-                self._record_delivery_failure("publish_ack", kind)
+                self._record_delivery_failure(
+                    "publish_ack", kind, metric_family="critical_outbox"
+                )
                 return
             metrics.record_outbox("published")
             return
@@ -348,7 +362,9 @@ class RunEmitter:
         except Exception:  # noqa: BLE001 — isolate only after this event is durable
             if not durable_output_committed:
                 raise
-            self._record_delivery_failure("live_publish", kind)
+            self._record_delivery_failure(
+                "live_publish", kind, metric_family="durable_output"
+            )
 
     async def emit_completed(
         self,
@@ -429,7 +445,9 @@ class RunEmitter:
         try:
             await outbox.mark_critical_published(self._run_id, frame.durable_seq)
         except Exception:  # noqa: BLE001 — ACK loss leaves the fixed frame queued for replay
-            self._record_delivery_failure("publish_ack", frame.kind)
+            self._record_delivery_failure(
+                "publish_ack", frame.kind, metric_family="critical_outbox"
+            )
             return
         metrics.record_outbox("published")
 

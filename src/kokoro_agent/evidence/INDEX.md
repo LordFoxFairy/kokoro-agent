@@ -26,6 +26,11 @@ hash is not promoted or relabeled as an Artifact/ArtifactVersion authority.
 `service.py` implements the four generated ConnectRPC reads, including exclusive-cursor
 output paging capped at 64 records. `server.py` builds the
 HTTP/2-only mTLS listener, and `main.py` is the independently deployable provider process.
+The canonical `agent_durable_output` index inventory is `run_output_seq_unique`
+(`run_id`, `output_seq`), `run_output_source_unique` (`run_id`, `source_event_ref`), and
+`run_output_text_latest` (`run_id`, `text_part_ref_sha256`, `output_seq` descending); the last
+index serves the latest-text lookup used when computing snapshot replacement boundaries.
+`agent_durable_output_source_batch` separately owns `run_output_source_batch_unique`.
 
 The storage adapter can delete output rows, private source-batch markers, and evidence rows with
 an eligible run in one Mongo transaction, but that destructive path is not operationally enabled.

@@ -34,6 +34,14 @@ OUTBOX = Counter(
     ["state"],
 )
 
+# Non-critical live frames whose user-visible payload is already retained by the independent
+# durable-output authority. These are delivery failures, not critical outbox transitions.
+DURABLE_OUTPUT_DELIVERY = Counter(
+    "kokoro_agent_durable_output_delivery_total",
+    "non-critical durable output live delivery outcomes",
+    ["state"],
+)
+
 # R3 tool journal：started 行重放（上次崩在执行中，outcome 未知）→交模型/HITL 决策。
 TOOL_UNKNOWN_OUTCOME = Counter(
     "kokoro_agent_tool_unknown_outcome_total",
@@ -100,6 +108,14 @@ def record_outbox(state: str, count: int = 1) -> None:
             OUTBOX.labels(state=state).inc(count)
     except Exception:  # noqa: BLE001 — 指标采集绝不影响主链路
         LOGGER.debug("metrics record_outbox failed", exc_info=True)
+
+
+def record_durable_output_delivery(state: str, count: int = 1) -> None:
+    try:
+        if count > 0:
+            DURABLE_OUTPUT_DELIVERY.labels(state=state).inc(count)
+    except Exception:  # noqa: BLE001 — 指标采集绝不影响主链路
+        LOGGER.debug("metrics record_durable_output_delivery failed", exc_info=True)
 
 
 def record_tool_unknown_outcome() -> None:

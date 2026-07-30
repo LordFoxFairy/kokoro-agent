@@ -898,14 +898,23 @@ async def test_repeated_durable_live_publish_failures_emit_one_warning(
             raise ConnectionError("live publish outage")
 
     outbox_states: list[str] = []
+    durable_output_delivery_states: list[str] = []
 
     def record_outbox(state: str, count: int = 1) -> None:
         outbox_states.extend([state] * count)
+
+    def record_durable_output_delivery(state: str, count: int = 1) -> None:
+        durable_output_delivery_states.extend([state] * count)
 
     monkeypatch.setattr(
         metrics,
         "record_outbox",
         record_outbox,
+    )
+    monkeypatch.setattr(
+        metrics,
+        "record_durable_output_delivery",
+        record_durable_output_delivery,
     )
     ledger = FakeLedger()
     await ledger.try_claim(request("r-live-warning-aggregate"))
@@ -925,7 +934,8 @@ async def test_repeated_durable_live_publish_failures_emit_one_warning(
     ]
     assert len([record for record in delivery_logs if record.levelno >= 30]) == 1
     assert len([record for record in delivery_logs if record.levelno == 10]) == 99
-    assert outbox_states.count("live_publish_failed") == 100
+    assert outbox_states.count("live_publish_failed") == 1
+    assert durable_output_delivery_states.count("live_publish_failed") == 99
 
 
 async def test_live_publish_failure_without_outbox_propagates() -> None:

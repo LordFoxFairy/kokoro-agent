@@ -36,7 +36,9 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   append/stage/replay conflict 统一抛 `DurableOutputCommitError`，该异常穿透 projection pump、立即取消并
   收束四路 producer，阻止成功终态；仅当本事件已 append output 或 staged critical frame 时，单纯 live bus
   publish 失败才在 publish 调用边界隔离且不回滚 durable truth；无 durable truth 时 publish error 原样传播。
-  live publish 与 publish-ack 故障按 run/phase 首次 WARNING、后续 DEBUG 聚合，但每次仍记 metric；
+  live publish 与 publish-ack 故障按 run/phase 首次 WARNING、后续 DEBUG 聚合，但每次仍记 metric；critical
+  outbox 故障记 `kokoro_agent_outbox_total`，非 critical 且已有 output authority 的 live delivery 故障独立记
+  `kokoro_agent_durable_output_delivery_total{state="live_publish_failed"}`；
   publish-ack 只是 transactional outbox delivery ack，失败保持 queued 供 scanner 固定身份补投，不杀 run。
   semantic 事件按语义身份，非 semantic 事件按 persisted live index
   派生 source identity；后者严格只保证 output append 成功、live publish 尚未成功这一崩溃窗口。

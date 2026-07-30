@@ -23,14 +23,13 @@ hash is not promoted or relabeled as an Artifact/ArtifactVersion authority.
 output paging capped at 64 records. `server.py` builds the
 HTTP/2-only mTLS listener, and `main.py` is the independently deployable provider process.
 
-Terminal retention deletes output and evidence rows in the same Mongo transaction and at the
-same local horizon as the eligible run record. `KOKORO_RETENTION_RUN_TTL_S` is the minimum
-time-based replay window after `terminal_at_ms`; deletion happens on the first heartbeat after
-that deadline and waits longer while a live outbox row exists. Zero disables time-based purge.
-Retained output/evidence counts and the configured replay-window seconds are gauges, making both
-leaks and an accidental SLA change observable. This is only local orphan/leak closure: there is
-no cross-service consumer ack or retention gate. Root and Session must define that contract
-before a shorter or consumer-dependent policy can replace the current terminal horizon.
+The storage adapter can delete output and evidence rows with an eligible run in one Mongo
+transaction, but that destructive path is not operationally enabled. `KOKORO_RETENTION_RUN_TTL_S`
+and direct supervisor construction accept zero only; a nonzero value fails startup with
+`DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK`. Retained output/evidence counts remain visible
+as gauges. Root and Session must define a consumer ACK/tombstone contract before time-based
+durable-output deletion can be enabled. The separate live events-stream TTL is non-authoritative
+and remains configurable.
 
 The caller trust bundle must pin only the client leaf certificates or dedicated issuer
 chains used by `kokoro-session` and `kokoro-platform`; strict partial-chain TLS client

@@ -39,7 +39,7 @@ subagents:
 limits:
   recursion_limit: 50
 retention:
-  run_ttl_s: 3600
+  run_ttl_s: 0
 """
 
 
@@ -65,7 +65,7 @@ class TestConfigTree:
         assert config.web_tools.search_provider == "searxng"
         assert config.enabled_builtin_subagents == frozenset({"researcher", "coder"})
         assert config.recursion_limit == 50
-        assert config.retention_run_ttl_s == 3600
+        assert config.retention_run_ttl_s == 0
 
     def test_env_overrides_yaml(self, tmp_path: Path) -> None:
         config = _config_from(
@@ -78,6 +78,12 @@ class TestConfigTree:
 
     def test_no_file_means_pure_env_behaviour(self) -> None:
         assert AppConfig.from_env({}) == AppConfig.from_env({"KOKORO_AGENT_CONFIG": ""})
+
+    def test_destructive_durable_output_retention_requires_consumer_ack(self) -> None:
+        with pytest.raises(
+            ValueError, match="DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK"
+        ):
+            AppConfig.from_env({"KOKORO_RETENTION_RUN_TTL_S": "1"})
 
     @pytest.mark.parametrize(
         ("tree", "match"),

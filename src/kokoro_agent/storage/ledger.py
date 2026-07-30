@@ -29,11 +29,15 @@ from kokoro_agent.storage.mongo import (
 from kokoro_agent.storage.execution_context import ExecutionContextStore
 
 DEFAULT_LEASE_TTL_S = 90
+DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK = (
+    "DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK"
+)
 
 # 这些记录类型定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
 __all__ = [
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
+    "DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK",
     "DurableRetentionStats",
     "LedgerSettings",
     "EvidenceLedger",

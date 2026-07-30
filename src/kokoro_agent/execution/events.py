@@ -129,6 +129,10 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+class DurableOutputCommitError(RuntimeError):
+    """A required durable output could not be committed exactly once."""
+
+
 class RunEmitter:
     """一次 run 的唯一发射口：index 在此单点递增，event_id=f(run_id,index) 永不回卷。"""
 
@@ -230,14 +234,24 @@ class RunEmitter:
                         drafts,
                         recorded_at_ms=timestamp,
                     )
-                except ValueError as error:
-                    if semantic_key is None or str(error) != "OUTPUT_SOURCE_CONFLICT":
-                        raise
-                    raise ValueError(
-                        f"semantic critical frame conflict for {semantic_key!r}"
+                except Exception as error:
+                    reason = str(error)
+                    detail = "APPEND_ERROR"
+                    if reason in {
+                        "OUTPUT_SOURCE_BATCH_CONFLICT",
+                        "OUTPUT_SOURCE_CONFLICT",
+                        "OUTPUT_SOURCE_PARTIAL",
+                    }:
+                        detail = reason
+                    if semantic_key is not None and reason == "OUTPUT_SOURCE_CONFLICT":
+                        detail = f"semantic critical frame conflict for {semantic_key!r}"
+                    raise DurableOutputCommitError(
+                        f"DURABLE_OUTPUT_COMMIT_FAILED: {detail}"
                     ) from error
                 if records is None:
-                    raise RuntimeError("DURABLE_OUTPUT_APPEND_REJECTED")
+                    raise DurableOutputCommitError(
+                        "DURABLE_OUTPUT_COMMIT_FAILED: DURABLE_OUTPUT_APPEND_REJECTED"
+                    )
         base: dict[str, object] = {
             "kind": kind,
             "run_id": self._run_id,

@@ -15,7 +15,7 @@ import logging
 from collections.abc import Mapping
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, field_validator
 
 from kokoro_agent.config_file import load_config_file
 from kokoro_agent.content_source import AssetSettings, LocalAssets, load_assets_config
@@ -24,7 +24,11 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.storage.checkpoints import CheckpointSettings
-from kokoro_agent.storage.ledger import DEFAULT_LEASE_TTL_S, LedgerSettings
+from kokoro_agent.storage.ledger import (
+    DEFAULT_LEASE_TTL_S,
+    DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK,
+    LedgerSettings,
+)
 from kokoro_agent.streams.factory import StreamSettings
 
 
@@ -210,13 +214,22 @@ class AppConfig(BaseModel):
         default=None, ge=1, le=65535, validation_alias="KOKORO_AGENT_METRICS_PORT"
     )
 
-    # --- retention 域（0=关，保留期限是产品决策不擅代）---
+    # --- retention 域 ---
     retention_events_ttl_s: int = Field(
         default=0, ge=0, validation_alias="KOKORO_RETENTION_EVENTS_TTL_S"
     )
+    # Durable output/evidence destruction stays disabled until a consumer ACK/tombstone
+    # contract exists. Both config parsing and supervisor construction enforce zero.
     retention_run_ttl_s: int = Field(
         default=0, ge=0, validation_alias="KOKORO_RETENTION_RUN_TTL_S"
     )
+
+    @field_validator("retention_run_ttl_s")
+    @classmethod
+    def _reject_destructive_durable_output_retention(cls, value: int) -> int:
+        if value != 0:
+            raise ValueError(DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK)
+        return value
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:

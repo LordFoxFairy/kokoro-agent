@@ -740,14 +740,14 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
     assert ("kokoro:run:rr1:events", 3600) in bus.expired_streams
 
 
-async def test_retention_heartbeat_preserves_completed_context_owner() -> None:
+async def test_heartbeat_preserves_completed_context_without_consumer_ack() -> None:
     agent = FakeAgent(run=text_run("x"))
     bus = FakeBus()
     store = FakeLedger()
     sup = RunSupervisor(
         agent_builder=_builder(agent), store=store,
         execution_context=FakeExecutionContextAuthority(store), approval_tool_names=_gated_names,
-        trace_factory=_no_trace, source_for=_source, consumer="t", run_ttl_s=1,
+        trace_factory=_no_trace, source_for=_source, consumer="t",
     )
     await sup.dispatch(bus, request("rr2"))
     await _drain(sup)
@@ -768,6 +768,23 @@ async def test_retention_off_by_default_no_side_effects() -> None:
     await sup.heartbeat_once(bus)
     assert bus.expired_streams == []
     assert await store.is_terminal("rr3") is True
+
+
+def test_destructive_durable_output_retention_rejected_at_supervisor_startup() -> None:
+    store = FakeLedger()
+    with pytest.raises(
+        ValueError, match="DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK"
+    ):
+        RunSupervisor(
+            agent_builder=_builder(FakeAgent(run=text_run("x"))),
+            store=store,
+            execution_context=FakeExecutionContextAuthority(store),
+            approval_tool_names=_gated_names,
+            trace_factory=_no_trace,
+            source_for=_source,
+            consumer="t",
+            run_ttl_s=1,
+        )
 
 
 # --- 审计修复回归钉（2026-07-05 链路审计） ---

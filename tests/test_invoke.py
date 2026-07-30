@@ -63,12 +63,13 @@ from kokoro_agent.contract import (
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
+from kokoro_agent.execution.publish_agent_events import pump_run
 from kokoro_agent.evidence.models import (
     DurableOutputDraft,
     DurableOutputRecord,
     durable_output_drafts_for_event,
 )
-from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.execution.protocols import AgentRunStream, InvokableAgent
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
@@ -111,6 +112,19 @@ async def _invoke(
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
         trace=trace,
+    )
+
+
+async def _pump_text_run(text: str) -> AgentRunStream:
+    return await _start_agent_run(FakeAgent(run=text_run(text)))
+
+
+async def _start_agent_run(agent: InvokableAgent) -> AgentRunStream:
+    return await agent.astream_events(
+        {"messages": []},
+        version="v3",
+        config={"configurable": {"thread_id": "pump-test"}},
+        transformers=[],
     )
 
 
@@ -724,7 +738,7 @@ async def test_plan_proposal_critical_identity_is_semantically_idempotent() -> N
     assert proposed[0].event_id == "evt_fake_r-plan_1"
     assert ledger.durable_counter["r-plan"] == 1
 
-    with pytest.raises(ValueError, match="semantic critical frame conflict"):
+    with pytest.raises(RuntimeError, match="semantic critical frame conflict"):
         await emitter.emit(
             payload.model_copy(
                 update={
@@ -900,6 +914,108 @@ async def test_durable_output_rejection_is_fail_loud_and_suppresses_live_publish
     with pytest.raises(RuntimeError, match="DURABLE_OUTPUT_APPEND_REJECTED"):
         await emitter.emit(MessageDeltaPayload(segment_id="segment-1", delta="hello"))
     assert bus.published == []
+
+
+async def test_durable_output_append_failure_cannot_end_in_completed() -> None:
+    class FailOnceLedger(FakeLedger):
+        failed = False
+
+        async def append_durable_outputs(
+            self,
+            run_id: str,
+            source_event_ref: str,
+            drafts: tuple[DurableOutputDraft, ...],
+            *,
+            recorded_at_ms: int,
+        ) -> tuple[DurableOutputRecord, ...] | None:
+            if not self.failed:
+                self.failed = True
+                raise OSError("durable output unavailable")
+            return await super().append_durable_outputs(
+                run_id,
+                source_event_ref,
+                drafts,
+                recorded_at_ms=recorded_at_ms,
+            )
+
+    bus = FakeBus()
+    ledger = FailOnceLedger()
+
+    done = await _invoke(
+        bus,
+        FakeAgent(run=text_run("missing unless commit succeeds")),
+        run_id="r-output-append-fault",
+        ledger=ledger,
+    )
+
+    assert done is True
+    assert "run.completed" not in bus.kinds("r-output-append-fault")
+    failed = find_event(bus.run_events("r-output-append-fault"), RunFailed)
+    assert failed.payload.error_kind == "DurableOutputCommitError"
+    assert failed.payload.message == "DURABLE_OUTPUT_COMMIT_FAILED: APPEND_ERROR"
+
+
+async def test_durable_output_source_conflict_cannot_end_in_completed() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-pump-conflict"))
+
+    class FailLivePublishBus(FakeBus):
+        fail_delta = True
+
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if self.fail_delta and event.get("kind") == "message.delta":
+                self.fail_delta = False
+                raise ConnectionError("live publish lost after durable commit")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    bus = FailLivePublishBus()
+    await RunEmitter(bus, "r-output-pump-conflict", outbox=ledger).emit(
+        RunStartedPayload()
+    )
+    with pytest.raises(ConnectionError, match="live publish lost"):
+        await RunEmitter(
+            bus,
+            "r-output-pump-conflict",
+            next_index=1,
+            outbox=ledger,
+        ).emit(MessageDeltaPayload(segment_id="segment-1", delta="original"))
+
+    done = await _invoke(
+        bus,
+        FakeAgent(run=text_run("changed")),
+        run_id="r-output-pump-conflict",
+        ledger=ledger,
+    )
+
+    assert done is True
+    assert "run.completed" not in bus.kinds("r-output-pump-conflict")
+    failed = find_event(bus.run_events("r-output-pump-conflict"), RunFailed)
+    assert failed.payload.error_kind == "DurableOutputCommitError"
+
+
+async def test_pump_keeps_live_bus_publish_failures_isolated() -> None:
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r-output-live-failure"))
+
+    class FailDeltaPublishBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if event.get("kind") == "message.delta":
+                raise ConnectionError("live bus unavailable")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    bus = FailDeltaPublishBus()
+    await pump_run(
+        RunEmitter(bus, "r-output-live-failure", next_index=1, outbox=ledger),
+        await _pump_text_run("durably retained"),
+        source_for=_runtime_custom,
+    )
+
+    assert len(ledger.output_records["r-output-live-failure"]) == 2
+    assert bus.kinds("r-output-live-failure") == ["message.completed"]
 
 
 async def test_critical_output_recovers_if_process_dies_before_staging() -> None:

@@ -32,7 +32,8 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   `stage_critical_frame` 分配 durable_seq/event_id、落 queued 行、发布后 published；live 序（index）
   不动、durable_seq 独立并行（浏览器面透明）；post-fence superseded 不发布、index 不前进。
   有 durable-output 映射的事件先以独立 output_seq/hash chain 落 Agent Mongo authority，再发布 live；
-  live publish 失败不回滚 output。semantic 事件按语义身份，非 semantic 事件按 persisted live index
+  append/replay conflict 统一抛 `DurableOutputCommitError`，该异常穿透 projection pump 并阻止成功终态；
+  单纯 live bus publish 失败仍按事件隔离且不回滚 output。semantic 事件按语义身份，非 semantic 事件按 persisted live index
   派生 source identity；后者严格只保证 output append 成功、live publish 尚未成功这一崩溃窗口。
   同一事件的多条 output 在一个事务内连续分配，并持久化 batch cardinality/ordinal，重放增删、
   重排或 payload 漂移均 fail-closed，不重复、不产生半批 output。live 已发布后的 graph checkpoint

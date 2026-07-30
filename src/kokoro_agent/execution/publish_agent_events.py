@@ -14,6 +14,7 @@ from kokoro_agent.execution.protocols import (
 )
 from kokoro_agent.execution.events import (
     AgentEventPayload,
+    DurableOutputCommitError,
     RunEmitter,
     SourceResolver,
     delivery_created_payload,
@@ -65,6 +66,8 @@ async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
             return
         try:
             await emitter.emit(payload)
+        except DurableOutputCommitError:
+            raise
         except Exception:  # noqa: BLE001 — 局部容错：单事件发布失败隔离，不毁整条流
             LOGGER.warning("dropping event on publish failure: %s", type(payload).__name__)
 

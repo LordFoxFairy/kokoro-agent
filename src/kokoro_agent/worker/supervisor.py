@@ -53,7 +53,10 @@ from kokoro_agent.execution.events import RunEmitter, outbox_wire_event, run_fai
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.state import RunScope
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.storage.ledger import (
+    DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK,
+    RunLedger,
+)
 from kokoro_agent.storage.execution_context import ExecutionContextAuthorityPort
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
@@ -100,6 +103,8 @@ class RunSupervisor:
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
         sandbox_teardown: Callable[[Backend, str | None], Awaitable[None]] | None = None,
     ) -> None:
+        if run_ttl_s != 0:
+            raise ValueError(DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK)
         self._build = agent_builder
         self._store = store
         self._execution_context = execution_context
@@ -109,7 +114,8 @@ class RunSupervisor:
         self._consumer = consumer
         self._heartbeat_s = heartbeat_s
         self._recursion_limit = recursion_limit
-        # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
+        # events TTL only affects the non-authoritative live stream. Destructive run/output
+        # retention is startup-fenced at zero until consumer ACK/tombstone exists.
         self._events_ttl_s = events_ttl_s
         self._run_ttl_s = run_ttl_s
         self._outbox_republish_ms = outbox_republish_ms

@@ -14,7 +14,7 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_REF_BYTES = 256
 _MAX_RUN_ID_BYTES = 128
 _MAX_STABLE_TASK_PATH_BYTES = 1024
-_MAX_CANONICAL_EVIDENCE_BYTES = 64 * 1024
+_MAX_CANONICAL_EVIDENCE_BYTES = 1024 * 1024
 
 
 class InteractionInvariantError(ValueError):
@@ -199,6 +199,32 @@ class OriginCandidate:
             self.effect_idempotency_sha256,
             "effect_idempotency",
         )
+        factory = InteractionIdentityFactory()
+        expected_request = factory.application_request(
+            run_id=self.run_id,
+            stable_task_path=self.stable_task_path,
+            origin_tool_call_ref=self.origin_tool_call_ref,
+            interaction_kind=self.interaction_kind.value,
+            elicitation_ordinal=self.elicitation_ordinal,
+        )
+        expected_owner = factory.interaction_owner(
+            run_id=self.run_id,
+            stable_task_path=self.stable_task_path,
+            origin_tool_call_ref=self.origin_tool_call_ref,
+            interaction_kind=self.interaction_kind.value,
+            application_request_ref=expected_request.value,
+        )
+        expected_origin_key_digest = hashlib.sha256(
+            expected_owner.canonical_json.encode("utf-8")
+        ).hexdigest()
+        if (
+            self.application_request_ref != expected_request.value
+            or self.interaction_owner_ref != expected_owner.value
+            or self.origin_key_digest != expected_origin_key_digest
+        ):
+            raise InteractionInvariantError(
+                "origin derived identity does not match Root contract"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +277,7 @@ class OwnerRevisionCandidate:
                 "canonical member evidence must be non-empty"
             )
         if len(self.canonical_member_evidence) > _MAX_CANONICAL_EVIDENCE_BYTES:
-            raise InteractionInvariantError("canonical member evidence exceeds 64 KiB")
+            raise InteractionInvariantError("canonical member evidence exceeds 1 MiB")
         if (
             hashlib.sha256(self.canonical_member_evidence).hexdigest()
             != self.member_evidence_sha256
@@ -310,14 +336,12 @@ class GroupRevisionCandidate:
                 "canonical group evidence must be non-empty"
             )
         if len(self.canonical_group_evidence) > _MAX_CANONICAL_EVIDENCE_BYTES:
-            raise InteractionInvariantError("canonical group evidence exceeds 64 KiB")
+            raise InteractionInvariantError("canonical group evidence exceeds 1 MiB")
         if (
             sum(len(member.canonical_member_evidence) for member in self.members)
             > _MAX_CANONICAL_EVIDENCE_BYTES
         ):
-            raise InteractionInvariantError(
-                "whole-frame member evidence exceeds 64 KiB"
-            )
+            raise InteractionInvariantError("whole-frame member evidence exceeds 1 MiB")
         if (
             hashlib.sha256(self.canonical_group_evidence).hexdigest()
             != self.group_evidence_sha256

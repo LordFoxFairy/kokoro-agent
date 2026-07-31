@@ -56,6 +56,16 @@ def _nested(document: dict[str, object], path: str) -> object:
     return _MISSING
 
 
+def _set_nested(document: dict[str, object], path: str, value: object) -> None:
+    current = document
+    segments = path.split(".")
+    for segment in segments[:-1]:
+        child = current.setdefault(segment, {})
+        assert type(child) is dict
+        current = cast(dict[str, object], child)
+    current[segments[-1]] = value
+
+
 def _matches(document: dict[str, object], query: Mapping[str, object]) -> bool:
     alternatives = query.get("$or")
     if alternatives is not None:
@@ -195,7 +205,15 @@ class _Collection:
     ) -> _UpdateResult:
         for document in self.docs:
             if _matches(document, query):
-                document.update(update["$set"])
+                for path, value in update.get("$set", {}).items():
+                    _set_nested(document, path, value)
+                for path, increment in update.get("$inc", {}).items():
+                    previous = _nested(document, path)
+                    if previous is _MISSING:
+                        previous = 0
+                    assert isinstance(previous, int)
+                    assert isinstance(increment, int)
+                    _set_nested(document, path, previous + increment)
                 self.write_sessions.append(session)
                 return _UpdateResult(1)
         return _UpdateResult(0)
@@ -528,6 +546,9 @@ async def test_prepare_origin_is_keep_first_and_rejects_gap_or_mutation() -> Non
     assert await repository.prepare_origin(origin, _fence()) == origin
     assert await repository.prepare_origin(origin, _fence()) == origin
     assert len(database[AGENT_INTERACTION_ORIGIN_JOURNAL_COLLECTION].docs) == 1
+    run = database["agent_run_ledger"].docs[0]
+    assert _nested(run, "interaction_v2_fence.origin_prepare_cas_count") == 2
+    assert len(database["agent_run_ledger"].write_sessions) == 2
 
     with pytest.raises(InteractionRepositoryConflict, match="ORIGIN_CONFLICT"):
         await repository.prepare_origin(
@@ -582,6 +603,33 @@ async def test_prepare_origin_fails_closed_after_terminal_or_lease_loss() -> Non
     database["agent_run_ledger"].docs[0]["terminal"] = True
     with pytest.raises(InteractionRepositoryConflict, match="RUN_FENCE_LOST"):
         await repository.prepare_origin(_origin("tool-1"), _fence())
+
+
+async def test_publish_rejects_member_interaction_kind_that_differs_from_origin() -> (
+    None
+):
+    repository, _, _ = await _repository()
+    origin = _origin("tool-1")
+    await repository.prepare_origin(origin, _fence())
+    frame = _frame((origin,))
+    forged_member = replace(frame.members[0], interaction_kind=InteractionKind.QUESTION)
+    forged = replace(frame, members=(forged_member,))
+    with pytest.raises(InteractionRepositoryConflict, match="ORIGIN_CONFLICT"):
+        await repository.publish_whole_frame(forged, _fence())
+
+
+async def test_publish_rederives_persisted_origin_identity_before_accepting_member() -> (
+    None
+):
+    repository, database, _ = await _repository()
+    origin = _origin("tool-1")
+    await repository.prepare_origin(origin, _fence())
+    database[AGENT_INTERACTION_ORIGIN_JOURNAL_COLLECTION].docs[0][
+        "stable_task_path"
+    ] = "root/tampered"
+
+    with pytest.raises(InteractionRepositoryConflict, match="ORIGIN_CONFLICT"):
+        await repository.publish_whole_frame(_frame((origin,)), _fence())
 
 
 async def test_initial_whole_frame_commits_all_rows_and_replays_without_recommit() -> (
@@ -668,7 +716,7 @@ async def test_whole_frame_rolls_back_every_row_when_evidence_commit_fails() -> 
         assert database[name].docs == []
 
 
-async def test_successor_advances_same_ordered_owner_set_as_one_frame() -> None:
+async def test_successor_fails_closed_until_root_proof_authority_is_wired() -> None:
     repository, database, committer = await _repository()
     origins = (_origin("tool-1"), _origin("tool-2"))
     for origin in origins:
@@ -680,18 +728,17 @@ async def test_successor_advances_same_ordered_owner_set_as_one_frame() -> None:
     database[AGENT_INTERACTION_GROUP_HEADS_COLLECTION].docs[0]["state"] = "applied"
 
     successor = _frame(origins, revision=2, predecessor=first)
-    published = await repository.publish_whole_frame(successor, _fence())
+    with pytest.raises(
+        InteractionFoundationNotReady,
+        match="SUCCESSOR_PROOF_AUTHORITY_NOT_READY",
+    ):
+        await repository.publish_whole_frame(successor, _fence())
 
-    assert published.created is True
-    assert committer.calls == 2
+    assert committer.calls == 1
     assert [
         row["current_revision"]
         for row in database[AGENT_INTERACTION_OWNER_HEADS_COLLECTION].docs
-    ] == [2, 2]
-    assert (
-        database[AGENT_INTERACTION_GROUP_HEADS_COLLECTION].docs[0]["current_revision"]
-        == 2
-    )
+    ] == [1, 1]
 
 
 async def test_successor_rejects_changed_ordered_owner_set() -> None:
@@ -707,5 +754,8 @@ async def test_successor_rejects_changed_ordered_owner_set() -> None:
     database[AGENT_INTERACTION_GROUP_HEADS_COLLECTION].docs[0]["state"] = "applied"
 
     changed = _frame((origins[0], third), revision=2, predecessor=first)
-    with pytest.raises(InteractionRepositoryConflict, match="MEMBER_VECTOR_CONFLICT"):
+    with pytest.raises(
+        InteractionFoundationNotReady,
+        match="SUCCESSOR_PROOF_AUTHORITY_NOT_READY",
+    ):
         await repository.publish_whole_frame(changed, _fence())

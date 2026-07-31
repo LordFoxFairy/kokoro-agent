@@ -53,6 +53,12 @@ Add runtime behavior through existing public packages and narrow protocols. Neve
 
 GA core semantics are frozen for the current Platform/Web/Session program. Graph, checkpoint, terminal, control, and handoff changes require prior user alignment.
 
+Interaction Protocol V2 is a dormant foundation, not an active Agent mode. Agent derives only the four Agent-owned
+application-request, interaction-owner, projection-event, and group-projection identities. Session-owned decision and
+resume refs remain opaque wire values. The generated Protobuf mirrors are distributed, but activation remains fail-closed
+until Root-equivalent CEL/protovalidate, the decision-group identity helper, successor proof authority, durable evidence
+composition, and the release epoch are wired; the incomplete Pydantic pseudo-mirrors are intentionally not shipped.
+
 ## Verification
 
 Run `uv run ruff check .`, `uv run pyright`, and `uv run pytest` with required Redis/Mongo/MinIO dependencies available.

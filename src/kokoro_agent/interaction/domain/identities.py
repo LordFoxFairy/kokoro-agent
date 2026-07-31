@@ -1,9 +1,9 @@
 """Pure ADR-014 interaction identity derivation.
 
 The domain intentionally accepts only the restricted Root canonical profile:
-objects, arrays and strings; decimal integers are strings.  Session-owned
-identity planes are available only through the corpus-shaped generic method,
-never through Agent runtime helpers.
+objects, arrays and strings; decimal integers are strings.  The factory exposes
+only identities owned by Agent.  Session/control-owned refs cross the wire as
+opaque, validated values and cannot be derived in this package.
 """
 
 from __future__ import annotations
@@ -88,64 +88,6 @@ _PLANES = MappingProxyType(
             "igpev_",
             frozenset({"run_id", "decision_group_ref", "decision_group_revision"}),
         ),
-        "human_decision": _IdentityPlane(
-            "kokoro.human-decision.v2",
-            "dec_",
-            frozenset(
-                {
-                    "site_id",
-                    "session_id",
-                    "run_id",
-                    "interaction_owner_ref",
-                    "owner_revision",
-                    "projection_event_ref",
-                    "command_id",
-                    "actor_subject_ref",
-                    "actor_subject_generation",
-                    "request_digest",
-                }
-            ),
-        ),
-        "decision_receipt": _IdentityPlane(
-            "kokoro.human-decision-receipt.v2",
-            "drcpt_",
-            frozenset(
-                {
-                    "site_id",
-                    "session_id",
-                    "run_id",
-                    "interaction_owner_ref",
-                    "owner_revision",
-                    "projection_event_ref",
-                    "decision_id",
-                    "actor_subject_ref",
-                    "actor_subject_generation",
-                }
-            ),
-        ),
-        "run_resume": _IdentityPlane(
-            "kokoro.run-resume.v2",
-            "rsm_",
-            frozenset(
-                {
-                    "run_id",
-                    "decision_group_ref",
-                    "decision_group_revision",
-                    "pending_frame_digest",
-                    "members",
-                }
-            ),
-        ),
-        "resume_receipt": _IdentityPlane(
-            "kokoro.run-resume-receipt.v2",
-            "rrcpt_",
-            frozenset({"run_id", "resume_ref"}),
-        ),
-        "resume_receipt_event": _IdentityPlane(
-            "kokoro.run-resume-receipt-event.v2",
-            "rrcev_",
-            frozenset({"run_id", "resume_ref", "resume_receipt_revision"}),
-        ),
     }
 )
 
@@ -154,17 +96,6 @@ _DECIMAL_FIELDS = frozenset(
         "elicitation_ordinal",
         "owner_revision",
         "decision_group_revision",
-        "actor_subject_generation",
-        "member_ordinal",
-        "resume_receipt_revision",
-    }
-)
-_RESUME_MEMBER_FIELDS = frozenset(
-    {
-        "decision_payload_digest",
-        "decision_receipt_ref",
-        "member_ordinal",
-        "projection_event_ref",
     }
 )
 
@@ -257,20 +188,6 @@ class InteractionIdentityFactory:
             raise IdentityContractError(
                 f"{kind} material fields do not match Root contract"
             )
-        if kind == "run_resume":
-            members = material.get("members")
-            if not isinstance(members, Sequence) or isinstance(members, (str, bytes)):
-                raise IdentityContractError(
-                    "run_resume members must be an ordered array"
-                )
-            for member in members:
-                if (
-                    not isinstance(member, Mapping)
-                    or frozenset(member) != _RESUME_MEMBER_FIELDS
-                ):
-                    raise IdentityContractError(
-                        "run_resume member fields do not match Root contract"
-                    )
         canonical_json = _canonical_json(material)
         digest = hashlib.sha256(
             plane.domain.encode("ascii") + b"\0" + canonical_json.encode("utf-8")

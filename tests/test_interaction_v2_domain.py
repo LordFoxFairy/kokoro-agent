@@ -140,6 +140,24 @@ def test_origin_descriptor_rejects_partial_effect_or_continuation_pair() -> None
         )
 
 
+def test_origin_candidate_recomputes_all_derived_identity_material() -> None:
+    candidate = OriginDescriptor(
+        run_id="run-1",
+        stable_task_path="root",
+        origin_tool_call_ref="tool-1",
+        invocation_elicitation_cursor=1,
+        interaction_kind=InteractionKind.APPROVAL,
+        base_descriptor_sha256=SHA_A,
+        base_schema_sha256=SHA_B,
+    ).to_candidate()
+    with pytest.raises(InteractionInvariantError, match="derived identity"):
+        replace(candidate, application_request_ref="areq_forged")
+    with pytest.raises(InteractionInvariantError, match="derived identity"):
+        replace(candidate, interaction_owner_ref="iown_forged")
+    with pytest.raises(InteractionInvariantError, match="derived identity"):
+        replace(candidate, origin_key_digest=SHA_A)
+
+
 def test_whole_frame_requires_contiguous_complete_member_vector() -> None:
     first = _member(ordinal=1, owner_ref="iown_one")
     skipped = _member(ordinal=3, owner_ref="iown_two")
@@ -176,7 +194,7 @@ def test_run_fence_requires_positive_generation_and_checkpoint_digest() -> None:
         )
 
 
-def test_private_refs_and_canonical_frame_bytes_are_bounded() -> None:
+def test_private_refs_and_canonical_frame_bytes_are_bounded_to_root_envelope() -> None:
     with pytest.raises(InteractionInvariantError, match="UTF-8 bytes"):
         replace(
             OriginDescriptor(
@@ -190,8 +208,15 @@ def test_private_refs_and_canonical_frame_bytes_are_bounded() -> None:
             ),
             origin_tool_call_ref="x" * 257,
         )
-    oversized = b"x" * (64 * 1024 + 1)
-    with pytest.raises(InteractionInvariantError, match="64 KiB"):
+    accepted = b"x" * (1024 * 1024)
+    accepted_frame = replace(
+        _frame(),
+        canonical_group_evidence=accepted,
+        group_evidence_sha256=hashlib.sha256(accepted).hexdigest(),
+    )
+    assert len(accepted_frame.canonical_group_evidence) == 1024 * 1024
+    oversized = b"x" * (1024 * 1024 + 1)
+    with pytest.raises(InteractionInvariantError, match="1 MiB"):
         replace(
             _frame(),
             canonical_group_evidence=oversized,
@@ -215,5 +240,13 @@ def test_runtime_activation_is_explicit_no_go_until_canonical_helpers_exist() ->
     )
     assert any(
         "member evidence digest" in blocker
+        for blocker in INTERACTION_V2_ACTIVATION_BLOCKERS
+    )
+    assert any(
+        "decision_group_ref" in blocker
+        for blocker in INTERACTION_V2_ACTIVATION_BLOCKERS
+    )
+    assert any(
+        "successor proof authority" in blocker.lower()
         for blocker in INTERACTION_V2_ACTIVATION_BLOCKERS
     )

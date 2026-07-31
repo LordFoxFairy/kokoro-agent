@@ -14,8 +14,9 @@ from kokoro_agent.interaction.domain.identities import (
     InteractionIdentityFactory,
 )
 from kokoro_agent.interaction.generated.contract_metadata import (
-    IDENTITY_CORPUS_SHA256,
+    AGENT_IDENTITY_CORPUS_SHA256,
     ROOT_CONTRACT_COMMIT,
+    ROOT_IDENTITY_CORPUS_SHA256,
 )
 
 
@@ -33,10 +34,10 @@ class _Corpus(TypedDict):
 def _corpus() -> _Corpus:
     payload = (
         files("kokoro_agent.interaction.generated")
-        .joinpath("interaction_identity_v2.json")
+        .joinpath("agent_interaction_identity_v2.json")
         .read_bytes()
     )
-    assert hashlib.sha256(payload).hexdigest() == IDENTITY_CORPUS_SHA256
+    assert hashlib.sha256(payload).hexdigest() == AGENT_IDENTITY_CORPUS_SHA256
     return cast(_Corpus, json.loads(payload))
 
 
@@ -44,10 +45,15 @@ def test_identity_contract_is_pinned_to_adr_014_root_commit() -> None:
     assert ROOT_CONTRACT_COMMIT == "1d60b01"
 
 
-def test_factory_matches_all_root_identity_vectors() -> None:
+def test_factory_matches_only_agent_owned_root_identity_vectors() -> None:
     corpus = _corpus()
     vectors = corpus["vectors"]
-    assert len(vectors) == 9
+    assert [vector["kind"] for vector in vectors] == [
+        "application_request",
+        "interaction_owner",
+        "projection_event",
+        "group_projection",
+    ]
 
     factory = InteractionIdentityFactory()
     for vector in vectors:
@@ -79,6 +85,26 @@ def test_factory_rejects_noncanonical_or_drifting_material(
         )
 
 
+@pytest.mark.parametrize(
+    "session_owned_plane",
+    [
+        "human_decision",
+        "decision_receipt",
+        "run_resume",
+        "resume_receipt",
+        "resume_receipt_event",
+    ],
+)
+def test_factory_does_not_derive_session_or_control_owned_identity_planes(
+    session_owned_plane: str,
+) -> None:
+    with pytest.raises(IdentityContractError, match="unknown identity plane"):
+        InteractionIdentityFactory().derive_contract_ref(
+            kind=session_owned_plane,
+            material={"run_id": "run-1"},
+        )
+
+
 @pytest.mark.parametrize("noncanonical", [1, True, b"iown-bytes"])
 def test_factory_fail_closes_exact_material_with_noncanonical_scalar(
     noncanonical: object,
@@ -102,22 +128,13 @@ def test_factory_fail_closes_nested_non_string_mapping_key() -> None:
         dict[str, CanonicalInput],
         {
             "run_id": "run-1",
-            "decision_group_ref": "group-1",
-            "decision_group_revision": "1",
-            "pending_frame_digest": "a" * 64,
-            "members": [
-                {
-                    "decision_payload_digest": "b" * 64,
-                    "decision_receipt_ref": "receipt-1",
-                    "member_ordinal": "1",
-                    7: "not-a-string-key",
-                }
-            ],
+            "interaction_owner_ref": "iown-1",
+            "owner_revision": {7: "not-a-string-key"},
         },
     )
     with pytest.raises(IdentityContractError):
         InteractionIdentityFactory().derive_contract_ref(
-            kind="run_resume", material=material
+            kind="projection_event", material=material
         )
 
 
@@ -143,16 +160,34 @@ def test_agent_typed_origin_helpers_do_not_accept_site_or_subject_axes() -> None
     assert "subject" not in owner.canonical_json
 
 
-def test_committed_corpus_is_byte_identical_to_available_root_source() -> None:
+def test_agent_corpus_records_root_digest_without_distributing_session_material() -> (
+    None
+):
     root_corpus = (
         Path(__file__).resolve().parents[2]
         / "contract/corpus/interaction-identity-v2.json"
     )
     if not root_corpus.is_file():
         pytest.skip("standalone Agent clone has no Root contract checkout")
+    root_bytes = root_corpus.read_bytes()
+    assert hashlib.sha256(root_bytes).hexdigest() == ROOT_IDENTITY_CORPUS_SHA256
     committed = (
         files("kokoro_agent.interaction.generated")
-        .joinpath("interaction_identity_v2.json")
+        .joinpath("agent_interaction_identity_v2.json")
         .read_bytes()
     )
-    assert committed == root_corpus.read_bytes()
+    assert committed != root_bytes
+    for forbidden in (b"site_id", b"session_id", b"actor_subject"):
+        assert forbidden not in committed
+
+
+def test_interaction_runtime_sources_have_no_session_identity_material() -> None:
+    package = Path(__file__).resolve().parents[1] / "src/kokoro_agent/interaction"
+    offenders = {
+        source.relative_to(package): forbidden
+        for source in package.rglob("*")
+        if source.is_file() and "__pycache__" not in source.parts
+        for forbidden in (b"site_id", b"session_id", b"actor_subject")
+        if forbidden in source.read_bytes()
+    }
+    assert offenders == {}

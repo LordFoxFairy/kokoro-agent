@@ -22,6 +22,7 @@ from pymongo.errors import DuplicateKeyError
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
 
+from kokoro_agent.interaction.domain.identities import InteractionIdentityFactory
 from kokoro_agent.interaction.domain.models import (
     GroupRevisionCandidate,
     OriginCandidate,
@@ -151,6 +152,33 @@ def _same_fields(
     existing: Mapping[str, object], expected: Mapping[str, object]
 ) -> bool:
     return all(existing.get(name) == value for name, value in expected.items())
+
+
+def _derived_origin_identity(
+    *,
+    run_id: str,
+    stable_task_path: str,
+    origin_tool_call_ref: str,
+    elicitation_ordinal: int,
+    interaction_kind: str,
+) -> tuple[str, str, str]:
+    factory = InteractionIdentityFactory()
+    application_request = factory.application_request(
+        run_id=run_id,
+        stable_task_path=stable_task_path,
+        origin_tool_call_ref=origin_tool_call_ref,
+        interaction_kind=interaction_kind,
+        elicitation_ordinal=elicitation_ordinal,
+    )
+    owner = factory.interaction_owner(
+        run_id=run_id,
+        stable_task_path=stable_task_path,
+        origin_tool_call_ref=origin_tool_call_ref,
+        interaction_kind=interaction_kind,
+        application_request_ref=application_request.value,
+    )
+    origin_key_digest = hashlib.sha256(owner.canonical_json.encode("utf-8")).hexdigest()
+    return application_request.value, owner.value, origin_key_digest
 
 
 def _origin_document(candidate: OriginCandidate) -> dict[str, object]:
@@ -344,12 +372,36 @@ class MongoInteractionRepository:
         if matched is None:
             raise InteractionRepositoryConflict("INTERACTION_RUN_FENCE_LOST")
 
+    async def _touch_run_fence(
+        self, fence: RunWriteFence, session: AsyncClientSession
+    ) -> None:
+        """Create a real transaction write conflict with lease/checkpoint takeover."""
+        touched = await self._runs.update_one(
+            self._run_fence_query(fence),
+            {"$inc": {"interaction_v2_fence.origin_prepare_cas_count": 1}},
+            session=session,
+        )
+        if touched.modified_count != 1:
+            raise InteractionRepositoryConflict("INTERACTION_RUN_FENCE_LOST")
+
     async def prepare_origin(
         self, candidate: OriginCandidate, fence: RunWriteFence
     ) -> OriginCandidate:
         self._assert_storage_ready()
         if candidate.run_id != fence.run_id:
             raise InteractionRepositoryConflict("INTERACTION_RUN_ID_CONFLICT")
+        if _derived_origin_identity(
+            run_id=candidate.run_id,
+            stable_task_path=candidate.stable_task_path,
+            origin_tool_call_ref=candidate.origin_tool_call_ref,
+            elicitation_ordinal=candidate.elicitation_ordinal,
+            interaction_kind=candidate.interaction_kind.value,
+        ) != (
+            candidate.application_request_ref,
+            candidate.interaction_owner_ref,
+            candidate.origin_key_digest,
+        ):
+            raise InteractionRepositoryConflict("INTERACTION_ORIGIN_CONFLICT")
         exact_key = {
             "run_id": candidate.run_id,
             "stable_task_path": candidate.stable_task_path,
@@ -359,7 +411,7 @@ class MongoInteractionRepository:
         expected = _origin_document(candidate)
 
         async def prepare(session: AsyncClientSession) -> OriginCandidate:
-            await self._assert_run_fence(fence, session)
+            await self._touch_run_fence(fence, session)
             existing = await self._origins.find_one(exact_key, session=session)
             if existing is not None:
                 if not _same_fields(existing, expected):
@@ -416,14 +468,49 @@ class MongoInteractionRepository:
             {
                 "run_id": candidate.run_id,
                 "application_request_ref": member.application_request_ref,
-                "interaction_owner_ref": member.interaction_owner_ref,
-                "origin_key_digest": member.origin_key_digest,
             },
-            {"_id": 1},
             session=session,
         )
         if origin is None:
             raise InteractionRepositoryConflict("INTERACTION_ORIGIN_MISSING")
+        stable_task_path = origin.get("stable_task_path")
+        origin_tool_call_ref = origin.get("origin_tool_call_ref")
+        elicitation_ordinal = origin.get("elicitation_ordinal")
+        interaction_kind = origin.get("interaction_kind")
+        if (
+            not isinstance(stable_task_path, str)
+            or not isinstance(origin_tool_call_ref, str)
+            or not isinstance(elicitation_ordinal, int)
+            or isinstance(elicitation_ordinal, bool)
+            or not isinstance(interaction_kind, str)
+        ):
+            raise InteractionRepositoryConflict("INTERACTION_ORIGIN_CONFLICT")
+        try:
+            application_request_ref, interaction_owner_ref, origin_key_digest = (
+                _derived_origin_identity(
+                    run_id=candidate.run_id,
+                    stable_task_path=stable_task_path,
+                    origin_tool_call_ref=origin_tool_call_ref,
+                    elicitation_ordinal=elicitation_ordinal,
+                    interaction_kind=interaction_kind,
+                )
+            )
+        except ValueError as exc:
+            raise InteractionRepositoryConflict("INTERACTION_ORIGIN_CONFLICT") from exc
+        if not _same_fields(
+            origin,
+            {
+                "interaction_kind": member.interaction_kind.value,
+                "application_request_ref": application_request_ref,
+                "interaction_owner_ref": interaction_owner_ref,
+                "origin_key_digest": origin_key_digest,
+            },
+        ) or (
+            member.application_request_ref != application_request_ref
+            or member.interaction_owner_ref != interaction_owner_ref
+            or member.origin_key_digest != origin_key_digest
+        ):
+            raise InteractionRepositoryConflict("INTERACTION_ORIGIN_CONFLICT")
 
     async def _assert_predecessors(
         self, candidate: GroupRevisionCandidate, session: AsyncClientSession
@@ -601,6 +688,10 @@ class MongoInteractionRepository:
         self, candidate: GroupRevisionCandidate, fence: RunWriteFence
     ) -> PublishedFrame:
         self._assert_storage_ready()
+        if candidate.decision_group_revision > 1:
+            raise InteractionFoundationNotReady(
+                "INTERACTION_SUCCESSOR_PROOF_AUTHORITY_NOT_READY"
+            )
         self._canonical_digest_verifier.verify_whole_frame(candidate)
         if candidate.run_id != fence.run_id:
             raise InteractionRepositoryConflict("INTERACTION_RUN_ID_CONFLICT")

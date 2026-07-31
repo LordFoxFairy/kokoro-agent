@@ -19,6 +19,7 @@ from kokoro_agent.platform import (
     MediaCommandAccepted,
     MediaCommandRejected,
     MediaCommandUnknown,
+    MediaOperationSafeView,
     MediaOperationProtocolError,
     MediaRuntimeSettings,
 )
@@ -292,6 +293,29 @@ async def test_owner_outcome_unknown_is_typed_and_never_inferred_terminal() -> N
     assert result.recovery_action == "recover_command"
 
 
+def test_unknown_domain_result_cannot_carry_an_unbound_operation() -> None:
+    with pytest.raises(ValueError):
+        MediaCommandUnknown.model_validate(
+            {
+                "outcome": "outcome_unknown",
+                "media_command_ref": "media-command:1",
+                "recovery_action": "recover_command",
+                "operation": MediaOperationSafeView(
+                    media_operation_handle="media-operation:" + "a" * 48,
+                    operation_ref="operation-1",
+                    owner_version=1,
+                    state="queued",
+                    safe_progress_bps=0,
+                    artifacts=(),
+                ),
+                "error": {
+                "code": "outcome_unknown",
+                "message": "owner is reconciling",
+                },
+            },
+        )
+
+
 async def test_submit_outcome_unknown_rejects_unbound_operation_view() -> None:
     command = _command()
     port_seed = _port(ScriptedClient(recover=[], create=[]))
@@ -406,6 +430,78 @@ async def test_connect_cancellation_propagates_without_recovery_or_create() -> N
     client = ScriptedClient(recover=[asyncio.CancelledError()], create=[])
     with pytest.raises(asyncio.CancelledError):
         await _port(client).create_image(command)
+    assert [name for name, _request, _timeout in client.calls] == ["recover"]
+
+
+@pytest.mark.parametrize("phase", ["recover", "create", "recover_after_create"])
+async def test_wrapped_connect_cancellation_preserves_task_cancellation(phase: str) -> None:
+    command = _command()
+    started = asyncio.Event()
+
+    class WrappedCancellationClient(ScriptedClient):
+        def __init__(self) -> None:
+            super().__init__(recover=[], create=[])
+            self.recover_count = 0
+
+        async def _wait_like_connectrpc(self) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError as error:
+                raise ConnectError(Code.CANCELED, "task canceled") from error
+
+        async def recover_media_operation_by_command(
+            self,
+            request: media_pb.RecoverMediaOperationByCommandRequest,
+            *,
+            timeout_ms: int | None = None,
+        ) -> media_pb.RecoverMediaOperationByCommandResponse:
+            self.calls.append(("recover", request, timeout_ms))
+            self.recover_count += 1
+            if phase == "recover" or (
+                phase == "recover_after_create" and self.recover_count == 2
+            ):
+                await self._wait_like_connectrpc()
+            return _missing(command.agent_media_command_ref)
+
+        async def create_agent_image_operation(
+            self,
+            request: media_pb.CreateAgentImageOperationRequest,
+            *,
+            timeout_ms: int | None = None,
+        ) -> media_pb.CreateAgentImageOperationResponse:
+            self.calls.append(("create", request, timeout_ms))
+            if phase == "create":
+                await self._wait_like_connectrpc()
+            raise ConnectError(Code.UNAVAILABLE, "ambiguous")
+
+    client = WrappedCancellationClient()
+    task = asyncio.create_task(_port(client).create_image(command))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    expected = {
+        "recover": ["recover"],
+        "create": ["recover", "create"],
+        "recover_after_create": ["recover", "create", "recover"],
+    }
+    assert [name for name, _request, _timeout in client.calls] == expected[phase]
+
+
+async def test_remote_connect_canceled_without_local_task_cancel_is_transport_unknown() -> None:
+    command = _command()
+    client = ScriptedClient(
+        recover=[ConnectError(Code.CANCELED, "remote canceled")],
+        create=[],
+    )
+
+    result = await _port(client).create_image(command)
+
+    assert isinstance(result, MediaCommandUnknown)
+    assert result.error.code == "transport_outcome_unknown"
     assert [name for name, _request, _timeout in client.calls] == ["recover"]
 
 

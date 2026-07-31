@@ -7,6 +7,7 @@ Opaque grants cross this boundary without being decoded or logged.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
@@ -16,6 +17,7 @@ from typing import Annotated, Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import pyqwest
+from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from pydantic import (
     AfterValidator,
@@ -176,6 +178,12 @@ class MediaCommandAccepted(_FrozenModel):
     operation: MediaOperationSafeView | None = None
     error: None = None
 
+    @model_validator(mode="after")
+    def _operation_matches_receipt(self) -> MediaCommandAccepted:
+        if self.operation is not None and self.operation.operation_ref != self.operation_ref:
+            raise ValueError("operation view must match the accepted receipt")
+        return self
+
 
 class MediaCommandRejected(_FrozenModel):
     outcome: Literal["rejected"]
@@ -189,7 +197,7 @@ class MediaCommandUnknown(_FrozenModel):
     outcome: Literal["outcome_unknown"]
     media_command_ref: _REFERENCE
     recovery_action: MediaRecoveryAction
-    operation: MediaOperationSafeView | None = None
+    operation: None = None
     error: MediaRuntimeSafeError
 
 
@@ -283,7 +291,10 @@ class ConnectMediaOperationPort:
                 ),
                 timeout_ms=self._timeout_ms,
             )
-        except (ConnectError, OSError, TimeoutError):
+        except ConnectError as error:
+            _propagate_cancellation(error)
+            return _transport_unknown(command.agent_media_command_ref)
+        except (OSError, TimeoutError):
             return _transport_unknown(command.agent_media_command_ref)
 
         recovered = _map_response(
@@ -310,7 +321,10 @@ class ConnectMediaOperationPort:
             response = await self._client.create_agent_image_operation(
                 request, timeout_ms=self._timeout_ms
             )
-        except (ConnectError, OSError, TimeoutError):
+        except ConnectError as error:
+            _propagate_cancellation(error)
+            return await self._recover_after_ambiguous_transport(command, fingerprint)
+        except (OSError, TimeoutError):
             return await self._recover_after_ambiguous_transport(command, fingerprint)
         return _map_response(
             response,
@@ -330,7 +344,10 @@ class ConnectMediaOperationPort:
                 ),
                 timeout_ms=self._timeout_ms,
             )
-        except (ConnectError, OSError, TimeoutError):
+        except ConnectError as error:
+            _propagate_cancellation(error)
+            return _transport_unknown(command.agent_media_command_ref)
+        except (OSError, TimeoutError):
             return _transport_unknown(command.agent_media_command_ref)
         recovered = _map_response(
             response,
@@ -568,6 +585,13 @@ def _transport_unknown(command_ref: str) -> MediaCommandUnknown:
             message="Media owner outcome is not yet known; recover the same command.",
         ),
     )
+
+
+def _propagate_cancellation(error: ConnectError) -> None:
+    """Restore asyncio cancellation hidden by connectrpc's client wrapper."""
+    task = asyncio.current_task()
+    if error.code == Code.CANCELED and task is not None and task.cancelling() > 0:
+        raise asyncio.CancelledError from error
 
 
 def _media_address(value: str) -> str:

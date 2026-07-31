@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 from collections.abc import Sequence
 
@@ -211,6 +212,15 @@ async def test_create_image_tool_call_id_changes_hidden_command_identity() -> No
     await coroutine(**kwargs, runtime=_runtime("call-image-2"))
     assert port.commands[0].agent_media_command_ref != port.commands[1].agent_media_command_ref
     assert port.commands[0].stable_output_slot_ref != port.commands[1].stable_output_slot_ref
+
+
+def test_stable_reference_uses_injective_part_framing() -> None:
+    module = importlib.import_module("kokoro_agent.tools.media.create_image")
+    stable_reference = getattr(module, "_stable_reference")
+    left = stable_reference("media-command", "domain", "a\0b", "c")
+    right = stable_reference("media-command", "domain", "a", "b\0c")
+
+    assert left != right
 
 
 async def test_create_image_does_not_swallow_graph_cancellation() -> None:

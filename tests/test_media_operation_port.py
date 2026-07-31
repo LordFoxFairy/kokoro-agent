@@ -292,6 +292,35 @@ async def test_owner_outcome_unknown_is_typed_and_never_inferred_terminal() -> N
     assert result.recovery_action == "recover_command"
 
 
+async def test_submit_outcome_unknown_rejects_unbound_operation_view() -> None:
+    command = _command()
+    port_seed = _port(ScriptedClient(recover=[], create=[]))
+    fingerprint = port_seed.fingerprint(command)
+    response = media_pb.CreateAgentImageOperationResponse(
+        receipt=media_pb.MediaCommandReceipt(
+            submit_outcome_unknown=media_pb.SubmitMediaCommandOutcomeUnknown(
+                media_command_ref=command.agent_media_command_ref,
+                caller_request_fingerprint=fingerprint,
+                error=media_pb.MediaRuntimeError(
+                    code=media_pb.MEDIA_RUNTIME_ERROR_CODE_OUTCOME_UNKNOWN,
+                    safe_message="owner is reconciling",
+                ),
+                receipt_version=1,
+                recorded_at=_timestamp(),
+                recovery_action=media_pb.MEDIA_COMMAND_RECOVERY_ACTION_RECOVER_COMMAND,
+            )
+        ),
+        operation=_operation(),
+    )
+    client = ScriptedClient(
+        recover=[_missing(command.agent_media_command_ref)],
+        create=[response],
+    )
+
+    with pytest.raises(MediaOperationProtocolError):
+        await _port(client).create_image(command)
+
+
 async def test_create_and_recovery_transport_loss_returns_local_unknown_not_retry() -> None:
     command = _command()
     client = ScriptedClient(

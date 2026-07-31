@@ -413,11 +413,13 @@ def _map_response(
             unknown = receipt.submit_outcome_unknown
             _validate_submit_identity(unknown, command_ref, fingerprint)
             _validate_receipt(unknown)
+            if operation is not None:
+                raise ValueError
             return MediaCommandUnknown(
                 outcome="outcome_unknown",
                 media_command_ref=command_ref,
                 recovery_action=_recovery_action(unknown.recovery_action),
-                operation=operation,
+                operation=None,
                 error=_safe_error(unknown.error),
             )
         raise ValueError

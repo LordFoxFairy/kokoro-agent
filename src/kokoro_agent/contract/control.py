@@ -15,6 +15,7 @@ def _trimmed_reference(value: str) -> str:
 
 Sha256Str = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 Reference = Annotated[str, StringConstraints(min_length=1, max_length=256), AfterValidator(_trimmed_reference)]
+OpaqueRuntimeHandle = Annotated[str, StringConstraints(min_length=32, max_length=8192), AfterValidator(_trimmed_reference)]
 
 SubagentCreate = Literal["deny", "ask", "allow"]
 FilesystemPerm = Literal["read_only", "workspace_write"]
@@ -62,6 +63,11 @@ class Permissions(StrictModel):
     filesystem: FilesystemPerm
 
 
+class MediaRuntimeGrant(StrictModel):
+    media_access_handle: OpaqueRuntimeHandle
+    media_projection_reservation_handle: OpaqueRuntimeHandle
+
+
 class RuntimeConfig(StrictModel):
     agent_catalog_ref: Reference
     agent_type: AgentType
@@ -73,6 +79,7 @@ class RuntimeConfig(StrictModel):
     subagents: list[NonEmptyStr]
     backend: Backend
     permissions: Permissions
+    media: MediaRuntimeGrant | None = None
 
 
 class RuntimeContext(StrictModel):

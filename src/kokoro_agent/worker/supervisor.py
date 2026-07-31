@@ -59,6 +59,7 @@ from kokoro_agent.storage.ledger import (
 )
 from kokoro_agent.storage.execution_context import ExecutionContextAuthorityPort
 from kokoro_agent.streams.protocol import StreamProtocol
+from kokoro_agent.tools.registry import validate_requested_tools
 from kokoro_agent.worker.messages import parse_inbound
 
 LOGGER = logging.getLogger(__name__)
@@ -156,6 +157,23 @@ class RunSupervisor:
                     await bus.ack(REQUESTS_STREAM, CONSUMER_GROUP, item.cursor)
                     continue
                 if isinstance(msg, RunRequest):
+                    try:
+                        validate_requested_tools(msg.runtime.tools)
+                    except ValueError:
+                        # 语义无效的 catalog 请求没有 run 生命周期所有权：在任何 claim、
+                        # execution binding、Hub 或 sandbox 副作用前隔离并 ACK，避免毒帧重投。
+                        LOGGER.warning(
+                            "quarantining invalid tool catalog run_id=%s", msg.run_id,
+                            exc_info=True,
+                        )
+                        with contextlib.suppress(Exception):
+                            await self._store.quarantine_dispatch(
+                                _raw_hash(item.event),
+                                source=REQUESTS_STREAM,
+                                reason="invalid_tool_catalog",
+                            )
+                        await bus.ack(REQUESTS_STREAM, CONSUMER_GROUP, item.cursor)
+                        continue
                     # dispatch 序：CAS claim→赢才执行→ACK 后置到 durable claim 之后。
                     # claim 落库前崩溃 → 不 ACK、不合成终态：留 PEL 重投（§8.3 首行）。
                     try:
@@ -181,6 +199,8 @@ class RunSupervisor:
                 await heartbeat
 
     async def _consume_request(self, bus: StreamProtocol, request: RunRequest) -> None:
+        # serve 已在纯边界解析后校验；此处保留防御，防止内部调用绕过入站闸门。
+        validate_requested_tools(request.runtime.tools)
         # dispatch CAS（D5）：pending→claimed。输（已 claimed=重复投递 / expired=迟到帧）→丢弃不执行；
         # 赢（或无 intent 兼容路径）→ durable 执行认领（try_claim）+ 启动。ACK 由 serve 后置于此之后。
         if not await self._store.claim_dispatch(request.run_id, self._consumer):
@@ -220,6 +240,8 @@ class RunSupervisor:
 
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):
+            # 测试/嵌入式直调没有 parse_inbound 阶段，同样必须先于全部外部端口失败。
+            validate_requested_tools(msg.runtime.tools)
             await self._on_request(bus, msg)
         elif isinstance(msg, RunResume):
             await self._on_resume(bus, msg)

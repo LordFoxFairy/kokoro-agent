@@ -32,8 +32,10 @@ tool construction and receives a verified immutable execution assembly.
 
 ## Runtime invariants
 
-- Incoming messages pass `parse_inbound`; scheduling dependencies are injected and do not read
-  environment state.
+- Incoming messages pass `parse_inbound`; `RunRequest` tool names are validated immediately after
+  that pure boundary parse and before dispatch claim, execution binding, Hub, or sandbox effects.
+  Invalid catalog frames are quarantined and acknowledged without creating a run terminal.
+  Scheduling dependencies are injected and do not read environment state.
 - Durable claim precedes ACK; lease fencing prevents a stale worker from emitting a terminal.
 - Resume, cancel, and steer use keep-first durable control records and terminal rechecks.
 - Critical events keep stable outbox identity across retries and recovery.
@@ -45,7 +47,8 @@ tool construction and receives a verified immutable execution assembly.
 - Capability resolution is fail-closed. A missing or invalid Hub assembly cannot fall back to
   local configuration.
 - A non-empty historical `KOKORO_AGENT_MEMORY` setting fails process configuration. Legacy
-  `save_memory`/`search_memory` names fail before Hub resolution and sandbox allocation.
+  `save_memory`/`search_memory` names fail at the supervisor ingress before dispatch claim, Hub
+  resolution, execution binding, or sandbox allocation; assembly retains the same defense.
 - Model streaming is accepted only from Platform's private RPC. Agent verifies the invocation and
   attempt identity, every sequence/hash-chain link, the aggregate terminal result, and resumes a
   transient disconnect from the last verified sequence using the same immutable attempt.

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Command, Interrupt
 from pydantic import JsonValue, TypeAdapter
 import pytest
@@ -971,6 +972,113 @@ async def test_malformed_frame_quarantined_to_dlq_and_acked() -> None:
     assert len(store.dlq) == 1
     _raw, source, reason = store.dlq[0]
     assert source == REQUESTS_STREAM and reason == "unparseable"
+
+
+@pytest.mark.parametrize(
+    ("tools", "error_code"),
+    [
+        (["save_memory"], "LEGACY_STORE_MEMORY_TOOLS_DISABLED"),
+        (["search_memory"], "LEGACY_STORE_MEMORY_TOOLS_DISABLED"),
+        (["not_a_registered_tool"], "unknown tools in RuntimeConfig.tools"),
+        (["web_fetch", "web_fetch"], "RuntimeConfig.tools contains duplicate names"),
+    ],
+)
+async def test_request_tool_catalog_validation_precedes_every_external_port(
+    tools: list[str], error_code: str
+) -> None:
+    touched: list[str] = []
+
+    class SideEffectLedger(FakeLedger):
+        async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
+            touched.append("ledger.try_claim")
+            return await super().try_claim(request, owner)
+
+    class SideEffectExecutionContext(FakeExecutionContextAuthority):
+        async def open(self, request: RunRequest) -> RunnableConfig:
+            touched.append("execution_context.open")
+            return await super().open(request)
+
+    async def build(_request: RunRequest) -> AssembledAgent:
+        touched.append("agent_builder")
+        return AssembledAgent(agent=FakeAgent(), tool_descriptions={})
+
+    store = SideEffectLedger()
+    supervisor = RunSupervisor(
+        agent_builder=build,
+        store=store,
+        execution_context=SideEffectExecutionContext(store),
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="catalog-boundary",
+    )
+    original = request("invalid-tool-catalog")
+    invalid = original.model_copy(
+        update={"runtime": original.runtime.model_copy(update={"tools": tools})}
+    )
+
+    with pytest.raises(ValueError, match=error_code):
+        await supervisor.dispatch(FakeBus(), invalid)
+    assert touched == []
+    assert store.requests == {}
+    assert store.terminals == set()
+    assert store.outbox == {}
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        ["save_memory"],
+        ["search_memory"],
+        ["not_a_registered_tool"],
+        ["web_fetch", "web_fetch"],
+    ],
+)
+async def test_serve_quarantines_invalid_tool_catalog_without_claim_or_terminal(
+    tools: list[str],
+) -> None:
+    class NoClaimLedger(FakeLedger):
+        async def claim_dispatch(
+            self, run_id: str, consumer: str = "test-consumer"
+        ) -> bool:
+            raise AssertionError("catalog validation must precede dispatch claim")
+
+        async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
+            raise AssertionError("catalog validation must precede run claim")
+
+        async def try_mark_terminal(self, run_id: str) -> bool:
+            raise AssertionError("boundary-invalid requests do not own a terminal")
+
+    async def never_build(_request: RunRequest) -> AssembledAgent:
+        raise AssertionError("catalog validation must precede agent assembly")
+
+    original = request("invalid-tool-catalog-serve")
+    invalid = original.model_copy(
+        update={"runtime": original.runtime.model_copy(update={"tools": tools})}
+    )
+    frame = StreamItem(cursor="catalog-1", event=dict(invalid.model_dump()))
+    store = NoClaimLedger()
+    bus = FakeBus(inbound=(frame,))
+    supervisor = RunSupervisor(
+        agent_builder=never_build,
+        store=store,
+        execution_context=FakeExecutionContextAuthority(store),
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="catalog-boundary",
+    )
+
+    await supervisor.serve(bus)
+
+    assert bus.acked == ["catalog-1"]
+    assert bus.published == []
+    assert store.requests == {}
+    assert store.terminals == set()
+    assert store.outbox == {}
+    assert len(store.dlq) == 1
+    _raw, source, reason = store.dlq[0]
+    assert source == REQUESTS_STREAM and reason == "invalid_tool_catalog"
 
 
 async def test_serve_republishes_queued_outbox() -> None:

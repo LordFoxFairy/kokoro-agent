@@ -1,3 +1,7 @@
+# Hypercorn's public serve annotation includes an unparameterized WSGI fallback.
+# This process passes an ASGI application and keeps that upstream gap at the boundary.
+# pyright: reportUnknownVariableType=false
+
 """Standalone mTLS/HTTP2 process entry for execution-evidence reads."""
 
 from __future__ import annotations
@@ -5,13 +9,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Awaitable, Callable
-from importlib import import_module
-from typing import cast
 
 from dotenv import load_dotenv
-from hypercorn.config import Config as HypercornConfig
-from hypercorn.typing import ASGIFramework
+from hypercorn.asyncio import serve as serve_asgi
 
 from kokoro.agent.execution.v1.agent_execution_evidence_connect import (
     AgentExecutionEvidenceServiceASGIApplication,
@@ -23,10 +23,6 @@ from kokoro_agent.storage.ledger import make_ledger
 
 LOGGER = logging.getLogger(__name__)
 _MAX_REQUEST_BYTES = 128 * 1024
-_serve_asgi = cast(
-    Callable[[ASGIFramework, HypercornConfig], Awaitable[None]],
-    getattr(import_module("hypercorn.asyncio"), "serve"),
-)
 
 
 async def _serve(config: AppConfig, settings: EvidenceServerSettings) -> None:
@@ -42,14 +38,21 @@ async def _serve(config: AppConfig, settings: EvidenceServerSettings) -> None:
             settings.port,
             ",".join(sorted(settings.allowed_callers)),
         )
-        await _serve_asgi(app, build_hypercorn_config(settings))
+        await serve_asgi(app, build_hypercorn_config(settings))
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
     config = AppConfig.from_env(os.environ)
-    settings = EvidenceServerSettings.from_config(config)
+    settings = EvidenceServerSettings.from_values(
+        host=config.evidence_host,
+        port=config.evidence_port,
+        tls_cert=config.evidence_tls_cert,
+        tls_key=config.evidence_tls_key,
+        caller_ca_bundle=config.evidence_caller_ca_bundle,
+        allowed_callers=config.evidence_allowed_callers,
+    )
     asyncio.run(_serve(config, settings))
 
 

@@ -9,8 +9,6 @@ from typing import Self
 from hypercorn.config import Config as HypercornConfig
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from kokoro_agent.config import AppConfig
-
 EXPECTED_CALLERS = frozenset({"kokoro-session", "kokoro-platform"})
 
 
@@ -36,24 +34,29 @@ class EvidenceServerSettings(BaseModel):
         return self
 
     @classmethod
-    def from_config(cls, config: AppConfig) -> Self:
-        if (
-            config.evidence_tls_cert is None
-            or config.evidence_tls_key is None
-            or config.evidence_caller_ca_bundle is None
-        ):
+    def from_values(
+        cls,
+        *,
+        host: str,
+        port: int,
+        tls_cert: str | None,
+        tls_key: str | None,
+        caller_ca_bundle: str | None,
+        allowed_callers: str,
+    ) -> Self:
+        if tls_cert is None or tls_key is None or caller_ca_bundle is None:
             raise ValueError("EVIDENCE_MTLS_REQUIRED")
         callers = frozenset(
             caller.strip()
-            for caller in config.evidence_allowed_callers.split(",")
+            for caller in allowed_callers.split(",")
             if caller.strip()
         )
         return cls(
-            host=config.evidence_host,
-            port=config.evidence_port,
-            tls_cert=Path(config.evidence_tls_cert),
-            tls_key=Path(config.evidence_tls_key),
-            caller_ca_bundle=Path(config.evidence_caller_ca_bundle),
+            host=host,
+            port=port,
+            tls_cert=Path(tls_cert),
+            tls_key=Path(tls_key),
+            caller_ca_bundle=Path(caller_ca_bundle),
             allowed_callers=callers,
         )
 

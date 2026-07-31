@@ -1,3 +1,8 @@
+# LangChain leaves convert_to_openai_tool/content partly unknown, while Pydantic's
+# generated subclass initializer is not represented in BaseChatModel's overloads.
+# Keep those upstream typing gaps confined to this adapter module.
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportCallIssue=false
+
 """LangChain chat-model adapter for the private Platform Model Gateway.
 
 GA owns conversation/tool orchestration.  Platform owns model authorization,
@@ -11,7 +16,7 @@ import hashlib
 import json
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeGuard
 from urllib.parse import urlsplit, urlunsplit
 
 import pyqwest
@@ -26,12 +31,14 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    ToolCall,
     ToolMessage,
+    UsageMetadata,
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
-from langchain_core.utils.function_calling import convert_to_openai_tool  # pyright: ignore[reportUnknownVariableType]
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import ConfigDict, PrivateAttr
 
 from kokoro.platform.model.v1 import model_gateway_pb2 as gateway_pb
@@ -138,14 +145,14 @@ class PlatformModelGatewayChatModel(BaseChatModel):
         async_client: AsyncModelGatewayClient | None = None,
         sync_client: SyncModelGatewayClient | None = None,
     ) -> None:
-        super().__init__(**cast(Any, {
-            "model_name": model_name,
-            "authorization_handle": authorization_handle,
-            "run_id": run_id,
-            "producer_generation": producer_generation,
-            "maximum_output_tokens": maximum_output_tokens,
-            "timeout_ms": timeout_ms,
-        }))
+        super().__init__(
+            model_name=model_name,
+            authorization_handle=authorization_handle,
+            run_id=run_id,
+            producer_generation=producer_generation,
+            maximum_output_tokens=maximum_output_tokens,
+            timeout_ms=timeout_ms,
+        )
         if async_client is None or sync_client is None:
             if gateway_url is None or ca_file is None or cert_file is None or key_file is None:
                 raise ValueError("MODEL_GATEWAY_MTLS_CONFIGURATION_REQUIRED")
@@ -357,15 +364,15 @@ class PlatformModelGatewayChatModel(BaseChatModel):
         if outcome != "completed":
             raise ModelGatewayUnavailable(rpc_code="INVALID_RESPONSE")
         completed = response.completed
-        tool_calls = [
-            {
-                "id": call.id,
-                "name": call.name,
-                "args": _parse_canonical_object(call.arguments_json),
-            }
+        tool_calls: list[ToolCall] = [
+            ToolCall(
+                id=call.id,
+                name=call.name,
+                args=_parse_canonical_object(call.arguments_json),
+            )
             for call in completed.tool_calls
         ]
-        usage = None
+        usage: UsageMetadata | None = None
         if completed.HasField("usage"):
             input_tokens = completed.usage.input_tokens
             output_tokens = completed.usage.output_tokens
@@ -388,16 +395,16 @@ class PlatformModelGatewayChatModel(BaseChatModel):
         message = AIMessage(
             content=completed.content,
             id=completed.response_id,
-            tool_calls=cast(Any, tool_calls),
+            tool_calls=tool_calls,
             additional_kwargs=additional,
             response_metadata=metadata,
-            usage_metadata=cast(Any, usage),
+            usage_metadata=usage,
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
 def _message(message: BaseMessage) -> gateway_pb.ModelMessage:
-    content = cast(object, message.content)  # pyright: ignore[reportUnknownMemberType]
+    content: object = message.content
     if not isinstance(content, str):
         raise ValueError("MODEL_GATEWAY_NON_TEXT_MESSAGE_UNSUPPORTED")
     fields: dict[str, Any] = {"content": content}
@@ -433,25 +440,22 @@ def _tools(
     unknown = set(kwargs) - {"tools", "tool_choice"}
     if unknown:
         raise ValueError("MODEL_GATEWAY_INVOCATION_OPTIONS_UNSUPPORTED")
-    raw_tools_value = kwargs.get("tools", [])
-    if not isinstance(raw_tools_value, list):
+    raw_tools_value: object = kwargs.get("tools", [])
+    if not _is_object_list(raw_tools_value):
         raise ValueError("MODEL_GATEWAY_TOOLS_INVALID")
-    raw_tools = cast(list[object], raw_tools_value)
     tools: list[gateway_pb.ModelToolDefinition] = []
     names: set[str] = set()
-    for raw in raw_tools:
-        if not isinstance(raw, dict):
+    for raw in raw_tools_value:
+        if not _is_string_object_dict(raw):
             raise ValueError("MODEL_GATEWAY_TOOL_INVALID")
-        raw_mapping = cast(dict[str, object], raw)
-        if raw_mapping.get("type") != "function":
+        if raw.get("type") != "function":
             raise ValueError("MODEL_GATEWAY_TOOL_INVALID")
-        function = raw_mapping.get("function")
-        if not isinstance(function, dict):
+        function = raw.get("function")
+        if not _is_string_object_dict(function):
             raise ValueError("MODEL_GATEWAY_TOOL_INVALID")
-        function_mapping = cast(dict[str, object], function)
-        name = function_mapping.get("name")
-        description = function_mapping.get("description", "")
-        parameters = function_mapping.get("parameters", {})
+        name = function.get("name")
+        description = function.get("description", "")
+        parameters = function.get("parameters", {})
         if not isinstance(name, str) or not isinstance(description, str) or name in names:
             raise ValueError("MODEL_GATEWAY_TOOL_INVALID")
         names.add(name)
@@ -474,12 +478,9 @@ def _tools(
     if choice in ("any", "required"):
         return tools, gateway_pb.MODEL_TOOL_CHOICE_REQUIRED, None
     required_name: object = choice
-    if isinstance(choice, dict):
-        choice_mapping = cast(dict[str, object], choice)
-        function = choice_mapping.get("function")
-        required_name = (
-            cast(dict[str, object], function).get("name") if isinstance(function, dict) else None
-        )
+    if _is_string_object_dict(choice):
+        function = choice.get("function")
+        required_name = function.get("name") if _is_string_object_dict(function) else None
     if isinstance(required_name, str) and required_name in names:
         return tools, gateway_pb.MODEL_TOOL_CHOICE_REQUIRED, required_name
     raise ValueError("MODEL_GATEWAY_TOOL_CHOICE_INVALID")
@@ -520,18 +521,25 @@ def _canonical_json_object(value: object) -> bytes:
     return encoded
 
 
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
 def _parse_canonical_object(value: bytes) -> dict[str, Any]:
     try:
         text = value.decode("utf-8")
         parsed: object = json.loads(text)
     except (UnicodeError, ValueError) as error:
         raise ModelGatewayUnavailable(rpc_code="INVALID_RESPONSE") from error
-    if not isinstance(parsed, dict):
+    if not _is_string_object_dict(parsed):
         raise ModelGatewayUnavailable(rpc_code="INVALID_RESPONSE")
-    parsed_object = cast(dict[str, object], parsed)
-    if _canonical_json_object(parsed_object) != value:
+    if _canonical_json_object(parsed) != value:
         raise ModelGatewayUnavailable(rpc_code="INVALID_RESPONSE")
-    return cast(dict[str, Any], parsed_object)
+    return {key: item for key, item in parsed.items()}
 
 
 def _gateway_address(value: str) -> str:

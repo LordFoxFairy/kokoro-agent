@@ -162,7 +162,11 @@ def test_run_completed_terminal_statuses(status: str) -> None:
 
 # --- 控制面（v2.1 形状：thread_id + runtime + context，禁 conversation_id/session_id/execution_style） ---
 
-_MODEL: dict[str, JsonValue] = {"provider": "anthropic", "name": "claude"}
+_MODEL: dict[str, JsonValue] = {
+    "provider": "anthropic",
+    "name": "claude",
+    "authorization_handle": "model-authz:test",
+}
 _PERMISSIONS: dict[str, JsonValue] = {
     "approval_tools": ["execute"],
     "review_tools": [],
@@ -170,6 +174,7 @@ _PERMISSIONS: dict[str, JsonValue] = {
     "filesystem": "read_only",
 }
 _RUNTIME: dict[str, JsonValue] = {
+    "agent_catalog_ref": f"agent-catalog:sha256:{'a' * 64}",
     "agent_type": "general",
     "model": _MODEL,
     "tools": [],

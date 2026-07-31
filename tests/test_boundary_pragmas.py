@@ -25,6 +25,16 @@ ALLOWED: dict[str, frozenset[str]] = {
     "tests/test_mcp_tools.py": frozenset({"reportUnknownMemberType"}),
     # StructuredTool.from_function 未解 Runnable 泛型（ToolRuntime 注入唯一构造路径）。
     "tests/test_run_scope_state.py": frozenset({"reportUnknownMemberType"}),
+    # LangChain tool/content 类型及 Pydantic 子类构造 overload 不完整，隔离在网关 adapter。
+    "src/kokoro_agent/model/platform_gateway.py": frozenset(
+        {"reportUnknownVariableType", "reportUnknownMemberType", "reportCallIssue"}
+    ),
+    # Hypercorn 的 public serve 注解带未参数化 WSGI fallback；此入口只传 ASGI app。
+    "src/kokoro_agent/evidence/main.py": frozenset({"reportUnknownVariableType"}),
+    # LangGraph 编译图泛型暴露部分 unknown overload，仅存在于执行上下文测试驱动器。
+    "tests/test_execution_context.py": frozenset(
+        {"reportUnknownMemberType", "reportArgumentType"}
+    ),
 }
 
 _PRAGMA = re.compile(r"^#\s*pyright:\s*(.+)$", re.MULTILINE)

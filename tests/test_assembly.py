@@ -41,8 +41,12 @@ def test_defaults_from_empty_env() -> None:
     # 存储收敛后唯一真后端：stream=redis、checkpoint/ledger=mongo（无 backend 选择枚举）。
     config = AppConfig.from_env({})
     assert config.stream.redis_url == "redis://127.0.0.1:6379/0"
-    assert config.checkpoint.mongo_url == "mongodb://127.0.0.1:27017"
-    assert config.ledger.mongo_url == "mongodb://127.0.0.1:27017"
+    assert config.checkpoint.mongo_url == (
+        "mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true"
+    )
+    assert config.ledger.mongo_url == (
+        "mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true"
+    )
     assert config.model.local_fake is False
     assert config.ledger.lease_ttl_ms == 90_000
     assert config.lease_heartbeat_s == 30.0

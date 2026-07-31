@@ -27,7 +27,10 @@ from kokoro_agent.streams.factory import StreamSettings, make_stream
 from kokoro_agent.streams.redis import RedisStream
 
 REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
-MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
+MONGO_URL = os.environ.get(
+    "KOKORO_MONGO_URL",
+    "mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true",
+)
 
 
 def _unique_db() -> str:

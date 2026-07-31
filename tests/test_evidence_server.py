@@ -26,8 +26,19 @@ def _config(tmp_path: Path, **overrides: str) -> AppConfig:
     return AppConfig.from_env(source)
 
 
+def _settings(config: AppConfig) -> EvidenceServerSettings:
+    return EvidenceServerSettings.from_values(
+        host=config.evidence_host,
+        port=config.evidence_port,
+        tls_cert=config.evidence_tls_cert,
+        tls_key=config.evidence_tls_key,
+        caller_ca_bundle=config.evidence_caller_ca_bundle,
+        allowed_callers=config.evidence_allowed_callers,
+    )
+
+
 def test_server_is_http2_only_and_requires_client_certificates(tmp_path: Path) -> None:
-    settings = EvidenceServerSettings.from_config(_config(tmp_path))
+    settings = _settings(_config(tmp_path))
     server = build_hypercorn_config(settings)
 
     assert server.bind == ["0.0.0.0:8443"]
@@ -44,7 +55,7 @@ def test_server_is_http2_only_and_requires_client_certificates(tmp_path: Path) -
 
 def test_server_rejects_plaintext_or_partial_mtls_configuration() -> None:
     with pytest.raises(ValueError, match="EVIDENCE_MTLS_REQUIRED"):
-        EvidenceServerSettings.from_config(AppConfig.from_env({}))
+        _settings(AppConfig.from_env({}))
 
 
 def test_server_rejects_caller_set_drift(tmp_path: Path) -> None:
@@ -53,7 +64,7 @@ def test_server_rejects_caller_set_drift(tmp_path: Path) -> None:
         KOKORO_AGENT_EVIDENCE_ALLOWED_CALLERS="kokoro-session,kokoro-platform,other",
     )
     with pytest.raises(ValidationError, match="EVIDENCE_CALLER_ALLOWLIST_INVALID"):
-        EvidenceServerSettings.from_config(config)
+        _settings(config)
 
 
 def test_server_rejects_missing_tls_files(tmp_path: Path) -> None:
@@ -62,4 +73,4 @@ def test_server_rejects_missing_tls_files(tmp_path: Path) -> None:
         update={"evidence_tls_key": str(tmp_path / "missing.key")}
     )
     with pytest.raises(ValidationError, match="EVIDENCE_TLS_FILE_MISSING"):
-        EvidenceServerSettings.from_config(config)
+        _settings(config)

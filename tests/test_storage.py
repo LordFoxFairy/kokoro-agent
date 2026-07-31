@@ -53,7 +53,10 @@ from kokoro_agent.storage.execution_context import (
     ExecutionContextBinding,
 )
 
-_MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
+_MONGO_URL = os.environ.get(
+    "KOKORO_MONGO_URL",
+    "mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true",
+)
 _TTL_MS = 1000
 OWNER = "worker-a"
 OTHER = "worker-b"

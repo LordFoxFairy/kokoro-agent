@@ -49,7 +49,7 @@ src/kokoro_agent/
 uv sync
 # 本地假模型（凭据无关，离线可跑）：
 KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
-  KOKORO_MONGO_URL=mongodb://127.0.0.1:27017 KOKORO_MONGO_DB=kokoro \
+  KOKORO_MONGO_URL='mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true' KOKORO_MONGO_DB=kokoro \
   KOKORO_HUB_RPC_URL=https://hub.internal:9443 \
   KOKORO_HUB_RPC_SERVER_NAME=hub.internal \
   KOKORO_HUB_RPC_CA_FILE=/run/secrets/hub-ca.pem \

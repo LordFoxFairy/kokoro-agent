@@ -8,7 +8,10 @@ from pymongo import AsyncMongoClient
 from kokoro_agent.storage.checkpoints import CheckpointSettings
 from kokoro_agent.storage.memory_store import make_memory_store
 
-_MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
+_MONGO_URL = os.environ.get(
+    "KOKORO_MONGO_URL",
+    "mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true",
+)
 
 
 def _settings() -> CheckpointSettings:

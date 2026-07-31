@@ -101,7 +101,10 @@ class AppConfig(BaseModel):
     redis_url: str = Field(
         default="redis://127.0.0.1:6379/0", validation_alias="KOKORO_REDIS_URL"
     )
-    mongo_url: str = Field(default="mongodb://127.0.0.1:27017", validation_alias="KOKORO_MONGO_URL")
+    mongo_url: str = Field(
+        default="mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true",
+        validation_alias="KOKORO_MONGO_URL",
+    )
     mongo_db: str = Field(default="kokoro", validation_alias="KOKORO_MONGO_DB")
 
     # --- observability 域 ---

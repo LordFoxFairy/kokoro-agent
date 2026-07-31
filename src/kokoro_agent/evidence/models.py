@@ -7,7 +7,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Literal, TypeGuard
 
 from google.protobuf.message import DecodeError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -579,6 +579,14 @@ def _sensitive_key(value: str) -> bool:
     )
 
 
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
 def _safe_json_value(
     value: object,
     *,
@@ -594,8 +602,7 @@ def _safe_json_value(
         return value if math.isfinite(value) else "[REDACTED_NON_FINITE_NUMBER]"
     if isinstance(value, str):
         return _safe_text(value, _MAX_SAFE_JSON_STRING_CHARS)
-    if isinstance(value, list):
-        items = cast(list[object], value)
+    if _is_object_list(value):
         return [
             _safe_json_value(
                 item,
@@ -603,12 +610,11 @@ def _safe_json_value(
                 key_budget=key_budget,
                 schema_mode=schema_mode,
             )
-            for item in items[:_MAX_SAFE_JSON_ARRAY_ITEMS]
+            for item in value[:_MAX_SAFE_JSON_ARRAY_ITEMS]
         ]
-    if isinstance(value, Mapping):
-        mapping = cast(Mapping[object, object], value)
+    if _is_object_mapping(value):
         result: dict[str, object] = {}
-        keys = sorted(key for key in mapping if isinstance(key, str))
+        keys = sorted(key for key in value if isinstance(key, str))
         for key in keys:
             if key_budget[0] <= 0:
                 break
@@ -624,7 +630,7 @@ def _safe_json_value(
                 "[REDACTED]"
                 if redact
                 else _safe_json_value(
-                    mapping[key],
+                    value[key],
                     depth=depth + 1,
                     key_budget=key_budget,
                     schema_mode=schema_mode,

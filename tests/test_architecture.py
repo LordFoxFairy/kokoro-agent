@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "kokoro_agent"
+_CONFIG_ENTRYPOINTS = frozenset({"worker/main.py", "evidence/main.py"})
 
 
 def _py_files() -> list[Path]:
@@ -41,9 +42,9 @@ def test_contract_has_zero_inward_dependencies() -> None:
         assert not offenders, f"{_rel(path)} imports non-contract internals: {sorted(offenders)}"
 
 
-def test_config_only_imported_by_worker_main() -> None:
+def test_config_only_imported_by_process_entrypoints() -> None:
     for path in _py_files():
-        if _rel(path) in {"config.py", "worker/main.py"}:
+        if _rel(path) == "config.py" or _rel(path) in _CONFIG_ENTRYPOINTS:
             continue
         offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.config")}
         assert not offenders, f"{_rel(path)} must not import kokoro_agent.config"
@@ -67,13 +68,13 @@ def test_no_stream_name_literals_outside_contract() -> None:
         )
 
 
-def test_environ_read_only_in_worker_main() -> None:
-    # env 单点纪律：os.environ 只出现在 worker/main.py（经 AppConfig 读一次）。
+def test_environ_read_only_in_process_entrypoints() -> None:
+    # env 只在独立进程入口读取一次，再以强类型配置向内传递。
     for path in _py_files():
-        if _rel(path) == "worker/main.py":
+        if _rel(path) in _CONFIG_ENTRYPOINTS:
             continue
         assert "os.environ" not in path.read_text(encoding="utf-8"), (
-            f"{_rel(path)} reads os.environ outside worker/main.py"
+            f"{_rel(path)} reads os.environ outside a process entrypoint"
         )
 
 

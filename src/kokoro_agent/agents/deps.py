@@ -17,6 +17,7 @@ from kokoro_agent.contract import AgentType
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.hub import ExecutionAssemblyResolver
 from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.platform import MediaOperationPort
 from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.skills.hub import PackageStore
 from kokoro_agent.sandbox import SandboxSettings
@@ -54,6 +55,8 @@ class AssembleDeps:
     prompts: PromptLibrary
     # 交付冻结件存储（deliveries 节，content-hash keyed 不可变写）；缺省=None → deliver 工具降级。
     deliveries: PackageStore | None = None
+    # Platform-owned Media command boundary; run grant + catalog permission decide mounting.
+    media: MediaOperationPort | None = None
 
 
 class AgentPolicy(Protocol):

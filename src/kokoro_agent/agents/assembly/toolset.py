@@ -15,7 +15,7 @@ from kokoro_agent.contract.storage import workspace_key
 from kokoro_agent.hub import ExecutionAssembly
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.tools.deliver import make_deliver_tool
-from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
+from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, media_tools_for_run, resolve_tools
 from kokoro_agent.tools.skills import make_skill_tool
 
 
@@ -49,6 +49,7 @@ async def build_toolset(
     ⑥ handoff 工具（仅本部署候选人格>1 时挂载）：会话内 swarm 移交主导人格
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
+    tools.extend(media_tools_for_run(request, deps.media))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
     tools.append(make_skill_tool(request.runtime.skills, capabilities.skills))
     mcp_grants = request.runtime.mcp_servers

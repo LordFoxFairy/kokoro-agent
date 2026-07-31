@@ -16,6 +16,7 @@ from kokoro_agent.config import AppConfig, log_config_summary
 from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
+from kokoro_agent.platform import ConnectMediaOperationPort
 from kokoro_agent.agents import AssembleDeps, approval_names, assemble
 from kokoro_agent.contract import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
@@ -103,6 +104,8 @@ async def _serve(config: AppConfig) -> None:
     asset_source = make_asset_source(config.assets)
     prompts = PromptLibrary(asset_source.load_personas())
     capabilities = HubExecutionAssemblyClient(config.hub_runtime)
+    media_settings = config.media_runtime
+    media = ConnectMediaOperationPort(media_settings) if media_settings is not None else None
     # 进程级共享 checkpointer + run 状态存储：mongo 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
@@ -122,6 +125,7 @@ async def _serve(config: AppConfig) -> None:
             prompts=prompts,
             # 交付冻结件存储（deliveries 节）；缺省=None → deliver 工具恒挂但调用降级。
             deliveries=deliveries_store(config),
+            media=media,
         )
         supervisor = RunSupervisor(
             agent_builder=functools.partial(assemble, deps),

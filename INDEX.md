@@ -21,6 +21,8 @@ The process entrypoint is `kokoro_agent.worker.main`. `skills` and `hitl` bound 
 
 Hub runtime consumption is implemented only by `kokoro_agent.hub.HubExecutionAssemblyClient` over mTLS ConnectRPC. Each run binds the exact `agent_catalog_ref`, ordered grants, streamed Skill artifacts, and MCP Authorization material; there is no compatibility CLI or Hub persistence access.
 
+Platform Media consumption is implemented by the narrow `kokoro_agent.platform.MediaOperationPort`. The `create_image` tool exposes product intent only; run-scoped opaque grants and deterministic command/output identities are injected during assembly. Platform remains the operation journal and execution owner.
+
 ## Callers and dependencies
 
 Session submits durable run/control messages. Agent consumes opaque `namespace` and calls model/capability/storage adapters through declared boundaries. Production model calls use only the typed Platform Model Gateway ConnectRPC; Admission supplies an opaque authorization handle inside the sealed RunRequest.

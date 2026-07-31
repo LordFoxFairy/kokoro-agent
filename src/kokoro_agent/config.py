@@ -22,6 +22,7 @@ from kokoro_agent.content_source import AssetSettings, LocalAssets, load_assets_
 from kokoro_agent.hub import HubRuntimeSettings
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
+from kokoro_agent.platform import MediaRuntimeSettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.storage.checkpoints import CheckpointSettings
 from kokoro_agent.storage.ledger import (
@@ -83,6 +84,17 @@ class AppConfig(BaseModel):
         ge=1,
         le=1_000_000,
         validation_alias="KOKORO_MODEL_GATEWAY_MAX_OUTPUT_TOKENS",
+    )
+
+    # --- Platform Media Runtime (optional process transport) ---
+    media_rpc_url: OptStr = Field(default=None, validation_alias="KOKORO_MEDIA_RPC_URL")
+    media_rpc_ca_file: OptStr = Field(default=None, validation_alias="KOKORO_MEDIA_RPC_CA_FILE")
+    media_rpc_cert_file: OptStr = Field(
+        default=None, validation_alias="KOKORO_MEDIA_RPC_CERT_FILE"
+    )
+    media_rpc_key_file: OptStr = Field(default=None, validation_alias="KOKORO_MEDIA_RPC_KEY_FILE")
+    media_rpc_timeout_ms: int = Field(
+        default=30_000, ge=100, le=30_000, validation_alias="KOKORO_MEDIA_RPC_TIMEOUT_MS"
     )
 
     # --- stream / mongo 域（mongo 为 checkpoint+ledger 共用真后端）---
@@ -325,6 +337,31 @@ class AppConfig(BaseModel):
             key_file=key_file,
             artifact_cache_dir=self.hub_artifact_cache_dir,
             timeout_ms=self.hub_rpc_timeout_ms,
+        )
+
+    @property
+    def media_runtime(self) -> MediaRuntimeSettings | None:
+        values = (
+            self.media_rpc_url,
+            self.media_rpc_ca_file,
+            self.media_rpc_cert_file,
+            self.media_rpc_key_file,
+        )
+        if all(value is None for value in values):
+            return None
+        if any(value is None for value in values):
+            raise ValueError("MEDIA_RUNTIME_MTLS_CONFIGURATION_INCOMPLETE")
+        rpc_url, ca_file, cert_file, key_file = values
+        assert rpc_url is not None
+        assert ca_file is not None
+        assert cert_file is not None
+        assert key_file is not None
+        return MediaRuntimeSettings(
+            rpc_url=rpc_url,
+            ca_file=ca_file,
+            cert_file=cert_file,
+            key_file=key_file,
+            timeout_ms=self.media_rpc_timeout_ms,
         )
 
     @property

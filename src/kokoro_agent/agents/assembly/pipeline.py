@@ -32,12 +32,16 @@ from kokoro_agent.skills import SkillMaterializerMiddleware
 from kokoro_agent.skills.supply import MaterializeBackend
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
+from kokoro_agent.tools.registry import validate_requested_tools
 
 
 async def assemble_agent(
     policy: AgentPolicy, deps: AssembleDeps, request: RunRequest
 ) -> AssembledAgent:
     runtime = request.runtime
+    # ADR-013 M0 hard-cut must happen before Hub/network resolution or sandbox allocation.
+    # RuntimeConfig is strict structurally, but tool names remain data owned by the remote catalog.
+    validate_requested_tools(runtime.tools)
     capabilities = await deps.capabilities.resolve(
         request.context.namespace,
         runtime.agent_catalog_ref,
@@ -89,8 +93,6 @@ async def assemble_agent(
         # backend 缺省档（state）无沙箱面 → 无附件可物化 → 不挂对账中间件。
         middleware=_with_materializer(main_chain, request, capabilities, backend),
         backend=backend,
-        # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
-        store=deps.memory_store,
     )
     return AssembledAgent(agent=graph, tool_descriptions=toolset.descriptions)
 

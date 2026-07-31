@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -31,7 +32,6 @@ from kokoro_agent.streams.factory import StreamSettings, make_stream
 from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.subagents import build_catalog
 from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.registry import resolve_tools
 from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent
 from kokoro_agent.worker.main import toolbox_from_config
@@ -258,15 +258,12 @@ def test_interrupt_on_subagent_create_ask_gates_task() -> None:
         assert "task" not in build_interrupt_on(frozenset(), subagent_create=policy)
 
 
-def test_core_tools_always_mounted() -> None:
-    # ask_user + 专用计划 proposal 恒挂载；记忆工具由 worker 装配点按 run scope 创建。
+def test_core_tools_always_mounted_and_legacy_memory_catalog_is_rejected() -> None:
+    # ask_user + 专用计划 proposal 恒挂载；ADR-013 M0 禁止旧 Mongo memory 工具进入生产目录。
     assert [tool.name for tool in resolve_tools([])] == ["ask_user_question", "propose_plan"]
-    # 名单里出现记忆工具名不报未知也不重复挂载（实例只来自 make_memory_tools）。
-    assert [tool.name for tool in resolve_tools(["save_memory"])] == [
-        "ask_user_question",
-        "propose_plan",
-    ]
-    assert [tool.name for tool in make_memory_tools("ns")] == ["save_memory", "search_memory"]
+    for tool_name in ("save_memory", "search_memory"):
+        with pytest.raises(ValueError, match="LEGACY_STORE_MEMORY_TOOLS_DISABLED"):
+            resolve_tools([tool_name])
 
 
 def test_general_prompt_separates_user_plan_from_internal_todos() -> None:
@@ -296,10 +293,38 @@ def test_toolbox_assembly_matrix() -> None:
         toolbox_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "zhipu"}))
     with pytest.raises(ValueError, match="unsupported"):
         toolbox_from_config(AppConfig.from_env({"KOKORO_WEB_SEARCH_PROVIDER": "bing", "KOKORO_WEB_SEARCH_API_KEY": "k"}))
-    # 恒挂底座一口出：租户态 memory 双件在前、配置态在后（挂载序即工具序）。
-    assert [tool.name for tool in bare.tools_for("ns-1")] == [
-        "save_memory", "search_memory", "web_fetch",
-    ]
+    # 生产底座不再实例化旧 Mongo memory 双件；namespace 参数不扩张其能力面。
+    assert [tool.name for tool in bare.tools_for("ns-1")] == ["web_fetch"]
+
+
+def test_legacy_memory_process_config_fails_closed() -> None:
+    # 这是历史上真实存在的启用入口；不能因 AppConfig.extra=ignore 而静默继续启动。
+    with pytest.raises(ValueError, match="LEGACY_STORE_MEMORY_CONFIG_DISABLED"):
+        AppConfig.from_env({"KOKORO_AGENT_MEMORY": "save_memory,search_memory"})
+    # 空值等同未启用，便于 Secret/Deployment 模板保留空占位。
+    assert AppConfig.from_env({"KOKORO_AGENT_MEMORY": "   "}).mongo_db == "kokoro"
+
+
+async def test_legacy_memory_run_catalog_fails_before_remote_resolution() -> None:
+    from kokoro_agent.agents.assembly.pipeline import assemble_agent
+
+    class NeverResolveCapabilities:
+        called = False
+
+        async def resolve(self, *args: object) -> object:
+            self.called = True
+            raise AssertionError("legacy catalog must fail before Hub resolution")
+
+    capabilities = NeverResolveCapabilities()
+    policy: Any = object()
+    deps: Any = SimpleNamespace(capabilities=capabilities)
+    original = request("legacy-memory-catalog")
+    stale = original.model_copy(
+        update={"runtime": original.runtime.model_copy(update={"tools": ["save_memory"]})}
+    )
+    with pytest.raises(ValueError, match="LEGACY_STORE_MEMORY_TOOLS_DISABLED"):
+        await assemble_agent(policy, deps, stale)
+    assert capabilities.called is False
 
 
 def test_recursion_limit_env_parse() -> None:

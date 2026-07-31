@@ -21,9 +21,10 @@ runtime configuration supplied by Session.
 
 ## Process assembly
 
-`main.py` constructs streams, checkpoint/ledger/memory stores, the Platform Hub mTLS RPC client,
-personas, toolbox, model gateway settings, subagent catalog, and delivery storage. It injects
-these into `AssembleDeps` and starts `RunSupervisor.serve`.
+`main.py` constructs streams, checkpoint/ledger stores, the Platform Hub mTLS RPC client, personas,
+toolbox, model gateway settings, subagent catalog, and delivery storage. It injects these into
+`AssembleDeps` and starts `RunSupervisor.serve`. ADR-013 M0 deliberately excludes the legacy Mongo
+memory store from this production composition; Mongo still owns checkpoints and the run ledger.
 
 Skills and MCP definitions are never loaded from local YAML, environment JSON, shared Hub
 databases, or seed directories. Each run calls the injected capability resolver once before
@@ -43,6 +44,8 @@ tool construction and receives a verified immutable execution assembly.
   define a consumer ACK/tombstone protocol. The separate live events-stream TTL remains allowed.
 - Capability resolution is fail-closed. A missing or invalid Hub assembly cannot fall back to
   local configuration.
+- A non-empty historical `KOKORO_AGENT_MEMORY` setting fails process configuration. Legacy
+  `save_memory`/`search_memory` names fail before Hub resolution and sandbox allocation.
 - Model streaming is accepted only from Platform's private RPC. Agent verifies the invocation and
   attempt identity, every sequence/hash-chain link, the aggregate terminal result, and resumes a
   transient disconnect from the last verified sequence using the same immutable attempt.

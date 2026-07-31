@@ -7,6 +7,12 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "kokoro_agent"
 _CONFIG_ENTRYPOINTS = frozenset({"worker/main.py", "evidence/main.py"})
+_LEGACY_MEMORY_MODULES = frozenset(
+    {
+        "kokoro_agent.storage.memory_store",
+        "kokoro_agent.tools.memory",
+    }
+)
 
 
 def _py_files() -> list[Path]:
@@ -48,6 +54,16 @@ def test_config_only_imported_by_process_entrypoints() -> None:
             continue
         offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.config")}
         assert not offenders, f"{_rel(path)} must not import kokoro_agent.config"
+
+
+def test_legacy_store_memory_is_unreachable_from_production_composition() -> None:
+    """ADR-013 M0 keeps the experiment importable, but no production module may compose it."""
+    experimental_implementations = frozenset({"storage/memory_store.py", "tools/memory.py"})
+    for path in _py_files():
+        if _rel(path) in experimental_implementations:
+            continue
+        offenders = _imports(path) & _LEGACY_MEMORY_MODULES
+        assert not offenders, f"{_rel(path)} imports legacy store memory: {sorted(offenders)}"
 
 
 def test_run_does_not_import_worker() -> None:

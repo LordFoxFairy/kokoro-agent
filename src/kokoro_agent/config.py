@@ -248,6 +248,14 @@ class AppConfig(BaseModel):
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
+        # Historical pre-wire runtime configuration. AppConfig otherwise ignores unknown keys,
+        # which would make a stale production deployment look healthy while memory is absent.
+        legacy_memory = source.get("KOKORO_AGENT_MEMORY")
+        if legacy_memory is not None and legacy_memory.strip():
+            raise ValueError(
+                "LEGACY_STORE_MEMORY_CONFIG_DISABLED: KOKORO_AGENT_MEMORY was retired by "
+                "ADR-013 M0; Product Memory is Platform-owned"
+            )
         # 统一配置树（ADR-010）：yaml 摊平（原生值）作底座，env 叠加覆盖；一次 coerce+校验。
         file_layer = load_config_file(source.get("KOKORO_AGENT_CONFIG"))
         merged: dict[str, object] = {**file_layer, **dict(source)}

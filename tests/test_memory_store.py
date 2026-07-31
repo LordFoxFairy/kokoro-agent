@@ -1,4 +1,4 @@
-"""memory store 工厂规格：mongo 唯一真后端——跨工厂周期持久、namespace 前缀隔离。"""
+"""非生产 legacy memory store 实验规格；不构成 Product Memory authority。"""
 
 import os
 import uuid

@@ -1,4 +1,4 @@
-"""记忆工具规格：scope 在装配时注入（工具体无租户概念），跨 run 可读、跨 scope 不可见。"""
+"""非生产 legacy memory 实验规格；生产不可达性由 test_architecture.py 执法。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,9 @@
-"""长期记忆工具：通用存取原语；归属 scope 在装配时注入，工具体不含租户概念。"""
+"""非生产 legacy experiment：旧 Mongo store-backed memory 工具。
+
+ADR-013 M0 禁止任何生产模块导入或装配本模块。它暂时仅用于显式实验测试，不是 Product
+Memory、不是兼容 fallback，也没有数据迁移承诺。生产能力只能经未来 Root contract 的窄
+Platform MemoryPort 接入。
+"""
 
 from __future__ import annotations
 

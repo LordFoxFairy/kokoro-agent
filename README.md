@@ -27,7 +27,7 @@ src/kokoro_agent/
 ├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
 │                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
 ├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake
-├── tools/            底层工具与治理：ask_user_question、propose_plan、memory（save/search，scope 装配注入）、
+├── tools/            底层工具与治理：ask_user_question、propose_plan、
 │                     web_fetch（SSRF 防御）、web_search（协议+provider 注册表同文件）、
 │                     registry（名字治理）、permissions（interrupt_on 构造）、
 │                     middleware（工具授权 fail-closed / 委派执法 / 结果审核）
@@ -39,7 +39,7 @@ src/kokoro_agent/
 ├── streams/          StreamProtocol（cursor 不透明）+ redis（XADD maxlen、XREADGROUP/XACK、
 │                     XAUTOCLAIM 死信收养）
 ├── storage/          RunStateStore（TTL 租约/暂停哨兵/终态原子认领/审核结果 keep-first，
-│                     mongo）+ checkpointer 工厂 + 记忆 store 工厂（随 checkpoint 对齐）
+│                     mongo）+ checkpointer 工厂；旧 memory store 只保留为非生产实验件
 └── observability.py  Langfuse trace config（三 env 齐备才开，缺任一静默关闭）
 ```
 
@@ -70,8 +70,10 @@ GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ow
 - **HITL 双拦截**：工具前审批（approve/edit/reject）+ 工具后结果审核（approve/respond/reject，
   keep-first 缓存防双跑）；`ask_user_question` 恒为 respond 暂停点；`propose_plan` 恒为主 agent
   独占 tool-call 帧的 approve/reject 暂停点，产出 immutable durable `plan.proposed` owner。
-- **长期记忆**：`save_memory`/`search_memory`，store 前缀 =(namespace, "memories")，
-  隔离政策装配注入，工具体零租户概念。
+- **Product Memory M0 hard-cut**：旧 Mongo `save_memory`/`search_memory` 已从所有生产工具箱、
+  Runtime catalog 与 worker storage composition 移除；历史 `KOKORO_AGENT_MEMORY` 非空即拒绝启动，
+  stale wire catalog 在任何 Hub 调用或沙箱分配前 fail-closed。Product Memory 的权威属于 Platform，
+  M2 只能通过 Root 版本化的窄 `MemoryPort` 接回 GA。旧模块仅供明确的非生产实验直接导入，且不迁移旧数据。
 - **web 双件**：`web_fetch` 恒挂载（SSRF：DNS 解析后拒非公网/逐跳复检/15s/1MB/24k）；
   `web_search` 配置即挂载（tavily/searxng/zhipu 注册表，无 provider 不挂空壳）。
 - **skills / MCP**：每次 run 在工具装配前经 Platform Hub mTLS RPC 解析一次精确 assembly；

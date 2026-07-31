@@ -1,4 +1,4 @@
-"""共享真后端 fixture：redis 传输 + mongo checkpoint/ledger/store。
+"""共享真后端 fixture：redis 传输 + mongo checkpoint/ledger/legacy experiment store。
 
 存储收敛后无内存假件——测试直连真服务（docker 起 redis+mongo）。服务缺失即
 fail-loud（不 skip、不灌绿数）。每 fixture 用唯一 db/collection 隔离，串行安全。
@@ -84,7 +84,7 @@ async def checkpointer() -> AsyncGenerator[BaseCheckpointSaver[str], None]:
 
 @pytest.fixture
 async def memory_store() -> AsyncGenerator[BaseStore, None]:
-    """真 mongo 长期记忆 store；唯一 db 隔离。"""
+    """非生产 legacy memory store；唯一 db 隔离。"""
     await require_mongo()
     settings = CheckpointSettings(mongo_url=MONGO_URL, mongo_db=_unique_db())
     async with make_memory_store(settings) as store:

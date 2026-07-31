@@ -4,7 +4,8 @@
 
 ## 放这里
 
-- agent 执行链路、sandbox、skills 供给、MCP client、memory、checkpoint、HITL 的本仓实现细节。
+- agent 执行链路、sandbox、skills 供给、MCP client、checkpoint、HITL，以及未来窄
+  Product Memory consumer adapter 的本仓实现细节；Memory 产品权威与政策不在本仓。
 - 本仓调试、测试、验证和运行说明。
 - 对根仓方案的 agent 侧摘录。
 

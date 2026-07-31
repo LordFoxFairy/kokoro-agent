@@ -24,7 +24,6 @@ from kokoro_agent.sandbox.archive import load_storage_file
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
-from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.storage.execution_context import ExecutionContextAuthority
 from kokoro_agent.streams.factory import make_stream
@@ -110,7 +109,6 @@ async def _serve(config: AppConfig) -> None:
     async with (
         make_checkpointer(config.checkpoint) as saver,
         make_ledger(ledger_settings) as store,
-        make_memory_store(config.checkpoint) as memory_store,
     ):
         deps = AssembleDeps(
             model=config.model,
@@ -120,7 +118,6 @@ async def _serve(config: AppConfig) -> None:
             toolbox=toolbox_from_config(config),
             checkpointer=saver,
             ledger=store,
-            memory_store=memory_store,
             capabilities=capabilities,
             prompts=prompts,
             # 交付冻结件存储（deliveries 节）；缺省=None → deliver 工具恒挂但调用降级。

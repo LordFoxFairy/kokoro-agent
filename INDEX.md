@@ -23,6 +23,14 @@ Hub runtime consumption is implemented only by `kokoro_agent.hub.HubExecutionAss
 
 Platform Media consumption is implemented by the narrow `kokoro_agent.platform.MediaOperationPort`. The `create_image` tool exposes product intent only; run-scoped opaque grants and deterministic command/output identities are injected during assembly. Platform remains the operation journal and execution owner.
 
+Product Memory is Platform-owned. Under ADR-013 M0, the legacy Mongo-backed `save_memory` and
+`search_memory` implementations are not imported or composed by production Agent modules. A stale
+`KOKORO_AGENT_MEMORY` process setting fails startup, and either legacy name in a Run catalog fails
+before Hub resolution or sandbox allocation. Mongo remains the Agent checkpoint/ledger authority;
+the isolated legacy store modules exist only for explicit non-production experiments and are not a
+Product Memory compatibility path. A future production Memory tool requires the Root-generated
+narrow `MemoryPort` and the coordinated M2 contract release.
+
 ## Callers and dependencies
 
 Session submits durable run/control messages. Agent consumes opaque `namespace` and calls model/capability/storage adapters through declared boundaries. Production model calls use only the typed Platform Model Gateway ConnectRPC; Admission supplies an opaque authorization handle inside the sealed RunRequest.

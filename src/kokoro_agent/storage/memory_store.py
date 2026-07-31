@@ -1,4 +1,8 @@
-"""长期记忆 store 工厂：mongo（后端与 checkpoint 对齐，唯一真源）。"""
+"""非生产 legacy experiment：旧 Mongo memory store 工厂。
+
+生产 worker 不导入、不创建本 store；Agent 的 Mongo checkpoint/ledger 生命周期由各自工厂
+继续拥有。保留本模块只为 ADR-013 允许的明确非生产实验，不代表 Product Memory authority。
+"""
 
 from __future__ import annotations
 

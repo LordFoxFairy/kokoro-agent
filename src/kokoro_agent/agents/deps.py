@@ -11,7 +11,6 @@ from typing import ClassVar, Protocol
 
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.store.base import BaseStore
 
 from kokoro_agent.contract import AgentType
 from kokoro_agent.execution.protocols import InvokableAgent
@@ -49,7 +48,6 @@ class AssembleDeps:
     toolbox: ProcessToolbox
     checkpointer: BaseCheckpointSaver[str]
     ledger: RunLedger
-    memory_store: BaseStore
     # Hub-owned exact runtime assembly consumer; one call per run, no Hub persistence access.
     capabilities: ExecutionAssemblyResolver
     prompts: PromptLibrary

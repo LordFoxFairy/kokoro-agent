@@ -3,8 +3,10 @@
 内置工具按"参数来自哪根轴"分三类，各归各位：
   无参常量（ask_user）           → registry 常量，类型工厂作 core_tools 恒挂
   进程配置态（web_search/web_fetch）→ 启动构建一次入箱（配置缺失即缺席，不挂空壳）
-  租户态（memory：namespace 隔离）  → 装配期由箱按 run 实例化
 wire 点名的注册表工具与 MCP 外接工具不在箱内——它们由 wire 逐 run 决定。
+
+ADR-013 M0 已从生产工具箱移除旧 Mongo store-backed memory。namespace 参数保留在
+方法边界，供后续窄 MemoryPort 工具在 Root 合同激活后接入；当前不得据此恢复旧工具。
 """
 
 from __future__ import annotations
@@ -13,7 +15,6 @@ from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool
 
-from kokoro_agent.tools.memory import make_memory_tools
 from kokoro_agent.tools.web_fetch import make_web_fetch_tool
 from kokoro_agent.tools.web_search import (
     SearchProviderSettings,
@@ -30,8 +31,10 @@ class ProcessToolbox:
     configured: tuple[BaseTool, ...]
 
     def tools_for(self, namespace: str) -> tuple[BaseTool, ...]:
-        """恒挂底座 = 租户态记忆工具（隔离在此注入，工具体不含租户概念）+ 配置态工具。"""
-        return (*make_memory_tools(namespace), *self.configured)
+        """当前恒挂底座只有已配置工具；旧 store-backed memory 不可生产装配。"""
+        # 保持已有 keyword-compatible API；未来窄 MemoryPort 可消费同一 opaque namespace。
+        _ = namespace
+        return self.configured
 
 
 def build_toolbox(

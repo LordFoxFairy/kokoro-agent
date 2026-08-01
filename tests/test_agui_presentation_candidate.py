@@ -139,6 +139,19 @@ def test_official_aliases_become_the_single_typed_event_fact() -> None:
     assert official.run_id == "run.1"
 
 
+def test_run_started_parent_is_forbidden_until_session_derives_lineage() -> None:
+    with pytest.raises(CandidateProtocolError, match="RUN_STARTED_PARENT_FORBIDDEN"):
+        build_agui_candidate(
+            RunStartedEvent(
+                thread_id="thread.1",
+                run_id="run.1",
+                parent_run_id="run.parent",
+                timestamp=TIMESTAMP,
+            ),
+            source=SOURCE,
+        )
+
+
 def test_run_finished_requires_explicit_success_and_forbids_result() -> None:
     successful = build_agui_candidate(
         RunFinishedEvent(
@@ -451,15 +464,18 @@ def test_pure_mapping_emits_only_semantically_safe_candidates() -> None:
         run_id="run.1",
         index=0,
         timestamp=TIMESTAMP,
+        durable_seq=41,
+        event_id="run.1:0",
         payload=RunStartedPayload(),
     )
     start_candidates = map_agent_event_candidates(
         started,
         thread_ref="thread.1",
-        source_event_ref="source.event.1",
+        source_event_ref="run.1:0",
     )
     assert [candidate.event.type for candidate in start_candidates] == ["RUN_STARTED"]
     assert start_candidates[0].source.source_ordinal == "0"
+    assert start_candidates[0].source.source_ordinal != str(started.durable_seq)
 
     completed = RunCompleted(
         kind="run.completed",

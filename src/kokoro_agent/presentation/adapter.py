@@ -65,6 +65,8 @@ def _closed_official_event(event: BaseEvent) -> ClosedAguiEvent:
         raise CandidateProtocolError("AGUI_EVENT_TYPE_FORBIDDEN")
     if event.raw_event is not None:
         raise CandidateProtocolError("AGUI_EVENT_SHAPE_FORBIDDEN")
+    if isinstance(event, RunStartedEvent) and event.parent_run_id is not None:
+        raise CandidateProtocolError("RUN_STARTED_PARENT_FORBIDDEN")
     if isinstance(event, RunFinishedEvent):
         if not isinstance(event.outcome, RunFinishedSuccessOutcome):
             raise CandidateProtocolError("RUN_FINISHED_SUCCESS_REQUIRED")
@@ -148,6 +150,8 @@ def _source(
     thread_ref: str,
     source_event_ref: str,
 ) -> AgentAguiCandidateSource:
+    # RunEmitter owns this per-run sequence: zero-based, resume-stable, and
+    # intentionally unrelated to the outbox's optional one-based durable_seq.
     return AgentAguiCandidateSource(
         source_event_ref=source_event_ref,
         source_ordinal=str(event.index),

@@ -105,7 +105,6 @@ class ClosedRunStartedEvent(_StrictAliasModel):
     timestamp: _Timestamp
     thread_id: _Id
     run_id: _Id
-    parent_run_id: _Id | None = None
 
 
 class _SuccessOutcome(_StrictAliasModel):

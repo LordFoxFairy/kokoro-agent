@@ -5,7 +5,6 @@ import hashlib
 import pytest
 
 from kokoro_agent.contract import (
-    AgentEvent,
     MessageCompleted,
     MessageCompletedPayload,
     MessageDelta,
@@ -18,6 +17,9 @@ from kokoro_agent.contract import (
     RunStartedPayload,
     ToolInvoked,
     ToolInvokedPayload,
+    ToolReturned,
+    ToolReturnedPayload,
+    agent_event_adapter,
 )
 from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
 from kokoro_agent.presentation.profile import (
@@ -37,7 +39,11 @@ from kokoro_agent.presentation.runtime import (
     plan_presentation_batch,
 )
 from kokoro_agent.execution.events import DurableOutputCommitError, RunEmitter
-from tests.fakes import FakeBus
+from kokoro_agent.storage.owner_event import (
+    OwnerEventCommitResult,
+    OwnerEventFenceLost,
+)
+from tests.fakes import FakeBus, FakeLedger
 
 
 THREAD = "agent.thread:" + "a" * 64
@@ -163,7 +169,7 @@ def test_failure_closes_open_message_and_emits_safe_error() -> None:
     ]
     terminal_event = batch.candidates[-1].event
     assert isinstance(terminal_event, ClosedRunErrorEvent)
-    assert terminal_event.message == "safe failure"
+    assert terminal_event.message == "The agent run failed."
     assert batch.next_state.run_state == "failed"
 
 
@@ -189,14 +195,81 @@ def test_tool_projection_is_redacted_activity_and_never_contains_raw_args() -> N
     ]
 
     assert [candidate.event.type for candidate in batch.candidates] == [
-        "TEXT_MESSAGE_START",
         "ACTIVITY_SNAPSHOT",
     ]
     activity = batch.candidates[-1].event
     assert isinstance(activity, ClosedToolPreviewActivity)
     assert activity.activity_type == "kokoro.tool-preview.v1"
+    assert activity.message_id.startswith("agent.activity:")
+    assert activity.message_id != "agent.message:" + hashlib.sha256(
+        b"kokoro-agent-message-v1\0run.1\0message.1"
+    ).hexdigest()
     assert all("Bearer secret" not in value for value in rendered)
     assert all("private.invalid" not in value for value in rendered)
+
+
+def test_activity_identity_is_stable_for_owner_and_does_not_open_text_message() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    invoked = ToolInvoked(
+        kind="tool.invoked",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=ToolInvokedPayload(
+            segment_id="message.1",
+            tool_id="tool.1",
+            name="web_fetch",
+            args={},
+        ),
+    )
+    first = plan_presentation_batch(invoked, state, THREAD)
+    returned = ToolReturned(
+        kind="tool.returned",
+        run_id="run.1",
+        index=2,
+        timestamp=1_002,
+        payload=ToolReturnedPayload(
+            segment_id="message.1",
+            tool_id="tool.1",
+            name="web_fetch",
+            result="secret result",
+            is_error=False,
+        ),
+    )
+    second = plan_presentation_batch(returned, first.next_state, THREAD)
+
+    assert [candidate.event.type for candidate in first.candidates] == ["ACTIVITY_SNAPSHOT"]
+    assert [candidate.event.type for candidate in second.candidates] == ["ACTIVITY_SNAPSHOT"]
+    first_activity = first.candidates[0].event
+    second_activity = second.candidates[0].event
+    assert isinstance(first_activity, ClosedToolPreviewActivity)
+    assert isinstance(second_activity, ClosedToolPreviewActivity)
+    assert first_activity.message_id == second_activity.message_id
+    assert first.next_state.messages == ()
+    assert second.next_state.messages == ()
+
+
+def test_run_error_candidate_never_contains_raw_exception_message() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    terminal = RunFailed(
+        kind="run.failed",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=RunFailedPayload(
+            code="internal_error",
+            error_kind="ProviderError",
+            message="Authorization Bearer sk-secret at mongodb://private.internal",
+        ),
+    )
+
+    batch = plan_presentation_batch(terminal, state, THREAD)
+    rendered = batch.candidates[-1].model_dump_json(by_alias=True, exclude_none=True)
+
+    assert "sk-secret" not in rendered
+    assert "private.internal" not in rendered
+    assert isinstance(batch.candidates[-1].event, ClosedRunErrorEvent)
+    assert batch.candidates[-1].event.message == "The agent run failed."
 
 
 def test_resume_reuses_state_and_rejects_message_reopen_or_post_terminal() -> None:
@@ -228,53 +301,111 @@ def test_agent_thread_ref_is_domain_separated_and_not_raw_session_identity() -> 
     assert agent_thread_ref("other.namespace", "session-thread-raw") != first
 
 
-class _PresentationWriter:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.events: list[tuple[AgentEvent, str]] = []
-        self.fail = fail
+class _OwnerEventStore(FakeLedger):
+    def __init__(self, *, head: int = 0, fail_once: bool = False) -> None:
+        super().__init__()
+        self.head = head
+        self.fail_once = fail_once
+        self.calls: list[dict[str, object]] = []
 
-    async def append_presentation_event(
-        self, event: AgentEvent, *, agent_thread_ref: str
-    ) -> tuple[PresentationCandidateRecord, ...]:
-        if self.fail:
-            raise ValueError("PRESENTATION_SOURCE_CONFLICT")
-        self.events.append((event, agent_thread_ref))
-        return ()
+    async def owner_event_head(self, run_id: str) -> int:
+        assert run_id == "run.1"
+        return self.head
+
+    async def commit_owner_event(self, **command: object) -> OwnerEventCommitResult:
+        self.calls.append(command)
+        if self.fail_once:
+            self.fail_once = False
+            raise RuntimeError("transaction aborted")
+        raw_index = command["expected_index"]
+        assert isinstance(raw_index, int)
+        index = raw_index
+        payload = command["payload"]
+        event = agent_event_adapter.validate_python({
+            "kind": command["kind"],
+            "run_id": "run.1",
+            "index": index,
+            "timestamp": 2_000 + index,
+            "payload": payload,
+        })
+        self.head = index + 1
+        return OwnerEventCommitResult(status="committed", event=event)
+
+
+class _FenceLostStore(_OwnerEventStore):
+    def __init__(self, drift: str) -> None:
+        super().__init__(head=4)
+        self.drift = drift
+
+    async def commit_owner_event(self, **command: object) -> OwnerEventCommitResult:
+        self.calls.append(command)
+        return OwnerEventCommitResult(status="fence_lost")
 
 
 @pytest.mark.asyncio
-async def test_run_emitter_commits_production_presentation_before_live_publish() -> None:
-    writer = _PresentationWriter()
+async def test_run_emitter_uses_single_owner_uow_and_durable_head_not_redis_history() -> None:
+    store = _OwnerEventStore(head=7)
     bus = FakeBus()
-    emitter = RunEmitter(
+    emitter = await RunEmitter.attach(
         bus,
         "run.1",
-        presentation=writer,
+        outbox=store,
+        lease_owner_ref="worker.1",
         agent_thread_ref=THREAD,
     )
 
     await emitter.emit(MessageDeltaPayload(segment_id="message.1", delta="hello"))
 
-    assert len(writer.events) == 1
-    assert isinstance(writer.events[0][0], MessageDelta)
-    assert writer.events[0][1] == THREAD
-    assert bus.kinds("run.1") == ["message.delta"]
+    assert store.calls == [{
+        "run_id": "run.1",
+        "expected_index": 7,
+        "kind": "message.delta",
+        "payload": MessageDeltaPayload(segment_id="message.1", delta="hello"),
+        "lease_owner_ref": "worker.1",
+        "agent_thread_ref": THREAD,
+    }]
+    assert bus.run_events("run.1")[0].index == 7
 
 
 @pytest.mark.asyncio
-async def test_presentation_commit_failure_suppresses_live_event() -> None:
+async def test_owner_uow_abort_keeps_index_and_retry_identity_slot_stable() -> None:
+    store = _OwnerEventStore(fail_once=True)
     bus = FakeBus()
-    emitter = RunEmitter(
+    emitter = await RunEmitter.attach(
         bus,
         "run.1",
-        presentation=_PresentationWriter(fail=True),
+        outbox=store,
+        lease_owner_ref="worker.1",
+        agent_thread_ref=THREAD,
+    )
+    payload = MessageDeltaPayload(segment_id="message.1", delta="hello")
+
+    with pytest.raises(DurableOutputCommitError, match="OWNER_EVENT_COMMIT_FAILED"):
+        await emitter.emit(payload)
+    await emitter.emit(payload)
+
+    assert [call["expected_index"] for call in store.calls] == [0, 0]
+    assert bus.run_events("run.1")[0].index == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["lease", "producer_instance", "producer_generation"])
+async def test_fence_lost_is_typed_and_fail_fast_before_live_publish(drift: str) -> None:
+    store = _FenceLostStore(drift)
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(
+        bus,
+        "run.1",
+        outbox=store,
+        lease_owner_ref="stale.worker",
         agent_thread_ref=THREAD,
     )
 
-    with pytest.raises(DurableOutputCommitError, match="PRESENTATION_COMMIT_FAILED"):
-        await emitter.emit(MessageDeltaPayload(segment_id="message.1", delta="hello"))
+    with pytest.raises(OwnerEventFenceLost, match="OWNER_EVENT_FENCE_LOST"):
+        await emitter.emit(MessageDeltaPayload(segment_id="message.1", delta="blocked"))
 
-    assert bus.kinds("run.1") == []
+    assert bus.published == []
+    assert len(store.calls) == 1
 
 
 class _Reader:

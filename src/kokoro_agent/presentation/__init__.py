@@ -3,7 +3,6 @@
 from kokoro_agent.presentation.adapter import (
     CandidateProtocolError,
     build_agui_candidate,
-    map_agent_event_candidates,
 )
 from kokoro_agent.presentation.candidate import (
     AgentAguiCandidateRoute,
@@ -45,7 +44,6 @@ __all__ = [
     "PresentationQuarantineCommand",
     "agent_thread_ref",
     "build_agui_candidate",
-    "map_agent_event_candidates",
     "plan_presentation_batch",
     "presentation_acknowledgement_digest",
 ]

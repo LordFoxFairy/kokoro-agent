@@ -185,9 +185,6 @@ def _scope(namespace: str = "ns1") -> RunScope:
 async def _invoke(
     agent: InvokableAgent, payload: object, run_id: str, bus: RedisStream, thread_id: str
 ) -> None:
-    async def claim() -> bool:
-        return True
-
     ledger = FakeLedger()
     await invoke_once(
         RunEmitter(bus, run_id, outbox=ledger),
@@ -199,7 +196,6 @@ async def _invoke(
         payload,
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
     )

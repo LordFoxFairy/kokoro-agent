@@ -93,14 +93,11 @@ from kokoro_agent.contract.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.storage.ledger import OutboxFrame, StagedFrame
+from kokoro_agent.storage.owner_event import OwnerEventFenceLost
 
 
 def _runtime_custom(_name: str) -> SubagentSource:
     return "runtime-custom"
-
-
-async def _always_claim() -> bool:
-    return True
 
 
 async def _invoke(
@@ -126,7 +123,6 @@ async def _invoke(
         {"messages": []},
         approval_tool_names=approval_tool_names,
         source_for=_runtime_custom,
-        claim_terminal=claim or (lambda: ledger.try_mark_terminal(run_id)),
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
         trace=trace,
@@ -840,7 +836,7 @@ async def test_plan_proposal_critical_identity_is_semantically_idempotent() -> N
     assert proposed[0].event_id == "evt_fake_r-plan_1"
     assert ledger.durable_counter["r-plan"] == 1
 
-    with pytest.raises(RuntimeError, match="semantic critical frame conflict"):
+    with pytest.raises(DurableOutputCommitError, match="OWNER_EVENT_COMMIT_FAILED"):
         await emitter.emit(
             payload.model_copy(
                 update={
@@ -951,7 +947,7 @@ async def test_live_publish_failure_without_outbox_propagates() -> None:
         )
 
 
-async def test_live_publish_failure_without_durable_mapping_propagates() -> None:
+async def test_live_publish_failure_after_owner_commit_is_best_effort() -> None:
     class FailingBus(FakeBus):
         async def publish(
             self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
@@ -961,12 +957,12 @@ async def test_live_publish_failure_without_durable_mapping_propagates() -> None
     ledger = FakeLedger()
     await ledger.try_claim(request("r-unmapped-live"))
 
-    with pytest.raises(ConnectionError, match="unmapped live publish unavailable"):
-        await RunEmitter(FailingBus(), "r-unmapped-live", outbox=ledger).emit(
-            ThinkingDeltaPayload(segment_id="segment-thinking", delta="ephemeral")
-        )
+    await RunEmitter(FailingBus(), "r-unmapped-live", outbox=ledger).emit(
+        ThinkingDeltaPayload(segment_id="segment-thinking", delta="ephemeral")
+    )
 
     assert ledger.output_records.get("r-unmapped-live", []) == []
+    assert await ledger.owner_event_head("r-unmapped-live") == 1
 
 
 async def test_noncritical_output_replay_after_isolated_live_loss_is_keep_first() -> None:
@@ -984,10 +980,10 @@ async def test_noncritical_output_replay_after_isolated_live_loss_is_keep_first(
     assert len(ledger.output_records["r-output-replay"]) == 1
 
     recovered_bus = FakeBus()
-    await RunEmitter(recovered_bus, "r-output-replay", outbox=ledger).emit(payload)
-
+    resumed = await RunEmitter.attach(recovered_bus, "r-output-replay", outbox=ledger)
     assert len(ledger.output_records["r-output-replay"]) == 1
-    assert recovered_bus.kinds("r-output-replay") == ["message.delta"]
+    assert resumed.at_start is False
+    assert recovered_bus.kinds("r-output-replay") == []
 
 
 async def test_output_batch_conflict_is_fail_loud_without_partial_mutation() -> None:
@@ -1204,7 +1200,7 @@ async def test_emitter_records_zero_cardinality_source_batch() -> None:
     assert ledger.output_records.get("r-output-zero-emitter", []) == []
 
 
-async def test_emitter_rejects_zero_batch_source_payload_drift() -> None:
+async def test_distinct_zero_batches_receive_distinct_owner_slots() -> None:
     ledger = FakeLedger()
     await ledger.try_claim(request("r-output-zero-drift"))
     bus = FakeBus()
@@ -1213,12 +1209,11 @@ async def test_emitter_rejects_zero_batch_source_payload_drift() -> None:
         MessageDeltaPayload(segment_id="segment-empty-a", delta="")
     )
 
-    with pytest.raises(DurableOutputCommitError, match="OUTPUT_SOURCE_CONFLICT"):
-        await RunEmitter(bus, "r-output-zero-drift", outbox=ledger).emit(
-            MessageDeltaPayload(segment_id="segment-empty-b", delta="")
-        )
+    resumed = await RunEmitter.attach(bus, "r-output-zero-drift", outbox=ledger)
+    await resumed.emit(MessageDeltaPayload(segment_id="segment-empty-b", delta=""))
 
-    assert len(bus.run_events("r-output-zero-drift")) == 1
+    assert len(bus.run_events("r-output-zero-drift")) == 2
+    assert await ledger.owner_event_head("r-output-zero-drift") == 2
     assert ledger.output_records.get("r-output-zero-drift", []) == []
 
 
@@ -1295,7 +1290,7 @@ async def test_durable_output_rejection_is_fail_loud_and_suppresses_live_publish
     bus = FakeBus()
     emitter = RunEmitter(bus, "r-output-rejected", outbox=ledger)
 
-    with pytest.raises(RuntimeError, match="DURABLE_OUTPUT_APPEND_REJECTED"):
+    with pytest.raises(DurableOutputCommitError, match="OWNER_EVENT_COMMIT_FAILED"):
         await emitter.emit(MessageDeltaPayload(segment_id="segment-1", delta="hello"))
     assert bus.published == []
 
@@ -1323,7 +1318,7 @@ async def test_pump_cancels_delayed_producers_on_durable_append_rejection() -> N
                 RunEmitter(
                     FakeBus(),
                     "r-output-cancel-producers",
-                    next_index=1,
+                    next_index=0,
                     outbox=ledger,
                 ),
                 run,
@@ -1334,7 +1329,7 @@ async def test_pump_cancels_delayed_producers_on_durable_append_rejection() -> N
 
     await asyncio.sleep(0)
     assert type(caught.value) is DurableOutputCommitError
-    assert str(caught.value).endswith("DURABLE_OUTPUT_APPEND_REJECTED")
+    assert str(caught.value) == "OWNER_EVENT_COMMIT_FAILED"
     assert run.effects == []
     assert run.tool_closed.is_set() and run.custom_closed.is_set()
     task_names = {task.get_name() for task in asyncio.all_tasks()}
@@ -1359,13 +1354,13 @@ async def test_pump_observes_drainer_fault_after_producer_finishes_first() -> No
     ledger = SlowRejectingLedger()
     await ledger.try_claim(request("r-output-drainer-race"))
 
-    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_APPEND_REJECTED"):
+    with pytest.raises(DurableOutputCommitError, match="OWNER_EVENT_COMMIT_FAILED"):
         await asyncio.wait_for(
             pump_run(
                 RunEmitter(
                     FakeBus(),
                     "r-output-drainer-race",
-                    next_index=1,
+                    next_index=0,
                     outbox=ledger,
                 ),
                 await _pump_text_run("producer finishes first"),
@@ -1459,7 +1454,7 @@ async def test_invoke_append_rejection_cannot_end_in_completed() -> None:
     assert "run.completed" not in bus.kinds("r-output-invoke-rejection")
     failed = find_event(bus.run_events("r-output-invoke-rejection"), RunFailed)
     assert failed.payload.error_kind == "DurableOutputCommitError"
-    assert failed.payload.message.endswith("DURABLE_OUTPUT_APPEND_REJECTED")
+    assert failed.payload.message == "OWNER_EVENT_COMMIT_FAILED"
 
 
 async def test_critical_stage_failure_is_fatal_after_output_commit() -> None:
@@ -1490,12 +1485,12 @@ async def test_critical_stage_failure_is_fatal_after_output_commit() -> None:
         ),
     )
 
-    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_STAGE_FAILED"):
+    with pytest.raises(DurableOutputCommitError, match="OWNER_EVENT_COMMIT_FAILED"):
         await RunEmitter(
             FakeBus(), "r-output-stage-failure", outbox=ledger
         ).emit(payload)
 
-    assert len(ledger.output_records["r-output-stage-failure"]) == 1
+    assert ledger.output_records.get("r-output-stage-failure", []) == []
 
 
 async def test_critical_publish_ack_failure_leaves_fixed_frame_queued(
@@ -1731,10 +1726,10 @@ async def test_durable_output_append_failure_cannot_end_in_completed() -> None:
     assert "run.completed" not in bus.kinds("r-output-append-fault")
     failed = find_event(bus.run_events("r-output-append-fault"), RunFailed)
     assert failed.payload.error_kind == "DurableOutputCommitError"
-    assert failed.payload.message == "DURABLE_OUTPUT_COMMIT_FAILED: APPEND_ERROR"
+    assert failed.payload.message == "OWNER_EVENT_COMMIT_FAILED"
 
 
-async def test_durable_output_source_conflict_cannot_end_in_completed() -> None:
+async def test_owner_head_allows_new_output_after_live_delivery_loss() -> None:
     ledger = FakeLedger()
     await ledger.try_claim(request("r-output-pump-conflict"))
 
@@ -1768,9 +1763,7 @@ async def test_durable_output_source_conflict_cannot_end_in_completed() -> None:
     )
 
     assert done is True
-    assert "run.completed" not in bus.kinds("r-output-pump-conflict")
-    failed = find_event(bus.run_events("r-output-pump-conflict"), RunFailed)
-    assert failed.payload.error_kind == "DurableOutputCommitError"
+    assert "run.completed" in bus.kinds("r-output-pump-conflict")
 
 
 async def test_pump_keeps_live_bus_publish_failures_isolated() -> None:
@@ -1787,7 +1780,7 @@ async def test_pump_keeps_live_bus_publish_failures_isolated() -> None:
 
     bus = FailDeltaPublishBus()
     await pump_run(
-        RunEmitter(bus, "r-output-live-failure", next_index=1, outbox=ledger),
+        RunEmitter(bus, "r-output-live-failure", next_index=0, outbox=ledger),
         await _pump_text_run("durably retained"),
         source_for=_runtime_custom,
     )
@@ -1798,9 +1791,7 @@ async def test_pump_keeps_live_bus_publish_failures_isolated() -> None:
 
 async def test_critical_output_recovers_if_process_dies_before_staging() -> None:
     class CrashBeforeStageLedger(FakeLedger):
-        def __init__(self) -> None:
-            super().__init__()
-            self.crash_once = True
+        crash_once = True
 
         async def stage_critical_frame(
             self,
@@ -1813,8 +1804,8 @@ async def test_critical_output_recovers_if_process_dies_before_staging() -> None
             terminal: bool,
             semantic_key: str | None = None,
         ) -> StagedFrame | None:
-            if self.crash_once:
-                self.crash_once = False
+            if type(self).crash_once:
+                type(self).crash_once = False
                 raise RuntimeError("crash after output before stage")
             return await super().stage_critical_frame(
                 run_id,
@@ -1839,11 +1830,12 @@ async def test_critical_output_recovers_if_process_dies_before_staging() -> None
             allowed_actions=["accept", "reject"],
         ),
     )
-    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_STAGE_FAILED"):
+    with pytest.raises(DurableOutputCommitError, match="OWNER_EVENT_COMMIT_FAILED"):
         await RunEmitter(bus, "r-plan-crash", outbox=ledger).emit(payload)
-    assert len(ledger.output_records["r-plan-crash"]) == 1
+    assert ledger.output_records.get("r-plan-crash", []) == []
     assert bus.published == []
 
+    await RunEmitter.attach(bus, "r-plan-crash", outbox=ledger)
     await RunEmitter(bus, "r-plan-crash", outbox=ledger).emit(payload)
     assert len(ledger.output_records["r-plan-crash"]) == 1
     assert bus.kinds("r-plan-crash") == ["plan.proposed"]
@@ -1871,8 +1863,10 @@ async def test_completion_claim_lost_suppresses_terminal() -> None:
     bus = FakeBus()
     ledger = FakeLedger()
     await ledger.try_mark_terminal("r1")
-    done = await _invoke(bus, FakeAgent(run=text_run("hi")), ledger=ledger)
-    assert done is True
+    agent = FakeAgent(run=text_run("hi"))
+    with pytest.raises(OwnerEventFenceLost, match="OWNER_EVENT_FENCE_LOST"):
+        await _invoke(bus, agent, ledger=ledger)
+    assert agent.seen_payloads == []
     kinds = bus.kinds("r1")
     assert "run.completed" not in kinds
     assert "run.failed" not in kinds
@@ -1915,10 +1909,15 @@ async def test_trace_none_config_only_configurable() -> None:
 
 async def test_emitter_attach_continues_after_existing_events() -> None:
     bus = FakeBus()
-    await _invoke(bus, FakeAgent(run=text_run("first")))
+    ledger = FakeLedger()
+    await ledger.try_claim(request("r1"))
+    first = await RunEmitter.attach(bus, "r1", outbox=ledger)
+    await first.emit(RunStartedPayload())
+    await first.emit(MessageDeltaPayload(segment_id="seg-1", delta="first"))
     count = len(bus.run_events("r1"))
     # 新 emitter（模拟 resume/重启/重拾）从既有最大 index 之后续接，不回卷。
-    await _invoke(bus, FakeAgent(run=text_run("second")))
+    resumed = await RunEmitter.attach(bus, "r1", outbox=ledger)
+    await resumed.emit(MessageDeltaPayload(segment_id="seg-1", delta="second"))
     indexes = [e.index for e in bus.run_events("r1")]
     assert indexes == list(range(len(indexes)))
     assert len(indexes) > count
@@ -1971,9 +1970,6 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(stream: RedisStr
     )
     run_id = f"rloop-{uuid4().hex}"
 
-    async def claim() -> bool:
-        return True
-
     terminal = await invoke_once(
         RunEmitter(stream, run_id),
         agent,
@@ -1981,7 +1977,6 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(stream: RedisStr
         {"messages": [HumanMessage(content="go")]},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
         recursion_limit=8,
@@ -2059,7 +2054,6 @@ async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
         prepare_completed=lambda: completed_execution_context("racc"),
         record_usage=preloaded_recorder,
     )
@@ -2090,7 +2084,6 @@ async def test_pause_segment_records_usage_too() -> None:
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
         prepare_completed=lambda: completed_execution_context("rpause"),
         record_usage=recorder,
     )
@@ -2129,7 +2122,6 @@ async def test_pause_projects_the_checkpoint_created_by_the_current_segment() ->
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
         prepare_completed=lambda: completed_execution_context("r-refresh"),
         capture_interrupted=capture_interrupted,
         record_usage=usage_recorder()[0],

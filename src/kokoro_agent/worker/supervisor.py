@@ -59,6 +59,7 @@ from kokoro_agent.storage.ledger import (
     RunLedger,
 )
 from kokoro_agent.storage.execution_context import ExecutionContextAuthorityPort
+from kokoro_agent.storage.owner_event import OwnerEventFenceLost
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.registry import validate_requested_tools
 from kokoro_agent.worker.messages import parse_inbound
@@ -425,6 +426,12 @@ class RunSupervisor:
         if not has_pending_interrupt(snapshot):
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
             return
+        # Resume may emit owner facts before the graph is spawned (review/approval resolution).
+        # Acquire the active producer fence first; the paused null lease authorizes no writes.
+        await self._store.adopt(msg.run_id, self._consumer)
+        if await self._store.is_terminal(msg.run_id):
+            LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
+            return
         names = self._approval_tool_names(request)
         entries = review_entries(snapshot.interrupts)
         command: Command[object]
@@ -461,13 +468,6 @@ class RunSupervisor:
                 for resolution in nested_approved_payloads(ordered, frame):
                     await emitter.emit(resolution)
             command = Command(resume={"decisions": resume_command_decisions(ordered, frame)})
-        # 离开 HITL 暂停哨兵：所有权交接给收养 worker（fencing 属主随之更新），恢复活跃租约。
-        await self._store.adopt(msg.run_id, self._consumer)
-        # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
-        # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
-        if await self._store.is_terminal(msg.run_id):
-            LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
-            return
         self._spawn_agent(
             bus, assembled, msg.run_id, config, command, names,
             trace=self._trace(request),
@@ -478,9 +478,9 @@ class RunSupervisor:
         if request is None:
             LOGGER.warning("dropping cancel for unknown run_id=%s", msg.run_id)
             return
-        # 原子认领终态：自然完成/重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
-        if not await self._store.try_mark_terminal(msg.run_id):
+        if await self._store.is_terminal(msg.run_id):
             return
+        await self._store.adopt(msg.run_id, self._consumer)
         task = self._tasks.get(msg.run_id)
         if task is not None and not task.done():
             # 运行中：被 cancel 的 invoke task 不自发终态，统一由此分支补发 cancelled。
@@ -543,29 +543,31 @@ class RunSupervisor:
         trace: RunnableConfig | None,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，resume 重新竞争额度。
-        async with self._sem:
-            if not await self._guarded_entry_gate(run_id):
-                LOGGER.warning("skipping execution for terminal run_id=%s", run_id)
-                return
-            emitter = await self._emitter(bus, run_id)
-            terminal = await invoke_once(
-                emitter,
-                assembled.agent,
-                execution_config,
-                payload,
-                approval_tool_names=approval_tool_names,
-                # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
-                describe_tool=assembled.describe_tool,
-                source_for=self._source_for,
-                trace=trace,
-                recursion_limit=self._recursion_limit,
-                # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
-                claim_terminal=lambda: self._store.try_mark_terminal(run_id),
-                prepare_completed=lambda: self._execution_context.prepare_completion(run_id),
-                capture_interrupted=lambda: self._capture_interrupted_config(run_id),
-                # 用量跨段累计真源：run.completed 报累计而非末段。
-                record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
-            )
+        try:
+            async with self._sem:
+                if not await self._guarded_entry_gate(run_id):
+                    LOGGER.warning("skipping execution for terminal run_id=%s", run_id)
+                    return
+                emitter = await self._emitter(bus, run_id)
+                terminal = await invoke_once(
+                    emitter,
+                    assembled.agent,
+                    execution_config,
+                    payload,
+                    approval_tool_names=approval_tool_names,
+                    describe_tool=assembled.describe_tool,
+                    source_for=self._source_for,
+                    trace=trace,
+                    recursion_limit=self._recursion_limit,
+                    prepare_completed=lambda: self._execution_context.prepare_completion(run_id),
+                    capture_interrupted=lambda: self._capture_interrupted_config(run_id),
+                    record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
+                )
+        except OwnerEventFenceLost:
+            LOGGER.warning("owner event fence lost; yielding run_id=%s", run_id)
+            self._emitters.pop(run_id, None)
+            await self._teardown_control(bus, run_id)
+            return
         if terminal:
             self._emitters.pop(run_id, None)
             await self._teardown_control(bus, run_id)
@@ -763,7 +765,7 @@ class RunSupervisor:
                 run_id,
                 review,
                 self._store,
-                self._store if presentation_thread_ref is not None else None,
+                self._consumer,
                 presentation_thread_ref,
             )
             self._emitters[run_id] = emitter
@@ -772,9 +774,7 @@ class RunSupervisor:
     async def _fail_terminal(
         self, bus: StreamProtocol, run_id: str, error: Exception, *, code: RunErrorCode | None = None
     ) -> None:
-        # 认领成功才发 run.failed，与并发 cancel/自然完成互斥为单一终态。
-        if await self._store.try_mark_terminal(run_id):
-            emitter = await self._emitter(bus, run_id)
-            await emitter.emit(run_failed_payload(error, code=code))
-            self._emitters.pop(run_id, None)
-            await self._teardown_control(bus, run_id)
+        emitter = await self._emitter(bus, run_id)
+        await emitter.emit(run_failed_payload(error, code=code))
+        self._emitters.pop(run_id, None)
+        await self._teardown_control(bus, run_id)

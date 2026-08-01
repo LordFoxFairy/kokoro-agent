@@ -65,9 +65,6 @@ async def test_subagent_approval_pauses_then_approve_completes(
     run1, run2 = f"rsub-{sfx}", f"rsub2-{sfx}"
     names = frozenset({"gated", "ask_user_question"})
 
-    async def claim() -> bool:
-        return True
-
     recorder, _seen = usage_recorder()
     first = await invoke_once(
         RunEmitter(stream, run1),
@@ -76,7 +73,6 @@ async def test_subagent_approval_pauses_then_approve_completes(
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(run1),
         record_usage=recorder,
     )
@@ -103,7 +99,6 @@ async def test_subagent_approval_pauses_then_approve_completes(
         Command(resume={"decisions": [{"type": "approve"}]}),
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(run2),
         record_usage=recorder,
     )
@@ -142,9 +137,6 @@ async def test_general_purpose_delegation_runs_inside_guards(
         interrupt_on=build_interrupt_on(frozenset()),
     )
 
-    async def claim() -> bool:
-        return True
-
     recorder, _seen = usage_recorder()
     terminal = await invoke_once(
         RunEmitter(stream, run_id),
@@ -153,7 +145,6 @@ async def test_general_purpose_delegation_runs_inside_guards(
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=frozenset({"ask_user_question"}),
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=recorder,
     )
@@ -203,9 +194,6 @@ async def test_subagent_review_pauses_with_cached_result(
         interrupt_on=build_interrupt_on(frozenset()),
     )
 
-    async def claim() -> bool:
-        return True
-
     recorder, _seen = usage_recorder()
     paused = await invoke_once(
         RunEmitter(stream, run_id, review_tool_names=frozenset({"gated"})),
@@ -214,7 +202,6 @@ async def test_subagent_review_pauses_with_cached_result(
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=frozenset({"ask_user_question"}),
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=recorder,
     )

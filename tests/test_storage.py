@@ -970,7 +970,16 @@ async def test_completed_context_claim_is_atomic_causal_and_retained() -> None:
         )
 
         attempts = await asyncio.gather(
-            *(store.try_complete_execution_context(completion, owner, terminal) for _ in range(8))
+            *(
+                store.try_complete_execution_context(
+                    completion,
+                    owner,
+                    terminal,
+                    lease_owner_ref=OWNER,
+                    agent_thread_ref=None,
+                )
+                for _ in range(8)
+            )
         )
         winners = [item for item in attempts if item is not None]
         assert len(winners) == 1

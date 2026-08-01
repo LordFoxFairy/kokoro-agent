@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeVar
@@ -11,7 +13,7 @@ from typing import TypeVar
 from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Interrupt
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from kokoro_agent.contract import (
     AgentEvent,
@@ -22,6 +24,8 @@ from kokoro_agent.contract import (
     RunRequest,
     RuntimeConfig,
     RuntimeContext,
+    PlanProposedPayload,
+    ToolAwaitingApprovalPayload,
     agent_event_adapter,
     run_events_stream,
 )
@@ -56,6 +60,7 @@ from kokoro_agent.storage.execution_context import (
     ExecutionContextBinding,
     ExecutionContextConflict,
 )
+from kokoro_agent.storage.owner_event import OwnerEventCommitResult
 from kokoro_agent.streams.protocol import StreamItem
 
 _T = TypeVar("_T")
@@ -179,6 +184,7 @@ class FakeLedger:
             tuple[str, str], tuple[str, tuple[PresentationCandidateRecord, ...]]
         ] = {}
         self.presentation_delivery: dict[str, PresentationAcknowledgeState] = {}
+        self.owner_heads: dict[str, int] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
         self.manifests: dict[str, dict[str, object]] = {}
@@ -198,6 +204,114 @@ class FakeLedger:
         self.leases[request.run_id] = 1
         self.owners[request.run_id] = owner
         return True
+
+    async def owner_event_head(self, run_id: str) -> int:
+        return self.owner_heads.get(run_id, 0)
+
+    async def commit_owner_event(
+        self,
+        *,
+        run_id: str,
+        expected_index: int,
+        kind: str,
+        payload: BaseModel,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
+    ) -> OwnerEventCommitResult:
+        from kokoro_agent.execution.events import (
+            CRITICAL_KINDS,
+            TERMINAL_KINDS,
+        )
+        from kokoro_agent.evidence.models import (
+            durable_output_drafts_for_event,
+            is_durable_output_capable_event,
+        )
+
+        if self.owners.get(run_id, lease_owner_ref) != lease_owner_ref:
+            return OwnerEventCommitResult(status="fence_lost")
+        if run_id in self.terminals:
+            return OwnerEventCommitResult(status="fence_lost")
+        if self.owner_heads.get(run_id, 0) != expected_index:
+            raise ValueError("OWNER_EVENT_HEAD_CONFLICT")
+        timestamp = self.clock_ms
+        owner_ref = "evt_" + hashlib.sha256(
+            f"owner-v1\0{run_id}\0{expected_index}".encode()
+        ).hexdigest()[:32]
+        event = agent_event_adapter.validate_python({
+            "kind": kind,
+            "run_id": run_id,
+            "index": expected_index,
+            "timestamp": timestamp,
+            "event_id": owner_ref,
+            "payload": payload,
+        })
+        semantic_key = (
+            f"action_owner:{payload.tool_id}"
+            if isinstance(payload, ToolAwaitingApprovalPayload)
+            else f"plan.proposed:{payload.owner_ref}"
+            if isinstance(payload, PlanProposedPayload)
+            else None
+        )
+        semantic_payload_json = json.dumps(
+            payload.model_dump(mode="json", exclude_none=True)
+        )
+        if semantic_key is not None:
+            existing = self.semantic_critical.get((run_id, semantic_key))
+            if existing is not None:
+                existing_kind, existing_digest, _seq, _event_id = existing
+                digest = hashlib.sha256(semantic_payload_json.encode()).hexdigest()
+                if existing_kind != kind or existing_digest != digest:
+                    raise ValueError(
+                        f"semantic critical frame conflict for {semantic_key!r}"
+                    )
+                return OwnerEventCommitResult(status="idempotent")
+        before = copy.deepcopy(self.__dict__)
+        try:
+            payload_json = json.dumps(
+                payload.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            payload_digest = hashlib.sha256(payload_json.encode()).hexdigest()
+            if is_durable_output_capable_event(payload):
+                drafts = durable_output_drafts_for_event(payload)
+                if await self.append_durable_outputs(
+                    run_id,
+                    owner_ref,
+                    drafts,
+                    recorded_at_ms=timestamp,
+                    source_payload_sha256=payload_digest,
+                ) is None:
+                    raise ValueError("OWNER_EVENT_OUTPUT_REJECTED")
+            if agent_thread_ref is not None:
+                if await self.append_presentation_event(
+                    event, agent_thread_ref=agent_thread_ref
+                ) is None:
+                    raise ValueError("OWNER_EVENT_PRESENTATION_REJECTED")
+            if kind in CRITICAL_KINDS:
+                staged = await self.stage_critical_frame(
+                    run_id,
+                    kind,
+                    expected_index,
+                    timestamp,
+                    semantic_payload_json,
+                    terminal=kind in TERMINAL_KINDS,
+                    semantic_key=semantic_key,
+                )
+                if staged is None or not staged.created:
+                    return OwnerEventCommitResult(status="idempotent")
+                event = event.model_copy(
+                    update={"durable_seq": staged.durable_seq, "event_id": staged.event_id}
+                )
+            self.owner_heads[run_id] = expected_index + 1
+            if kind in TERMINAL_KINDS:
+                self.terminals.add(run_id)
+            return OwnerEventCommitResult(status="committed", event=event)
+        except BaseException:
+            self.__dict__.clear()
+            self.__dict__.update(before)
+            raise
 
     async def claim_dispatch(self, run_id: str, consumer: str = "test-consumer") -> bool:
         # 无 intent 记录=放行（与 MongoLedger 同语义）；pending 且未过期=赢转 claimed；
@@ -695,6 +809,9 @@ class FakeLedger:
         completion: CompletedExecutionContext,
         owner_event: CompletionEventDraft,
         terminal_event: CompletionEventDraft,
+        *,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
     ) -> ClaimedCompletionFrames | None:
         if completion.owner_revision != 1 or completion.continuation_run_id is not None:
             raise ValueError("new completion owner must start at revision one")
@@ -703,6 +820,10 @@ class FakeLedger:
         if terminal_event.kind != "run.completed" or terminal_event.index != owner_event.index + 1:
             raise ValueError("completion terminal event must immediately follow owner")
         if completion.run_id in self.terminals:
+            return None
+        if self.owners.get(completion.run_id, lease_owner_ref) != lease_owner_ref:
+            return None
+        if self.owner_heads.get(completion.run_id, 0) != owner_event.index:
             return None
         if completion.anchor in self.execution_completions:
             raise ExecutionContextConflict("EXECUTION_CONTEXT_ANCHOR_COLLISION")
@@ -731,6 +852,7 @@ class FakeLedger:
         self.terminal_fence[completion.run_id] = terminal_seq
         self.terminals.add(completion.run_id)
         self.terminal_at[completion.run_id] = self.clock_ms
+        self.owner_heads[completion.run_id] = terminal_event.index + 1
         self.execution_completions[completion.anchor] = completion
         self.semantic_critical[(completion.run_id, "run.owner.completed")] = (
             owner_event.kind,
@@ -738,6 +860,21 @@ class FakeLedger:
             owner_seq,
             owner_id,
         )
+        if agent_thread_ref is not None:
+            terminal_agent_event = agent_event_adapter.validate_python(
+                {
+                    "kind": terminal_event.kind,
+                    "run_id": completion.run_id,
+                    "index": terminal_event.index,
+                    "timestamp": terminal_event.timestamp,
+                    "durable_seq": terminal_seq,
+                    "event_id": terminal_id,
+                    "payload": json.loads(terminal_event.payload_json),
+                }
+            )
+            await self.append_presentation_event(
+                terminal_agent_event, agent_thread_ref=agent_thread_ref
+            )
         return ClaimedCompletionFrames(
             owner=DurableCompletionFrame(
                 **owner_event.model_dump(), durable_seq=owner_seq, event_id=owner_id

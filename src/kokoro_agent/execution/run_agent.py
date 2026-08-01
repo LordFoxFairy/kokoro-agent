@@ -20,6 +20,7 @@ from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.publish_agent_events import pump_run
 from kokoro_agent.storage.execution_context import CompletedExecutionContext
+from kokoro_agent.storage.owner_event import OwnerEventFenceLost
 
 
 async def invoke_once(
@@ -31,7 +32,6 @@ async def invoke_once(
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
-    claim_terminal: Callable[[], Awaitable[bool]],
     prepare_completed: Callable[[], Awaitable[CompletedExecutionContext]],
     capture_interrupted: Callable[[], Awaitable[RunnableConfig]] | None = None,
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
@@ -40,8 +40,7 @@ async def invoke_once(
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
-    终态发射前先经 claim_terminal 原子认领：cancel/自然完成/异常三路共用同一认领键，
-    多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
+    终态事实及其所有投影由 emitter 的 fenced owner UoW 一次提交。
     """
     config = _config(execution_config, trace, recursion_limit, run_id=emitter.run_id)
     if emitter.at_start:
@@ -95,9 +94,10 @@ async def invoke_once(
                 RunCompletedPayload(status="completed", token_usage=token_usage),
             )
             return True
+        except OwnerEventFenceLost:
+            raise
         except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
-            if await claim_terminal():
-                await emitter.emit(run_failed_payload(error))
+            await emitter.emit(run_failed_payload(error))
             return True
 
 

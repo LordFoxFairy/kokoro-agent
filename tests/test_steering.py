@@ -79,9 +79,6 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
         middleware=[SteeringMiddleware(store=ledger, run_id="r-graph")],
     )
 
-    async def claim() -> bool:
-        return True
-
     bus = FakeBus()
     terminal = await invoke_once(
         RunEmitter(bus, "r-graph", outbox=ledger),
@@ -93,7 +90,6 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
         {"messages": [HumanMessage(content="写调研报告", id="m0")]},
         approval_tool_names=frozenset(),
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context("r-graph"),
         record_usage=usage_recorder()[0],
     )

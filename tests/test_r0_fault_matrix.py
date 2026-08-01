@@ -117,7 +117,6 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
-        claim_terminal=lambda: store.try_mark_terminal("term-drop"),
         prepare_completed=lambda: completed_execution_context("term-drop"),
         record_usage=usage_recorder()[0],
     )

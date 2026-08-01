@@ -74,6 +74,9 @@ class FakeExecutionContextStore(ExecutionContextStore):
         completion: CompletedExecutionContext,
         owner_event: CompletionEventDraft,
         terminal_event: CompletionEventDraft,
+        *,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
     ) -> ClaimedCompletionFrames | None:
         if completion.run_id in {item.run_id for item in self.completed.values()}:
             return None
@@ -103,6 +106,8 @@ async def _complete(
             kind="run.owner.completed", index=0, timestamp=1, payload_json="{}"
         ),
         CompletionEventDraft(kind="run.completed", index=1, timestamp=1, payload_json="{}"),
+        lease_owner_ref="test-consumer",
+        agent_thread_ref=None,
     )
     assert claimed is not None
     return completion

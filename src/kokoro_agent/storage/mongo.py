@@ -8,7 +8,8 @@ import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar, cast
+from contextvars import ContextVar
+from typing import Any, TypeVar
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
@@ -20,9 +21,16 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from kokoro_agent.contract import (
     AgentEvent,
+    PlanProposedPayload,
     RunCompletedPayload,
     RunOwnerCompletedPayload,
     RunRequest,
+    ToolAwaitingApprovalPayload,
+    agent_event_adapter,
+)
+from kokoro_agent.execution.event_policy import (
+    is_critical_event_kind,
+    is_terminal_event_kind,
 )
 from kokoro_agent.storage.execution_context import (
     ClaimedCompletionFrames,
@@ -33,6 +41,7 @@ from kokoro_agent.storage.execution_context import (
     ExecutionContextBinding,
     ExecutionContextConflict,
 )
+from kokoro_agent.storage.owner_event import OwnerEventCommitResult
 from kokoro_agent.contract.storage import (
     RUN_DISPATCHES_COLLECTION,
     RUN_EVENT_RECEIPTS_COLLECTION,
@@ -46,8 +55,10 @@ from kokoro_agent.evidence.models import (
     DurableOutputRecord,
     DurableRetentionStats,
     append_output_digest,
+    durable_output_drafts_for_event,
     evidence_kind_for_event,
     initial_output_digest,
+    is_durable_output_capable_event,
     make_durable_output_record,
     make_durable_execution_evidence,
 )
@@ -76,10 +87,20 @@ AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION = (
 
 _T = TypeVar("_T")
 _OUTPUT_APPEND_MAX_ATTEMPTS = 64
+_ACTIVE_TRANSACTION_DEPTH: ContextVar[int] = ContextVar(
+    "kokoro_agent_mongo_transaction_depth", default=0
+)
+_ACTIVE_TRANSACTION_SESSION: ContextVar[AsyncClientSession | None] = ContextVar(
+    "kokoro_agent_mongo_transaction_session", default=None
+)
 
 
 class _OutputAppendContention(RuntimeError):
     """A live run advanced its output counter before this append CAS."""
+
+
+class _OwnerEventSuppressed(RuntimeError):
+    """A semantic owner fact already exists; abort this transaction as a no-op."""
 
 
 def _output_source_batch_digest(payload_sha256s: tuple[str, ...]) -> str:
@@ -398,10 +419,26 @@ class MongoLedger:
         self,
         callback: Callable[[AsyncClientSession | None], Awaitable[_T]],
     ) -> _T:
-        if self._allow_nontransactional_evidence_for_tests:
-            return await callback(None)
-        async with self._coll.database.client.start_session() as session:
-            return await session.with_transaction(callback)
+        # An owner-event commit composes output, presentation and outbox writers. Nested
+        # writers must join that transaction instead of silently opening independent ones.
+        if _ACTIVE_TRANSACTION_DEPTH.get() > 0:
+            return await callback(_ACTIVE_TRANSACTION_SESSION.get())
+        depth_token = _ACTIVE_TRANSACTION_DEPTH.set(1)
+        try:
+            if self._allow_nontransactional_evidence_for_tests:
+                session_token = _ACTIVE_TRANSACTION_SESSION.set(None)
+                try:
+                    return await callback(None)
+                finally:
+                    _ACTIVE_TRANSACTION_SESSION.reset(session_token)
+            async with self._coll.database.client.start_session() as session:
+                session_token = _ACTIVE_TRANSACTION_SESSION.set(session)
+                try:
+                    return await session.with_transaction(callback)
+                finally:
+                    _ACTIVE_TRANSACTION_SESSION.reset(session_token)
+        finally:
+            _ACTIVE_TRANSACTION_DEPTH.reset(depth_token)
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # $setOnInsert + upsert：仅 _id 不存在时写入；并发 upsert 撞 _id 抛 DuplicateKeyError
@@ -415,6 +452,9 @@ class MongoLedger:
                         "terminal": False,
                         "lease_expires_ms": self._clock() + self._ttl_ms,
                         "owner": owner,
+                        "producer_instance_ref": self._producer_instance_ref,
+                        "producer_generation": self._producer_generation,
+                        "owner_event_counter": 0,
                         # R4：run.started 收编进 critical outbox（seq 1 惯例），claim 不再写
                         # run_started_published 布尔位——身份/补发一律走 outbox（stage→publish→scanner）。
                     }
@@ -424,6 +464,186 @@ class MongoLedger:
         except DuplicateKeyError:
             return False
         return result.upserted_id is not None
+
+    async def owner_event_head(self, run_id: str) -> int:
+        doc = await self._coll.find_one({"_id": run_id}, {"owner_event_counter": 1})
+        if doc is None:
+            return 0
+        head = doc.get("owner_event_counter", 0)
+        if not isinstance(head, int) or head < 0:
+            raise TypeError("OWNER_EVENT_HEAD_INVALID")
+        return head
+
+    async def commit_owner_event(
+        self,
+        *,
+        run_id: str,
+        expected_index: int,
+        kind: str,
+        payload: BaseModel,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
+    ) -> OwnerEventCommitResult:
+        """Commit one Agent-owned fact and every required durable projection atomically."""
+        if expected_index < 0:
+            raise ValueError("OWNER_EVENT_INDEX_INVALID")
+        timestamp = self._clock()
+        payload_json = json.dumps(
+            payload.model_dump(mode="json", exclude_none=True),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        payload_digest = hashlib.sha256(payload_json.encode()).hexdigest()
+        owner_ref = "owner_evt_" + hashlib.sha256(
+            (
+                f"v1\0{run_id}\0{expected_index}\0{self._producer_instance_ref}"
+                f"\0{self._producer_generation}"
+            ).encode()
+        ).hexdigest()
+        owner_event = agent_event_adapter.validate_python(
+            {
+                "kind": kind,
+                "run_id": run_id,
+                "index": expected_index,
+                "timestamp": timestamp,
+                "event_id": owner_ref,
+                "payload": payload,
+            }
+        )
+        terminal = is_terminal_event_kind(kind)
+        semantic_key = (
+            f"action_owner:{payload.tool_id}"
+            if isinstance(payload, ToolAwaitingApprovalPayload)
+            else f"plan.proposed:{payload.owner_ref}"
+            if isinstance(payload, PlanProposedPayload)
+            else None
+        )
+
+        async def commit(session: AsyncClientSession | None) -> OwnerEventCommitResult:
+            now = self._clock()
+            query: dict[str, object] = {
+                "_id": run_id,
+                "owner": lease_owner_ref,
+                "producer_instance_ref": self._producer_instance_ref,
+                "producer_generation": self._producer_generation,
+                "lease_expires_ms": {"$gt": now},
+                "owner_event_counter": expected_index,
+                "terminal": {"$ne": True},
+            }
+            # Authorization precedes even semantic-idempotency detection. The write touch
+            # serializes this transaction with adopt/reclaim so a stale executor can never
+            # receive "idempotent" and continue doing model/tool work.
+            authorized = await self._coll.find_one_and_update(
+                query,
+                {"$set": {"owner_event_fence_checked_at_ms": now}},
+                projection={"semantic_critical_frames": 1},
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
+            if authorized is None:
+                return OwnerEventCommitResult(status="fence_lost")
+            if semantic_key is not None:
+                entries = _SEMANTIC_CRITICAL_ADAPTER.validate_python(
+                    authorized.get("semantic_critical_frames") or []
+                )
+                existing = next(
+                    (entry for entry in entries if entry.semantic_key == semantic_key),
+                    None,
+                )
+                if existing is not None:
+                    if existing.kind != kind or existing.payload_sha256 != payload_digest:
+                        raise ValueError(
+                            f"semantic critical frame conflict for {semantic_key!r}"
+                        )
+                    return OwnerEventCommitResult(status="idempotent")
+            set_fields: dict[str, object] = {"owner_event_updated_at_ms": now}
+            update: dict[str, object] = {
+                "$inc": {"owner_event_counter": 1},
+                "$set": set_fields,
+            }
+            if terminal:
+                set_fields.update(
+                    {
+                        "terminal": True,
+                        "terminal_at_ms": now,
+                        "output_sealed_high_watermark": 0,
+                        "output_sealed_digest_sha256": initial_output_digest(run_id),
+                    }
+                )
+            fenced = await self._coll.find_one_and_update(
+                query,
+                update,
+                projection={"output_counter": 1, "output_digest_sha256": 1},
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
+            if fenced is None:
+                return OwnerEventCommitResult(status="fence_lost")
+
+            if terminal:
+                output_high = fenced.get("output_counter", 0)
+                output_digest = fenced.get(
+                    "output_digest_sha256", initial_output_digest(run_id)
+                )
+                if not isinstance(output_high, int) or not isinstance(output_digest, str):
+                    raise TypeError("OUTPUT_SEAL_INVALID")
+                await self._coll.update_one(
+                    {"_id": run_id, "owner_event_counter": expected_index + 1},
+                    {
+                        "$set": {
+                            "output_sealed_high_watermark": output_high,
+                            "output_sealed_digest_sha256": output_digest,
+                        }
+                    },
+                    session=session,
+                )
+
+            if is_durable_output_capable_event(payload):
+                outputs = await self.append_durable_outputs(
+                    run_id,
+                    owner_ref,
+                    durable_output_drafts_for_event(payload),
+                    recorded_at_ms=timestamp,
+                    source_payload_sha256=payload_digest,
+                )
+                if outputs is None:
+                    raise RuntimeError("OWNER_EVENT_OUTPUT_REJECTED")
+
+            if agent_thread_ref is not None:
+                presentation = await self.append_presentation_event(
+                    owner_event, agent_thread_ref=agent_thread_ref
+                )
+                if presentation is None:
+                    raise RuntimeError("OWNER_EVENT_PRESENTATION_REJECTED")
+
+            committed_event = owner_event
+            if is_critical_event_kind(kind):
+                staged = await self.stage_critical_frame(
+                    run_id,
+                    kind,
+                    expected_index,
+                    timestamp,
+                    payload_json,
+                    terminal=terminal,
+                    semantic_key=semantic_key,
+                )
+                if staged is None:
+                    raise RuntimeError("OWNER_EVENT_OUTBOX_REJECTED")
+                if not staged.created:
+                    raise _OwnerEventSuppressed
+                committed_event = owner_event.model_copy(
+                    update={
+                        "durable_seq": staged.durable_seq,
+                        "event_id": staged.event_id,
+                    }
+                )
+            return OwnerEventCommitResult(status="committed", event=committed_event)
+
+        try:
+            return await self._run_evidence_transaction(commit)
+        except _OwnerEventSuppressed:
+            return OwnerEventCommitResult(status="idempotent")
 
     async def claim_dispatch(self, run_id: str, consumer: str) -> bool:
         # dispatch CAS（D5）：pending→claimed 单文档条件转移。赢=授权执行；已 claimed/expired
@@ -886,9 +1106,9 @@ class MongoLedger:
         state = row.get("state")
         if not isinstance(state, dict):
             raise TypeError("PRESENTATION_STATE_INVALID")
-        value: object = cast(dict[str, object], state).get("next_ordinal")
-        if not isinstance(value, int) or value < 0:
-            raise TypeError("PRESENTATION_HEAD_INVALID")
+        value = _PRESENTATION_STATE_ADAPTER.validate_python(
+            state, strict=False
+        ).next_ordinal
         return value
 
     async def pull_presentation_candidates(
@@ -1294,8 +1514,6 @@ class MongoLedger:
                 )
             return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
 
-        if evidence_kind is None:
-            return await stage(None)
         return await self._run_evidence_transaction(stage)
 
     async def pull_durable_execution_evidence(
@@ -1582,7 +1800,13 @@ class MongoLedger:
     async def renew(self, run_id: str, owner: str) -> bool:
         # 严格属主续租（fencing）：owner 不符即失败——假死副本苏醒后据此让渡。
         result = await self._coll.update_one(
-            {"_id": run_id, "terminal": {"$ne": True}, "owner": owner},
+            {
+                "_id": run_id,
+                "terminal": {"$ne": True},
+                "owner": owner,
+                "producer_instance_ref": self._producer_instance_ref,
+                "producer_generation": self._producer_generation,
+            },
             {"$set": {"lease_expires_ms": self._clock() + self._ttl_ms}},
         )
         return result.matched_count == 1
@@ -1591,13 +1815,25 @@ class MongoLedger:
         # 所有权交接（resume 收养）：置 owner 并把暂停哨兵拉回活跃租约。
         await self._coll.update_one(
             {"_id": run_id, "terminal": {"$ne": True}},
-            {"$set": {"lease_expires_ms": self._clock() + self._ttl_ms, "owner": owner}},
+            {
+                "$set": {
+                    "lease_expires_ms": self._clock() + self._ttl_ms,
+                    "owner": owner,
+                    "producer_instance_ref": self._producer_instance_ref,
+                    "producer_generation": self._producer_generation,
+                }
+            },
         )
 
     async def pause(self, run_id: str) -> None:
         # null 哨兵：HITL 等人可以是小时级，暂停 run 绝不被过期重拾重跑。
         await self._coll.update_one(
-            {"_id": run_id, "terminal": {"$ne": True}},
+            {
+                "_id": run_id,
+                "terminal": {"$ne": True},
+                "producer_instance_ref": self._producer_instance_ref,
+                "producer_generation": self._producer_generation,
+            },
             {"$set": {"lease_expires_ms": None}},
         )
 
@@ -1613,7 +1849,14 @@ class MongoLedger:
                     "request_json": {"$type": "string"},
                     "lease_expires_ms": {"$lte": now},
                 },
-                {"$set": {"lease_expires_ms": now + self._ttl_ms, "owner": owner}},
+                {
+                    "$set": {
+                        "lease_expires_ms": now + self._ttl_ms,
+                        "owner": owner,
+                        "producer_instance_ref": self._producer_instance_ref,
+                        "producer_generation": self._producer_generation,
+                    }
+                },
             )
             if doc is None:
                 return reclaimed
@@ -1763,6 +2006,9 @@ class MongoLedger:
         completion: CompletedExecutionContext,
         owner_event: CompletionEventDraft,
         terminal_event: CompletionEventDraft,
+        *,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
     ) -> ClaimedCompletionFrames | None:
         if completion.owner_revision != 1 or completion.continuation_run_id is not None:
             raise ValueError("new completion owner must start at revision one")
@@ -1826,6 +2072,7 @@ class MongoLedger:
                 "$set": {
                     "terminal": True,
                     "terminal_at_ms": now,
+                    "owner_event_counter": terminal_event.index + 1,
                     "terminal_fence_seq": "$durable_counter",
                     "output_sealed_high_watermark": {"$ifNull": ["$output_counter", 0]},
                     "output_sealed_digest_sha256": {
@@ -1867,6 +2114,11 @@ class MongoLedger:
                 doc = await self._coll.find_one_and_update(
                     {
                         "_id": completion.run_id,
+                        "owner": lease_owner_ref,
+                        "producer_instance_ref": self._producer_instance_ref,
+                        "producer_generation": self._producer_generation,
+                        "lease_expires_ms": {"$gt": now},
+                        "owner_event_counter": owner_event.index,
                         "terminal": {"$ne": True},
                         "$or": [
                             {"terminal_fence_seq": {"$exists": False}},
@@ -1925,6 +2177,23 @@ class MongoLedger:
                 ],
                 session=session,
             )
+            if agent_thread_ref is not None:
+                presentation_event = agent_event_adapter.validate_python(
+                    {
+                        "kind": terminal_event.kind,
+                        "run_id": completion.run_id,
+                        "index": terminal_event.index,
+                        "timestamp": terminal_event.timestamp,
+                        "durable_seq": final_seq,
+                        "event_id": terminal_event_id,
+                        "payload": terminal_payload,
+                    }
+                )
+                presentation = await self.append_presentation_event(
+                    presentation_event, agent_thread_ref=agent_thread_ref
+                )
+                if presentation is None:
+                    raise RuntimeError("OWNER_EVENT_PRESENTATION_REJECTED")
             return doc
 
         doc = await self._run_evidence_transaction(complete)

@@ -422,6 +422,11 @@ def _message_ref(run_id: str, segment_id: str) -> str:
     return f"agent.message:{hashlib.sha256(material).hexdigest()}"
 
 
+def _activity_message_ref(run_id: str, activity_type: str, owner_ref: str) -> str:
+    material = f"kokoro-agent-activity-v1\0{run_id}\0{activity_type}\0{owner_ref}".encode()
+    return f"agent.activity:{hashlib.sha256(material).hexdigest()}"
+
+
 def _safe_ref(value: str, *, domain: str) -> str:
     if (
         1 <= len(value) <= 128
@@ -576,11 +581,9 @@ def _events_for_source(
             message = message.model_copy(update={"state": "closed"})
         states[message_ref] = message
     elif isinstance(event, ToolInvoked | SubagentToolInvoked):
-        segment_ref = event.payload.segment_id
-        message_ref, states, starts = _ensure_message(
-            event.run_id, segment_ref, event.timestamp, state.next_ordinal, states
+        message_ref = _activity_message_ref(
+            event.run_id, "kokoro.tool-preview.v1", event.payload.tool_id
         )
-        planned.extend(starts)
         planned.append(
             (
                 _activity(
@@ -597,11 +600,9 @@ def _events_for_source(
             )
         )
     elif isinstance(event, ToolReturned | SubagentToolReturned):
-        segment_ref = event.payload.segment_id
-        message_ref, states, starts = _ensure_message(
-            event.run_id, segment_ref, event.timestamp, state.next_ordinal, states
+        message_ref = _activity_message_ref(
+            event.run_id, "kokoro.tool-preview.v1", event.payload.tool_id
         )
-        planned.extend(starts)
         planned.append(
             (
                 _activity(
@@ -620,14 +621,9 @@ def _events_for_source(
             )
         )
     elif isinstance(event, ToolAwaitingApproval):
-        message_ref, states, starts = _ensure_message(
-            event.run_id,
-            event.payload.segment_id,
-            event.timestamp,
-            state.next_ordinal,
-            states,
+        message_ref = _activity_message_ref(
+            event.run_id, "kokoro.hitl.v1", event.payload.tool_id
         )
-        planned.extend(starts)
         planned.append(
             (
                 _activity(
@@ -652,14 +648,9 @@ def _events_for_source(
             )
         )
     elif isinstance(event, PlanProposed):
-        message_ref, states, starts = _ensure_message(
-            event.run_id,
-            event.payload.segment_id,
-            event.timestamp,
-            state.next_ordinal,
-            states,
+        message_ref = _activity_message_ref(
+            event.run_id, "kokoro.plan.v1", event.payload.owner_ref
         )
-        planned.extend(starts)
         planned.append(
             (
                 _activity(
@@ -684,14 +675,9 @@ def _events_for_source(
             )
         )
     elif isinstance(event, SubagentStarted | SubagentFinished):
-        message_ref, states, starts = _ensure_message(
-            event.run_id,
-            event.payload.segment_id,
-            event.timestamp,
-            state.next_ordinal,
-            states,
+        message_ref = _activity_message_ref(
+            event.run_id, "kokoro.subagent.v1", event.payload.subagent_id
         )
-        planned.extend(starts)
         planned.append(
             (
                 _activity(
@@ -755,9 +741,9 @@ def _events_for_source(
             next_run_state = "finished"
         else:
             message = (
-                event.payload.message
+                "The agent run failed."
                 if isinstance(event, RunFailed)
-                else "Run cancelled"
+                else "Run cancelled."
             )
             code = (
                 event.payload.code if isinstance(event, RunFailed) else "run_cancelled"
@@ -780,44 +766,6 @@ def _events_for_source(
         messages=tuple(sorted(states.values(), key=lambda item: item.opened_ordinal)),
     )
     return tuple(planned), next_state
-
-
-def _ensure_message(
-    run_id: str,
-    segment_ref: str,
-    timestamp: int,
-    next_ordinal: int,
-    states: dict[str, PresentationMessageState],
-) -> tuple[
-    str,
-    dict[str, PresentationMessageState],
-    tuple[tuple[BaseEvent, str | None], ...],
-]:
-    message_ref = _message_ref(run_id, segment_ref)
-    message = states.get(message_ref)
-    if message is not None and message.state == "closed":
-        raise ValueError("PRESENTATION_MESSAGE_CLOSED")
-    if message is not None:
-        return message_ref, states, ()
-    message = PresentationMessageState(
-        internal_message_ref=message_ref,
-        source_segment_ref=segment_ref,
-        state="open",
-        opened_ordinal=next_ordinal,
-    )
-    states[message_ref] = message
-    return (
-        message_ref,
-        states,
-        (
-            (
-                TextMessageStartEvent(
-                    message_id=message_ref, role="assistant", timestamp=timestamp
-                ),
-                message_ref,
-            ),
-        ),
-    )
 
 
 def plan_presentation_batch(

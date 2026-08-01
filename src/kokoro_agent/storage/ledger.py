@@ -40,6 +40,7 @@ from kokoro_agent.storage.mongo import (
     make_mongo_collection,
 )
 from kokoro_agent.storage.execution_context import ExecutionContextStore
+from kokoro_agent.storage.owner_event import OwnerEventCommitResult
 
 DEFAULT_LEASE_TTL_S = 90
 DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK = (
@@ -64,6 +65,21 @@ __all__ = [
 
 
 class RunLedger(ExecutionContextStore, Protocol):
+    async def owner_event_head(self, run_id: str) -> int: ...
+
+    async def commit_owner_event(
+        self,
+        *,
+        run_id: str,
+        expected_index: int,
+        kind: str,
+        payload: BaseModel,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
+    ) -> OwnerEventCommitResult:
+        """Fenced owner UoW for outputs, presentation and critical outbox."""
+        ...
+
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         # 原子认领新 run：首个认领者持有 TTL 租约并返 True，重复广播去重返 False。
         ...

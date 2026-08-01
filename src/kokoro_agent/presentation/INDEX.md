@@ -31,6 +31,10 @@ Mongo commits source marker, full ordered candidate batch and next projection st
 Replay must reproduce the exact batch or fail closed. Candidate sequence is independent from raw live
 index, lifecycle durable sequence and execution-output sequence.
 
+`RunEmitter` has one production mapping path: `plan_presentation_batch` inside the fenced owner-event
+unit of work. `adapter.py` only closes and seals an already-planned official SDK event; it does not map
+Agent facts. There is no stateless or compatibility mapper that can bypass projection state.
+
 `AgentPresentationService` freezes a snapshot head on the first pull and pages only through that head.
 The future Root Connect provider maps this child application shape without changing its semantics:
 
@@ -52,7 +56,7 @@ recovery. Web/AG-UI must never consume it. Agent does not own Site/Session bindi
 identity, browser cursor, durable Session projection, snapshot repair, SSE or HITL decision authority.
 
 The compatibility CLI exercises the same strict builder but is not production activation. Production
-activation is `RunSupervisor -> RunEmitter -> append_presentation_event -> Mongo presentation log`.
+activation is `RunSupervisor -> RunEmitter -> commit_owner_event -> Mongo presentation log`.
 
 ## Verification
 

@@ -17,18 +17,6 @@ from ag_ui.core import (
 )
 from pydantic import JsonValue, ValidationError
 
-from kokoro_agent.contract import (
-    MessageDelta,
-    MessageDeltaPayload,
-    RunCompleted,
-    RunCompletedPayload,
-    RunStarted,
-    RunStartedPayload,
-    ThinkingDelta,
-    ThinkingDeltaPayload,
-    ToolInvoked,
-    ToolInvokedPayload,
-)
 from kokoro_agent.presentation import (
     AGUI_CANDIDATE_PROFILE_REVISION,
     AGUI_UPSTREAM_COMMIT,
@@ -37,7 +25,6 @@ from kokoro_agent.presentation import (
     AgentAguiEventCandidate,
     CandidateProtocolError,
     build_agui_candidate,
-    map_agent_event_candidates,
 )
 from kokoro_agent.presentation.candidate import event_jcs_bytes
 
@@ -500,109 +487,3 @@ def test_closed_text_and_candidate_size_limits_are_enforced() -> None:
             ),
             source=source,
         )
-
-
-def test_pure_mapping_emits_only_semantically_safe_candidates() -> None:
-    started = RunStarted(
-        kind="run.started",
-        run_id="run.1",
-        index=0,
-        timestamp=TIMESTAMP,
-        durable_seq=41,
-        event_id="run.1:0",
-        payload=RunStartedPayload(),
-    )
-    start_candidates = map_agent_event_candidates(
-        started,
-        agent_thread_ref="agent.thread:test.1",
-        source_event_ref="run.1:0",
-    )
-    assert [candidate.event.type for candidate in start_candidates] == ["RUN_STARTED"]
-    assert start_candidates[0].source.source_ordinal == "0"
-    assert start_candidates[0].source.source_ordinal != str(started.durable_seq)
-
-    completed = RunCompleted(
-        kind="run.completed",
-        run_id="run.1",
-        index=1,
-        timestamp=1,
-        payload=RunCompletedPayload(status="completed"),
-    )
-    finish_candidates = map_agent_event_candidates(
-        completed,
-        agent_thread_ref="agent.thread:test.1",
-        source_event_ref="source.event.2",
-    )
-    finish_dump = finish_candidates[0].event.model_dump(
-        mode="json", by_alias=True, exclude_none=True
-    )
-    assert finish_dump["outcome"] == {"type": "success"}
-
-    canceled = completed.model_copy(
-        update={"payload": RunCompletedPayload(status="cancelled")}
-    )
-    assert (
-        map_agent_event_candidates(
-            canceled,
-            agent_thread_ref="agent.thread:test.1",
-            source_event_ref="source.event.cancelled",
-        )
-        == ()
-    )
-
-    thinking = ThinkingDelta(
-        kind="thinking.delta",
-        run_id="run.1",
-        index=2,
-        timestamp=2,
-        payload=ThinkingDeltaPayload(segment_id="thinking.1", delta="private"),
-    )
-    assert (
-        map_agent_event_candidates(
-            thinking,
-            agent_thread_ref="agent.thread:test.1",
-            source_event_ref="source.event.thinking",
-        )
-        == ()
-    )
-
-
-def test_current_tool_facts_map_to_zero_until_atomic_segment_transition_exists() -> None:
-    invoked = ToolInvoked(
-        kind="tool.invoked",
-        run_id="run.1",
-        index=4,
-        timestamp=4,
-        payload=ToolInvokedPayload(
-            segment_id="tool.1",
-            tool_id="tool.1",
-            name="web_fetch",
-            args={"authorization": "Bearer secret"},
-        ),
-    )
-    assert (
-        map_agent_event_candidates(
-            invoked,
-            agent_thread_ref="agent.thread:test.1",
-            source_event_ref="source.event.tool",
-        )
-        == ()
-    )
-
-
-def test_message_delta_maps_to_zero_without_fabricating_stream_start() -> None:
-    delta = MessageDelta(
-        kind="message.delta",
-        run_id="run.1",
-        index=3,
-        timestamp=3,
-        payload=MessageDeltaPayload(segment_id="message.1", delta="hello"),
-    )
-    assert (
-        map_agent_event_candidates(
-            delta,
-            agent_thread_ref="agent.thread:test.1",
-            source_event_ref="source.event.message",
-        )
-        == ()
-    )

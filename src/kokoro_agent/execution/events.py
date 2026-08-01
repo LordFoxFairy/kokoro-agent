@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
@@ -48,12 +47,12 @@ from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.evidence.models import (
-    durable_output_drafts_for_event,
-    is_durable_output_capable_event,
+from kokoro_agent.execution.event_policy import (
+    CRITICAL_EVENT_KINDS,
+    TERMINAL_EVENT_KINDS,
 )
-from kokoro_agent.presentation.runtime import PresentationCandidateWriter
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
+from kokoro_agent.storage.owner_event import OwnerEventFenceLost
 from kokoro_agent.storage.execution_context import (
     CompletionEventDraft,
     CompletedExecutionContext,
@@ -67,19 +66,9 @@ LOGGER = logging.getLogger(__name__)
 
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
 # 其余 live 帧（delta/tool 过程帧）不占 seq、丢了由 checkpoint 重建。
-CRITICAL_KINDS: frozenset[str] = frozenset(
-    {
-        "run.started",
-        "tool.awaiting_approval",
-        "plan.proposed",
-        "run.control.receipt",
-        "run.owner.completed",
-        "run.completed",
-        "run.failed",
-    }
-)
+CRITICAL_KINDS = CRITICAL_EVENT_KINDS
 # 终态帧：分配时 CAS 设 local fence（first-terminal），其后更大 seq 一律 superseded。
-TERMINAL_KINDS: frozenset[str] = frozenset({"run.completed", "run.failed"})
+TERMINAL_KINDS = TERMINAL_EVENT_KINDS
 
 AgentEventPayload = (
     RunStartedPayload
@@ -151,7 +140,7 @@ class RunEmitter:
         tool_segments: dict[str, str] | None = None,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunLedger | None = None,
-        presentation: PresentationCandidateWriter | None = None,
+        lease_owner_ref: str = "test-consumer",
         agent_thread_ref: str | None = None,
     ) -> None:
         self._bus = bus
@@ -166,9 +155,9 @@ class RunEmitter:
         # R4 durable outbox（None=纯 live 发布，向后兼容）：critical 帧经此分配 durable_seq/event_id、
         # 落 queued 行、发布后置 published。live 序（index）不动，durable_seq 独立并行。
         self._outbox = outbox
-        if (presentation is None) != (agent_thread_ref is None):
-            raise ValueError("presentation writer and agent thread ref must be paired")
-        self._presentation = presentation
+        if not lease_owner_ref:
+            raise ValueError("lease owner ref must not be empty")
+        self._lease_owner_ref = lease_owner_ref
         self._agent_thread_ref = agent_thread_ref
         self._delivery_warning_phases: set[str] = set()
 
@@ -188,18 +177,19 @@ class RunEmitter:
         run_id: str,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunLedger | None = None,
-        presentation: PresentationCandidateWriter | None = None,
+        lease_owner_ref: str = "test-consumer",
         agent_thread_ref: str | None = None,
     ) -> RunEmitter:
         # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
         # 同时从历史 awaiting 事件重建 tool_id→segment 归属（漂移正发生在 resume 重建之后）。
-        next_index = 0
+        next_index = await outbox.owner_event_head(run_id) if outbox is not None else 0
         tool_segments: dict[str, str] = {}
-        for item in await bus.read_all(run_events_stream(run_id)):
-            event = agent_event_adapter.validate_python(item.event)
-            next_index = max(next_index, event.index + 1)
-            if isinstance(event.payload, ToolAwaitingApprovalPayload):
-                tool_segments[event.payload.tool_id] = event.payload.segment_id
+        if outbox is None:
+            for item in await bus.read_all(run_events_stream(run_id)):
+                event = agent_event_adapter.validate_python(item.event)
+                next_index = max(next_index, event.index + 1)
+                if isinstance(event.payload, ToolAwaitingApprovalPayload):
+                    tool_segments[event.payload.tool_id] = event.payload.segment_id
         return cls(
             bus,
             run_id,
@@ -207,7 +197,7 @@ class RunEmitter:
             tool_segments,
             review_tool_names,
             outbox,
-            presentation,
+            lease_owner_ref,
             agent_thread_ref,
         )
 
@@ -255,61 +245,57 @@ class RunEmitter:
         payload = self._with_owner_segment(payload)
         kind = _KIND_BY_PAYLOAD[type(payload)]
         index = self._next_index
-        timestamp = _now_ms()
-        semantic_key = (
-            f"action_owner:{payload.tool_id}"
-            if isinstance(payload, ToolAwaitingApprovalPayload)
-            else f"plan.proposed:{payload.owner_ref}"
-            if isinstance(payload, PlanProposedPayload)
-            else "run.owner.completed"
-            if isinstance(payload, RunOwnerCompletedPayload)
-            else None
-        )
-        durable_output_committed = False
-        if self._outbox is not None and is_durable_output_capable_event(payload):
-            drafts = durable_output_drafts_for_event(payload)
-            source_payload_json = json.dumps(
-                payload.model_dump(mode="json", exclude_none=True),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            source_payload_sha256 = hashlib.sha256(
-                source_payload_json.encode()
-            ).hexdigest()
-            source_seed = "event:" + hashlib.sha256(
-                (
-                    f"v1\0{self._run_id}\0{kind}\0"
-                    f"{semantic_key or f'index:{index}'}"
-                ).encode()
-            ).hexdigest()
+        if self._outbox is not None:
             try:
-                records = await self._outbox.append_durable_outputs(
-                    self._run_id,
-                    source_seed,
-                    drafts,
-                    recorded_at_ms=timestamp,
-                    source_payload_sha256=source_payload_sha256,
+                result = await self._outbox.commit_owner_event(
+                    run_id=self._run_id,
+                    expected_index=index,
+                    kind=kind,
+                    payload=payload,
+                    lease_owner_ref=self._lease_owner_ref,
+                    agent_thread_ref=self._agent_thread_ref,
                 )
             except Exception as error:
-                reason = str(error)
-                detail = "APPEND_ERROR"
-                if reason in {
-                    "OUTPUT_SOURCE_BATCH_CONFLICT",
-                    "OUTPUT_SOURCE_CONFLICT",
-                    "OUTPUT_SOURCE_PARTIAL",
-                }:
-                    detail = reason
-                if semantic_key is not None and reason == "OUTPUT_SOURCE_CONFLICT":
-                    detail = f"semantic critical frame conflict for {semantic_key!r}"
                 raise DurableOutputCommitError(
-                    f"DURABLE_OUTPUT_COMMIT_FAILED: {detail}"
+                    "OWNER_EVENT_COMMIT_FAILED"
                 ) from error
-            if records is None:
-                raise DurableOutputCommitError(
-                    "DURABLE_OUTPUT_COMMIT_FAILED: DURABLE_OUTPUT_APPEND_REJECTED"
+            if result.status == "fence_lost":
+                raise OwnerEventFenceLost("OWNER_EVENT_FENCE_LOST")
+            if result.status == "idempotent":
+                return
+            event = result.event
+            if event is None:
+                raise AssertionError("committed owner event is missing")
+            self._next_index = event.index + 1
+            try:
+                await self._bus.publish(
+                    run_events_stream(self._run_id),
+                    event.model_dump(exclude_none=True),
+                    maxlen=RUN_EVENTS_MAXLEN,
                 )
-            durable_output_committed = bool(drafts)
+            except Exception:  # noqa: BLE001 - owner truth is already durable
+                self._record_delivery_failure(
+                    "live_publish",
+                    kind,
+                    metric_family=(
+                        "critical_outbox" if kind in CRITICAL_KINDS else "durable_output"
+                    ),
+                )
+                return
+            if event.durable_seq is not None:
+                try:
+                    await self._outbox.mark_critical_published(
+                        self._run_id, event.durable_seq
+                    )
+                except Exception:  # noqa: BLE001
+                    self._record_delivery_failure(
+                        "publish_ack", kind, metric_family="critical_outbox"
+                    )
+                    return
+                metrics.record_outbox("published")
+            return
+
+        timestamp = _now_ms()
         base: dict[str, object] = {
             "kind": kind,
             "run_id": self._run_id,
@@ -317,72 +303,6 @@ class RunEmitter:
             "timestamp": timestamp,
             "payload": payload,
         }
-        if self._presentation is not None:
-            presentation_event = agent_event_adapter.validate_python(base)
-            try:
-                records = await self._presentation.append_presentation_event(
-                    presentation_event,
-                    agent_thread_ref=self._agent_thread_ref or "",
-                )
-            except Exception as error:
-                raise DurableOutputCommitError(
-                    "PRESENTATION_COMMIT_FAILED"
-                ) from error
-            if records is None:
-                raise DurableOutputCommitError(
-                    "PRESENTATION_COMMIT_FAILED: PRESENTATION_APPEND_REJECTED"
-                )
-        if self._outbox is not None and kind in CRITICAL_KINDS:
-            # critical 帧：先分配 durable_seq/event_id + 落 queued 行，再发布（live），后置 published。
-            payload_json = json.dumps(payload.model_dump(mode="json", exclude_none=True))
-            try:
-                staged = await self._outbox.stage_critical_frame(
-                    self._run_id,
-                    kind,
-                    index,
-                    timestamp,
-                    payload_json,
-                    terminal=kind in TERMINAL_KINDS,
-                    semantic_key=semantic_key,
-                )
-            except Exception as error:
-                raise DurableOutputCommitError(
-                    "DURABLE_OUTPUT_STAGE_FAILED"
-                ) from error
-            if staged is None:
-                # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
-                return
-            if not staged.created:
-                # semantic owner 已有固定 durable identity（即使 outbox 已收据 GC）；不重发、
-                # 不推进 live index。不同 payload 已由 ledger fail-loud。
-                return
-            metrics.record_outbox("queued")
-            event = agent_event_adapter.validate_python(
-                {**base, "durable_seq": staged.durable_seq, "event_id": staged.event_id}
-            )
-            self._next_index += 1
-            try:
-                await self._bus.publish(
-                    run_events_stream(self._run_id),
-                    event.model_dump(exclude_none=True),
-                    maxlen=RUN_EVENTS_MAXLEN,
-                )
-            except Exception:  # noqa: BLE001 — live bus loss leaves the critical frame queued
-                self._record_delivery_failure(
-                    "live_publish", kind, metric_family="critical_outbox"
-                )
-                return
-            try:
-                await self._outbox.mark_critical_published(
-                    self._run_id, staged.durable_seq
-                )
-            except Exception:  # noqa: BLE001 — delivery ack loss leaves the staged row queued
-                self._record_delivery_failure(
-                    "publish_ack", kind, metric_family="critical_outbox"
-                )
-                return
-            metrics.record_outbox("published")
-            return
         event = agent_event_adapter.validate_python(base)
         self._next_index += 1
         # exclude_none：契约 optional 字段的 None 即"缺席"；null 上 wire 会被 session 的 zod .optional() 拒收。
@@ -392,12 +312,8 @@ class RunEmitter:
                 event.model_dump(exclude_none=True),
                 maxlen=RUN_EVENTS_MAXLEN,
             )
-        except Exception:  # noqa: BLE001 — isolate only after this event is durable
-            if not durable_output_committed:
-                raise
-            self._record_delivery_failure(
-                "live_publish", kind, metric_family="durable_output"
-            )
+        except Exception:
+            raise
 
     async def emit_completed(
         self,
@@ -433,50 +349,29 @@ class RunEmitter:
             payload_json=json.dumps(payload.model_dump(mode="json", exclude_none=True)),
         )
         claimed = await self._outbox.try_complete_execution_context(
-            completion, owner, terminal
+            completion,
+            owner,
+            terminal,
+            lease_owner_ref=self._lease_owner_ref,
+            agent_thread_ref=self._agent_thread_ref,
         )
         if claimed is None:
             return False
 
-        if self._presentation is not None:
-            presentation_event = agent_event_adapter.validate_python(
-                {
-                    "kind": terminal.kind,
-                    "run_id": self._run_id,
-                    "index": terminal.index,
-                    "timestamp": terminal.timestamp,
-                    "payload": payload,
-                }
-            )
-            try:
-                records = await self._presentation.append_presentation_event(
-                    presentation_event,
-                    agent_thread_ref=self._agent_thread_ref or "",
-                )
-            except Exception as error:
-                raise DurableOutputCommitError(
-                    "PRESENTATION_COMMIT_FAILED"
-                ) from error
-            if records is None:
-                raise DurableOutputCommitError(
-                    "PRESENTATION_COMMIT_FAILED: PRESENTATION_APPEND_REJECTED"
-                )
-
         self._next_index += 2
         metrics.record_outbox("queued")
         metrics.record_outbox("queued")
-        first_error: Exception | None = None
         for frame in (claimed.owner, claimed.terminal):
             try:
                 await self._publish_completion_frame(frame)
-            except Exception as error:  # noqa: BLE001 — leave this and later slots for replay
-                first_error = error
+            except Exception:  # noqa: BLE001 — durable rows remain queued for replay
+                self._record_delivery_failure(
+                    "live_publish", frame.kind, metric_family="critical_outbox"
+                )
                 # Strict causal edge: Session must never observe terminal before the private
                 # owner milestone. Both rows remain queued when owner publish/mark is uncertain;
                 # the ordered scanner will replay owner before terminal.
                 break
-        if first_error is not None:
-            raise first_error
         return True
 
     async def _publish_completion_frame(self, frame: DurableCompletionFrame) -> None:

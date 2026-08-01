@@ -38,9 +38,6 @@ async def _run(
         store=store,
     )
 
-    async def claim() -> bool:
-        return True
-
     ledger = FakeLedger()
     terminal = await invoke_once(
         RunEmitter(bus, context.run_id, outbox=ledger),
@@ -52,7 +49,6 @@ async def _run(
         {"messages": [HumanMessage(content="hi")], "scope": context.as_state()},
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
-        claim_terminal=claim,
         prepare_completed=lambda: completed_execution_context(context.run_id),
         record_usage=usage_recorder()[0],
     )

@@ -22,10 +22,6 @@ def _runtime_custom(_name: str) -> SubagentSource:
     return "runtime-custom"
 
 
-async def _always_claim() -> bool:
-    return True
-
-
 async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
     ledger = FakeLedger()
     emitter = await RunEmitter.attach(bus, "r1", outbox=ledger)
@@ -36,7 +32,6 @@ async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
         prepare_completed=lambda: completed_execution_context("r1"),
         record_usage=usage_recorder()[0],
     )

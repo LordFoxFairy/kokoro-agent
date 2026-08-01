@@ -96,6 +96,9 @@ class ExecutionContextStore(Protocol):
         completion: CompletedExecutionContext,
         owner_event: CompletionEventDraft,
         terminal_event: CompletionEventDraft,
+        *,
+        lease_owner_ref: str,
+        agent_thread_ref: str | None,
     ) -> ClaimedCompletionFrames | None: ...
 
 

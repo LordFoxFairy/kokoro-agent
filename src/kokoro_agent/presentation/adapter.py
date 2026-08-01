@@ -57,6 +57,16 @@ class CandidateProtocolError(ValueError):
     """Stable fail-closed error raised at the official SDK trust boundary."""
 
 
+def _closed_candidate_source(
+    source: AgentAguiCandidateSource,
+) -> AgentAguiCandidateSource:
+    try:
+        serialized = source.model_dump(mode="json", by_alias=True, exclude_none=True)
+        return AgentAguiCandidateSource.model_validate(serialized)
+    except (AttributeError, TypeError, ValueError, ValidationError) as error:
+        raise CandidateProtocolError("AGUI_CANDIDATE_SOURCE_INVALID") from error
+
+
 def _closed_official_event(event: BaseEvent) -> ClosedAguiEvent:
     if (
         not isinstance(event, _ALLOWED_OFFICIAL_CLASSES)
@@ -126,6 +136,7 @@ def build_agui_candidate(
 ) -> AgentAguiEventCandidate:
     """Construct with official models, close the shape, then seal identity/digest."""
 
+    source = _closed_candidate_source(source)
     closed = _closed_official_event(event)
     _validate_source_scope(closed, source)
     digest = event_digest(closed)

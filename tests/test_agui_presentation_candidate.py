@@ -152,6 +152,40 @@ def test_run_started_parent_is_forbidden_until_session_derives_lineage() -> None
         )
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        SOURCE.model_copy(update={"source_ordinal": "01"}),
+        SOURCE.model_copy(update={"source_event_ref": "invalid ref"}),
+        SOURCE.model_copy(
+            update={
+                "route": SOURCE.route.model_copy(
+                    update={"internal_thread_ref": "invalid thread ref"}
+                )
+            }
+        ),
+        AgentAguiCandidateSource.model_construct(
+            source_event_ref="source.event.constructed",
+            source_ordinal="18446744073709551616",
+            recorded_at="1970-01-01T00:00:00.000Z",
+            route=SOURCE.route,
+        ),
+    ],
+)
+def test_builder_revalidates_caller_source_instances(
+    source: AgentAguiCandidateSource,
+) -> None:
+    with pytest.raises(CandidateProtocolError, match="AGUI_CANDIDATE_SOURCE_INVALID"):
+        build_agui_candidate(
+            RunStartedEvent(
+                thread_id="thread.1",
+                run_id="run.1",
+                timestamp=TIMESTAMP,
+            ),
+            source=source,
+        )
+
+
 def test_run_finished_requires_explicit_success_and_forbids_result() -> None:
     successful = build_agui_candidate(
         RunFinishedEvent(

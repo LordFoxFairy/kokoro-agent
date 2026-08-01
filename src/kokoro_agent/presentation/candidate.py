@@ -71,6 +71,7 @@ class _StrictCandidateModel(BaseModel):
         extra="forbid",
         alias_generator=to_camel,
         populate_by_name=True,
+        revalidate_instances="always",
     )
 
 

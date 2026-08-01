@@ -31,6 +31,10 @@ official event timestamp, and route/source/digest are bound into candidate ident
 always carries the official explicit success outcome and never carries `result`; Session must validate
 and deliberately project that outcome before the narrower browser event shape.
 
+Caller-supplied source models are untrusted even when their Python type is correct. The builder dumps and
+strictly reconstructs the complete nested source before scope or identity work, and candidate models enable
+instance revalidation, so `model_copy`/`model_construct` cannot bypass ordinal, identifier, time or route rules.
+
 Candidate `RUN_STARTED` forbids `parentRunId`; Session owns run bindings and alone derives the browser
 presentation parent. `sourceOrdinal` comes from `AgentEvent.index`, the RunEmitter-owned per-run sequence
 that starts at zero and continues across attach/resume. It never comes from the independent optional,

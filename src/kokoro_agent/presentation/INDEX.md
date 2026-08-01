@@ -24,6 +24,8 @@ Agent-internal candidate envelope with a deterministic RFC 8785 JCS digest and i
 This package produces internal candidates only. Session owns durable presentation rows, run/message
 bindings, browser projection, cursors, snapshot repair, SSE and cancellation/interruption rendering.
 The package is dormant and has no transport, process composition, background task, or browser path.
+The child-owned `scripts.compat.agui_candidate_provider` compatibility process exercises this public
+builder to provide real cross-repository evidence; it does not activate a production transport path.
 
 The caller must supply an opaque durable `sourceEventRef` and `agent_thread_ref` from Agent owner
 authority; the adapter never derives either from Session identity or content. The thread ref is a

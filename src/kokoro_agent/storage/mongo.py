@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
@@ -17,7 +18,12 @@ from pymongo.errors import DuplicateKeyError
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from kokoro_agent.contract import RunCompletedPayload, RunOwnerCompletedPayload, RunRequest
+from kokoro_agent.contract import (
+    AgentEvent,
+    RunCompletedPayload,
+    RunOwnerCompletedPayload,
+    RunRequest,
+)
 from kokoro_agent.storage.execution_context import (
     ClaimedCompletionFrames,
     CompletionEventDraft,
@@ -45,12 +51,28 @@ from kokoro_agent.evidence.models import (
     make_durable_output_record,
     make_durable_execution_evidence,
 )
+from kokoro_agent.presentation.runtime import (
+    PresentationAcknowledgeCommand,
+    PresentationAcknowledgeState,
+    PresentationCandidateRecord,
+    PresentationProjectionState,
+    PresentationQuarantineCommand,
+    plan_presentation_batch,
+)
+from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
 
 # 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
 AGENT_DURABLE_OUTPUT_COLLECTION = "agent_durable_output"
 AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION = "agent_durable_output_source_batch"
+AGENT_PRESENTATION_CANDIDATE_COLLECTION = "agent_presentation_candidate"
+AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION = "agent_presentation_source_batch"
+AGENT_PRESENTATION_STATE_COLLECTION = "agent_presentation_state"
+AGENT_PRESENTATION_DELIVERY_COLLECTION = "agent_presentation_delivery"
+AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION = (
+    "agent_presentation_admission_command"
+)
 
 _T = TypeVar("_T")
 _OUTPUT_APPEND_MAX_ATTEMPTS = 64
@@ -73,6 +95,57 @@ def _output_source_batch_digest(payload_sha256s: tuple[str, ...]) -> str:
 def _output_source_batch_id(run_id: str, source_event_ref: str) -> str:
     identity = hashlib.sha256(f"v1\0{run_id}\0{source_event_ref}".encode()).hexdigest()
     return f"output_batch_{identity}"
+
+
+def _presentation_command_id(run_id: str, kind: str, command_ref: str) -> str:
+    material = f"v1\0{run_id}\0{kind}\0{command_ref}".encode()
+    return f"presentation_command_{hashlib.sha256(material).hexdigest()}"
+
+
+def _presentation_quarantine_digest(command: PresentationQuarantineCommand) -> str:
+    canonical = json.dumps(
+        command.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(b"kokoro-presentation-quarantine-v1\0" + canonical).hexdigest()
+
+
+def _delivery_state(
+    run_id: str, document: dict[str, object] | None
+) -> PresentationAcknowledgeState:
+    if document is None:
+        return PresentationAcknowledgeState(
+            run_id=run_id,
+            acknowledged_through_presentation_seq=0,
+            revision=0,
+        )
+    public = {key: value for key, value in document.items() if key != "_id"}
+    return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(public)
+
+
+async def _replace_delivery_state(
+    collection: AsyncCollection[dict[str, object]],
+    current: PresentationAcknowledgeState,
+    effect: PresentationAcknowledgeState,
+    *,
+    session: AsyncClientSession | None,
+) -> None:
+    document: dict[str, object] = {
+        "_id": effect.run_id,
+        **effect.model_dump(mode="python"),
+    }
+    if current.revision == 0:
+        await collection.insert_one(document, session=session)
+        return
+    result = await collection.replace_one(
+        {"_id": current.run_id, "revision": current.revision},
+        document,
+        session=session,
+    )
+    if result.modified_count != 1:
+        raise ValueError("PRESENTATION_DELIVERY_CAS_CONFLICT")
 
 
 def _now_ms() -> int:
@@ -205,6 +278,15 @@ _DURABLE_EVIDENCE_ADAPTER: TypeAdapter[DurableExecutionEvidence] = TypeAdapter(
 _DURABLE_OUTPUT_ADAPTER: TypeAdapter[DurableOutputRecord] = TypeAdapter(
     DurableOutputRecord
 )
+_PRESENTATION_RECORD_ADAPTER: TypeAdapter[PresentationCandidateRecord] = TypeAdapter(
+    PresentationCandidateRecord
+)
+_PRESENTATION_STATE_ADAPTER: TypeAdapter[PresentationProjectionState] = TypeAdapter(
+    PresentationProjectionState
+)
+_PRESENTATION_ACK_STATE_ADAPTER: TypeAdapter[PresentationAcknowledgeState] = (
+    TypeAdapter(PresentationAcknowledgeState)
+)
 
 _EXECUTION_BINDING_ADAPTER: TypeAdapter[ExecutionContextBinding] = TypeAdapter(
     ExecutionContextBinding
@@ -295,6 +377,21 @@ class MongoLedger:
         # ordered payload identity without polluting public output cursors or hash chains.
         self._output_source_batches = collection.database[
             AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION
+        ]
+        self._presentation_candidates = collection.database[
+            AGENT_PRESENTATION_CANDIDATE_COLLECTION
+        ]
+        self._presentation_source_batches = collection.database[
+            AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION
+        ]
+        self._presentation_states = collection.database[
+            AGENT_PRESENTATION_STATE_COLLECTION
+        ]
+        self._presentation_delivery = collection.database[
+            AGENT_PRESENTATION_DELIVERY_COLLECTION
+        ]
+        self._presentation_admission_commands = collection.database[
+            AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION
         ]
 
     async def _run_evidence_transaction(
@@ -627,6 +724,396 @@ class MongoLedger:
             .limit(limit)
         )
         return [_DURABLE_OUTPUT_ADAPTER.validate_python(row) async for row in cursor]
+
+    async def append_presentation_event(
+        self, event: AgentEvent, *, agent_thread_ref: str
+    ) -> tuple[PresentationCandidateRecord, ...] | None:
+        """Commit one source fact's complete official AG-UI batch and state transition.
+
+        START+CONTENT, terminal END+RUN terminal, source marker, candidate records and the
+        projection head are born in one Mongo transaction. Replays return the exact records.
+        """
+
+        source_seed = hashlib.sha256(
+            f"v1\0{event.run_id}\0{event.kind}\0{event.event_id or f'index:{event.index}'}".encode()
+        ).hexdigest()
+        marker_id = f"presentation_batch_{source_seed}"
+        source_payload_sha256 = hashlib.sha256(
+            json.dumps(
+                event.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+
+        async def append(
+            session: AsyncClientSession | None,
+        ) -> tuple[PresentationCandidateRecord, ...] | None:
+            existing_marker = await self._presentation_source_batches.find_one(
+                {"_id": marker_id}, session=session
+            )
+            if existing_marker is not None:
+                if (
+                    existing_marker.get("run_id") != event.run_id
+                    or existing_marker.get("agent_thread_ref") != agent_thread_ref
+                    or existing_marker.get("source_payload_sha256")
+                    != source_payload_sha256
+                ):
+                    raise ValueError("PRESENTATION_SOURCE_CONFLICT")
+                rows = [
+                    row
+                    async for row in self._presentation_candidates.find(
+                        {
+                            "run_id": event.run_id,
+                            "source_batch_ref": marker_id,
+                        },
+                        {"_id": 0, "source_batch_ref": 0},
+                        session=session,
+                    ).sort("presentation_seq", 1)
+                ]
+                if len(rows) != existing_marker.get("batch_size"):
+                    raise ValueError("PRESENTATION_SOURCE_PARTIAL")
+                records = tuple(
+                    _PRESENTATION_RECORD_ADAPTER.validate_python(row) for row in rows
+                )
+                ordered_digest = hashlib.sha256(
+                    b"".join(bytes.fromhex(row.envelope_sha256) for row in records)
+                ).hexdigest()
+                if ordered_digest != existing_marker.get("ordered_envelope_sha256"):
+                    raise ValueError("PRESENTATION_SOURCE_CONFLICT")
+                first_seq = existing_marker.get("first_presentation_seq")
+                if records and (
+                    not isinstance(first_seq, int)
+                    or any(
+                        record.presentation_seq != first_seq + offset
+                        for offset, record in enumerate(records)
+                    )
+                ):
+                    raise ValueError("PRESENTATION_SOURCE_PARTIAL")
+                return records
+
+            state_doc = await self._presentation_states.find_one(
+                {"_id": event.run_id}, session=session
+            )
+            if state_doc is None:
+                revision = 0
+                state = PresentationProjectionState()
+            else:
+                revision_value = state_doc.get("revision")
+                if not isinstance(revision_value, int) or revision_value < 1:
+                    raise TypeError("PRESENTATION_STATE_REVISION_INVALID")
+                revision = revision_value
+                state = _PRESENTATION_STATE_ADAPTER.validate_python(
+                    state_doc.get("state"), strict=False
+                )
+            batch = plan_presentation_batch(event, state, agent_thread_ref)
+            records = tuple(
+                PresentationCandidateRecord.from_candidate(
+                    run_id=event.run_id,
+                    presentation_seq=int(candidate.source.source_ordinal) + 1,
+                    candidate=candidate,
+                    producer_instance_ref=self._producer_instance_ref,
+                    producer_generation=self._producer_generation,
+                )
+                for candidate in batch.candidates
+            )
+            ordered_digest = hashlib.sha256(
+                b"".join(bytes.fromhex(record.envelope_sha256) for record in records)
+            ).hexdigest()
+            marker: dict[str, object] = {
+                "_id": marker_id,
+                "run_id": event.run_id,
+                "agent_thread_ref": agent_thread_ref,
+                "source_event_ref": batch.source_event_ref,
+                "source_payload_sha256": batch.source_payload_sha256,
+                "batch_size": len(records),
+                "ordered_envelope_sha256": ordered_digest,
+                "first_presentation_seq": (
+                    records[0].presentation_seq if records else None
+                ),
+                "recorded_at_ms": event.timestamp,
+            }
+            next_state_doc: dict[str, object] = {
+                "_id": event.run_id,
+                "revision": revision + 1,
+                "state": batch.next_state.model_dump(mode="python"),
+            }
+            if revision == 0:
+                await self._presentation_states.insert_one(
+                    next_state_doc, session=session
+                )
+            else:
+                advanced = await self._presentation_states.replace_one(
+                    {"_id": event.run_id, "revision": revision},
+                    next_state_doc,
+                    session=session,
+                )
+                if advanced.modified_count != 1:
+                    raise _OutputAppendContention
+            if records:
+                await self._presentation_candidates.insert_many(
+                    [
+                        {
+                            "_id": record.presentation_ref,
+                            **record.model_dump(mode="python"),
+                            "source_batch_ref": marker_id,
+                        }
+                        for record in records
+                    ],
+                    ordered=True,
+                    session=session,
+                )
+            await self._presentation_source_batches.insert_one(
+                marker, session=session
+            )
+            return records
+
+        for attempt in range(_OUTPUT_APPEND_MAX_ATTEMPTS):
+            try:
+                return await self._run_evidence_transaction(append)
+            except (_OutputAppendContention, DuplicateKeyError):
+                if attempt + 1 == _OUTPUT_APPEND_MAX_ATTEMPTS:
+                    raise RuntimeError("PRESENTATION_APPEND_CONTENTION") from None
+        raise AssertionError("unreachable presentation append retry")
+
+    async def presentation_head(self, run_id: str) -> int:
+        row = await self._presentation_states.find_one(
+            {"_id": run_id}, {"state.next_ordinal": 1}
+        )
+        if row is None:
+            return 0
+        state = row.get("state")
+        if not isinstance(state, dict):
+            raise TypeError("PRESENTATION_STATE_INVALID")
+        value: object = cast(dict[str, object], state).get("next_ordinal")
+        if not isinstance(value, int) or value < 0:
+            raise TypeError("PRESENTATION_HEAD_INVALID")
+        return value
+
+    async def pull_presentation_candidates(
+        self,
+        run_id: str,
+        after_presentation_seq: int,
+        through_presentation_seq: int,
+        limit: int,
+    ) -> tuple[PresentationCandidateRecord, ...]:
+        if (
+            after_presentation_seq < 0
+            or through_presentation_seq < after_presentation_seq
+            or limit < 1
+            or limit > 257
+        ):
+            raise ValueError("PRESENTATION_CURSOR_INVALID")
+        cursor = (
+            self._presentation_candidates.find(
+                {
+                    "run_id": run_id,
+                    "presentation_seq": {
+                        "$gt": after_presentation_seq,
+                        "$lte": through_presentation_seq,
+                    },
+                },
+                {"_id": 0, "source_batch_ref": 0},
+            )
+            .sort("presentation_seq", 1)
+            .limit(limit)
+        )
+        records: list[PresentationCandidateRecord] = []
+        async for row in cursor:
+            records.append(_PRESENTATION_RECORD_ADAPTER.validate_python(row))
+        return tuple(records)
+
+    async def acknowledge_presentation_admissions(
+        self, command: PresentationAcknowledgeCommand
+    ) -> PresentationAcknowledgeState:
+        marker_id = _presentation_command_id(
+            command.run_id, "ack", command.acknowledgement_ref
+        )
+
+        async def acknowledge(
+            session: AsyncClientSession | None,
+        ) -> PresentationAcknowledgeState:
+            existing = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}, session=session
+            )
+            if existing is not None:
+                if existing.get("command_digest") != command.request_effect_digest:
+                    raise ValueError("PRESENTATION_ACK_REPLAY_CONFLICT")
+                return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+                    existing.get("effect")
+                )
+            current_doc = await self._presentation_delivery.find_one(
+                {"_id": command.run_id}, session=session
+            )
+            current = _delivery_state(command.run_id, current_doc)
+            if current.quarantined_presentation_seq is not None:
+                raise ValueError("PRESENTATION_DELIVERY_QUARANTINED")
+            if (
+                current.acknowledged_through_presentation_seq
+                != command.expected_acknowledged_through_presentation_seq
+            ):
+                raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
+            for receipt in command.receipts:
+                record = await self._presentation_candidates.find_one(
+                    {
+                        "run_id": command.run_id,
+                        "presentation_seq": receipt.presentation_seq,
+                    },
+                    {"presentation_ref": 1, "candidate_envelope_json": 1},
+                    session=session,
+                )
+                if record is None or record.get("presentation_ref") != receipt.presentation_ref:
+                    raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
+                envelope_bytes = record.get("candidate_envelope_json")
+                if not isinstance(envelope_bytes, bytes):
+                    raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
+                envelope = AgentAguiEventCandidate.model_validate_json(envelope_bytes)
+                if envelope.candidate_ref != receipt.candidate_ref:
+                    raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
+            effect = PresentationAcknowledgeState(
+                run_id=command.run_id,
+                acknowledged_through_presentation_seq=(
+                    command.receipts[-1].presentation_seq
+                ),
+                revision=current.revision + 1,
+            )
+            await _replace_delivery_state(
+                self._presentation_delivery,
+                current,
+                effect,
+                session=session,
+            )
+            await self._presentation_admission_commands.insert_one(
+                {
+                    "_id": marker_id,
+                    "run_id": command.run_id,
+                    "kind": "ack",
+                    "command_digest": command.request_effect_digest,
+                    "effect": effect.model_dump(mode="python"),
+                    "receipts": [
+                        receipt.model_dump(mode="python")
+                        for receipt in command.receipts
+                    ],
+                },
+                session=session,
+            )
+            return effect
+
+        try:
+            return await self._run_evidence_transaction(acknowledge)
+        except DuplicateKeyError:
+            duplicate = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}
+            )
+            if (
+                duplicate is None
+                or duplicate.get("command_digest") != command.request_effect_digest
+            ):
+                raise ValueError("PRESENTATION_ACK_REPLAY_CONFLICT") from None
+            return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+                duplicate.get("effect")
+            )
+
+    async def quarantine_presentation_admission(
+        self, command: PresentationQuarantineCommand
+    ) -> PresentationAcknowledgeState:
+        marker_id = _presentation_command_id(
+            command.run_id, "reject", command.rejection_ref
+        )
+        command_digest = _presentation_quarantine_digest(command)
+
+        async def quarantine(
+            session: AsyncClientSession | None,
+        ) -> PresentationAcknowledgeState:
+            existing = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}, session=session
+            )
+            if existing is not None:
+                if existing.get("command_digest") != command_digest:
+                    raise ValueError("PRESENTATION_QUARANTINE_REPLAY_CONFLICT")
+                return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+                    existing.get("effect")
+                )
+            current_doc = await self._presentation_delivery.find_one(
+                {"_id": command.run_id}, session=session
+            )
+            current = _delivery_state(command.run_id, current_doc)
+            if current.quarantined_presentation_seq is not None:
+                raise ValueError("PRESENTATION_DELIVERY_QUARANTINED")
+            if (
+                current.acknowledged_through_presentation_seq
+                != command.expected_acknowledged_through_presentation_seq
+                or command.presentation_seq
+                != current.acknowledged_through_presentation_seq + 1
+            ):
+                raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
+            record = await self._presentation_candidates.find_one(
+                {
+                    "run_id": command.run_id,
+                    "presentation_seq": command.presentation_seq,
+                },
+                {"presentation_ref": 1, "candidate_envelope_json": 1},
+                session=session,
+            )
+            if record is None or record.get("presentation_ref") != command.presentation_ref:
+                raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
+            envelope_bytes = record.get("candidate_envelope_json")
+            if not isinstance(envelope_bytes, bytes):
+                raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
+            envelope = AgentAguiEventCandidate.model_validate_json(envelope_bytes)
+            if envelope.candidate_ref != command.candidate_ref:
+                raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
+            effect = PresentationAcknowledgeState(
+                run_id=command.run_id,
+                acknowledged_through_presentation_seq=(
+                    current.acknowledged_through_presentation_seq
+                ),
+                revision=current.revision + 1,
+                quarantined_presentation_seq=command.presentation_seq,
+                quarantine_reason=command.reason,
+            )
+            await _replace_delivery_state(
+                self._presentation_delivery,
+                current,
+                effect,
+                session=session,
+            )
+            await self._presentation_admission_commands.insert_one(
+                {
+                    "_id": marker_id,
+                    "run_id": command.run_id,
+                    "kind": "quarantine",
+                    "command_digest": command_digest,
+                    "effect": effect.model_dump(mode="python"),
+                    "session_effect_digest": command.session_effect_digest,
+                },
+                session=session,
+            )
+            return effect
+
+        try:
+            return await self._run_evidence_transaction(quarantine)
+        except DuplicateKeyError:
+            duplicate = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}
+            )
+            if (
+                duplicate is None
+                or duplicate.get("command_digest") != command_digest
+            ):
+                raise ValueError("PRESENTATION_QUARANTINE_REPLAY_CONFLICT") from None
+            return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+                duplicate.get("effect")
+            )
+
+    async def get_presentation_delivery_state(
+        self, run_id: str
+    ) -> PresentationAcknowledgeState:
+        return _delivery_state(
+            run_id,
+            await self._presentation_delivery.find_one({"_id": run_id}),
+        )
 
     async def get_durable_retention_stats(self) -> DurableRetentionStats:
         return DurableRetentionStats(

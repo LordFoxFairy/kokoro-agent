@@ -8,11 +8,14 @@
 - LangChain/LangGraph/DeepAgents 执行。
 - tools、skills、MCP client、subagents、HITL、sandbox。
 - checkpoint、memory、run state、raw execution events。
+- official AG-UI internal candidate construction、durable presentation source batch 与
+  Agent→Session pull/ack/quarantine application port。
 - run 级别的 capability 装配和执行生命周期。
 
 ## Does Not Own
 
 - 浏览器会话事件契约的业务投影。
+- public presentation identity、Session admission/binding、cursor/snapshot/SSE。
 - session messages、snapshot、SSE replay。
 - 用户、团队、site、workspace 的身份主数据。
 - credit/payment/model pricing。

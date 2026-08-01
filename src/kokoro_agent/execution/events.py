@@ -52,6 +52,7 @@ from kokoro_agent.evidence.models import (
     durable_output_drafts_for_event,
     is_durable_output_capable_event,
 )
+from kokoro_agent.presentation.runtime import PresentationCandidateWriter
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
 from kokoro_agent.storage.execution_context import (
     CompletionEventDraft,
@@ -150,6 +151,8 @@ class RunEmitter:
         tool_segments: dict[str, str] | None = None,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunLedger | None = None,
+        presentation: PresentationCandidateWriter | None = None,
+        agent_thread_ref: str | None = None,
     ) -> None:
         self._bus = bus
         self._run_id = run_id
@@ -163,6 +166,10 @@ class RunEmitter:
         # R4 durable outbox（None=纯 live 发布，向后兼容）：critical 帧经此分配 durable_seq/event_id、
         # 落 queued 行、发布后置 published。live 序（index）不动，durable_seq 独立并行。
         self._outbox = outbox
+        if (presentation is None) != (agent_thread_ref is None):
+            raise ValueError("presentation writer and agent thread ref must be paired")
+        self._presentation = presentation
+        self._agent_thread_ref = agent_thread_ref
         self._delivery_warning_phases: set[str] = set()
 
     @property
@@ -181,6 +188,8 @@ class RunEmitter:
         run_id: str,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunLedger | None = None,
+        presentation: PresentationCandidateWriter | None = None,
+        agent_thread_ref: str | None = None,
     ) -> RunEmitter:
         # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
         # 同时从历史 awaiting 事件重建 tool_id→segment 归属（漂移正发生在 resume 重建之后）。
@@ -191,7 +200,16 @@ class RunEmitter:
             next_index = max(next_index, event.index + 1)
             if isinstance(event.payload, ToolAwaitingApprovalPayload):
                 tool_segments[event.payload.tool_id] = event.payload.segment_id
-        return cls(bus, run_id, next_index, tool_segments, review_tool_names, outbox)
+        return cls(
+            bus,
+            run_id,
+            next_index,
+            tool_segments,
+            review_tool_names,
+            outbox,
+            presentation,
+            agent_thread_ref,
+        )
 
     def _with_owner_segment(self, payload: AgentEventPayload) -> AgentEventPayload:
         if isinstance(payload, ToolAwaitingApprovalPayload):
@@ -299,6 +317,21 @@ class RunEmitter:
             "timestamp": timestamp,
             "payload": payload,
         }
+        if self._presentation is not None:
+            presentation_event = agent_event_adapter.validate_python(base)
+            try:
+                records = await self._presentation.append_presentation_event(
+                    presentation_event,
+                    agent_thread_ref=self._agent_thread_ref or "",
+                )
+            except Exception as error:
+                raise DurableOutputCommitError(
+                    "PRESENTATION_COMMIT_FAILED"
+                ) from error
+            if records is None:
+                raise DurableOutputCommitError(
+                    "PRESENTATION_COMMIT_FAILED: PRESENTATION_APPEND_REJECTED"
+                )
         if self._outbox is not None and kind in CRITICAL_KINDS:
             # critical 帧：先分配 durable_seq/event_id + 落 queued 行，再发布（live），后置 published。
             payload_json = json.dumps(payload.model_dump(mode="json", exclude_none=True))
@@ -404,6 +437,30 @@ class RunEmitter:
         )
         if claimed is None:
             return False
+
+        if self._presentation is not None:
+            presentation_event = agent_event_adapter.validate_python(
+                {
+                    "kind": terminal.kind,
+                    "run_id": self._run_id,
+                    "index": terminal.index,
+                    "timestamp": terminal.timestamp,
+                    "payload": payload,
+                }
+            )
+            try:
+                records = await self._presentation.append_presentation_event(
+                    presentation_event,
+                    agent_thread_ref=self._agent_thread_ref or "",
+                )
+            except Exception as error:
+                raise DurableOutputCommitError(
+                    "PRESENTATION_COMMIT_FAILED"
+                ) from error
+            if records is None:
+                raise DurableOutputCommitError(
+                    "PRESENTATION_COMMIT_FAILED: PRESENTATION_APPEND_REJECTED"
+                )
 
         self._next_index += 2
         metrics.record_outbox("queued")

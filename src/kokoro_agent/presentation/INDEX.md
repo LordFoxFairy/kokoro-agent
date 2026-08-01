@@ -5,68 +5,56 @@ owners:
   - "@LordFoxFairy"
 ---
 
-# presentation — dormant internal AG-UI candidate boundary
+# presentation — production official AG-UI output boundary
 
 ## Responsibilities
 
-Construct the Root-pinned official Python AG-UI event models, serialize their canonical camelCase
-typed event, validate it again through Kokoro's closed strict profile, and seal one immutable
-Agent-internal candidate envelope with a deterministic RFC 8785 JCS digest and identity.
+Convert real `RunEmitter` owner facts into the Root-pinned official Python AG-UI models, close them
+through Kokoro's strict profile, and commit an append-only Agent presentation log before live raw-event
+publication. This is the only Agent-owned browser-presentation semantic output.
 
-## Public boundary
+`runtime.py` owns the stateful source-batch projector and child application port:
 
-`kokoro_agent.presentation` exports the profile pins, strict `AgentAguiCandidateRoute`,
-`AgentAguiCandidateSource` and `AgentAguiEventCandidate`, `build_agui_candidate`,
-`map_agent_event_candidates`, and the stable `CandidateProtocolError`.
+- first text delta atomically creates `TEXT_MESSAGE_START + TEXT_MESSAGE_CONTENT`;
+- a completion without deltas atomically creates START + optional CONTENT + END;
+- terminal/failure closes every open message before RUN_FINISHED/RUN_ERROR;
+- one source fact may create multiple candidates, each with a stable run-global ordinal, member source
+  identity and candidate digest;
+- tool, HITL, plan and subagent facts become closed, redacted `ACTIVITY_SNAPSHOT` values. Raw args,
+  raw results, provider data, secrets, reasoning and subagent text never enter the presentation log;
+- an opaque Agent thread ref is domain-separated from namespace + inbound thread identity. Agent never
+  forwards a Session/browser thread identifier.
 
-## Ownership and activation
+## Durability and delivery
 
-This package produces internal candidates only. Session owns durable presentation rows, run/message
-bindings, browser projection, cursors, snapshot repair, SSE and cancellation/interruption rendering.
-The package is dormant and has no transport, process composition, background task, or browser path.
-The child-owned `scripts.compat.agui_candidate_provider` compatibility process exercises this public
-builder to provide real cross-repository evidence; it does not activate a production transport path.
+Mongo commits source marker, full ordered candidate batch and next projection state in one transaction.
+Replay must reproduce the exact batch or fail closed. Candidate sequence is independent from raw live
+index, lifecycle durable sequence and execution-output sequence.
 
-The caller must supply an opaque durable `sourceEventRef` and `agent_thread_ref` from Agent owner
-authority; the adapter never derives either from Session identity or content. The thread ref is a
-closed `agent.thread:<opaque-id>` brand, so a Session thread/session identifier cannot be accepted by
-accident. Root's cross-repository contract makes ordinal-zero `RUN_STARTED` establish that owner ref
-per run and requires every later candidate to retain it; this stateless builder never invents it.
-`sourceOrdinal` is canonical uint64 decimal, `recordedAt` is canonical UTC milliseconds equal to the
-official event timestamp, and route/source/digest are bound into candidate identity. `RUN_FINISHED`
-always carries the official explicit success outcome and never carries `result`; Session must validate
-and deliberately project that outcome before the narrower browser event shape.
+`AgentPresentationService` freezes a snapshot head on the first pull and pages only through that head.
+The future Root Connect provider maps this child application shape without changing its semantics:
 
-Caller-supplied source models are untrusted even when their Python type is correct. The builder dumps and
-strictly reconstructs the complete nested source before scope or identity work, and candidate models enable
-instance revalidation, so `model_copy`/`model_construct` cannot bypass ordinal, identifier, time or route rules.
+- `PullCandidateBatches` returns ordered candidate envelopes plus record/envelope digests and producer
+  instance/generation fencing;
+- `AcknowledgeCandidateAdmissions` advances only a contiguous prefix under expected-watermark CAS and
+  an idempotent request/effect digest;
+- `GetDeliveryStatus` exposes acknowledged-through/revision/quarantine;
+- a permanent Session rejection is a typed quarantine at the first gap. It never advances the ACK
+  watermark and cannot be represented as success.
 
-Candidate `RUN_STARTED` forbids `parentRunId`; Session owns run bindings and alone derives the browser
-presentation parent. `sourceOrdinal` comes from `AgentEvent.index`, the RunEmitter-owned per-run sequence
-that starts at zero and continues across attach/resume. It never comes from the independent optional,
-one-based `durable_seq` assigned by the outbox.
+No candidate is garbage-collected merely because it was pulled. GC remains forbidden until the typed
+Session admission receipt has advanced the contiguous acknowledgement watermark.
 
-The current raw Agent contract has no message-start fact and tool/subagent segments are not guaranteed
-to have an admitted presentation message binding. Therefore `map_agent_event_candidates` maps only
-statelessly complete run start/success/error facts today; all message/tool/activity source events map
-to zero. The explicit builder still validates every allowed Text/Activity arm for the future atomic
-durable source-batch/segment-transition adapter. Shipping CONTENT/END or ACTIVITY alone would create
-an unusable sequence, so it is intentionally blocked rather than approximated.
+## Boundary with execution evidence and Session
 
-## Closed profile
+`PullDurableOutputRecords` remains non-browser execution evidence for audit, business projection and
+recovery. Web/AG-UI must never consume it. Agent does not own Site/Session binding, public run/message
+identity, browser cursor, durable Session projection, snapshot repair, SSE or HITL decision authority.
 
-Allowed event types are RUN start/success/error, TEXT start/content/end and the eight registered safe
-ACTIVITY snapshots. CUSTOM, raw/state/messages, native tool, thinking/reasoning/step/chunk families,
-Artifact/Cost owner activities, `rawEvent`, `input`, `result` and arbitrary extras fail closed. The
-official SDK uses `extra=allow`, so its model is construction authority, not the final trust boundary.
-
-## Extension rules
-
-Do not wire this package into `RunEmitter` until a reviewed durable source-batch integration can commit
-zero-or-more candidates atomically. Do not add Site/account/subject/plan/price/provider/storage facts,
-cursor/SSE fields, or import Session/Web/Platform source. New event/activity arms require a coordinated
-Root profile revision and compatibility evidence.
+The compatibility CLI exercises the same strict builder but is not production activation. Production
+activation is `RunSupervisor -> RunEmitter -> append_presentation_event -> Mongo presentation log`.
 
 ## Verification
 
-Run `uv run pytest tests/test_agui_presentation_candidate.py -q`, then repository Ruff and Pyright.
+Run `uv run pytest tests/test_agui_production_presentation.py tests/test_invoke.py tests/test_supervisor.py -q`,
+then `uv run ruff check .` and `uv run pyright`.

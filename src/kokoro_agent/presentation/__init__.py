@@ -1,4 +1,4 @@
-"""Narrow public boundary for dormant internal AG-UI event candidates."""
+"""Official AG-UI candidate construction and durable Agent presentation port."""
 
 from kokoro_agent.presentation.adapter import (
     CandidateProtocolError,
@@ -15,6 +15,18 @@ from kokoro_agent.presentation.profile import (
     AGUI_UPSTREAM_COMMIT,
     AGUI_UPSTREAM_PYTHON_VERSION,
 )
+from kokoro_agent.presentation.runtime import (
+    AgentPresentationService,
+    PresentationAcknowledgeCommand,
+    PresentationAcknowledgeState,
+    PresentationAdmissionReceipt,
+    PresentationCandidatePage,
+    PresentationCandidateRecord,
+    PresentationQuarantineCommand,
+    agent_thread_ref,
+    plan_presentation_batch,
+    presentation_acknowledgement_digest,
+)
 
 __all__ = [
     "AGUI_CANDIDATE_PROFILE_REVISION",
@@ -23,7 +35,17 @@ __all__ = [
     "AgentAguiCandidateRoute",
     "AgentAguiCandidateSource",
     "AgentAguiEventCandidate",
+    "AgentPresentationService",
     "CandidateProtocolError",
+    "PresentationAcknowledgeCommand",
+    "PresentationAcknowledgeState",
+    "PresentationAdmissionReceipt",
+    "PresentationCandidatePage",
+    "PresentationCandidateRecord",
+    "PresentationQuarantineCommand",
+    "agent_thread_ref",
     "build_agui_candidate",
     "map_agent_event_candidates",
+    "plan_presentation_batch",
+    "presentation_acknowledgement_digest",
 ]

@@ -16,6 +16,7 @@ from kokoro.agent.execution.v1 import agent_execution_evidence_pb2 as evidence_p
 
 from fakes import request
 from kokoro_agent.contract import (
+    MessageDelta,
     MessageDeltaPayload,
     PlanProposal,
     PlanProposedPayload,
@@ -23,7 +24,15 @@ from kokoro_agent.contract import (
     RunCompletedPayload,
     RunFailedPayload,
     RunOwnerCompletedPayload,
+    RunStarted,
+    RunStartedPayload,
 )
+from kokoro_agent.presentation.runtime import (
+    AgentPresentationService,
+    PresentationAdmissionReceipt,
+    presentation_acknowledgement_digest,
+)
+from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
 from kokoro_agent.evidence.models import (
     append_output_digest,
     durable_output_draft_for_event,
@@ -43,6 +52,11 @@ from kokoro_agent.storage.mongo import (
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
+    AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION,
+    AGENT_PRESENTATION_CANDIDATE_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_COLLECTION,
+    AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION,
+    AGENT_PRESENTATION_STATE_COLLECTION,
     DISPATCH_DLQ_COLLECTION,
     MongoLedger,
 )
@@ -116,7 +130,87 @@ async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_CANDIDATE_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_STATE_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_DELIVERY_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION].drop()
         await client.close()
+
+
+async def test_presentation_authority_replays_and_closes_admission_delivery() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as raw_store:
+        assert isinstance(raw_store, MongoLedger)
+        store = raw_store
+        req = request("run-presentation")
+        assert await store.try_claim(req, OWNER) is True
+        thread_ref = "agent.thread:" + "a" * 64
+        start = RunStarted(
+            kind="run.started",
+            run_id=req.run_id,
+            index=0,
+            timestamp=clock.now,
+            payload=RunStartedPayload(),
+        )
+        text = MessageDelta(
+            kind="message.delta",
+            run_id=req.run_id,
+            index=1,
+            timestamp=clock.now + 1,
+            payload=MessageDeltaPayload(segment_id="message.1", delta="hello"),
+        )
+
+        first = await store.append_presentation_event(start, agent_thread_ref=thread_ref)
+        replay = await store.append_presentation_event(start, agent_thread_ref=thread_ref)
+        second = await store.append_presentation_event(text, agent_thread_ref=thread_ref)
+
+        assert first is not None and replay == first and second is not None
+        assert [record.presentation_seq for record in first + second] == [1, 2, 3]
+        service = AgentPresentationService(store)
+        page = await service.pull_candidate_batches(
+            run_id=req.run_id, after_presentation_seq=0, page_size=2
+        )
+        assert page.snapshot_through_presentation_seq == 3
+        assert page.has_more is True
+        receipt = PresentationAdmissionReceipt(
+            presentation_seq=1,
+            presentation_ref=first[0].presentation_ref,
+            candidate_ref=AgentAguiEventCandidate.model_validate_json(
+                first[0].candidate_envelope_json
+            ).candidate_ref,
+            session_receipt_ref="session.receipt.1",
+            session_effect_digest="sha256:" + "1" * 64,
+        )
+        digest = presentation_acknowledgement_digest(
+            run_id=req.run_id,
+            acknowledgement_ref="ack.1",
+            expected_acknowledged_through_presentation_seq=0,
+            receipts=(receipt,),
+        )
+        acknowledged = await service.acknowledge_candidate_admissions(
+            run_id=req.run_id,
+            acknowledgement_ref="ack.1",
+            expected_acknowledged_through_presentation_seq=0,
+            receipts=(receipt,),
+            request_effect_digest=digest,
+        )
+        assert acknowledged.acknowledged_through_presentation_seq == 1
+        quarantined_candidate = AgentAguiEventCandidate.model_validate_json(
+            second[0].candidate_envelope_json
+        )
+        quarantined = await service.quarantine_candidate_admission(
+            run_id=req.run_id,
+            rejection_ref="reject.2",
+            expected_acknowledged_through_presentation_seq=1,
+            presentation_seq=2,
+            presentation_ref=second[0].presentation_ref,
+            candidate_ref=quarantined_candidate.candidate_ref,
+            reason="SESSION_ADMISSION_PERMANENT_REJECT",
+            session_effect_digest="sha256:" + "2" * 64,
+        )
+        assert quarantined.acknowledged_through_presentation_seq == 1
+        assert quarantined.quarantined_presentation_seq == 2
 
 
 # --- 共用行为矩阵：任意 RunLedger 实例逐条对标 ---

@@ -51,6 +51,7 @@ from kokoro_agent.execution.approvals import (
 )
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event, run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.presentation.runtime import agent_thread_ref
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.state import RunScope
 from kokoro_agent.storage.ledger import (
@@ -752,7 +753,19 @@ class RunSupervisor:
             )
             # store 作 critical outbox 端口：run.started/receipt/completed/failed 经其分配
             # durable_seq/event_id 并落 queued 行；live 帧仍直发。
-            emitter = await RunEmitter.attach(bus, run_id, review, self._store)
+            presentation_thread_ref = (
+                None
+                if request is None
+                else agent_thread_ref(request.context.namespace, request.thread_id)
+            )
+            emitter = await RunEmitter.attach(
+                bus,
+                run_id,
+                review,
+                self._store,
+                self._store if presentation_thread_ref is not None else None,
+                presentation_thread_ref,
+            )
             self._emitters[run_id] = emitter
         return emitter
 

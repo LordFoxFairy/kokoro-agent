@@ -47,6 +47,9 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   replay 尚无 persisted projection-event identity，因此不宣称去重；扩展该保证前必须由 Root contract
   提供 `projection_event_ref`，不得用内容 hash 猜测（相同 delta 可能是合法重复文本）。
   `outbox_wire_event(frame)`：queued 行→补发 wire 帧（复用固定身份，幂等不漂移）。
+  生产展示另经注入的 `PresentationCandidateWriter`：每个 raw owner fact 在 live publish 前先提交完整
+  official AG-UI source batch；失败即 `PRESENTATION_COMMIT_FAILED` 并抑制 live publish。旧 durable output
+  只保留 execution evidence/business projection 语义，禁止作为第二套 browser protocol。
   `plan.proposed` 额外以 `plan.proposed:<tool_call_id>` 作 semantic key；marker 不随 receipt GC 删除，
   同 key 同 payload 返回 duplicate/no-publish，同 key异 payload fail-loud。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影

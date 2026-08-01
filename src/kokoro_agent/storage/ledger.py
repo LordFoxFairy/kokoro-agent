@@ -14,11 +14,23 @@ from kokoro_agent.evidence.models import (
     DurableOutputRecord,
     DurableRetentionStats,
 )
+from kokoro_agent.presentation.runtime import (
+    PresentationAcknowledgeCommand,
+    PresentationAcknowledgeState,
+    PresentationCandidateRecord,
+    PresentationQuarantineCommand,
+)
+from kokoro_agent.contract import AgentEvent
 from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
+    AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION,
+    AGENT_PRESENTATION_CANDIDATE_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_COLLECTION,
+    AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION,
+    AGENT_PRESENTATION_STATE_COLLECTION,
     ControlInboxRecord,
     MongoLedger,
     OutboxFrame,
@@ -100,6 +112,32 @@ class RunLedger(ExecutionContextStore, Protocol):
     async def pull_durable_output_records(
         self, run_id: str, after_output_seq: int, limit: int
     ) -> list[DurableOutputRecord]: ...
+
+    async def append_presentation_event(
+        self, event: AgentEvent, *, agent_thread_ref: str
+    ) -> tuple[PresentationCandidateRecord, ...] | None: ...
+
+    async def presentation_head(self, run_id: str) -> int: ...
+
+    async def pull_presentation_candidates(
+        self,
+        run_id: str,
+        after_presentation_seq: int,
+        through_presentation_seq: int,
+        limit: int,
+    ) -> tuple[PresentationCandidateRecord, ...]: ...
+
+    async def acknowledge_presentation_admissions(
+        self, command: PresentationAcknowledgeCommand
+    ) -> PresentationAcknowledgeState: ...
+
+    async def quarantine_presentation_admission(
+        self, command: PresentationQuarantineCommand
+    ) -> PresentationAcknowledgeState: ...
+
+    async def get_presentation_delivery_state(
+        self, run_id: str
+    ) -> PresentationAcknowledgeState: ...
 
     async def get_durable_retention_stats(self) -> DurableRetentionStats: ...
 
@@ -295,6 +333,42 @@ async def make_ledger(
         await output_source_batches.create_index(
             [("run_id", 1), ("source_event_ref", 1)],
             name="run_output_source_batch_unique",
+            unique=True,
+        )
+        presentation_candidates = collection.database[
+            AGENT_PRESENTATION_CANDIDATE_COLLECTION
+        ]
+        await presentation_candidates.create_index(
+            [("run_id", 1), ("presentation_seq", 1)],
+            name="run_presentation_seq_unique",
+            unique=True,
+        )
+        await presentation_candidates.create_index(
+            [("run_id", 1), ("presentation_ref", 1)],
+            name="run_presentation_ref_unique",
+            unique=True,
+        )
+        presentation_source_batches = collection.database[
+            AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION
+        ]
+        await presentation_source_batches.create_index(
+            [("run_id", 1), ("source_event_ref", 1)],
+            name="run_presentation_source_unique",
+            unique=True,
+        )
+        await collection.database[AGENT_PRESENTATION_STATE_COLLECTION].create_index(
+            [("_id", 1), ("revision", 1)],
+            name="presentation_state_revision",
+        )
+        await collection.database[AGENT_PRESENTATION_DELIVERY_COLLECTION].create_index(
+            [("_id", 1), ("revision", 1)],
+            name="presentation_delivery_revision",
+        )
+        await collection.database[
+            AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION
+        ].create_index(
+            [("run_id", 1), ("_id", 1)],
+            name="presentation_admission_command_unique",
             unique=True,
         )
         yield MongoLedger(

@@ -38,6 +38,14 @@ _Id = Annotated[
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     ),
 ]
+_AgentThreadRef = Annotated[
+    str,
+    StringConstraints(
+        min_length=14,
+        max_length=128,
+        pattern=r"^agent\.thread:[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    ),
+]
 _Sha256Digest = Annotated[
     str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")
 ]
@@ -77,7 +85,7 @@ class _StrictCandidateModel(BaseModel):
 
 class AgentAguiCandidateRoute(_StrictCandidateModel):
     internal_run_ref: _Id
-    internal_thread_ref: _Id
+    internal_thread_ref: _AgentThreadRef
     internal_message_ref: _Id | None = None
 
     @model_validator(mode="after")

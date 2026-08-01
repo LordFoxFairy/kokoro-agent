@@ -158,7 +158,7 @@ def build_agui_candidate(
 def _source(
     event: AgentEvent,
     *,
-    thread_ref: str,
+    agent_thread_ref: str,
     source_event_ref: str,
 ) -> AgentAguiCandidateSource:
     # RunEmitter owns this per-run sequence: zero-based, resume-stable, and
@@ -169,7 +169,7 @@ def _source(
         recorded_at=canonical_recorded_at(event.timestamp),
         route=AgentAguiCandidateRoute(
             internal_run_ref=event.run_id,
-            internal_thread_ref=thread_ref,
+            internal_thread_ref=agent_thread_ref,
         ),
     )
 
@@ -181,27 +181,29 @@ def _safe_text(value: str, maximum: int = 16_384) -> str:
 def map_agent_event_candidates(
     event: AgentEvent,
     *,
-    thread_ref: str,
+    agent_thread_ref: str,
     source_event_ref: str,
 ) -> tuple[AgentAguiEventCandidate, ...]:
     """Map one source fact without inventing stream state or durable source identity.
 
-    ``source_event_ref`` must come from durable Agent owner authority. Only the three statelessly
-    complete run lifecycle mappings are enabled. Existing message/tool/subagent facts cannot create
-    an admissible START-bound sequence without a future atomic segment-transition source batch, so
-    they deliberately produce zero candidates instead of fabricating presentation state.
+    ``agent_thread_ref`` and ``source_event_ref`` must come from durable Agent owner authority;
+    the thread ref is additionally branded ``agent.thread:`` to prevent accidental Session identity
+    reuse. Only the three statelessly complete run lifecycle mappings are enabled. Existing
+    message/tool/subagent facts cannot create an admissible START-bound sequence without a future
+    atomic segment-transition source batch, so they deliberately produce zero candidates instead
+    of fabricating presentation state.
     """
 
     if isinstance(event, RunStarted):
         source = _source(
             event,
-            thread_ref=thread_ref,
+            agent_thread_ref=agent_thread_ref,
             source_event_ref=source_event_ref,
         )
         return (
             build_agui_candidate(
                 RunStartedEvent(
-                    thread_id=thread_ref,
+                    thread_id=agent_thread_ref,
                     run_id=event.run_id,
                     timestamp=event.timestamp,
                 ),
@@ -213,13 +215,13 @@ def map_agent_event_candidates(
             return ()
         source = _source(
             event,
-            thread_ref=thread_ref,
+            agent_thread_ref=agent_thread_ref,
             source_event_ref=source_event_ref,
         )
         return (
             build_agui_candidate(
                 RunFinishedEvent(
-                    thread_id=thread_ref,
+                    thread_id=agent_thread_ref,
                     run_id=event.run_id,
                     timestamp=event.timestamp,
                     outcome=RunFinishedSuccessOutcome(),
@@ -230,7 +232,7 @@ def map_agent_event_candidates(
     if isinstance(event, RunFailed):
         source = _source(
             event,
-            thread_ref=thread_ref,
+            agent_thread_ref=agent_thread_ref,
             source_event_ref=source_event_ref,
         )
         return (

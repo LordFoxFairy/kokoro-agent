@@ -49,7 +49,7 @@ SOURCE = AgentAguiCandidateSource(
     recorded_at="1970-01-01T00:00:00.000Z",
     route=AgentAguiCandidateRoute(
         internal_run_ref="run.1",
-        internal_thread_ref="thread.1",
+        internal_thread_ref="agent.thread:test.1",
     ),
 )
 
@@ -119,7 +119,7 @@ def test_profile_pins_official_python_sdk_commit() -> None:
 def test_official_aliases_become_the_single_typed_event_fact() -> None:
     candidate = build_agui_candidate(
         RunStartedEvent(
-            thread_id="thread.1",
+            thread_id="agent.thread:test.1",
             run_id="run.1",
             timestamp=TIMESTAMP,
         ),
@@ -129,7 +129,7 @@ def test_official_aliases_become_the_single_typed_event_fact() -> None:
 
     assert dumped["event"] == {
         "runId": "run.1",
-        "threadId": "thread.1",
+        "threadId": "agent.thread:test.1",
         "timestamp": 0,
         "type": "RUN_STARTED",
     }
@@ -143,7 +143,7 @@ def test_run_started_parent_is_forbidden_until_session_derives_lineage() -> None
     with pytest.raises(CandidateProtocolError, match="RUN_STARTED_PARENT_FORBIDDEN"):
         build_agui_candidate(
             RunStartedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 parent_run_id="run.parent",
                 timestamp=TIMESTAMP,
@@ -178,7 +178,7 @@ def test_builder_revalidates_caller_source_instances(
     with pytest.raises(CandidateProtocolError, match="AGUI_CANDIDATE_SOURCE_INVALID"):
         build_agui_candidate(
             RunStartedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 timestamp=TIMESTAMP,
             ),
@@ -189,7 +189,7 @@ def test_builder_revalidates_caller_source_instances(
 def test_run_finished_requires_explicit_success_and_forbids_result() -> None:
     successful = build_agui_candidate(
         RunFinishedEvent(
-            thread_id="thread.1",
+            thread_id="agent.thread:test.1",
             run_id="run.1",
             timestamp=TIMESTAMP,
             outcome=RunFinishedSuccessOutcome(),
@@ -202,7 +202,7 @@ def test_run_finished_requires_explicit_success_and_forbids_result() -> None:
     with pytest.raises(CandidateProtocolError, match="RUN_FINISHED_SUCCESS_REQUIRED"):
         build_agui_candidate(
             RunFinishedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 timestamp=TIMESTAMP,
             ),
@@ -212,7 +212,7 @@ def test_run_finished_requires_explicit_success_and_forbids_result() -> None:
     with pytest.raises(CandidateProtocolError, match="RUN_FINISHED_RESULT_FORBIDDEN"):
         build_agui_candidate(
             RunFinishedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 timestamp=TIMESTAMP,
                 outcome=RunFinishedSuccessOutcome(),
@@ -236,7 +236,7 @@ def test_forbidden_official_families_and_extra_fields_fail_closed() -> None:
 
     upstream_allows_extra = RunStartedEvent.model_validate(
         {
-            "threadId": "thread.1",
+            "threadId": "agent.thread:test.1",
             "runId": "run.1",
             "timestamp": TIMESTAMP,
             "userId": "user.must-not-cross",
@@ -248,7 +248,7 @@ def test_forbidden_official_families_and_extra_fields_fail_closed() -> None:
     with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_SHAPE_FORBIDDEN"):
         build_agui_candidate(
             RunStartedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 timestamp=TIMESTAMP,
                 raw_event={"provider": "forbidden"},
@@ -258,11 +258,11 @@ def test_forbidden_official_families_and_extra_fields_fail_closed() -> None:
 
     upstream_with_input = RunStartedEvent.model_validate(
         {
-            "threadId": "thread.1",
+            "threadId": "agent.thread:test.1",
             "runId": "run.1",
             "timestamp": TIMESTAMP,
             "input": {
-                "threadId": "thread.1",
+                "threadId": "agent.thread:test.1",
                 "runId": "run.1",
                 "state": {},
                 "messages": [],
@@ -385,7 +385,7 @@ def test_lone_surrogates_are_rejected_before_digesting() -> None:
 def test_candidate_envelope_rejects_extra_and_tampered_material() -> None:
     candidate = build_agui_candidate(
         RunStartedEvent(
-            thread_id="thread.1",
+            thread_id="agent.thread:test.1",
             run_id="run.1",
             timestamp=TIMESTAMP,
         ),
@@ -407,8 +407,18 @@ def test_internal_message_ref_must_be_absent_instead_of_null() -> None:
         AgentAguiCandidateRoute.model_validate(
             {
                 "internalRunRef": "run.1",
-                "internalThreadRef": "thread.1",
+                "internalThreadRef": "agent.thread:test.1",
                 "internalMessageRef": None,
+            }
+        )
+
+
+def test_internal_thread_ref_requires_agent_owner_brand() -> None:
+    with pytest.raises(ValidationError):
+        AgentAguiCandidateRoute.model_validate(
+            {
+                "internalRunRef": "run.1",
+                "internalThreadRef": "thread.session.1",
             }
         )
 
@@ -417,14 +427,14 @@ def test_route_recorded_at_and_message_binding_are_enforced() -> None:
     wrong_route = SOURCE.model_copy(
         update={
             "route": SOURCE.route.model_copy(
-                update={"internal_thread_ref": "thread.other"}
+                update={"internal_thread_ref": "agent.thread:test.other"}
             )
         }
     )
     with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_SCOPE_CONFLICT"):
         build_agui_candidate(
             RunStartedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 timestamp=TIMESTAMP,
             ),
@@ -437,7 +447,7 @@ def test_route_recorded_at_and_message_binding_are_enforced() -> None:
     with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_TIMESTAMP_CONFLICT"):
         build_agui_candidate(
             RunStartedEvent(
-                thread_id="thread.1",
+                thread_id="agent.thread:test.1",
                 run_id="run.1",
                 timestamp=TIMESTAMP,
             ),
@@ -504,7 +514,7 @@ def test_pure_mapping_emits_only_semantically_safe_candidates() -> None:
     )
     start_candidates = map_agent_event_candidates(
         started,
-        thread_ref="thread.1",
+        agent_thread_ref="agent.thread:test.1",
         source_event_ref="run.1:0",
     )
     assert [candidate.event.type for candidate in start_candidates] == ["RUN_STARTED"]
@@ -520,7 +530,7 @@ def test_pure_mapping_emits_only_semantically_safe_candidates() -> None:
     )
     finish_candidates = map_agent_event_candidates(
         completed,
-        thread_ref="thread.1",
+        agent_thread_ref="agent.thread:test.1",
         source_event_ref="source.event.2",
     )
     finish_dump = finish_candidates[0].event.model_dump(
@@ -534,7 +544,7 @@ def test_pure_mapping_emits_only_semantically_safe_candidates() -> None:
     assert (
         map_agent_event_candidates(
             canceled,
-            thread_ref="thread.1",
+            agent_thread_ref="agent.thread:test.1",
             source_event_ref="source.event.cancelled",
         )
         == ()
@@ -550,7 +560,7 @@ def test_pure_mapping_emits_only_semantically_safe_candidates() -> None:
     assert (
         map_agent_event_candidates(
             thinking,
-            thread_ref="thread.1",
+            agent_thread_ref="agent.thread:test.1",
             source_event_ref="source.event.thinking",
         )
         == ()
@@ -573,7 +583,7 @@ def test_current_tool_facts_map_to_zero_until_atomic_segment_transition_exists()
     assert (
         map_agent_event_candidates(
             invoked,
-            thread_ref="thread.1",
+            agent_thread_ref="agent.thread:test.1",
             source_event_ref="source.event.tool",
         )
         == ()
@@ -591,7 +601,7 @@ def test_message_delta_maps_to_zero_without_fabricating_stream_start() -> None:
     assert (
         map_agent_event_candidates(
             delta,
-            thread_ref="thread.1",
+            agent_thread_ref="agent.thread:test.1",
             source_event_ref="source.event.message",
         )
         == ()

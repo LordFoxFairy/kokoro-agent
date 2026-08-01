@@ -25,7 +25,11 @@ This package produces internal candidates only. Session owns durable presentatio
 bindings, browser projection, cursors, snapshot repair, SSE and cancellation/interruption rendering.
 The package is dormant and has no transport, process composition, background task, or browser path.
 
-The caller must supply an opaque durable `sourceEventRef`; the adapter never derives one from content.
+The caller must supply an opaque durable `sourceEventRef` and `agent_thread_ref` from Agent owner
+authority; the adapter never derives either from Session identity or content. The thread ref is a
+closed `agent.thread:<opaque-id>` brand, so a Session thread/session identifier cannot be accepted by
+accident. Root's cross-repository contract makes ordinal-zero `RUN_STARTED` establish that owner ref
+per run and requires every later candidate to retain it; this stateless builder never invents it.
 `sourceOrdinal` is canonical uint64 decimal, `recordedAt` is canonical UTC milliseconds equal to the
 official event timestamp, and route/source/digest are bound into candidate identity. `RUN_FINISHED`
 always carries the official explicit success outcome and never carries `result`; Session must validate

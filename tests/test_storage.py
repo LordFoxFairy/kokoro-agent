@@ -66,6 +66,7 @@ from kokoro_agent.storage.execution_context import (
     ExecutionCheckpoint,
     ExecutionContextBinding,
 )
+from kokoro_agent.storage.owner_event import OwnerEventCommitResult
 
 _MONGO_URL = os.environ.get(
     "KOKORO_MONGO_URL",
@@ -136,6 +137,114 @@ async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
         await coll.database[AGENT_PRESENTATION_DELIVERY_COLLECTION].drop()
         await coll.database[AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION].drop()
         await client.close()
+
+
+@asynccontextmanager
+async def _mongo_takeover_stores(
+    clock: FakeClock,
+) -> AsyncGenerator[tuple[MongoLedger, MongoLedger]]:
+    client, coll = await _mongo_collection()
+    try:
+        yield (
+            MongoLedger(
+                coll,
+                ttl_ms=_TTL_MS,
+                clock=clock,
+                producer_instance_ref="executor-a",
+                producer_generation=11,
+                allow_nontransactional_evidence_for_tests=True,
+            ),
+            MongoLedger(
+                coll,
+                ttl_ms=_TTL_MS,
+                clock=clock,
+                producer_instance_ref="executor-b",
+                producer_generation=22,
+                allow_nontransactional_evidence_for_tests=True,
+            ),
+        )
+    finally:
+        await coll.drop()
+        for name in (
+            AGENT_EXECUTION_EVIDENCE_COLLECTION,
+            AGENT_DURABLE_OUTPUT_COLLECTION,
+            AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
+            AGENT_PRESENTATION_CANDIDATE_COLLECTION,
+            AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION,
+            AGENT_PRESENTATION_STATE_COLLECTION,
+            AGENT_PRESENTATION_DELIVERY_COLLECTION,
+            AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION,
+        ):
+            await coll.database[name].drop()
+        await client.close()
+
+
+async def test_takeover_changes_execution_fence_not_run_stream_identity() -> None:
+    clock = FakeClock()
+    async with _mongo_takeover_stores(clock) as (executor_a, executor_b):
+        run_id = "run-stream-takeover"
+        thread_ref = "agent.thread:" + "b" * 64
+        assert await executor_a.try_claim(request(run_id), OWNER)
+
+        first = await executor_a.commit_owner_event(
+            run_id=run_id,
+            expected_index=0,
+            kind="run.started",
+            payload=RunStartedPayload(),
+            lease_owner_ref=OWNER,
+            agent_thread_ref=thread_ref,
+        )
+        assert first.status == "committed"
+        first_output = await executor_a.commit_owner_event(
+            run_id=run_id,
+            expected_index=1,
+            kind="message.delta",
+            payload=MessageDeltaPayload(segment_id="message.1", delta="before"),
+            lease_owner_ref=OWNER,
+            agent_thread_ref=thread_ref,
+        )
+        assert first_output.status == "committed"
+
+        clock.advance_ms(_TTL_MS + 1)
+        reclaimed = await executor_b.reclaim_expired(OTHER)
+        assert [item.run_id for item in reclaimed] == [run_id]
+        second = await executor_b.commit_owner_event(
+            run_id=run_id,
+            expected_index=2,
+            kind="plan.proposed",
+            payload=PlanProposedPayload.model_validate_json(_plan_payload("plan-after-takeover")),
+            lease_owner_ref=OTHER,
+            agent_thread_ref=thread_ref,
+        )
+        assert second.status == "committed"
+
+        stale: OwnerEventCommitResult = await executor_a.commit_owner_event(
+            run_id=run_id,
+            expected_index=3,
+            kind="message.delta",
+            payload=MessageDeltaPayload(segment_id="message.1", delta="stale"),
+            lease_owner_ref=OWNER,
+            agent_thread_ref=thread_ref,
+        )
+        assert stale.status == "fence_lost"
+
+        presentation = await executor_b.pull_presentation_candidates(run_id, 0, 4, 10)
+        outputs = await executor_b.pull_durable_output_records(run_id, 0, 10)
+        evidence = await executor_b.pull_durable_execution_evidence(run_id, 0, 10)
+        assert len(presentation) == 4
+        assert len(outputs) == 2
+        assert len(evidence) == 2
+        lane_fences = [
+            {
+                (record.producer_instance_ref, record.producer_generation)
+                for record in lane
+            }
+            for lane in (presentation, outputs, evidence)
+        ]
+        assert lane_fences == [lane_fences[0], lane_fences[0], lane_fences[0]]
+        assert len(lane_fences[0]) == 1
+        stream_ref, _generation = next(iter(lane_fences[0]))
+        assert stream_ref not in {"executor-a", "executor-b"}
 
 
 async def test_presentation_authority_replays_and_closes_admission_delivery() -> None:

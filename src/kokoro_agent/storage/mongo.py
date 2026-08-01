@@ -7,7 +7,7 @@ import json
 import re
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from typing import Any, TypeVar
 
@@ -176,6 +176,24 @@ def _now_ms() -> int:
 def _event_id() -> str:
     # critical 帧稳定身份（evt_ 前缀 + 128bit 随机）：崩溃补发复用同 event_id，session 去重不漂移。
     return f"evt_{secrets.token_hex(16)}"
+
+
+def _run_stream_producer_ref() -> str:
+    """Immutable identity shared by every externally durable lane of one run."""
+    return f"run_stream_{secrets.token_hex(16)}"
+
+
+def _run_stream_producer(authority: Mapping[str, object]) -> tuple[str, int]:
+    instance_ref = authority.get("run_stream_producer_instance_ref")
+    generation = authority.get("run_stream_producer_generation")
+    if (
+        not isinstance(instance_ref, str)
+        or not instance_ref
+        or not isinstance(generation, int)
+        or generation < 1
+    ):
+        raise TypeError("RUN_STREAM_PRODUCER_AUTHORITY_INVALID")
+    return instance_ref, generation
 
 
 class _ToolResultEntry(BaseModel):
@@ -452,8 +470,10 @@ class MongoLedger:
                         "terminal": False,
                         "lease_expires_ms": self._clock() + self._ttl_ms,
                         "owner": owner,
-                        "producer_instance_ref": self._producer_instance_ref,
-                        "producer_generation": self._producer_generation,
+                        "execution_producer_instance_ref": self._producer_instance_ref,
+                        "execution_producer_generation": self._producer_generation,
+                        "run_stream_producer_instance_ref": _run_stream_producer_ref(),
+                        "run_stream_producer_generation": 1,
                         "owner_event_counter": 0,
                         # R4：run.started 收编进 critical outbox（seq 1 惯例），claim 不再写
                         # run_started_published 布尔位——身份/补发一律走 outbox（stage→publish→scanner）。
@@ -525,8 +545,8 @@ class MongoLedger:
             query: dict[str, object] = {
                 "_id": run_id,
                 "owner": lease_owner_ref,
-                "producer_instance_ref": self._producer_instance_ref,
-                "producer_generation": self._producer_generation,
+                "execution_producer_instance_ref": self._producer_instance_ref,
+                "execution_producer_generation": self._producer_generation,
                 "lease_expires_ms": {"$gt": now},
                 "owner_event_counter": expected_index,
                 "terminal": {"$ne": True},
@@ -789,11 +809,14 @@ class MongoLedger:
                     "terminal": 1,
                     "output_counter": 1,
                     "output_digest_sha256": 1,
+                    "run_stream_producer_instance_ref": 1,
+                    "run_stream_producer_generation": 1,
                 },
                 session=session,
             )
             if run is None or run.get("terminal") is True:
                 return None
+            stream_instance_ref, stream_generation = _run_stream_producer(run)
             if not drafts:
                 fenced = await self._coll.update_one(
                     {"_id": run_id, "terminal": {"$ne": True}},
@@ -850,8 +873,8 @@ class MongoLedger:
                     draft=draft,
                     replaces_through_output_seq=replaces_through_output_seq,
                     recorded_at_ms=recorded_at_ms,
-                    producer_instance_ref=self._producer_instance_ref,
-                    producer_generation=self._producer_generation,
+                    producer_instance_ref=stream_instance_ref,
+                    producer_generation=stream_generation,
                 )
                 records.append(record)
                 next_digest = append_output_digest(
@@ -970,6 +993,17 @@ class MongoLedger:
         async def append(
             session: AsyncClientSession | None,
         ) -> tuple[PresentationCandidateRecord, ...] | None:
+            authority = await self._coll.find_one(
+                {"_id": event.run_id},
+                {
+                    "run_stream_producer_instance_ref": 1,
+                    "run_stream_producer_generation": 1,
+                },
+                session=session,
+            )
+            if authority is None:
+                return None
+            stream_instance_ref, stream_generation = _run_stream_producer(authority)
             existing_marker = await self._presentation_source_batches.find_one(
                 {"_id": marker_id}, session=session
             )
@@ -1033,8 +1067,8 @@ class MongoLedger:
                     run_id=event.run_id,
                     presentation_seq=int(candidate.source.source_ordinal) + 1,
                     candidate=candidate,
-                    producer_instance_ref=self._producer_instance_ref,
-                    producer_generation=self._producer_generation,
+                    producer_instance_ref=stream_instance_ref,
+                    producer_generation=stream_generation,
                 )
                 for candidate in batch.candidates
             )
@@ -1488,6 +1522,7 @@ class MongoLedger:
             if isinstance(fence, int) and seq > fence:
                 return None
             if evidence_kind is not None:
+                stream_instance_ref, stream_generation = _run_stream_producer(doc)
                 output_high_watermark = doc.get("output_sealed_high_watermark", 0)
                 output_digest_sha256 = doc.get(
                     "output_sealed_digest_sha256", initial_output_digest(run_id)
@@ -1503,8 +1538,8 @@ class MongoLedger:
                     event_kind=kind,
                     payload_json=payload_json,
                     recorded_at_ms=recorded_at_ms,
-                    producer_instance_ref=self._producer_instance_ref,
-                    producer_generation=self._producer_generation,
+                    producer_instance_ref=stream_instance_ref,
+                    producer_generation=stream_generation,
                     output_high_watermark=output_high_watermark,
                     output_digest_sha256=output_digest_sha256,
                 )
@@ -1804,8 +1839,8 @@ class MongoLedger:
                 "_id": run_id,
                 "terminal": {"$ne": True},
                 "owner": owner,
-                "producer_instance_ref": self._producer_instance_ref,
-                "producer_generation": self._producer_generation,
+                "execution_producer_instance_ref": self._producer_instance_ref,
+                "execution_producer_generation": self._producer_generation,
             },
             {"$set": {"lease_expires_ms": self._clock() + self._ttl_ms}},
         )
@@ -1819,8 +1854,8 @@ class MongoLedger:
                 "$set": {
                     "lease_expires_ms": self._clock() + self._ttl_ms,
                     "owner": owner,
-                    "producer_instance_ref": self._producer_instance_ref,
-                    "producer_generation": self._producer_generation,
+                    "execution_producer_instance_ref": self._producer_instance_ref,
+                    "execution_producer_generation": self._producer_generation,
                 }
             },
         )
@@ -1831,8 +1866,8 @@ class MongoLedger:
             {
                 "_id": run_id,
                 "terminal": {"$ne": True},
-                "producer_instance_ref": self._producer_instance_ref,
-                "producer_generation": self._producer_generation,
+                "execution_producer_instance_ref": self._producer_instance_ref,
+                "execution_producer_generation": self._producer_generation,
             },
             {"$set": {"lease_expires_ms": None}},
         )
@@ -1853,8 +1888,8 @@ class MongoLedger:
                     "$set": {
                         "lease_expires_ms": now + self._ttl_ms,
                         "owner": owner,
-                        "producer_instance_ref": self._producer_instance_ref,
-                        "producer_generation": self._producer_generation,
+                        "execution_producer_instance_ref": self._producer_instance_ref,
+                        "execution_producer_generation": self._producer_generation,
                     }
                 },
             )
@@ -2032,16 +2067,6 @@ class MongoLedger:
         terminal_event_id = _event_id()
         owner_payload_sha256 = hashlib.sha256(owner_event.payload_json.encode()).hexdigest()
         now = self._clock()
-        owner_evidence = make_durable_execution_evidence(
-            run_id=completion.run_id,
-            durable_seq=1,
-            event_id=owner_event_id,
-            event_kind=owner_event.kind,
-            payload_json=owner_event.payload_json,
-            recorded_at_ms=now,
-            producer_instance_ref=self._producer_instance_ref,
-            producer_generation=self._producer_generation,
-        )
         owner_row: dict[str, object] = {
             "durable_seq": {"$subtract": ["$durable_counter", 1]},
             "event_id": {"$literal": owner_event_id},
@@ -2115,8 +2140,8 @@ class MongoLedger:
                     {
                         "_id": completion.run_id,
                         "owner": lease_owner_ref,
-                        "producer_instance_ref": self._producer_instance_ref,
-                        "producer_generation": self._producer_generation,
+                        "execution_producer_instance_ref": self._producer_instance_ref,
+                        "execution_producer_generation": self._producer_generation,
                         "lease_expires_ms": {"$gt": now},
                         "owner_event_counter": owner_event.index,
                         "terminal": {"$ne": True},
@@ -2154,6 +2179,19 @@ class MongoLedger:
                 output_digest_sha256, str
             ):
                 raise TypeError("OUTPUT_SEAL_INVALID")
+            stream_instance_ref, stream_generation = _run_stream_producer(doc)
+            owner_evidence = make_durable_execution_evidence(
+                run_id=completion.run_id,
+                durable_seq=final_seq - 1,
+                event_id=owner_event_id,
+                event_kind=owner_event.kind,
+                payload_json=owner_event.payload_json,
+                recorded_at_ms=now,
+                producer_instance_ref=stream_instance_ref,
+                producer_generation=stream_generation,
+                output_high_watermark=output_high_watermark,
+                output_digest_sha256=output_digest_sha256,
+            )
             terminal_evidence = make_durable_execution_evidence(
                 run_id=completion.run_id,
                 durable_seq=final_seq,
@@ -2161,15 +2199,12 @@ class MongoLedger:
                 event_kind=terminal_event.kind,
                 payload_json=terminal_event.payload_json,
                 recorded_at_ms=now,
-                producer_instance_ref=self._producer_instance_ref,
-                producer_generation=self._producer_generation,
+                producer_instance_ref=stream_instance_ref,
+                producer_generation=stream_generation,
                 output_high_watermark=output_high_watermark,
                 output_digest_sha256=output_digest_sha256,
             )
-            records = [
-                owner_evidence.model_copy(update={"durable_seq": final_seq - 1}),
-                terminal_evidence,
-            ]
+            records = [owner_evidence, terminal_evidence]
             await self._evidence.insert_many(
                 [
                     {"_id": record.evidence_ref, **record.model_dump(mode="python")}

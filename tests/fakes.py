@@ -184,6 +184,7 @@ class FakeLedger:
             tuple[str, str], tuple[str, tuple[PresentationCandidateRecord, ...]]
         ] = {}
         self.presentation_delivery: dict[str, PresentationAcknowledgeState] = {}
+        self.run_stream_producers: dict[str, tuple[str, int]] = {}
         self.owner_heads: dict[str, int] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
@@ -203,6 +204,11 @@ class FakeLedger:
         self.requests[request.run_id] = request
         self.leases[request.run_id] = 1
         self.owners[request.run_id] = owner
+        self.run_stream_producers[request.run_id] = (
+            "run_stream_"
+            + hashlib.sha256(f"fake\0{request.run_id}".encode()).hexdigest()[:32],
+            1,
+        )
         return True
 
     async def owner_event_head(self, run_id: str) -> int:
@@ -432,6 +438,9 @@ class FakeLedger:
             raise ValueError("OUTPUT_SOURCE_PARTIAL")
         if run_id in self.terminals:
             return None
+        producer = self.run_stream_producers.get(run_id)
+        if producer is None:
+            return None
         records = self.output_records.setdefault(run_id, [])
         next_text_seq = dict(self.output_text_seq)
         appended: list[DurableOutputRecord] = []
@@ -447,8 +456,8 @@ class FakeLedger:
                 draft=draft,
                 replaces_through_output_seq=replaces_through,
                 recorded_at_ms=recorded_at_ms,
-                producer_instance_ref="agent-test",
-                producer_generation=1,
+                producer_instance_ref=producer[0],
+                producer_generation=producer[1],
             )
             appended.append(record)
             if draft.text_part_ref is not None:
@@ -478,6 +487,9 @@ class FakeLedger:
     async def append_presentation_event(
         self, event: AgentEvent, *, agent_thread_ref: str
     ) -> tuple[PresentationCandidateRecord, ...] | None:
+        producer = self.run_stream_producers.get(event.run_id)
+        if producer is None:
+            return None
         state = self.presentation_states.get(
             event.run_id, PresentationProjectionState()
         )
@@ -494,8 +506,8 @@ class FakeLedger:
                 run_id=event.run_id,
                 presentation_seq=int(candidate.source.source_ordinal) + 1,
                 candidate=candidate,
-                producer_instance_ref="agent-test",
-                producer_generation=1,
+                producer_instance_ref=producer[0],
+                producer_generation=producer[1],
             )
             for candidate in batch.candidates
         )

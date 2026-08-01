@@ -116,14 +116,6 @@ async def _invoke(
     ledger = ledger or FakeLedger()
     await ledger.try_claim(request(run_id))
     emitter = await RunEmitter.attach(bus, run_id, outbox=ledger)
-    captured: RunnableConfig = {
-        "configurable": {
-            "thread_id": "c1",
-            "checkpoint_ns": "",
-            "checkpoint_id": f"checkpoint-{run_id}",
-        },
-        "metadata": {"kokoro_run_id": run_id},
-    }
     return await invoke_once(
         emitter,
         agent,
@@ -136,14 +128,9 @@ async def _invoke(
         source_for=_runtime_custom,
         claim_terminal=claim or (lambda: ledger.try_mark_terminal(run_id)),
         prepare_completed=lambda: completed_execution_context(run_id),
-        capture_interrupted=lambda: _constant_config(captured),
         record_usage=usage_recorder()[0],
         trace=trace,
     )
-
-
-async def _constant_config(config: RunnableConfig) -> RunnableConfig:
-    return config
 
 
 async def _pump_text_run(text: str) -> AgentRunStream:
@@ -321,7 +308,6 @@ async def test_tool_events_inherit_awaiting_segment(stream: RedisStream) -> None
         ToolAwaitingApprovalPayload(
             segment_id="seg_msg",
             tool_id="t1",
-            owner_version=1,
             name="write_file",
             args={},
             description="d",
@@ -361,7 +347,6 @@ async def test_optional_none_fields_never_serialize_as_null(stream: RedisStream)
         ToolAwaitingApprovalPayload(
             segment_id="s1",
             tool_id="t1",
-            owner_version=1,
             name="write_file",
             args={},
             description="d",
@@ -377,153 +362,6 @@ async def test_optional_none_fields_never_serialize_as_null(stream: RedisStream)
     payload = items[-1].event["payload"]
     assert isinstance(payload, dict)
     assert "risk" not in payload and "input_schema" not in payload
-
-
-async def test_action_owner_revision_is_checkpoint_idempotent_and_monotonic() -> None:
-    """One owner advances only for an applied resume, even when LangGraph reuses its checkpoint."""
-    ledger = FakeLedger()
-    await ledger.try_claim(request("r-action-revision"))
-    bus = FakeBus()
-    payload = ToolAwaitingApprovalPayload(
-        segment_id="seg-input",
-        tool_id="request-otp",
-        owner_version=1,
-        name="mcp__auth__otp",
-        args={"message": "Enter OTP"},
-        description="Enter the one-time password",
-        allowed_decisions=["submit", "reject"],
-        kind="input",
-        editable=False,
-        input_schema={"type": "object"},
-        pending_tool_ids=["request-otp"],
-    )
-
-    first = RunEmitter(bus, "r-action-revision", outbox=ledger)
-    await first.emit(payload, action_owner_checkpoint_ref="acheck_same")
-    await first.emit(payload, action_owner_checkpoint_ref="acheck_same")
-
-    reprompt = payload.model_copy(
-        update={"args": {"message": "Enter OTP", "validation_error": "otp required"}}
-    )
-    assert await ledger.record_control_inbox(
-        "r-action-revision", "decision-1", "fingerprint-1", "{}"
-    )
-    # Merely persisted/untrusted control is not a successor cause.
-    with pytest.raises(DurableOutputCommitError, match="ACTION_OWNER_REVISION_CONFLICT"):
-        await first.emit(reprompt, action_owner_checkpoint_ref="acheck_same")
-    await ledger.mark_control_applied("r-action-revision", "decision-1")
-
-    resumed = await RunEmitter.attach(bus, "r-action-revision", outbox=ledger)
-    await resumed.emit(reprompt, action_owner_checkpoint_ref="acheck_same")
-
-    restarted = await RunEmitter.attach(bus, "r-action-revision", outbox=ledger)
-    await restarted.emit(reprompt, action_owner_checkpoint_ref="acheck_same")
-
-    second_reprompt = reprompt.model_copy(
-        update={"args": {"message": "Enter OTP", "validation_error": "otp format invalid"}}
-    )
-    assert await ledger.record_control_inbox(
-        "r-action-revision", "decision-2", "fingerprint-2", "{}"
-    )
-    with pytest.raises(DurableOutputCommitError, match="ACTION_OWNER_REVISION_CONFLICT"):
-        await restarted.emit(second_reprompt, action_owner_checkpoint_ref="acheck_same")
-    await ledger.mark_control_applied("r-action-revision", "decision-2")
-    await restarted.emit(second_reprompt, action_owner_checkpoint_ref="acheck_same")
-    # Duplicate transport of the same applied decision is keep-first and cannot create v4.
-    assert not await ledger.record_control_inbox(
-        "r-action-revision", "decision-2", "forged", '{"different":true}'
-    )
-    await restarted.emit(second_reprompt, action_owner_checkpoint_ref="acheck_same")
-
-    awaiting = find_events(bus.run_events("r-action-revision"), ToolAwaitingApproval)
-    assert [event.payload.owner_version for event in awaiting] == [1, 2, 3]
-    assert [event.payload.tool_id for event in awaiting] == [
-        "request-otp",
-        "request-otp",
-        "request-otp",
-    ]
-    assert ledger.durable_counter["r-action-revision"] == 3
-    assert {
-        semantic_key
-        for run_id, semantic_key in ledger.semantic_critical
-        if run_id == "r-action-revision"
-    } == {
-        "action_owner:request-otp:version:1",
-        "action_owner:request-otp:version:2",
-        "action_owner:request-otp:version:3",
-    }
-
-    with pytest.raises(DurableOutputCommitError, match="ACTION_OWNER_REVISION_CONFLICT"):
-        await restarted.emit(
-            second_reprompt.model_copy(update={"description": "mutated same checkpoint"}),
-            action_owner_checkpoint_ref="acheck_same",
-        )
-
-
-async def test_action_owner_orphan_reservation_replays_same_checkpoint_after_attach() -> None:
-    """Crash after reservation but before outbox stage leaves a retryable, not skipped, intent."""
-
-    class CrashBeforeStageLedger(FakeLedger):
-        def __init__(self) -> None:
-            super().__init__()
-            self.crash_once = True
-
-        async def stage_critical_frame(
-            self,
-            run_id: str,
-            kind: str,
-            index: int,
-            timestamp: int,
-            payload_json: str,
-            *,
-            terminal: bool,
-            semantic_key: str | None = None,
-        ) -> StagedFrame | None:
-            if self.crash_once and kind == "tool.awaiting_approval":
-                self.crash_once = False
-                raise RuntimeError("crash after action-owner reservation")
-            return await super().stage_critical_frame(
-                run_id,
-                kind,
-                index,
-                timestamp,
-                payload_json,
-                terminal=terminal,
-                semantic_key=semantic_key,
-            )
-
-    ledger = CrashBeforeStageLedger()
-    await ledger.try_claim(request("r-action-orphan"))
-    bus = FakeBus()
-    payload = ToolAwaitingApprovalPayload(
-        segment_id="seg-input",
-        tool_id="request-otp",
-        owner_version=1,
-        name="mcp__auth__otp",
-        args={"message": "Enter OTP"},
-        description="Enter the one-time password",
-        allowed_decisions=["submit", "reject"],
-        kind="input",
-        editable=False,
-        pending_tool_ids=["request-otp"],
-    )
-
-    with pytest.raises(DurableOutputCommitError, match="DURABLE_OUTPUT_STAGE_FAILED"):
-        await RunEmitter(bus, "r-action-orphan", outbox=ledger).emit(
-            payload,
-            action_owner_checkpoint_ref="acheck_same",
-        )
-
-    assert len(ledger.action_owner_revisions) == 1
-    assert ledger.durable_counter.get("r-action-orphan", 0) == 0
-
-    recovered = await RunEmitter.attach(bus, "r-action-orphan", outbox=ledger)
-    await recovered.emit(payload, action_owner_checkpoint_ref="acheck_same")
-
-    awaiting = find_events(bus.run_events("r-action-orphan"), ToolAwaitingApproval)
-    assert [event.payload.owner_version for event in awaiting] == [1]
-    assert len(ledger.action_owner_revisions) == 1
-    assert ledger.durable_counter["r-action-orphan"] == 1
 
 
 async def test_thinking_channel_and_final_frame() -> None:

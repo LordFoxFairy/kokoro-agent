@@ -257,7 +257,6 @@ def awaiting_payloads(
             ToolAwaitingApprovalPayload(
                 segment_id=frame.segment_id,
                 tool_id=entry.tool_id,
-                owner_version=1,
                 name=entry.name,
                 args=entry.args,
                 description=describe_tool(entry.name) or "",
@@ -279,7 +278,6 @@ def awaiting_payloads(
                 segment_id=iframe.segment_id,
                 # 工具边界二者同值：pause 锚 request_id 承在 tool_id 槽（web 据此关联发起工具卡）。
                 tool_id=entry.request_id,
-                owner_version=1,
                 name=entry.name,
                 args=entry.args,
                 description=describe_tool(entry.name) or "",
@@ -300,7 +298,6 @@ def awaiting_payloads(
             ToolAwaitingApprovalPayload(
                 segment_id=frame.segment_id,
                 tool_id=tool_id,
-                owner_version=1,
                 name=request.name,
                 args=request.args,
                 description=describe_tool(request.name) or "",

@@ -28,7 +28,6 @@ def _envelope(kind: str, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
 _AWAITING_PAYLOAD: dict[str, JsonValue] = {
     "segment_id": "seg",
     "tool_id": "t1",
-    "owner_version": 1,
     "name": "execute",
     "args": {"cmd": "ls"},
     "description": "run",
@@ -151,17 +150,6 @@ def test_malformed_events_rejected(envelope: dict[str, JsonValue]) -> None:
 def test_missing_kind_rejected() -> None:
     with pytest.raises(ValidationError):
         agent_event_adapter.validate_python({"run_id": "r1", "index": 0, "timestamp": 1, "payload": {}})
-
-
-def test_action_owner_version_is_required_and_positive() -> None:
-    missing = dict(_AWAITING_PAYLOAD)
-    del missing["owner_version"]
-    with pytest.raises(ValidationError):
-        agent_event_adapter.validate_python(_envelope("tool.awaiting_approval", missing))
-
-    invalid = {**_AWAITING_PAYLOAD, "owner_version": 0}
-    with pytest.raises(ValidationError):
-        agent_event_adapter.validate_python(_envelope("tool.awaiting_approval", invalid))
 
 
 @pytest.mark.parametrize("status", ["completed", "cancelled"])

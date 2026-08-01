@@ -711,7 +711,7 @@ def _typed_payload(
                 raise ValueError("EVIDENCE_ACTION_OWNER_SET_TOO_LARGE")
             action = wire.ActionOwnerEvidenceV1(
                 owner_ref=owner.tool_id,
-                owner_version=owner.owner_version,
+                owner_version=1,
                 segment_id=owner.segment_id,
                 action_name=owner.name,
                 awaiting_kind=_ACTION_KIND[owner.kind],

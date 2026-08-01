@@ -16,11 +16,9 @@ from kokoro_agent.evidence.models import (
 )
 from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
-    AGENT_ACTION_OWNER_REVISIONS_COLLECTION,
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
-    ActionOwnerRevision,
     ControlInboxRecord,
     MongoLedger,
     OutboxFrame,
@@ -38,7 +36,6 @@ DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK = (
 
 # 这些记录类型定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
 __all__ = [
-    "ActionOwnerRevision",
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
     "DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK",
@@ -83,18 +80,6 @@ class RunLedger(ExecutionContextStore, Protocol):
         # local fence。semantic_key 非空时同 key+同 payload 原子复用既有身份，不同 payload
         # fail-loud；marker 保留到 run retention，不随 outbox receipt GC 删除。
         # 返回 None=post-fence（seq>fence）→superseded 摘要落库、caller 不发布。
-        ...
-
-    async def reserve_action_owner_revision(
-        self,
-        run_id: str,
-        owner_ref: str,
-        checkpoint_ref: str,
-        payload_sha256: str,
-    ) -> ActionOwnerRevision | None:
-        # Same checkpoint + latest applied control decision + payload is an exact replay. A real
-        # applied resume appends owner_version +1 even when LangGraph reuses checkpoint_id.
-        # Persisted/unapplied controls cannot advance it; terminal runs never allocate.
         ...
 
     async def append_durable_outputs(
@@ -310,19 +295,6 @@ async def make_ledger(
         await output_source_batches.create_index(
             [("run_id", 1), ("source_event_ref", 1)],
             name="run_output_source_batch_unique",
-            unique=True,
-        )
-        action_owner_revisions = collection.database[
-            AGENT_ACTION_OWNER_REVISIONS_COLLECTION
-        ]
-        await action_owner_revisions.create_index(
-            [("run_id", 1), ("owner_ref", 1), ("owner_version", 1)],
-            name="run_action_owner_version_unique",
-            unique=True,
-        )
-        await action_owner_revisions.create_index(
-            [("run_id", 1), ("owner_ref", 1), ("checkpoint_ref", 1)],
-            name="run_action_owner_checkpoint_unique",
             unique=True,
         )
         yield MongoLedger(

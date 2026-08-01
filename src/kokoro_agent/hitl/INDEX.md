@@ -24,9 +24,7 @@ owners:
 - `request_input(*, request_id, schema=None, context=None) -> HumanInput`
   kind=input 的消费侧包装：request_human(kind="input") + jsonschema 校验 + 重问循环。
   submit 通过校验 → `InputSubmitted(value)`；reject → `InputRejected(reason)`；submit 不合法 →
-  附 `validation_error` 原地重新 interrupt（同 request_id/owner，人重填）；durable outbound
-  projection 以 exact checkpoint + 已 applied resume decision 识别该真实 successor，并为同一
-  owner 分配递增 `owner_version`。MCP elicitation 桥的消费点。
+  附 `validation_error` 原地重新 interrupt（同 request_id，人重填）。MCP elicitation 桥的消费点。
   resume 载荷形态 = `list[{request_id, type, value?/reason?}]`（supervisor 的 `submit_resume_value` 产出）。
 - `HumanInput = InputSubmitted | InputRejected`：`request_input` 返回值的具名联合，消费方
   按分支穷尽；`InputSubmitted(value: dict[str, JsonValue])` 与 `InputRejected(reason: str | None)`

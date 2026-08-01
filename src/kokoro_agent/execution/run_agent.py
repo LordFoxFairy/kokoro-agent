@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 
 from collections.abc import Awaitable, Callable, Mapping
 
@@ -76,16 +74,10 @@ async def invoke_once(
                         # 专用 owner 事件取代 generic awaiting，避免浏览器出现两个决策 owner。
                         await emitter.emit(proposal)
                     else:
-                        action_owner_checkpoint_ref = _action_owner_checkpoint_ref(
-                            state_config
-                        )
                         for awaiting in awaiting_payloads(
                             snapshot, approval_tool_names, describe_tool=describe_tool
                         ):
-                            await emitter.emit(
-                                awaiting,
-                                action_owner_checkpoint_ref=action_owner_checkpoint_ref,
-                            )
+                            await emitter.emit(awaiting)
                     # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
                     await _record(record_usage, usage_cb.usage_metadata)
                     return False
@@ -153,39 +145,3 @@ def _config(
     metadata["kokoro_run_id"] = run_id
     config["metadata"] = metadata
     return config
-
-
-def _action_owner_checkpoint_ref(config: RunnableConfig) -> str | None:
-    """Derive a private stable replay fence from the exact projected checkpoint."""
-    configurable = config.get("configurable")
-    if not isinstance(configurable, dict):
-        raise ValueError("action owner checkpoint config is missing")
-    checkpoint_id = configurable.get("checkpoint_id")
-    if checkpoint_id is None:
-        # Unit/live-only emitters without a durable ledger retain version one. Production
-        # supervisor capture always supplies an exact checkpoint before durable publication.
-        return None
-    thread_id = configurable.get("thread_id")
-    checkpoint_ns = configurable.get("checkpoint_ns", "")
-    if (
-        not isinstance(thread_id, str)
-        or not thread_id
-        or not isinstance(checkpoint_ns, str)
-        or not isinstance(checkpoint_id, str)
-        or not checkpoint_id
-    ):
-        raise ValueError("action owner checkpoint config is invalid")
-    canonical = json.dumps(
-        {
-            "checkpoint_id": checkpoint_id,
-            "checkpoint_ns": checkpoint_ns,
-            "thread_id": thread_id,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    digest = hashlib.sha256(
-        b"kokoro-action-owner-checkpoint.v1\0" + canonical.encode()
-    ).hexdigest()
-    return f"acheck_{digest}"

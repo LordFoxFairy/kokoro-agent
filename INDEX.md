@@ -70,15 +70,6 @@ resume refs remain opaque wire values. The generated Protobuf mirrors are distri
 until Root-equivalent CEL/protovalidate, the decision-group identity helper, successor proof authority, durable evidence
 composition, and the release epoch are wired; the incomplete Pydantic pseudo-mirrors are intentionally not shipped.
 
-The prelaunch V1 outbound hard cut carries `tool.awaiting_approval.owner_version`. The stable
-tool/request id remains the owner; an Agent-private pause journal binds the exact LangGraph
-checkpoint to the latest durable applied resume decision, appends immutable revisions, reuses the
-exact revision on attach/restart replay, and binds each successor to its predecessor. LangGraph may
-re-prompt by changing writes under the same checkpoint id, so checkpoint id alone is never treated
-as revision authority; persisted/unapplied control cannot advance the journal.
-The semantic critical key is owner + version, and V1 execution evidence copies the emitted version.
-Root/Session/Web contract mirrors must be promoted atomically before this wire shape is activated.
-
 The official Python AG-UI SDK is pinned to `ag-ui-protocol==0.1.19` at Root's exact upstream commit.
 `kokoro_agent.presentation` constructs official models and then closes them into a frozen typed
 Agent-to-Session candidate envelope. It has no transport and is not wired into `RunEmitter`.

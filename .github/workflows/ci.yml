@@ -18,16 +18,11 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
-      mongo:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
     env:
+      KOKORO_CI_MONGO_CONTAINER: kokoro-agent-ci-mongo-${{ github.run_id }}-${{ github.run_attempt }}
+      # Keep CI on the same immutable Mongo 7 artifact as Root Infra.
+      KOKORO_CI_MONGO_IMAGE: mongo:7@sha256:340c1c56fb10e95cf79ff547f8664b96bc6ead9909bc355238cbf865a9695a6f
+      KOKORO_MONGO_URL: mongodb://127.0.0.1:27017/?replicaSet=kokoro-rs&directConnection=true
       KOKORO_REDIS_URL: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@v4
@@ -44,5 +39,76 @@ jobs:
         run: uv run ruff check src tests
       - name: pyright
         run: uv run pyright
+      - name: CI workflow contract
+        run: uv run pytest tests/repository/test_ci_workflow.py -q
+      - name: Start Mongo replica set
+        timeout-minutes: 5
+        run: |
+          set -Eeuo pipefail
+
+          docker run --detach \
+            --name "${KOKORO_CI_MONGO_CONTAINER}" \
+            --publish 127.0.0.1:27017:27017 \
+            "${KOKORO_CI_MONGO_IMAGE}" \
+            --replSet kokoro-rs \
+            --bind_ip_all
+
+          # A pre-init replica-set node cannot report PRIMARY yet. First wait only for
+          # the mongod process to answer a direct ping, then initialize the set.
+          mongo_responding=0
+          for attempt in $(seq 1 30); do
+            if docker exec "${KOKORO_CI_MONGO_CONTAINER}" \
+              mongosh --quiet --host 127.0.0.1 --eval \
+              'db.runCommand({ ping: 1 }).ok === 1 ? quit(0) : quit(1)'; then
+              mongo_responding=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${mongo_responding}" != "1" ]]; then
+            docker logs "${KOKORO_CI_MONGO_CONTAINER}"
+            exit 1
+          fi
+
+          # rs.status succeeds on reruns. NotYetInitialized is the only state allowed
+          # to call rs.initiate, making the bootstrap safe to retry.
+          docker exec "${KOKORO_CI_MONGO_CONTAINER}" \
+            mongosh --quiet --host 127.0.0.1 --eval '
+            try {
+              const status = rs.status();
+              if (status.set !== "kokoro-rs") {
+                throw new Error(`unexpected replica set: ${status.set}`);
+              }
+            } catch (error) {
+              if (error.code !== 94 && error.codeName !== "NotYetInitialized") {
+                throw error;
+              }
+              const result = rs.initiate({
+                _id: "kokoro-rs",
+                members: [{ _id: 0, host: "localhost:27017" }],
+              });
+              if (result.ok !== 1 && result.codeName !== "AlreadyInitialized") {
+                throw new Error(`replica-set initialization failed: ${tojson(result)}`);
+              }
+            }
+          '
+
+          primary_ready=0
+          for attempt in $(seq 1 30); do
+            if docker exec "${KOKORO_CI_MONGO_CONTAINER}" \
+              mongosh --quiet --host 127.0.0.1 --eval \
+              'if (!db.hello().isWritablePrimary) { quit(1); }'; then
+              primary_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${primary_ready}" != "1" ]]; then
+            docker logs "${KOKORO_CI_MONGO_CONTAINER}"
+            exit 1
+          fi
       - name: pytest
         run: uv run pytest -q
+      - name: Stop Mongo replica set
+        if: always()
+        run: docker rm --force "${KOKORO_CI_MONGO_CONTAINER}" >/dev/null 2>&1 || true

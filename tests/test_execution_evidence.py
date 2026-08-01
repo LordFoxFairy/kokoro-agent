@@ -194,6 +194,7 @@ def test_safe_output_mapping_covers_supported_families_without_raw_material() ->
         ToolAwaitingApprovalPayload(
             segment_id="segment-1",
             tool_id="tool-approval-1",
+            owner_version=1,
             name="execute",
             args={"raw": "RAW_APPROVAL_ARGUMENT"},
             description="RAW_APPROVAL_DESCRIPTION",
@@ -419,6 +420,7 @@ def test_action_owner_is_renderable_bounded_and_redacted() -> None:
     payload = {
         "segment_id": "seg-action",
         "tool_id": "call-action",
+        "owner_version": 2,
         "name": "deploy",
         "args": {
             "password": "do-not-expose",
@@ -452,6 +454,7 @@ def test_action_owner_is_renderable_bounded_and_redacted() -> None:
     )
     owner = canonical.action_owner
     assert owner.owner_ref == "call-action"
+    assert owner.owner_version == 2
     assert owner.awaiting_kind == evidence_pb2.ACTION_AWAITING_KIND_V1_TOOL_APPROVAL
     assert list(owner.pending_owner_refs) == ["call-action", "call-next"]
     assert owner.risk.level == "high"
@@ -519,6 +522,7 @@ def test_safe_action_json_never_serializes_nonstandard_numbers() -> None:
     payload = {
         "segment_id": "seg-action",
         "tool_id": "call-action",
+        "owner_version": 1,
         "name": "calculate",
         "args": {"nan": float("nan"), "positive": float("inf"), "negative": -float("inf")},
         "description": "Review numbers",

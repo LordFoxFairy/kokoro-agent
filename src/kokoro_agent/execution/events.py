@@ -225,7 +225,12 @@ class RunEmitter:
             message = "live event publish failed; durable truth retained: run_id=%s kind=%s"
         LOGGER.log(logging.WARNING if first else logging.DEBUG, message, self._run_id, kind)
 
-    async def emit(self, payload: AgentEventPayload) -> None:
+    async def emit(
+        self,
+        payload: AgentEventPayload,
+        *,
+        action_owner_checkpoint_ref: str | None = None,
+    ) -> None:
         if (
             isinstance(payload, ToolReturnedPayload)
             and payload.name in self._review_tool_names
@@ -234,12 +239,48 @@ class RunEmitter:
         ):
             # 投影侧 raw returned 抑制；带 rejected/responded 标记的是 supervisor 裁决直发，放行。
             return
+        if isinstance(payload, ToolAwaitingApprovalPayload) and self._outbox is not None:
+            if action_owner_checkpoint_ref is None:
+                raise DurableOutputCommitError(
+                    "DURABLE_ACTION_OWNER_REVISION_FAILED: "
+                    "ACTION_OWNER_CHECKPOINT_REQUIRED"
+                )
+            candidate_json = json.dumps(
+                payload.model_dump(
+                    mode="json", exclude_none=True, exclude={"owner_version"}
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            candidate_sha256 = hashlib.sha256(candidate_json.encode()).hexdigest()
+            try:
+                revision = await self._outbox.reserve_action_owner_revision(
+                    self._run_id,
+                    payload.tool_id,
+                    action_owner_checkpoint_ref,
+                    candidate_sha256,
+                )
+            except Exception as error:
+                detail = (
+                    "ACTION_OWNER_REVISION_CONFLICT"
+                    if str(error) == "ACTION_OWNER_REVISION_CONFLICT"
+                    else "ACTION_OWNER_REVISION_ERROR"
+                )
+                raise DurableOutputCommitError(
+                    f"DURABLE_ACTION_OWNER_REVISION_FAILED: {detail}"
+                ) from error
+            if revision is None:
+                return
+            payload = payload.model_copy(
+                update={"owner_version": revision.owner_version}
+            )
         payload = self._with_owner_segment(payload)
         kind = _KIND_BY_PAYLOAD[type(payload)]
         index = self._next_index
         timestamp = _now_ms()
         semantic_key = (
-            f"action_owner:{payload.tool_id}"
+            f"action_owner:{payload.tool_id}:version:{payload.owner_version}"
             if isinstance(payload, ToolAwaitingApprovalPayload)
             else f"plan.proposed:{payload.owner_ref}"
             if isinstance(payload, PlanProposedPayload)

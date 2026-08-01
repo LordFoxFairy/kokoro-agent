@@ -99,6 +99,8 @@ class ToolOutputDeltaPayload(StrictModel):
 class ToolAwaitingApprovalPayload(StrictModel):
     segment_id: NonEmptyStr
     tool_id: NonEmptyStr
+    # Stable tool/request owner + monotonic presentation revision. Reprompt keeps tool_id.
+    owner_version: PositiveInt
     name: NonEmptyStr
     args: dict[str, JsonValue]
     description: str

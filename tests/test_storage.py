@@ -40,6 +40,7 @@ from kokoro_agent.storage.ledger import (
     make_ledger,
 )
 from kokoro_agent.storage.mongo import (
+    AGENT_ACTION_OWNER_REVISIONS_COLLECTION,
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
@@ -116,6 +117,7 @@ async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION].drop()
+        await coll.database[AGENT_ACTION_OWNER_REVISIONS_COLLECTION].drop()
         await client.close()
 
 
@@ -721,6 +723,7 @@ async def _mongo_ledger_with_dispatches(
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION].drop()
+        await coll.database[AGENT_ACTION_OWNER_REVISIONS_COLLECTION].drop()
         # R4 回执/清单是同库固定名兄弟集合（跨测试共享）：逐测试清空，串行安全。
         await coll.database[RUN_EVENT_RECEIPTS_COLLECTION].drop()
         await coll.database[RUN_RECEIPT_MANIFESTS_COLLECTION].drop()
@@ -1031,6 +1034,103 @@ async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> Non
                 terminal=False,
                 semantic_key=key,
             )
+
+
+async def test_action_owner_revision_is_durable_monotonic_and_predecessor_bound() -> None:
+    clock = FakeClock()
+    async with _mongo_ledger_with_dispatches(clock) as (store, _dispatches):
+        run_id = "run-action-owner-revision"
+        await store.try_claim(request(run_id), OWNER)
+
+        first = await store.reserve_action_owner_revision(
+            run_id,
+            "request-otp",
+            "acheck_same",
+            "a" * 64,
+        )
+        replay = await store.reserve_action_owner_revision(
+            run_id,
+            "request-otp",
+            "acheck_same",
+            "a" * 64,
+        )
+        assert await store.record_control_inbox(
+            run_id, "decision-1", "fingerprint-1", "{}"
+        )
+        # A persisted but unapplied control cannot forge a new pause revision.
+        with pytest.raises(ValueError, match="ACTION_OWNER_REVISION_CONFLICT"):
+            await store.reserve_action_owner_revision(
+                run_id,
+                "request-otp",
+                "acheck_same",
+                "b" * 64,
+            )
+        await store.mark_control_applied(run_id, "decision-1")
+        successor = await store.reserve_action_owner_revision(
+            run_id,
+            "request-otp",
+            "acheck_same",
+            "b" * 64,
+        )
+        successor_replay = await store.reserve_action_owner_revision(
+            run_id,
+            "request-otp",
+            "acheck_same",
+            "b" * 64,
+        )
+
+        assert first is not None and first.owner_version == 1
+        assert replay == first
+        assert successor is not None and successor.owner_version == 2
+        assert successor_replay == successor
+        assert successor.predecessor_owner_version == 1
+        assert successor.predecessor_checkpoint_ref == first.checkpoint_ref
+        assert successor.predecessor_payload_sha256 == first.payload_sha256
+
+        with pytest.raises(ValueError, match="ACTION_OWNER_REVISION_CONFLICT"):
+            await store.reserve_action_owner_revision(
+                run_id,
+                "request-otp",
+                "acheck_same",
+                "c" * 64,
+            )
+
+        assert await store.record_control_inbox(
+            run_id, "decision-2", "fingerprint-2", "{}"
+        )
+        await store.mark_control_applied(run_id, "decision-2")
+        second_successor = await store.reserve_action_owner_revision(
+            run_id,
+            "request-otp",
+            "acheck_same",
+            "c" * 64,
+        )
+        assert second_successor is not None and second_successor.owner_version == 3
+        assert second_successor.predecessor_owner_version == 2
+        assert second_successor.predecessor_checkpoint_ref == successor.checkpoint_ref
+        assert not await store.record_control_inbox(
+            run_id, "decision-2", "forged", '{"different":true}'
+        )
+        assert (
+            await store.reserve_action_owner_revision(
+                run_id,
+                "request-otp",
+                "acheck_same",
+                "c" * 64,
+            )
+            == second_successor
+        )
+
+        assert await store.try_mark_terminal(run_id) is True
+        assert (
+            await store.reserve_action_owner_revision(
+                run_id,
+                "request-otp",
+                "acheck_terminal",
+                "d" * 64,
+            )
+            is None
+        )
 
 
 async def test_execution_evidence_is_run_document_independent_and_page_bounded() -> None:

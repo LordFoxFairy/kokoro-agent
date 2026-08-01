@@ -49,6 +49,13 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   `outbox_wire_event(frame)`：queued 行→补发 wire 帧（复用固定身份，幂等不漂移）。
   `plan.proposed` 额外以 `plan.proposed:<tool_call_id>` 作 semantic key；marker 不随 receipt GC 删除，
   同 key 同 payload 返回 duplicate/no-publish，同 key异 payload fail-loud。
+  `tool.awaiting_approval` 以 stable `tool_id` 为 owner，并以 exact LangGraph checkpoint +
+  durable latest-applied control decision 密封私有 pause ref 后 reserve `owner_version`。这处理
+  LangGraph 原地 re-interrupt 复用 checkpoint id 的事实：同 pause cause/同 payload 重放复用，
+  每次真实 applied resume 单调追加 predecessor-bound revision；persisted/unapplied control 不得
+  推进。critical key 为 `action_owner:<tool_id>:version:<n>`。reservation 先于 outbox stage；
+  中间崩溃留下 retryable intent，attach 后补齐同一 revision，不跳号、不按 payload hash 伪造
+  owner。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布；drainer fatal 时立即取消并
   await producer 树，且保留原始 `DurableOutputCommitError`；外部 `CancelledError` 同步取消并收束

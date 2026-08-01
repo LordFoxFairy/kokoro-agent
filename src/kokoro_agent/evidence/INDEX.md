@@ -32,6 +32,14 @@ The canonical `agent_durable_output` index inventory is `run_output_seq_unique`
 index serves the latest-text lookup used when computing snapshot replacement boundaries.
 `agent_durable_output_source_batch` separately owns `run_output_source_batch_unique`.
 
+`agent_action_owner_revisions` is the append-only V1 outbound Interaction owner journal. It has
+unique `(run_id, owner_ref, owner_version)` and `(run_id, owner_ref, checkpoint_ref)` identities;
+the stored `checkpoint_ref` is a private domain-separated digest of the exact captured LangGraph
+checkpoint and latest durable applied control decision. This is the replay fence because LangGraph
+can re-interrupt under one checkpoint id. Persisted/unapplied controls are excluded. Rows carry the
+canonical candidate payload digest and exact predecessor tuple. `ActionOwnerEvidenceV1.owner_version`
+must equal published `tool.awaiting_approval.owner_version`; it is no longer synthesized as one.
+
 The storage adapter can delete output rows, private source-batch markers, and evidence rows with
 an eligible run in one Mongo transaction, but that destructive path is not operationally enabled.
 `KOKORO_RETENTION_RUN_TTL_S`

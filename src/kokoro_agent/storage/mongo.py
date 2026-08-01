@@ -15,7 +15,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from kokoro_agent.contract import RunCompletedPayload, RunOwnerCompletedPayload, RunRequest
 from kokoro_agent.storage.execution_context import (
@@ -51,6 +51,7 @@ DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
 AGENT_DURABLE_OUTPUT_COLLECTION = "agent_durable_output"
 AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION = "agent_durable_output_source_batch"
+AGENT_ACTION_OWNER_REVISIONS_COLLECTION = "agent_action_owner_revisions"
 
 _T = TypeVar("_T")
 _OUTPUT_APPEND_MAX_ATTEMPTS = 64
@@ -225,6 +226,74 @@ class StagedFrame(BaseModel):
     created: bool = True
 
 
+class ActionOwnerRevision(BaseModel):
+    """Immutable revision reservation for one stable tool/request interaction owner."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    run_id: str = Field(min_length=1, max_length=128)
+    owner_ref: str = Field(min_length=1, max_length=256)
+    owner_version: int = Field(gt=0)
+    checkpoint_ref: str = Field(min_length=1, max_length=256)
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    predecessor_owner_version: int | None = Field(default=None, gt=0)
+    predecessor_checkpoint_ref: str | None = Field(
+        default=None, min_length=1, max_length=256
+    )
+    predecessor_payload_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+
+    @model_validator(mode="after")
+    def validate_predecessor(self) -> ActionOwnerRevision:
+        predecessor = (
+            self.predecessor_owner_version,
+            self.predecessor_checkpoint_ref,
+            self.predecessor_payload_sha256,
+        )
+        if self.owner_version == 1:
+            if any(value is not None for value in predecessor):
+                raise ValueError("ACTION_OWNER_INITIAL_PREDECESSOR_INVALID")
+        elif (
+            self.predecessor_owner_version != self.owner_version - 1
+            or self.predecessor_checkpoint_ref is None
+            or self.predecessor_payload_sha256 is None
+        ):
+            raise ValueError("ACTION_OWNER_SUCCESSOR_PREDECESSOR_INVALID")
+        return self
+
+
+def action_owner_pause_revision_ref(
+    checkpoint_ref: str,
+    applied_decision_id: str | None,
+) -> str:
+    """Seal one private pause cause without exposing control identity on the wire.
+
+    LangGraph can replace the interrupt writes of an existing checkpoint when invalid input
+    re-prompts the same task, so checkpoint identity alone is not a revision fence. The durable
+    applied control decision is the causal successor; persisted/unapplied controls are ignored.
+    """
+
+    if not checkpoint_ref:
+        raise ValueError("ACTION_OWNER_CHECKPOINT_REQUIRED")
+    cause = (
+        b"initial"
+        if applied_decision_id is None
+        else b"applied\0" + applied_decision_id.encode()
+    )
+    checkpoint = checkpoint_ref.encode()
+    canonical = (
+        len(checkpoint).to_bytes(4, "big")
+        + checkpoint
+        + len(cause).to_bytes(4, "big")
+        + cause
+    )
+    digest = hashlib.sha256(
+        b"kokoro-action-owner-pause-revision.v1\0" + canonical
+    ).hexdigest()
+    return f"apause_{digest}"
+
+
 class OutboxFrame(BaseModel):
     """queued outbox 行的重建视图（scanner 补发用）：完整还原 wire 帧。"""
 
@@ -295,6 +364,12 @@ class MongoLedger:
         # ordered payload identity without polluting public output cursors or hash chains.
         self._output_source_batches = collection.database[
             AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION
+        ]
+        # One append-only row per stable action owner revision. The private pause ref binds the
+        # exact checkpoint to the latest durable applied resume cause: replay reuses the row;
+        # a true resumed pause appends the exact predecessor-bound successor.
+        self._action_owner_revisions = collection.database[
+            AGENT_ACTION_OWNER_REVISIONS_COLLECTION
         ]
 
     async def _run_evidence_transaction(
@@ -605,6 +680,121 @@ class MongoLedger:
                 if attempt + 1 == _OUTPUT_APPEND_MAX_ATTEMPTS:
                     raise RuntimeError("OUTPUT_APPEND_CONTENTION") from None
         raise AssertionError("unreachable output append retry")
+
+    async def reserve_action_owner_revision(
+        self,
+        run_id: str,
+        owner_ref: str,
+        checkpoint_ref: str,
+        payload_sha256: str,
+    ) -> ActionOwnerRevision | None:
+        """Reserve/replay an immutable revision bound to checkpoint + applied resume cause."""
+
+        async def reserve(
+            session: AsyncClientSession | None,
+        ) -> ActionOwnerRevision | None:
+            run = await self._coll.find_one(
+                {"_id": run_id}, {"terminal": 1, "control_inbox": 1}, session=session
+            )
+            if run is None or run.get("terminal") is True:
+                return None
+            controls = _CONTROL_INBOX_ADAPTER.validate_python(
+                run.get("control_inbox") or []
+            )
+            latest_applied_decision_id = next(
+                (
+                    entry.decision_id
+                    for entry in reversed(controls)
+                    if entry.status == "applied"
+                ),
+                None,
+            )
+            pause_revision_ref = action_owner_pause_revision_ref(
+                checkpoint_ref,
+                latest_applied_decision_id,
+            )
+            requested = ActionOwnerRevision(
+                run_id=run_id,
+                owner_ref=owner_ref,
+                owner_version=1,
+                checkpoint_ref=pause_revision_ref,
+                payload_sha256=payload_sha256,
+            )
+
+            exact = await self._action_owner_revisions.find_one(
+                {
+                    "run_id": run_id,
+                    "owner_ref": owner_ref,
+                    "checkpoint_ref": pause_revision_ref,
+                },
+                {"_id": 0},
+                session=session,
+            )
+            if exact is not None:
+                existing = ActionOwnerRevision.model_validate(exact)
+                if existing.payload_sha256 != requested.payload_sha256:
+                    raise ValueError("ACTION_OWNER_REVISION_CONFLICT")
+                return existing
+
+            # Touch the run authority in the same transaction. Terminal fencing and concurrent
+            # successor allocation therefore serialize instead of producing a revision after
+            # terminal or two rows with the same monotonic version.
+            touched = await self._coll.update_one(
+                {"_id": run_id, "terminal": {"$ne": True}},
+                {"$inc": {"action_owner_revision_cas_count": 1}},
+                session=session,
+            )
+            if touched.modified_count != 1:
+                return None
+
+            head_raw = await self._action_owner_revisions.find_one(
+                {"run_id": run_id, "owner_ref": owner_ref},
+                {"_id": 0},
+                sort=[("owner_version", -1)],
+                session=session,
+            )
+            head = (
+                None
+                if head_raw is None
+                else ActionOwnerRevision.model_validate(head_raw)
+            )
+            revision = ActionOwnerRevision(
+                run_id=run_id,
+                owner_ref=owner_ref,
+                owner_version=1 if head is None else head.owner_version + 1,
+                checkpoint_ref=pause_revision_ref,
+                payload_sha256=payload_sha256,
+                predecessor_owner_version=(
+                    None if head is None else head.owner_version
+                ),
+                predecessor_checkpoint_ref=(
+                    None if head is None else head.checkpoint_ref
+                ),
+                predecessor_payload_sha256=(
+                    None if head is None else head.payload_sha256
+                ),
+            )
+            identity = hashlib.sha256(
+                (
+                    f"action-owner-revision:v1\0{run_id}\0{owner_ref}\0"
+                    f"{revision.owner_version}"
+                ).encode()
+            ).hexdigest()
+            await self._action_owner_revisions.insert_one(
+                {"_id": f"aorev_{identity}", **revision.model_dump(mode="python")},
+                session=session,
+            )
+            return revision
+
+        # Unique indexes convert concurrent same-checkpoint or same-version writers into a
+        # retry that reads the immutable winner. No payload is overwritten.
+        for attempt in range(_OUTPUT_APPEND_MAX_ATTEMPTS):
+            try:
+                return await self._run_evidence_transaction(reserve)
+            except DuplicateKeyError:
+                if attempt + 1 == _OUTPUT_APPEND_MAX_ATTEMPTS:
+                    raise RuntimeError("ACTION_OWNER_REVISION_CONTENTION") from None
+        raise AssertionError("unreachable action owner revision retry")
 
     async def pull_durable_output_records(
         self, run_id: str, after_output_seq: int, limit: int
@@ -1512,6 +1702,9 @@ class MongoLedger:
                     {"run_id": run_id}, session=session
                 )
                 await self._evidence.delete_many({"run_id": run_id}, session=session)
+                await self._action_owner_revisions.delete_many(
+                    {"run_id": run_id}, session=session
+                )
                 if retains_completion:
                     archived = await self._coll.update_one(
                         query,

@@ -32,6 +32,7 @@ from kokoro_agent.evidence.models import (
     make_durable_output_record,
 )
 from kokoro_agent.storage.ledger import (
+    ActionOwnerRevision,
     ControlInboxRecord,
     DurableRetentionStats,
     OutboxFrame,
@@ -39,6 +40,7 @@ from kokoro_agent.storage.ledger import (
     StagedFrame,
     ToolJournalRecord,
 )
+from kokoro_agent.storage.mongo import action_owner_pause_revision_ref
 from kokoro_agent.storage.execution_context import (
     ClaimedCompletionFrames,
     CompletionEventDraft,
@@ -158,6 +160,9 @@ class FakeLedger:
         self.terminal_fence: dict[str, int] = {}
         self.outbox: dict[str, list[dict[str, object]]] = {}
         self.semantic_critical: dict[tuple[str, str], tuple[str, str, int, str]] = {}
+        self.action_owner_revisions: dict[
+            tuple[str, str, str], ActionOwnerRevision
+        ] = {}
         self.output_records: dict[str, list[DurableOutputRecord]] = {}
         self.output_sources: dict[tuple[str, str], tuple[str, DurableOutputRecord]] = {}
         self.output_batches: dict[
@@ -253,6 +258,56 @@ class FakeLedger:
             }
         )
         return StagedFrame(durable_seq=seq, event_id=event_id, created=True)
+
+    async def reserve_action_owner_revision(
+        self,
+        run_id: str,
+        owner_ref: str,
+        checkpoint_ref: str,
+        payload_sha256: str,
+    ) -> ActionOwnerRevision | None:
+        if run_id in self.terminals:
+            return None
+        latest_applied_decision_id = next(
+            (
+                str(entry["decision_id"])
+                for entry in reversed(self.control_inbox.get(run_id, []))
+                if entry["status"] == "applied"
+            ),
+            None,
+        )
+        pause_revision_ref = action_owner_pause_revision_ref(
+            checkpoint_ref,
+            latest_applied_decision_id,
+        )
+        identity = (run_id, owner_ref, pause_revision_ref)
+        existing = self.action_owner_revisions.get(identity)
+        if existing is not None:
+            if existing.payload_sha256 != payload_sha256:
+                raise ValueError("ACTION_OWNER_REVISION_CONFLICT")
+            return existing
+        history = sorted(
+            (
+                revision
+                for (revision_run_id, revision_owner_ref, _checkpoint), revision
+                in self.action_owner_revisions.items()
+                if revision_run_id == run_id and revision_owner_ref == owner_ref
+            ),
+            key=lambda revision: revision.owner_version,
+        )
+        head = history[-1] if history else None
+        revision = ActionOwnerRevision(
+            run_id=run_id,
+            owner_ref=owner_ref,
+            owner_version=1 if head is None else head.owner_version + 1,
+            checkpoint_ref=pause_revision_ref,
+            payload_sha256=payload_sha256,
+            predecessor_owner_version=None if head is None else head.owner_version,
+            predecessor_checkpoint_ref=None if head is None else head.checkpoint_ref,
+            predecessor_payload_sha256=None if head is None else head.payload_sha256,
+        )
+        self.action_owner_revisions[identity] = revision
+        return revision
 
     async def append_durable_outputs(
         self,

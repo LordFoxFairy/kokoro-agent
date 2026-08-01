@@ -46,7 +46,7 @@ class ToolPolicyMiddleware(AgentMiddleware):
         # 委派执法（handbook 12：模型静默创建同权限子代理不可作生产默认）：
         # deny=只放行声明集内的 subagent_type（general-purpose 属临时创建，不在声明集即拒）；
         # ask 走 interrupt_on 审批（不在此层）；allow 放行任意。
-        if self._subagent_create == "allow":
+        if self._subagent_create in {"ask", "allow"}:
             return None
         requested = call_args.get("subagent_type")
         if isinstance(requested, str) and requested in self._declared_subagents:

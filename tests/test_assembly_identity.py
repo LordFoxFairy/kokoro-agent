@@ -27,6 +27,7 @@ def _facts() -> AgentAssemblyFacts:
         backend_kind="state",
         backend_mapping={"/": "state", "/.skills/": "run-scoped-store"},
         subagents=("researcher",),
+        subagent_grants=("researcher",),
         permissions=Permissions(
             approval_tools=[],
             review_tools=[],
@@ -48,6 +49,7 @@ def test_digest_binds_every_execution_semantic_axis() -> None:
         replace(_facts(), hub_assembly_digest="1" * 64),
         replace(_facts(), skill_package_digest="2" * 64),
         replace(_facts(), tool_schema_digest="3" * 64),
+        replace(_facts(), subagent_grants=()),
         replace(
             _facts(),
             backend_kind="docker",

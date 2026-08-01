@@ -128,6 +128,18 @@ async def test_delegation_allow_passes_anything() -> None:
     assert isinstance(result, ToolMessage) and result.text == "delegated"
 
 
+async def test_delegation_ask_defers_any_framework_candidate_to_hitl() -> None:
+    middleware = ToolPolicyMiddleware(
+        frozenset({"task"}), declared_subagents=frozenset(), subagent_create="ask"
+    )
+    handler = _TaskHandler()
+    result = await middleware.awrap_tool_call(
+        _task_request("general-purpose"), handler
+    )
+    assert isinstance(result, ToolMessage) and result.text == "delegated"
+    assert handler.calls == 1
+
+
 # --- token 预算熔断：跨段累计（store 背书），超限 fail-loud ---
 
 

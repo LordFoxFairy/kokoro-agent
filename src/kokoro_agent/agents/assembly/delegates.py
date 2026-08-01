@@ -16,6 +16,8 @@ from kokoro_agent.agents.assembly.toolset import Toolset
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.subagents import catalog_subagents, general_purpose_subagent
 
+_GENERAL_PURPOSE = "general-purpose"
+
 
 @dataclass(frozen=True, slots=True)
 class Delegates:
@@ -23,6 +25,7 @@ class Delegates:
     # 委派执法（deny 档）声明集=真挂载 catalog + wire 点名；general-purpose 是内生件，
     # 同名覆盖只为挂满守卫，可达性政策不因此放宽（不进声明集）。
     declared: frozenset[str]
+    mounted: frozenset[str]
 
 
 def build_delegates(
@@ -31,8 +34,22 @@ def build_delegates(
     deps: AssembleDeps,
     chain: tuple[AgentMiddleware, ...],
 ) -> Delegates:
-    catalog_defs, catalog_names = catalog_subagents(deps.catalog, toolset.by_name, chain)
+    grants = frozenset(request.runtime.subagents)
+    catalog_defs, catalog_names = catalog_subagents(
+        deps.catalog,
+        toolset.by_name,
+        chain,
+        grants - {_GENERAL_PURPOSE},
+    )
+    general = general_purpose_subagent(chain, toolset.tools)
+    mounted = catalog_names | {_GENERAL_PURPOSE}
+    general_grants: frozenset[str] = (
+        frozenset({_GENERAL_PURPOSE})
+        if _GENERAL_PURPOSE in grants
+        else frozenset()
+    )
     return Delegates(
-        subagents=(general_purpose_subagent(chain, toolset.tools), *catalog_defs),
-        declared=catalog_names | frozenset(request.runtime.subagents),
+        subagents=(general, *catalog_defs),
+        declared=catalog_names | general_grants,
+        mounted=mounted,
     )

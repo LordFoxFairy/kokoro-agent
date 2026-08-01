@@ -367,6 +367,28 @@ def test_builtin_subagents_opt_in_matrix() -> None:
     assert defs_bare == [] and mounted_bare == frozenset()
 
 
+def test_catalog_subagents_mount_only_exact_runtime_grants() -> None:
+    from kokoro_agent.subagents import RegisteredSubagent, SubagentCatalog
+
+    catalog = SubagentCatalog(
+        (
+            RegisteredSubagent(
+                name="alpha", description="a", system_prompt="a", source="config-custom"
+            ),
+            RegisteredSubagent(
+                name="beta", description="b", system_prompt="b", source="config-custom"
+            ),
+        )
+    )
+    definitions, mounted = catalog_subagents(
+        catalog, {}, selected_names=frozenset({"alpha"})
+    )
+    assert [definition["name"] for definition in definitions] == ["alpha"]
+    assert mounted == {"alpha"}
+    with pytest.raises(ValueError, match="unknown subagent grants"):
+        catalog_subagents(catalog, {}, selected_names=frozenset({"ghost"}))
+
+
 def test_builtin_subagents_env_parse() -> None:
     config = AppConfig.from_env({"KOKORO_BUILTIN_SUBAGENTS": "web-researcher, "})
     assert config.enabled_builtin_subagents == {"web-researcher"}

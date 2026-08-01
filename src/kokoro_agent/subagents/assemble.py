@@ -42,12 +42,20 @@ def catalog_subagents(
     catalog: SubagentCatalog,
     tool_index: Mapping[str, BaseTool],
     guards: Sequence[AgentMiddleware] = (),
+    selected_names: frozenset[str] | None = None,
 ) -> tuple[list[SubAgent], frozenset[str]]:
     """内建/配置子代理 → deepagents 定义：声明工具缺任一即整个不挂（不设空壳），
     返回 (定义, 实际可委派名集)——deny 声明集只含真挂载者。"""
+    available = catalog.names()
+    selected = available if selected_names is None else selected_names
+    unknown = selected - available
+    if unknown:
+        raise ValueError(f"unknown subagent grants: {sorted(unknown)}")
     subs: list[SubAgent] = []
     mounted: set[str] = set()
     for spec in catalog.specs():
+        if spec.name not in selected:
+            continue
         if PROPOSE_PLAN_TOOL_NAME in spec.tools:
             raise ValueError(
                 f"subagent {spec.name!r} cannot mount main-agent-only tool "

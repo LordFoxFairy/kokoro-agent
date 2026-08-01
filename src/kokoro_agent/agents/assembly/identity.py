@@ -46,6 +46,7 @@ class AgentAssemblyFacts:
     backend_kind: Backend
     backend_mapping: Mapping[str, str]
     subagents: tuple[str, ...]
+    subagent_grants: tuple[str, ...]
     permissions: Permissions
 
     def digest(self) -> str:
@@ -74,6 +75,7 @@ class AgentAssemblyFacts:
                 "mapping": dict(sorted(self.backend_mapping.items())),
             },
             "subagents": list(self.subagents),
+            "subagent_grants": list(self.subagent_grants),
             "permissions": self.permissions.model_dump(mode="json"),
         }
         canonical = json.dumps(

@@ -97,7 +97,8 @@ async def assemble_agent(
         tool_schema_digest=tool_schema_digest(toolset.tools),
         backend_kind=runtime.backend,
         backend_mapping=backend_mapping,
-        subagents=tuple(sorted(delegates.declared)),
+        subagents=tuple(sorted(delegates.mounted)),
+        subagent_grants=tuple(sorted(delegates.declared)),
         permissions=runtime.permissions,
     ).digest()
     graph = build_agent(

@@ -10,7 +10,6 @@ _CONFIG_ENTRYPOINTS = frozenset({"worker/main.py", "evidence/main.py"})
 _LEGACY_MEMORY_MODULES = frozenset(
     {
         "kokoro_agent.storage.memory_store",
-        "kokoro_agent.tools.memory",
     }
 )
 
@@ -58,7 +57,7 @@ def test_config_only_imported_by_process_entrypoints() -> None:
 
 def test_legacy_store_memory_is_unreachable_from_production_composition() -> None:
     """ADR-013 M0 keeps the experiment importable, but no production module may compose it."""
-    experimental_implementations = frozenset({"storage/memory_store.py", "tools/memory.py"})
+    experimental_implementations = frozenset({"storage/memory_store.py"})
     for path in _py_files():
         if _rel(path) in experimental_implementations:
             continue

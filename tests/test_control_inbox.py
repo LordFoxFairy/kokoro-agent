@@ -57,6 +57,7 @@ _PENDING_STATE = FakeState(
         ),
     ),
     values={
+        "assembly_digest": "a" * 64,
         "messages": [
             AIMessage(content="", id="seg", tool_calls=[{"name": _GATED, "args": {}, "id": _TID}])
         ]
@@ -66,7 +67,7 @@ _PENDING_STATE = FakeState(
 
 def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AssembledAgent]]:
     async def _build(_request: RunRequest) -> AssembledAgent:
-        return AssembledAgent(agent=agent, tool_descriptions={})
+        return AssembledAgent(agent=agent, assembly_digest="a" * 64, tool_descriptions={})
 
     return _build
 
@@ -169,6 +170,7 @@ async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
     ledger = FakeLedger()
     req = request("rf")
     await ledger.try_claim(req)
+    await ledger.bind_assembly_digest("rf", "a" * 64, "test-consumer")
     await FakeExecutionContextAuthority(ledger).open(req)
     await ledger.record_control_inbox("rf", "dec_1", _fingerprint_of(_PENDING_STATE), _resume_body("rf"))
 

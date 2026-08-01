@@ -9,6 +9,7 @@ from fakes import (
     FakeRunStream,
     FakeToolCall,
     completed_execution_context,
+    request,
     usage_recorder,
 )
 
@@ -24,6 +25,7 @@ def _runtime_custom(_name: str) -> SubagentSource:
 
 async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
     ledger = FakeLedger()
+    await ledger.try_claim(request("r1"))
     emitter = await RunEmitter.attach(bus, "r1", outbox=ledger)
     await invoke_once(
         emitter,

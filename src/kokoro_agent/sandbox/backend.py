@@ -11,6 +11,7 @@ from typing import Annotated, Protocol
 
 from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.state import StateBackend
 from deepagents.middleware.filesystem import FilesystemPermission
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
@@ -66,15 +67,17 @@ class SandboxSettings(BaseModel):
 
 def build_filesystem_permissions(perm: FilesystemPerm) -> list[FilesystemPermission]:
     if perm == "workspace_write":
-        return []
+        return [
+            FilesystemPermission(operations=["write"], paths=["/.skills/**"], mode="deny")
+        ]
     return [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
 
 
 def make_backend(
     kind: Backend, settings: SandboxSettings, *, workspace: str | None = None
-) -> BackendProtocol | None:
+) -> BackendProtocol:
     if kind == "state":
-        return None
+        return StateBackend()
     if kind == "local_shell":
         # 工作区约定：{root}/{namespace:session_id}/ ——session files 端点按同约定直读。
         root = _workspace_root(settings, workspace)
@@ -141,18 +144,18 @@ class SandboxContext:
 class SandboxConnector(Protocol):
     """每档一个连接器（Strategy）：sync 构造（编排层 to_thread），返回 None=无 backend。"""
 
-    def __call__(self, context: SandboxContext) -> BackendProtocol | None: ...
+    def __call__(self, context: SandboxContext) -> BackendProtocol: ...
 
 
-def _connect_state(context: SandboxContext) -> BackendProtocol | None:
-    return None
+def _connect_state(context: SandboxContext) -> BackendProtocol:
+    return StateBackend()
 
 
-def _connect_local_shell(context: SandboxContext) -> BackendProtocol | None:
+def _connect_local_shell(context: SandboxContext) -> BackendProtocol:
     return make_backend("local_shell", context.settings, workspace=context.workspace)
 
 
-def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
+def _connect_docker(context: SandboxContext) -> BackendProtocol:
     root = _workspace_root(context.settings, context.workspace)
     if root is None:
         raise ValueError("backend docker requires KOKORO_AGENT_LOCAL_SHELL_ROOT")
@@ -186,11 +189,11 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
     return backend
 
 
-def _connect_e2b(context: SandboxContext) -> BackendProtocol | None:
+def _connect_e2b(context: SandboxContext) -> BackendProtocol:
     return connect_e2b_sandbox(context.settings.e2b, sandbox_id=context.prior_sandbox_id)
 
 
-def _connect_custom(context: SandboxContext) -> BackendProtocol | None:
+def _connect_custom(context: SandboxContext) -> BackendProtocol:
     return connect_custom_sandbox(
         context.settings.custom,
         run_id=context.run_id,
@@ -217,7 +220,7 @@ async def make_backend_for_run(
     workspace: str,
     run_id: str,
     binding: SandboxBinding,
-) -> BackendProtocol | None:
+) -> BackendProtocol:
     """统一装配入口：注册表选连接器 + 生命周期单点收口——
     产物带非空 `sandbox_id` 即落 ledger（keep-first），resume 经 prior 重连而非新建。
     """

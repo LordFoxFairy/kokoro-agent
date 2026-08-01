@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 import asyncio
 import socket
 import threading
@@ -221,7 +223,9 @@ def _build_supervisor(
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),
                 interrupt_on=build_interrupt_on(frozenset(runtime.permissions.approval_tools)),
                 middleware=middleware,
+                backend=StateBackend(),
             ),
+            assembly_digest="a" * 64,
             tool_descriptions={},
         )
 

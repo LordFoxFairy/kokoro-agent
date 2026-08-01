@@ -1,142 +1,117 @@
-"""技能资产物化 reconcile 与装配期中间件（graph state 账本驱动）。
+"""Pre-graph materialization for DeepAgents' native Skill middleware.
 
-一次 run 装配（before_agent）对本会话技能集做一次对账：
-- 账本 {name: content_hash} 从 graph state 读入（checkpoint 态 → resume/跨 worker 认账）。
-- 有附件的包才物化；hash 与账本相符且目录在 → 跳过，否则按 hash 取包整包写入 /.skills/<name>/**。
-- /.skills 目录缺失（沙箱重建）→ 列举为空 → 账本失效 → 全量重写自愈。
-- 会话不含的旧目录 → GC 删除（沙箱档经 aexecute 相对 rm；无 exec 能力则跳过删除）。
-- 单包失败（取包抛错/上传抛错）不阻断整体：该技能不落账本（工具侧据此标记不可用），其余照常。
-
-对账产出的新账本整体落回 state（LastValue 覆盖），供同 run 的 skill 工具读取与下 run 认账。
+The Hub resolves an immutable run assembly. GA writes every exact package to a
+content-addressed directory before ``create_deep_agent`` is called and passes
+those directories through DeepAgents' native ``skills=`` parameter. No graph
+middleware, checkpoint ledger, best-effort fallback, or stale directory scan is
+part of this path.
 """
 
 from __future__ import annotations
 
-import logging
-import re
-from collections.abc import Mapping, Sequence
-from pathlib import PurePosixPath
-from typing import Any
+import hashlib
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 
-from langchain.agents.middleware import AgentMiddleware
-from langgraph.runtime import Runtime
+from deepagents.backends.composite import CompositeBackend
+from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.state import StateBackend
+from deepagents.backends.store import StoreBackend
+from langgraph.store.memory import InMemoryStore
 
 from kokoro_agent.contract import SkillGrant
-from kokoro_agent.skills.hub import SkillHub, SkillHubError
-from kokoro_agent.skills.supply import SKILLS_ROOT, ExecCapableBackend, MaterializeBackend
-from kokoro_agent.state import SKILLS_MATERIALIZED_STATE_KEY, KokoroAgentState
-
-LOGGER = logging.getLogger("kokoro_agent.skills.materialize")
-
-# 与 hub 入库校验同形（GC 删除前二次确认目标名安全，杜绝相对 rm 越界/注入）。
-_SAFE_SKILL_NAME = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+from kokoro_agent.skills.hub import SkillHub, content_hash_of
+from kokoro_agent.skills.supply import SKILLS_ROOT
 
 
-async def _list_skill_dirs(backend: MaterializeBackend, skills_root: str) -> set[str]:
-    """列举 /.skills 下的技能目录名；目录缺失/异常一律视为空集（触发全量自愈）。"""
-    root = skills_root.rstrip("/") or "/"
-    try:
-        result = await backend.als(root)
-    except Exception:  # noqa: BLE001 — backend 探目录异常＝目录不可信＝当空集自愈
-        LOGGER.warning("skills dir listing failed at %s; treating as empty", root, exc_info=True)
-        return set()
-    if result.error is not None or result.entries is None:
-        return set()
-    return {
-        PurePosixPath(entry["path"]).name
-        for entry in result.entries
-        if entry.get("is_dir")
-    }
+@dataclass(frozen=True, slots=True)
+class NativeSkillAssembly:
+    """Exact native Skill inputs and the backend that owns their paths."""
+
+    backend: BackendProtocol
+    sources: tuple[str, ...]
+    package_digest: str
 
 
-async def _delete_skill_dir(backend: MaterializeBackend, skills_root: str, name: str) -> None:
-    """GC 删除单个残留目录：仅沙箱档（有 aexecute）执行相对 rm，落点=工作区根/.skills/<name>。"""
-    if not _SAFE_SKILL_NAME.fullmatch(name):
-        return  # 非法名不碰（防越界；正常物化名都通过 hub 校验）
-    if not isinstance(backend, ExecCapableBackend):
-        return  # 无 shell 能力档（如 BYO 纯文件 backend）：GC 尽力而为，跳过删除
-    rel = f".{skills_root.rstrip('/')}/{name}"  # "/.skills" → "./.skills/<name>"
-    try:
-        await backend.aexecute(f"rm -rf -- {rel}")
-    except Exception:  # noqa: BLE001 — GC 是清洁动作,失败不阻断对账
-        LOGGER.warning("skills GC failed for %r", name, exc_info=True)
-
-
-async def _upload_package(
-    backend: MaterializeBackend, skills_root: str, name: str, files: Mapping[str, str]
-) -> None:
-    """整包写入沙箱 /.skills/<name>/**（含 SKILL.md，保内相对引用完整）。"""
-    payload = [
-        (f"{skills_root}{name}/{rel}", files[rel].encode("utf-8")) for rel in sorted(files)
-    ]
-    await backend.aupload_files(payload)
-
-
-async def reconcile_skill_assets(
+async def materialize_native_skills(
     *,
-    ledger: Mapping[str, str],
     grants: Sequence[SkillGrant],
     hub: SkillHub,
-    backend: MaterializeBackend,
-    skills_root: str = SKILLS_ROOT,
-) -> dict[str, str]:
-    """对账并返回新账本 {name: content_hash}（仅含成功物化的附件包）。"""
-    granted_names = {grant.name for grant in grants}
-    present = await _list_skill_dirs(backend, skills_root)
+    backend: BackendProtocol,
+    namespace: str,
+    run_id: str,
+) -> NativeSkillAssembly:
+    """Materialize the frozen Hub packages before graph construction.
 
-    # GC：沙箱残留但本会话已不含的目录（沙箱重建后 present 为空则无残留可删）。
-    for stale in present - granted_names:
-        await _delete_skill_dir(backend, skills_root, stale)
+    State mode cannot be mutated outside a running LangGraph node, so its
+    workspace remains a native ``StateBackend`` while ``/.skills/`` is routed
+    to a native ``StoreBackend`` backed by a graph-local in-memory store.
+    Sandbox modes place packages in the sandbox itself so referenced scripts
+    remain executable. Content-addressed source directories make stale files
+    unreachable without destructive GC.
+    """
 
-    new_ledger: dict[str, str] = {}
+    target = _backend_with_pregraph_skill_route(backend, namespace, run_id)
+    digest_rows: list[dict[str, str]] = []
+    packages: list[tuple[SkillGrant, dict[str, str]]] = []
     for grant in grants:
-        try:
-            # 取包按快照卡的 scope 定死归属（同名跨 scope 不错位）。
-            files = await hub.load_package_if_assets(grant.scope, grant.name, grant.content_hash)
-        except SkillHubError:
-            LOGGER.warning("skill %r package unavailable; skipped", grant.name, exc_info=True)
-            continue  # 取包失败：不落账本 → 工具标记不可用；不阻断其余
-        if files is None:
-            continue  # 纯知识包（无附件），无需物化
-        if ledger.get(grant.name) == grant.content_hash and grant.name in present:
-            new_ledger[grant.name] = grant.content_hash  # hash 未变且目录在：跳过写入
-            continue
-        try:
-            await _upload_package(backend, skills_root, grant.name, files)
-        except Exception:  # noqa: BLE001 — 单包上传失败不阻断其余技能
-            LOGGER.warning("skill %r upload failed; marked unavailable", grant.name, exc_info=True)
-            continue
-        new_ledger[grant.name] = grant.content_hash
-    return new_ledger
-
-
-class SkillMaterializerMiddleware(AgentMiddleware[KokoroAgentState, Any]):
-    """装配期物化对账：before_agent 一次，读 state 账本 → reconcile → 新账本落回 state。"""
-
-    state_schema = KokoroAgentState
-
-    def __init__(
-        self,
-        *,
-        grants: Sequence[SkillGrant],
-        hub: SkillHub,
-        backend: MaterializeBackend,
-        skills_root: str = SKILLS_ROOT,
-    ) -> None:
-        super().__init__()
-        self._grants = tuple(grants)
-        self._hub = hub
-        self._backend = backend
-        self._skills_root = skills_root
-
-    async def abefore_agent(
-        self, state: KokoroAgentState, runtime: Runtime[Any]
-    ) -> dict[str, Any] | None:
-        new_ledger = await reconcile_skill_assets(
-            ledger=state.get("skills_materialized") or {},
-            grants=self._grants,
-            hub=self._hub,
-            backend=self._backend,
-            skills_root=self._skills_root,
+        files = await hub.load_package(grant.scope, grant.name, grant.content_hash)
+        if content_hash_of(files) != grant.content_hash:
+            raise RuntimeError(f"NATIVE_SKILL_CONTENT_LOCK_INVALID:{grant.name}")
+        packages.append((grant, files))
+        digest_rows.append(
+            {
+                "scope": grant.scope,
+                "name": grant.name,
+                "content_hash": grant.content_hash,
+            }
         )
-        return {SKILLS_MATERIALIZED_STATE_KEY: new_ledger}
+    package_digest = hashlib.sha256(
+        json.dumps(
+            digest_rows,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    source = f"{SKILLS_ROOT}assemblies/{package_digest}/"
+    for grant, files in packages:
+        payload = [
+            (
+                f"{source}{grant.name}/{relative_path}",
+                files[relative_path].encode("utf-8"),
+            )
+            for relative_path in sorted(files)
+        ]
+        responses = await target.aupload_files(payload)
+        if len(responses) != len(payload) or any(response.error for response in responses):
+            raise RuntimeError(f"NATIVE_SKILL_MATERIALIZATION_FAILED:{grant.name}")
+        roundtrip = await target.adownload_files([path for path, _content in payload])
+        if len(roundtrip) != len(payload) or any(
+            downloaded.error is not None or downloaded.content != expected
+            for downloaded, (_path, expected) in zip(roundtrip, payload, strict=True)
+        ):
+            raise RuntimeError(f"NATIVE_SKILL_WRITE_INTEGRITY_FAILED:{grant.name}")
+    return NativeSkillAssembly(
+        backend=target,
+        sources=(source,) if packages else (),
+        package_digest=package_digest,
+    )
+
+
+def _backend_with_pregraph_skill_route(
+    backend: BackendProtocol, namespace: str, run_id: str
+) -> BackendProtocol:
+    if not isinstance(backend, StateBackend):
+        return backend
+    store = InMemoryStore()
+    skill_backend = StoreBackend(
+        store=store,
+        namespace=lambda _runtime: ("kokoro", "agent", namespace, run_id, "skills"),
+    )
+    return CompositeBackend(
+        default=backend,
+        routes={SKILLS_ROOT: skill_backend},
+        artifacts_root="/",
+    )

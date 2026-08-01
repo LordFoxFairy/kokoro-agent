@@ -67,6 +67,7 @@ from kokoro_agent.storage.execution_context import (
     ExecutionContextBinding,
 )
 from kokoro_agent.storage.owner_event import OwnerEventCommitResult
+from kokoro_agent.storage.assembly import AssemblyDigestConflict
 
 _MONGO_URL = os.environ.get(
     "KOKORO_MONGO_URL",
@@ -245,6 +246,26 @@ async def test_takeover_changes_execution_fence_not_run_stream_identity() -> Non
         assert len(lane_fences[0]) == 1
         stream_ref, _generation = next(iter(lane_fences[0]))
         assert stream_ref not in {"executor-a", "executor-b"}
+
+
+async def test_assembly_digest_is_bound_by_claim_owner_and_compared_on_takeover() -> None:
+    clock = FakeClock()
+    async with _mongo_takeover_stores(clock) as (executor_a, executor_b):
+        run_id = "run-assembly-binding"
+        exact = "a" * 64
+        drifted = "b" * 64
+        assert await executor_a.try_claim(request(run_id), OWNER)
+        await executor_a.bind_assembly_digest(run_id, exact, OWNER)
+        await executor_a.require_assembly_digest(run_id, exact)
+
+        with pytest.raises(AssemblyDigestConflict):
+            await executor_a.bind_assembly_digest(run_id, drifted, OWNER)
+
+        clock.advance_ms(_TTL_MS + 1)
+        assert [item.run_id for item in await executor_b.reclaim_expired(OTHER)] == [run_id]
+        await executor_b.bind_assembly_digest(run_id, exact, OTHER)
+        with pytest.raises(AssemblyDigestConflict):
+            await executor_b.require_assembly_digest(run_id, drifted)
 
 
 async def test_presentation_authority_replays_and_closes_admission_delivery() -> None:

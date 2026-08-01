@@ -17,8 +17,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     "src/kokoro_agent/mcp/tools.py": frozenset({"reportUnknownMemberType"}),
     # langchain-core BaseTool.ainvoke 注解含裸 dict。
     "tests/e2e/test_mcp_live.py": frozenset({"reportUnknownMemberType"}),
-    # 同上：技能库工具经 ainvoke 驱动断言。
-    "tests/test_skill_tools.py": frozenset({"reportUnknownMemberType"}),
     # 同上：deliver 工具经 ainvoke 驱动断言。
     "tests/test_deliver_tool.py": frozenset({"reportUnknownMemberType"}),
     # 同上：MCP 稳定三工具经 ainvoke 驱动断言。

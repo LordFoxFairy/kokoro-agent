@@ -14,8 +14,8 @@ from kokoro_agent.skills.hub import (
     validate_package,
 )
 from kokoro_agent.skills.materialize import (
-    SkillMaterializerMiddleware,
-    reconcile_skill_assets,
+    NativeSkillAssembly,
+    materialize_native_skills,
 )
 from kokoro_agent.skills.package import (
     SkillAssetError,
@@ -31,10 +31,10 @@ __all__ = [
     "SkillFrontmatter",
     "SkillHub",
     "SkillHubError",
-    "SkillMaterializerMiddleware",
+    "NativeSkillAssembly",
     "content_hash_of",
     "package_from_zip",
     "parse_frontmatter",
-    "reconcile_skill_assets",
+    "materialize_native_skills",
     "validate_package",
 ]

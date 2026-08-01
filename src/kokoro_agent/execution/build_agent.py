@@ -32,7 +32,9 @@ def build_agent(
     permissions: Sequence[FilesystemPermission],
     interrupt_on: Mapping[str, bool | InterruptOnConfig],
     middleware: Sequence[AgentMiddleware] = (),
-    backend: BackendProtocol | None = None,
+    backend: BackendProtocol,
+    skills: Sequence[str] = (),
+    memory: Sequence[str] = (),
     store: BaseStore | None = None,
 ) -> InvokableAgent:
     # deepagents 返回泛型 CompiledStateGraph（含未定 ResponseT）：object 边界 + TypeGuard
@@ -47,6 +49,10 @@ def build_agent(
         interrupt_on=dict(interrupt_on),
         middleware=list(middleware),
         backend=backend,
+        skills=list(skills) or None,
+        # DeepAgents memory is instruction-file injection only. Product saved
+        # memory belongs to the independent Platform MemoryPort.
+        memory=list(memory) or None,
         store=store,
         # 身份乘 State 轴（scope 键）：随 input 进图、落 checkpoint（run/state.py 法则）。
         state_schema=KokoroAgentState,

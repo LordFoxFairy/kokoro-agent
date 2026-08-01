@@ -380,6 +380,9 @@ class RunSupervisor:
             return
         try:
             assembled = await self._build(request)
+            await self._store.bind_assembly_digest(
+                request.run_id, assembled.assembly_digest, self._consumer
+            )
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, request.run_id, error, code="assembly_failed")
             return
@@ -389,6 +392,7 @@ class RunSupervisor:
             # 稳定 id=message_id：TTL 重拾对已推进 checkpoint 重放原始 input 时，add_messages 按 id 去重。
             "messages": [HumanMessage(content=request.input.content, id=request.input.message_id)],
             "scope": scope.as_state(),
+            "assembly_digest": assembled.assembly_digest,
         }
         self._spawn_agent(
             bus,
@@ -413,6 +417,9 @@ class RunSupervisor:
             return
         try:
             assembled = await self._build(request)
+            await self._store.require_assembly_digest(
+                msg.run_id, assembled.assembly_digest
+            )
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, msg.run_id, error, code="assembly_failed")
             return
@@ -422,6 +429,14 @@ class RunSupervisor:
             await self._fail_terminal(bus, msg.run_id, error)
             return
         snapshot = await assembled.agent.aget_state(config)
+        if snapshot.values.get("assembly_digest") != assembled.assembly_digest:
+            await self._fail_terminal(
+                bus,
+                msg.run_id,
+                RuntimeError("AGENT_ASSEMBLY_CHECKPOINT_CONFLICT"),
+                code="assembly_failed",
+            )
+            return
         # 幂等护栏：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
         if not has_pending_interrupt(snapshot):
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
@@ -684,6 +699,7 @@ class RunSupervisor:
             return None
         try:
             assembled = await self._build(request)
+            await self._store.require_assembly_digest(run_id, assembled.assembly_digest)
             config = await self._execution_context.config_for_run(run_id)
             snapshot = await assembled.agent.aget_state(config)
         except Exception:  # noqa: BLE001 — 指纹是 stale 判定辅助，取不到降级 None（续办侧按不匹配处理）

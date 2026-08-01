@@ -42,6 +42,7 @@ from kokoro_agent.storage.execution_context import (
     ExecutionContextConflict,
 )
 from kokoro_agent.storage.owner_event import OwnerEventCommitResult
+from kokoro_agent.storage.assembly import AssemblyDigestConflict
 from kokoro_agent.contract.storage import (
     RUN_DISPATCHES_COLLECTION,
     RUN_EVENT_RECEIPTS_COLLECTION,
@@ -493,6 +494,39 @@ class MongoLedger:
         if not isinstance(head, int) or head < 0:
             raise TypeError("OWNER_EVENT_HEAD_INVALID")
         return head
+
+    async def bind_assembly_digest(
+        self, run_id: str, assembly_digest: str, lease_owner_ref: str
+    ) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", assembly_digest) is None:
+            raise ValueError("AGENT_ASSEMBLY_DIGEST_INVALID")
+        now = self._clock()
+        execution_fence: dict[str, object] = {
+            "_id": run_id,
+            "owner": lease_owner_ref,
+            "execution_producer_instance_ref": self._producer_instance_ref,
+            "execution_producer_generation": self._producer_generation,
+            "lease_expires_ms": {"$gt": now},
+            "terminal": {"$ne": True},
+        }
+        bound = await self._coll.update_one(
+            {**execution_fence, "assembly_digest": {"$exists": False}},
+            {"$set": {"assembly_digest": assembly_digest}},
+        )
+        if bound.modified_count == 1:
+            return
+        authority = await self._coll.find_one(execution_fence, {"assembly_digest": 1})
+        if authority is None or authority.get("assembly_digest") != assembly_digest:
+            raise AssemblyDigestConflict()
+
+    async def require_assembly_digest(self, run_id: str, assembly_digest: str) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", assembly_digest) is None:
+            raise ValueError("AGENT_ASSEMBLY_DIGEST_INVALID")
+        matched = await self._coll.find_one(
+            {"_id": run_id, "assembly_digest": assembly_digest}, {"_id": 1}
+        )
+        if matched is None:
+            raise AssemblyDigestConflict()
 
     async def commit_owner_event(
         self,

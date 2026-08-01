@@ -97,17 +97,17 @@ def hitl_script() -> list[AIMessage]:
     ]
 
 
-def handoff_script(target: str = "researcher") -> list[AIMessage]:
-    # swarm 移交脚本：一次 handoff 切主导人格 → 移交后人格的一段纯文本收束。
-    # 驱动「双 persona fixture 模型驱动移交」实测（active_agent 落 checkpoint、恢复重放仍在后轨）。
+def persona_switch_script(target: str = "researcher") -> list[AIMessage]:
+    # swarm 切换脚本：一次 switch_persona 切主导人格，再用纯文本收束。
+    # 驱动双 persona fixture：active_persona 落 checkpoint，恢复重放仍在后轨。
     return [
         AIMessage(
             content="",
             tool_calls=[
                 {
-                    "name": "handoff",
+                    "name": "switch_persona",
                     "args": {"agent_name": target},
-                    "id": "local_handoff",
+                    "id": "local_persona_switch",
                     "type": "tool_call",
                 }
             ],

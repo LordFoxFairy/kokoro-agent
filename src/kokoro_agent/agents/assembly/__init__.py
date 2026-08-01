@@ -7,15 +7,15 @@ from kokoro_agent.agents.assembly.guardrails import GuardChains, build_guard_cha
 from kokoro_agent.agents.assembly.pipeline import assemble_agent
 from kokoro_agent.agents.assembly.prompt import PresetNotFoundError, resolve_system_prompt
 from kokoro_agent.agents.assembly.swarm import (
-    HANDOFF_TOOL_NAME,
+    SWITCH_PERSONA_TOOL_NAME,
     SwarmPersonaMiddleware,
-    make_handoff_tool,
+    make_switch_persona_tool,
     swarm_candidates,
 )
 from kokoro_agent.agents.assembly.toolset import Toolset, build_toolset
 
 __all__ = [
-    "HANDOFF_TOOL_NAME",
+    "SWITCH_PERSONA_TOOL_NAME",
     "Delegates",
     "GuardChains",
     "PresetNotFoundError",
@@ -25,7 +25,7 @@ __all__ = [
     "build_delegates",
     "build_guard_chains",
     "build_toolset",
-    "make_handoff_tool",
+    "make_switch_persona_tool",
     "resolve_system_prompt",
     "swarm_candidates",
 ]

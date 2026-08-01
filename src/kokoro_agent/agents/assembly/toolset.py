@@ -8,7 +8,7 @@ from pathlib import Path
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from kokoro_agent.agents.assembly.swarm import make_handoff_tool, swarm_candidates
+from kokoro_agent.agents.assembly.swarm import make_switch_persona_tool, swarm_candidates
 from kokoro_agent.agents.deps import AssembleDeps
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.contract.storage import workspace_key
@@ -16,7 +16,6 @@ from kokoro_agent.hub import ExecutionAssembly
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, media_tools_for_run, resolve_tools
-from kokoro_agent.tools.skills import make_skill_tool
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,12 +45,11 @@ async def build_toolset(
        附件物化由装配期 reconcile 中间件负责，工具只读账本判断就绪与否
     ④ MCP 稳定三工具（恒挂，schema 不随 server 集/远端漂移变）：list/describe/call
     ⑤ deliver 工具（恒挂，schema 不随配置变 D9）：无 workspace/无 deliveries 调用时降级
-    ⑥ handoff 工具（仅本部署候选人格>1 时挂载）：会话内 swarm 移交主导人格
+    ⑥ switch_persona（仅本部署候选人格>1）：同一图内切换应答人格
     """
     tools: list[BaseTool] = list(resolve_tools(request.runtime.tools, core=core))
     tools.extend(media_tools_for_run(request, deps.media))
     tools.extend(deps.toolbox.tools_for(request.context.namespace))
-    tools.append(make_skill_tool(request.runtime.skills, capabilities.skills))
     mcp_grants = request.runtime.mcp_servers
     tools.extend(
         make_mcp_tools([grant.name for grant in mcp_grants], capabilities.mcp_servers)
@@ -59,7 +57,7 @@ async def build_toolset(
     tools.append(_deliver_tool(request, deps))
     candidates = swarm_candidates(deps.prompts)
     if len(candidates) > 1:
-        tools.append(make_handoff_tool(candidates))
+        tools.append(make_switch_persona_tool(candidates))
     return Toolset(
         tools=tuple(tools),
         authorized=frozenset(tool.name for tool in tools) | RESERVED_TOOL_NAMES,

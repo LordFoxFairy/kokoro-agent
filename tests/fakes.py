@@ -185,6 +185,7 @@ class FakeLedger:
         ] = {}
         self.presentation_delivery: dict[str, PresentationAcknowledgeState] = {}
         self.run_stream_producers: dict[str, tuple[str, int]] = {}
+        self.assembly_digests: dict[str, str] = {}
         self.owner_heads: dict[str, int] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
@@ -210,6 +211,23 @@ class FakeLedger:
             1,
         )
         return True
+
+    async def bind_assembly_digest(
+        self, run_id: str, assembly_digest: str, lease_owner_ref: str
+    ) -> None:
+        from kokoro_agent.storage.assembly import AssemblyDigestConflict
+
+        if self.owners.get(run_id) != lease_owner_ref:
+            raise AssemblyDigestConflict()
+        current = self.assembly_digests.setdefault(run_id, assembly_digest)
+        if current != assembly_digest:
+            raise AssemblyDigestConflict()
+
+    async def require_assembly_digest(self, run_id: str, assembly_digest: str) -> None:
+        from kokoro_agent.storage.assembly import AssemblyDigestConflict
+
+        if self.assembly_digests.get(run_id) != assembly_digest:
+            raise AssemblyDigestConflict()
 
     async def owner_event_head(self, run_id: str) -> int:
         return self.owner_heads.get(run_id, 0)
@@ -763,7 +781,18 @@ class FakeLedger:
         out = self.expired
         self.expired = []
         for req in out:
+            self.requests[req.run_id] = req
             self.owners[req.run_id] = owner
+            self.leases[req.run_id] = 1
+            self.run_stream_producers.setdefault(
+                req.run_id,
+                (
+                    "run_stream_"
+                    + hashlib.sha256(f"fake\0{req.run_id}".encode()).hexdigest()[:32],
+                    1,
+                ),
+            )
+            self.assembly_digests.setdefault(req.run_id, "a" * 64)
         return out
 
     async def list_paused(self) -> list[str]:

@@ -124,7 +124,9 @@ def test_propose_plan_cannot_be_a_result_review_tool() -> None:
 
 
 def test_filesystem_permissions_by_perm() -> None:
-    assert build_filesystem_permissions("workspace_write") == []
+    writes = build_filesystem_permissions("workspace_write")
+    assert len(writes) == 1
+    assert writes[0].paths == ["/.skills/**"]
     denies = build_filesystem_permissions("read_only")
     assert len(denies) == 1
 
@@ -173,9 +175,11 @@ def test_catalog_duplicate_custom_name_rejected() -> None:
 # --- 沙箱 / 模型 / 传输工厂（backend/model 每请求经 wire 选择） ---
 
 
-def test_sandbox_state_backend_is_none() -> None:
+def test_sandbox_state_backend_is_explicit() -> None:
+    from deepagents.backends.state import StateBackend
+
     config = AppConfig.from_env({})
-    assert make_backend("state", config.sandbox) is None
+    assert isinstance(make_backend("state", config.sandbox), StateBackend)
 
 
 def test_sandbox_local_shell_backend() -> None:

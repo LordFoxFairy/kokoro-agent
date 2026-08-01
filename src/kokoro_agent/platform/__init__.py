@@ -15,6 +15,13 @@ from kokoro_agent.platform.media import (
     MediaRuntimeSafeError,
     MediaRuntimeSettings,
 )
+from kokoro_agent.platform.memory import (
+    MemoryItem,
+    MemorySearch,
+    MemoryWrite,
+    MemoryWriteReceipt,
+    ProductMemoryPort,
+)
 
 __all__ = [
     "AgentImageCreateCommand",
@@ -30,4 +37,9 @@ __all__ = [
     "MediaOperationSafeView",
     "MediaRuntimeSafeError",
     "MediaRuntimeSettings",
+    "MemoryItem",
+    "MemorySearch",
+    "MemoryWrite",
+    "MemoryWriteReceipt",
+    "ProductMemoryPort",
 ]

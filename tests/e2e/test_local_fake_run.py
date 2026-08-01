@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 import asyncio
 from collections.abc import Sequence
 from uuid import uuid4
@@ -29,7 +31,7 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.agents.assembly.swarm import (
     SwarmPersonaMiddleware,
-    make_handoff_tool,
+    make_switch_persona_tool,
 )
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent, StateView
@@ -39,7 +41,11 @@ from kokoro_agent.agents.base import AssembledAgent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.runnables.config import RunnableConfig
 
-from kokoro_agent.model.local_fake import handoff_script, hitl_script, make_local_fake_chat_model
+from kokoro_agent.model.local_fake import (
+    hitl_script,
+    make_local_fake_chat_model,
+    persona_switch_script,
+)
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 from kokoro_agent.sandbox import build_filesystem_permissions
 from kokoro_agent.storage.ledger import RunLedger
@@ -106,7 +112,9 @@ def _build_supervisor(
                 permissions=build_filesystem_permissions(runtime.permissions.filesystem),
                 interrupt_on=build_interrupt_on(frozenset(runtime.permissions.approval_tools)),
                 middleware=middleware,
+                backend=StateBackend(),
             ),
+            assembly_digest="a" * 64,
             tool_descriptions={},
         )
 
@@ -323,13 +331,13 @@ async def test_local_fake_result_review_over_control_stream(
 def _build_swarm_supervisor(
     store: RunLedger, saver: BaseCheckpointSaver[str]
 ) -> tuple[RunSupervisor, InvokableAgent]:
-    """双 persona 部署：挂 handoff 工具 + 人格中间件，驱动模型自判移交（active_agent 落 checkpoint）。"""
+    """双 persona 部署：挂载切换工具与人格中间件，active_persona 落 checkpoint。"""
     catalog = build_catalog(None)
     library = PromptLibrary({"poet": "你是诗人。", "researcher": "你是严谨研究员。"})
     initial_prompt = "你是诗人。"
     agent = build_agent(
-        model=make_local_fake_chat_model(handoff_script("researcher")),
-        tools=[make_handoff_tool(library.names())],
+        model=make_local_fake_chat_model(persona_switch_script("researcher")),
+        tools=[make_switch_persona_tool(library.names())],
         system_prompt=initial_prompt,
         subagents=catalog.definitions(),
         checkpointer=saver,
@@ -340,10 +348,11 @@ def _build_swarm_supervisor(
                 library=library, grants=[], initial_prompt=initial_prompt, initial_name="poet"
             )
         ],
+        backend=StateBackend(),
     )
 
     async def build(_request: RunRequest) -> AssembledAgent:
-        return AssembledAgent(agent=agent, tool_descriptions={})
+        return AssembledAgent(agent=agent, assembly_digest="a" * 64, tool_descriptions={})
 
     supervisor = RunSupervisor(
         agent_builder=build,
@@ -360,10 +369,10 @@ def _build_swarm_supervisor(
     return supervisor, agent
 
 
-async def test_local_fake_model_driven_handoff_persists_active_agent(
+async def test_local_fake_model_driven_switch_persists_active_persona(
     stream: RedisStream, ledger: RunLedger, checkpointer: BaseCheckpointSaver[str]
 ) -> None:
-    """模型自判调 handoff → active_agent 落 checkpoint；恢复重取 state 仍在移交后轨。"""
+    """模型自判调 switch_persona；恢复重取 state 仍在切换后轨。"""
     bus = stream
     store = ledger
     await bus.delete(REQUESTS_STREAM)
@@ -387,7 +396,7 @@ async def test_local_fake_model_driven_handoff_persists_active_agent(
         store=store, checkpointer=checkpointer
     ).config_for_run(run.run_id)
     snapshot: StateView = await agent.aget_state(config)
-    assert snapshot.values["active_agent"] == "researcher"
+    assert snapshot.values["active_persona"] == "researcher"
 
 
 def _calls_tool(turn: AIMessage, name: str) -> bool:

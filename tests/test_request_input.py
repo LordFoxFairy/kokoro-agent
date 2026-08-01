@@ -6,6 +6,8 @@ jsonschema 校验、不合法重新 interrupt（同 request_id 附 validation_er
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -74,6 +76,7 @@ def _build(checkpointer: BaseCheckpointSaver[str]) -> InvokableAgent:
         checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
+        backend=StateBackend(),
     )
 
 

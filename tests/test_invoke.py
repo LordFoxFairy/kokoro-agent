@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
@@ -753,6 +755,7 @@ async def test_plan_model_guard_blocks_nonapproval_side_effect_in_same_frame() -
             frozenset(), plan_tools=frozenset({PROPOSE_PLAN_TOOL_NAME})
         ),
         middleware=[PlanProposalCallGuardMiddleware()],
+        backend=StateBackend(),
     )
     bus = FakeBus()
 
@@ -1967,6 +1970,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(stream: RedisStr
         checkpointer=None,
         permissions=[],
         interrupt_on={},
+        backend=StateBackend(),
     )
     run_id = f"rloop-{uuid4().hex}"
 
@@ -2046,6 +2050,7 @@ async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
 
     bus = FakeBus()
     ledger = FakeLedger()
+    await ledger.try_claim(request("racc"))
     emitter = await RunEmitter.attach(bus, "racc", outbox=ledger)
     await invoke_once(
         emitter,

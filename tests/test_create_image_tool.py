@@ -41,6 +41,7 @@ class RecordingMediaPort(MediaOperationPort):
 
 def _runtime(tool_call_id: str = "call-image-1") -> ToolRuntime[None, KokoroAgentState]:
     state: KokoroAgentState = {
+        "assembly_digest": "a" * 64,
         "scope": {
             "namespace": "opaque-ns-a",
             "session_id": "session-a",
@@ -48,7 +49,6 @@ def _runtime(tool_call_id: str = "call-image-1") -> ToolRuntime[None, KokoroAgen
             "thread_id": "thread-a",
         },
         "messages": [],
-        "skills_materialized": {},
     }
     return ToolRuntime(
         state=state,

@@ -86,9 +86,9 @@ JOURNAL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         TODO_TOOL_NAME,
         SUBAGENT_TOOL_NAME,
         PROPOSE_PLAN_TOOL_NAME,
-        # handoff（swarm 移交，见 agents/assembly/swarm.py）：Command 形态纯状态覆盖，无文本可短路，
-        # 重放归 langgraph checkpoint（active_agent LastValue 幂等）——入豁免表不双写 journal。
-        "handoff",
+        # switch_persona：Command 形态纯状态覆盖，重放归 checkpoint 的
+        # active_persona LastValue，故不双写 effect journal。
+        "switch_persona",
         # Platform Media owns the effect journal. Re-entry must reach its stable command-ref
         # recovery path; a local `started` row would otherwise block reconciliation forever.
         CREATE_IMAGE_TOOL_NAME,

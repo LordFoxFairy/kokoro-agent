@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -11,7 +13,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict
 
-from fakes import FakeLedger, completed_execution_context, usage_recorder
+from fakes import FakeLedger, completed_execution_context, request, usage_recorder
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
@@ -53,6 +55,7 @@ def _build(saver: BaseCheckpointSaver[str]):
         checkpointer=saver,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset({"gated"})),
+        backend=StateBackend(),
     )
 
 
@@ -70,7 +73,10 @@ async def test_subagent_approval_pauses_then_approve_completes(
         RunEmitter(stream, run1),
         _build(saver),
         {"configurable": {"thread_id": "tsub"}, "metadata": {"kokoro_run_id": run1}},
-        {"messages": [HumanMessage(content="go", id="m1")]},
+        {
+            "messages": [HumanMessage(content="go", id="m1")],
+            "assembly_digest": "a" * 64,
+        },
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
         prepare_completed=lambda: completed_execution_context(run1),
@@ -92,6 +98,7 @@ async def test_subagent_approval_pauses_then_approve_completes(
     # 重读快照重建帧：合成 id 必须稳定（resume 对齐依据）。
     agent2 = _build(saver)
     completion_ledger = FakeLedger()
+    await completion_ledger.try_claim(request(run2))
     second = await invoke_once(
         RunEmitter(stream, run2, outbox=completion_ledger),
         agent2,
@@ -103,8 +110,8 @@ async def test_subagent_approval_pauses_then_approve_completes(
         record_usage=recorder,
     )
     assert second is True
-    assert _EXECUTED["n"] == 1  # 批准后在子代理内执行恰一次
     events2 = [item.event for item in await stream.read_all(run_events_stream(run2))]
+    assert _EXECUTED["n"] == 1, events2  # 批准后在子代理内执行恰一次
     assert events2[-1]["kind"] == "run.completed"
 
 
@@ -135,6 +142,7 @@ async def test_general_purpose_delegation_runs_inside_guards(
         checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
+        backend=StateBackend(),
     )
 
     recorder, _seen = usage_recorder()
@@ -192,6 +200,7 @@ async def test_subagent_review_pauses_with_cached_result(
         checkpointer=saver,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
+        backend=StateBackend(),
     )
 
     recorder, _seen = usage_recorder()

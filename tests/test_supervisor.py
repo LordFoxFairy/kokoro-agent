@@ -46,7 +46,7 @@ _TID = "call-A"
 
 def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AssembledAgent]]:
     async def _build(_request: RunRequest) -> AssembledAgent:
-        return AssembledAgent(agent=agent, tool_descriptions={})
+        return AssembledAgent(agent=agent, assembly_digest="a" * 64, tool_descriptions={})
 
     return _build
 
@@ -107,6 +107,7 @@ _PENDING_STATE = FakeState(
         ),
     ),
     values={
+        "assembly_digest": "a" * 64,
         "messages": [
             AIMessage(content="", id="seg", tool_calls=[{"name": _GATED, "args": {}, "id": _TID}])
         ]
@@ -133,6 +134,7 @@ async def test_request_dispatches_initial_invoke() -> None:
     initial = agent.seen_payloads[0]
     # 身份乘 State 轴：初始 payload 携带 scope（namespace 前缀键派生自 request.context）。
     assert initial == {
+        "assembly_digest": "a" * 64,
         "messages": [HumanMessage(content="hello", id="r1-m")],
         "scope": {
             "namespace": "local:s1",
@@ -1000,7 +1002,9 @@ async def test_request_tool_catalog_validation_precedes_every_external_port(
 
     async def build(_request: RunRequest) -> AssembledAgent:
         touched.append("agent_builder")
-        return AssembledAgent(agent=FakeAgent(), tool_descriptions={})
+        return AssembledAgent(
+            agent=FakeAgent(), assembly_digest="a" * 64, tool_descriptions={}
+        )
 
     store = SideEffectLedger()
     supervisor = RunSupervisor(

@@ -19,7 +19,8 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 ## Public boundary
 
 - `build_agent.py`：`build_agent(**deps) → InvokableAgent`。包住 `create_deep_agent`
-  的未解泛型（object 边界 + TypeGuard 一次收窄），state_schema=KokoroAgentState。
+  的未解泛型（object 边界 + TypeGuard 一次收窄），强制显式 Backend，
+  原生传入 `skills=`/`memory=`（空集为 `None`），state_schema=KokoroAgentState。
 - `run_agent.py`：`invoke_once(emitter, agent, thread_id, payload, ...) → bool`。
   run.started（仅 index==0）→ pump_run → interrupt 则发 generic awaiting 或专用 plan.proposed
   owner，并入账用量返 False；

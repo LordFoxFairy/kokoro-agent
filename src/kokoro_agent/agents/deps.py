@@ -30,6 +30,7 @@ class AssembledAgent:
     """装配产物：可运行图 + wire 面元数据（审批卡的工具自述查询）。"""
 
     agent: InvokableAgent
+    assembly_digest: str
     tool_descriptions: Mapping[str, str]
 
     def describe_tool(self, name: str) -> str | None:

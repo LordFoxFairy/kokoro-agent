@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 from uuid import uuid4
 
 import pytest
@@ -109,6 +111,7 @@ async def test_request_human_pauses_mid_tool_then_resumes_value(
         checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
+        backend=StateBackend(),
     )
     run_id = f"rrh-{uuid4().hex}"
     emitter = RunEmitter(stream, run_id)

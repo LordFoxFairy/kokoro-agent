@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 from typing import Any
 
 import pytest
@@ -77,6 +79,7 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
         middleware=[SteeringMiddleware(store=ledger, run_id="r-graph")],
+        backend=StateBackend(),
     )
 
     bus = FakeBus()

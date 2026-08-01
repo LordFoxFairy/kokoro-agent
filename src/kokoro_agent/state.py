@@ -7,28 +7,35 @@ resume 不重供仍保持；工具/中间件经 ToolRuntime.state 读取。法�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NotRequired
+from typing import Annotated, NotRequired
 
 from deepagents.graph import DeepAgentState
+from langchain.agents.middleware.types import PrivateStateAttr
+from langgraph.channels import UntrackedValue
 
 from kokoro_agent.contract import RunRequest
 
 SCOPE_STATE_KEY = "scope"
-SKILLS_MATERIALIZED_STATE_KEY = "skills_materialized"
 
 
 class KokoroAgentState(DeepAgentState):
     # 纯 dict 载荷（checkpoint 序列化安全）；读写经 RunScope.as_state/from_state 收口。
     scope: dict[str, str]
-    # 技能资产物化账本 {skill_name: content_hash}：装配期 reconcile 写、skill 工具读。
-    # 无 reducer → LastValue 覆盖：reconcile 每 run 算全量账本整体落回,GC/自愈即删项/清空天然生效；
-    # 落 checkpoint → resume/跨 worker 认账（取代冻结代码的闭包 `supplied` 局部变量）。
-    skills_materialized: dict[str, str]
+    assembly_digest: str
+    # DeepAgents native SkillsMiddleware skips loading when this key exists. These
+    # private channels deliberately survive within one invocation but are never
+    # checkpointed, so every reconstructed graph reloads the exact current assembly.
+    skills_metadata: NotRequired[
+        Annotated[list[dict[str, object]], PrivateStateAttr, UntrackedValue(list)]
+    ]
+    skills_load_errors: NotRequired[
+        Annotated[list[str], PrivateStateAttr, UntrackedValue(list)]
+    ]
     # swarm 当前主导人格名（handoff 工具落此，dynamic prompt 中间件读此切 system prompt 轨）：
     # 未设=沿用装配期 preset（runtime.agent）；无 reducer→LastValue 覆盖，落 checkpoint→resume
     # 重放后仍在移交后轨（模型驱动移交，session/wire 不参与切换）。
     # NotRequired：channel 未写即缺席（未移交的 run 与 SWARM 前旧 checkpoint 都没有此键）。
-    active_agent: NotRequired[str]
+    active_persona: NotRequired[str]
 
 
 @dataclass(frozen=True, slots=True)

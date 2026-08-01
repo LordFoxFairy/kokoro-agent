@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from deepagents.backends.state import StateBackend
+
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
@@ -72,11 +74,16 @@ async def test_tool_reads_scope_from_state(stream: RedisStream) -> None:
         checkpointer=None,
         permissions=[],
         interrupt_on={},
+        backend=StateBackend(),
     )
     scope = _scope()
     terminal = await _invoke(
         agent,
-        {"messages": [HumanMessage(content="hi")], "scope": scope.as_state()},
+        {
+            "messages": [HumanMessage(content="hi")],
+            "scope": scope.as_state(),
+            "assembly_digest": "a" * 64,
+        },
         "rn",
         stream,
     )
@@ -100,13 +107,29 @@ async def test_scope_survives_second_segment_without_resupply(
         checkpointer=saver,
         permissions=[],
         interrupt_on={},
+        backend=StateBackend(),
     )
     await _invoke(
-        first, {"messages": [HumanMessage(content="hi")], "scope": scope.as_state()}, "rn", stream
+        first,
+        {
+            "messages": [HumanMessage(content="hi")],
+            "scope": scope.as_state(),
+            "assembly_digest": "a" * 64,
+        },
+        "rn",
+        stream,
+    )
+    snapshot = await first.aget_state(
+        {"configurable": {"thread_id": scope.scoped_thread_id}}
+    )
+    assert snapshot.values["scope"] == scope.as_state()
+    assert snapshot.values["assembly_digest"] == "a" * 64
+    historical_turns = sum(
+        isinstance(message, AIMessage) for message in snapshot.values["messages"]
     )
     _SEEN.clear()
     second_script = [
-        *_SCRIPT,  # 占位：同线程历史已含首段两条 AIMessage（LocalFake 轮次=历史 AIMessage 数）
+        *[AIMessage(content="historical") for _ in range(historical_turns)],
         AIMessage(
             content="",
             tool_calls=[{"name": "probe_scope", "args": {}, "id": "p2", "type": "tool_call"}],
@@ -121,6 +144,7 @@ async def test_scope_survives_second_segment_without_resupply(
         checkpointer=saver,
         permissions=[],
         interrupt_on={},
+        backend=StateBackend(),
     )
     await _invoke(second, {"messages": [HumanMessage(content="again")]}, "rn2", stream)
     assert _SEEN["scope"] == scope.as_state()

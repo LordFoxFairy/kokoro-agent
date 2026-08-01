@@ -41,6 +41,7 @@ from kokoro_agent.storage.mongo import (
 )
 from kokoro_agent.storage.execution_context import ExecutionContextStore
 from kokoro_agent.storage.owner_event import OwnerEventCommitResult
+from kokoro_agent.storage.assembly import AssemblyDigestConflict
 
 DEFAULT_LEASE_TTL_S = 90
 DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK = (
@@ -50,6 +51,7 @@ DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK = (
 # 这些记录类型定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
 __all__ = [
     "ControlInboxRecord",
+    "AssemblyDigestConflict",
     "DEFAULT_LEASE_TTL_S",
     "DURABLE_OUTPUT_RETENTION_REQUIRES_CONSUMER_ACK",
     "DurableRetentionStats",
@@ -65,6 +67,12 @@ __all__ = [
 
 
 class RunLedger(ExecutionContextStore, Protocol):
+    async def bind_assembly_digest(
+        self, run_id: str, assembly_digest: str, lease_owner_ref: str
+    ) -> None: ...
+
+    async def require_assembly_digest(self, run_id: str, assembly_digest: str) -> None: ...
+
     async def owner_event_head(self, run_id: str) -> int: ...
 
     async def commit_owner_event(

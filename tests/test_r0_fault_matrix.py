@@ -33,7 +33,7 @@ from kokoro_agent.worker.supervisor import RunSupervisor
 
 def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AssembledAgent]]:
     async def _build(_request: RunRequest) -> AssembledAgent:
-        return AssembledAgent(agent=agent, tool_descriptions={})
+        return AssembledAgent(agent=agent, assembly_digest="a" * 64, tool_descriptions={})
 
     return _build
 

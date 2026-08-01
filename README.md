@@ -24,6 +24,8 @@ src/kokoro_agent/
 ├── execution/        【运行域】build_agent（DeepAgents 装配收窄为 InvokableAgent 端口）、
 │                     run_agent（invoke/终态认领/recursion 熔断）、events（RunEmitter：index 单点
 │                     递增、wire 截断、review 抑制）、approvals（HITL/审核帧构造与 resume 对齐）
+├── presentation/     【休眠候选边界】官方 Python AG-UI model → Kokoro strict typed candidate；
+│                     只自动映射无状态完整的 run start/success/error，不接浏览器或 RunEmitter
 ├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
 │                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
 ├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake

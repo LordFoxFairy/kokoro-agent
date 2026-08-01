@@ -17,7 +17,10 @@ Agent does not own Site identity, accounts, pricing, plans, credit deduction, Se
 
 ## Public boundary
 
-The process entrypoint is `kokoro_agent.worker.main`. `skills` and `hitl` bound their public surface with `__init__.py` re-exports; `execution` and `worker` re-export nothing, so their public surface is the module-level symbols listed in their component INDEX files.
+The process entrypoint is `kokoro_agent.worker.main`. `skills`, `hitl`, and the dormant internal
+`presentation` candidate adapter bound their public surface with `__init__.py` re-exports; `execution`
+and `worker` re-export nothing, so their public surface is the module-level symbols listed in their
+component INDEX files.
 
 Hub runtime consumption is implemented only by `kokoro_agent.hub.HubExecutionAssemblyClient` over mTLS ConnectRPC. Each run binds the exact `agent_catalog_ref`, ordered grants, streamed Skill artifacts, and MCP Authorization material; there is no compatibility CLI or Hub persistence access.
 
@@ -66,6 +69,15 @@ application-request, interaction-owner, projection-event, and group-projection i
 resume refs remain opaque wire values. The generated Protobuf mirrors are distributed, but activation remains fail-closed
 until Root-equivalent CEL/protovalidate, the decision-group identity helper, successor proof authority, durable evidence
 composition, and the release epoch are wired; the incomplete Pydantic pseudo-mirrors are intentionally not shipped.
+
+The official Python AG-UI SDK is pinned to `ag-ui-protocol==0.1.19` at Root's exact upstream commit.
+`kokoro_agent.presentation` constructs official models and then closes them into a frozen typed
+Agent-to-Session candidate envelope. It has no transport and is not wired into `RunEmitter`.
+`RUN_FINISHED` carries explicit official `success` and forbids `result`; Session must validate that
+outcome before deliberately projecting the narrower browser event. Candidate JCS digest, route,
+uint64 source ordinal, and canonical UTC millisecond time are recomputable identity inputs.
+The existing raw contract has no message-start fact, so current automatic mapping is deliberately
+limited to run start/success/error; Text/Activity awaits an atomic durable segment-transition source.
 
 ## Verification
 

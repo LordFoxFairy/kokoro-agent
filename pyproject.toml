@@ -5,6 +5,7 @@ description = "Kokoro agent runtime"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "ag-ui-protocol==0.1.19",
   "beautifulsoup4>=4.15.0",
   "boto3>=1.43.40",
   "connectrpc==0.10.1",
@@ -236,3 +237,6 @@ constraint-dependencies = [
 name = "pypi"
 url = "https://pypi.org/simple"
 default = true
+
+[tool.uv.sources]
+ag-ui-protocol = { git = "https://github.com/ag-ui-protocol/ag-ui", rev = "54f13419055b4d0f442c71e1efab18b310982ce1", subdirectory = "sdks/python" }

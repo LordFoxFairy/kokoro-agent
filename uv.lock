@@ -149,6 +149,14 @@ constraints = [
 ]
 
 [[package]]
+name = "ag-ui-protocol"
+version = "0.1.19"
+source = { git = "https://github.com/ag-ui-protocol/ag-ui?subdirectory=sdks%2Fpython&rev=54f13419055b4d0f442c71e1efab18b310982ce1#54f13419055b4d0f442c71e1efab18b310982ce1" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1032,6 +1040,7 @@ name = "kokoro-agent"
 version = "2.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ag-ui-protocol" },
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "connectrpc" },
@@ -1068,6 +1077,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ag-ui-protocol", git = "https://github.com/ag-ui-protocol/ag-ui?subdirectory=sdks%2Fpython&rev=54f13419055b4d0f442c71e1efab18b310982ce1" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
     { name = "boto3", specifier = ">=1.43.40" },
     { name = "connectrpc", specifier = "==0.10.1" },

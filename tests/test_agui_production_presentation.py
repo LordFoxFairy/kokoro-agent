@@ -17,12 +17,15 @@ from kokoro_agent.contract import (
     RunStartedPayload,
     ToolInvoked,
     ToolInvokedPayload,
+    ToolAwaitingApproval,
+    ToolAwaitingApprovalPayload,
     ToolReturned,
     ToolReturnedPayload,
     agent_event_adapter,
 )
 from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
 from kokoro_agent.presentation.profile import (
+    ClosedHitlActivity,
     ClosedRunErrorEvent,
     ClosedToolPreviewActivity,
 )
@@ -32,6 +35,7 @@ from kokoro_agent.presentation.runtime import (
     PresentationAcknowledgeCommand,
     PresentationAcknowledgeState,
     PresentationCandidateRecord,
+    PresentationOwnerState,
     PresentationQuarantineCommand,
     PresentationProjectionState,
     presentation_acknowledgement_digest,
@@ -245,8 +249,202 @@ def test_activity_identity_is_stable_for_owner_and_does_not_open_text_message() 
     assert isinstance(first_activity, ClosedToolPreviewActivity)
     assert isinstance(second_activity, ClosedToolPreviewActivity)
     assert first_activity.message_id == second_activity.message_id
+    assert first_activity.content.owner_version == "1"
+    assert second_activity.content.owner_version == "2"
+    assert first_activity.content.updated_at == "1970-01-01T00:00:01.001Z"
+    assert second_activity.content.updated_at == "1970-01-01T00:00:01.002Z"
+    assert second.next_state.owners[0].owner_version == "2"
     assert first.next_state.messages == ()
     assert second.next_state.messages == ()
+
+
+def test_semantically_identical_owner_replacement_is_idempotent() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    invoked = ToolInvoked(
+        kind="tool.invoked",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=ToolInvokedPayload(
+            segment_id="message.1", tool_id="tool.1", name="web_fetch", args={}
+        ),
+    )
+    first = plan_presentation_batch(invoked, state, THREAD)
+    duplicate = invoked.model_copy(update={"index": 2, "timestamp": 1_002})
+
+    second = plan_presentation_batch(duplicate, first.next_state, THREAD)
+
+    assert second.candidates == ()
+    assert second.next_state.owners == first.next_state.owners
+    assert second.next_state.next_ordinal == first.next_state.next_ordinal
+
+
+def test_owner_replacement_rejects_time_regression_terminal_revival_and_overflow() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    invoked = ToolInvoked(
+        kind="tool.invoked",
+        run_id="run.1",
+        index=1,
+        timestamp=1_010,
+        payload=ToolInvokedPayload(
+            segment_id="message.1", tool_id="tool.1", name="web_fetch", args={}
+        ),
+    )
+    running = plan_presentation_batch(invoked, state, THREAD)
+    returned = ToolReturned(
+        kind="tool.returned",
+        run_id="run.1",
+        index=2,
+        timestamp=1_011,
+        payload=ToolReturnedPayload(
+            segment_id="message.1",
+            tool_id="tool.1",
+            name="web_fetch",
+            result="done",
+            is_error=False,
+        ),
+    )
+    with pytest.raises(ValueError, match="PRESENTATION_OWNER_TIME_REGRESSION"):
+        plan_presentation_batch(returned.model_copy(update={"timestamp": 1_009}), running.next_state, THREAD)
+
+    completed_owner = plan_presentation_batch(returned, running.next_state, THREAD)
+    with pytest.raises(ValueError, match="PRESENTATION_OWNER_TERMINAL"):
+        plan_presentation_batch(
+            invoked.model_copy(update={"index": 3, "timestamp": 1_012}),
+            completed_owner.next_state,
+            THREAD,
+        )
+
+    owner = running.next_state.owners[0]
+    overflow_state = running.next_state.model_copy(
+        update={
+            "owners": (
+                owner.model_copy(update={"owner_version": "18446744073709551615"}),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="PRESENTATION_OWNER_VERSION_OVERFLOW"):
+        plan_presentation_batch(returned, overflow_state, THREAD)
+
+
+def test_owner_identity_and_placement_are_immutable() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    invoked = ToolInvoked(
+        kind="tool.invoked",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=ToolInvokedPayload(
+            segment_id="message.1", tool_id="tool.1", name="web_fetch", args={}
+        ),
+    )
+    first = plan_presentation_batch(invoked, state, THREAD)
+    owner = first.next_state.owners[0]
+    drifted = first.next_state.model_copy(
+        update={
+            "owners": (
+                PresentationOwnerState(
+                    **{
+                        **owner.model_dump(),
+                        "message_ref": "agent.activity:drifted",
+                    }
+                ),
+            )
+        }
+    )
+    returned = ToolReturned(
+        kind="tool.returned",
+        run_id="run.1",
+        index=2,
+        timestamp=1_002,
+        payload=ToolReturnedPayload(
+            segment_id="message.1",
+            tool_id="tool.1",
+            name="web_fetch",
+            result="done",
+            is_error=False,
+        ),
+    )
+    with pytest.raises(ValueError, match="PRESENTATION_OWNER_PLACEMENT_CONFLICT"):
+        plan_presentation_batch(returned, drifted, THREAD)
+
+    identity_drifted = first.next_state.model_copy(
+        update={
+            "owners": (
+                owner.model_copy(update={"identity_fingerprint": "sha256:" + "0" * 64}),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="PRESENTATION_OWNER_IDENTITY_CONFLICT"):
+        plan_presentation_batch(returned, identity_drifted, THREAD)
+
+
+def test_hitl_group_allocates_private_complete_ancestry_once() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+
+    def awaiting(index: int, tool_id: str) -> ToolAwaitingApproval:
+        return ToolAwaitingApproval(
+            kind="tool.awaiting_approval",
+            run_id="run.1",
+            index=index,
+            timestamp=1_000 + index,
+            payload=ToolAwaitingApprovalPayload(
+                segment_id="message.1",
+                tool_id=tool_id,
+                name="execute",
+                args={},
+                description="Review",
+                allowed_decisions=["approve", "reject"],
+                kind="tool_approval",
+                editable=False,
+                pending_tool_ids=["tool.A", "tool.B"],
+            ),
+        )
+
+    first = plan_presentation_batch(awaiting(1, "tool.A"), state, THREAD)
+    second = plan_presentation_batch(awaiting(2, "tool.B"), first.next_state, THREAD)
+    first_event = first.candidates[0].event
+    second_event = second.candidates[0].event
+
+    assert isinstance(first_event, ClosedHitlActivity)
+    assert isinstance(second_event, ClosedHitlActivity)
+    assert first_event.content.status == "pending"
+    assert second_event.content.status == "pending"
+    assert first_event.content.decision_group_ref == second_event.content.decision_group_ref
+    assert first_event.content.control_ref == second_event.content.control_ref
+    assert first_event.content.required_owner_refs == second_event.content.required_owner_refs
+    assert first_event.content.owner_ref in first_event.content.required_owner_refs
+    assert second_event.content.owner_ref in second_event.content.required_owner_refs
+    assert first_event.content.owner_ref != second_event.content.owner_ref
+    assert "tool.A" not in first_event.content.owner_ref
+    assert len(second.next_state.decision_groups) == 1
+
+
+def test_structured_input_submit_is_projected_as_agui_respond_action() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    event = ToolAwaitingApproval(
+        kind="tool.awaiting_approval",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=ToolAwaitingApprovalPayload(
+            segment_id="message.1",
+            tool_id="request.1",
+            name="ask_details",
+            args={},
+            description="Provide details",
+            allowed_decisions=["submit", "reject"],
+            kind="input",
+            editable=False,
+            pending_tool_ids=["request.1"],
+        ),
+    )
+
+    batch = plan_presentation_batch(event, state, THREAD)
+    activity = batch.candidates[0].event
+
+    assert isinstance(activity, ClosedHitlActivity)
+    assert activity.content.allowed_actions == ("respond", "reject")
 
 
 def test_run_error_candidate_never_contains_raw_exception_message() -> None:

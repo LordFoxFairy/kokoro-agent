@@ -20,14 +20,25 @@ publication. This is the only Agent-owned browser-presentation semantic output.
 - terminal/failure closes every open message before RUN_FINISHED/RUN_ERROR;
 - one source fact may create multiple candidates, each with a stable run-global ordinal, member source
   identity and candidate digest;
-- tool, HITL, plan and subagent facts become closed, redacted `ACTIVITY_SNAPSHOT` values. Raw args,
-  raw results, provider data, secrets, reasoning and subagent text never enter the presentation log;
+- tool, HITL, plan and subagent facts become closed, redacted `ACTIVITY_SNAPSHOT` values. Safe-summary,
+  notice and error remain closed candidate arms but have no production source until a real safe owner fact
+  exists. Agent cannot emit Platform-owned media, artifact or cost Activity. Raw args, raw results, provider
+  data, secrets, reasoning and subagent text never enter the presentation log;
+- `PresentationOwnerState` allocates owner version `1` on the first semantic replacement and advances a
+  positive uint64 decimal **string** only when that owner's semantic fingerprint changes. It is independent
+  from candidate ordinal, presentation sequence, durable sequence and Python/JavaScript numeric transport.
+  Exact semantic replay emits no new candidate; identity/placement drift, time regression, terminal revival
+  and uint64 overflow fail closed;
+- HITL presentation groups are allocated once from the complete ordered pending frame. Agent stores only
+  domain-separated private hashes for owner/group/control identity, emits pending proposals without receipt
+  authority, and requires Session to remap every private ancestry ref before browser projection;
 - an opaque Agent thread ref is domain-separated from namespace + inbound thread identity. Agent never
   forwards a Session/browser thread identifier.
 
 ## Durability and delivery
 
-Mongo commits source marker, full ordered candidate batch and next projection state in one transaction.
+Mongo commits source marker, full ordered candidate batch and next projection state—including owner/group
+authority—in one transaction under the existing projection revision CAS.
 Replay must reproduce the exact batch or fail closed. Candidate sequence is independent from raw live
 index, lifecycle durable sequence and execution-output sequence.
 

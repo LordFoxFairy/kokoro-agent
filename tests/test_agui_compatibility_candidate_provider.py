@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from ag_ui.core import (
+    ActivitySnapshotEvent,
     RunFinishedEvent,
     RunStartedEvent,
     TextMessageContentEvent,
@@ -15,6 +16,12 @@ from ag_ui.core import (
 from pydantic import ValidationError
 
 from kokoro_agent.presentation import AgentAguiEventCandidate
+from kokoro_agent.presentation.profile import (
+    ClosedSafeSummaryActivity,
+    ClosedTextContentEvent,
+    ClosedTextEndEvent,
+    ClosedTextStartEvent,
+)
 from scripts.compat.agui_candidate_provider import (
     AGUI_COMPATIBILITY_FIXTURE_PROFILE,
     AguiCompatibilityFixtureInput,
@@ -45,6 +52,7 @@ def _fixture() -> AguiCompatibilityFixtureInput:
                 "internalThreadRef": "agent.thread:compat.1",
                 "internalRunRef": "run.compat.1",
                 "internalMessageRef": "message.compat.1",
+                "internalActivityRef": "activity.compat.1",
                 "sourceEventPrefix": "agent.event.compat",
                 "startedAtMs": 1_735_689_600_000,
                 "textDeltas": ["Hello, ", "Kokoro!"],
@@ -64,7 +72,7 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
         "sessionId": "session.compat.1",
         "streamEpoch": "1",
     }
-    assert len(output["candidates"]) == 6
+    assert len(output["candidates"]) == 7
 
     envelopes = [
         AgentAguiEventCandidate.model_validate_json(
@@ -74,6 +82,7 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
     ]
     assert [envelope.event.type for envelope in envelopes] == [
         "RUN_STARTED",
+        "ACTIVITY_SNAPSHOT",
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_CONTENT",
@@ -82,6 +91,7 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
     ]
     official_types = (
         RunStartedEvent,
+        ActivitySnapshotEvent,
         TextMessageStartEvent,
         TextMessageContentEvent,
         TextMessageContentEvent,
@@ -101,12 +111,13 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
         "3",
         "4",
         "5",
+        "6",
     ]
     assert [candidate["binding"]["sourceEventRef"] for candidate in output["candidates"]] == [
-        f"agent.event.compat.{ordinal}" for ordinal in range(6)
+        f"agent.event.compat.{ordinal}" for ordinal in range(7)
     ]
     assert [candidate["binding"]["expectedSourceOrdinal"] for candidate in output["candidates"]] == [
-        str(ordinal) for ordinal in range(6)
+        str(ordinal) for ordinal in range(7)
     ]
     assert all(
         candidate["candidateRef"] == envelope.candidate_ref
@@ -122,7 +133,21 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
             "runInternalRunRef": "run.compat.1",
             "runSegmentOrdinal": 0,
         }
-        for candidate in output["candidates"][1:-1]
+        for candidate in output["candidates"][2:-1]
+    )
+    activity = envelopes[1].event
+    assert isinstance(activity, ClosedSafeSummaryActivity)
+    assert activity.message_id == "activity.compat.1"
+    assert activity.message_id not in {
+        envelope.event.message_id
+        for envelope in envelopes
+        if isinstance(
+            envelope.event,
+            (ClosedTextStartEvent, ClosedTextContentEvent, ClosedTextEndEvent),
+        )
+    }
+    assert output["candidates"][1]["binding"]["message"]["internalMessageRef"] == (
+        "activity.compat.1"
     )
 
 
@@ -139,6 +164,11 @@ def test_fixture_input_is_closed_and_bounded() -> None:
 
     raw = _fixture().model_dump(mode="json", by_alias=True)
     raw["fixture"]["sourceEventPrefix"] = "a" * 127
+    with pytest.raises(ValidationError):
+        AguiCompatibilityFixtureInput.model_validate(raw)
+
+    raw = _fixture().model_dump(mode="json", by_alias=True)
+    raw["fixture"]["startedAtMs"] = 253_402_300_799_988
     with pytest.raises(ValidationError):
         AguiCompatibilityFixtureInput.model_validate(raw)
 

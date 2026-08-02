@@ -25,7 +25,8 @@ from kokoro_agent.presentation.candidate import (
 from kokoro_agent.presentation.profile import (
     AGUI_CANDIDATE_PROFILE_REVISION,
     ALLOWED_OFFICIAL_EVENT_TYPES,
-    ClosedActivityBase,
+    CLOSED_ACTIVITY_CLASSES,
+    ClosedActivityEvent,
     ClosedAguiEvent,
     ClosedRunFinishedEvent,
     ClosedRunStartedEvent,
@@ -111,12 +112,12 @@ def _validate_source_scope(
     if isinstance(
         event,
         (ClosedTextStartEvent, ClosedTextContentEvent, ClosedTextEndEvent),
-    ) or isinstance(event, ClosedActivityBase):
+    ) or isinstance(event, CLOSED_ACTIVITY_CLASSES):
         message_event: (
             ClosedTextStartEvent
             | ClosedTextContentEvent
             | ClosedTextEndEvent
-            | ClosedActivityBase
+            | ClosedActivityEvent
         ) = event
         if route.internal_message_ref != message_event.message_id:
             raise CandidateProtocolError("AGUI_EVENT_SEGMENT_CONFLICT")

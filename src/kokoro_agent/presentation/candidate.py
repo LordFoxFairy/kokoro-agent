@@ -20,7 +20,8 @@ from pydantic.alias_generators import to_camel
 
 from kokoro_agent.presentation.profile import (
     AGUI_CANDIDATE_PROFILE_REVISION,
-    ClosedActivityBase,
+    CLOSED_ACTIVITY_CLASSES,
+    ClosedActivityEvent,
     ClosedAguiEvent,
     ClosedRunFinishedEvent,
     ClosedRunStartedEvent,
@@ -207,7 +208,7 @@ def candidate_identity(
 
 
 _MessageScopedEvent: TypeAlias = (
-    ClosedTextStartEvent | ClosedTextContentEvent | ClosedTextEndEvent | ClosedActivityBase
+    ClosedTextStartEvent | ClosedTextContentEvent | ClosedTextEndEvent | ClosedActivityEvent
 )
 
 
@@ -246,7 +247,7 @@ class AgentAguiEventCandidate(_StrictCandidateModel):
                 ClosedTextContentEvent,
                 ClosedTextEndEvent,
             ),
-        ) or isinstance(self.event, ClosedActivityBase):
+        ) or isinstance(self.event, CLOSED_ACTIVITY_CLASSES):
             message_event: _MessageScopedEvent = self.event
             if message_event.message_id != route.internal_message_ref:
                 raise ValueError("official event message route mismatch")

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, Literal, TypeAlias
 
 from ag_ui.core import (
+    ActivitySnapshotEvent,
     BaseEvent,
     RunFinishedEvent,
     RunFinishedSuccessOutcome,
@@ -50,7 +51,7 @@ MAXIMUM_OUTPUT_BYTES = 2_097_152
 MAXIMUM_CANDIDATE_ENVELOPE_BYTES = 131_072
 MAXIMUM_TEXT_DELTAS = 8
 MAXIMUM_UINT64 = (1 << 64) - 1
-MAXIMUM_START_TIMESTAMP_MS = 253_402_300_799_994
+MAXIMUM_START_TIMESTAMP_MS = 253_402_300_799_987
 
 _Id = Annotated[
     str,
@@ -110,6 +111,7 @@ _Base64Envelope = Annotated[
 ]
 CompatibilityEventType: TypeAlias = Literal[
     "RUN_STARTED",
+    "ACTIVITY_SNAPSHOT",
     "TEXT_MESSAGE_START",
     "TEXT_MESSAGE_CONTENT",
     "TEXT_MESSAGE_END",
@@ -165,6 +167,7 @@ class AguiCompatibilityFixture(_ClosedModel):
     internal_thread_ref: _AgentThreadRef = "agent.thread:compatibility"
     internal_run_ref: _Id = "run.compatibility"
     internal_message_ref: _Id = "message.compatibility"
+    internal_activity_ref: _Id = "activity.compatibility"
     source_event_prefix: _SourceEventPrefix = "agent.event.compatibility"
     started_at_ms: Annotated[
         int,
@@ -243,7 +246,7 @@ class SessionAguiCompatibilityInput(_ClosedModel):
     replay_page_limit: Annotated[int, Field(strict=True, ge=1, le=512)]
     candidates: Annotated[
         tuple[CompatibilityCandidate, ...],
-        Field(min_length=6, max_length=4 + MAXIMUM_TEXT_DELTAS),
+        Field(min_length=7, max_length=5 + MAXIMUM_TEXT_DELTAS),
     ]
 
     @model_validator(mode="after")
@@ -262,7 +265,7 @@ def _candidate_source(
     fixture: AguiCompatibilityFixture,
     *,
     ordinal: int,
-    message_scoped: bool,
+    internal_message_ref: str | None,
 ) -> AgentAguiCandidateSource:
     timestamp = fixture.started_at_ms + ordinal
     return AgentAguiCandidateSource(
@@ -273,46 +276,78 @@ def _candidate_source(
             internal_run_ref=fixture.internal_run_ref,
             internal_thread_ref=fixture.internal_thread_ref,
             **(
-                {"internal_message_ref": fixture.internal_message_ref}
-                if message_scoped
+                {"internal_message_ref": internal_message_ref}
+                if internal_message_ref is not None
                 else {}
             ),
         ),
     )
 
 
-def _official_events(fixture: AguiCompatibilityFixture) -> tuple[BaseEvent, ...]:
-    events: list[BaseEvent] = [
-        RunStartedEvent(
-            thread_id=fixture.internal_thread_ref,
-            run_id=fixture.internal_run_ref,
-            timestamp=fixture.started_at_ms,
+def _official_events(
+    fixture: AguiCompatibilityFixture,
+) -> tuple[tuple[BaseEvent, str | None], ...]:
+    events: list[tuple[BaseEvent, str | None]] = [
+        (
+            RunStartedEvent(
+                thread_id=fixture.internal_thread_ref,
+                run_id=fixture.internal_run_ref,
+                timestamp=fixture.started_at_ms,
+            ),
+            None,
         ),
-        TextMessageStartEvent(
-            message_id=fixture.internal_message_ref,
-            role="assistant",
-            timestamp=fixture.started_at_ms + 1,
+        (
+            ActivitySnapshotEvent(
+                message_id=fixture.internal_activity_ref,
+                activity_type="kokoro.safe-summary.v1",
+                content={
+                    "partRef": "agent.compat.safe-summary.1",
+                    "ownerVersion": "1",
+                    "summary": "Compared safe alternatives.",
+                    "status": "complete",
+                    "updatedAt": canonical_recorded_at(fixture.started_at_ms + 1),
+                },
+                timestamp=fixture.started_at_ms + 1,
+            ),
+            fixture.internal_activity_ref,
+        ),
+        (
+            TextMessageStartEvent(
+                message_id=fixture.internal_message_ref,
+                role="assistant",
+                timestamp=fixture.started_at_ms + 2,
+            ),
+            fixture.internal_message_ref,
         ),
     ]
     events.extend(
-        TextMessageContentEvent(
-            message_id=fixture.internal_message_ref,
-            delta=delta,
-            timestamp=fixture.started_at_ms + 2 + index,
+        (
+            TextMessageContentEvent(
+                message_id=fixture.internal_message_ref,
+                delta=delta,
+                timestamp=fixture.started_at_ms + 3 + index,
+            ),
+            fixture.internal_message_ref,
         )
         for index, delta in enumerate(fixture.text_deltas)
     )
     events.extend(
         (
-            TextMessageEndEvent(
-                message_id=fixture.internal_message_ref,
-                timestamp=fixture.started_at_ms + 2 + len(fixture.text_deltas),
+            (
+                TextMessageEndEvent(
+                    message_id=fixture.internal_message_ref,
+                    timestamp=fixture.started_at_ms + 3 + len(fixture.text_deltas),
+                ),
+                fixture.internal_message_ref,
             ),
-            RunFinishedEvent(
-                thread_id=fixture.internal_thread_ref,
-                run_id=fixture.internal_run_ref,
-                timestamp=fixture.started_at_ms + 3 + len(fixture.text_deltas),
-                outcome=RunFinishedSuccessOutcome(),
+            (
+                RunFinishedEvent(
+                    thread_id=fixture.internal_thread_ref,
+                    run_id=fixture.internal_run_ref,
+                    timestamp=fixture.started_at_ms + 4 + len(fixture.text_deltas),
+                    outcome=RunFinishedSuccessOutcome(),
+                ),
+                None,
             ),
         )
     )
@@ -363,6 +398,8 @@ def _compatibility_event_type(
     match candidate.event.type:
         case "RUN_STARTED":
             return "RUN_STARTED"
+        case "ACTIVITY_SNAPSHOT":
+            return "ACTIVITY_SNAPSHOT"
         case "TEXT_MESSAGE_START":
             return "TEXT_MESSAGE_START"
         case "TEXT_MESSAGE_CONTENT":
@@ -390,11 +427,11 @@ def build_session_compatibility_input(
                     source=_candidate_source(
                         fixture,
                         ordinal=ordinal,
-                        message_scoped=0 < ordinal < len(events) - 1,
+                        internal_message_ref=internal_message_ref,
                     ),
                 )
             )
-            for ordinal, event in enumerate(events)
+            for ordinal, (event, internal_message_ref) in enumerate(events)
         )
         return SessionAguiCompatibilityInput(
             profile_revision=SESSION_AGUI_COMPATIBILITY_INPUT_PROFILE,

@@ -46,9 +46,11 @@ from kokoro_agent.presentation.candidate import (
     AgentAguiCandidateSource,
     AgentAguiEventCandidate,
     canonical_recorded_at,
+    recorded_at_milliseconds,
 )
 
 MAX_PRESENTATION_PAGE_SIZE = 256
+MAX_UINT64_DECIMAL = "18446744073709551615"
 
 
 class _FrozenModel(BaseModel):
@@ -63,12 +65,56 @@ class PresentationMessageState(_FrozenModel):
     text_seen: bool = False
 
 
+class PresentationOwnerState(_FrozenModel):
+    owner_key: str = Field(pattern=r"^agent\.presentation-owner:sha256:[0-9a-f]{64}$")
+    activity_type: str = Field(min_length=1, max_length=128)
+    message_ref: str = Field(min_length=1, max_length=128)
+    identity_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    semantic_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    owner_version: str = Field(pattern=r"^[1-9][0-9]{0,19}$")
+    updated_at: str = Field(
+        pattern=(
+            r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+            r"\.[0-9]{3}Z$"
+        )
+    )
+    terminal_state: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_version(self) -> PresentationOwnerState:
+        if (
+            len(self.owner_version) > len(MAX_UINT64_DECIMAL)
+            or (
+                len(self.owner_version) == len(MAX_UINT64_DECIMAL)
+                and self.owner_version > MAX_UINT64_DECIMAL
+            )
+        ):
+            raise ValueError("ownerVersion exceeds uint64")
+        recorded_at_milliseconds(self.updated_at)
+        return self
+
+
+class PresentationDecisionGroupState(_FrozenModel):
+    group_key: str = Field(pattern=r"^agent\.decision-group-key:sha256:[0-9a-f]{64}$")
+    decision_group_ref: str = Field(min_length=1, max_length=128)
+    control_ref: str = Field(min_length=1, max_length=128)
+    required_owner_refs: tuple[str, ...] = Field(min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_group(self) -> PresentationDecisionGroupState:
+        if len(self.required_owner_refs) != len(set(self.required_owner_refs)):
+            raise ValueError("required owner refs must be unique")
+        return self
+
+
 class PresentationProjectionState(_FrozenModel):
     internal_run_ref: str | None = None
     internal_thread_ref: str | None = None
     run_state: Literal["new", "running", "finished", "failed"] = "new"
     next_ordinal: int = Field(default=0, ge=0)
     messages: tuple[PresentationMessageState, ...] = ()
+    owners: tuple[PresentationOwnerState, ...] = ()
+    decision_groups: tuple[PresentationDecisionGroupState, ...] = ()
 
 
 class PresentationCandidateBatch(_FrozenModel):
@@ -427,6 +473,155 @@ def _activity_message_ref(run_id: str, activity_type: str, owner_ref: str) -> st
     return f"agent.activity:{hashlib.sha256(material).hexdigest()}"
 
 
+def _private_ref(domain: str, *parts: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"kokoro-agent-{domain}-v1\0".encode())
+    for part in parts:
+        encoded = part.encode()
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+    return f"agent.{domain}:sha256:{digest.hexdigest()}"
+
+
+def _fingerprint(domain: str, value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    digest = hashlib.sha256(domain.encode() + b"\0" + encoded).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _increment_uint64_decimal(value: str) -> str:
+    if value == MAX_UINT64_DECIMAL:
+        raise ValueError("PRESENTATION_OWNER_VERSION_OVERFLOW")
+    digits = list(value)
+    carry = 1
+    for index in range(len(digits) - 1, -1, -1):
+        next_digit = ord(digits[index]) - ord("0") + carry
+        digits[index] = chr(ord("0") + next_digit % 10)
+        carry = next_digit // 10
+        if carry == 0:
+            break
+    if carry:
+        digits.insert(0, "1")
+    return "".join(digits)
+
+
+def _owner_terminal_state(activity_type: str, content: dict[str, object]) -> str | None:
+    status = content.get("status")
+    if activity_type == "kokoro.safe-summary.v1":
+        return None if status == "streaming" else str(status)
+    if activity_type in {
+        "kokoro.tool-preview.v1",
+        "kokoro.plan.v1",
+        "kokoro.subagent.v1",
+    }:
+        return str(status) if status in {"completed", "failed", "canceled"} else None
+    if activity_type in {"kokoro.notice.v1", "kokoro.error.v1"}:
+        return "terminal"
+    return None
+
+
+def _plan_owner_activity(
+    *,
+    run_id: str,
+    timestamp: int,
+    activity_type: str,
+    raw_owner_key: str,
+    owner_identity: dict[str, object],
+    semantic_content: dict[str, object],
+    owners: dict[str, PresentationOwnerState],
+) -> tuple[ActivitySnapshotEvent | None, str]:
+    owner_key = _private_ref("presentation-owner", activity_type, raw_owner_key)
+    message_ref = _activity_message_ref(run_id, activity_type, owner_key)
+    identity_fingerprint = _fingerprint(
+        "kokoro-agent-presentation-owner-identity-v1",
+        {"activityType": activity_type, **owner_identity},
+    )
+    semantic_fingerprint = _fingerprint(
+        "kokoro-agent-presentation-owner-semantic-v1",
+        {"activityType": activity_type, **semantic_content},
+    )
+    updated_at = canonical_recorded_at(timestamp)
+    current = owners.get(owner_key)
+    if current is None:
+        owner_version = "1"
+    else:
+        if current.activity_type != activity_type or current.identity_fingerprint != identity_fingerprint:
+            raise ValueError("PRESENTATION_OWNER_IDENTITY_CONFLICT")
+        if current.message_ref != message_ref:
+            raise ValueError("PRESENTATION_OWNER_PLACEMENT_CONFLICT")
+        if updated_at < current.updated_at:
+            raise ValueError("PRESENTATION_OWNER_TIME_REGRESSION")
+        if current.semantic_fingerprint == semantic_fingerprint:
+            return None, message_ref
+        if current.terminal_state is not None:
+            raise ValueError("PRESENTATION_OWNER_TERMINAL")
+        owner_version = _increment_uint64_decimal(current.owner_version)
+    terminal_state = _owner_terminal_state(activity_type, semantic_content)
+    owners[owner_key] = PresentationOwnerState(
+        owner_key=owner_key,
+        activity_type=activity_type,
+        message_ref=message_ref,
+        identity_fingerprint=identity_fingerprint,
+        semantic_fingerprint=semantic_fingerprint,
+        owner_version=owner_version,
+        updated_at=updated_at,
+        terminal_state=terminal_state,
+    )
+    return (
+        _activity(
+            message_id=message_ref,
+            timestamp=timestamp,
+            activity_type=activity_type,
+            content={
+                **semantic_content,
+                "ownerVersion": owner_version,
+                "updatedAt": updated_at,
+            },
+        ),
+        message_ref,
+    )
+
+
+def _hitl_group(
+    event: ToolAwaitingApproval,
+    groups: dict[str, PresentationDecisionGroupState],
+) -> tuple[PresentationDecisionGroupState, str]:
+    pending_tool_ids = tuple(event.payload.pending_tool_ids)
+    if (
+        not pending_tool_ids
+        or len(pending_tool_ids) != len(set(pending_tool_ids))
+        or event.payload.tool_id not in pending_tool_ids
+    ):
+        raise ValueError("PRESENTATION_HITL_GROUP_INVALID")
+    group_key = _private_ref(
+        "decision-group-key",
+        event.run_id,
+        event.payload.segment_id,
+        *pending_tool_ids,
+    )
+    decision_group_ref = _private_ref("decision-group", group_key)
+    control_ref = _private_ref("control-proposal", group_key)
+    owner_refs = tuple(
+        _private_ref("hitl-owner", group_key, tool_id) for tool_id in pending_tool_ids
+    )
+    expected = PresentationDecisionGroupState(
+        group_key=group_key,
+        decision_group_ref=decision_group_ref,
+        control_ref=control_ref,
+        required_owner_refs=owner_refs,
+    )
+    current = groups.get(group_key)
+    if current is not None and current != expected:
+        raise ValueError("PRESENTATION_HITL_GROUP_CONFLICT")
+    groups[group_key] = expected
+    return expected, owner_refs[pending_tool_ids.index(event.payload.tool_id)]
+
+
 def _safe_ref(value: str, *, domain: str) -> str:
     if (
         1 <= len(value) <= 128
@@ -441,6 +636,11 @@ def _clip(value: str, maximum: int = 16_384) -> str:
     if len(value) <= maximum:
         return value
     return value[: maximum - 1] + "…"
+
+
+def _presentation_actions(actions: Sequence[str]) -> list[str]:
+    projected = ("respond" if action == "submit" else action for action in actions)
+    return list(dict.fromkeys(projected))
 
 
 def _source_event_ref(event: AgentEvent) -> str:
@@ -514,6 +714,8 @@ def _events_for_source(
         raise ValueError("PRESENTATION_RUN_ALREADY_STARTED")
 
     states = {message.internal_message_ref: message for message in state.messages}
+    owners = {owner.owner_key: owner for owner in state.owners}
+    groups = {group.group_key: group for group in state.decision_groups}
     planned: list[tuple[BaseEvent, str | None]] = []
     next_run_state = state.run_state
     thread_ref = state.internal_thread_ref
@@ -581,125 +783,118 @@ def _events_for_source(
             message = message.model_copy(update={"state": "closed"})
         states[message_ref] = message
     elif isinstance(event, ToolInvoked | SubagentToolInvoked):
-        message_ref = _activity_message_ref(
-            event.run_id, "kokoro.tool-preview.v1", event.payload.tool_id
+        activity, message_ref = _plan_owner_activity(
+            run_id=event.run_id,
+            timestamp=event.timestamp,
+            activity_type="kokoro.tool-preview.v1",
+            raw_owner_key=event.payload.tool_id,
+            owner_identity={"toolCallRef": _safe_ref(event.payload.tool_id, domain="tool")},
+            semantic_content={
+                "toolCallRef": _safe_ref(event.payload.tool_id, domain="tool"),
+                "label": _clip(event.payload.name, 1_024),
+                "status": "running",
+            },
+            owners=owners,
         )
-        planned.append(
-            (
-                _activity(
-                    message_id=message_ref,
-                    timestamp=event.timestamp,
-                    activity_type="kokoro.tool-preview.v1",
-                    content={
-                        "toolCallRef": _safe_ref(event.payload.tool_id, domain="tool"),
-                        "label": _clip(event.payload.name, 1_024),
-                        "status": "running",
-                    },
-                ),
-                message_ref,
-            )
-        )
+        if activity is not None:
+            planned.append((activity, message_ref))
     elif isinstance(event, ToolReturned | SubagentToolReturned):
-        message_ref = _activity_message_ref(
-            event.run_id, "kokoro.tool-preview.v1", event.payload.tool_id
+        activity, message_ref = _plan_owner_activity(
+            run_id=event.run_id,
+            timestamp=event.timestamp,
+            activity_type="kokoro.tool-preview.v1",
+            raw_owner_key=event.payload.tool_id,
+            owner_identity={"toolCallRef": _safe_ref(event.payload.tool_id, domain="tool")},
+            semantic_content={
+                "toolCallRef": _safe_ref(event.payload.tool_id, domain="tool"),
+                "label": _clip(event.payload.name, 1_024),
+                "status": "failed" if event.payload.is_error else "completed",
+                "isError": event.payload.is_error,
+                **({"truncated": True} if event.payload.truncated else {}),
+            },
+            owners=owners,
         )
-        planned.append(
-            (
-                _activity(
-                    message_id=message_ref,
-                    timestamp=event.timestamp,
-                    activity_type="kokoro.tool-preview.v1",
-                    content={
-                        "toolCallRef": _safe_ref(event.payload.tool_id, domain="tool"),
-                        "label": _clip(event.payload.name, 1_024),
-                        "status": "failed" if event.payload.is_error else "completed",
-                        "isError": event.payload.is_error,
-                        **({"truncated": True} if event.payload.truncated else {}),
-                    },
-                ),
-                message_ref,
-            )
-        )
+        if activity is not None:
+            planned.append((activity, message_ref))
     elif isinstance(event, ToolAwaitingApproval):
-        message_ref = _activity_message_ref(
-            event.run_id, "kokoro.hitl.v1", event.payload.tool_id
-        )
-        planned.append(
-            (
-                _activity(
-                    message_id=message_ref,
-                    timestamp=event.timestamp,
-                    activity_type="kokoro.hitl.v1",
-                    content={
-                        "ownerRef": _safe_ref(event.payload.tool_id, domain="hitl"),
-                        "expectedVersion": 1,
-                        "kind": (
-                            "approval"
-                            if event.payload.kind == "tool_approval"
-                            else "interaction"
-                        ),
-                        "title": _clip(event.payload.name, 1_024),
-                        "description": _clip(event.payload.description),
-                        "allowedActions": list(dict.fromkeys(event.payload.allowed_decisions)),
-                        "status": "pending",
-                    },
+        group, owner_ref = _hitl_group(event, groups)
+        activity, message_ref = _plan_owner_activity(
+            run_id=event.run_id,
+            timestamp=event.timestamp,
+            activity_type="kokoro.hitl.v1",
+            raw_owner_key=f"{group.group_key}\0{event.payload.tool_id}",
+            owner_identity={
+                "ownerRef": owner_ref,
+                "decisionGroupRef": group.decision_group_ref,
+                "requiredOwnerRefs": group.required_owner_refs,
+                "controlRef": group.control_ref,
+            },
+            semantic_content={
+                "ownerRef": owner_ref,
+                "decisionGroupRef": group.decision_group_ref,
+                "requiredOwnerRefs": list(group.required_owner_refs),
+                "controlRef": group.control_ref,
+                "kind": (
+                    "approval"
+                    if event.payload.kind == "tool_approval"
+                    else "interaction"
                 ),
-                message_ref,
-            )
+                "title": _clip(event.payload.name, 1_024),
+                "description": _clip(event.payload.description),
+                "allowedActions": _presentation_actions(event.payload.allowed_decisions),
+                "status": "pending",
+            },
+            owners=owners,
         )
+        if activity is not None:
+            planned.append((activity, message_ref))
     elif isinstance(event, PlanProposed):
-        message_ref = _activity_message_ref(
-            event.run_id, "kokoro.plan.v1", event.payload.owner_ref
+        plan_ref = _safe_ref(event.payload.owner_ref, domain="plan")
+        activity, message_ref = _plan_owner_activity(
+            run_id=event.run_id,
+            timestamp=event.timestamp,
+            activity_type="kokoro.plan.v1",
+            raw_owner_key=event.payload.owner_ref,
+            owner_identity={"planRef": plan_ref},
+            semantic_content={
+                "planRef": plan_ref,
+                "summary": _clip(event.payload.proposal.summary),
+                "status": "proposed",
+                "steps": [
+                    {
+                        "stepRef": _safe_ref(step.step_ref, domain="plan.step"),
+                        "label": _clip(step.label, 1_024),
+                        "status": step.status.replace("_", "-"),
+                    }
+                    for step in event.payload.proposal.steps[:256]
+                ],
+            },
+            owners=owners,
         )
-        planned.append(
-            (
-                _activity(
-                    message_id=message_ref,
-                    timestamp=event.timestamp,
-                    activity_type="kokoro.plan.v1",
-                    content={
-                        "planRef": _safe_ref(event.payload.owner_ref, domain="plan"),
-                        "summary": _clip(event.payload.proposal.summary),
-                        "status": "proposed",
-                        "steps": [
-                            {
-                                "stepRef": _safe_ref(step.step_ref, domain="plan.step"),
-                                "label": _clip(step.label, 1_024),
-                                "status": step.status.replace("_", "-"),
-                            }
-                            for step in event.payload.proposal.steps[:256]
-                        ],
-                    },
-                ),
-                message_ref,
-            )
-        )
+        if activity is not None:
+            planned.append((activity, message_ref))
     elif isinstance(event, SubagentStarted | SubagentFinished):
-        message_ref = _activity_message_ref(
-            event.run_id, "kokoro.subagent.v1", event.payload.subagent_id
-        )
-        planned.append(
-            (
-                _activity(
-                    message_id=message_ref,
-                    timestamp=event.timestamp,
-                    activity_type="kokoro.subagent.v1",
-                    content={
-                        "subagentRef": _safe_ref(
-                            event.payload.subagent_id, domain="subagent"
-                        ),
-                        "status": (
-                            "failed"
-                            if isinstance(event, SubagentFinished) and event.payload.failed
-                            else "completed"
-                            if isinstance(event, SubagentFinished)
-                            else "running"
-                        ),
-                    },
+        subagent_ref = _safe_ref(event.payload.subagent_id, domain="subagent")
+        activity, message_ref = _plan_owner_activity(
+            run_id=event.run_id,
+            timestamp=event.timestamp,
+            activity_type="kokoro.subagent.v1",
+            raw_owner_key=event.payload.subagent_id,
+            owner_identity={"subagentRef": subagent_ref},
+            semantic_content={
+                "subagentRef": subagent_ref,
+                "status": (
+                    "failed"
+                    if isinstance(event, SubagentFinished) and event.payload.failed
+                    else "completed"
+                    if isinstance(event, SubagentFinished)
+                    else "running"
                 ),
-                message_ref,
-            )
+            },
+            owners=owners,
         )
+        if activity is not None:
+            planned.append((activity, message_ref))
     elif isinstance(event, RunCompleted | RunFailed):
         if state.run_state == "new":
             planned.append(
@@ -764,6 +959,8 @@ def _events_for_source(
         run_state=next_run_state,
         next_ordinal=state.next_ordinal + len(planned),
         messages=tuple(sorted(states.values(), key=lambda item: item.opened_ordinal)),
+        owners=tuple(sorted(owners.values(), key=lambda item: item.owner_key)),
+        decision_groups=tuple(sorted(groups.values(), key=lambda item: item.group_key)),
     )
     return tuple(planned), next_state
 
@@ -828,6 +1025,7 @@ __all__ = [
     "PresentationCandidatePage",
     "PresentationCandidateReader",
     "PresentationCandidateRecord",
+    "PresentationOwnerState",
     "PresentationCandidateWriter",
     "PresentationMessageState",
     "PresentationProjectionState",

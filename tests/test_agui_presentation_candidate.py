@@ -43,54 +43,80 @@ SOURCE = AgentAguiCandidateSource(
 _ALLOWED_ACTIVITY_CASES: list[tuple[str, dict[str, JsonValue]]] = [
     (
         "kokoro.safe-summary.v1",
-        {"partRef": "part.1", "summary": "safe", "status": "complete"},
+        {
+            "partRef": "part.1",
+            "ownerVersion": "1",
+            "summary": "safe",
+            "status": "complete",
+            "updatedAt": "1970-01-01T00:00:00.000Z",
+        },
     ),
     (
         "kokoro.tool-preview.v1",
-        {"toolCallRef": "tool.1", "label": "search", "status": "running"},
+        {
+            "toolCallRef": "tool.1",
+            "ownerVersion": "1",
+            "label": "search",
+            "status": "running",
+            "updatedAt": "1970-01-01T00:00:00.000Z",
+        },
     ),
     (
         "kokoro.hitl.v1",
         {
             "ownerRef": "owner.1",
-            "expectedVersion": 1,
+            "ownerVersion": "1",
+            "decisionGroupRef": "decision-group.1",
+            "requiredOwnerRefs": ["owner.1"],
+            "controlRef": "control.1",
             "kind": "approval",
             "title": "Approve",
             "description": "Review the action",
             "allowedActions": ["approve", "reject"],
             "status": "pending",
+            "updatedAt": "1970-01-01T00:00:00.000Z",
         },
     ),
     (
         "kokoro.plan.v1",
         {
             "planRef": "plan.1",
+            "ownerVersion": "1",
             "summary": "Plan",
             "status": "proposed",
             "steps": [{"stepRef": "step.1", "label": "First", "status": "pending"}],
+            "updatedAt": "1970-01-01T00:00:00.000Z",
         },
     ),
-    ("kokoro.subagent.v1", {"subagentRef": "subagent.1", "status": "running"}),
     (
-        "kokoro.media.v1",
-        {"operationRef": "media.1", "state": "active", "progressBps": 5000},
+        "kokoro.subagent.v1",
+        {
+            "subagentRef": "subagent.1",
+            "ownerVersion": "1",
+            "status": "running",
+            "updatedAt": "1970-01-01T00:00:00.000Z",
+        },
     ),
     (
         "kokoro.notice.v1",
         {
             "noticeRef": "notice.1",
+            "ownerVersion": "1",
             "code": "working",
             "message": "正在处理",
             "severity": "info",
+            "updatedAt": "1970-01-01T00:00:00.000Z",
         },
     ),
     (
         "kokoro.error.v1",
         {
             "errorRef": "error.1",
+            "ownerVersion": "1",
             "code": "tool.failed",
             "message": "Failed safely",
             "retryClass": "never",
+            "updatedAt": "1970-01-01T00:00:00.000Z",
         },
     ),
 ]
@@ -301,9 +327,11 @@ def test_activity_content_is_closed_even_though_official_model_allows_any() -> N
             activity_type="kokoro.notice.v1",
             content={
                 "noticeRef": "notice.1",
+                "ownerVersion": "1",
                 "code": "working",
                 "message": "正在处理",
                 "severity": "info",
+                "updatedAt": "1970-01-01T00:00:00.000Z",
             },
             timestamp=TIMESTAMP,
         ),
@@ -317,6 +345,152 @@ def test_activity_content_is_closed_even_though_official_model_allows_any() -> N
                 message_id="activity.1",
                 activity_type="kokoro.artifact.v1",
                 content={"artifactRef": "artifact.1"},
+                timestamp=TIMESTAMP,
+            ),
+            source=source,
+        )
+
+
+@pytest.mark.parametrize(
+    ("activity_type", "content"),
+    [
+        (
+            "kokoro.media.v1",
+            {
+                "operationRef": "media.1",
+                "ownerVersion": "1",
+                "state": "active",
+                "progressBps": 5000,
+                "updatedAt": "1970-01-01T00:00:00.000Z",
+            },
+        ),
+        (
+            "kokoro.artifact.v1",
+            {
+                "artifactRef": "artifact.1",
+                "ownerVersion": "1",
+                "updatedAt": "1970-01-01T00:00:00.000Z",
+            },
+        ),
+        (
+            "kokoro.cost.v1",
+            {
+                "costRef": "cost.1",
+                "ownerVersion": "1",
+                "updatedAt": "1970-01-01T00:00:00.000Z",
+            },
+        ),
+    ],
+)
+def test_platform_owned_activity_arms_are_forbidden_to_agent(
+    activity_type: str, content: dict[str, JsonValue]
+) -> None:
+    source = SOURCE.model_copy(
+        update={
+            "route": SOURCE.route.model_copy(
+                update={"internal_message_ref": "activity.1"}
+            )
+        }
+    )
+    with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_SHAPE_FORBIDDEN"):
+        build_agui_candidate(
+            ActivitySnapshotEvent(
+                message_id="activity.1",
+                activity_type=activity_type,
+                content=content,
+                timestamp=TIMESTAMP,
+            ),
+            source=source,
+        )
+
+
+@pytest.mark.parametrize("owner_version", [1, 0, "0", "01", "18446744073709551616"])
+def test_activity_owner_version_is_positive_uint64_decimal_string(
+    owner_version: JsonValue,
+) -> None:
+    source = SOURCE.model_copy(
+        update={
+            "route": SOURCE.route.model_copy(
+                update={"internal_message_ref": "activity.1"}
+            )
+        }
+    )
+    with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_SHAPE_FORBIDDEN"):
+        build_agui_candidate(
+            ActivitySnapshotEvent(
+                message_id="activity.1",
+                activity_type="kokoro.safe-summary.v1",
+                content={
+                    "partRef": "part.1",
+                    "ownerVersion": owner_version,
+                    "summary": "safe",
+                    "status": "complete",
+                    "updatedAt": "1970-01-01T00:00:00.000Z",
+                },
+                timestamp=TIMESTAMP,
+            ),
+            source=source,
+        )
+
+
+@pytest.mark.parametrize(
+    "updated_at",
+    ["0000-01-01T00:00:00.000Z", "1970-01-01T00:00:00.001Z"],
+)
+def test_activity_updated_at_is_canonical_and_not_after_event(updated_at: str) -> None:
+    source = SOURCE.model_copy(
+        update={
+            "route": SOURCE.route.model_copy(
+                update={"internal_message_ref": "activity.1"}
+            )
+        }
+    )
+    with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_SHAPE_FORBIDDEN"):
+        build_agui_candidate(
+            ActivitySnapshotEvent(
+                message_id="activity.1",
+                activity_type="kokoro.safe-summary.v1",
+                content={
+                    "partRef": "part.1",
+                    "ownerVersion": "1",
+                    "summary": "safe",
+                    "status": "complete",
+                    "updatedAt": updated_at,
+                },
+                timestamp=TIMESTAMP,
+            ),
+            source=source,
+        )
+
+
+def test_hitl_candidate_is_pending_proposal_with_complete_immutable_ancestry() -> None:
+    source = SOURCE.model_copy(
+        update={
+            "route": SOURCE.route.model_copy(
+                update={"internal_message_ref": "activity.1"}
+            )
+        }
+    )
+    content: dict[str, JsonValue] = {
+        "ownerRef": "owner.1",
+        "ownerVersion": "1",
+        "decisionGroupRef": "decision-group.1",
+        "requiredOwnerRefs": ["owner.1"],
+        "controlRef": "control.1",
+        "kind": "approval",
+        "title": "Approve",
+        "description": "Review",
+        "allowedActions": ["approve", "reject"],
+        "status": "accepted",
+        "receiptRef": "receipt.forbidden",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+    }
+    with pytest.raises(CandidateProtocolError, match="AGUI_EVENT_SHAPE_FORBIDDEN"):
+        build_agui_candidate(
+            ActivitySnapshotEvent(
+                message_id="activity.1",
+                activity_type="kokoro.hitl.v1",
+                content=content,
                 timestamp=TIMESTAMP,
             ),
             source=source,

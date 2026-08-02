@@ -5,6 +5,7 @@ import hashlib
 import pytest
 
 from kokoro_agent.contract import (
+    AwaitingKind,
     MessageCompleted,
     MessageCompletedPayload,
     MessageDelta,
@@ -15,6 +16,8 @@ from kokoro_agent.contract import (
     RunFailedPayload,
     RunStarted,
     RunStartedPayload,
+    SubagentToolInvoked,
+    SubagentToolInvokedPayload,
     ToolInvoked,
     ToolInvokedPayload,
     ToolAwaitingApproval,
@@ -780,6 +783,111 @@ def test_hitl_group_allocates_private_complete_ancestry_once() -> None:
     assert first_event.content.owner_ref != second_event.content.owner_ref
     assert "tool.A" not in first_event.content.owner_ref
     assert len(second.next_state.decision_groups) == 1
+
+
+def test_hitl_approval_and_result_review_have_distinct_decision_identity() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+
+    def awaiting(*, index: int, kind: AwaitingKind) -> ToolAwaitingApproval:
+        return ToolAwaitingApproval(
+            kind="tool.awaiting_approval",
+            run_id="run.1",
+            index=index,
+            timestamp=1_000 + index,
+            payload=ToolAwaitingApprovalPayload(
+                segment_id="message.1",
+                tool_id="tool.1",
+                name="write_file",
+                args={},
+                description="Review",
+                allowed_decisions=["approve", "respond", "reject"],
+                kind=kind,
+                editable=False,
+                pending_tool_ids=["tool.1"],
+                result="done" if kind == "result_review" else None,
+            ),
+        )
+
+    approval = plan_presentation_batch(
+        awaiting(index=1, kind="tool_approval"), state, THREAD
+    )
+    review = plan_presentation_batch(
+        awaiting(index=2, kind="result_review"), approval.next_state, THREAD
+    )
+    approval_event = approval.candidates[0].event
+    review_event = review.candidates[0].event
+
+    assert isinstance(approval_event, ClosedHitlActivity)
+    assert isinstance(review_event, ClosedHitlActivity)
+    assert approval_event.content.decision_group_ref != review_event.content.decision_group_ref
+    assert approval_event.content.control_ref != review_event.content.control_ref
+    assert approval_event.content.owner_ref != review_event.content.owner_ref
+    assert len(review.next_state.decision_groups) == 2
+
+
+def test_tool_activity_identity_is_scoped_to_main_or_exact_subagent() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    main = ToolInvoked(
+        kind="tool.invoked",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=ToolInvokedPayload(
+            segment_id="message.1", tool_id="tool.same", name="web_fetch", args={}
+        ),
+    )
+    subagent_a = SubagentToolInvoked(
+        kind="subagent.tool.invoked",
+        run_id="run.1",
+        index=2,
+        timestamp=1_002,
+        payload=SubagentToolInvokedPayload(
+            segment_id="message.2",
+            subagent_id="subagent.a",
+            tool_id="tool.same",
+            name="web_fetch",
+            args={},
+        ),
+    )
+    subagent_b = SubagentToolInvoked(
+        kind="subagent.tool.invoked",
+        run_id="run.1",
+        index=3,
+        timestamp=1_003,
+        payload=SubagentToolInvokedPayload(
+            segment_id="message.3",
+            subagent_id="subagent.b",
+            tool_id="tool.same",
+            name="web_fetch",
+            args={},
+        ),
+    )
+
+    main_batch = plan_presentation_batch(main, state, THREAD)
+    first_subagent_batch = plan_presentation_batch(
+        subagent_a, main_batch.next_state, THREAD
+    )
+    second_subagent_batch = plan_presentation_batch(
+        subagent_b, first_subagent_batch.next_state, THREAD
+    )
+
+    main_activity = main_batch.candidates[0].event
+    first_subagent_activity = first_subagent_batch.candidates[0].event
+    second_subagent_activity = second_subagent_batch.candidates[0].event
+    assert isinstance(main_activity, ClosedToolPreviewActivity)
+    assert isinstance(first_subagent_activity, ClosedToolPreviewActivity)
+    assert isinstance(second_subagent_activity, ClosedToolPreviewActivity)
+    assert len({
+        main_activity.content.tool_call_ref,
+        first_subagent_activity.content.tool_call_ref,
+        second_subagent_activity.content.tool_call_ref,
+    }) == 3
+    assert len({
+        main_activity.message_id,
+        first_subagent_activity.message_id,
+        second_subagent_activity.message_id,
+    }) == 3
+    assert len(second_subagent_batch.next_state.owners) == 3
 
 
 def test_structured_input_submit_is_projected_as_agui_respond_action() -> None:

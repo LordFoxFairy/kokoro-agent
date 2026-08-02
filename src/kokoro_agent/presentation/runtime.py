@@ -702,6 +702,7 @@ def _hitl_group(
         "decision-group-key",
         event.run_id,
         event.payload.segment_id,
+        event.payload.kind,
         *pending_tool_ids,
     )
     decision_group_ref = _private_ref("decision-group", group_key)
@@ -741,6 +742,23 @@ def _clip(value: str, maximum: int = 16_384) -> str:
 def _presentation_actions(actions: Sequence[str]) -> list[str]:
     projected = ("respond" if action == "submit" else action for action in actions)
     return list(dict.fromkeys(projected))
+
+
+def _tool_activity_identity(
+    event: ToolInvoked | ToolReturned | SubagentToolInvoked | SubagentToolReturned,
+) -> tuple[str, str]:
+    if isinstance(event, SubagentToolInvoked | SubagentToolReturned):
+        return (
+            f"subagent\0{event.payload.subagent_id}\0{event.payload.tool_id}",
+            _private_ref(
+                "subagent-tool-call",
+                event.payload.subagent_id,
+                event.payload.tool_id,
+            ),
+        )
+    return f"main\0{event.payload.tool_id}", _safe_ref(
+        event.payload.tool_id, domain="tool"
+    )
 
 
 def _source_event_ref(event: AgentEvent) -> str:
@@ -883,14 +901,15 @@ def _events_for_source(
             message = message.model_copy(update={"state": "closed"})
         states[message_ref] = message
     elif isinstance(event, ToolInvoked | SubagentToolInvoked):
+        raw_owner_key, tool_call_ref = _tool_activity_identity(event)
         activity, message_ref = _plan_owner_activity(
             run_id=event.run_id,
             timestamp=event.timestamp,
             activity_type="kokoro.tool-preview.v1",
-            raw_owner_key=event.payload.tool_id,
-            owner_identity={"toolCallRef": _safe_ref(event.payload.tool_id, domain="tool")},
+            raw_owner_key=raw_owner_key,
+            owner_identity={"toolCallRef": tool_call_ref},
             semantic_content={
-                "toolCallRef": _safe_ref(event.payload.tool_id, domain="tool"),
+                "toolCallRef": tool_call_ref,
                 "label": _clip(event.payload.name, 1_024),
                 "status": "running",
             },
@@ -899,14 +918,15 @@ def _events_for_source(
         if activity is not None:
             planned.append((activity, message_ref))
     elif isinstance(event, ToolReturned | SubagentToolReturned):
+        raw_owner_key, tool_call_ref = _tool_activity_identity(event)
         activity, message_ref = _plan_owner_activity(
             run_id=event.run_id,
             timestamp=event.timestamp,
             activity_type="kokoro.tool-preview.v1",
-            raw_owner_key=event.payload.tool_id,
-            owner_identity={"toolCallRef": _safe_ref(event.payload.tool_id, domain="tool")},
+            raw_owner_key=raw_owner_key,
+            owner_identity={"toolCallRef": tool_call_ref},
             semantic_content={
-                "toolCallRef": _safe_ref(event.payload.tool_id, domain="tool"),
+                "toolCallRef": tool_call_ref,
                 "label": _clip(event.payload.name, 1_024),
                 "status": "failed" if event.payload.is_error else "completed",
                 "isError": event.payload.is_error,

@@ -58,6 +58,10 @@ identity, browser cursor, durable Session projection, snapshot repair, SSE or HI
 The compatibility CLI exercises the same strict builder but is not production activation. Production
 activation is `RunSupervisor -> RunEmitter -> commit_owner_event -> Mongo presentation log`.
 
+The Root integrity corpus under `presentation/generated/` is a generated mirror with a pinned Root
+revision and SHA-256 provenance. Independent Agent CI reads that mirror and never reaches into a Root
+checkout; the sync script remains the only update path, so the mirror is not a second authority.
+
 ## Verification
 
 Run `uv run pytest tests/test_agui_production_presentation.py tests/test_invoke.py tests/test_supervisor.py -q`,

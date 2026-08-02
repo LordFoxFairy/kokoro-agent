@@ -75,7 +75,7 @@ async def test_pull_binds_authoritative_producer_and_empty_snapshot_digest() -> 
             producer=PRODUCER,
             page_size=16,
         ),
-        None,  # type: ignore[arg-type]
+        None,
     )
     assert response.run_id == RUN_ID
     assert response.producer == PRODUCER
@@ -90,7 +90,7 @@ async def test_check_active_probes_presentation_store_not_evidence_listener() ->
 
     response = await service.check_active(
         wire.CheckActiveRequest(),
-        None,  # type: ignore[arg-type]
+        None,
     )
 
     assert store.active_checks == 1
@@ -102,7 +102,7 @@ async def test_status_read_verifies_authoritative_producer_and_status_digest() -
 
     response = await service.get_delivery_status(
         wire.GetDeliveryStatusRequest(run_id=RUN_ID, producer=PRODUCER),
-        None,  # type: ignore[arg-type]
+        None,
     )
 
     assert response.status == _status()

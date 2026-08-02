@@ -81,7 +81,7 @@ class AgentPresentationConnectService:
     async def check_active(
         self,
         request: wire.CheckActiveRequest,
-        ctx: RequestContext[wire.CheckActiveRequest, wire.CheckActiveResponse],
+        ctx: RequestContext[wire.CheckActiveRequest, wire.CheckActiveResponse] | None,
     ) -> wire.CheckActiveResponse:
         del ctx
         try:
@@ -116,8 +116,9 @@ class AgentPresentationConnectService:
         ctx: RequestContext[
             wire.PullCandidateBatchesRequest,
             wire.PullCandidateBatchesResponse,
-        ],
+        ] | None,
     ) -> wire.PullCandidateBatchesResponse:
+        del ctx
         try:
             reject_unknown_fields(request)
             if (
@@ -188,7 +189,7 @@ class AgentPresentationConnectService:
         ctx: RequestContext[
             wire.GetDeliveryStatusRequest,
             wire.GetDeliveryStatusResponse,
-        ],
+        ] | None,
     ) -> wire.GetDeliveryStatusResponse:
         del ctx
         try:

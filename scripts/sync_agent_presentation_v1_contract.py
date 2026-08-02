@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -29,7 +30,11 @@ ARTIFACTS = (
     "src/kokoro/agent/presentation/v1/agent_presentation_pb2.py",
     "src/kokoro/agent/presentation/v1/agent_presentation_pb2.pyi",
     "src/kokoro/agent/presentation/v1/agent_presentation_connect.py",
+    "src/kokoro_agent/presentation/generated/agent_presentation_integrity_v1.json",
+    "src/kokoro_agent/presentation/generated/contract_metadata.py",
 )
+CORPUS_RELATIVE = "corpus/agent-presentation-integrity-v1.json"
+EXPECTED_CORPUS_SHA256 = "652923bf645fa8ef2a55413299b14018c0836f1ee24eabe9fb803b3d4e92f11e"
 
 
 def _digest(path: Path) -> str:
@@ -102,8 +107,21 @@ def _generate(
             ],
             check=True,
         )
-    connect = output / ARTIFACTS[-1]
+    connect = output / "src/kokoro/agent/presentation/v1/agent_presentation_connect.py"
     connect.write_text(connect.read_text().rstrip() + "\n")
+    corpus = _required(contract / CORPUS_RELATIVE)
+    if _digest(corpus) != EXPECTED_CORPUS_SHA256:
+        raise SystemExit(
+            f"Root corpus differs from {ROOT_CONTRACT_SOURCE_REVISION}: {_digest(corpus)!r}"
+        )
+    generated = output / "src/kokoro_agent/presentation/generated"
+    generated.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(corpus, generated / "agent_presentation_integrity_v1.json")
+    (generated / "contract_metadata.py").write_text(
+        '"""Generated provenance for the Root AgentPresentation contract mirror."""\n\n'
+        f'ROOT_PRESENTATION_CONTRACT_REVISION = "{ROOT_CONTRACT_SOURCE_REVISION}"\n'
+        f'ROOT_CORPUS_SHA256 = "{EXPECTED_CORPUS_SHA256}"\n'
+    )
 
 
 def main() -> None:

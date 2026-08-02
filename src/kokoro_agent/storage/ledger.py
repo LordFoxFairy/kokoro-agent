@@ -8,7 +8,7 @@ from typing import Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.contract import RunRequest
+from kokoro_agent.contract import ControlReceiptStatus, RunRequest
 from kokoro_agent.evidence.models import (
     DurableOutputDraft,
     DurableOutputRecord,
@@ -84,8 +84,19 @@ class RunLedger(ExecutionContextStore, Protocol):
         payload: BaseModel,
         lease_owner_ref: str,
         agent_thread_ref: str | None,
+        semantic_owner_ref: str | None = None,
     ) -> OwnerEventCommitResult:
         """Fenced owner UoW for outputs, presentation and critical outbox."""
+        ...
+
+    async def commit_control_receipt(
+        self,
+        *,
+        run_id: str,
+        decision_id: str,
+        status: ControlReceiptStatus,
+    ) -> OwnerEventCommitResult:
+        """Commit a receipt under durable control-inbox authority, never an execution lease."""
         ...
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:

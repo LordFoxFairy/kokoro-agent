@@ -22,10 +22,12 @@ from kokoro_agent.contract import (
     PlanProposedPayload,
     PlanStep,
     RunCompletedPayload,
+    RunControlReceiptPayload,
     RunFailedPayload,
     RunOwnerCompletedPayload,
     RunStarted,
     RunStartedPayload,
+    ToolAwaitingApprovalPayload,
 )
 from kokoro_agent.presentation.runtime import (
     AgentPresentationService,
@@ -1264,6 +1266,141 @@ async def test_semantic_critical_stage_is_atomic_and_survives_outbox_gc() -> Non
                 terminal=False,
                 semantic_key=key,
             )
+
+
+async def test_control_receipt_uses_inbox_authority_while_execution_is_paused() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as store:
+        run_id = "run-control-authority"
+        assert await store.try_claim(request(run_id), OWNER)
+        started = await store.commit_owner_event(
+            run_id=run_id,
+            expected_index=0,
+            kind="run.started",
+            payload=RunStartedPayload(),
+            lease_owner_ref=OWNER,
+            agent_thread_ref=None,
+        )
+        assert started.status == "committed"
+        assert await store.record_control_inbox(run_id, "decision.1", "fingerprint", "{}")
+        await store.pause(run_id)
+
+        persisted = await store.commit_control_receipt(
+            run_id=run_id,
+            decision_id="decision.1",
+            status="persisted",
+        )
+        assert persisted.status == "committed"
+        assert persisted.event is not None
+        assert persisted.event.index == 1
+        assert persisted.event.payload == RunControlReceiptPayload(
+            decision_id="decision.1", control_status="persisted"
+        )
+        replay = await store.commit_control_receipt(
+            run_id=run_id,
+            decision_id="decision.1",
+            status="persisted",
+        )
+        assert replay.status == "idempotent"
+        assert await store.owner_event_head(run_id) == 2
+
+        unauthorized = await store.commit_control_receipt(
+            run_id=run_id,
+            decision_id="decision.missing",
+            status="persisted",
+        )
+        assert unauthorized.status == "fence_lost"
+        assert await store.owner_event_head(run_id) == 2
+
+        premature_applied = await store.commit_control_receipt(
+            run_id=run_id,
+            decision_id="decision.1",
+            status="applied",
+        )
+        assert premature_applied.status == "fence_lost"
+        assert await store.owner_event_head(run_id) == 2
+
+        await store.mark_control_applied(run_id, "decision.1")
+        applied = await store.commit_control_receipt(
+            run_id=run_id,
+            decision_id="decision.1",
+            status="applied",
+        )
+        assert applied.status == "committed"
+        assert applied.event is not None and applied.event.index == 2
+        assert await store.owner_event_head(run_id) == 3
+
+
+async def test_interrupted_checkpoint_identity_versions_action_owners() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as store:
+        run_id = "run-action-owner-generation"
+        assert await store.try_claim(request(run_id), OWNER)
+        first_payload = ToolAwaitingApprovalPayload(
+            segment_id="segment.1",
+            tool_id="call.1",
+            name="input",
+            args={},
+            description="",
+            allowed_decisions=["submit", "reject"],
+            kind="input",
+            editable=False,
+            pending_tool_ids=["call.1"],
+        )
+        first = await store.commit_owner_event(
+            run_id=run_id,
+            expected_index=0,
+            kind="tool.awaiting_approval",
+            payload=first_payload,
+            lease_owner_ref=OWNER,
+            agent_thread_ref=None,
+            semantic_owner_ref="checkpoint.1",
+        )
+        assert first.status == "committed"
+        replay = await store.commit_owner_event(
+            run_id=run_id,
+            expected_index=1,
+            kind="tool.awaiting_approval",
+            payload=first_payload,
+            lease_owner_ref=OWNER,
+            agent_thread_ref=None,
+            semantic_owner_ref="checkpoint.1",
+        )
+        assert replay.status == "idempotent"
+
+        drift = first_payload.model_copy(update={"args": {"validation_error": "different"}})
+        with pytest.raises(ValueError, match="semantic critical frame conflict"):
+            await store.commit_owner_event(
+                run_id=run_id,
+                expected_index=1,
+                kind="tool.awaiting_approval",
+                payload=drift,
+                lease_owner_ref=OWNER,
+                agent_thread_ref=None,
+                semantic_owner_ref="checkpoint.1",
+            )
+
+        successor = await store.commit_owner_event(
+            run_id=run_id,
+            expected_index=1,
+            kind="tool.awaiting_approval",
+            payload=drift,
+            lease_owner_ref=OWNER,
+            agent_thread_ref=None,
+            semantic_owner_ref="checkpoint.2",
+        )
+        assert successor.status == "committed"
+        late_old = await store.commit_owner_event(
+            run_id=run_id,
+            expected_index=2,
+            kind="tool.awaiting_approval",
+            payload=first_payload,
+            lease_owner_ref=OWNER,
+            agent_thread_ref=None,
+            semantic_owner_ref="checkpoint.1",
+        )
+        assert late_old.status == "idempotent"
+        assert await store.owner_event_head(run_id) == 2
 
 
 async def test_execution_evidence_is_run_document_independent_and_page_bounded() -> None:

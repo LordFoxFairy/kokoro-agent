@@ -21,9 +21,11 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from kokoro_agent.contract import (
     AgentEvent,
+    ControlReceiptStatus,
     PlanProposedPayload,
     RunCompletedPayload,
     RunOwnerCompletedPayload,
+    RunControlReceiptPayload,
     RunRequest,
     ToolAwaitingApprovalPayload,
     agent_event_adapter,
@@ -537,6 +539,7 @@ class MongoLedger:
         payload: BaseModel,
         lease_owner_ref: str,
         agent_thread_ref: str | None,
+        semantic_owner_ref: str | None = None,
     ) -> OwnerEventCommitResult:
         """Commit one Agent-owned fact and every required durable projection atomically."""
         if expected_index < 0:
@@ -567,7 +570,7 @@ class MongoLedger:
         )
         terminal = is_terminal_event_kind(kind)
         semantic_key = (
-            f"action_owner:{payload.tool_id}"
+            f"action_owner:{semantic_owner_ref or payload.tool_id}:{payload.tool_id}"
             if isinstance(payload, ToolAwaitingApprovalPayload)
             else f"plan.proposed:{payload.owner_ref}"
             if isinstance(payload, PlanProposedPayload)
@@ -698,6 +701,120 @@ class MongoLedger:
             return await self._run_evidence_transaction(commit)
         except _OwnerEventSuppressed:
             return OwnerEventCommitResult(status="idempotent")
+
+    async def commit_control_receipt(
+        self,
+        *,
+        run_id: str,
+        decision_id: str,
+        status: ControlReceiptStatus,
+    ) -> OwnerEventCommitResult:
+        """Append a control receipt under inbox authority in the owner-event sequence."""
+        payload = RunControlReceiptPayload(
+            decision_id=decision_id,
+            control_status=status,
+        )
+        payload_json = json.dumps(
+            payload.model_dump(mode="json", exclude_none=True),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        payload_digest = hashlib.sha256(payload_json.encode()).hexdigest()
+        semantic_key = f"control_receipt:{decision_id}:{status}"
+        timestamp = self._clock()
+        allowed_states: list[str] = (
+            ["persisted", "applied"] if status == "persisted" else ["applied"]
+        )
+
+        async def commit(session: AsyncClientSession | None) -> OwnerEventCommitResult:
+            authority_query: dict[str, object] = {
+                "_id": run_id,
+                "terminal": {"$ne": True},
+                "control_inbox": {
+                    "$elemMatch": {
+                        "decision_id": decision_id,
+                        "status": {"$in": allowed_states},
+                    }
+                },
+            }
+            authority = await self._coll.find_one(
+                authority_query,
+                {"owner_event_counter": 1, "semantic_critical_frames": 1},
+                session=session,
+            )
+            if authority is None:
+                return OwnerEventCommitResult(status="fence_lost")
+            entries = _SEMANTIC_CRITICAL_ADAPTER.validate_python(
+                authority.get("semantic_critical_frames") or []
+            )
+            existing = next(
+                (entry for entry in entries if entry.semantic_key == semantic_key),
+                None,
+            )
+            if existing is not None:
+                if (
+                    existing.kind != "run.control.receipt"
+                    or existing.payload_sha256 != payload_digest
+                ):
+                    raise ValueError(
+                        f"semantic critical frame conflict for {semantic_key!r}"
+                    )
+                return OwnerEventCommitResult(status="idempotent")
+            index = authority.get("owner_event_counter", 0)
+            if not isinstance(index, int) or index < 0:
+                raise TypeError("OWNER_EVENT_HEAD_INVALID")
+            advanced = await self._coll.find_one_and_update(
+                {
+                    **authority_query,
+                    "owner_event_counter": index,
+                    "semantic_critical_frames.semantic_key": {"$ne": semantic_key},
+                },
+                {
+                    "$inc": {
+                        "owner_event_counter": 1,
+                        "control_receipt_counter": 1,
+                    },
+                    "$set": {"owner_event_updated_at_ms": self._clock()},
+                },
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
+            if advanced is None:
+                raise _OutputAppendContention
+            staged = await self.stage_critical_frame(
+                run_id,
+                "run.control.receipt",
+                index,
+                timestamp,
+                payload_json,
+                terminal=False,
+                semantic_key=semantic_key,
+            )
+            if staged is None:
+                raise RuntimeError("CONTROL_RECEIPT_OUTBOX_REJECTED")
+            if not staged.created:
+                return OwnerEventCommitResult(status="idempotent")
+            event = agent_event_adapter.validate_python(
+                {
+                    "kind": "run.control.receipt",
+                    "run_id": run_id,
+                    "index": index,
+                    "timestamp": timestamp,
+                    "durable_seq": staged.durable_seq,
+                    "event_id": staged.event_id,
+                    "payload": payload,
+                }
+            )
+            return OwnerEventCommitResult(status="committed", event=event)
+
+        for attempt in range(_OUTPUT_APPEND_MAX_ATTEMPTS):
+            try:
+                return await self._run_evidence_transaction(commit)
+            except (_OutputAppendContention, DuplicateKeyError):
+                if attempt + 1 == _OUTPUT_APPEND_MAX_ATTEMPTS:
+                    raise RuntimeError("CONTROL_RECEIPT_COMMIT_CONTENTION") from None
+        raise AssertionError("unreachable control receipt contention loop")
 
     async def claim_dispatch(self, run_id: str, consumer: str) -> bool:
         # dispatch CAS（D5）：pending→claimed 单文档条件转移。赢=授权执行；已 claimed/expired

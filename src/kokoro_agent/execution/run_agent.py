@@ -17,7 +17,7 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.approvals import awaiting_payloads, plan_proposed_payload
 from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
-from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.execution.protocols import InvokableAgent, StateView
 from kokoro_agent.execution.publish_agent_events import pump_run
 from kokoro_agent.storage.execution_context import CompletedExecutionContext
 from kokoro_agent.storage.owner_event import OwnerEventFenceLost
@@ -37,6 +37,7 @@ async def invoke_once(
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
+    owner_generation_ref: str = "initial",
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
@@ -73,10 +74,23 @@ async def invoke_once(
                         # 专用 owner 事件取代 generic awaiting，避免浏览器出现两个决策 owner。
                         await emitter.emit(proposal)
                     else:
-                        for awaiting in awaiting_payloads(
+                        awaitings = awaiting_payloads(
                             snapshot, approval_tool_names, describe_tool=describe_tool
-                        ):
-                            await emitter.emit(awaiting)
+                        )
+                        checkpoint_owner_ref = (
+                            _checkpoint_owner_ref(
+                                state_config,
+                                owner_generation_ref,
+                                snapshot,
+                            )
+                            if awaitings
+                            else None
+                        )
+                        for awaiting in awaitings:
+                            await emitter.emit(
+                                awaiting,
+                                semantic_owner_ref=checkpoint_owner_ref,
+                            )
                     # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
                     await _record(record_usage, usage_cb.usage_metadata)
                     return False
@@ -99,6 +113,29 @@ async def invoke_once(
         except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
             await emitter.emit(run_failed_payload(error))
             return True
+
+
+def _checkpoint_owner_ref(
+    config: RunnableConfig,
+    owner_generation_ref: str,
+    snapshot: StateView,
+) -> str:
+    configurable = config.get("configurable")
+    if not isinstance(configurable, Mapping):
+        raise RuntimeError("INTERRUPT_CHECKPOINT_ID_MISSING")
+    if not owner_generation_ref:
+        raise RuntimeError("INTERRUPT_OWNER_GENERATION_MISSING")
+    checkpoint_id = configurable.get("checkpoint_id")
+    if isinstance(checkpoint_id, str) and checkpoint_id:
+        source_ref = checkpoint_id
+    else:
+        interrupt_ids = ",".join(
+            sorted(str(interrupt.id) for interrupt in snapshot.interrupts)
+        )
+        if not interrupt_ids:
+            raise RuntimeError("INTERRUPT_OWNER_IDENTITY_MISSING")
+        source_ref = f"interrupts:{interrupt_ids}"
+    return f"{source_ref}:{owner_generation_ref}"
 
 
 async def _record(

@@ -55,6 +55,10 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   语义，禁止作为第二套 browser protocol。
   `plan.proposed` 额外以 `plan.proposed:<tool_call_id>` 作 semantic key；marker 不随 receipt GC 删除，
   同 key 同 payload 返回 duplicate/no-publish，同 key异 payload fail-loud。
+  HITL action owner 的私有 semantic key 绑定 exact interrupted checkpoint、触发该执行段的 durable
+  control decision 与 tool id；相同 checkpoint/decision 重放幂等，新 decision 可在同一框架 checkpoint
+  上形成合法 re-prompt successor。`run.control.receipt` 不借 execution lease，而由 control inbox 状态机
+  授权并在同一 owner counter/outbox 事务中提交；RunEmitter 的进程锁只负责本地排序，不是正确性边界。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布；drainer fatal 时立即取消并
   await producer 树，且保留原始 `DurableOutputCommitError`；外部 `CancelledError` 同步取消并收束

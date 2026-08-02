@@ -486,6 +486,7 @@ class RunSupervisor:
         self._spawn_agent(
             bus, assembled, msg.run_id, config, command, names,
             trace=self._trace(request),
+            owner_generation_ref=msg.decision_id,
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
@@ -517,6 +518,7 @@ class RunSupervisor:
         approval_tool_names: frozenset[str],
         *,
         trace: RunnableConfig | None,
+        owner_generation_ref: str = "initial",
     ) -> None:
         task = asyncio.create_task(
             self._guarded(
@@ -527,6 +529,7 @@ class RunSupervisor:
                 payload,
                 approval_tool_names,
                 trace,
+                owner_generation_ref,
             )
         )
         self._tasks[run_id] = task
@@ -556,6 +559,7 @@ class RunSupervisor:
         payload: object,
         approval_tool_names: frozenset[str],
         trace: RunnableConfig | None,
+        owner_generation_ref: str,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，resume 重新竞争额度。
         try:
@@ -577,6 +581,7 @@ class RunSupervisor:
                     prepare_completed=lambda: self._execution_context.prepare_completion(run_id),
                     capture_interrupted=lambda: self._capture_interrupted_config(run_id),
                     record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
+                    owner_generation_ref=owner_generation_ref,
                 )
         except OwnerEventFenceLost:
             LOGGER.warning("owner event fence lost; yielding run_id=%s", run_id)
@@ -684,7 +689,9 @@ class RunSupervisor:
     ) -> None:
         # 内部 raw kind（走既有 run events 流）：session 消费进 receipt 存储，永不投影浏览器。
         emitter = await self._emitter(bus, run_id)
-        await emitter.emit(RunControlReceiptPayload(decision_id=decision_id, control_status=status))
+        await emitter.emit_control_receipt(
+            RunControlReceiptPayload(decision_id=decision_id, control_status=status)
+        )
 
     async def _control_fingerprint(self, run_id: str, msg: RunResume | RunCancel) -> str | None:
         # resume 绑定当前 interrupt 指纹（重启续办据此判 stale）；cancel 无 interrupt 依赖=None。

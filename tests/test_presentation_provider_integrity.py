@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import cast
 
@@ -13,13 +14,24 @@ from kokoro_agent.presentation.integrity import (
     record_chain_genesis_digest,
     snapshot_head_digest,
 )
+from kokoro_agent.presentation.generated.contract_metadata import (
+    ROOT_CORPUS_SHA256,
+    ROOT_PRESENTATION_CONTRACT_REVISION,
+)
 
 
 def _corpus() -> dict[str, object]:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     return cast(dict[str, object], json.loads(
-        (root / "contract/corpus/agent-presentation-integrity-v1.json").read_text()
+        (root / "src/kokoro_agent/presentation/generated/agent_presentation_integrity_v1.json").read_text()
     ))
+
+
+def test_integrity_corpus_is_a_root_provenance_bound_generated_mirror() -> None:
+    root = Path(__file__).resolve().parents[1]
+    mirror = root / "src/kokoro_agent/presentation/generated/agent_presentation_integrity_v1.json"
+    assert ROOT_PRESENTATION_CONTRACT_REVISION == "agent-presentation@v1:c282e2fc"
+    assert hashlib.sha256(mirror.read_bytes()).hexdigest() == ROOT_CORPUS_SHA256
 
 
 def test_root_cross_language_presentation_integrity_vector() -> None:

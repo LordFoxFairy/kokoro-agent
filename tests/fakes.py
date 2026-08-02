@@ -17,11 +17,13 @@ from pydantic import BaseModel, JsonValue
 
 from kokoro_agent.contract import (
     AgentEvent,
+    ControlReceiptStatus,
     ExecutionContextIntentRoot,
     ModelConfig,
     Permissions,
     RunInput,
     RunRequest,
+    RunControlReceiptPayload,
     RuntimeConfig,
     RuntimeContext,
     PlanProposedPayload,
@@ -241,6 +243,7 @@ class FakeLedger:
         payload: BaseModel,
         lease_owner_ref: str,
         agent_thread_ref: str | None,
+        semantic_owner_ref: str | None = None,
     ) -> OwnerEventCommitResult:
         from kokoro_agent.execution.events import (
             CRITICAL_KINDS,
@@ -270,7 +273,7 @@ class FakeLedger:
             "payload": payload,
         })
         semantic_key = (
-            f"action_owner:{payload.tool_id}"
+            f"action_owner:{semantic_owner_ref or payload.tool_id}:{payload.tool_id}"
             if isinstance(payload, ToolAwaitingApprovalPayload)
             else f"plan.proposed:{payload.owner_ref}"
             if isinstance(payload, PlanProposedPayload)
@@ -336,6 +339,64 @@ class FakeLedger:
             self.__dict__.clear()
             self.__dict__.update(before)
             raise
+
+    async def commit_control_receipt(
+        self,
+        *,
+        run_id: str,
+        decision_id: str,
+        status: ControlReceiptStatus,
+    ) -> OwnerEventCommitResult:
+        box = self.control_inbox.get(run_id, [])
+        allowed = {"persisted", "applied"} if status == "persisted" else {"applied"}
+        if run_id in self.terminals or not any(
+            entry["decision_id"] == decision_id and entry["status"] in allowed
+            for entry in box
+        ):
+            return OwnerEventCommitResult(status="fence_lost")
+        payload = RunControlReceiptPayload(
+            decision_id=decision_id,
+            control_status=status,
+        )
+        payload_json = json.dumps(
+            payload.model_dump(mode="json", exclude_none=True),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        semantic_key = f"control_receipt:{decision_id}:{status}"
+        existing = self.semantic_critical.get((run_id, semantic_key))
+        digest = hashlib.sha256(payload_json.encode()).hexdigest()
+        if existing is not None:
+            existing_kind, existing_digest, _seq, _event_id = existing
+            if existing_kind != "run.control.receipt" or existing_digest != digest:
+                raise ValueError(f"semantic critical frame conflict for {semantic_key!r}")
+            return OwnerEventCommitResult(status="idempotent")
+        index = self.owner_heads.get(run_id, 0)
+        staged = await self.stage_critical_frame(
+            run_id,
+            "run.control.receipt",
+            index,
+            self.clock_ms,
+            payload_json,
+            terminal=False,
+            semantic_key=semantic_key,
+        )
+        if staged is None or not staged.created:
+            return OwnerEventCommitResult(status="idempotent")
+        event = agent_event_adapter.validate_python(
+            {
+                "kind": "run.control.receipt",
+                "run_id": run_id,
+                "index": index,
+                "timestamp": self.clock_ms,
+                "durable_seq": staged.durable_seq,
+                "event_id": staged.event_id,
+                "payload": payload,
+            }
+        )
+        self.owner_heads[run_id] = index + 1
+        return OwnerEventCommitResult(status="committed", event=event)
 
     async def claim_dispatch(self, run_id: str, consumer: str = "test-consumer") -> bool:
         # 无 intent 记录=放行（与 MongoLedger 同语义）；pending 且未过期=赢转 claimed；

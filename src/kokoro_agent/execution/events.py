@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -160,6 +161,7 @@ class RunEmitter:
         self._lease_owner_ref = lease_owner_ref
         self._agent_thread_ref = agent_thread_ref
         self._delivery_warning_phases: set[str] = set()
+        self._sequence_lock = asyncio.Lock()
 
     @property
     def run_id(self) -> str:
@@ -233,7 +235,21 @@ class RunEmitter:
             message = "live event publish failed; durable truth retained: run_id=%s kind=%s"
         LOGGER.log(logging.WARNING if first else logging.DEBUG, message, self._run_id, kind)
 
-    async def emit(self, payload: AgentEventPayload) -> None:
+    async def emit(
+        self,
+        payload: AgentEventPayload,
+        *,
+        semantic_owner_ref: str | None = None,
+    ) -> None:
+        async with self._sequence_lock:
+            await self._emit_unlocked(payload, semantic_owner_ref=semantic_owner_ref)
+
+    async def _emit_unlocked(
+        self,
+        payload: AgentEventPayload,
+        *,
+        semantic_owner_ref: str | None,
+    ) -> None:
         if (
             isinstance(payload, ToolReturnedPayload)
             and payload.name in self._review_tool_names
@@ -247,15 +263,31 @@ class RunEmitter:
         index = self._next_index
         if self._outbox is not None:
             try:
-                result = await self._outbox.commit_owner_event(
-                    run_id=self._run_id,
-                    expected_index=index,
-                    kind=kind,
-                    payload=payload,
-                    lease_owner_ref=self._lease_owner_ref,
-                    agent_thread_ref=self._agent_thread_ref,
-                )
+                if semantic_owner_ref is None:
+                    result = await self._outbox.commit_owner_event(
+                        run_id=self._run_id,
+                        expected_index=index,
+                        kind=kind,
+                        payload=payload,
+                        lease_owner_ref=self._lease_owner_ref,
+                        agent_thread_ref=self._agent_thread_ref,
+                    )
+                else:
+                    result = await self._outbox.commit_owner_event(
+                        run_id=self._run_id,
+                        expected_index=index,
+                        kind=kind,
+                        payload=payload,
+                        lease_owner_ref=self._lease_owner_ref,
+                        agent_thread_ref=self._agent_thread_ref,
+                        semantic_owner_ref=semantic_owner_ref,
+                    )
             except Exception as error:
+                LOGGER.exception(
+                    "owner event commit failed: run_id=%s kind=%s",
+                    self._run_id,
+                    kind,
+                )
                 raise DurableOutputCommitError(
                     "OWNER_EVENT_COMMIT_FAILED"
                 ) from error
@@ -315,7 +347,59 @@ class RunEmitter:
         except Exception:
             raise
 
+    async def emit_control_receipt(
+        self,
+        payload: RunControlReceiptPayload,
+    ) -> None:
+        if self._outbox is None:
+            raise RuntimeError("control receipt requires durable outbox")
+        async with self._sequence_lock:
+            result = await self._outbox.commit_control_receipt(
+                run_id=self._run_id,
+                decision_id=payload.decision_id,
+                status=payload.control_status,
+            )
+            if result.status == "fence_lost":
+                raise RuntimeError("CONTROL_RECEIPT_AUTHORITY_LOST")
+            if result.status == "idempotent":
+                return
+            event = result.event
+            if event is None:
+                raise AssertionError("committed control receipt is missing")
+            self._next_index = event.index + 1
+            try:
+                await self._bus.publish(
+                    run_events_stream(self._run_id),
+                    event.model_dump(exclude_none=True),
+                    maxlen=RUN_EVENTS_MAXLEN,
+                )
+            except Exception:  # noqa: BLE001 - receipt truth is already durable
+                self._record_delivery_failure(
+                    "live_publish", event.kind, metric_family="critical_outbox"
+                )
+                return
+            if event.durable_seq is None:
+                raise AssertionError("control receipt is missing durable sequence")
+            try:
+                await self._outbox.mark_critical_published(
+                    self._run_id, event.durable_seq
+                )
+            except Exception:  # noqa: BLE001 - queued receipt is replayable
+                self._record_delivery_failure(
+                    "publish_ack", event.kind, metric_family="critical_outbox"
+                )
+                return
+            metrics.record_outbox("published")
+
     async def emit_completed(
+        self,
+        completion: CompletedExecutionContext,
+        payload: RunCompletedPayload,
+    ) -> bool:
+        async with self._sequence_lock:
+            return await self._emit_completed_unlocked(completion, payload)
+
+    async def _emit_completed_unlocked(
         self,
         completion: CompletedExecutionContext,
         payload: RunCompletedPayload,

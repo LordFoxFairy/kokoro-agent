@@ -279,6 +279,368 @@ def test_semantically_identical_owner_replacement_is_idempotent() -> None:
     assert second.next_state.next_ordinal == first.next_state.next_ordinal
 
 
+def test_durable_projection_rejects_duplicate_owner_authority_key() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    running = plan_presentation_batch(
+        ToolInvoked(
+            kind="tool.invoked",
+            run_id="run.1",
+            index=1,
+            timestamp=1_001,
+            payload=ToolInvokedPayload(
+                segment_id="message.1",
+                tool_id="tool.1",
+                name="web_fetch",
+                args={},
+            ),
+        ),
+        state,
+        THREAD,
+    )
+    terminal = plan_presentation_batch(
+        ToolReturned(
+            kind="tool.returned",
+            run_id="run.1",
+            index=2,
+            timestamp=1_002,
+            payload=ToolReturnedPayload(
+                segment_id="message.1",
+                tool_id="tool.1",
+                name="web_fetch",
+                result="done",
+                is_error=False,
+            ),
+        ),
+        running.next_state,
+        THREAD,
+    )
+    payload = terminal.next_state.model_dump()
+    payload["owners"] = (
+        terminal.next_state.owners[0],
+        running.next_state.owners[0],
+    )
+
+    with pytest.raises(ValueError, match="PRESENTATION_STATE_DUPLICATE_OWNER_KEY"):
+        PresentationProjectionState.model_validate(payload)
+
+
+def test_durable_projection_rejects_duplicate_message_authority() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(delta(1), state, THREAD).next_state
+    message = state.messages[0]
+
+    duplicate_ref = state.model_dump()
+    duplicate_ref["messages"] = (message, message)
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DUPLICATE_INTERNAL_MESSAGE_REF"
+    ):
+        PresentationProjectionState.model_validate(duplicate_ref)
+
+    duplicate_segment = state.model_dump()
+    duplicate_segment["messages"] = (
+        message,
+        message.model_copy(update={"internal_message_ref": "agent.message:forged"}),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DUPLICATE_SOURCE_SEGMENT_REF"
+    ):
+        PresentationProjectionState.model_validate(duplicate_segment)
+
+
+def test_durable_projection_rejects_activity_message_placement_conflicts() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(delta(1), state, THREAD).next_state
+    for index, tool_id in enumerate(("tool.1", "tool.2"), start=2):
+        state = plan_presentation_batch(
+            ToolInvoked(
+                kind="tool.invoked",
+                run_id="run.1",
+                index=index,
+                timestamp=1_000 + index,
+                payload=ToolInvokedPayload(
+                    segment_id="message.1",
+                    tool_id=tool_id,
+                    name="web_fetch",
+                    args={},
+                ),
+            ),
+            state,
+            THREAD,
+        ).next_state
+    first_owner, second_owner = state.owners
+
+    duplicate_owner_placement = state.model_dump()
+    duplicate_owner_placement["owners"] = (
+        first_owner,
+        second_owner.model_copy(update={"message_ref": first_owner.message_ref}),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DUPLICATE_OWNER_MESSAGE_REF"
+    ):
+        PresentationProjectionState.model_validate(duplicate_owner_placement)
+
+    cross_kind_placement = state.model_dump()
+    cross_kind_placement["owners"] = (
+        first_owner.model_copy(
+            update={"message_ref": state.messages[0].internal_message_ref}
+        ),
+        second_owner,
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_MESSAGE_REF_CONFLICT"
+    ):
+        PresentationProjectionState.model_validate(cross_kind_placement)
+
+
+def test_durable_projection_rejects_duplicate_decision_group_authority() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    awaiting = ToolAwaitingApproval(
+        kind="tool.awaiting_approval",
+        run_id="run.1",
+        index=1,
+        timestamp=1_001,
+        payload=ToolAwaitingApprovalPayload(
+            segment_id="message.1",
+            tool_id="tool.A",
+            name="execute",
+            args={},
+            description="Review",
+            allowed_decisions=["approve", "reject"],
+            kind="tool_approval",
+            editable=False,
+            pending_tool_ids=["tool.A", "tool.B"],
+        ),
+    )
+    state = plan_presentation_batch(awaiting, state, THREAD).next_state
+    group = state.decision_groups[0]
+    payload = state.model_dump()
+    payload["decision_groups"] = (group, group)
+
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DUPLICATE_DECISION_GROUP_KEY"
+    ):
+        PresentationProjectionState.model_validate(payload)
+
+
+def test_durable_projection_rejects_invalid_hitl_owner_references_and_membership() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(
+        ToolAwaitingApproval(
+            kind="tool.awaiting_approval",
+            run_id="run.1",
+            index=1,
+            timestamp=1_001,
+            payload=ToolAwaitingApprovalPayload(
+                segment_id="message.1",
+                tool_id="tool.A",
+                name="execute",
+                args={},
+                description="Review",
+                allowed_decisions=["approve", "reject"],
+                kind="tool_approval",
+                editable=False,
+                pending_tool_ids=["tool.A", "tool.B"],
+            ),
+        ),
+        state,
+        THREAD,
+    ).next_state
+    group = state.decision_groups[0]
+
+    invalid_ref = state.model_dump()
+    invalid_ref["decision_groups"] = (
+        group.model_copy(
+            update={"required_owner_refs": ("raw.tool.A", group.required_owner_refs[1])}
+        ),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DECISION_OWNER_REF_INVALID"
+    ):
+        PresentationProjectionState.model_validate(invalid_ref)
+
+    orphaned_owner = state.model_dump()
+    orphaned_owner["decision_groups"] = ()
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_HITL_OWNER_MEMBERSHIP_INVALID"
+    ):
+        PresentationProjectionState.model_validate(orphaned_owner)
+
+    mismatched_owner = state.model_dump()
+    mismatched_owner["owners"] = (
+        state.owners[0].model_copy(
+            update={"identity_fingerprint": "sha256:" + "0" * 64}
+        ),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_HITL_OWNER_MEMBERSHIP_INVALID"
+    ):
+        PresentationProjectionState.model_validate(mismatched_owner)
+
+    duplicate_owner_key = "agent.presentation-owner:sha256:" + "0" * 64
+    duplicate_message_ref = "agent.activity:" + hashlib.sha256(
+        (
+            "kokoro-agent-activity-v1\0run.1\0kokoro.hitl.v1\0"
+            + duplicate_owner_key
+        ).encode()
+    ).hexdigest()
+    duplicate_membership = state.model_dump()
+    duplicate_membership["owners"] = (
+        state.owners[0],
+        state.owners[0].model_copy(
+            update={
+                "owner_key": duplicate_owner_key,
+                "message_ref": duplicate_message_ref,
+            }
+        ),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DUPLICATE_HITL_OWNER_MEMBERSHIP"
+    ):
+        PresentationProjectionState.model_validate(duplicate_membership)
+
+
+def test_durable_projection_rejects_forged_message_placements() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(delta(1), state, THREAD).next_state
+    forged_message = state.model_dump()
+    forged_message["messages"] = (
+        state.messages[0].model_copy(
+            update={"internal_message_ref": "agent.message:forged"}
+        ),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_MESSAGE_PLACEMENT_INVALID"
+    ):
+        PresentationProjectionState.model_validate(forged_message)
+
+    state = plan_presentation_batch(
+        ToolInvoked(
+            kind="tool.invoked",
+            run_id="run.1",
+            index=2,
+            timestamp=1_002,
+            payload=ToolInvokedPayload(
+                segment_id="message.1",
+                tool_id="tool.1",
+                name="web_fetch",
+                args={},
+            ),
+        ),
+        state,
+        THREAD,
+    ).next_state
+    forged_owner = state.model_dump()
+    forged_owner["owners"] = (
+        state.owners[0].model_copy(
+            update={"message_ref": "agent.activity:forged"}
+        ),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_OWNER_PLACEMENT_INVALID"
+    ):
+        PresentationProjectionState.model_validate(forged_owner)
+
+
+def test_durable_projection_requires_run_identity_for_owned_state() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(delta(1), state, THREAD).next_state
+    payload = state.model_dump()
+    payload["internal_run_ref"] = None
+
+    with pytest.raises(ValueError, match="PRESENTATION_STATE_RUN_REF_REQUIRED"):
+        PresentationProjectionState.model_validate(payload)
+
+
+def test_durable_projection_rejects_decision_group_reference_conflicts() -> None:
+    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+
+    def awaiting(
+        *, index: int, segment_id: str, tool_id: str, pending_tool_ids: list[str]
+    ) -> ToolAwaitingApproval:
+        return ToolAwaitingApproval(
+            kind="tool.awaiting_approval",
+            run_id="run.1",
+            index=index,
+            timestamp=1_000 + index,
+            payload=ToolAwaitingApprovalPayload(
+                segment_id=segment_id,
+                tool_id=tool_id,
+                name="execute",
+                args={},
+                description="Review",
+                allowed_decisions=["approve", "reject"],
+                kind="tool_approval",
+                editable=False,
+                pending_tool_ids=pending_tool_ids,
+            ),
+        )
+
+    state = plan_presentation_batch(
+        awaiting(
+            index=1,
+            segment_id="message.1",
+            tool_id="tool.A",
+            pending_tool_ids=["tool.A", "tool.B"],
+        ),
+        state,
+        THREAD,
+    ).next_state
+    state = plan_presentation_batch(
+        awaiting(
+            index=2,
+            segment_id="message.2",
+            tool_id="tool.C",
+            pending_tool_ids=["tool.C", "tool.D"],
+        ),
+        state,
+        THREAD,
+    ).next_state
+    first_group, second_group = state.decision_groups
+
+    for field in ("decision_group_ref", "control_ref"):
+        payload = state.model_dump()
+        payload["decision_groups"] = (
+            first_group,
+            second_group.model_copy(
+                update={field: getattr(first_group, field)}
+            ),
+        )
+        with pytest.raises(
+            ValueError,
+            match="PRESENTATION_STATE_DECISION_GROUP_REFERENCE_CONFLICT",
+        ):
+            PresentationProjectionState.model_validate(payload)
+
+    for field in ("decision_group_ref", "control_ref"):
+        payload = state.model_dump()
+        payload["decision_groups"] = (
+            first_group,
+            second_group.model_copy(update={field: f"agent.forged.{field}"}),
+        )
+        with pytest.raises(
+            ValueError,
+            match="PRESENTATION_STATE_DECISION_GROUP_PLACEMENT_INVALID",
+        ):
+            PresentationProjectionState.model_validate(payload)
+
+    overlapping_owners = state.model_dump()
+    overlapping_owners["decision_groups"] = (
+        first_group,
+        second_group.model_copy(
+            update={
+                "required_owner_refs": (
+                    first_group.required_owner_refs[0],
+                    second_group.required_owner_refs[1],
+                )
+            }
+        ),
+    )
+    with pytest.raises(
+        ValueError, match="PRESENTATION_STATE_DECISION_OWNER_REF_CONFLICT"
+    ):
+        PresentationProjectionState.model_validate(overlapping_owners)
+
+
 def test_owner_replacement_rejects_time_regression_terminal_revival_and_overflow() -> None:
     state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
     invoked = ToolInvoked(

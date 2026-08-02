@@ -51,6 +51,7 @@ from kokoro_agent.presentation.candidate import (
 
 MAX_PRESENTATION_PAGE_SIZE = 256
 MAX_UINT64_DECIMAL = "18446744073709551615"
+HITL_OWNER_REF_PREFIX = "agent.hitl-owner:sha256:"
 
 
 class _FrozenModel(BaseModel):
@@ -115,6 +116,105 @@ class PresentationProjectionState(_FrozenModel):
     messages: tuple[PresentationMessageState, ...] = ()
     owners: tuple[PresentationOwnerState, ...] = ()
     decision_groups: tuple[PresentationDecisionGroupState, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_durable_identities(self) -> PresentationProjectionState:
+        if (
+            self.messages or self.owners or self.decision_groups
+        ) and self.internal_run_ref is None:
+            raise ValueError("PRESENTATION_STATE_RUN_REF_REQUIRED")
+
+        message_refs = tuple(message.internal_message_ref for message in self.messages)
+        if len(message_refs) != len(set(message_refs)):
+            raise ValueError("PRESENTATION_STATE_DUPLICATE_INTERNAL_MESSAGE_REF")
+        segment_refs = tuple(message.source_segment_ref for message in self.messages)
+        if len(segment_refs) != len(set(segment_refs)):
+            raise ValueError("PRESENTATION_STATE_DUPLICATE_SOURCE_SEGMENT_REF")
+        if self.internal_run_ref is not None and any(
+            message.internal_message_ref
+            != _message_ref(self.internal_run_ref, message.source_segment_ref)
+            for message in self.messages
+        ):
+            raise ValueError("PRESENTATION_STATE_MESSAGE_PLACEMENT_INVALID")
+
+        owner_keys = tuple(owner.owner_key for owner in self.owners)
+        if len(owner_keys) != len(set(owner_keys)):
+            raise ValueError("PRESENTATION_STATE_DUPLICATE_OWNER_KEY")
+        owner_message_refs = tuple(owner.message_ref for owner in self.owners)
+        if len(owner_message_refs) != len(set(owner_message_refs)):
+            raise ValueError("PRESENTATION_STATE_DUPLICATE_OWNER_MESSAGE_REF")
+        if set(message_refs).intersection(owner_message_refs):
+            raise ValueError("PRESENTATION_STATE_MESSAGE_REF_CONFLICT")
+        if self.internal_run_ref is not None and any(
+            owner.message_ref
+            != _activity_message_ref(
+                self.internal_run_ref, owner.activity_type, owner.owner_key
+            )
+            for owner in self.owners
+        ):
+            raise ValueError("PRESENTATION_STATE_OWNER_PLACEMENT_INVALID")
+
+        group_keys = tuple(group.group_key for group in self.decision_groups)
+        if len(group_keys) != len(set(group_keys)):
+            raise ValueError("PRESENTATION_STATE_DUPLICATE_DECISION_GROUP_KEY")
+        decision_group_refs = tuple(
+            group.decision_group_ref for group in self.decision_groups
+        )
+        control_refs = tuple(group.control_ref for group in self.decision_groups)
+        if len(decision_group_refs) != len(set(decision_group_refs)) or len(
+            control_refs
+        ) != len(set(control_refs)):
+            raise ValueError("PRESENTATION_STATE_DECISION_GROUP_REFERENCE_CONFLICT")
+        required_owner_refs = tuple(
+            owner_ref
+            for group in self.decision_groups
+            for owner_ref in group.required_owner_refs
+        )
+        if any(
+            not owner_ref.startswith(HITL_OWNER_REF_PREFIX)
+            or len(owner_ref) != len(HITL_OWNER_REF_PREFIX) + 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in owner_ref[len(HITL_OWNER_REF_PREFIX) :]
+            )
+            for owner_ref in required_owner_refs
+        ):
+            raise ValueError("PRESENTATION_STATE_DECISION_OWNER_REF_INVALID")
+        if len(required_owner_refs) != len(set(required_owner_refs)):
+            raise ValueError("PRESENTATION_STATE_DECISION_OWNER_REF_CONFLICT")
+        if any(
+            group.decision_group_ref != _private_ref("decision-group", group.group_key)
+            or group.control_ref != _private_ref("control-proposal", group.group_key)
+            for group in self.decision_groups
+        ):
+            raise ValueError("PRESENTATION_STATE_DECISION_GROUP_PLACEMENT_INVALID")
+        valid_hitl_owner_identities = {
+            _fingerprint(
+                "kokoro-agent-presentation-owner-identity-v1",
+                {
+                    "activityType": "kokoro.hitl.v1",
+                    "ownerRef": owner_ref,
+                    "decisionGroupRef": group.decision_group_ref,
+                    "requiredOwnerRefs": group.required_owner_refs,
+                    "controlRef": group.control_ref,
+                },
+            )
+            for group in self.decision_groups
+            for owner_ref in group.required_owner_refs
+        }
+        hitl_owner_identities = tuple(
+            owner.identity_fingerprint
+            for owner in self.owners
+            if owner.activity_type == "kokoro.hitl.v1"
+        )
+        if len(hitl_owner_identities) != len(set(hitl_owner_identities)):
+            raise ValueError("PRESENTATION_STATE_DUPLICATE_HITL_OWNER_MEMBERSHIP")
+        if any(
+            identity not in valid_hitl_owner_identities
+            for identity in hitl_owner_identities
+        ):
+            raise ValueError("PRESENTATION_STATE_HITL_OWNER_MEMBERSHIP_INVALID")
+        return self
 
 
 class PresentationCandidateBatch(_FrozenModel):

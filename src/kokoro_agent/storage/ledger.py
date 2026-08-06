@@ -20,6 +20,7 @@ from kokoro_agent.presentation.runtime import (
     PresentationCandidateRecord,
     PresentationQuarantineCommand,
 )
+from kokoro_agent.presentation.provider import PresentationProviderStore
 from kokoro_agent.contract import AgentEvent
 from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
@@ -57,6 +58,7 @@ __all__ = [
     "DurableRetentionStats",
     "LedgerSettings",
     "EvidenceLedger",
+    "PresentationLedger",
     "OutboxFrame",
     "ReceiptReconcile",
     "RunLedger",
@@ -310,6 +312,10 @@ class EvidenceLedger(RunLedger, ExecutionEvidenceReader, Protocol):
     """Concrete ledger capability returned by the factory without widening RunLedger fakes."""
 
 
+class PresentationLedger(EvidenceLedger, PresentationProviderStore, Protocol):
+    """Factory result also serving the independent Presentation deployable."""
+
+
 class LedgerSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -323,7 +329,7 @@ class LedgerSettings(BaseModel):
 @asynccontextmanager
 async def make_ledger(
     settings: LedgerSettings,
-) -> AsyncGenerator[EvidenceLedger, None]:
+) -> AsyncGenerator[PresentationLedger, None]:
     client, collection = make_mongo_collection(settings.mongo_url, settings.mongo_db)
     try:
         await collection.create_index(

@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n.kokoro/platform/media/v1/media_canonical.proto\x12\x18kokoro.platform.media.v1\x1a\x1b\x62uf/validate/validate.proto\"\xe5\x02\n\x16ImageTextToImageSpecV1\x12\"\n\rprompt_intent\x18\x01 \x01(\tB\x0b\xbaH\x08r\x06 \x01(\x80\x80\x02\x12U\n\x0c\x61spect_ratio\x18\x02 \x01(\x0e\x32\x33.kokoro.platform.media.v1.CanonicalImageAspectRatioB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\"\n\x0f\x63\x61ndidate_count\x18\x03 \x01(\rB\t\xbaH\x06*\x04\x18\x04(\x01\x12S\n\x19model_option_revision_ref\x18\x04 \x01(\tB0\xbaH-r+\x10\x01\x18\x80\x02\x32$^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$\x12W\n\routput_format\x18\x05 \x01(\x0e\x32\x34.kokoro.platform.media.v1.CanonicalImageOutputFormatB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\"\xf4\x01\n\x1e\x43\x61nonicalMediaOperationInputV1\x12\x1f\n\x0e\x63ontract_major\x18\x01 \x01(\rB\x07\xbaH\x04*\x02\x08\x01\x12Q\n\x17\x64\x65\x66inition_revision_ref\x18\x02 \x01(\tB0\xbaH-r+\x10\x01\x18\x80\x02\x32$^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$\x12O\n\x13image_text_to_image\x18\x03 \x01(\x0b\x32\x30.kokoro.platform.media.v1.ImageTextToImageSpecV1H\x00\x42\r\n\x04spec\x12\x05\xbaH\x02\x08\x01*\xb6\x02\n\x19\x43\x61nonicalImageAspectRatio\x12,\n(CANONICAL_IMAGE_ASPECT_RATIO_UNSPECIFIED\x10\x00\x12+\n\'CANONICAL_IMAGE_ASPECT_RATIO_SQUARE_1_1\x10\x01\x12.\n*CANONICAL_IMAGE_ASPECT_RATIO_LANDSCAPE_4_3\x10\x02\x12/\n+CANONICAL_IMAGE_ASPECT_RATIO_LANDSCAPE_16_9\x10\x03\x12-\n)CANONICAL_IMAGE_ASPECT_RATIO_PORTRAIT_3_4\x10\x04\x12.\n*CANONICAL_IMAGE_ASPECT_RATIO_PORTRAIT_9_16\x10\x05*\xc2\x01\n\x1a\x43\x61nonicalImageOutputFormat\x12-\n)CANONICAL_IMAGE_OUTPUT_FORMAT_UNSPECIFIED\x10\x00\x12%\n!CANONICAL_IMAGE_OUTPUT_FORMAT_PNG\x10\x01\x12&\n\"CANONICAL_IMAGE_OUTPUT_FORMAT_JPEG\x10\x02\x12&\n\"CANONICAL_IMAGE_OUTPUT_FORMAT_WEBP\x10\x03\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n.kokoro/platform/media/v1/media_canonical.proto\x12\x18kokoro.platform.media.v1\x1a\x1b\x62uf/validate/validate.proto\"\xb6\x03\n\x16ImageTextToImageSpecV1\x12\x30\n\rprompt_intent\x18\x01 \x01(\tB\x0b\xbaH\x08r\x06 \x01(\x80\x80\x02R\x0cpromptIntent\x12\x62\n\x0c\x61spect_ratio\x18\x02 \x01(\x0e\x32\x33.kokoro.platform.media.v1.CanonicalImageAspectRatioB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00R\x0b\x61spectRatio\x12\x32\n\x0f\x63\x61ndidate_count\x18\x03 \x01(\rB\t\xbaH\x06*\x04\x18\x04(\x01R\x0e\x63\x61ndidateCount\x12k\n\x19model_option_revision_ref\x18\x04 \x01(\tB0\xbaH-r+\x10\x01\x18\x80\x02\x32$^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$R\x16modelOptionRevisionRef\x12\x65\n\routput_format\x18\x05 \x01(\x0e\x32\x34.kokoro.platform.media.v1.CanonicalImageOutputFormatB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00R\x0coutputFormat\"\xac\x02\n\x1e\x43\x61nonicalMediaOperationInputV1\x12.\n\x0e\x63ontract_major\x18\x01 \x01(\rB\x07\xbaH\x04*\x02\x08\x01R\rcontractMajor\x12h\n\x17\x64\x65\x66inition_revision_ref\x18\x02 \x01(\tB0\xbaH-r+\x10\x01\x18\x80\x02\x32$^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$R\x15\x64\x65\x66initionRevisionRef\x12\x61\n\x13image_text_to_image\x18\x03 \x01(\x0b\x32\x30.kokoro.platform.media.v1.ImageTextToImageSpecV1H\x00R\x10imageTextToImageB\r\n\x04spec\x12\x05\xbaH\x02\x08\x01*\xb6\x02\n\x19\x43\x61nonicalImageAspectRatio\x12,\n(CANONICAL_IMAGE_ASPECT_RATIO_UNSPECIFIED\x10\x00\x12+\n\'CANONICAL_IMAGE_ASPECT_RATIO_SQUARE_1_1\x10\x01\x12.\n*CANONICAL_IMAGE_ASPECT_RATIO_LANDSCAPE_4_3\x10\x02\x12/\n+CANONICAL_IMAGE_ASPECT_RATIO_LANDSCAPE_16_9\x10\x03\x12-\n)CANONICAL_IMAGE_ASPECT_RATIO_PORTRAIT_3_4\x10\x04\x12.\n*CANONICAL_IMAGE_ASPECT_RATIO_PORTRAIT_9_16\x10\x05*\xc2\x01\n\x1a\x43\x61nonicalImageOutputFormat\x12-\n)CANONICAL_IMAGE_OUTPUT_FORMAT_UNSPECIFIED\x10\x00\x12%\n!CANONICAL_IMAGE_OUTPUT_FORMAT_PNG\x10\x01\x12&\n\"CANONICAL_IMAGE_OUTPUT_FORMAT_JPEG\x10\x02\x12&\n\"CANONICAL_IMAGE_OUTPUT_FORMAT_WEBP\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -48,12 +48,12 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CANONICALMEDIAOPERATIONINPUTV1'].fields_by_name['contract_major']._serialized_options = b'\272H\004*\002\010\001'
   _globals['_CANONICALMEDIAOPERATIONINPUTV1'].fields_by_name['definition_revision_ref']._loaded_options = None
   _globals['_CANONICALMEDIAOPERATIONINPUTV1'].fields_by_name['definition_revision_ref']._serialized_options = b'\272H-r+\020\001\030\200\0022$^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$'
-  _globals['_CANONICALIMAGEASPECTRATIO']._serialized_start=713
-  _globals['_CANONICALIMAGEASPECTRATIO']._serialized_end=1023
-  _globals['_CANONICALIMAGEOUTPUTFORMAT']._serialized_start=1026
-  _globals['_CANONICALIMAGEOUTPUTFORMAT']._serialized_end=1220
+  _globals['_CANONICALIMAGEASPECTRATIO']._serialized_start=850
+  _globals['_CANONICALIMAGEASPECTRATIO']._serialized_end=1160
+  _globals['_CANONICALIMAGEOUTPUTFORMAT']._serialized_start=1163
+  _globals['_CANONICALIMAGEOUTPUTFORMAT']._serialized_end=1357
   _globals['_IMAGETEXTTOIMAGESPECV1']._serialized_start=106
-  _globals['_IMAGETEXTTOIMAGESPECV1']._serialized_end=463
-  _globals['_CANONICALMEDIAOPERATIONINPUTV1']._serialized_start=466
-  _globals['_CANONICALMEDIAOPERATIONINPUTV1']._serialized_end=710
+  _globals['_IMAGETEXTTOIMAGESPECV1']._serialized_end=544
+  _globals['_CANONICALMEDIAOPERATIONINPUTV1']._serialized_start=547
+  _globals['_CANONICALMEDIAOPERATIONINPUTV1']._serialized_end=847
 # @@protoc_insertion_point(module_scope)

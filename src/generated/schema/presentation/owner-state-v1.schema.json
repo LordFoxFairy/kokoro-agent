@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/owner-state-v1.schema.json",
+  "title": "Kokoro Presentation owner state v1",
+  "description": "One complete versioned owner, control, or receipt replacement retained in Session Presentation state. The explicit stateKind prevents Control and Receipt from collapsing into generic owner state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractRevision",
+    "schemaVersion",
+    "ownerBindingRef",
+    "publicSourceEventId",
+    "projectionRevision",
+    "recordedAt",
+    "stateKind",
+    "stateData"
+  ],
+  "properties": {
+    "contractRevision": {
+      "const": "kokoro.presentation.owner-state.v1"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "ownerBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.owner-binding:[0-9a-f]{64}$"
+    },
+    "publicSourceEventId": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/publicSourceEventId"
+    },
+    "projectionRevision": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+    },
+    "recordedAt": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/canonicalUtcMs"
+    },
+    "stateKind": {
+      "enum": ["owner.replaced", "control.replaced", "receipt.replaced"]
+    },
+    "stateData": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {"stateKind": {"const": "owner.replaced"}},
+        "required": ["stateKind"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "stateData": {
+            "oneOf": [
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/safeSummaryOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/toolOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/hitlOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/planOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/subagentOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/mediaOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/artifactOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/costOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/noticeOwnerData"
+              },
+              {
+                "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/errorOwnerData"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {"stateKind": {"const": "control.replaced"}},
+        "required": ["stateKind"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "stateData": {
+            "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/controlReplacedData"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {"stateKind": {"const": "receipt.replaced"}},
+        "required": ["stateKind"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "stateData": {
+            "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/receiptReplacedData"
+          }
+        }
+      }
+    }
+  ]
+}

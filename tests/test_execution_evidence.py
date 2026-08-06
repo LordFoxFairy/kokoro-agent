@@ -97,7 +97,7 @@ def test_durable_output_record_has_independent_sequence_and_frozen_digest_chain(
     assert isinstance(record, DurableOutputRecord)
     assert record.output_seq == 1
     assert not hasattr(record, "durable_seq")
-    canonical = evidence_pb2.DurableOutputCanonicalPayloadV1.FromString(
+    canonical = evidence_pb2.DurableOutputPayloadV1.FromString(
         record.canonical_payload
     )
     assert canonical.WhichOneof("payload") == "text_delta"
@@ -116,7 +116,7 @@ def test_durable_output_record_has_independent_sequence_and_frozen_digest_chain(
 
 
 def test_output_draft_rejects_text_part_binding_mismatch() -> None:
-    canonical = evidence_pb2.DurableOutputCanonicalPayloadV1(
+    canonical = evidence_pb2.DurableOutputPayloadV1(
         text_delta=evidence_pb2.TextDeltaOutputV1(
             part_ref="canonical-part", delta="hello"
         )
@@ -130,9 +130,9 @@ def test_output_draft_rejects_text_part_binding_mismatch() -> None:
 
 def _output_payloads(
     payload: BaseModel,
-) -> list[evidence_pb2.DurableOutputCanonicalPayloadV1]:
+) -> list[evidence_pb2.DurableOutputPayloadV1]:
     return [
-        evidence_pb2.DurableOutputCanonicalPayloadV1.FromString(draft.canonical_payload)
+        evidence_pb2.DurableOutputPayloadV1.FromString(draft.canonical_payload)
         for draft in durable_output_drafts_for_event(payload)
     ]
 

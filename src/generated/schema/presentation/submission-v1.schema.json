@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/submission-v1.schema.json",
+  "title": "Kokoro Presentation submission v1",
+  "description": "The closed Agent-to-Session submission. The nested AG-UI event is wire input only; Site, user, Session cursor and SSE fields are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractRevision",
+    "submissionRef",
+    "source",
+    "eventDigest",
+    "event"
+  ],
+  "properties": {
+    "contractRevision": {
+      "const": "kokoro.presentation.submission.v1"
+    },
+    "submissionRef": {
+      "type": "string",
+      "pattern": "^presentation\\.submission:sha256:[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceEventRef",
+        "eventOrdinal",
+        "recordedAt",
+        "route"
+      ],
+      "properties": {
+        "sourceEventRef": {
+          "$ref": "#/$defs/id"
+        },
+        "eventOrdinal": {
+          "$ref": "#/$defs/uint64"
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/canonicalUtcMs"
+        },
+        "route": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "internalRunRef",
+            "internalThreadRef"
+          ],
+          "properties": {
+            "internalRunRef": {
+              "$ref": "#/$defs/id"
+            },
+            "internalThreadRef": {
+              "$ref": "#/$defs/agentThreadRef"
+            },
+            "internalMessageRef": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        }
+      }
+    },
+    "eventDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "event": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-submission-event-v1.schema.json"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "agentThreadRef": {
+      "type": "string",
+      "minLength": 14,
+      "maxLength": 128,
+      "pattern": "^agent\\.thread:[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "uint64": {
+      "oneOf": [
+        {
+          "const": "0"
+        },
+        {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+        }
+      ]
+    },
+    "canonicalUtcMs": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

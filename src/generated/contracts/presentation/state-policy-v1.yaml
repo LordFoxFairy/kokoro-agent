@@ -1,0 +1,228 @@
+{
+  "registryId": "kokoro.presentation.state-policy.v1",
+  "lifecycle": "contract-only",
+  "owner": "kokoro-session",
+  "eventSchema": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json",
+  "contractRevision": "kokoro.presentation.owner-state.v1",
+  "records": {
+    "drop": false,
+    "fanOut": false,
+    "passthrough": {
+      "agent": false,
+      "provider": false
+    },
+    "bindingUpdate": {
+      "cardinality": "exactly-one-required",
+      "atomicity": "binding-update-commits-with-same-StreamRecord",
+      "mutation": "complete-replacement-only",
+      "patch": "forbidden"
+    },
+    "submissionContractRevision": "kokoro.presentation.submission.v1",
+    "sequence": {
+      "durableSeq": "first-StreamRecord-is-one-then-exactly-plus-one-per-stream-epoch",
+      "projectionRevision": "first-accepted-StreamRecord-is-one-then-exactly-plus-one-per-stream-epoch-independent-from-durableSeq"
+    }
+  },
+  "identities": {
+    "publicSourceEvent": {
+      "format": "presentation.event:-branded-session-owned-opaque-ref",
+      "assignment": "session-owner-assigned",
+      "derivationContract": "none",
+      "fixtureGenerator": "root-test-only-not-runtime",
+      "privateSourceEquality": "forbidden",
+      "privateSourceExposure": "private-provenance-only"
+    },
+    "presentation": {
+      "format": "type-branded-256-bit-opaque-ref",
+      "assignment": "session-owner-assigned",
+      "derivationContract": "none",
+      "fixtureGenerator": "root-test-only-not-runtime",
+      "privateRefEquality": "forbidden",
+      "privateRefSubstring": "forbidden"
+    },
+    "projectionRevision": {
+      "format": "positive-uint64-decimal-string",
+      "meaning": "session-projection-revision",
+      "javascriptNumber": "forbidden"
+    },
+    "runOwnerVersion": {
+      "format": "positive-uint64-decimal-string",
+      "meaning": "run-owner-version",
+      "legacyProjectionVersion": "forbidden",
+      "javascriptNumber": "forbidden"
+    }
+  },
+  "ownerState": {
+    "identity": {
+      "ownerIdentity": "immutable-from-first-accepted-replacement",
+      "ownerVersion": "positive-uint64-decimal-string",
+      "updatedAt": "canonical-utc-milliseconds",
+      "activityMessageIdentity": "independent-owner-message-not-derived-from-text",
+      "textContainer": "optional"
+    },
+    "activities": [
+      {
+        "activityType": "kokoro.safe-summary.v1",
+        "payloadDefinition": "safeSummaryOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "full-owner-replacement",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-agent",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.tool-preview.v1",
+        "payloadDefinition": "toolOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "full-owner-replacement",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-agent",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.hitl.v1",
+        "payloadDefinition": "hitlOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "pending-proposal-only",
+        "forbiddenSubmissionFields": [
+          "receiptRef"
+        ],
+        "terminalOwnerStateSource": "kokoro-session",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.plan.v1",
+        "payloadDefinition": "planOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "full-owner-replacement",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-agent",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.subagent.v1",
+        "payloadDefinition": "subagentOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "full-owner-replacement",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-agent",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.notice.v1",
+        "payloadDefinition": "noticeOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "full-owner-replacement",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-agent",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.error.v1",
+        "payloadDefinition": "errorOwnerData",
+        "submissionSource": "kokoro-agent",
+        "submissionStatePolicy": "full-owner-replacement",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-agent",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.media.v1",
+        "payloadDefinition": "mediaOwnerData",
+        "submissionSource": null,
+        "submissionStatePolicy": "forbidden",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-platform",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.artifact.v1",
+        "payloadDefinition": "artifactOwnerData",
+        "submissionSource": null,
+        "submissionStatePolicy": "forbidden",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-platform",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "activityType": "kokoro.cost.v1",
+        "payloadDefinition": "costOwnerData",
+        "submissionSource": null,
+        "submissionStatePolicy": "forbidden",
+        "forbiddenSubmissionFields": [],
+        "terminalOwnerStateSource": "kokoro-platform",
+        "projectionOwner": "kokoro-session"
+      }
+    ],
+    "sessionEvents": [
+      {
+        "name": "kokoro.control.replace.v1",
+        "payloadDefinition": "controlReplacedData",
+        "ownerStateSource": "kokoro-session",
+        "projectionOwner": "kokoro-session"
+      },
+      {
+        "name": "kokoro.receipt.replace.v1",
+        "payloadDefinition": "receiptReplacedData",
+        "ownerStateSource": "kokoro-session",
+        "projectionOwner": "kokoro-session"
+      }
+    ],
+    "reducer": {
+      "binding": "complete-immutable-owner-replacement-per-OwnerState",
+      "snapshot": "same-owner-identity-version-terminal-reducer-as-live",
+      "javascriptOwnerVersion": "forbidden"
+    },
+    "lateTerminal": {
+      "messageEndedRunOpen": [
+        "safe-summary",
+        "tool",
+        "hitl",
+        "plan",
+        "subagent",
+        "media",
+        "artifact",
+        "cost",
+        "notice",
+        "error"
+      ],
+      "terminalRunMayCreate": [
+        "media",
+        "artifact",
+        "cost",
+        "notice",
+        "error"
+      ],
+      "terminalRunReceiptRequiresExistingControl": true,
+      "terminalRunMayConvergeExisting": [
+        "media",
+        "artifact",
+        "cost",
+        "notice",
+        "error",
+        "receipt"
+      ],
+      "terminalRunMayNotCreate": [
+        "safe-summary",
+        "tool",
+        "hitl",
+        "control",
+        "plan",
+        "subagent"
+      ],
+      "textOrRunReopen": "forbidden"
+    }
+  },
+  "snapshot": {
+    "timeWatermarkField": "lastRecordedAt",
+    "timeWatermarkAuthority": "session-durable-head"
+  },
+  "limits": {
+    "maxOwnerBindings": 2048,
+    "maxOwnerBindingsPerMessage": 64,
+    "maxControlReceiptsPerRun": 256,
+    "maxOwnerLinkDepth": 2,
+    "maxOwnerStates": 2048,
+    "maxOwnerStateBytes": 16777216
+  }
+}

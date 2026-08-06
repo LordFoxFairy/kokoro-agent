@@ -83,6 +83,7 @@ class HubCatalogServiceClient(ConnectClient):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+
     async def get_catalog_publication(
         self,
         request: kokoro_dot_platform_dot_capability_dot_v1_dot_capability__catalog__pb2.GetCatalogPublicationRequest,
@@ -276,6 +277,8 @@ class CapabilityCatalogProjectionServiceClient(ConnectClient):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+
+
 
 
 

@@ -1,0 +1,207 @@
+# Kokoro execution-event vocabulary — the ONE truth for the event kinds.
+#
+# One vocabulary (snake_case fields + dot-kind) travels agent -> session -> web.
+# `contract/generate.py` renders every mirror; `contract/check.py` gates drift.
+#
+# Two faces(数量以本文件清单为准,README 由生成器计数派生,不再手写数字):
+#   raw     — agent emits, session parses. Envelope {kind, run_id, index, timestamp}
+#             + 可选 durable 身份位 {durable_seq, event_id}(R4:critical 帧必带,live 帧缺席;
+#             browser 面不携带——durable 身份不出内部面)。
+#   browser — session emits, web parses. run.started 由 session 消费并换成合成的
+#             session.created + run.created;internal-only kind(run.control.receipt)永不投影;
+#             其余 raw kinds 原样透传。Envelope adds event_id/seq/session ids.
+#
+# tool.awaiting_approval.payload carries its own `kind` (tool_approval|ask_user_question) — a
+# nested field, distinct from the envelope `kind`; both stay readable side by side.
+
+enums:
+  subagent_source: [built-in, config-custom, runtime-custom]
+  resume_decision: [approve, edit, reject, respond, submit]
+  plan_action: [accept, reject]
+  awaiting_kind: [tool_approval, ask_user_question, result_review, input]
+  todo_status: [pending, in_progress, completed]
+  run_completed_status: [completed, cancelled]
+  # 失败码是闭集：新失败形态必须进枚举（单源扩表），internal_error 兜底。
+  # enqueue_failed 由 session 合成（投递失败收口，agent 永不发它）。
+  control_receipt_status: [persisted, applied]
+  # contract_incompatible 由 session 合成(R5 quarantine 收口:identity 已识别但 payload 不可应用
+  # 的 critical 帧被隔离,contract-failure reconciler 原子投影为该终态——session 除 dispatch
+  # expire 外唯一合法终态权场景)。
+  run_error_code: [token_budget_exceeded, recursion_limit_exceeded, assembly_failed, enqueue_failed, dispatch_exhausted, contract_incompatible, internal_error]
+
+# Reusable nested object shapes (dependency order: leaves first).
+objects:
+  - name: Todo
+    fields:
+      - {name: content, type: string_nonempty}
+      - {name: status, type: enum:todo_status}
+  - name: TokenUsage
+    fields:
+      - {name: input_tokens, type: int}
+      - {name: output_tokens, type: int}
+  - name: Risk
+    fields:
+      - {name: level, type: string_nonempty}
+      - {name: source, type: string_nonempty}
+      - {name: reason, type: string_nonempty}
+  - name: PlanStep
+    fields:
+      - {name: step_ref, type: string_nonempty}
+      - {name: label, type: string_nonempty}
+      - {name: status, type: enum:todo_status}
+  - name: PlanProposal
+    fields:
+      - {name: summary, type: string_nonempty}
+      - {name: steps, type: array:object:PlanStep, min_items: 1, max_items: 256}
+      - {name: allowed_actions, type: array:enum:plan_action, min_items: 2, max_items: 2}
+
+# field-name -> abstract type. DEFAULT (unlisted) = string_nonempty.
+field_types:
+  code: enum:run_error_code
+  delta: string
+  content: string
+  text: string
+  result: string
+  description: string
+  error: string
+  reject_reason: string
+  args: record
+  editable: boolean
+  is_error: boolean
+  truncated: boolean
+  rejected: boolean
+  responded: boolean
+  failed: boolean
+  source: enum:subagent_source
+  kind: enum:awaiting_kind
+  allowed_decisions: array:enum:resume_decision
+  pending_tool_ids: array:string_nonempty
+  risk: object:Risk
+  input_schema: record
+  summary: record
+  todos: array:object:Todo
+  status: enum:run_completed_status
+  control_status: enum:control_receipt_status
+  token_usage: object:TokenUsage
+  size: int
+  note: string
+  owner_version: positive_int
+  owner_revision: positive_int
+  execution_context_anchor: reference
+  execution_context_digest: sha256
+  proposal: object:PlanProposal
+
+# Fields whose KEY may be absent on the common path.
+payload_optional: [risk, input_schema, rejected, reject_reason, responded, summary, failed, error, token_usage, note]
+# Fields whose VALUE may be null.
+payload_nullable: [token_usage]
+
+terminal_kinds: [run.completed, run.failed]
+
+notes:
+  run.failed.code: "三层错误语义：code=稳定错误码（web 按码本地化的键，闭集枚举）；error_kind=诊断用异常类名（观测/排障，不作展示）；message=人读原文（未知码/未译码的兜底展示，绝不裸露 key）。"
+  message.delta.delta: "流上文本恒为 assistant，无 role 字段；角色由 segment 归属决定。"
+  tool.returned.is_error: "严格必填 fail-loud：生产端始终发送；缺失即报错，绝不用默认 false 掩盖真失败。"
+  tool.returned.truncated: "wire 展示层截断标记：缺席=结果完整，true=已截断（完整结果在工作区文件，预览经 files 端点取）。"
+  tool.output.delta.delta: "长执行工具的增量输出（如 execute）；每工具累计上限同 result 护栏，超限静默停发（终值仍走 tool.returned）。"
+  tool.awaiting_approval.pending_tool_ids: "同帧完整待批 tool_id 列表；HITL『凑齐才提交』契约依据，web 读契约而非内嵌算法。"
+  tool.awaiting_approval.result: "仅 kind=result_review 时存在：待人工审核的已执行结果（payload 列表尾缀 ? = 该 kind 局部可选）。"
+  tool.awaiting_approval.risk: "面向 web 的风险摘要，非权限判断真源。"
+  run.completed.token_usage: "agent 认真算的用量全链路贯通；无用量时为 null。"
+  subagent.tool.invoked.args: "子代理内工具过程可见性通道；HITL 审批仍走主通道嵌套帧，无输出增量通道（终值走 returned）。"
+  subagent.tool.returned.truncated: "同 tool.returned.truncated：缺席=结果完整。"
+  delivery.created.content_hash: "成果冻结键：deliveries/<namespace>/<content_hash> 内容寻址,永不漂移；由 deliver 工具归档时计算,emitter 在 tool.returned 后追发本事件。"
+  plan.proposed.owner_ref: "计划 owner 的唯一身份；必须逐字等于真实 LangGraph tool_call_id，Session resume 用它回填 decision.tool_id。"
+  plan.proposed.owner_version: "V1 immutable proposal 恒为 1；修订必须创建新的 propose_plan tool call/owner_ref，禁止原位覆盖。"
+  plan.proposed.proposal: "专用计划提案；与 todo.updated 的内部进度清单语义严格分离，禁止互相推断。"
+
+# raw wire kinds (agent-out / session-in), wire order.
+raw_kinds:
+  - {kind: run.started, payload: []}
+  - {kind: thinking.delta, payload: [segment_id, delta]}
+  - {kind: message.delta, payload: [segment_id, delta]}
+  - {kind: message.completed, payload: [segment_id, content]}
+  - {kind: tool.invoked, payload: [segment_id, tool_id, name, args]}
+  - {kind: tool.output.delta, payload: [segment_id, tool_id, name, delta]}
+  - {kind: tool.awaiting_approval, payload: [segment_id, tool_id, name, args, description, allowed_decisions, kind, risk, editable, input_schema, pending_tool_ids, "result?"]}
+  - {kind: tool.returned, payload: [segment_id, tool_id, name, result, is_error, "truncated?", rejected, reject_reason, responded, summary]}
+  - {kind: todo.updated, payload: [todos]}
+  - {kind: plan.proposed, payload: [segment_id, owner_ref, owner_version, proposal]}
+  - {kind: subagent.started, payload: [segment_id, subagent_id, name, description, subagent_type, source]}
+  - {kind: subagent.finished, payload: [segment_id, subagent_id, name, subagent_type, source, failed, error]}
+  - {kind: subagent.thinking.delta, payload: [segment_id, subagent_id, delta]}
+  - {kind: subagent.text.delta, payload: [segment_id, subagent_id, text]}
+  - {kind: subagent.text.completed, payload: [segment_id, subagent_id, text]}
+  - {kind: subagent.tool.invoked, payload: [segment_id, subagent_id, tool_id, name, args]}
+  - {kind: subagent.tool.returned, payload: [segment_id, subagent_id, tool_id, name, result, is_error, "truncated?"]}
+  - {kind: delivery.created, payload: [path, title, mime, size, content_hash, "note?"]}
+  # internal-only(R2):control 回执两时点(persisted/applied);session 消费进 receipt 存储,
+  # 不入 browser_order 永不投影浏览器。
+  - {kind: run.control.receipt, payload: [decision_id, control_status]}
+  # internal-only: authenticated durable completion evidence. Agent binds the opaque pair to its
+  # namespace/checkpoint authority; Session consumes it before run.completed and never projects it.
+  - {kind: run.owner.completed, payload: [execution_context_anchor, execution_context_digest, owner_revision]}
+  - {kind: run.completed, payload: [status, token_usage]}
+  - {kind: run.failed, payload: [code, error_kind, message]}
+
+# Browser-facing projection contract. Raw GA kinds above are intentionally
+# unchanged; Session translates them into owner-safe durable projection deltas.
+browser_schema_id: kokoro.session.events.v3
+browser_schema_version: 3
+browser_imports:
+  - SessionMetadata
+  - ConversationBranch
+  - MessageRecord
+  - MessagePartEnvelope
+  - RunLaunchProjection
+  - RunView
+  - ControlProjection
+  - RunCostProjection
+  - CommandReceiptView
+
+browser_kinds:
+  - kind: session.updated
+    fields: [{name: session, type: object:SessionMetadata}]
+  - kind: branch.created
+    fields: [{name: branch, type: object:ConversationBranch}]
+  - kind: branch.activated
+    fields:
+      - {name: branch_id, type: string_nonempty}
+      - {name: active_leaf_message_id, type: string_nonempty, optional: true}
+      - {name: session_version, type: positive_int}
+  - kind: message.created
+    fields: [{name: message, type: object:MessageRecord}]
+  - kind: message.part.updated
+    fields: [{name: part, type: object:MessagePartEnvelope}]
+  - kind: run.launch.updated
+    fields: [{name: launch, type: object:RunLaunchProjection}]
+  - kind: run.view.updated
+    fields: [{name: run, type: object:RunView}]
+  - kind: run.control.updated
+    fields: [{name: control, type: object:ControlProjection}]
+  - kind: run.cost.updated
+    fields: [{name: cost, type: object:RunCostProjection}]
+  - kind: command.receipt.updated
+    fields: [{name: receipt, type: object:CommandReceiptView}]
+browser_order:
+  - session.updated
+  - branch.created
+  - branch.activated
+  - message.created
+  - message.part.updated
+  - run.launch.updated
+  - run.view.updated
+  - run.control.updated
+  - run.cost.updated
+  - command.receipt.updated
+
+# JSON control frames share the SSE connection but never enter the durable
+# sequence and never advance a resume cursor. Heartbeats remain SSE comments.
+stream_control_frames:
+  - kind: stream.draining
+    fields:
+      - {name: session_id, type: string_nonempty}
+      - {name: stream_epoch, type: string_nonempty}
+      - {name: last_durable_cursor, type: string_nonempty}
+      - {name: action, type: literal:retry_same_cursor}
+      - {name: retry_after_ms, type: nonnegative_int, optional: true}

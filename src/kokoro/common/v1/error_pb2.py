@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1ckokoro/common/v1/error.proto\x12\x10kokoro.common.v1\x1a\x1b\x62uf/validate/validate.proto\"\x90\x03\n\x11KokoroErrorDetail\x12\x1f\n\x0b\x64omain_code\x18\x01 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01\x12=\n\x0bretry_class\x18\x02 \x01(\x0e\x32\x1c.kokoro.common.v1.RetryClassB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x1c\n\nrequest_id\x18\x03 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x01\x12 \n\x0e\x63orrelation_id\x18\x04 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x01\x12\x1e\n\x0csafe_message\x18\x05 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x04\x12 \n\x13retry_after_seconds\x18\x06 \x01(\rH\x00\x88\x01\x01\x12\"\n\x0breceipt_ref\x18\x07 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x02H\x01\x88\x01\x01\x12/\n\x19required_contract_version\x18\x08 \x01(\tB\x07\xbaH\x04r\x02\x18@H\x02\x88\x01\x01\x42\x16\n\x14_retry_after_secondsB\x0e\n\x0c_receipt_refB\x1c\n\x1a_required_contract_version*\x9f\x01\n\nRetryClass\x12\x1b\n\x17RETRY_CLASS_UNSPECIFIED\x10\x00\x12\x15\n\x11RETRY_CLASS_NEVER\x10\x01\x12\x1b\n\x17RETRY_CLASS_AFTER_DELAY\x10\x02\x12\x1d\n\x19RETRY_CLASS_SAME_IDENTITY\x10\x03\x12!\n\x1dRETRY_CLASS_RECONCILE_RECEIPT\x10\x04\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1ckokoro/common/v1/error.proto\x12\x10kokoro.common.v1\x1a\x1b\x62uf/validate/validate.proto\"\x87\x04\n\x11KokoroErrorDetail\x12+\n\x0b\x64omain_code\x18\x01 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01R\ndomainCode\x12I\n\x0bretry_class\x18\x02 \x01(\x0e\x32\x1c.kokoro.common.v1.RetryClassB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00R\nretryClass\x12\'\n\nrequest_id\x18\x03 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x01R\trequestId\x12/\n\x0e\x63orrelation_id\x18\x04 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x01R\rcorrelationId\x12+\n\x0csafe_message\x18\x05 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x04R\x0bsafeMessage\x12\x33\n\x13retry_after_seconds\x18\x06 \x01(\rH\x00R\x11retryAfterSeconds\x88\x01\x01\x12.\n\x0breceipt_ref\x18\x07 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x02H\x01R\nreceiptRef\x88\x01\x01\x12H\n\x19required_contract_version\x18\x08 \x01(\tB\x07\xbaH\x04r\x02\x18@H\x02R\x17requiredContractVersion\x88\x01\x01\x42\x16\n\x14_retry_after_secondsB\x0e\n\x0c_receipt_refB\x1c\n\x1a_required_contract_version*\x9f\x01\n\nRetryClass\x12\x1b\n\x17RETRY_CLASS_UNSPECIFIED\x10\x00\x12\x15\n\x11RETRY_CLASS_NEVER\x10\x01\x12\x1b\n\x17RETRY_CLASS_AFTER_DELAY\x10\x02\x12\x1d\n\x19RETRY_CLASS_SAME_IDENTITY\x10\x03\x12!\n\x1dRETRY_CLASS_RECONCILE_RECEIPT\x10\x04\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -46,8 +46,8 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_KOKOROERRORDETAIL'].fields_by_name['receipt_ref']._serialized_options = b'\272H\005r\003\030\200\002'
   _globals['_KOKOROERRORDETAIL'].fields_by_name['required_contract_version']._loaded_options = None
   _globals['_KOKOROERRORDETAIL'].fields_by_name['required_contract_version']._serialized_options = b'\272H\004r\002\030@'
-  _globals['_RETRYCLASS']._serialized_start=483
-  _globals['_RETRYCLASS']._serialized_end=642
+  _globals['_RETRYCLASS']._serialized_start=602
+  _globals['_RETRYCLASS']._serialized_end=761
   _globals['_KOKOROERRORDETAIL']._serialized_start=80
-  _globals['_KOKOROERRORDETAIL']._serialized_end=480
+  _globals['_KOKOROERRORDETAIL']._serialized_end=599
 # @@protoc_insertion_point(module_scope)

@@ -1,0 +1,2852 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json",
+  "title": "Kokoro Presentation AG-UI wire frame v1",
+  "description": "The immutable AG-UI wire frame materialized from one StreamRecord. Cursor claims and SSE line formatting are issued at read time and are not represented.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "wireProfileRevision",
+    "eventName",
+    "frameData",
+    "streamRecordDigest",
+    "frameDigest"
+  ],
+  "properties": {
+    "wireProfileRevision": {
+      "const": "kokoro.presentation.ag-ui-frame.v1"
+    },
+    "eventName": {
+      "$ref": "#/$defs/eventType"
+    },
+    "frameData": {
+      "$ref": "#/$defs/frameData"
+    },
+    "streamRecordDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "frameDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "runBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.run-binding:[0-9a-f]{64}$"
+    },
+    "messageBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.message-binding:[0-9a-f]{64}$"
+    },
+    "ownerBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.owner-binding:[0-9a-f]{64}$"
+    },
+    "publicSourceEventId": {
+      "type": "string",
+      "minLength": 83,
+      "maxLength": 83,
+      "pattern": "^presentation\\.event:[0-9a-f]{64}$"
+    },
+    "dateTime": {
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 24,
+      "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "actionDecision": {
+      "enum": [
+        "approve",
+        "reject",
+        "edit",
+        "respond"
+      ]
+    },
+    "planDecision": {
+      "enum": [
+        "accept",
+        "reject"
+      ]
+    },
+    "presentationThreadId": {
+      "type": "string",
+      "pattern": "^presentation\\.thread:[0-9a-f]{64}$"
+    },
+    "presentationRunId": {
+      "type": "string",
+      "pattern": "^presentation\\.run:[0-9a-f]{64}$"
+    },
+    "presentationMessageId": {
+      "type": "string",
+      "pattern": "^presentation\\.message:[0-9a-f]{64}$"
+    },
+    "positiveUint64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "oneOf": [
+        {
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        {
+          "pattern": "^1[0-7][0-9]{18}$"
+        },
+        {
+          "pattern": "^18[0-3][0-9]{17}$"
+        },
+        {
+          "pattern": "^184[0-3][0-9]{16}$"
+        },
+        {
+          "pattern": "^1844[0-5][0-9]{15}$"
+        },
+        {
+          "pattern": "^18446[0-6][0-9]{14}$"
+        },
+        {
+          "pattern": "^184467[0-3][0-9]{13}$"
+        },
+        {
+          "pattern": "^1844674[0-3][0-9]{12}$"
+        },
+        {
+          "pattern": "^184467440[0-6][0-9]{10}$"
+        },
+        {
+          "pattern": "^1844674407[0-2][0-9]{9}$"
+        },
+        {
+          "pattern": "^18446744073[0-6][0-9]{8}$"
+        },
+        {
+          "pattern": "^1844674407370[0-8][0-9]{6}$"
+        },
+        {
+          "pattern": "^18446744073709[0-4][0-9]{5}$"
+        },
+        {
+          "pattern": "^184467440737095[0-4][0-9]{4}$"
+        },
+        {
+          "pattern": "^18446744073709550[0-9]{3}$"
+        },
+        {
+          "pattern": "^18446744073709551[0-5][0-9]{2}$"
+        },
+        {
+          "pattern": "^1844674407370955160[0-9]$"
+        },
+        {
+          "pattern": "^1844674407370955161[0-4]$"
+        },
+        {
+          "const": "18446744073709551615"
+        }
+      ]
+    },
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "safeText": {
+      "type": "string",
+      "maxLength": 16384
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799999
+    },
+    "canonicalUtcMs": {
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 24,
+      "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "creditDecimal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^(0|[1-9][0-9]{0,39})$"
+    },
+    "mediaFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "retryClass"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "provider_rejected",
+            "provider_unavailable",
+            "invalid_output",
+            "policy_restricted",
+            "artifact_unavailable",
+            "usage_unavailable",
+            "unknown_terminal"
+          ]
+        },
+        "retryClass": {
+          "enum": [
+            "never",
+            "after-delay",
+            "after-user-action",
+            "reconcile-receipt"
+          ]
+        },
+        "safeMessage": {
+          "$ref": "#/$defs/safeText"
+        }
+      }
+    },
+    "mediaCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateRef",
+        "ordinal",
+        "ownerVersion",
+        "state"
+      ],
+      "properties": {
+        "candidateRef": {
+          "$ref": "#/$defs/id"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "ownerVersion": {
+          "$ref": "#/$defs/positiveUint64"
+        },
+        "state": {
+          "enum": [
+            "allocated",
+            "producing",
+            "output-received",
+            "validating",
+            "ready",
+            "restricted",
+            "failed",
+            "unknown",
+            "cancel-requested",
+            "canceled"
+          ]
+        },
+        "artifactRef": {
+          "$ref": "#/$defs/id"
+        },
+        "artifactVersionRef": {
+          "$ref": "#/$defs/id"
+        },
+        "safeFailure": {
+          "$ref": "#/$defs/mediaFailure"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ready"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "artifactRef",
+              "artifactVersionRef"
+            ],
+            "properties": {
+              "artifactRef": {
+                "$ref": "#/$defs/id"
+              },
+              "artifactVersionRef": {
+                "$ref": "#/$defs/id"
+              },
+              "safeFailure": false
+            },
+            "type": "object"
+          },
+          "else": {
+            "properties": {
+              "artifactRef": false,
+              "artifactVersionRef": false
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "restricted",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "safeFailure"
+            ],
+            "properties": {
+              "safeFailure": {
+                "$ref": "#/$defs/mediaFailure"
+              }
+            },
+            "type": "object"
+          },
+          "else": {
+            "properties": {
+              "safeFailure": false
+            },
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "costProjectionLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "costProjectionRef",
+        "ownerVersion"
+      ],
+      "properties": {
+        "costProjectionRef": {
+          "$ref": "#/$defs/id"
+        },
+        "ownerVersion": {
+          "$ref": "#/$defs/positiveUint64"
+        }
+      }
+    },
+    "artifactDisplay": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "format",
+            "width",
+            "height",
+            "byteSize"
+          ],
+          "properties": {
+            "kind": {
+              "const": "image"
+            },
+            "format": {
+              "enum": [
+                "png",
+                "jpeg",
+                "webp"
+              ]
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "byteSize": {
+              "$ref": "#/$defs/positiveUint64"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "format",
+            "durationMs",
+            "byteSize"
+          ],
+          "properties": {
+            "kind": {
+              "const": "audio"
+            },
+            "format": {
+              "enum": [
+                "mp3",
+                "wav",
+                "aac",
+                "flac",
+                "ogg"
+              ]
+            },
+            "durationMs": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "byteSize": {
+              "$ref": "#/$defs/positiveUint64"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "format",
+            "width",
+            "height",
+            "durationMs",
+            "byteSize"
+          ],
+          "properties": {
+            "kind": {
+              "const": "video"
+            },
+            "format": {
+              "enum": [
+                "mp4",
+                "webm",
+                "mov"
+              ]
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "durationMs": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "byteSize": {
+              "$ref": "#/$defs/positiveUint64"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "format",
+            "byteSize"
+          ],
+          "properties": {
+            "kind": {
+              "const": "document"
+            },
+            "format": {
+              "enum": [
+                "pdf",
+                "markdown",
+                "text"
+              ]
+            },
+            "byteSize": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "pageCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          }
+        }
+      ]
+    },
+    "planStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stepRef",
+        "label",
+        "status"
+      ],
+      "properties": {
+        "stepRef": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "$ref": "#/$defs/shortText"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in-progress",
+            "completed",
+            "failed",
+            "canceled"
+          ]
+        }
+      }
+    },
+    "runStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "threadId",
+        "runId"
+      ],
+      "properties": {
+        "type": {
+          "const": "RUN_STARTED"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "threadId": {
+          "$ref": "#/$defs/presentationThreadId"
+        },
+        "runId": {
+          "$ref": "#/$defs/presentationRunId"
+        },
+        "parentRunId": {
+          "$ref": "#/$defs/presentationRunId"
+        }
+      }
+    },
+    "runFinished": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "threadId",
+        "runId"
+      ],
+      "properties": {
+        "type": {
+          "const": "RUN_FINISHED"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "threadId": {
+          "$ref": "#/$defs/presentationThreadId"
+        },
+        "runId": {
+          "$ref": "#/$defs/presentationRunId"
+        }
+      }
+    },
+    "runError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "message",
+        "code"
+      ],
+      "properties": {
+        "type": {
+          "const": "RUN_ERROR"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "message": {
+          "$ref": "#/$defs/safeText"
+        },
+        "code": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "textStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "role"
+      ],
+      "properties": {
+        "type": {
+          "const": "TEXT_MESSAGE_START"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "role": {
+          "const": "assistant"
+        }
+      }
+    },
+    "textContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "delta"
+      ],
+      "properties": {
+        "type": {
+          "const": "TEXT_MESSAGE_CONTENT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "delta": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      }
+    },
+    "textEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId"
+      ],
+      "properties": {
+        "type": {
+          "const": "TEXT_MESSAGE_END"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        }
+      }
+    },
+    "activitySafeSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.safe-summary.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "partRef",
+            "ownerVersion",
+            "summary",
+            "status",
+            "updatedAt"
+          ],
+          "properties": {
+            "partRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "summary": {
+              "$ref": "#/$defs/safeText"
+            },
+            "status": {
+              "enum": [
+                "streaming",
+                "complete",
+                "partial",
+                "failed",
+                "canceled"
+              ]
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "activityToolPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.tool-preview.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "toolCallRef",
+            "ownerVersion",
+            "label",
+            "status",
+            "updatedAt"
+          ],
+          "properties": {
+            "toolCallRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "label": {
+              "$ref": "#/$defs/shortText"
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "running",
+                "awaiting-user",
+                "completed",
+                "failed",
+                "canceled"
+              ]
+            },
+            "summary": {
+              "$ref": "#/$defs/safeText"
+            },
+            "resultPreview": {
+              "$ref": "#/$defs/safeText"
+            },
+            "isError": {
+              "type": "boolean"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "activityHitl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.hitl.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ownerRef",
+            "ownerVersion",
+            "decisionGroupRef",
+            "requiredOwnerRefs",
+            "controlRef",
+            "kind",
+            "title",
+            "description",
+            "allowedActions",
+            "status",
+            "updatedAt"
+          ],
+          "properties": {
+            "ownerRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "decisionGroupRef": {
+              "$ref": "#/$defs/id"
+            },
+            "requiredOwnerRefs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/id"
+              }
+            },
+            "controlRef": {
+              "$ref": "#/$defs/id"
+            },
+            "kind": {
+              "enum": [
+                "approval",
+                "interaction"
+              ]
+            },
+            "title": {
+              "$ref": "#/$defs/shortText"
+            },
+            "description": {
+              "$ref": "#/$defs/safeText"
+            },
+            "riskSummary": {
+              "$ref": "#/$defs/safeText"
+            },
+            "inputSchemaRef": {
+              "$ref": "#/$defs/id"
+            },
+            "allowedActions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/actionDecision"
+              }
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "accepted",
+                "rejected",
+                "expired",
+                "canceled"
+              ]
+            },
+            "deadline": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            },
+            "receiptRef": {
+              "$ref": "#/$defs/id"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "activityPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.plan.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "planRef",
+            "ownerVersion",
+            "summary",
+            "status",
+            "steps",
+            "updatedAt"
+          ],
+          "properties": {
+            "planRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "summary": {
+              "$ref": "#/$defs/safeText"
+            },
+            "status": {
+              "enum": [
+                "proposed",
+                "active",
+                "completed",
+                "failed",
+                "canceled"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "$ref": "#/$defs/planStep"
+              }
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "activitySubagent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.subagent.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subagentRef",
+            "ownerVersion",
+            "status",
+            "updatedAt"
+          ],
+          "properties": {
+            "subagentRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed",
+                "canceled"
+              ]
+            },
+            "summary": {
+              "$ref": "#/$defs/safeText"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "activityMedia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.media.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mediaOperationRef",
+            "definitionRef",
+            "definitionRevisionRef",
+            "ownerVersion",
+            "state",
+            "progressBps",
+            "candidates",
+            "updatedAt"
+          ],
+          "properties": {
+            "mediaOperationRef": {
+              "$ref": "#/$defs/id"
+            },
+            "definitionRef": {
+              "$ref": "#/$defs/id"
+            },
+            "definitionRevisionRef": {
+              "$ref": "#/$defs/id"
+            },
+            "modelOptionRevisionRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "state": {
+              "enum": [
+                "admission-pending",
+                "authorized",
+                "queued",
+                "active",
+                "finalizing",
+                "cancel-requested",
+                "reconciling",
+                "completed",
+                "partial",
+                "failed",
+                "canceled"
+              ]
+            },
+            "progressBps": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "candidates": {
+              "type": "array",
+              "maxItems": 4,
+              "items": {
+                "$ref": "#/$defs/mediaCandidate"
+              }
+            },
+            "costProjection": {
+              "$ref": "#/$defs/costProjectionLink"
+            },
+            "outcomeClass": {
+              "enum": [
+                "canonical",
+                "irreconcilable"
+              ]
+            },
+            "safeFailure": {
+              "$ref": "#/$defs/mediaFailure"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "completed",
+                      "partial",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "state"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "outcomeClass"
+                ],
+                "properties": {
+                  "outcomeClass": {
+                    "enum": [
+                      "canonical",
+                      "irreconcilable"
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "outcomeClass": false,
+                  "safeFailure": false
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "failed"
+                  }
+                },
+                "required": [
+                  "state"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "safeFailure"
+                ],
+                "properties": {
+                  "safeFailure": {
+                    "$ref": "#/$defs/mediaFailure"
+                  }
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "safeFailure": false
+                },
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "activityArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.artifact.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "artifactRef",
+            "artifactVersionRef",
+            "ownerVersion",
+            "availability",
+            "mediaClass",
+            "updatedAt"
+          ],
+          "properties": {
+            "artifactRef": {
+              "$ref": "#/$defs/id"
+            },
+            "artifactVersionRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "availability": {
+              "enum": [
+                "processing",
+                "ready",
+                "restricted",
+                "unavailable",
+                "deleted"
+              ]
+            },
+            "mediaClass": {
+              "enum": [
+                "image",
+                "audio",
+                "video",
+                "document"
+              ]
+            },
+            "display": {
+              "$ref": "#/$defs/artifactDisplay"
+            },
+            "safeFailure": {
+              "$ref": "#/$defs/mediaFailure"
+            },
+            "title": {
+              "$ref": "#/$defs/shortText"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "availability": {
+                    "const": "ready"
+                  }
+                },
+                "required": [
+                  "availability"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "display"
+                ],
+                "properties": {
+                  "display": {
+                    "$ref": "#/$defs/artifactDisplay"
+                  },
+                  "safeFailure": false
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "display": false
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "availability": {
+                    "enum": [
+                      "restricted",
+                      "unavailable"
+                    ]
+                  }
+                },
+                "required": [
+                  "availability"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "safeFailure"
+                ],
+                "properties": {
+                  "safeFailure": {
+                    "$ref": "#/$defs/mediaFailure"
+                  }
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "safeFailure": false
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "availability": {
+                    "const": "ready"
+                  },
+                  "mediaClass": {
+                    "const": "image"
+                  }
+                },
+                "required": [
+                  "availability",
+                  "mediaClass"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "display": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "image"
+                      }
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "availability": {
+                    "const": "ready"
+                  },
+                  "mediaClass": {
+                    "const": "audio"
+                  }
+                },
+                "required": [
+                  "availability",
+                  "mediaClass"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "display": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "audio"
+                      }
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "availability": {
+                    "const": "ready"
+                  },
+                  "mediaClass": {
+                    "const": "video"
+                  }
+                },
+                "required": [
+                  "availability",
+                  "mediaClass"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "display": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "video"
+                      }
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "availability": {
+                    "const": "ready"
+                  },
+                  "mediaClass": {
+                    "const": "document"
+                  }
+                },
+                "required": [
+                  "availability",
+                  "mediaClass"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "display": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "document"
+                      }
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "activityCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.cost.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mediaOperationRef",
+            "costProjectionRef",
+            "ownerVersion",
+            "state",
+            "freshness",
+            "updatedAt"
+          ],
+          "properties": {
+            "mediaOperationRef": {
+              "$ref": "#/$defs/id"
+            },
+            "costProjectionRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "estimated",
+                "final",
+                "corrected",
+                "unavailable"
+              ]
+            },
+            "freshness": {
+              "enum": [
+                "current",
+                "stale",
+                "rebuilding",
+                "unavailable"
+              ]
+            },
+            "amount": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "creditUnit",
+                "amount"
+              ],
+              "properties": {
+                "creditUnit": {
+                  "$ref": "#/$defs/id"
+                },
+                "amount": {
+                  "$ref": "#/$defs/creditDecimal"
+                }
+              }
+            },
+            "correctsOwnerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "safeReason": {
+              "$ref": "#/$defs/safeText"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "estimated",
+                      "final",
+                      "corrected"
+                    ]
+                  }
+                },
+                "required": [
+                  "state"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "creditUnit",
+                      "amount"
+                    ],
+                    "properties": {
+                      "creditUnit": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "amount": {
+                        "$ref": "#/$defs/creditDecimal"
+                      }
+                    }
+                  }
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "amount": false
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "corrected"
+                  }
+                },
+                "required": [
+                  "state"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "correctsOwnerVersion"
+                ],
+                "properties": {
+                  "correctsOwnerVersion": {
+                    "$ref": "#/$defs/positiveUint64"
+                  }
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "correctsOwnerVersion": false
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "unavailable"
+                  }
+                },
+                "required": [
+                  "state"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "required": [
+                  "safeReason"
+                ],
+                "properties": {
+                  "safeReason": {
+                    "$ref": "#/$defs/safeText"
+                  }
+                },
+                "type": "object"
+              },
+              "else": {
+                "properties": {
+                  "safeReason": false
+                },
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "activityNotice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.notice.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "noticeRef",
+            "ownerVersion",
+            "code",
+            "message",
+            "severity",
+            "updatedAt"
+          ],
+          "properties": {
+            "noticeRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "code": {
+              "$ref": "#/$defs/id"
+            },
+            "message": {
+              "$ref": "#/$defs/safeText"
+            },
+            "severity": {
+              "enum": [
+                "info",
+                "warning"
+              ]
+            },
+            "retryClass": {
+              "enum": [
+                "never",
+                "after-delay",
+                "after-user-action",
+                "reconcile-receipt"
+              ]
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "activityError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "activityType": {
+          "const": "kokoro.error.v1"
+        },
+        "replace": {
+          "const": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "errorRef",
+            "ownerVersion",
+            "code",
+            "message",
+            "retryClass",
+            "updatedAt"
+          ],
+          "properties": {
+            "errorRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "code": {
+              "$ref": "#/$defs/id"
+            },
+            "message": {
+              "$ref": "#/$defs/safeText"
+            },
+            "retryClass": {
+              "enum": [
+                "never",
+                "after-delay",
+                "after-user-action",
+                "reconcile-receipt"
+              ]
+            },
+            "supportCorrelationRef": {
+              "$ref": "#/$defs/id"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "customSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "timestamp",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "CUSTOM"
+        },
+        "name": {
+          "const": "kokoro.session.replace.v1"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessionId",
+            "contractRevision",
+            "title",
+            "lifecycle",
+            "contextPolicy",
+            "activeBranchId",
+            "version"
+          ],
+          "properties": {
+            "sessionId": {
+              "$ref": "#/$defs/id"
+            },
+            "contractRevision": {
+              "const": "kokoro.presentation.domain-event.v1"
+            },
+            "title": {
+              "$ref": "#/$defs/shortText"
+            },
+            "lifecycle": {
+              "enum": [
+                "active",
+                "archived",
+                "deleted"
+              ]
+            },
+            "contextPolicy": {
+              "enum": [
+                "standard",
+                "temporary"
+              ]
+            },
+            "activeBranchId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "customBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "timestamp",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "CUSTOM"
+        },
+        "name": {
+          "const": "kokoro.branch.replace.v1"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "branchId",
+            "rootMessageId",
+            "leafMessageId",
+            "version"
+          ],
+          "properties": {
+            "branchId": {
+              "$ref": "#/$defs/id"
+            },
+            "parentBranchId": {
+              "$ref": "#/$defs/id"
+            },
+            "rootMessageId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/presentationMessageId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "leafMessageId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/presentationMessageId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "customMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "timestamp",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "CUSTOM"
+        },
+        "name": {
+          "const": "kokoro.message.replace.v1"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "presentationMessageId",
+            "role",
+            "lifecycle",
+            "parentPresentationMessageId",
+            "ordinal",
+            "version"
+          ],
+          "properties": {
+            "presentationMessageId": {
+              "$ref": "#/$defs/presentationMessageId"
+            },
+            "role": {
+              "enum": [
+                "user",
+                "assistant",
+                "system"
+              ]
+            },
+            "lifecycle": {
+              "enum": [
+                "created",
+                "streaming",
+                "completed",
+                "partial",
+                "failed",
+                "canceled"
+              ]
+            },
+            "parentPresentationMessageId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/presentationMessageId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ordinal": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "customRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "timestamp",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "CUSTOM"
+        },
+        "name": {
+          "const": "kokoro.run.replace.v1"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "presentationRunId",
+            "state",
+            "ownerVersion"
+          ],
+          "properties": {
+            "presentationRunId": {
+              "$ref": "#/$defs/presentationRunId"
+            },
+            "state": {
+              "enum": [
+                "starting",
+                "running",
+                "waiting",
+                "canceling",
+                "finished",
+                "error"
+              ]
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            }
+          }
+        }
+      }
+    },
+    "customControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "timestamp",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "CUSTOM"
+        },
+        "name": {
+          "const": "kokoro.control.replace.v1"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "controlRef",
+            "ownerRef",
+            "decisionGroupRef",
+            "kind",
+            "state",
+            "ownerVersion",
+            "allowedActions",
+            "updatedAt"
+          ],
+          "properties": {
+            "controlRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerRef": {
+              "$ref": "#/$defs/id"
+            },
+            "decisionGroupRef": {
+              "$ref": "#/$defs/id"
+            },
+            "kind": {
+              "enum": [
+                "approval",
+                "interaction",
+                "plan",
+                "cancellation"
+              ]
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "accepted",
+                "rejected",
+                "expired",
+                "canceled"
+              ]
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "allowedActions": {
+              "type": "array",
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "approve",
+                  "reject",
+                  "edit",
+                  "respond",
+                  "accept"
+                ]
+              }
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "approval",
+                      "interaction"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "allowedActions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "#/$defs/actionDecision"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "plan"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "allowedActions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 2,
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "#/$defs/planDecision"
+                    }
+                  }
+                },
+                "type": "object"
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "cancellation"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "then": {
+                "properties": {
+                  "allowedActions": {
+                    "type": "array",
+                    "maxItems": 0
+                  }
+                },
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "customReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "timestamp",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "CUSTOM"
+        },
+        "name": {
+          "const": "kokoro.receipt.replace.v1"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "receiptRef",
+            "controlRef",
+            "ownerRef",
+            "decisionGroupRef",
+            "commandId",
+            "operation",
+            "state",
+            "ownerVersion",
+            "updatedAt"
+          ],
+          "properties": {
+            "receiptRef": {
+              "$ref": "#/$defs/id"
+            },
+            "controlRef": {
+              "$ref": "#/$defs/id"
+            },
+            "ownerRef": {
+              "$ref": "#/$defs/id"
+            },
+            "decisionGroupRef": {
+              "$ref": "#/$defs/id"
+            },
+            "commandId": {
+              "$ref": "#/$defs/id"
+            },
+            "operation": {
+              "$ref": "#/$defs/id"
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "accepted",
+                "committed",
+                "rejected",
+                "unknown"
+              ]
+            },
+            "ownerVersion": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/canonicalUtcMs"
+            }
+          }
+        }
+      }
+    },
+    "eventType": {
+      "enum": [
+        "RUN_STARTED",
+        "RUN_FINISHED",
+        "RUN_ERROR",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "ACTIVITY_SNAPSHOT",
+        "CUSTOM"
+      ]
+    },
+    "frameData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "bindingUpdate",
+        "event"
+      ],
+      "properties": {
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publicSourceEventId",
+            "eventKind",
+            "sessionId",
+            "streamEpoch",
+            "durableSeq",
+            "projectionRevision",
+            "recordedAt"
+          ],
+          "properties": {
+            "publicSourceEventId": {
+              "$ref": "#/$defs/publicSourceEventId"
+            },
+            "eventKind": {
+              "$ref": "#/$defs/id"
+            },
+            "sessionId": {
+              "$ref": "#/$defs/id"
+            },
+            "streamEpoch": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "durableSeq": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "projectionRevision": {
+              "$ref": "#/$defs/positiveUint64"
+            },
+            "recordedAt": {
+              "$ref": "#/$defs/dateTime"
+            }
+          }
+        },
+        "presentationRunBindingRef": {
+          "$ref": "#/$defs/runBindingRef"
+        },
+        "presentationMessageBindingRef": {
+          "$ref": "#/$defs/messageBindingRef"
+        },
+        "presentationOwnerBindingRef": {
+          "$ref": "#/$defs/ownerBindingRef"
+        },
+        "bindingUpdate": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json"
+        },
+        "event": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/runStarted"
+            },
+            {
+              "$ref": "#/$defs/runFinished"
+            },
+            {
+              "$ref": "#/$defs/runError"
+            },
+            {
+              "$ref": "#/$defs/textStart"
+            },
+            {
+              "$ref": "#/$defs/textContent"
+            },
+            {
+              "$ref": "#/$defs/textEnd"
+            },
+            {
+              "$ref": "#/$defs/activitySafeSummary"
+            },
+            {
+              "$ref": "#/$defs/activityToolPreview"
+            },
+            {
+              "$ref": "#/$defs/activityHitl"
+            },
+            {
+              "$ref": "#/$defs/activityPlan"
+            },
+            {
+              "$ref": "#/$defs/activitySubagent"
+            },
+            {
+              "$ref": "#/$defs/activityMedia"
+            },
+            {
+              "$ref": "#/$defs/activityArtifact"
+            },
+            {
+              "$ref": "#/$defs/activityCost"
+            },
+            {
+              "$ref": "#/$defs/activityNotice"
+            },
+            {
+              "$ref": "#/$defs/activityError"
+            },
+            {
+              "$ref": "#/$defs/customSession"
+            },
+            {
+              "$ref": "#/$defs/customBranch"
+            },
+            {
+              "$ref": "#/$defs/customMessage"
+            },
+            {
+              "$ref": "#/$defs/customRun"
+            },
+            {
+              "$ref": "#/$defs/customControl"
+            },
+            {
+              "$ref": "#/$defs/customReceipt"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "RUN_STARTED",
+                      "RUN_FINISHED",
+                      "RUN_ERROR"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationMessageBindingRef": false,
+              "presentationOwnerBindingRef": false,
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/runReplace"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "TEXT_MESSAGE_START",
+                      "TEXT_MESSAGE_END"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef",
+              "presentationMessageBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationMessageBindingRef": {
+                "$ref": "#/$defs/messageBindingRef"
+              },
+              "presentationOwnerBindingRef": false,
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/messageReplace"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "TEXT_MESSAGE_CONTENT"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef",
+              "presentationMessageBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationMessageBindingRef": {
+                "$ref": "#/$defs/messageBindingRef"
+              },
+              "presentationOwnerBindingRef": false,
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/none"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "CUSTOM"
+                  },
+                  "name": {
+                    "enum": [
+                      "kokoro.session.replace.v1",
+                      "kokoro.branch.replace.v1"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "presentationRunBindingRef": false,
+              "presentationMessageBindingRef": false,
+              "presentationOwnerBindingRef": false,
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/none"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "CUSTOM"
+                  },
+                  "name": {
+                    "const": "kokoro.message.replace.v1"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef",
+              "presentationMessageBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationMessageBindingRef": {
+                "$ref": "#/$defs/messageBindingRef"
+              },
+              "presentationOwnerBindingRef": false,
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/none"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "CUSTOM"
+                  },
+                  "name": {
+                    "const": "kokoro.run.replace.v1"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationMessageBindingRef": false,
+              "presentationOwnerBindingRef": false,
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/none"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "ACTIVITY_SNAPSHOT"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef",
+              "presentationOwnerBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationOwnerBindingRef": {
+                "$ref": "#/$defs/ownerBindingRef"
+              },
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/ownerReplace"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "CUSTOM"
+                  },
+                  "name": {
+                    "enum": [
+                      "kokoro.control.replace.v1",
+                      "kokoro.receipt.replace.v1"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "presentationRunBindingRef",
+              "presentationOwnerBindingRef"
+            ],
+            "properties": {
+              "presentationRunBindingRef": {
+                "$ref": "#/$defs/runBindingRef"
+              },
+              "presentationMessageBindingRef": false,
+              "presentationOwnerBindingRef": {
+                "$ref": "#/$defs/ownerBindingRef"
+              },
+              "bindingUpdate": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json#/$defs/ownerReplace"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "event": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "ACTIVITY_SNAPSHOT"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  }
+                },
+                "required": [
+                  "event"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "event": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "CUSTOM"
+                      },
+                      "name": {
+                        "enum": [
+                          "kokoro.control.replace.v1",
+                          "kokoro.receipt.replace.v1"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "name"
+                    ]
+                  }
+                },
+                "required": [
+                  "event"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "else": {
+            "properties": {
+              "presentationOwnerBindingRef": false
+            },
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -83,6 +83,7 @@ class ModelGatewayServiceClient(ConnectClient):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+
     def stream_model(
         self,
         request: kokoro_dot_platform_dot_model_dot_v1_dot_model__gateway__pb2.StreamModelRequest,
@@ -102,6 +103,7 @@ class ModelGatewayServiceClient(ConnectClient):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+
 
 
 

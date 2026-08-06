@@ -1,0 +1,765 @@
+{
+  "contractRevision": "kokoro.generated-artifact-provenance.v1",
+  "boundaryId": "generated-kokoro-agent@v1",
+  "consumerRepository": "kokoro-agent",
+  "sourceRootCommit": "09c8007a436d4996a32097e3c803143a2a8b6341",
+  "sourceFiles": [
+    {
+      "path": "contract/buf.gen.yaml",
+      "sha256": "sha256:ba342b769bde295ee362a5876dd51ab06aa412ac84f117220bd78eb31d67ce6b"
+    },
+    {
+      "path": "contract/buf.lock",
+      "sha256": "sha256:f167aece00cd881df9e57b220d5edeff1343c5020a6caed6b425a213f75991ee"
+    },
+    {
+      "path": "contract/buf.yaml",
+      "sha256": "sha256:b71f20db373671d58f73156590cbeaf8fc1c470fe2fe1d69752808f0b4e80e1c"
+    },
+    {
+      "path": "contract/corpus/interaction-identity-v2.json",
+      "sha256": "sha256:29a12eca87ed52dd6e4bda6f862c493a6cdd2d6ba2decab2a37de87ffcd1ca26"
+    },
+    {
+      "path": "contract/corpus/media-canonicalization-v1.json",
+      "sha256": "sha256:cabeed365c6de315419d8913cce44f15b9d1689951ad307de6f7270de8966a76"
+    },
+    {
+      "path": "contract/corpus/presentation-v1.json",
+      "sha256": "sha256:692b98d30fea9ed7e5a81239ea0e368add84fba685bc70d10f29eb3201661706"
+    },
+    {
+      "path": "contract/corpus/projection-integrity-v1.json",
+      "sha256": "sha256:29e8d50c9c03fe3cbc1045bf022c46b9fe130ca44b6d28a4f8b8e269066cc29c"
+    },
+    {
+      "path": "contract/corpus/site-release-publication-command-v1.json",
+      "sha256": "sha256:fe95242fec4c006fe074532ab1bacb1bdbc0d0175cf30bfbdc44ca6182af18a6"
+    },
+    {
+      "path": "contract/corpus/web-release-composition-v1.json",
+      "sha256": "sha256:93be4068ce7c21a336bf84e9bd341c848907c93fe4de9adc5f04a1a74827b9d8"
+    },
+    {
+      "path": "contract/generate-media-canonical.mjs",
+      "sha256": "sha256:93d9651a6ff01b1deb8abc0f7cdb30eeeaeedc7e4c09ab1255f78b61281d6f2e"
+    },
+    {
+      "path": "contract/generate-public-openapi.mjs",
+      "sha256": "sha256:7a76893f453f79d02b8238302ec9d898714b225d07634824cb1b099afaff50a6"
+    },
+    {
+      "path": "contract/generate.mjs",
+      "sha256": "sha256:9692e3e307a7c45d88a9221e0736dd3302a8cf2212a505db10ca9b991328d054"
+    },
+    {
+      "path": "contract/generate.py",
+      "sha256": "sha256:29220bc3360ac2b8994d1d5c59ca58f15ec9a597b144cc26e874979634db7b4e"
+    },
+    {
+      "path": "contract/lib/committed-worktree.mjs",
+      "sha256": "sha256:b8f16b7e55ecd4b9ffcbe6d8f1526776e45d65f940dda035f7d585b6c1d3553f"
+    },
+    {
+      "path": "contract/lib/generation/consumer-manifest.mjs",
+      "sha256": "sha256:245f3a29042c70adbd99e522b7ea5e6a66f7f8d1bc27b0b29b4cc1d899e17498"
+    },
+    {
+      "path": "contract/lib/generation/output-transaction.mjs",
+      "sha256": "sha256:6f9542ba15d47829a8110893baddefda08bbc8397590c8521d228be1d42d3ae8"
+    },
+    {
+      "path": "contract/lib/generation/presentation-typescript.mjs",
+      "sha256": "sha256:e59f1c88deb29fc0719b159fb9b09a3a49dd3b0d226b88b9bc0a2b1d25607c60"
+    },
+    {
+      "path": "contract/lib/generation/stage-consumer.mjs",
+      "sha256": "sha256:2987ec0d193aa6d346272b6e0fa65ca66a90fffb95a5673f1ea198d7f85b3ace"
+    },
+    {
+      "path": "contract/lib/provenance/build-manifest.mjs",
+      "sha256": "sha256:dd8bf717c79756f837e732c5428aafd9cfe80639fcbeff7517a621da83066458"
+    },
+    {
+      "path": "contract/lib/provenance/canonical-manifest.mjs",
+      "sha256": "sha256:969a057bb55ee2dd0f01f0148254d6a7339cdc4674413f2d16b49682da3afb2e"
+    },
+    {
+      "path": "contract/openapi/admin-web-v1.yaml",
+      "sha256": "sha256:0f8c267e5f2ad09e1c65a044beb5b5fcb88a4e50bd89602c2ad5dcccbf6be48c"
+    },
+    {
+      "path": "contract/openapi/asset-data-plane-v1.yaml",
+      "sha256": "sha256:33de398d498d8a11cd9ce65b63824b171aa9b0894952f901cde0672ec07fb1aa"
+    },
+    {
+      "path": "contract/openapi/platform-public-v1.yaml",
+      "sha256": "sha256:b003b60248c311b57c88f3788bcc858c2defeacde3776e7b739a8ade54a4b55b"
+    },
+    {
+      "path": "contract/package.json",
+      "sha256": "sha256:378bfa9af5553465fe71265fac0548e2544c366888f73cc698809eb2961fe2d0"
+    },
+    {
+      "path": "contract/pnpm-lock.yaml",
+      "sha256": "sha256:f71c223be467971407c5942f60960b91a5654bf7be92e2a4fd9d93435b25deee"
+    },
+    {
+      "path": "contract/pnpm-workspace.yaml",
+      "sha256": "sha256:676e28272cd6e16e8f91702e78b5ed46fb19807c83121bfa5a6150b32461d600"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/control/v2/session_agent_control.proto",
+      "sha256": "sha256:93db2d54fa8d54d3a369572701c6e115e9575070a22074bea8cfaab424081bd9"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/execution/v1/agent_execution_evidence.proto",
+      "sha256": "sha256:01aa0f16d5c1a0d0d18af08a00770a7553063d0a1045b041caef12bf82b75f53"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/execution/v2/agent_execution_evidence.proto",
+      "sha256": "sha256:f1edbdf71e2b9abcc2a3dd4ff294e9c6c38078b5273a76322d6186aa1f0693f7"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/presentation/v1/presentation.proto",
+      "sha256": "sha256:c2ae6a209ee75b2e58938e3ba0978e63867c56e1863cd3cdd673ee9a909d4b3f"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v1/error.proto",
+      "sha256": "sha256:ef7a83bd42248109e1bfdf60d37f19ec3c91eb36749bc566d9e6388a8fa33b3e"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v1/projection_integrity.proto",
+      "sha256": "sha256:fa9c990f3937e3f807af747be1126e86f3b81f6e013290b53ee612527d81d34a"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v1/receipt.proto",
+      "sha256": "sha256:eda1652a157f0829efe656f686a8a312aeca8d56206f21fbd7bb1141ff844719"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v2/command_envelope.proto",
+      "sha256": "sha256:dd4451ec255413c5c3eb7f7a6caadc961d72e00828bdb54aa88fec5aed0a71e7"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v1/admin_auth.proto",
+      "sha256": "sha256:890b152347e995ac592616172ff3aee32d1da019488297b3a37600de7d8b57b9"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v2/admin_command.proto",
+      "sha256": "sha256:3eef80ba47ec0a9c2e6e4c1a9aca4b76a2406756fccd671dcedb80b1665d3b05"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v2/admin_query.proto",
+      "sha256": "sha256:9a8c650f37f57258ee382ec2249eb4bdd56ead6b46cdc70ac83e11bfe089768d"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v2/admin_shared.proto",
+      "sha256": "sha256:2468fe92f108706656d58edeceb02b7627f36c00d2e434a7e36b8862bdf505e1"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admission/v1/admission.proto",
+      "sha256": "sha256:3e4091cde7ace9f08bb4c0a507471a8a975878e8ad5c5b2038c5b278040c1cca"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/asset/v1/asset_eligibility.proto",
+      "sha256": "sha256:6e496aa5de08e1ea660bb671fbc62d47fc7862a349ea42b7305097f6d36e7518"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/authorization/v1/session_authorization.proto",
+      "sha256": "sha256:fa9f17a1ee7399cf5c6b8aaa3c5e45fdd953132367407efe8e617e002dcaa3cf"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/authorization/v2/scoped_session_authorization.proto",
+      "sha256": "sha256:499e71b69a99d0a496756b76d17f514b27cdbbfc25ffd65bd1a8564c7e58a36f"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/capability/v1/capability_catalog.proto",
+      "sha256": "sha256:b4c9d8076f12ce3e513291a77f47cea9a8573ed90076732b2e7e04049c00fd3a"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/admin_commerce.proto",
+      "sha256": "sha256:f27bb896ac141af5670848c7f5cc37d32e05dc4f4247a95cae3357df7f4a1904"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/commerce_catalog.proto",
+      "sha256": "sha256:c9176136565afbc15c13011f875779bf791528f517b0706a96725f840d35d841"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/commerce_control.proto",
+      "sha256": "sha256:e3c9fc9127663e5602d3393f44e8609fa0dde4027b1809059706b3008e9f9b97"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/fulfillment.proto",
+      "sha256": "sha256:4ca7419a1058e625a686375971a151ffa1fd8e48e8e0c0e1297108194f3e7d55"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/admin_credit.proto",
+      "sha256": "sha256:939eaf5248f4e0755c3939fa8f61185fa830587d77321a7c725422535120eb68"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/cost_projection.proto",
+      "sha256": "sha256:d0397fcefb0b3ca0f0864e53e56fdfb240b69c32beba7b6ed92f162674858d8c"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/cost_projection_recovery.proto",
+      "sha256": "sha256:6430b5fe17ed329d612d00997aaefea2d1aa445219fcceadef65a2b661595b18"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/credit_catalog.proto",
+      "sha256": "sha256:3df22c465bfb3700927fa5e6ad007ee35026b776f8c322b7f8efb5fb36c05f77"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/identity/v1/admin_identity.proto",
+      "sha256": "sha256:ff78070d726c076633878cf04ec19d05e99f8956783c321dffa0fd70a0e39173"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_canonical.proto",
+      "sha256": "sha256:4be16d9066250acc26695e49d130653908a8781ca013153427959522e40f3c53"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_projection.proto",
+      "sha256": "sha256:57a657ec8f2fb80554c893137bb4c60eb1bf6be3562425ef41ab5f4e18acfe66"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_projection_recovery.proto",
+      "sha256": "sha256:7190898a6872162fb0345ea0f5cac005f52d071ef549bd35df6a1eaa5eee0e14"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_runtime.proto",
+      "sha256": "sha256:aaaa5af0bbe09b5fb61b044bb19a2b8b2a77aa9cb53b8e84d8a144abc255b687"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/model/image/v1/image_effect.proto",
+      "sha256": "sha256:4de437eafedefc453915695640fd1b0a4c3bc2a6ea95aaf4538e579f18a8fa90"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/model/v1/model_control.proto",
+      "sha256": "sha256:7f9aee6cd7eb388b220788da2439e2c018a8f53241a7ef97a664c763f3fa5958"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/model/v1/model_gateway.proto",
+      "sha256": "sha256:1ba64128c12ae01a2d24861554b433e0ee5401113cb1a0b1218617e11b3907b1"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/product/v1/product_catalog_publication.proto",
+      "sha256": "sha256:e36c3b6190d50c78e55243e3ff88ea10ee2d21796582d36b06834e6e00bf270d"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/publication/v1/publication_common.proto",
+      "sha256": "sha256:087c512f7ce907032e8cadc46cbd66a7831d11cb8363e9713d0eaed9825931a1"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/site/v1/site_lifecycle.proto",
+      "sha256": "sha256:c08935b7a22f012bb55aaf7ab62d6586e5ebf7a001fa05d470be5e9124c97dc7"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/site/v1/site_provisioning.proto",
+      "sha256": "sha256:3c2a9876b814d8e65c0ebf44747749f38cf401d1a394d35b50bd01de34f2b177"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/site/v1/site_publication.proto",
+      "sha256": "sha256:59e0b18ea8304ae9f6bff0c73524c5e87abac714b526d3c22008c67a8a299fba"
+    },
+    {
+      "path": "contract/proto/kokoro/session/admission/v1/session_admission_owner.proto",
+      "sha256": "sha256:81f609f617858a82edc87a0a75bc33ff5f0689325e91c9adbc5c6251215944dd"
+    },
+    {
+      "path": "contract/proto/kokoro/session/dispatch/v1/dispatch_owner_evidence.proto",
+      "sha256": "sha256:f8c19d79a2b08a5381eb967b135a6125bbfc58bd24120648e465851ab7e56745"
+    },
+    {
+      "path": "contract/proto/kokoro/session/media/v1/media_projection.proto",
+      "sha256": "sha256:485a2cc406bdf00a2ec31fafce87af6331d322e6b7e35fce18a0d2b97c8b73e8"
+    },
+    {
+      "path": "contract/proto/kokoro/session/media/v1/media_projection_ingest.proto",
+      "sha256": "sha256:8601bca928113b028f66f2c35ddb4c34b09cce1ed9ee5b126288508aa14a2aaa"
+    },
+    {
+      "path": "contract/registry/boundaries.schema.json",
+      "sha256": "sha256:9306cd719e1e0daceb67e242737e3653a2403ec4e1e64a78e0b66447d3fd3853"
+    },
+    {
+      "path": "contract/registry/boundaries.yaml",
+      "sha256": "sha256:08553773b0fde64f534ec3928bddb39fc1abb6ffb3c4e221cd27b6a5e0179831"
+    },
+    {
+      "path": "contract/registry/consumer-generation-transition-v1.yaml",
+      "sha256": "sha256:3553a52efdd00c53eed9e6bdd563575c57df5210967799bf2139f3e05902477f"
+    },
+    {
+      "path": "contract/registry/generated-consumers.schema.json",
+      "sha256": "sha256:2cc48b12ff5525bd2c940bb516d77b6c30578d74ecbbae9096b52d40aae0bdfe"
+    },
+    {
+      "path": "contract/registry/generated-consumers.yaml",
+      "sha256": "sha256:7a98a0784b0f80fb5bc12df666ed370d29cd0c9fd84e2f11e25f009595ab9e3e"
+    },
+    {
+      "path": "contract/registry/platform-session-authorization-v1.yaml",
+      "sha256": "sha256:e413fefdb48f161dd34104a9aeaac07b2011c112c22373a4439ed33777daf36c"
+    },
+    {
+      "path": "contract/registry/platform-session-authorization-v2.yaml",
+      "sha256": "sha256:b854c5622e30da4aedea000168f21e29a003526de223033241ec057ad8a170f2"
+    },
+    {
+      "path": "contract/registry/prelaunch-protobuf-hard-cuts.yaml",
+      "sha256": "sha256:75de798d5444f8333e9b5d5893970774ab32441f3acce14c191b034d1e2bd963"
+    },
+    {
+      "path": "contract/registry/prelaunch-schema-hard-cuts.yaml",
+      "sha256": "sha256:9fcf7b62b7a3fc3d166fb3bf7a9122e8f9c8850d59b884db0e593e061b6952c4"
+    },
+    {
+      "path": "contract/registry/presentation/INDEX.md",
+      "sha256": "sha256:47e65a1cbbd71500cf74a34a7d79629f28f9d292ccd701a527b81677d57b8418"
+    },
+    {
+      "path": "contract/registry/presentation/ag-ui-version-lock.yaml",
+      "sha256": "sha256:2e7d950ab9f5d7f21067d21c9ca6baba3159facbc916b4fd95791cfd486d5462"
+    },
+    {
+      "path": "contract/registry/presentation/state-policy-v1.yaml",
+      "sha256": "sha256:070159317b5b2e839f3d96b5152c055172bf0ebc0f478a3680d6a28b497c3374"
+    },
+    {
+      "path": "contract/registry/presentation/stream-policy-v1.yaml",
+      "sha256": "sha256:d38a958b200d8f908572529da8a547cf96fdbab8031acd30d57e7dfe37b16717"
+    },
+    {
+      "path": "contract/registry/presentation/submission-policy-v1.yaml",
+      "sha256": "sha256:393a109f09927008c4f07ada38c0f3e85788b539d61c238538738932fbbe65aa"
+    },
+    {
+      "path": "contract/registry/presentation/wire-profile-v1.yaml",
+      "sha256": "sha256:3a1f39d054dc0384a3f7c67abf879ba21b313949e6e12f2eab57506eb5c7685b"
+    },
+    {
+      "path": "contract/registry/root-contract-hard-cut-ledger-v1.yaml",
+      "sha256": "sha256:61c39b22e57f4298c72561768803d0a8ef052a285bbb042f09817d19b210befd"
+    },
+    {
+      "path": "contract/registry/trusted-web-release-producers.yaml",
+      "sha256": "sha256:4998f9e37779fa1f13bada783523a6f2abebf4ddf62c91421e987aa3fd1651b2"
+    },
+    {
+      "path": "contract/registry/web-release-composition.yaml",
+      "sha256": "sha256:0239f58040ee316cd772e170fa0c74f625eec59b08248815125c7665762a523d"
+    },
+    {
+      "path": "contract/spec/activation-authority-snapshot.yaml",
+      "sha256": "sha256:44a0b0732cd66cbf6e624c4656469395793a33e6976c43540fda2fb7cd303eea"
+    },
+    {
+      "path": "contract/spec/activation-eligibility-evidence.yaml",
+      "sha256": "sha256:70fafec289c197f47e2f2f49bccd34f76110daefb03573d70179c7083417abf7"
+    },
+    {
+      "path": "contract/spec/compiled-web-manifest.yaml",
+      "sha256": "sha256:d80a198e3fafc73b9ea759f2ba9b8fe17174297135c106097ba2295b11554b99"
+    },
+    {
+      "path": "contract/spec/control.yaml",
+      "sha256": "sha256:28b356b39bfd0ebc7e06d48b0b432e59fad0b35cedb7c789d2864ed106debc2b"
+    },
+    {
+      "path": "contract/spec/events.yaml",
+      "sha256": "sha256:86cf0536deb410768a58feb65a7b760493a51015187402c882152e363612f178"
+    },
+    {
+      "path": "contract/spec/generated-artifact-provenance-v1.yaml",
+      "sha256": "sha256:00f18254bc62670b33a09c7b0e4688b863798782c1cbc2aa8e00724773101cbe"
+    },
+    {
+      "path": "contract/spec/http.yaml",
+      "sha256": "sha256:044d029eef3a29eac20084ca4f3e5ce19e95c9d609e2f87c3ef5d30d34af3adf"
+    },
+    {
+      "path": "contract/spec/launch-product-profile.yaml",
+      "sha256": "sha256:2a94462472fcb15a51c380047d5de3cd06c5c8c255e7157bf22153b576fdbda7"
+    },
+    {
+      "path": "contract/spec/media-canonicalization.yaml",
+      "sha256": "sha256:a0a26ac4bb9b86f0d0c1e80bfc0c3330d8e9a6b5c1664eb015479e1ac5989808"
+    },
+    {
+      "path": "contract/spec/media-projection.yaml",
+      "sha256": "sha256:f1f3d8838186f49e9dbe59911f2307f03b01b5b9b9f05980bd30dcaa2277e0ca"
+    },
+    {
+      "path": "contract/spec/model-control-browser-recovery.yaml",
+      "sha256": "sha256:6d5fbc430bacf67bedaa818547a3221c50b0ea149766b916bc6e4c274d05f510"
+    },
+    {
+      "path": "contract/spec/platform-runtime.yaml",
+      "sha256": "sha256:b959bdcdd6c4e6fc3749d26e8f96862144efab97493422206b1da1b2cbebe4a2"
+    },
+    {
+      "path": "contract/spec/presentation/ag-ui-frame-v1.yaml",
+      "sha256": "sha256:8e89177b3f5fcdb79f5fc0a26c46d8de6c504047ee181ae884103d401bdb61b7"
+    },
+    {
+      "path": "contract/spec/presentation/ag-ui-submission-event-v1.yaml",
+      "sha256": "sha256:f929ec2c74103cd6c97baddbcea9f6485ffabbc30313d758b88273d155247f19"
+    },
+    {
+      "path": "contract/spec/presentation/binding-update-v1.yaml",
+      "sha256": "sha256:cfea776d58361f88a0c0a8d8ec5413983472f702abad0e7d425aa021356c26f7"
+    },
+    {
+      "path": "contract/spec/presentation/binding-v1.yaml",
+      "sha256": "sha256:9ea081aff4ab48ceb857d3f58464a01971ad7ed88f96133858827f729d269843"
+    },
+    {
+      "path": "contract/spec/presentation/domain-event-v1.yaml",
+      "sha256": "sha256:adb35e4adc4714146dd7ed505809fe6e14f9bbfe8bfc34560583b23c537c53fa"
+    },
+    {
+      "path": "contract/spec/presentation/owner-state-v1.yaml",
+      "sha256": "sha256:7913424e8b33d81614753139bac987a8c12de6522b179c38e42fd242521092c5"
+    },
+    {
+      "path": "contract/spec/presentation/snapshot-v1.yaml",
+      "sha256": "sha256:739157c1f3942e30558369286d2b8fce42cbfc2cfea42679ef2e1a566d42a66c"
+    },
+    {
+      "path": "contract/spec/presentation/stream-record-v1.yaml",
+      "sha256": "sha256:7d873772b9bf2854001a84705f420839d686c7264e9c3c0540b3a82ffde1b01f"
+    },
+    {
+      "path": "contract/spec/presentation/stream-v1.yaml",
+      "sha256": "sha256:26459aa9c97ce31933dbef684265823252ea12c4756df323db0d6658af68f86c"
+    },
+    {
+      "path": "contract/spec/presentation/submission-v1.yaml",
+      "sha256": "sha256:4e5031874ccdf27e3456a6561aed7f8c153a6dbafbb99be102df9bc12107572a"
+    },
+    {
+      "path": "contract/spec/product-surface-catalog.yaml",
+      "sha256": "sha256:d37698e12299f61079d704d9ed1996fcc4545d7771b7dfa1b05228cce1d1546c"
+    },
+    {
+      "path": "contract/spec/projection-integrity.yaml",
+      "sha256": "sha256:cd3855b7cf4d702ff063b90e8c017d2087bbec07d9a9d3557217b651b6b3cdc7"
+    },
+    {
+      "path": "contract/spec/release-certification-instance.yaml",
+      "sha256": "sha256:2e0f27eddd0be8fed7f7b12425dd928ab36fe5b73315a83fbd785c7b500116d1"
+    },
+    {
+      "path": "contract/spec/release-certification-revocation.yaml",
+      "sha256": "sha256:5fa1b99f0a155052b2ede0899836e8bdfdd3c94c50256867f295f8614695751b"
+    },
+    {
+      "path": "contract/spec/session-agent-control-v2.yaml",
+      "sha256": "sha256:0cfdcb65a4be79528e07a40e857941ee007cf9ed1539ec066af0dd747b5653a3"
+    },
+    {
+      "path": "contract/spec/site-release-candidate.yaml",
+      "sha256": "sha256:d6e31adf4014fc235a8c029baeb119862be77df67adb6ab5fedf32d9b3754045"
+    },
+    {
+      "path": "contract/spec/site-release.yaml",
+      "sha256": "sha256:f980d25f590c2895738ff78c75d7c827024ebdaf72e38d4995d731e24dfc54e9"
+    },
+    {
+      "path": "contract/spec/storage.yaml",
+      "sha256": "sha256:b735968ab37b057a3667e8f4ccd2bb79bb38dbc74e9a59cdce3877070f7b2a8e"
+    },
+    {
+      "path": "contract/spec/streams.yaml",
+      "sha256": "sha256:0f53536738a71ed37f834b051b07e340fe87c41989c9fa48f7f1e00700f0210b"
+    },
+    {
+      "path": "contract/spec/surface-inventory.yaml",
+      "sha256": "sha256:9ddca157bfd2dbb9db0ce6fa9ff97742348c198908a38b9e50cb0384c22ee08c"
+    },
+    {
+      "path": "contract/spec/web-artifact-provenance-profile.yaml",
+      "sha256": "sha256:42099053581a28b790237f5dadd8c06e422b21ac1e08e78edaaf1137993ffe05"
+    },
+    {
+      "path": "contract/spec/web-build-intent.yaml",
+      "sha256": "sha256:69f4f1dc053df5aa456b23f15dc8dd1280372b9a3fab17815f5ef9ba4a0e4ec5"
+    },
+    {
+      "path": "contract/spec/web-build-material-bundle.yaml",
+      "sha256": "sha256:5146ef2e810c42d221f63df7eea17921b69c65329e60a3ee60024c4730228c00"
+    },
+    {
+      "path": "contract/spec/web-build-toolchain.yaml",
+      "sha256": "sha256:79b5091f7aeb43ec6342ff7a88af013e5585fb4088689f412e6fc185abcb268d"
+    },
+    {
+      "path": "contract/spec/web-composition-registry.yaml",
+      "sha256": "sha256:20edfc25b4d2b97ac4705faf3d47a9afa634cdaed3051d2fcbd2aac04c15b121"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "sha256:20bf81f3b0e5fdab7fbd4fe46fca5a0a601a1143b2c9698e21ba890d4a4fb829"
+    },
+    {
+      "path": "scripts/contract/openapi-reader.mjs",
+      "sha256": "sha256:2ff646e8e3868bc25d053904b351b4b16ee0b68b797ab6f844634ae7a53df9b8"
+    },
+    {
+      "path": "scripts/contract/read-openapi.py",
+      "sha256": "sha256:36412bfc52791979816f49cea9bc046769a542e3418ec6688be0fe78f6a8eb49"
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "sha256:3d3d45c5d4b8b8ef93efbb871457c461bf3bdfa2af2a7ca1ab508d5bd6ae8423"
+    }
+  ],
+  "generator": {
+    "name": "contract/generate.mjs",
+    "version": "kokoro.consumer-generation.v1",
+    "lockDigest": "sha256:041ad55bd754d088e7d7589053d3bedc25e962d439c7bd8f07dcfd8daea450af",
+    "argv": [
+      "--consumer",
+      "kokoro-agent",
+      "--source-root",
+      "@source-root",
+      "--output-repository",
+      "@consumer-root"
+    ]
+  },
+  "toolchain": {
+    "language": "node+python",
+    "runtimeVersion": "node@24.13.0;python@3.11.14",
+    "packageManagerVersion": "pnpm@11.2.2;uv@0.9.4 (Homebrew 2025-10-18)"
+  },
+  "outputs": [
+    {
+      "path": "src/buf/validate/validate_pb2.py",
+      "sha256": "sha256:31c6afc839527ff9d48a80a08051b9a2a6888269e89c735bb1e9d7f9fde5cd6d"
+    },
+    {
+      "path": "src/buf/validate/validate_pb2.pyi",
+      "sha256": "sha256:3e962083f67f0afe5099f6be3a4e0c2d3efee94396ab251d569af212c1b0b554"
+    },
+    {
+      "path": "src/generated/contracts/interaction/identity-v2.json",
+      "sha256": "sha256:29a12eca87ed52dd6e4bda6f862c493a6cdd2d6ba2decab2a37de87ffcd1ca26"
+    },
+    {
+      "path": "src/generated/contracts/media/canonicalization-v1.json",
+      "sha256": "sha256:cabeed365c6de315419d8913cce44f15b9d1689951ad307de6f7270de8966a76"
+    },
+    {
+      "path": "src/generated/contracts/presentation/ag-ui-version-lock.yaml",
+      "sha256": "sha256:2e7d950ab9f5d7f21067d21c9ca6baba3159facbc916b4fd95791cfd486d5462"
+    },
+    {
+      "path": "src/generated/contracts/presentation/corpus-v1.json",
+      "sha256": "sha256:692b98d30fea9ed7e5a81239ea0e368add84fba685bc70d10f29eb3201661706"
+    },
+    {
+      "path": "src/generated/contracts/presentation/state-policy-v1.yaml",
+      "sha256": "sha256:070159317b5b2e839f3d96b5152c055172bf0ebc0f478a3680d6a28b497c3374"
+    },
+    {
+      "path": "src/generated/contracts/presentation/stream-policy-v1.yaml",
+      "sha256": "sha256:d38a958b200d8f908572529da8a547cf96fdbab8031acd30d57e7dfe37b16717"
+    },
+    {
+      "path": "src/generated/contracts/presentation/submission-policy-v1.yaml",
+      "sha256": "sha256:393a109f09927008c4f07ada38c0f3e85788b539d61c238538738932fbbe65aa"
+    },
+    {
+      "path": "src/generated/contracts/presentation/wire-profile-v1.yaml",
+      "sha256": "sha256:3a1f39d054dc0384a3f7c67abf879ba21b313949e6e12f2eab57506eb5c7685b"
+    },
+    {
+      "path": "src/generated/schema/control.yaml",
+      "sha256": "sha256:28b356b39bfd0ebc7e06d48b0b432e59fad0b35cedb7c789d2864ed106debc2b"
+    },
+    {
+      "path": "src/generated/schema/events.yaml",
+      "sha256": "sha256:86cf0536deb410768a58feb65a7b760493a51015187402c882152e363612f178"
+    },
+    {
+      "path": "src/generated/schema/presentation/ag-ui-frame-v1.schema.json",
+      "sha256": "sha256:8e89177b3f5fcdb79f5fc0a26c46d8de6c504047ee181ae884103d401bdb61b7"
+    },
+    {
+      "path": "src/generated/schema/presentation/ag-ui-submission-event-v1.schema.json",
+      "sha256": "sha256:f929ec2c74103cd6c97baddbcea9f6485ffabbc30313d758b88273d155247f19"
+    },
+    {
+      "path": "src/generated/schema/presentation/binding-update-v1.schema.json",
+      "sha256": "sha256:cfea776d58361f88a0c0a8d8ec5413983472f702abad0e7d425aa021356c26f7"
+    },
+    {
+      "path": "src/generated/schema/presentation/binding-v1.schema.json",
+      "sha256": "sha256:9ea081aff4ab48ceb857d3f58464a01971ad7ed88f96133858827f729d269843"
+    },
+    {
+      "path": "src/generated/schema/presentation/domain-event-v1.schema.json",
+      "sha256": "sha256:adb35e4adc4714146dd7ed505809fe6e14f9bbfe8bfc34560583b23c537c53fa"
+    },
+    {
+      "path": "src/generated/schema/presentation/owner-state-v1.schema.json",
+      "sha256": "sha256:7913424e8b33d81614753139bac987a8c12de6522b179c38e42fd242521092c5"
+    },
+    {
+      "path": "src/generated/schema/presentation/snapshot-v1.schema.json",
+      "sha256": "sha256:739157c1f3942e30558369286d2b8fce42cbfc2cfea42679ef2e1a566d42a66c"
+    },
+    {
+      "path": "src/generated/schema/presentation/stream-record-v1.schema.json",
+      "sha256": "sha256:7d873772b9bf2854001a84705f420839d686c7264e9c3c0540b3a82ffde1b01f"
+    },
+    {
+      "path": "src/generated/schema/presentation/stream-v1.schema.json",
+      "sha256": "sha256:26459aa9c97ce31933dbef684265823252ea12c4756df323db0d6658af68f86c"
+    },
+    {
+      "path": "src/generated/schema/presentation/submission-v1.schema.json",
+      "sha256": "sha256:4e5031874ccdf27e3456a6561aed7f8c153a6dbafbb99be102df9bc12107572a"
+    },
+    {
+      "path": "src/generated/schema/session-agent-control-v2.yaml",
+      "sha256": "sha256:0cfdcb65a4be79528e07a40e857941ee007cf9ed1539ec066af0dd747b5653a3"
+    },
+    {
+      "path": "src/kokoro/agent/control/v2/session_agent_control_connect.py",
+      "sha256": "sha256:3f8125db2b0bec12c6e23c268e675871b5290895edaf9ca32c2bf50860940712"
+    },
+    {
+      "path": "src/kokoro/agent/control/v2/session_agent_control_pb2.py",
+      "sha256": "sha256:516011fdab34ab6c423b666851bebdb532a535d763a09a2b951b5b2e455e000d"
+    },
+    {
+      "path": "src/kokoro/agent/control/v2/session_agent_control_pb2.pyi",
+      "sha256": "sha256:62f71dc2d185f9ff9a3fb1b7981ba4e0ec4b9d0a5291d09d59ebe0c70eb25ced"
+    },
+    {
+      "path": "src/kokoro/agent/execution/v1/agent_execution_evidence_connect.py",
+      "sha256": "sha256:eba1f06b94d936113cf3f5b19e6477ceae0c30f06f9dd1cac903d6a621a6ddf9"
+    },
+    {
+      "path": "src/kokoro/agent/execution/v1/agent_execution_evidence_pb2.py",
+      "sha256": "sha256:4f2970d13544a47f7b77cb3ea59ae166a537a838c07a3a36d7c08667d268990e"
+    },
+    {
+      "path": "src/kokoro/agent/execution/v1/agent_execution_evidence_pb2.pyi",
+      "sha256": "sha256:83d3fb871ed0cfa3fdff5286020bce49d8330b2f39cd8595de17c33374d5327b"
+    },
+    {
+      "path": "src/kokoro/agent/execution/v2/agent_execution_evidence_connect.py",
+      "sha256": "sha256:046ade2a26c8b4b71456417efbf1324bc2e2439b96bd86e00746f867037f19aa"
+    },
+    {
+      "path": "src/kokoro/agent/execution/v2/agent_execution_evidence_pb2.py",
+      "sha256": "sha256:5bfbd29d9e0a4c1fee14ba5012a53c98ca46b6e990aea79aabba9cda3a612fb6"
+    },
+    {
+      "path": "src/kokoro/agent/execution/v2/agent_execution_evidence_pb2.pyi",
+      "sha256": "sha256:d6cb7cd33cc9cec87a49a43549b5711f67889448502a3dc1dec0b3bb7400aab6"
+    },
+    {
+      "path": "src/kokoro/agent/presentation/v1/presentation_connect.py",
+      "sha256": "sha256:eae58273b2d265f706d08809ec88d1baa58c178d2ce0d7acc920b307971c986c"
+    },
+    {
+      "path": "src/kokoro/agent/presentation/v1/presentation_pb2.py",
+      "sha256": "sha256:6303e570566f022c0451de6df2c951c0e26ecd6d8d35f61dfe406080fcc767d6"
+    },
+    {
+      "path": "src/kokoro/agent/presentation/v1/presentation_pb2.pyi",
+      "sha256": "sha256:1655aabd2b785fc45ea1de6b8ae6700ab1eb9d9c15003d0e5a17c242cf8842e2"
+    },
+    {
+      "path": "src/kokoro/common/v1/error_pb2.py",
+      "sha256": "sha256:980492e090844e6b57abc05458673312a5b0b07517dc04c78a97a007a96750d9"
+    },
+    {
+      "path": "src/kokoro/common/v1/error_pb2.pyi",
+      "sha256": "sha256:3547b297902d46f47b3740dc3c7f2fdb4d620ee3e48bd128e437579a6479feb7"
+    },
+    {
+      "path": "src/kokoro/common/v1/receipt_pb2.py",
+      "sha256": "sha256:56929b4458a336bab63e13a51f2775b1f6300bb84a37be0641b471d71a49bd9c"
+    },
+    {
+      "path": "src/kokoro/common/v1/receipt_pb2.pyi",
+      "sha256": "sha256:503280541820eb4e5b29fd6acdda2ac939624bc3ee4187d3d90c619a6fdba8c8"
+    },
+    {
+      "path": "src/kokoro/common/v2/command_envelope_pb2.py",
+      "sha256": "sha256:14af9e760963c67964638064635b874d6018120078eef294671b9203fc141b7a"
+    },
+    {
+      "path": "src/kokoro/common/v2/command_envelope_pb2.pyi",
+      "sha256": "sha256:1999fee5d9a4fd74cebf07e01abbb4a3033097ebab3ce8b7936a84a9ec85bc08"
+    },
+    {
+      "path": "src/kokoro/platform/capability/v1/capability_catalog_connect.py",
+      "sha256": "sha256:49f7681049170f5f3b4765225cdad7a8fcb95c8ced23160f8d5f3eb13a7a00e4"
+    },
+    {
+      "path": "src/kokoro/platform/capability/v1/capability_catalog_pb2.py",
+      "sha256": "sha256:13b68869dc8bddbb0c7360fa7eafacfe3bfc1771f44b80b5738cca18944d5deb"
+    },
+    {
+      "path": "src/kokoro/platform/capability/v1/capability_catalog_pb2.pyi",
+      "sha256": "sha256:ea0c6cb82445c6b131e762c269214a06902f67b3905055d8ae5c7cd87eaad7c6"
+    },
+    {
+      "path": "src/kokoro/platform/media/v1/media_canonical_pb2.py",
+      "sha256": "sha256:fe4eb1a30133c96d6f47c5ee759d8ce8d93375d1f8d806356b1c5086b0e79530"
+    },
+    {
+      "path": "src/kokoro/platform/media/v1/media_canonical_pb2.pyi",
+      "sha256": "sha256:51da789eb073b1e09b48727015ace3f2efc714e6dc8407a4a1e696eec85892e9"
+    },
+    {
+      "path": "src/kokoro/platform/media/v1/media_runtime_connect.py",
+      "sha256": "sha256:10b9ce853c9583c93bae6323b805275d4f3b5b26ccfcc4145d6c66c1aa3a21a3"
+    },
+    {
+      "path": "src/kokoro/platform/media/v1/media_runtime_pb2.py",
+      "sha256": "sha256:f193502b09c0b52a23d6cca315cf33e068d6c005083a69571df132e1e2c69282"
+    },
+    {
+      "path": "src/kokoro/platform/media/v1/media_runtime_pb2.pyi",
+      "sha256": "sha256:f4ada45ccc22d927b13fa2d6030881379f900e9aeef279c51f1a5f756ee60905"
+    },
+    {
+      "path": "src/kokoro/platform/model/v1/model_gateway_connect.py",
+      "sha256": "sha256:4461f02c46dce70f043f9eb1ebd6b4f3c594830338209b8ceb63c7b93b09f110"
+    },
+    {
+      "path": "src/kokoro/platform/model/v1/model_gateway_pb2.py",
+      "sha256": "sha256:990d7a89a7ac19d59b6f24e4b8e4656f1f3d3d8066d209ef71b4495c742beb8a"
+    },
+    {
+      "path": "src/kokoro/platform/model/v1/model_gateway_pb2.pyi",
+      "sha256": "sha256:c991cda2d17e84822dce6c3d8bc92bd6327960bc4f9b1742902ddea0eeadcf89"
+    },
+    {
+      "path": "src/kokoro_agent/contract/__init__.py",
+      "sha256": "sha256:186e0db4330d728a4f3e115fa94d70fbcf5d831d0562d6342390b5ad9d7353b6"
+    },
+    {
+      "path": "src/kokoro_agent/contract/control.py",
+      "sha256": "sha256:daac114d05aa0d406aacd6bc2feab80b6f9e79c3af64d59a117b54c8f38d4593"
+    },
+    {
+      "path": "src/kokoro_agent/contract/events.py",
+      "sha256": "sha256:cbe265256112d14ad2ebe2a5a2ad87a18b10c4503807e3577cf7761a91d7cf13"
+    },
+    {
+      "path": "src/kokoro_agent/contract/storage.py",
+      "sha256": "sha256:f2c45532abcec27d9eb0753b01edcc46814316b5f8575a421894575556e1e5f9"
+    },
+    {
+      "path": "src/kokoro_agent/contract/streams.py",
+      "sha256": "sha256:a3973bd5eb34895b495b91946e544b75e223f0af0b9990861f0def766ff19efa"
+    }
+  ],
+  "manifestDigest": "sha256:64e9bac8f7f2b59947b579c3d348d6af73242e9192c968954b1a94e5e24428a5"
+}

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Protocol, TypeGuard
 from urllib.parse import urlsplit, urlunsplit
@@ -28,6 +29,7 @@ from langchain_core.callbacks.manager import (
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -36,7 +38,7 @@ from langchain_core.messages import (
     UsageMetadata,
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig, ensure_config
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import ConfigDict, PrivateAttr
@@ -53,6 +55,11 @@ from kokoro_agent.model.streaming import (
     ModelStreamTransportError,
     aiter_verified_model_stream,
     iter_verified_model_stream,
+)
+
+_stream_checkpoint_namespace: ContextVar[str | None] = ContextVar(
+    "model_gateway_stream_checkpoint_namespace",
+    default=None,
 )
 
 
@@ -216,6 +223,51 @@ class PlatformModelGatewayChatModel(BaseChatModel):
         formatted = [convert_to_openai_tool(tool, strict=strict) for tool in tools]
         return self.bind(tools=formatted, tool_choice=tool_choice, **kwargs)
 
+    def stream(
+        self,
+        input: LanguageModelInput,
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> Iterator[AIMessageChunk]:
+        resolved_config = ensure_config(config)
+        token = _stream_checkpoint_namespace.set(
+            _checkpoint_namespace_from_config(resolved_config)
+        )
+        try:
+            yield from super().stream(
+                input,
+                config=resolved_config,
+                stop=stop,
+                **kwargs,
+            )
+        finally:
+            _stream_checkpoint_namespace.reset(token)
+
+    async def astream(
+        self,
+        input: LanguageModelInput,
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[AIMessageChunk]:
+        resolved_config = ensure_config(config)
+        token = _stream_checkpoint_namespace.set(
+            _checkpoint_namespace_from_config(resolved_config)
+        )
+        try:
+            async for chunk in super().astream(
+                input,
+                config=resolved_config,
+                stop=stop,
+                **kwargs,
+            ):
+                yield chunk
+        finally:
+            _stream_checkpoint_namespace.reset(token)
+
     def _generate(
         self,
         messages: list[BaseMessage],
@@ -230,7 +282,7 @@ class PlatformModelGatewayChatModel(BaseChatModel):
             raise ModelGatewayUnavailable(rpc_code=error.code.name) from None
         except Exception as error:
             raise ModelGatewayUnavailable(rpc_code=type(error).__name__) from None
-        return self._result(response)
+        return self._result(response, expected_attempt_ref=request.attempt_ref)
 
     async def _agenerate(
         self,
@@ -246,7 +298,7 @@ class PlatformModelGatewayChatModel(BaseChatModel):
             raise ModelGatewayUnavailable(rpc_code=error.code.name) from None
         except Exception as error:
             raise ModelGatewayUnavailable(rpc_code=type(error).__name__) from None
-        return self._result(response)
+        return self._result(response, expected_attempt_ref=request.attempt_ref)
 
     def _stream(
         self,
@@ -349,7 +401,14 @@ class PlatformModelGatewayChatModel(BaseChatModel):
             request=gateway_pb.ChatCompletionRequest(**request_kwargs),
         )
 
-    def _result(self, response: gateway_pb.InvokeModelResponse) -> ChatResult:
+    def _result(
+        self,
+        response: gateway_pb.InvokeModelResponse,
+        *,
+        expected_attempt_ref: str,
+    ) -> ChatResult:
+        if response.attempt_ref != expected_attempt_ref:
+            raise ModelGatewayUnavailable(rpc_code="INVALID_RESPONSE")
         outcome = response.WhichOneof("outcome")
         if outcome == "outcome_unknown":
             raise ModelGatewayOutcomeUnknown(
@@ -489,7 +548,24 @@ def _tools(
 def _checkpoint_namespace(
     manager: CallbackManagerForLLMRun | AsyncCallbackManagerForLLMRun | None,
 ) -> str:
-    value = None if manager is None else manager.metadata.get("langgraph_checkpoint_ns")
+    if manager is not None:
+        value: object = manager.metadata.get("langgraph_checkpoint_ns")
+    else:
+        value = _stream_checkpoint_namespace.get()
+    return _require_checkpoint_namespace(value)
+
+
+def _checkpoint_namespace_from_config(config: RunnableConfig) -> str:
+    metadata = config.get("metadata")
+    value = (
+        metadata.get("langgraph_checkpoint_ns")
+        if isinstance(metadata, Mapping)
+        else None
+    )
+    return _require_checkpoint_namespace(value)
+
+
+def _require_checkpoint_namespace(value: object) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError("MODEL_GATEWAY_STABLE_CALL_IDENTITY_REQUIRED")
     return value

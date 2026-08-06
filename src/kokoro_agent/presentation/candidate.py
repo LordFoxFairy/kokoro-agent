@@ -175,11 +175,16 @@ def _jcs_text(value: JsonValue) -> str:
 
 def event_jcs_bytes(event: ClosedAguiEvent) -> bytes:
     dumped = event.model_dump(mode="json", by_alias=True, exclude_none=True)
-    value = _JSON_VALUE_ADAPTER.validate_python(dumped)
-    encoded = _jcs_text(value).encode("utf-8")
+    encoded = canonical_json_bytes(dumped)
     if len(encoded) > MAX_OFFICIAL_EVENT_JSON_BYTES:
         raise ValueError("official event JCS exceeds byte limit")
     return encoded
+
+
+def canonical_json_bytes(value: JsonValue) -> bytes:
+    """Encode the closed Presentation JSON subset with RFC 8785 key ordering."""
+    validated = _JSON_VALUE_ADAPTER.validate_python(value)
+    return _jcs_text(validated).encode("utf-8")
 
 
 def event_digest(event: ClosedAguiEvent) -> str:
@@ -272,6 +277,7 @@ __all__ = [
     "MAX_SAFE_INTEGER",
     "MAX_UINT64",
     "candidate_identity",
+    "canonical_json_bytes",
     "canonical_recorded_at",
     "event_digest",
     "event_jcs_bytes",

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from google.protobuf.message import Message
 
-from kokoro.agent.presentation.v1 import agent_presentation_pb2 as wire
+from kokoro.agent.presentation.v1 import presentation_pb2 as wire
 from kokoro.common.v2 import command_envelope_pb2 as common_wire
 
 ZERO_SHA256 = "sha256:" + "0" * 64
@@ -48,12 +48,12 @@ def _typed_digest(message: Message) -> str:
 
 def producer_fence(
     producer_instance_ref: str, producer_generation: int
-) -> wire.PresentationProducerFence:
-    payload = wire.PresentationProducerFenceDigestPayload(
+) -> wire.ProducerFence:
+    payload = wire.ProducerFenceDigestPayload(
         producer_instance_ref=producer_instance_ref,
         producer_generation=producer_generation,
     )
-    return wire.PresentationProducerFence(
+    return wire.ProducerFence(
         producer_instance_ref=producer_instance_ref,
         producer_generation=producer_generation,
         producer_fence_digest=_typed_digest(payload),
@@ -61,28 +61,28 @@ def producer_fence(
 
 
 def record_chain_genesis_digest(
-    run_id: str, producer: wire.PresentationProducerFence
+    run_id: str, producer: wire.ProducerFence
 ) -> str:
     return _typed_digest(
-        wire.PresentationRecordChainGenesisDigestPayload(
+        wire.RecordChainGenesisDigestPayload(
             run_id=run_id,
             producer=producer,
         )
     )
 
 
-def candidate_record_digest(
-    run_id: str, record: wire.PresentationCandidateRecord
+def delivery_record_digest(
+    run_id: str, record: wire.DeliveryRecord
 ) -> str:
     return _typed_digest(
-        wire.PresentationCandidateRecordDigestPayload(
+        wire.DeliveryRecordDigestPayload(
             run_id=run_id,
-            presentation_ref=record.presentation_ref,
-            previous_presentation_seq=record.previous_presentation_seq,
-            presentation_seq=record.presentation_seq,
+            record_ref=record.record_ref,
+            previous_delivery_seq=record.previous_delivery_seq,
+            delivery_seq=record.delivery_seq,
             envelope_digest=record.envelope_digest,
-            candidate_ref=record.candidate_ref,
-            candidate_digest=record.candidate_digest,
+            submission_ref=record.submission_ref,
+            submission_digest=record.submission_digest,
             recorded_at=record.recorded_at,
             producer=record.producer,
             previous_record_digest=record.previous_record_digest,
@@ -92,26 +92,26 @@ def candidate_record_digest(
 
 def snapshot_head_digest(
     run_id: str,
-    producer: wire.PresentationProducerFence,
-    snapshot_through_presentation_seq: int,
+    producer: wire.ProducerFence,
+    snapshot_through_delivery_seq: int,
     snapshot_head_record_digest: str | None,
 ) -> str:
-    payload = wire.PresentationSnapshotHeadDigestPayload(
+    payload = wire.DeliveryHeadDigestPayload(
         run_id=run_id,
         producer=producer,
-        snapshot_through_presentation_seq=snapshot_through_presentation_seq,
+        snapshot_through_delivery_seq=snapshot_through_delivery_seq,
     )
     if snapshot_head_record_digest is not None:
         payload.snapshot_head_record_digest = snapshot_head_record_digest
     return _typed_digest(payload)
 
 
-def delivery_status_digest(status: wire.PresentationDeliveryStatus) -> str:
-    payload = wire.PresentationDeliveryStatusDigestPayload(
+def delivery_status_digest(status: wire.DeliveryStatus) -> str:
+    payload = wire.DeliveryStatusDigestPayload(
         run_id=status.run_id,
         producer=status.producer,
-        acknowledged_through_presentation_seq=(
-            status.acknowledged_through_presentation_seq
+        acknowledged_through_delivery_seq=(
+            status.acknowledged_through_delivery_seq
         ),
         status_revision=status.status_revision,
         updated_at=status.updated_at,
@@ -195,7 +195,7 @@ __all__ = [
     "PresentationCommandTrust",
     "QUARANTINE_EFFECT_DOMAIN",
     "ZERO_SHA256",
-    "candidate_record_digest",
+    "delivery_record_digest",
     "delivery_status_digest",
     "effect_digest",
     "producer_fence",

@@ -1,0 +1,26 @@
+schema_version: 2
+
+# ADR-014 hard-cut durable messages. Payload types are defined by the V2 proto;
+# this source freezes the asynchronous operation names that have no RPC method.
+durable_control_messages:
+  - RunResumeV2
+  - RunResumeReceiptEventV2
+
+delivery:
+  RunResumeV2:
+    direction: session-to-agent
+    transport: run-control-v2
+    keep_first_identity: resume_ref
+    receipt: kokoro.agent.control.v2.RunResumeReceiptEventV2
+    recovery_operation: GetRunResumeReceiptEvents
+  RunResumeReceiptEventV2:
+    direction: agent-to-session
+    transport: run-control-receipts-v2
+    keep_first_identity: resume_receipt_event_ref
+    gap_recovery_operation: GetRunResumeReceiptEvents
+
+security:
+  authenticated_context: workload-identity
+  caller_claims_on_wire: forbidden
+  strict_unknown_fields: reject
+  plaintext_decision_values: forbidden

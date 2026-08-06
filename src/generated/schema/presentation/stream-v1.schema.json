@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/stream-v1.schema.json",
+  "title": "Kokoro Presentation authorized stream page v1",
+  "description": "One frozen authorized replay page. Cursors belong to this read-time envelope; each nested AG-UI wire frame remains the exact immutable persisted frame.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/replayPage"
+    },
+    {
+      "$ref": "#/$defs/draining"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 2048,
+      "pattern": "^(?=.*[A-Za-z._~-])[A-Za-z0-9._~-]+$"
+    },
+    "uint64": {
+      "oneOf": [
+        {
+          "const": "0"
+        },
+        {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+        }
+      ]
+    },
+    "authorizedFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cursor",
+        "durableSeq",
+        "frame"
+      ],
+      "properties": {
+        "cursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "durableSeq": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+        },
+        "frame": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json"
+        }
+      }
+    },
+    "replayPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractRevision",
+        "cursorRevision",
+        "siteId",
+        "sessionId",
+        "streamEpoch",
+        "snapshotCursor",
+        "afterDurableSeq",
+        "throughDurableSeq",
+        "frames",
+        "hasMore",
+        "nextAfterDurableSeq"
+      ],
+      "properties": {
+        "contractRevision": {
+          "const": "kokoro.presentation.stream.v1"
+        },
+        "cursorRevision": {
+          "const": "opaque-session-cursor-v1"
+        },
+        "siteId": {
+          "$ref": "#/$defs/id"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "streamEpoch": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+        },
+        "snapshotCursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "afterDurableSeq": {
+          "$ref": "#/$defs/uint64"
+        },
+        "throughDurableSeq": {
+          "$ref": "#/$defs/uint64"
+        },
+        "frames": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "$ref": "#/$defs/authorizedFrame"
+          }
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextAfterDurableSeq": {
+          "$ref": "#/$defs/uint64"
+        }
+      }
+    },
+    "draining": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractRevision",
+        "cursorRevision",
+        "siteId",
+        "sessionId",
+        "streamEpoch",
+        "lastDurableCursor",
+        "action"
+      ],
+      "properties": {
+        "contractRevision": {
+          "const": "kokoro.presentation.stream-draining.v1"
+        },
+        "cursorRevision": {
+          "const": "opaque-session-cursor-v1"
+        },
+        "siteId": {
+          "$ref": "#/$defs/id"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "streamEpoch": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+        },
+        "lastDurableCursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "action": {
+          "const": "retry-same-cursor"
+        },
+        "retryAfterMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        }
+      }
+    }
+  }
+}

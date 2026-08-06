@@ -32,6 +32,7 @@ dependencies = [
 [project.scripts]
 kokoro-agent-worker = "kokoro_agent.worker.main:main"
 kokoro-agent-evidence = "kokoro_agent.evidence.main:main"
+kokoro-agent-presentation = "kokoro_agent.presentation.main:main"
 
 [dependency-groups]
 dev = [

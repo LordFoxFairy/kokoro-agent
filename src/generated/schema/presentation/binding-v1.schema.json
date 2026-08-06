@@ -1,0 +1,935 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json",
+  "title": "Kokoro Presentation binding v1",
+  "description": "One complete immutable Session-owned run, message, or owner binding. The explicit bindingKind keeps generated runtime and static unions lossless.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/runBinding"
+    },
+    {
+      "$ref": "#/$defs/messageBinding"
+    },
+    {
+      "$ref": "#/$defs/ownerBinding"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "runBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.run-binding:[0-9a-f]{64}$"
+    },
+    "presentationThreadId": {
+      "type": "string",
+      "pattern": "^presentation\\.thread:[0-9a-f]{64}$"
+    },
+    "presentationRunId": {
+      "type": "string",
+      "pattern": "^presentation\\.run:[0-9a-f]{64}$"
+    },
+    "publicSourceEventId": {
+      "type": "string",
+      "minLength": 83,
+      "maxLength": 83,
+      "pattern": "^presentation\\.event:[0-9a-f]{64}$"
+    },
+    "dateTime": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "messageBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.message-binding:[0-9a-f]{64}$"
+    },
+    "presentationMessageId": {
+      "type": "string",
+      "pattern": "^presentation\\.message:[0-9a-f]{64}$"
+    },
+    "ownerBindingRef": {
+      "type": "string",
+      "pattern": "^presentation\\.owner-binding:[0-9a-f]{64}$"
+    },
+    "canonicalUtcMs": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "ownerIdentity": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/safeSummaryIdentity"
+        },
+        {
+          "$ref": "#/$defs/toolIdentity"
+        },
+        {
+          "$ref": "#/$defs/hitlIdentity"
+        },
+        {
+          "$ref": "#/$defs/planIdentity"
+        },
+        {
+          "$ref": "#/$defs/subagentIdentity"
+        },
+        {
+          "$ref": "#/$defs/mediaIdentity"
+        },
+        {
+          "$ref": "#/$defs/artifactIdentity"
+        },
+        {
+          "$ref": "#/$defs/costIdentity"
+        },
+        {
+          "$ref": "#/$defs/noticeIdentity"
+        },
+        {
+          "$ref": "#/$defs/errorIdentity"
+        },
+        {
+          "$ref": "#/$defs/controlIdentity"
+        },
+        {
+          "$ref": "#/$defs/receiptIdentity"
+        }
+      ]
+    },
+    "safeSummaryIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "partRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "safe-summary"
+        },
+        "partRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "toolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "toolCallRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "tool"
+        },
+        "toolCallRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "hitlIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ownerRef",
+        "decisionGroupRef",
+        "controlRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "hitl"
+        },
+        "ownerRef": {
+          "$ref": "#/$defs/id"
+        },
+        "decisionGroupRef": {
+          "$ref": "#/$defs/id"
+        },
+        "controlRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "planIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "planRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "plan"
+        },
+        "planRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "subagentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "subagentRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "subagent"
+        },
+        "subagentRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "mediaIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "mediaOperationRef",
+        "definitionRef",
+        "definitionRevisionRef",
+        "modelOptionRevisionRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "media"
+        },
+        "mediaOperationRef": {
+          "$ref": "#/$defs/id"
+        },
+        "definitionRef": {
+          "$ref": "#/$defs/id"
+        },
+        "definitionRevisionRef": {
+          "$ref": "#/$defs/id"
+        },
+        "modelOptionRevisionRef": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ]
+        }
+      }
+    },
+    "artifactIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "artifactRef",
+        "artifactVersionRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "artifact"
+        },
+        "artifactRef": {
+          "$ref": "#/$defs/id"
+        },
+        "artifactVersionRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "costIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "mediaOperationRef",
+        "costProjectionRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "cost"
+        },
+        "mediaOperationRef": {
+          "$ref": "#/$defs/id"
+        },
+        "costProjectionRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "noticeIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "noticeRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "notice"
+        },
+        "noticeRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "errorIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "errorRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "error"
+        },
+        "errorRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "controlIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "controlRef",
+        "ownerRef",
+        "decisionGroupRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "control"
+        },
+        "controlRef": {
+          "$ref": "#/$defs/id"
+        },
+        "ownerRef": {
+          "$ref": "#/$defs/id"
+        },
+        "decisionGroupRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "receiptIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "receiptRef",
+        "controlRef",
+        "ownerRef",
+        "decisionGroupRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "receipt"
+        },
+        "receiptRef": {
+          "$ref": "#/$defs/id"
+        },
+        "controlRef": {
+          "$ref": "#/$defs/id"
+        },
+        "ownerRef": {
+          "$ref": "#/$defs/id"
+        },
+        "decisionGroupRef": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "runBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingKind",
+        "bindingRef",
+        "contractRevision",
+        "sessionId",
+        "presentationThreadId",
+        "presentationRunId",
+        "sessionRunId",
+        "segmentOrdinal",
+        "resumeOfPresentationRunId",
+        "parentLineage",
+        "state",
+        "terminalDisposition",
+        "openedBySourceEventId",
+        "terminalSourceEventId",
+        "openedAt",
+        "terminalAt"
+      ],
+      "properties": {
+        "bindingKind": {
+          "const": "run"
+        },
+        "bindingRef": {
+          "$ref": "#/$defs/runBindingRef"
+        },
+        "contractRevision": {
+          "const": "kokoro.presentation.binding.v1"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "presentationThreadId": {
+          "$ref": "#/$defs/presentationThreadId"
+        },
+        "presentationRunId": {
+          "$ref": "#/$defs/presentationRunId"
+        },
+        "sessionRunId": {
+          "description": "The browser-safe Session command Run identity when this presentation Run is attached to one. Null is an explicit no-binding decision for DeepAgents child/subagent Runs; consumers must never infer a Session Run from UI activity.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segmentOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "resumeOfPresentationRunId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/presentationRunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parentLineage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "parentPresentationRunId"
+          ],
+          "properties": {
+            "parentPresentationRunId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/presentationRunId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "state": {
+          "enum": [
+            "open",
+            "finished",
+            "error"
+          ]
+        },
+        "terminalDisposition": {
+          "oneOf": [
+            {
+              "enum": [
+                "success",
+                "interrupted",
+                "error",
+                "canceled"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "openedBySourceEventId": {
+          "$ref": "#/$defs/publicSourceEventId"
+        },
+        "terminalSourceEventId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/publicSourceEventId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "openedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "terminalAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/dateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "segmentOrdinal": {
+                "const": 0
+              }
+            },
+            "required": [
+              "segmentOrdinal"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "resumeOfPresentationRunId": {
+                "type": "null"
+              }
+            },
+            "type": "object"
+          },
+          "else": {
+            "properties": {
+              "resumeOfPresentationRunId": {
+                "$ref": "#/$defs/presentationRunId"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "terminalDisposition": {
+                "type": "null"
+              },
+              "terminalSourceEventId": {
+                "type": "null"
+              },
+              "terminalAt": {
+                "type": "null"
+              }
+            },
+            "type": "object"
+          },
+          "else": {
+            "properties": {
+              "terminalDisposition": {
+                "enum": [
+                  "success",
+                  "interrupted",
+                  "error",
+                  "canceled"
+                ]
+              },
+              "terminalSourceEventId": {
+                "$ref": "#/$defs/publicSourceEventId"
+              },
+              "terminalAt": {
+                "$ref": "#/$defs/dateTime"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "messageBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingKind",
+        "bindingRef",
+        "contractRevision",
+        "sessionId",
+        "presentationRunBindingRef",
+        "presentationMessageId",
+        "sessionMessageId",
+        "sessionTextPartId",
+        "resumeSegmentOrdinal",
+        "state",
+        "openedBySourceEventId",
+        "endedBySourceEventId",
+        "openedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "bindingKind": {
+          "const": "message"
+        },
+        "bindingRef": {
+          "$ref": "#/$defs/messageBindingRef"
+        },
+        "contractRevision": {
+          "const": "kokoro.presentation.binding.v1"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "presentationRunBindingRef": {
+          "$ref": "#/$defs/runBindingRef"
+        },
+        "presentationMessageId": {
+          "$ref": "#/$defs/presentationMessageId"
+        },
+        "sessionMessageId": {
+          "description": "The browser-safe Session message identity when Session has materialized this presentation message. Null is explicit and forbids consumer-side identity guessing.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessionTextPartId": {
+          "description": "The browser-safe Session text part identity paired with sessionMessageId. Null exactly when sessionMessageId is null.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resumeSegmentOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "state": {
+          "enum": [
+            "open",
+            "ended"
+          ]
+        },
+        "openedBySourceEventId": {
+          "$ref": "#/$defs/publicSourceEventId"
+        },
+        "endedBySourceEventId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/publicSourceEventId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "openedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "endedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/dateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sessionMessageId": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "sessionMessageId"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "sessionTextPartId": {
+                "type": "null"
+              }
+            },
+            "type": "object"
+          },
+          "else": {
+            "properties": {
+              "sessionTextPartId": {
+                "$ref": "#/$defs/id"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "endedBySourceEventId": {
+                "type": "null"
+              },
+              "endedAt": {
+                "type": "null"
+              }
+            },
+            "type": "object"
+          },
+          "else": {
+            "properties": {
+              "endedBySourceEventId": {
+                "$ref": "#/$defs/publicSourceEventId"
+              },
+              "endedAt": {
+                "$ref": "#/$defs/dateTime"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "ownerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingKind",
+        "contractRevision",
+        "schemaVersion",
+        "bindingRef",
+        "sessionId",
+        "presentationRunBindingRef",
+        "presentationMessageBindingRef",
+        "presentationOwnerMessageId",
+        "ownerIdentity",
+        "targetOwnerBindingRef",
+        "controlOwnerBindingRef",
+        "boundBySourceEventId",
+        "boundAt"
+      ],
+      "properties": {
+        "bindingKind": {
+          "const": "owner"
+        },
+        "contractRevision": {
+          "const": "kokoro.presentation.binding.v1"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "bindingRef": {
+          "$ref": "#/$defs/ownerBindingRef"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "presentationRunBindingRef": {
+          "$ref": "#/$defs/runBindingRef"
+        },
+        "presentationMessageBindingRef": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/messageBindingRef"
+            }
+          ]
+        },
+        "presentationOwnerMessageId": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/presentationMessageId"
+            }
+          ]
+        },
+        "ownerIdentity": {
+          "$ref": "#/$defs/ownerIdentity"
+        },
+        "targetOwnerBindingRef": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/ownerBindingRef"
+            }
+          ]
+        },
+        "controlOwnerBindingRef": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/ownerBindingRef"
+            }
+          ]
+        },
+        "boundBySourceEventId": {
+          "$ref": "#/$defs/publicSourceEventId"
+        },
+        "boundAt": {
+          "$ref": "#/$defs/canonicalUtcMs"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ownerIdentity": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "control"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "ownerIdentity"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "presentationMessageBindingRef": {
+                "type": "null"
+              },
+              "presentationOwnerMessageId": {
+                "type": "null"
+              },
+              "targetOwnerBindingRef": {
+                "$ref": "#/$defs/ownerBindingRef"
+              },
+              "controlOwnerBindingRef": {
+                "type": "null"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ownerIdentity": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "receipt"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "ownerIdentity"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "presentationMessageBindingRef": {
+                "type": "null"
+              },
+              "presentationOwnerMessageId": {
+                "type": "null"
+              },
+              "targetOwnerBindingRef": {
+                "$ref": "#/$defs/ownerBindingRef"
+              },
+              "controlOwnerBindingRef": {
+                "$ref": "#/$defs/ownerBindingRef"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ownerIdentity": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "not": {
+                      "enum": [
+                        "control",
+                        "receipt"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "ownerIdentity"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "presentationOwnerMessageId": {
+                "$ref": "#/$defs/presentationMessageId"
+              },
+              "targetOwnerBindingRef": {
+                "type": "null"
+              },
+              "controlOwnerBindingRef": {
+                "type": "null"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

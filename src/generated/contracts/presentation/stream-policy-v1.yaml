@@ -1,0 +1,62 @@
+{
+  "registryId": "kokoro.presentation.stream-policy.v1",
+  "lifecycle": "contract-only",
+  "owner": "kokoro-session",
+  "protocol": "sse",
+  "transport": {
+    "eventId": "opaque-session-cursor",
+    "eventName": "exact-inner-event-type",
+    "resumeHeader": "Last-Event-ID",
+    "queryCursor": "same-opaque-cursor-or-absent",
+    "cursorGapAction": "http-snapshot-required",
+    "drainingDurability": "non-durable",
+    "drainingAction": "retry-same-cursor",
+    "stockClientTransport": "forbidden"
+  },
+  "recovery": {
+    "hydrateAuthority": "session-browser-v3-http-snapshot",
+    "repairAuthority": "session-browser-v3-http-snapshot",
+    "streamHydration": "forbidden",
+    "messagesSnapshotEvent": "forbidden",
+    "stateSnapshotEvent": "forbidden"
+  },
+  "bindings": {
+    "cursor": [
+      "siteId",
+      "sessionId",
+      "streamEpoch",
+      "durableSeq",
+      "wireProfileRevision",
+      "cursorRevision"
+    ],
+    "grant": [
+      "siteId",
+      "sessionId",
+      "sessionContractRevision",
+      "wireProfileRevision",
+      "cursorRevision"
+    ]
+  },
+  "cursor": {
+    "format": "aes-256-gcm-closed-claims-v1",
+    "keyRevision": "presentation-cursor-2026-08",
+    "aad": "kokoro.session.browser.cursor.v1\u0000presentation-cursor-2026-08",
+    "claims": [
+      "version",
+      "kind",
+      "siteId",
+      "sessionId",
+      "streamEpoch",
+      "durableSeq",
+      "wireProfileRevision",
+      "cursorRevision"
+    ],
+    "keyMaterialPolicy": "public-conformance-fixture-only",
+    "cursorRevision": "opaque-session-cursor-v1"
+  },
+  "limits": {
+    "maxCursorBytes": 2048
+  },
+  "statePolicy": "kokoro.presentation.state-policy.v1",
+  "wireProfile": "kokoro.presentation.wire-profile.v1"
+}

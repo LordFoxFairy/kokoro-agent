@@ -1,0 +1,121 @@
+{
+  "lifecycle": "contract-only",
+  "eventSchema": "https://contracts.kokoro.invalid/presentation/ag-ui-submission-event-v1.schema.json",
+  "envelopeSchema": "https://contracts.kokoro.invalid/presentation/submission-v1.schema.json",
+  "producer": "kokoro-agent",
+  "consumer": "kokoro-session",
+  "allowedEventTypes": [
+    "RUN_STARTED",
+    "RUN_FINISHED",
+    "RUN_ERROR",
+    "TEXT_MESSAGE_START",
+    "TEXT_MESSAGE_CONTENT",
+    "TEXT_MESSAGE_END",
+    "ACTIVITY_SNAPSHOT"
+  ],
+  "forbiddenEventTypes": [
+    "TEXT_MESSAGE_CHUNK",
+    "TOOL_CALL_START",
+    "TOOL_CALL_ARGS",
+    "TOOL_CALL_END",
+    "TOOL_CALL_CHUNK",
+    "TOOL_CALL_RESULT",
+    "THINKING_START",
+    "THINKING_END",
+    "THINKING_TEXT_MESSAGE_START",
+    "THINKING_TEXT_MESSAGE_CONTENT",
+    "THINKING_TEXT_MESSAGE_END",
+    "STATE_SNAPSHOT",
+    "STATE_DELTA",
+    "MESSAGES_SNAPSHOT",
+    "ACTIVITY_DELTA",
+    "RAW",
+    "CUSTOM",
+    "STEP_STARTED",
+    "STEP_FINISHED",
+    "REASONING_START",
+    "REASONING_MESSAGE_START",
+    "REASONING_MESSAGE_CONTENT",
+    "REASONING_MESSAGE_END",
+    "REASONING_MESSAGE_CHUNK",
+    "REASONING_END",
+    "REASONING_ENCRYPTED_VALUE"
+  ],
+  "forbiddenEventFamilies": [
+    "raw",
+    "state",
+    "messages",
+    "delta",
+    "native-tool",
+    "reasoning",
+    "thinking",
+    "step",
+    "chunk",
+    "custom"
+  ],
+  "forbiddenFields": [
+    "rawEvent",
+    "raw_event",
+    "providerEvent",
+    "provider_event",
+    "messages",
+    "patch",
+    "tools",
+    "context",
+    "forwardedProps",
+    "input",
+    "result",
+    "extra"
+  ],
+  "terminalPolicy": {
+    "runFinished": "success-only",
+    "runError": "failure-only",
+    "canceledOrInterrupted": "session-owned"
+  },
+  "identityPolicy": {
+    "submissionRefDomain": "presentation.submission:sha256",
+    "submissionRefMaterial": [
+      "contractRevision",
+      "internalRunRef",
+      "internalThreadRef",
+      "internalMessageRef-or-empty",
+      "sourceEventRef",
+      "eventOrdinal-decimal",
+      "recordedAt",
+      "eventDigest"
+    ],
+    "sourceEventRef": "agent-owner-stable-ref",
+    "eventOrdinal": "uint64-decimal-string-first-zero-then-exactly-plus-one-per-run",
+    "eventFixtureOrder": "owner-log-order-within-internalRunRef",
+    "internalThreadRef": "agent.thread:-branded-opaque-owner-ref-established-by-zero-run-start",
+    "recordedAt": "canonical-utc-ms-equals-event-timestamp",
+    "eventDigest": "sha256-rfc8785-jcs-event",
+    "forbiddenAxes": [
+      "siteId",
+      "userId",
+      "sessionId",
+      "cursor",
+      "sseId",
+      "sseEvent"
+    ]
+  },
+  "eventScopePolicy": {
+    "runStartedAndFinished": "threadId=internalThreadRef-and-runId=internalRunRef-and-no-parentRunId",
+    "runError": "outer-route-matches-zero-run-start-thread-authority",
+    "textAndActivity": "messageId=internalMessageRef"
+  },
+  "activation": {
+    "runtimeImplemented": false,
+    "compatibilityEvidence": false,
+    "browserTransport": false
+  },
+  "registryId": "kokoro.presentation.submission-policy.v1",
+  "contractRevision": "kokoro.presentation.submission.v1",
+  "processingPolicy": {
+    "admission": "validate-before-recording",
+    "runFinishedOutcome": "strip-after-success-validation",
+    "bindingResolution": "session-owned",
+    "ownerStateWrite": "admitted-facts-without-content-synthesis"
+  },
+  "statePolicy": "kokoro.presentation.state-policy.v1"
+}

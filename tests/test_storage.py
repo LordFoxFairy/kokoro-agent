@@ -13,6 +13,8 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
 from kokoro.agent.execution.v1 import agent_execution_evidence_pb2 as evidence_pb2
+from kokoro.agent.presentation.v1 import presentation_pb2 as presentation_wire
+from kokoro.common.v2 import command_envelope_pb2 as common_wire
 
 from fakes import request
 from kokoro_agent.contract import (
@@ -29,12 +31,12 @@ from kokoro_agent.contract import (
     RunStartedPayload,
     ToolAwaitingApprovalPayload,
 )
-from kokoro_agent.presentation.runtime import (
-    AgentPresentationService,
-    PresentationAdmissionReceipt,
-    presentation_acknowledgement_digest,
+from kokoro_agent.presentation.integrity import (
+    ACK_EFFECT_DOMAIN,
+    QUARANTINE_EFFECT_DOMAIN,
+    effect_digest,
 )
-from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
+from kokoro_agent.presentation.provider import PresentationConnectService
 from kokoro_agent.evidence.models import (
     append_output_digest,
     durable_output_draft_for_event,
@@ -298,51 +300,98 @@ async def test_presentation_authority_replays_and_closes_admission_delivery() ->
         second = await store.append_presentation_event(text, agent_thread_ref=thread_ref)
 
         assert first is not None and replay == first and second is not None
-        assert [record.presentation_seq for record in first + second] == [1, 2, 3]
-        service = AgentPresentationService(store)
-        page = await service.pull_candidate_batches(
-            run_id=req.run_id, after_presentation_seq=0, page_size=2
+        service = PresentationConnectService(store)
+        producer = await store.presentation_provider_fence(req.run_id)
+        page = await service.pull_records(
+            presentation_wire.PullRecordsRequest(
+                run_id=req.run_id,
+                producer=producer,
+                page_size=3,
+            ),
+            None,
         )
-        assert page.snapshot_through_presentation_seq == 3
-        assert page.has_more is True
-        receipt = PresentationAdmissionReceipt(
-            presentation_seq=1,
-            presentation_ref=first[0].presentation_ref,
-            candidate_ref=AgentAguiEventCandidate.model_validate_json(
-                first[0].candidate_envelope_json
-            ).candidate_ref,
-            session_receipt_ref="session.receipt.1",
-            session_effect_digest="sha256:" + "1" * 64,
+        assert page.snapshot_through_delivery_seq == 3
+        assert [record.delivery_seq for record in page.records] == [1, 2, 3]
+        assert page.has_more is False
+        command = common_wire.CommandIdentityV2(
+            command_id="a" * 32,
+            idempotency_key="presentation-ack-1",
+            digest_algorithm=(
+                common_wire.COMMAND_DIGEST_ALGORITHM_V2_SHA256_COMMAND_ENVELOPE
+            ),
+            request_digest="1" * 64,
         )
-        digest = presentation_acknowledgement_digest(
+        first_record = page.records[0]
+        ack_effect = presentation_wire.AcknowledgeAdmissionsEffect(
             run_id=req.run_id,
-            acknowledgement_ref="ack.1",
-            expected_acknowledged_through_presentation_seq=0,
-            receipts=(receipt,),
+            producer=producer,
+            expected_acknowledged_through=0,
+            expected_status_revision=page.delivery_status.status_revision,
+            idempotency_ref="presentation.ack.1",
+            receipts=[
+                presentation_wire.AdmissionReceipt(
+                    previous_delivery_seq=0,
+                    delivery_seq=1,
+                    record_ref=first_record.record_ref,
+                    record_digest=first_record.record_digest,
+                    submission_ref=first_record.submission_ref,
+                    submission_digest=first_record.submission_digest,
+                    session_admission_receipt_ref="session.receipt.1",
+                    session_effect_digest="sha256:" + "1" * 64,
+                )
+            ],
+            effect_digest_domain=ACK_EFFECT_DOMAIN,
+            effect_digest="sha256:" + "0" * 64,
         )
-        acknowledged = await service.acknowledge_candidate_admissions(
+        ack_effect.effect_digest = effect_digest(ack_effect, ACK_EFFECT_DOMAIN)
+        acknowledged = await service.acknowledge_admissions(
+            presentation_wire.AcknowledgeAdmissionsRequest(
+                command=command, effect=ack_effect
+            ),
+            None,
+        )
+        assert acknowledged.status.acknowledged_through_delivery_seq == 1
+        assert acknowledged.status.last_command == command
+        second_record = page.records[1]
+        quarantine_command = common_wire.CommandIdentityV2(
+            command_id="b" * 32,
+            idempotency_key="presentation-quarantine-2",
+            digest_algorithm=(
+                common_wire.COMMAND_DIGEST_ALGORITHM_V2_SHA256_COMMAND_ENVELOPE
+            ),
+            request_digest="2" * 64,
+        )
+        quarantine_effect = presentation_wire.QuarantineSubmissionEffect(
             run_id=req.run_id,
-            acknowledgement_ref="ack.1",
-            expected_acknowledged_through_presentation_seq=0,
-            receipts=(receipt,),
-            request_effect_digest=digest,
+            producer=producer,
+            expected_acknowledged_through=1,
+            expected_status_revision=acknowledged.status.status_revision,
+            idempotency_ref="presentation.quarantine.2",
+            delivery_seq=2,
+            record_ref=second_record.record_ref,
+            record_digest=second_record.record_digest,
+            submission_ref=second_record.submission_ref,
+            submission_digest=second_record.submission_digest,
+            rejection_class=presentation_wire.REJECTION_CLASS_PERMANENT,
+            reason_code="SESSION_ADMISSION_PERMANENT_REJECT",
+            session_rejection_digest="sha256:" + "2" * 64,
+            effect_digest_domain=QUARANTINE_EFFECT_DOMAIN,
+            effect_digest="sha256:" + "0" * 64,
         )
-        assert acknowledged.acknowledged_through_presentation_seq == 1
-        quarantined_candidate = AgentAguiEventCandidate.model_validate_json(
-            second[0].candidate_envelope_json
+        quarantine_effect.effect_digest = effect_digest(
+            quarantine_effect, QUARANTINE_EFFECT_DOMAIN
         )
-        quarantined = await service.quarantine_candidate_admission(
-            run_id=req.run_id,
-            rejection_ref="reject.2",
-            expected_acknowledged_through_presentation_seq=1,
-            presentation_seq=2,
-            presentation_ref=second[0].presentation_ref,
-            candidate_ref=quarantined_candidate.candidate_ref,
-            reason="SESSION_ADMISSION_PERMANENT_REJECT",
-            session_effect_digest="sha256:" + "2" * 64,
+        quarantined = await service.quarantine_submission(
+            presentation_wire.QuarantineSubmissionRequest(
+                command=quarantine_command, effect=quarantine_effect
+            ),
+            None,
         )
-        assert quarantined.acknowledged_through_presentation_seq == 1
-        assert quarantined.quarantined_presentation_seq == 2
+        assert quarantined.status.acknowledged_through_delivery_seq == 1
+        assert quarantined.status.quarantine.delivery_seq == 2
+        assert quarantined.status.quarantine.reason_code == (
+            "SESSION_ADMISSION_PERMANENT_REJECT"
+        )
 
 
 # --- 共用行为矩阵：任意 RunLedger 实例逐条对标 ---

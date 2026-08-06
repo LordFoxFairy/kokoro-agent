@@ -150,7 +150,7 @@ class DurableOutputDraft(BaseModel):
     @model_validator(mode="after")
     def validate_canonical_payload(self) -> DurableOutputDraft:
         try:
-            payload = wire.DurableOutputCanonicalPayloadV1.FromString(
+            payload = wire.DurableOutputPayloadV1.FromString(
                 self.canonical_payload
             )
         except DecodeError as error:
@@ -198,7 +198,7 @@ class DurableOutputRecord(BaseModel):
         if hashlib.sha256(self.canonical_payload).hexdigest() != self.payload_sha256:
             raise ValueError("output payload sha256 does not match canonical payload")
         try:
-            payload = wire.DurableOutputCanonicalPayloadV1.FromString(
+            payload = wire.DurableOutputPayloadV1.FromString(
                 self.canonical_payload
             )
         except DecodeError as error:
@@ -273,7 +273,7 @@ def _safe_output_ref(value: str) -> str:
 
 
 def _output_draft(
-    payload: wire.DurableOutputCanonicalPayloadV1,
+    payload: wire.DurableOutputPayloadV1,
     *,
     text_part_ref: str | None = None,
     is_text_snapshot: bool = False,
@@ -289,7 +289,7 @@ def _text_delta_drafts(part_ref: str, value: str) -> tuple[DurableOutputDraft, .
     safe_part_ref = _safe_output_ref(part_ref)
     return tuple(
         _output_draft(
-            wire.DurableOutputCanonicalPayloadV1(
+            wire.DurableOutputPayloadV1(
                 text_delta=wire.TextDeltaOutputV1(
                     part_ref=safe_part_ref,
                     delta=delta,
@@ -306,7 +306,7 @@ def _text_snapshot_drafts(part_ref: str, value: str) -> tuple[DurableOutputDraft
     if not value:
         return (
             _output_draft(
-                wire.DurableOutputCanonicalPayloadV1(
+                wire.DurableOutputPayloadV1(
                     text_snapshot=wire.TextSnapshotOutputV1(
                         part_ref=safe_part_ref,
                         text="",
@@ -320,7 +320,7 @@ def _text_snapshot_drafts(part_ref: str, value: str) -> tuple[DurableOutputDraft
     snapshot_text = snapshot_chunks[0]
     remainder = "".join(snapshot_chunks[1:])
     snapshot = _output_draft(
-        wire.DurableOutputCanonicalPayloadV1(
+        wire.DurableOutputPayloadV1(
             text_snapshot=wire.TextSnapshotOutputV1(
                 part_ref=safe_part_ref,
                 text=snapshot_text,
@@ -338,7 +338,7 @@ def _tool_started_draft(tool_call_id: str, label: str) -> DurableOutputDraft | N
     if safe_label is None:
         return None
     return _output_draft(
-        wire.DurableOutputCanonicalPayloadV1(
+        wire.DurableOutputPayloadV1(
             tool_started=wire.ToolStartedOutputV1(
                 tool_call_id=safe_tool_call_id,
                 tool_label=safe_label,
@@ -355,7 +355,7 @@ def _tool_finished_drafts(
 ) -> tuple[DurableOutputDraft, ...]:
     safe_tool_call_id = _safe_output_ref(tool_call_id)
     finished = _output_draft(
-        wire.DurableOutputCanonicalPayloadV1(
+        wire.DurableOutputPayloadV1(
             tool_finished=wire.ToolFinishedOutputV1(
                 tool_call_id=safe_tool_call_id,
                 is_error=is_error,
@@ -366,7 +366,7 @@ def _tool_finished_drafts(
     if not is_error:
         return (finished,)
     error = _output_draft(
-        wire.DurableOutputCanonicalPayloadV1(
+        wire.DurableOutputPayloadV1(
             error=wire.ErrorOutputV1(
                 error_ref=safe_tool_call_id,
                 code="tool.failed",
@@ -422,7 +422,7 @@ def durable_output_drafts_for_event(
             )
         return (
             _output_draft(
-                wire.DurableOutputCanonicalPayloadV1(
+                wire.DurableOutputPayloadV1(
                     plan_progress=wire.PlanProgressOutputV1(
                         plan_ref=plan_ref,
                         safe_summary=summary,
@@ -442,7 +442,7 @@ def durable_output_drafts_for_event(
             else wire.SUBAGENT_PROGRESS_STATUS_V1_RUNNING
         )
         progress = _output_draft(
-            wire.DurableOutputCanonicalPayloadV1(
+            wire.DurableOutputPayloadV1(
                 subagent_progress=wire.SubagentProgressOutputV1(
                     subagent_ref=subagent_ref,
                     status=status,
@@ -452,7 +452,7 @@ def durable_output_drafts_for_event(
         if not failed:
             return (progress,)
         error = _output_draft(
-            wire.DurableOutputCanonicalPayloadV1(
+            wire.DurableOutputPayloadV1(
                 error=wire.ErrorOutputV1(
                     error_ref=subagent_ref,
                     code="subagent.failed",
@@ -468,7 +468,7 @@ def durable_output_drafts_for_event(
         delivery_ref = f"delivery:sha256:{payload.content_hash}"
         return (
             _output_draft(
-                wire.DurableOutputCanonicalPayloadV1(
+                wire.DurableOutputPayloadV1(
                     notice=wire.NoticeOutputV1(
                         notice_ref=delivery_ref,
                         code="delivery.created",
@@ -499,7 +499,7 @@ def make_durable_output_record(
     producer_instance_ref: str,
     producer_generation: int,
 ) -> DurableOutputRecord:
-    payload = wire.DurableOutputCanonicalPayloadV1.FromString(draft.canonical_payload)
+    payload = wire.DurableOutputPayloadV1.FromString(draft.canonical_payload)
     if draft.is_text_snapshot:
         payload.text_snapshot.replaces_through_output_seq = replaces_through_output_seq
     canonical_payload = payload.SerializeToString(deterministic=True)

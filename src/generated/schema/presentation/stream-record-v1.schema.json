@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/stream-record-v1.schema.json",
+  "title": "Kokoro Presentation StreamRecord v1",
+  "description": "One immutable protocol-neutral Session Presentation record. Wire profile, frame bytes, frame digest, cursor and SSE formatting are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "recordRef",
+    "contractRevision",
+    "schemaVersion",
+    "siteId",
+    "sessionId",
+    "streamEpoch",
+    "durableSeq",
+    "projectionRevision",
+    "publicSourceEventId",
+    "eventKind",
+    "eventData",
+    "bindingUpdate",
+    "recordedAt",
+    "recordDigest"
+  ],
+  "properties": {
+    "recordRef": {
+      "type": "string",
+      "pattern": "^presentation\\.record:sha256:[0-9a-f]{64}$"
+    },
+    "contractRevision": {
+      "const": "kokoro.presentation.stream-record.v1"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "siteId": {
+      "$ref": "#/$defs/id"
+    },
+    "sessionId": {
+      "$ref": "#/$defs/id"
+    },
+    "streamEpoch": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+    },
+    "durableSeq": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+    },
+    "projectionRevision": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+    },
+    "publicSourceEventId": {
+      "$ref": "#/$defs/publicSourceEventId"
+    },
+    "eventKind": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/eventKind"
+    },
+    "eventData": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/eventData"
+    },
+    "bindingUpdate": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json"
+    },
+    "recordedAt": {
+      "$ref": "#/$defs/canonicalUtcMs"
+    },
+    "recordDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/eventCorrelation"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "publicSourceEventId": {
+      "type": "string",
+      "minLength": 83,
+      "maxLength": 83,
+      "pattern": "^presentation\\.event:[0-9a-f]{64}$"
+    },
+    "canonicalUtcMs": {
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 24,
+      "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

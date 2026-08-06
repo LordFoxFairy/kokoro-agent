@@ -1,0 +1,80 @@
+"""HTTP/2-only mTLS listener settings for PresentationService."""
+
+from __future__ import annotations
+
+import ssl
+from pathlib import Path
+from typing import Self
+
+from hypercorn.config import Config as HypercornConfig
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+EXPECTED_CALLERS = frozenset({"kokoro-session"})
+
+
+class PresentationServerSettings(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    host: str = Field(min_length=1)
+    port: int = Field(ge=1, le=65535)
+    tls_cert: Path
+    tls_key: Path
+    caller_ca_bundle: Path
+    allowed_callers: frozenset[str]
+
+    @model_validator(mode="after")
+    def validate_security_boundary(self) -> Self:
+        if self.allowed_callers != EXPECTED_CALLERS:
+            raise ValueError("PRESENTATION_CALLER_ALLOWLIST_INVALID")
+        for path in (self.tls_cert, self.tls_key, self.caller_ca_bundle):
+            if not path.is_file():
+                raise ValueError("PRESENTATION_TLS_FILE_MISSING")
+        return self
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        host: str,
+        port: int,
+        tls_cert: str | None,
+        tls_key: str | None,
+        caller_ca_bundle: str | None,
+        allowed_callers: str,
+    ) -> Self:
+        if tls_cert is None or tls_key is None or caller_ca_bundle is None:
+            raise ValueError("PRESENTATION_MTLS_REQUIRED")
+        callers = frozenset(
+            caller.strip()
+            for caller in allowed_callers.split(",")
+            if caller.strip()
+        )
+        return cls(
+            host=host,
+            port=port,
+            tls_cert=Path(tls_cert),
+            tls_key=Path(tls_key),
+            caller_ca_bundle=Path(caller_ca_bundle),
+            allowed_callers=callers,
+        )
+
+
+def build_hypercorn_config(
+    settings: PresentationServerSettings,
+) -> HypercornConfig:
+    config = HypercornConfig()
+    host = f"[{settings.host}]" if ":" in settings.host else settings.host
+    config.bind = [f"{host}:{settings.port}"]
+    config.certfile = str(settings.tls_cert)
+    config.keyfile = str(settings.tls_key)
+    config.ca_certs = str(settings.caller_ca_bundle)
+    config.verify_mode = ssl.VerifyMode.CERT_REQUIRED
+    config.verify_flags = (
+        ssl.VerifyFlags.VERIFY_X509_STRICT
+        | ssl.VerifyFlags.VERIFY_X509_PARTIAL_CHAIN
+    )
+    config.alpn_protocols = ["h2"]
+    return config
+
+
+__all__ = ["PresentationServerSettings", "build_hypercorn_config"]

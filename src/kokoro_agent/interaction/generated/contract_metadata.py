@@ -12,10 +12,10 @@ CONTRACT_SOURCE_SHA256 = {
 }
 GENERATED_ARTIFACT_SHA256 = {
     "src/kokoro/agent/control/v2/session_agent_control_connect.py": "3f8125db2b0bec12c6e23c268e675871b5290895edaf9ca32c2bf50860940712",
-    "src/kokoro/agent/control/v2/session_agent_control_pb2.py": "146f84f37b36b2352cf4e806388d26f1092879ed847e45bd3d9c6cb8f345746f",
+    "src/kokoro/agent/control/v2/session_agent_control_pb2.py": "516011fdab34ab6c423b666851bebdb532a535d763a09a2b951b5b2e455e000d",
     "src/kokoro/agent/control/v2/session_agent_control_pb2.pyi": "62f71dc2d185f9ff9a3fb1b7981ba4e0ec4b9d0a5291d09d59ebe0c70eb25ced",
     "src/kokoro/agent/execution/v2/agent_execution_evidence_connect.py": "046ade2a26c8b4b71456417efbf1324bc2e2439b96bd86e00746f867037f19aa",
-    "src/kokoro/agent/execution/v2/agent_execution_evidence_pb2.py": "781e1478e4334c1e382463c084897dcfb99af915e881c436ad40691b8e30cc25",
+    "src/kokoro/agent/execution/v2/agent_execution_evidence_pb2.py": "5bfbd29d9e0a4c1fee14ba5012a53c98ca46b6e990aea79aabba9cda3a612fb6",
     "src/kokoro/agent/execution/v2/agent_execution_evidence_pb2.pyi": "d6cb7cd33cc9cec87a49a43549b5711f67889448502a3dc1dec0b3bb7400aab6",
     "src/kokoro_agent/interaction/generated/agent_interaction_identity_v2.json": "1a6cbddf8aec40aec8052154676d9bfff7166fedc191d152c46201046b881b07",
 }

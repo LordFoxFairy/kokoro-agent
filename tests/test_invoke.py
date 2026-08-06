@@ -875,7 +875,7 @@ async def test_all_durable_outputs_precede_and_survive_isolated_live_publish_fai
     )
 
     canonical = [
-        evidence_pb2.DurableOutputCanonicalPayloadV1.FromString(
+        evidence_pb2.DurableOutputPayloadV1.FromString(
             record.canonical_payload
         )
         for record in ledger.output_records["r-output-publish"]

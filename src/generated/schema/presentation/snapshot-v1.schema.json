@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/snapshot-v1.schema.json",
+  "title": "Kokoro Presentation snapshot v1",
+  "description": "The complete protocol-neutral Session Presentation state at one immutable stream head. HTTP grants, cursors, hydrate/repair flags and AG-UI wire fields are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractRevision",
+    "schemaVersion",
+    "siteId",
+    "sessionId",
+    "streamEpoch",
+    "durableSeq",
+    "projectionRevision",
+    "lastRecordedAt",
+    "headRecordRef",
+    "headRecordDigest",
+    "runBindings",
+    "messageBindings",
+    "ownerBindings",
+    "ownerStates"
+  ],
+  "properties": {
+    "contractRevision": {
+      "const": "kokoro.presentation.snapshot.v1"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "siteId": {
+      "$ref": "#/$defs/id"
+    },
+    "sessionId": {
+      "$ref": "#/$defs/id"
+    },
+    "streamEpoch": {
+      "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+    },
+    "durableSeq": {
+      "$ref": "#/$defs/uint64"
+    },
+    "projectionRevision": {
+      "$ref": "#/$defs/uint64"
+    },
+    "lastRecordedAt": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/canonicalUtcMs"
+        }
+      ]
+    },
+    "headRecordRef": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^presentation\\.record:sha256:[0-9a-f]{64}$"
+        }
+      ]
+    },
+    "headRecordDigest": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      ]
+    },
+    "runBindings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/runBinding"
+      }
+    },
+    "messageBindings": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/messageBinding"
+      }
+    },
+    "ownerBindings": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": {
+        "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/ownerBinding"
+      }
+    },
+    "ownerStates": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": {
+        "$ref": "https://contracts.kokoro.invalid/presentation/owner-state-v1.schema.json"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "durableSeq": {
+            "const": "0"
+          }
+        },
+        "required": [
+          "durableSeq"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "projectionRevision": {
+            "const": "0"
+          },
+          "lastRecordedAt": {
+            "type": "null"
+          },
+          "headRecordRef": {
+            "type": "null"
+          },
+          "headRecordDigest": {
+            "type": "null"
+          }
+        },
+        "type": "object"
+      },
+      "else": {
+        "properties": {
+          "projectionRevision": {
+            "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+          },
+          "lastRecordedAt": {
+            "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/canonicalUtcMs"
+          },
+          "headRecordRef": {
+            "type": "string",
+            "pattern": "^presentation\\.record:sha256:[0-9a-f]{64}$"
+          },
+          "headRecordDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "type": "object"
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "uint64": {
+      "oneOf": [
+        {
+          "const": "0"
+        },
+        {
+          "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
+        }
+      ]
+    }
+  }
+}

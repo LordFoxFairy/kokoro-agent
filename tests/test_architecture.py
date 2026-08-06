@@ -6,7 +6,9 @@ import ast
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "kokoro_agent"
-_CONFIG_ENTRYPOINTS = frozenset({"worker/main.py", "evidence/main.py"})
+_CONFIG_ENTRYPOINTS = frozenset(
+    {"worker/main.py", "evidence/main.py", "presentation/main.py"}
+)
 _LEGACY_MEMORY_MODULES = frozenset(
     {
         "kokoro_agent.storage.memory_store",

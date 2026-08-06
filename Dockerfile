@@ -19,6 +19,8 @@ USER kokoro
 ENV PYTHONUNBUFFERED=1
 # 系统用户无家目录 → uv 默认缓存 ~/.cache/uv 不可写(EACCES)。指到 /app(已 chown kokoro)下可写目录。
 ENV UV_CACHE_DIR=/app/.uv-cache
-# worker：从 redis 取 dispatch、跑 run、发事件。无端口。依赖已在 build 期 uv sync 烘焙,
+# worker：从 redis 取 dispatch、跑 run、发事件。Presentation deployable 通过
+# `kokoro-agent-presentation` 覆盖容器 command，独立监听 mTLS/HTTP2 8444。
+# 依赖已在 build 期 uv sync 烘焙,
 # --no-sync 免运行时再联网 sync(生产离线也能起)。
 CMD ["uv", "run", "--no-sync", "kokoro-agent-worker"]

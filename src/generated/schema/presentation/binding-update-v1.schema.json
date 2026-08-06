@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/binding-update-v1.schema.json",
+  "title": "Kokoro Presentation binding update v1",
+  "description": "Exactly one Session-owned binding decision carried atomically by each StreamRecord. Replace arms contain one complete run, message, or owner binding; patches are forbidden.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/none"
+    },
+    {
+      "$ref": "#/$defs/runReplace"
+    },
+    {
+      "$ref": "#/$defs/messageReplace"
+    },
+    {
+      "$ref": "#/$defs/ownerReplace"
+    }
+  ],
+  "$defs": {
+    "none": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "none"
+        }
+      }
+    },
+    "runReplace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "binding"
+      ],
+      "properties": {
+        "kind": {
+          "const": "run.replace"
+        },
+        "binding": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/runBinding"
+        }
+      }
+    },
+    "messageReplace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "binding"
+      ],
+      "properties": {
+        "kind": {
+          "const": "message.replace"
+        },
+        "binding": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/messageBinding"
+        }
+      }
+    },
+    "ownerReplace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "binding"
+      ],
+      "properties": {
+        "kind": {
+          "const": "owner.replace"
+        },
+        "binding": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/binding-v1.schema.json#/$defs/ownerBinding"
+        }
+      }
+    }
+  }
+}

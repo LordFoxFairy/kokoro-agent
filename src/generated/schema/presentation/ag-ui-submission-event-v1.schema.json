@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.invalid/presentation/ag-ui-submission-event-v1.schema.json",
+  "title": "Kokoro Presentation AG-UI submission event v1",
+  "description": "The only wire-specific Agent event accepted inside a Presentation submission. RUN_STARTED forbids parentRunId so Session derives public lineage; HITL remains a pending proposal without receipt authority.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/runStartedWithoutParent"
+    },
+    {
+      "$ref": "#/$defs/runFinishedSuccess"
+    },
+    {
+      "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/runError"
+    },
+    {
+      "$ref": "#/$defs/textStart"
+    },
+    {
+      "$ref": "#/$defs/textContent"
+    },
+    {
+      "$ref": "#/$defs/textEnd"
+    },
+    {
+      "$ref": "#/$defs/activitySubmission"
+    }
+  ],
+  "$defs": {
+    "runStartedWithoutParent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "threadId",
+        "runId"
+      ],
+      "properties": {
+        "type": {
+          "const": "RUN_STARTED"
+        },
+        "timestamp": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/timestamp"
+        },
+        "threadId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        },
+        "runId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        }
+      }
+    },
+    "runFinishedSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "threadId",
+        "runId",
+        "outcome"
+      ],
+      "properties": {
+        "type": {
+          "const": "RUN_FINISHED"
+        },
+        "timestamp": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/timestamp"
+        },
+        "threadId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        },
+        "runId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "success"
+            }
+          }
+        }
+      }
+    },
+    "textStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "role"
+      ],
+      "properties": {
+        "type": {
+          "const": "TEXT_MESSAGE_START"
+        },
+        "timestamp": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        },
+        "role": {
+          "const": "assistant"
+        }
+      }
+    },
+    "textContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "delta"
+      ],
+      "properties": {
+        "type": {
+          "const": "TEXT_MESSAGE_CONTENT"
+        },
+        "timestamp": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        },
+        "delta": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      }
+    },
+    "textEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId"
+      ],
+      "properties": {
+        "type": {
+          "const": "TEXT_MESSAGE_END"
+        },
+        "timestamp": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        }
+      }
+    },
+    "activitySubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "timestamp",
+        "messageId",
+        "activityType",
+        "content",
+        "replace"
+      ],
+      "properties": {
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        },
+        "timestamp": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/timestamp"
+        },
+        "messageId": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/id"
+        },
+        "activityType": {
+          "enum": [
+            "kokoro.safe-summary.v1",
+            "kokoro.tool-preview.v1",
+            "kokoro.hitl.v1",
+            "kokoro.plan.v1",
+            "kokoro.subagent.v1",
+            "kokoro.notice.v1",
+            "kokoro.error.v1"
+          ]
+        },
+        "content": {
+          "type": "object"
+        },
+        "replace": {
+          "const": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.safe-summary.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activitySafeSummary/properties/content"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.tool-preview.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activityToolPreview/properties/content"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.hitl.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "allOf": [
+                  {
+                    "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activityHitl/properties/content"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "const": "pending"
+                      }
+                    },
+                    "not": {
+                      "type": "object",
+                      "properties": {
+                        "receiptRef": {}
+                      },
+                      "required": [
+                        "receiptRef"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.plan.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activityPlan/properties/content"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.subagent.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activitySubagent/properties/content"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.notice.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activityNotice/properties/content"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "activityType": {
+                "const": "kokoro.error.v1"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/activityError/properties/content"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

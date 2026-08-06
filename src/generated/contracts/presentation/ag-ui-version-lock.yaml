@@ -1,0 +1,36 @@
+{
+  "lifecycle": "contract-only",
+  "upstream": {
+    "repository": "https://github.com/ag-ui-protocol/ag-ui",
+    "commit": "54f13419055b4d0f442c71e1efab18b310982ce1"
+  },
+  "typescript": {
+    "core": {
+      "package": "@ag-ui/core",
+      "version": "0.0.57",
+      "integrity": "sha512-gho1OWjNE6E3Rl7ZEZ1wr2CEpUHjLFU0FqzCZZk439TicLu+BfLCMkMokB07bMGlRmbJ60hM6LW60iOVauCx+Q=="
+    },
+    "client": {
+      "package": "@ag-ui/client",
+      "version": "0.0.57",
+      "integrity": "sha512-Xap2alG9Z0/j5kb3x4D7oTpe2sw1dfrC9rgJJr2NZu5vKcm8dzIPNd31mF2B4zS3BKqYIu245yxKPhEtT30MHw=="
+    }
+  },
+  "python": {
+    "package": "ag-ui-protocol",
+    "versionAtCommit": "0.1.19",
+    "source": {
+      "kind": "git",
+      "repository": "https://github.com/ag-ui-protocol/ag-ui",
+      "subdirectory": "sdks/python",
+      "commit": "54f13419055b4d0f442c71e1efab18b310982ce1"
+    }
+  },
+  "upgradePolicy": {
+    "exactVersionOnly": true,
+    "requiresConformanceCorpus": true,
+    "requiresCompatibilityEvidence": true,
+    "requiresNewWireProfileRevision": true
+  },
+  "registryId": "kokoro.presentation.ag-ui-version-lock.v1"
+}

@@ -138,6 +138,31 @@ class AppConfig(BaseModel):
         validation_alias="KOKORO_AGENT_EVIDENCE_ALLOWED_CALLERS",
     )
 
+    # --- Agent-owned Presentation ConnectRPC provider ---
+    presentation_host: str = Field(
+        default="0.0.0.0", validation_alias="KOKORO_AGENT_PRESENTATION_HOST"
+    )
+    presentation_port: int = Field(
+        default=8444,
+        ge=1,
+        le=65535,
+        validation_alias="KOKORO_AGENT_PRESENTATION_PORT",
+    )
+    presentation_tls_cert: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_PRESENTATION_TLS_CERT"
+    )
+    presentation_tls_key: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_PRESENTATION_TLS_KEY"
+    )
+    presentation_caller_ca_bundle: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_PRESENTATION_CALLER_CA_BUNDLE",
+    )
+    presentation_allowed_callers: str = Field(
+        default="kokoro-session",
+        validation_alias="KOKORO_AGENT_PRESENTATION_ALLOWED_CALLERS",
+    )
+
     # --- sandbox 域 ---
     local_shell_root: OptStr = Field(default=None, validation_alias="KOKORO_AGENT_LOCAL_SHELL_ROOT")
     local_shell_inherit_env: bool = Field(

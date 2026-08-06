@@ -27,7 +27,7 @@ from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__
 from kokoro.common.v1 import error_pb2 as kokoro_dot_common_dot_v1_dot_error__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1ekokoro/common/v1/receipt.proto\x12\x10kokoro.common.v1\x1a\x1b\x62uf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1ckokoro/common/v1/error.proto\"\xd8\x01\n\x0f\x43ommandIdentity\x12\x1e\n\ncommand_id\x18\x01 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01\x12#\n\x0fidempotency_key\x18\x02 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\xbf\x01\x12N\n\x10\x64igest_algorithm\x18\x03 \x01(\x0e\x32(.kokoro.common.v1.CommandDigestAlgorithmB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x30\n\x0erequest_digest\x18\x04 \x01(\tB\x18\xbaH\x15r\x13\x32\x0e^[0-9a-f]{64}$\x98\x01@\"\xaa\x02\n\x0e\x43ommandReceipt\x12;\n\x08identity\x18\x01 \x01(\x0b\x32!.kokoro.common.v1.CommandIdentityB\x06\xbaH\x03\xc8\x01\x01\x12\x1d\n\toperation\x18\x02 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01\x12@\n\x05state\x18\x03 \x01(\x0e\x32%.kokoro.common.v1.CommandReceiptStateB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00\x12\x37\n\x0brecorded_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01\x12\x37\n\x05\x65rror\x18\x05 \x01(\x0b\x32#.kokoro.common.v1.KokoroErrorDetailH\x00\x88\x01\x01\x42\x08\n\x06_error*s\n\x16\x43ommandDigestAlgorithm\x12(\n$COMMAND_DIGEST_ALGORITHM_UNSPECIFIED\x10\x00\x12/\n+COMMAND_DIGEST_ALGORITHM_SHA256_PROTOBUF_V1\x10\x01*\xd4\x01\n\x13\x43ommandReceiptState\x12%\n!COMMAND_RECEIPT_STATE_UNSPECIFIED\x10\x00\x12\"\n\x1e\x43OMMAND_RECEIPT_STATE_ACCEPTED\x10\x01\x12#\n\x1f\x43OMMAND_RECEIPT_STATE_COMMITTED\x10\x02\x12\"\n\x1e\x43OMMAND_RECEIPT_STATE_REJECTED\x10\x03\x12)\n%COMMAND_RECEIPT_STATE_OUTCOME_UNKNOWN\x10\x04\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1ekokoro/common/v1/receipt.proto\x12\x10kokoro.common.v1\x1a\x1b\x62uf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1ckokoro/common/v1/error.proto\"\x93\x02\n\x0f\x43ommandIdentity\x12)\n\ncommand_id\x18\x01 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01R\tcommandId\x12\x33\n\x0fidempotency_key\x18\x02 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\xbf\x01R\x0eidempotencyKey\x12_\n\x10\x64igest_algorithm\x18\x03 \x01(\x0e\x32(.kokoro.common.v1.CommandDigestAlgorithmB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00R\x0f\x64igestAlgorithm\x12?\n\x0erequest_digest\x18\x04 \x01(\tB\x18\xbaH\x15r\x13\x32\x0e^[0-9a-f]{64}$\x98\x01@R\rrequestDigest\"\xd9\x02\n\x0e\x43ommandReceipt\x12\x45\n\x08identity\x18\x01 \x01(\x0b\x32!.kokoro.common.v1.CommandIdentityB\x06\xbaH\x03\xc8\x01\x01R\x08identity\x12(\n\toperation\x18\x02 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01R\toperation\x12G\n\x05state\x18\x03 \x01(\x0e\x32%.kokoro.common.v1.CommandReceiptStateB\n\xbaH\x07\x82\x01\x04\x10\x01 \x00R\x05state\x12\x43\n\x0brecorded_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\nrecordedAt\x12>\n\x05\x65rror\x18\x05 \x01(\x0b\x32#.kokoro.common.v1.KokoroErrorDetailH\x00R\x05\x65rror\x88\x01\x01\x42\x08\n\x06_error*s\n\x16\x43ommandDigestAlgorithm\x12(\n$COMMAND_DIGEST_ALGORITHM_UNSPECIFIED\x10\x00\x12/\n+COMMAND_DIGEST_ALGORITHM_SHA256_PROTOBUF_V1\x10\x01*\xd4\x01\n\x13\x43ommandReceiptState\x12%\n!COMMAND_RECEIPT_STATE_UNSPECIFIED\x10\x00\x12\"\n\x1e\x43OMMAND_RECEIPT_STATE_ACCEPTED\x10\x01\x12#\n\x1f\x43OMMAND_RECEIPT_STATE_COMMITTED\x10\x02\x12\"\n\x1e\x43OMMAND_RECEIPT_STATE_REJECTED\x10\x03\x12)\n%COMMAND_RECEIPT_STATE_OUTCOME_UNKNOWN\x10\x04\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -50,12 +50,12 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_COMMANDRECEIPT'].fields_by_name['state']._serialized_options = b'\272H\007\202\001\004\020\001 \000'
   _globals['_COMMANDRECEIPT'].fields_by_name['recorded_at']._loaded_options = None
   _globals['_COMMANDRECEIPT'].fields_by_name['recorded_at']._serialized_options = b'\272H\003\310\001\001'
-  _globals['_COMMANDDIGESTALGORITHM']._serialized_start=664
-  _globals['_COMMANDDIGESTALGORITHM']._serialized_end=779
-  _globals['_COMMANDRECEIPTSTATE']._serialized_start=782
-  _globals['_COMMANDRECEIPTSTATE']._serialized_end=994
+  _globals['_COMMANDDIGESTALGORITHM']._serialized_start=770
+  _globals['_COMMANDDIGESTALGORITHM']._serialized_end=885
+  _globals['_COMMANDRECEIPTSTATE']._serialized_start=888
+  _globals['_COMMANDRECEIPTSTATE']._serialized_end=1100
   _globals['_COMMANDIDENTITY']._serialized_start=145
-  _globals['_COMMANDIDENTITY']._serialized_end=361
-  _globals['_COMMANDRECEIPT']._serialized_start=364
-  _globals['_COMMANDRECEIPT']._serialized_end=662
+  _globals['_COMMANDIDENTITY']._serialized_end=420
+  _globals['_COMMANDRECEIPT']._serialized_start=423
+  _globals['_COMMANDRECEIPT']._serialized_end=768
 # @@protoc_insertion_point(module_scope)

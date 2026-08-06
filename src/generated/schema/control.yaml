@@ -1,0 +1,171 @@
+# Kokoro control-plane — the ONE truth for inbound run messages.
+#
+# session -> agent. run.request rides the requests stream; run.resume/run.cancel ride
+# the per-run control stream (see streams.yaml). run_id is minted by session; thread_id
+# is the LangGraph configurable.thread_id (V1 value == session_id, named only at the
+# agent boundary). RuntimeConfig/RuntimeContext are already-resolved config, not Hub
+# source data. conversation_id / execution_style / permission_mode are deleted.
+
+enums:
+  subagent_create: [deny, ask, allow]
+  filesystem_perm: [read_only, workspace_write]
+  backend: [state, local_shell, docker, e2b, custom]
+  # 装配配方分派键（assembly/<type>.py）：general=对话型对外缺省；studio 类型落地时扩枚举。
+  agent_type: [general]
+  resume_decision: [approve, edit, reject, respond, submit]
+
+# Reusable nested object shapes (dependency order: leaves first).
+objects:
+  # 附件/大输入引用等真实需求落地时再进契约（拒绝投机字段；content 即唯一输入）。
+  - name: RunInput
+    fields:
+      - {name: message_id, type: string_nonempty}
+      - {name: content, type: string_nonempty}
+  - name: ModelConfig
+    fields:
+      - {name: provider, type: string_nonempty}
+      - {name: name, type: string_nonempty}
+      # Platform-owned opaque capability for the exact execution manifest. GA never derives Site/budget/route.
+      - {name: authorization_handle, type: reference}
+      - {name: effort, type: string_nonempty, optional: true}
+      - {name: thinking, type: boolean, optional: true}
+  # 会话快照的技能卡片（内容锁）：装配清单零查询,恢复重放零决策。
+  - name: SkillGrant
+    fields:
+      - {name: option_ref, type: reference}
+      - {name: name, type: string_nonempty}
+      - {name: content_hash, type: string_nonempty}
+      - {name: description, type: string_nonempty}
+      # 快照时定死归属（"official" | <namespace>）：同名跨 scope 时按 hash 取包不再猜先后
+      # （skills spec §7.5 边角:用户上传同名技能后,旧会话仍按 official 卡读到正确旧版）。
+      - {name: scope, type: string_nonempty}
+  # 会话快照的 MCP 授权卡(MCP-REVISION,对偶 SkillGrant):session 创建时按解析结果定死
+  # (scope,name,revision),config_hash=该 revision 规范化配置 sha256(内容锁)。agent 装配按
+  # revision 取不可变快照,disable/revoke 走活文档 fail-closed 检查,不靠 wire 猜"现在的配置"。
+  - name: McpGrant
+    fields:
+      - {name: option_ref, type: reference}
+      - {name: scope, type: string_nonempty}
+      - {name: name, type: string_nonempty}
+      - {name: revision, type: int}
+      - {name: config_hash, type: string_nonempty}
+  - name: Permissions
+    fields:
+      - {name: approval_tools, type: array:string_nonempty}
+      - {name: review_tools, type: array:string_nonempty}
+      - {name: subagent_create, type: enum:subagent_create}
+      - {name: filesystem, type: enum:filesystem_perm}
+  # Platform Admission seals run-bound Media authority into the request. Both
+  # values are opaque to Session and GA: they carry no Site, subject, credit,
+  # provider, or storage facts and are never exposed to model-editable input.
+  - name: MediaRuntimeGrant
+    fields:
+      - {name: media_access_handle, type: opaque_runtime_handle}
+      - {name: media_projection_reservation_handle, type: opaque_runtime_handle}
+  # wire 只传 names + 已解析上下文；一切定义（prompt/subagent/MCP server）归 agent 侧资产/配置。
+  - name: RuntimeConfig
+    fields:
+      # Platform Admission 从 SiteRelease 投影取得的冻结 Hub catalog 内容锁；Session 只密封透传。
+      - {name: agent_catalog_ref, type: reference}
+      # 类型决定配方与基础工具面（如 ask_user 只属对话型）；agent 是类型下的具名实例。
+      - {name: agent_type, type: enum:agent_type}
+      # agent（preset）名：人格资产解析键 prompts/<agent>.md；缺省=general。
+      - {name: agent, type: string_nonempty, optional: true}
+      - {name: model, type: object:ModelConfig}
+      - {name: tools, type: array:string_nonempty}
+      # skills = 会话快照卡片（session 创建时查池定死,含内容锁 hash）；run 只是复制。
+      - {name: skills, type: array:object:SkillGrant}
+      # MCP server = 会话快照授权卡（MCP-REVISION 破坏性切换）：按 (scope,name,revision) 引用
+      # 不可变快照,凭据仍不上 wire（secret_ref 在 hub/agent 侧按 handle 解析）。
+      - {name: mcp_servers, type: array:object:McpGrant}
+      # subagent 按名引用：定义住 agent 侧 catalog/资产库，wire 不携带内联 prompt。
+      - {name: subagents, type: array:string_nonempty}
+      - {name: backend, type: enum:backend}
+      - {name: permissions, type: object:Permissions}
+      # Optional because chat-only Site releases do not expose Media. When
+      # present the pair is atomic: GA cannot receive Media authority without
+      # an exact Session projection reservation for the same run.
+      - {name: media, type: object:MediaRuntimeGrant, optional: true}
+  # 会话连续性由 thread checkpoint 承担；组织/用户维度等真实 auth 落地再进契约（拒绝投机字段）。
+  - name: RuntimeContext
+    fields:
+      - {name: namespace, type: string_nonempty}
+      - {name: session_id, type: string_nonempty}
+  # Session owns conversation topology but never sees a GA checkpoint config.
+  # It transports only the opaque anchor returned by Agent and its integrity
+  # digest. The tagged union makes half-populated parent intents impossible.
+  - name: ExecutionContextIntent
+    discriminator: mode
+    variants:
+      - value: root
+        fields: []
+      - value: continue
+        fields:
+          - {name: parent_anchor, type: reference}
+          - {name: parent_digest, type: sha256}
+      - value: fork
+        fields:
+          - {name: parent_anchor, type: reference}
+          - {name: parent_digest, type: sha256}
+
+# Inbound messages, discriminated on `kind`.
+messages:
+  - kind: run.request
+    fields:
+      - {name: run_id, type: string_nonempty}
+      - {name: thread_id, type: string_nonempty}
+      - {name: input, type: object:RunInput}
+      - {name: runtime, type: object:RuntimeConfig}
+      - {name: context, type: object:RuntimeContext}
+      - {name: execution_context, type: object:ExecutionContextIntent}
+      - {name: trace, type: record, optional: true}
+  - kind: run.resume
+    fields:
+      - {name: run_id, type: string_nonempty}
+      - {name: thread_id, type: string_nonempty}
+      # R2:幂等锚上 wire(agent inbox 按它去重;receipt 按它回执)。
+      - {name: decision_id, type: string_nonempty}
+      - {name: decisions, type: decision_message_list}
+  - kind: run.cancel
+    fields:
+      - {name: run_id, type: string_nonempty}
+      - {name: thread_id, type: string_nonempty}
+      - {name: decision_id, type: string_nonempty}
+  - kind: run.steer
+    fields:
+      - {name: run_id, type: string_nonempty}
+      - {name: thread_id, type: string_nonempty}
+      - {name: message_id, type: string_nonempty}
+      - {name: content, type: string_nonempty}
+
+# ResumeDecision arms, discriminated on `type`.
+resume_decisions:
+  - type: approve
+    fields:
+      - {name: tool_id, type: string_nonempty}
+      - {name: args, type: record, optional: true}
+  - type: edit
+    fields:
+      - {name: tool_id, type: string_nonempty}
+      - {name: args, type: record}
+  - type: reject
+    fields:
+      - {name: tool_id, type: string_nonempty}
+      - {name: reason, type: string, optional: true}
+  - type: respond
+    fields:
+      - {name: tool_id, type: string_nonempty}
+      - {name: response, type: string_nonempty}
+  # kind=input（request_human 通用输入请求,如 MCP elicitation）的回应：结构化 value 按
+  # 请求随附的 input_schema 校验（校验在 agent 侧,靠近消费点）。request_id=幂等锚——
+  # 工具边界场景与 tool_id 同值,pause 存储沿用同一锚位。
+  - type: submit
+    fields:
+      - {name: request_id, type: string_nonempty}
+      - {name: value, type: record}
+
+notes:
+  run.request.thread_id: "LangGraph configurable.thread_id；V1 取值=session_id，命名只在 agent 边界。"
+  run.request.trace: "观测专用（langfuse_trace_id 等），不参与业务；record 直透。"
+  run.request.execution_context: "Agent-owned opaque checkpoint anchor intent；Session/Platform 只绑定并透传，不读取 checkpoint。"
+  run.steer.message_id: "运行中插话（模型轮粒度注入）；幂等键=message_id（keep-first），不打断进行中的工具。"

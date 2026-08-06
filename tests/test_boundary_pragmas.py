@@ -29,6 +29,8 @@ ALLOWED: dict[str, frozenset[str]] = {
     ),
     # Hypercorn 的 public serve 注解带未参数化 WSGI fallback；此入口只传 ASGI app。
     "src/kokoro_agent/evidence/main.py": frozenset({"reportUnknownVariableType"}),
+    # 同一 Hypercorn 边界；Presentation 入口只传 ASGI app。
+    "src/kokoro_agent/presentation/main.py": frozenset({"reportUnknownVariableType"}),
     # LangGraph 编译图泛型暴露部分 unknown overload，仅存在于执行上下文测试驱动器。
     "tests/test_execution_context.py": frozenset(
         {"reportUnknownMemberType", "reportArgumentType"}

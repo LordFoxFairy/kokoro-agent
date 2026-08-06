@@ -18,6 +18,10 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from google.protobuf.timestamp_pb2 import Timestamp
+
+from kokoro.agent.presentation.v1 import presentation_pb2 as presentation_wire
+from kokoro.common.v2 import command_envelope_pb2 as common_wire
 
 from kokoro_agent.contract import (
     AgentEvent,
@@ -74,6 +78,13 @@ from kokoro_agent.presentation.runtime import (
     plan_presentation_batch,
 )
 from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
+from kokoro_agent.presentation.integrity import (
+    delivery_record_digest,
+    delivery_status_digest,
+    producer_fence,
+    record_chain_genesis_digest,
+)
+from kokoro_agent.presentation.submission import PresentationSubmission
 
 # 不可解析帧死信集合（R1 quarantine 简版；identity 感知的畸形帧留 R5）。
 DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
@@ -134,6 +145,126 @@ def _presentation_quarantine_digest(command: PresentationQuarantineCommand) -> s
         sort_keys=True,
     ).encode()
     return hashlib.sha256(b"kokoro-presentation-quarantine-v1\0" + canonical).hexdigest()
+
+
+def _presentation_timestamp(timestamp_ms: int) -> Timestamp:
+    value = Timestamp()
+    value.FromMilliseconds(timestamp_ms)
+    return value
+
+
+def _presentation_delivery_record(
+    record: PresentationCandidateRecord,
+    *,
+    previous_record_digest: str,
+) -> presentation_wire.DeliveryRecord:
+    candidate = AgentAguiEventCandidate.model_validate_json(
+        record.candidate_envelope_json
+    )
+    submission = PresentationSubmission.from_candidate(candidate)
+    envelope = submission.envelope_bytes()
+    envelope_digest = f"sha256:{hashlib.sha256(envelope).hexdigest()}"
+    record_identity = hashlib.sha256(
+        (
+            f"kokoro-presentation-record-v1\0{record.run_id}\0"
+            f"{record.presentation_seq}\0{envelope_digest}"
+        ).encode()
+    ).hexdigest()
+    value = presentation_wire.DeliveryRecord(
+        record_ref=f"presentation.record:sha256:{record_identity}",
+        previous_delivery_seq=record.presentation_seq - 1,
+        delivery_seq=record.presentation_seq,
+        envelope_bytes=envelope,
+        envelope_digest=envelope_digest,
+        submission_ref=submission.submission_ref,
+        submission_digest=envelope_digest,
+        recorded_at=_presentation_timestamp(record.recorded_at_ms),
+        producer=producer_fence(
+            record.producer_instance_ref, record.producer_generation
+        ),
+        previous_record_digest=previous_record_digest,
+    )
+    value.record_digest = delivery_record_digest(record.run_id, value)
+    return value
+
+
+def _presentation_delivery_status(
+    *,
+    run_id: str,
+    producer: presentation_wire.ProducerFence,
+    initial_updated_at_ms: int,
+    document: dict[str, object] | None,
+) -> presentation_wire.DeliveryStatus:
+    if document is None:
+        status = presentation_wire.DeliveryStatus(
+            run_id=run_id,
+            producer=producer,
+            acknowledged_through_delivery_seq=0,
+            status_revision=1,
+            updated_at=_presentation_timestamp(initial_updated_at_ms),
+        )
+    else:
+        acknowledged = document.get("acknowledged_through_delivery_seq")
+        revision = document.get("status_revision")
+        updated_at_ms = document.get("updated_at_ms")
+        if (
+            not isinstance(acknowledged, int)
+            or acknowledged < 0
+            or not isinstance(revision, int)
+            or revision < 1
+            or not isinstance(updated_at_ms, int)
+            or updated_at_ms < 0
+        ):
+            raise TypeError("PRESENTATION_DELIVERY_STATE_INVALID")
+        status = presentation_wire.DeliveryStatus(
+            run_id=run_id,
+            producer=producer,
+            acknowledged_through_delivery_seq=acknowledged,
+            status_revision=revision,
+            updated_at=_presentation_timestamp(updated_at_ms),
+        )
+        acknowledged_head = document.get("acknowledged_head_record_digest")
+        if acknowledged_head is not None:
+            if not isinstance(acknowledged_head, str):
+                raise TypeError("PRESENTATION_DELIVERY_STATE_INVALID")
+            status.acknowledged_head_record_digest = acknowledged_head
+        for key, target in (
+            ("last_command_proto", status.last_command),
+            ("quarantine_proto", status.quarantine),
+        ):
+            encoded = document.get(key)
+            if encoded is not None:
+                if not isinstance(encoded, bytes):
+                    raise TypeError("PRESENTATION_DELIVERY_STATE_INVALID")
+                target.ParseFromString(encoded)
+    status.status_digest = delivery_status_digest(status)
+    return status
+
+
+def _presentation_delivery_document(
+    status: presentation_wire.DeliveryStatus,
+) -> dict[str, object]:
+    document: dict[str, object] = {
+        "_id": status.run_id,
+        "acknowledged_through_delivery_seq": (
+            status.acknowledged_through_delivery_seq
+        ),
+        "status_revision": status.status_revision,
+        "updated_at_ms": status.updated_at.ToMilliseconds(),
+    }
+    if status.HasField("acknowledged_head_record_digest"):
+        document["acknowledged_head_record_digest"] = (
+            status.acknowledged_head_record_digest
+        )
+    if status.HasField("last_command"):
+        document["last_command_proto"] = status.last_command.SerializeToString(
+            deterministic=True
+        )
+    if status.HasField("quarantine"):
+        document["quarantine_proto"] = status.quarantine.SerializeToString(
+            deterministic=True
+        )
+    return document
 
 
 def _delivery_state(
@@ -1173,7 +1304,11 @@ class MongoLedger:
                             "run_id": event.run_id,
                             "source_batch_ref": marker_id,
                         },
-                        {"_id": 0, "source_batch_ref": 0},
+                        {
+                            "_id": 0,
+                            "source_batch_ref": 0,
+                            "delivery_record_proto": 0,
+                        },
                         session=session,
                     ).sort("presentation_seq", 1)
                 ]
@@ -1223,6 +1358,39 @@ class MongoLedger:
                 )
                 for candidate in batch.candidates
             )
+            delivery_records: list[presentation_wire.DeliveryRecord] = []
+            if records:
+                first_sequence = records[0].presentation_seq
+                producer = producer_fence(stream_instance_ref, stream_generation)
+                if first_sequence == 1:
+                    previous_record_digest = record_chain_genesis_digest(
+                        event.run_id, producer
+                    )
+                else:
+                    previous = await self._presentation_candidates.find_one(
+                        {
+                            "run_id": event.run_id,
+                            "presentation_seq": first_sequence - 1,
+                        },
+                        {"delivery_record_proto": 1},
+                        session=session,
+                    )
+                    encoded = (
+                        None
+                        if previous is None
+                        else previous.get("delivery_record_proto")
+                    )
+                    if not isinstance(encoded, bytes):
+                        raise ValueError("PRESENTATION_RECORD_CHAIN_MISSING")
+                    previous_wire = presentation_wire.DeliveryRecord()
+                    previous_wire.ParseFromString(encoded)
+                    previous_record_digest = previous_wire.record_digest
+                for record in records:
+                    delivery_record = _presentation_delivery_record(
+                        record, previous_record_digest=previous_record_digest
+                    )
+                    delivery_records.append(delivery_record)
+                    previous_record_digest = delivery_record.record_digest
             ordered_digest = hashlib.sha256(
                 b"".join(bytes.fromhex(record.envelope_sha256) for record in records)
             ).hexdigest()
@@ -1263,8 +1431,13 @@ class MongoLedger:
                             "_id": record.presentation_ref,
                             **record.model_dump(mode="python"),
                             "source_batch_ref": marker_id,
+                            "delivery_record_proto": delivery_record.SerializeToString(
+                                deterministic=True
+                            ),
                         }
-                        for record in records
+                        for record, delivery_record in zip(
+                            records, delivery_records, strict=True
+                        )
                     ],
                     ordered=True,
                     session=session,
@@ -1319,7 +1492,11 @@ class MongoLedger:
                         "$lte": through_presentation_seq,
                     },
                 },
-                {"_id": 0, "source_batch_ref": 0},
+                {
+                    "_id": 0,
+                    "source_batch_ref": 0,
+                    "delivery_record_proto": 0,
+                },
             )
             .sort("presentation_seq", 1)
             .limit(limit)
@@ -1328,6 +1505,392 @@ class MongoLedger:
         async for row in cursor:
             records.append(_PRESENTATION_RECORD_ADAPTER.validate_python(row))
         return tuple(records)
+
+    async def check_presentation_provider_active(self) -> None:
+        await self._coll.database.command("ping")
+
+    async def presentation_provider_fence(
+        self, run_id: str
+    ) -> presentation_wire.ProducerFence:
+        authority = await self._coll.find_one(
+            {"_id": run_id},
+            {
+                "run_stream_producer_instance_ref": 1,
+                "run_stream_producer_generation": 1,
+            },
+        )
+        if authority is None:
+            raise ValueError("PRESENTATION_RUN_NOT_FOUND")
+        instance_ref, generation = _run_stream_producer(authority)
+        return producer_fence(instance_ref, generation)
+
+    async def presentation_provider_head(self, run_id: str) -> int:
+        return await self.presentation_head(run_id)
+
+    async def presentation_provider_record(
+        self, run_id: str, delivery_seq: int
+    ) -> presentation_wire.DeliveryRecord | None:
+        if delivery_seq < 1:
+            return None
+        document = await self._presentation_candidates.find_one(
+            {"run_id": run_id, "presentation_seq": delivery_seq},
+            {"delivery_record_proto": 1},
+        )
+        encoded = None if document is None else document.get("delivery_record_proto")
+        if document is None:
+            return None
+        if not isinstance(encoded, bytes):
+            raise TypeError("PRESENTATION_DELIVERY_RECORD_INVALID")
+        record = presentation_wire.DeliveryRecord()
+        record.ParseFromString(encoded)
+        return record
+
+    async def pull_presentation_provider_records(
+        self,
+        run_id: str,
+        after_delivery_seq: int,
+        through_delivery_seq: int,
+        limit: int,
+    ) -> tuple[presentation_wire.DeliveryRecord, ...]:
+        if (
+            after_delivery_seq < 0
+            or through_delivery_seq < after_delivery_seq
+            or not 1 <= limit <= 128
+        ):
+            raise ValueError("PRESENTATION_CURSOR_INVALID")
+        cursor = (
+            self._presentation_candidates.find(
+                {
+                    "run_id": run_id,
+                    "presentation_seq": {
+                        "$gt": after_delivery_seq,
+                        "$lte": through_delivery_seq,
+                    },
+                },
+                {"delivery_record_proto": 1},
+            )
+            .sort("presentation_seq", 1)
+            .limit(limit)
+        )
+        records: list[presentation_wire.DeliveryRecord] = []
+        async for document in cursor:
+            encoded = document.get("delivery_record_proto")
+            if not isinstance(encoded, bytes):
+                raise TypeError("PRESENTATION_DELIVERY_RECORD_INVALID")
+            record = presentation_wire.DeliveryRecord()
+            record.ParseFromString(encoded)
+            records.append(record)
+        return tuple(records)
+
+    async def _presentation_provider_status_for_run(
+        self,
+        run_id: str,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> presentation_wire.DeliveryStatus:
+        authority = await self._coll.find_one(
+            {"_id": run_id},
+            {
+                "run_stream_producer_instance_ref": 1,
+                "run_stream_producer_generation": 1,
+            },
+            session=session,
+        )
+        if authority is None:
+            raise ValueError("PRESENTATION_RUN_NOT_FOUND")
+        instance_ref, generation = _run_stream_producer(authority)
+        first = await self._presentation_candidates.find_one(
+            {"run_id": run_id},
+            {"recorded_at_ms": 1},
+            sort=[("presentation_seq", 1)],
+            session=session,
+        )
+        initial_updated_at_ms = 0 if first is None else first.get("recorded_at_ms")
+        if not isinstance(initial_updated_at_ms, int) or initial_updated_at_ms < 0:
+            raise TypeError("PRESENTATION_DELIVERY_STATE_INVALID")
+        document = await self._presentation_delivery.find_one(
+            {"_id": run_id}, session=session
+        )
+        return _presentation_delivery_status(
+            run_id=run_id,
+            producer=producer_fence(instance_ref, generation),
+            initial_updated_at_ms=initial_updated_at_ms,
+            document=document,
+        )
+
+    async def presentation_provider_status(
+        self,
+        run_id: str | None,
+        original_command: common_wire.CommandIdentityV2 | None,
+    ) -> presentation_wire.DeliveryStatus:
+        if run_id is None:
+            if original_command is None:
+                raise ValueError("PRESENTATION_STATUS_LOOKUP_INVALID")
+            receipt = await self._presentation_admission_commands.find_one(
+                {"original_command_id": original_command.command_id},
+                {"run_id": 1, "original_command_proto": 1},
+            )
+            encoded = None if receipt is None else receipt.get("original_command_proto")
+            stored_run_id = None if receipt is None else receipt.get("run_id")
+            if (
+                not isinstance(encoded, bytes)
+                or not isinstance(stored_run_id, str)
+                or encoded
+                != original_command.SerializeToString(deterministic=True)
+            ):
+                raise ValueError("PRESENTATION_COMMAND_NOT_FOUND")
+            run_id = stored_run_id
+        return await self._presentation_provider_status_for_run(run_id)
+
+    async def acknowledge_presentation_provider_admissions(
+        self, request: presentation_wire.AcknowledgeAdmissionsRequest
+    ) -> presentation_wire.DeliveryStatus:
+        effect = request.effect
+        marker_id = _presentation_command_id(
+            effect.run_id, "ack", effect.idempotency_ref
+        )
+        command_bytes = request.command.SerializeToString(deterministic=True)
+
+        async def acknowledge(
+            session: AsyncClientSession | None,
+        ) -> presentation_wire.DeliveryStatus:
+            existing = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}, session=session
+            )
+            if existing is not None:
+                if (
+                    existing.get("original_command_proto") != command_bytes
+                    or existing.get("effect_digest") != effect.effect_digest
+                ):
+                    raise ValueError("PRESENTATION_ACK_REPLAY_CONFLICT")
+                encoded_status = existing.get("status_proto")
+                if not isinstance(encoded_status, bytes):
+                    raise TypeError("PRESENTATION_COMMAND_RECEIPT_INVALID")
+                status = presentation_wire.DeliveryStatus()
+                status.ParseFromString(encoded_status)
+                return status
+            current = await self._presentation_provider_status_for_run(
+                effect.run_id, session=session
+            )
+            if current.HasField("quarantine"):
+                raise ValueError("PRESENTATION_DELIVERY_QUARANTINED")
+            if (
+                current.acknowledged_through_delivery_seq
+                != effect.expected_acknowledged_through
+                or current.status_revision != effect.expected_status_revision
+            ):
+                raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
+            for receipt in effect.receipts:
+                document = await self._presentation_candidates.find_one(
+                    {
+                        "run_id": effect.run_id,
+                        "presentation_seq": receipt.delivery_seq,
+                    },
+                    {"delivery_record_proto": 1},
+                    session=session,
+                )
+                encoded_record = (
+                    None if document is None else document.get("delivery_record_proto")
+                )
+                if not isinstance(encoded_record, bytes):
+                    raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
+                record = presentation_wire.DeliveryRecord()
+                record.ParseFromString(encoded_record)
+                if (
+                    record.previous_delivery_seq != receipt.previous_delivery_seq
+                    or record.delivery_seq != receipt.delivery_seq
+                    or record.record_ref != receipt.record_ref
+                    or record.record_digest != receipt.record_digest
+                    or record.submission_ref != receipt.submission_ref
+                    or record.submission_digest != receipt.submission_digest
+                ):
+                    raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
+            status = presentation_wire.DeliveryStatus(
+                run_id=effect.run_id,
+                producer=current.producer,
+                acknowledged_through_delivery_seq=effect.receipts[-1].delivery_seq,
+                acknowledged_head_record_digest=effect.receipts[-1].record_digest,
+                status_revision=current.status_revision + 1,
+                last_command=request.command,
+                updated_at=_presentation_timestamp(self._clock()),
+            )
+            if current.HasField("terminal_seal"):
+                status.terminal_seal.CopyFrom(current.terminal_seal)
+            status.status_digest = delivery_status_digest(status)
+            next_document = _presentation_delivery_document(status)
+            if current.status_revision == 1:
+                await self._presentation_delivery.insert_one(
+                    next_document, session=session
+                )
+            else:
+                updated = await self._presentation_delivery.replace_one(
+                    {"_id": effect.run_id, "status_revision": current.status_revision},
+                    next_document,
+                    session=session,
+                )
+                if updated.modified_count != 1:
+                    raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
+            await self._presentation_admission_commands.insert_one(
+                {
+                    "_id": marker_id,
+                    "run_id": effect.run_id,
+                    "kind": "ack",
+                    "original_command_id": request.command.command_id,
+                    "original_command_proto": command_bytes,
+                    "effect_digest": effect.effect_digest,
+                    "status_proto": status.SerializeToString(deterministic=True),
+                },
+                session=session,
+            )
+            return status
+
+        try:
+            return await self._run_evidence_transaction(acknowledge)
+        except DuplicateKeyError:
+            duplicate = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}
+            )
+            if (
+                duplicate is None
+                or duplicate.get("original_command_proto") != command_bytes
+                or duplicate.get("effect_digest") != effect.effect_digest
+            ):
+                raise ValueError("PRESENTATION_ACK_REPLAY_CONFLICT") from None
+            encoded = duplicate.get("status_proto")
+            if not isinstance(encoded, bytes):
+                raise TypeError("PRESENTATION_COMMAND_RECEIPT_INVALID") from None
+            status = presentation_wire.DeliveryStatus()
+            status.ParseFromString(encoded)
+            return status
+
+    async def quarantine_presentation_provider_submission(
+        self, request: presentation_wire.QuarantineSubmissionRequest
+    ) -> presentation_wire.DeliveryStatus:
+        effect = request.effect
+        marker_id = _presentation_command_id(
+            effect.run_id, "quarantine", effect.idempotency_ref
+        )
+        command_bytes = request.command.SerializeToString(deterministic=True)
+
+        async def quarantine(
+            session: AsyncClientSession | None,
+        ) -> presentation_wire.DeliveryStatus:
+            existing = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}, session=session
+            )
+            if existing is not None:
+                if (
+                    existing.get("original_command_proto") != command_bytes
+                    or existing.get("effect_digest") != effect.effect_digest
+                ):
+                    raise ValueError("PRESENTATION_QUARANTINE_REPLAY_CONFLICT")
+                encoded_status = existing.get("status_proto")
+                if not isinstance(encoded_status, bytes):
+                    raise TypeError("PRESENTATION_COMMAND_RECEIPT_INVALID")
+                status = presentation_wire.DeliveryStatus()
+                status.ParseFromString(encoded_status)
+                return status
+            current = await self._presentation_provider_status_for_run(
+                effect.run_id, session=session
+            )
+            if current.HasField("quarantine"):
+                raise ValueError("PRESENTATION_DELIVERY_QUARANTINED")
+            if (
+                current.acknowledged_through_delivery_seq
+                != effect.expected_acknowledged_through
+                or current.status_revision != effect.expected_status_revision
+            ):
+                raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
+            document = await self._presentation_candidates.find_one(
+                {
+                    "run_id": effect.run_id,
+                    "presentation_seq": effect.delivery_seq,
+                },
+                {"delivery_record_proto": 1},
+                session=session,
+            )
+            encoded_record = (
+                None if document is None else document.get("delivery_record_proto")
+            )
+            if not isinstance(encoded_record, bytes):
+                raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
+            record = presentation_wire.DeliveryRecord()
+            record.ParseFromString(encoded_record)
+            if (
+                record.record_ref != effect.record_ref
+                or record.record_digest != effect.record_digest
+                or record.submission_ref != effect.submission_ref
+                or record.submission_digest != effect.submission_digest
+            ):
+                raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
+            status = presentation_wire.DeliveryStatus(
+                run_id=effect.run_id,
+                producer=current.producer,
+                acknowledged_through_delivery_seq=(
+                    current.acknowledged_through_delivery_seq
+                ),
+                status_revision=current.status_revision + 1,
+                last_command=request.command,
+                quarantine=presentation_wire.QuarantineStatus(
+                    delivery_seq=effect.delivery_seq,
+                    record_ref=effect.record_ref,
+                    submission_ref=effect.submission_ref,
+                    rejection_class=effect.rejection_class,
+                    reason_code=effect.reason_code,
+                    session_rejection_digest=effect.session_rejection_digest,
+                    quarantined_at=_presentation_timestamp(self._clock()),
+                ),
+                updated_at=_presentation_timestamp(self._clock()),
+            )
+            if current.HasField("acknowledged_head_record_digest"):
+                status.acknowledged_head_record_digest = (
+                    current.acknowledged_head_record_digest
+                )
+            if current.HasField("terminal_seal"):
+                status.terminal_seal.CopyFrom(current.terminal_seal)
+            status.status_digest = delivery_status_digest(status)
+            next_document = _presentation_delivery_document(status)
+            updated = await self._presentation_delivery.replace_one(
+                {"_id": effect.run_id, "status_revision": current.status_revision},
+                next_document,
+                session=session,
+            )
+            if updated.modified_count != 1:
+                raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
+            await self._presentation_admission_commands.insert_one(
+                {
+                    "_id": marker_id,
+                    "run_id": effect.run_id,
+                    "kind": "quarantine",
+                    "original_command_id": request.command.command_id,
+                    "original_command_proto": command_bytes,
+                    "effect_digest": effect.effect_digest,
+                    "status_proto": status.SerializeToString(deterministic=True),
+                },
+                session=session,
+            )
+            return status
+
+        try:
+            return await self._run_evidence_transaction(quarantine)
+        except DuplicateKeyError:
+            duplicate = await self._presentation_admission_commands.find_one(
+                {"_id": marker_id}
+            )
+            if (
+                duplicate is None
+                or duplicate.get("original_command_proto") != command_bytes
+                or duplicate.get("effect_digest") != effect.effect_digest
+            ):
+                raise ValueError(
+                    "PRESENTATION_QUARANTINE_REPLAY_CONFLICT"
+                ) from None
+            encoded = duplicate.get("status_proto")
+            if not isinstance(encoded, bytes):
+                raise TypeError("PRESENTATION_COMMAND_RECEIPT_INVALID") from None
+            status = presentation_wire.DeliveryStatus()
+            status.ParseFromString(encoded)
+            return status
 
     async def acknowledge_presentation_admissions(
         self, command: PresentationAcknowledgeCommand

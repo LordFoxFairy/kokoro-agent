@@ -2,7 +2,7 @@
   "contractRevision": "kokoro.generated-artifact-provenance.v1",
   "boundaryId": "generated-kokoro-agent@v1",
   "consumerRepository": "kokoro-agent",
-  "sourceRootCommit": "608025a36f4746ab6e699826c1cea35166265a31",
+  "sourceRootCommit": "e66efb07a5839fe4085a719b77eb33cd534b01e9",
   "sourceFiles": [
     {
       "path": "contract/buf.gen.yaml",
@@ -74,7 +74,7 @@
     },
     {
       "path": "contract/lib/generation/stage-consumer.mjs",
-      "sha256": "sha256:2987ec0d193aa6d346272b6e0fa65ca66a90fffb95a5673f1ea198d7f85b3ace"
+      "sha256": "sha256:338eadfa494b1fc58db3144d8e409a1a7ac1b547b6895e1eb2b2877aeda09483"
     },
     {
       "path": "contract/lib/provenance/build-manifest.mjs",
@@ -290,7 +290,7 @@
     },
     {
       "path": "contract/registry/generated-consumers.yaml",
-      "sha256": "sha256:50a3795899658ad91b0e04e5e61766bbc0468c25073a26abb36b4d16ffd313e3"
+      "sha256": "sha256:a722c46506990de7a37fe2239d63025e0a1179bd6cc16c7b4994277b339220ce"
     },
     {
       "path": "contract/registry/platform-session-authorization-v1.yaml",
@@ -757,5 +757,5 @@
       "sha256": "sha256:a3973bd5eb34895b495b91946e544b75e223f0af0b9990861f0def766ff19efa"
     }
   ],
-  "manifestDigest": "sha256:1bdf13d3d7ce613c5f29389523edd11fc459f91d523ca73ca96c63b9ddcd56dd"
+  "manifestDigest": "sha256:4f3cffc3a97d910adbc3e69fdaf9e9618194384cf07b44dddfd390ecfed1eb03"
 }

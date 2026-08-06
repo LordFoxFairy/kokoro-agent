@@ -2,7 +2,7 @@
   "contractRevision": "kokoro.generated-artifact-provenance.v1",
   "boundaryId": "generated-kokoro-agent@v1",
   "consumerRepository": "kokoro-agent",
-  "sourceRootCommit": "09c8007a436d4996a32097e3c803143a2a8b6341",
+  "sourceRootCommit": "608025a36f4746ab6e699826c1cea35166265a31",
   "sourceFiles": [
     {
       "path": "contract/buf.gen.yaml",
@@ -50,7 +50,7 @@
     },
     {
       "path": "contract/generate.mjs",
-      "sha256": "sha256:9692e3e307a7c45d88a9221e0736dd3302a8cf2212a505db10ca9b991328d054"
+      "sha256": "sha256:91be368f2c9b275a3928e1859ea24fa9c5ba19e9791f83f84d41e02fe184fab7"
     },
     {
       "path": "contract/generate.py",
@@ -94,7 +94,7 @@
     },
     {
       "path": "contract/openapi/platform-public-v1.yaml",
-      "sha256": "sha256:b003b60248c311b57c88f3788bcc858c2defeacde3776e7b739a8ade54a4b55b"
+      "sha256": "sha256:e117d10992722ffee6a3d7cead24e8329924af663ca6b13f216044e6af88f052"
     },
     {
       "path": "contract/package.json",
@@ -178,11 +178,11 @@
     },
     {
       "path": "contract/proto/kokoro/platform/commerce/v1/admin_commerce.proto",
-      "sha256": "sha256:f27bb896ac141af5670848c7f5cc37d32e05dc4f4247a95cae3357df7f4a1904"
+      "sha256": "sha256:47fbe8d7f944c011a7524c77358791b7239b00900bc03f41f1f8dbbac6746665"
     },
     {
       "path": "contract/proto/kokoro/platform/commerce/v1/commerce_catalog.proto",
-      "sha256": "sha256:c9176136565afbc15c13011f875779bf791528f517b0706a96725f840d35d841"
+      "sha256": "sha256:fdc50e36538af360bcf470dd15ae3716d37a97892c20cc6b524900131731fc61"
     },
     {
       "path": "contract/proto/kokoro/platform/commerce/v1/commerce_control.proto",
@@ -194,7 +194,7 @@
     },
     {
       "path": "contract/proto/kokoro/platform/credit/v1/admin_credit.proto",
-      "sha256": "sha256:939eaf5248f4e0755c3939fa8f61185fa830587d77321a7c725422535120eb68"
+      "sha256": "sha256:1cdb7118f920178754c99ac11c1b0aaa226cabd997d44cf4f9000a98b1eb7cc6"
     },
     {
       "path": "contract/proto/kokoro/platform/credit/v1/cost_projection.proto",
@@ -203,10 +203,6 @@
     {
       "path": "contract/proto/kokoro/platform/credit/v1/cost_projection_recovery.proto",
       "sha256": "sha256:6430b5fe17ed329d612d00997aaefea2d1aa445219fcceadef65a2b661595b18"
-    },
-    {
-      "path": "contract/proto/kokoro/platform/credit/v1/credit_catalog.proto",
-      "sha256": "sha256:3df22c465bfb3700927fa5e6ad007ee35026b776f8c322b7f8efb5fb36c05f77"
     },
     {
       "path": "contract/proto/kokoro/platform/identity/v1/admin_identity.proto",
@@ -282,7 +278,7 @@
     },
     {
       "path": "contract/registry/boundaries.yaml",
-      "sha256": "sha256:08553773b0fde64f534ec3928bddb39fc1abb6ffb3c4e221cd27b6a5e0179831"
+      "sha256": "sha256:1c6768c25ea99ee2fa8904310e379e337d37ce67af0f5f7e6f801e194d33467a"
     },
     {
       "path": "contract/registry/consumer-generation-transition-v1.yaml",
@@ -294,7 +290,7 @@
     },
     {
       "path": "contract/registry/generated-consumers.yaml",
-      "sha256": "sha256:7a98a0784b0f80fb5bc12df666ed370d29cd0c9fd84e2f11e25f009595ab9e3e"
+      "sha256": "sha256:50a3795899658ad91b0e04e5e61766bbc0468c25073a26abb36b4d16ffd313e3"
     },
     {
       "path": "contract/registry/platform-session-authorization-v1.yaml",
@@ -302,11 +298,11 @@
     },
     {
       "path": "contract/registry/platform-session-authorization-v2.yaml",
-      "sha256": "sha256:b854c5622e30da4aedea000168f21e29a003526de223033241ec057ad8a170f2"
+      "sha256": "sha256:9fe15d0ad9a58c6574bd62d5c47429d23247a917a88efadc0df66bd0d7040d05"
     },
     {
       "path": "contract/registry/prelaunch-protobuf-hard-cuts.yaml",
-      "sha256": "sha256:75de798d5444f8333e9b5d5893970774ab32441f3acce14c191b034d1e2bd963"
+      "sha256": "sha256:6f311bccd1cf753faf08246069952ef91d6a05952c05d22d0fe1c21f4dc97239"
     },
     {
       "path": "contract/registry/prelaunch-schema-hard-cuts.yaml",
@@ -761,5 +757,5 @@
       "sha256": "sha256:a3973bd5eb34895b495b91946e544b75e223f0af0b9990861f0def766ff19efa"
     }
   ],
-  "manifestDigest": "sha256:64e9bac8f7f2b59947b579c3d348d6af73242e9192c968954b1a94e5e24428a5"
+  "manifestDigest": "sha256:1bdf13d3d7ce613c5f29389523edd11fc459f91d523ca73ca96c63b9ddcd56dd"
 }

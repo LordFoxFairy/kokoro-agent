@@ -15,6 +15,7 @@ docs/*
 !docs/agent/
 !docs/agent/**
 tmp/
+build/
 *.egg-info/
 # sqlite checkpointer 落盘文件（KOKORO_CHECKPOINT_DB）
 *.db

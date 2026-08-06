@@ -1,26 +1,47 @@
-# kokoro-agent 生产镜像（Python 3.11 + uv）。worker 进程（kokoro-agent-worker），非 HTTP 服务。
-# 依赖：redis / mongo / litellm（KOKORO_LITELLM_BASE_URL）；env 运行时注入。
-FROM python:3.11-slim
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:d29f48a31a8b408ed19272ca1e7b10ebae13b240a27e862d3d4217c528e2e0c3
+
+FROM ${PYTHON_IMAGE} AS build
 WORKDIR /app
 
-# uv 装依赖管理器；git 供部分源码依赖（如有）。
-RUN pip install --no-cache-dir uv
+# The build tool is pinned and never copied into the production stage. The first sync keeps
+# dependency layers stable; the second installs the project as a non-editable wheel-style package.
+RUN python -m pip install --no-cache-dir uv==0.9.4
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
+COPY src ./src
+RUN uv sync --frozen --no-dev --no-editable \
+    && test -x /app/.venv/bin/kokoro-agent-worker \
+    && test -x /app/.venv/bin/kokoro-agent-evidence \
+    && test -x /app/.venv/bin/kokoro-agent-presentation
 
-# 依赖层（不含本项目）——先拷 lock 命中缓存。
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+FROM ${PYTHON_IMAGE} AS runtime
+WORKDIR /app
 
-# 项目源 + 安装本包（提供 kokoro-agent-worker 入口）。
-COPY . .
-RUN uv sync --frozen --no-dev
+RUN rm -rf /usr/local/lib/python3.11/site-packages/pip \
+        /usr/local/lib/python3.11/site-packages/pip-* \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
+    && groupadd --system --gid 10001 kokoro \
+    && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
+       --shell /usr/sbin/nologin kokoro
 
-RUN useradd --system --uid 1001 kokoro && chown -R kokoro:kokoro /app
-USER kokoro
-ENV PYTHONUNBUFFERED=1
-# 系统用户无家目录 → uv 默认缓存 ~/.cache/uv 不可写(EACCES)。指到 /app(已 chown kokoro)下可写目录。
-ENV UV_CACHE_DIR=/app/.uv-cache
-# worker：从 redis 取 dispatch、跑 run、发事件。Presentation deployable 通过
-# `kokoro-agent-presentation` 覆盖容器 command，独立监听 mTLS/HTTP2 8444。
-# 依赖已在 build 期 uv sync 烘焙,
-# --no-sync 免运行时再联网 sync(生产离线也能起)。
-CMD ["uv", "run", "--no-sync", "kokoro-agent-worker"]
+COPY --from=build --chown=10001:10001 /app/.venv /app/.venv
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/nonexistent
+
+USER 10001:10001
+EXPOSE 8443 8444
+STOPSIGNAL SIGTERM
+
+# The owner inventory deliberately records dependency-aware readiness as missing and blocks every
+# deployment. A generic image-level probe would hide that fact, so orchestration must not inherit one.
+HEALTHCHECK NONE
+
+RUN test -x /app/.venv/bin/kokoro-agent-worker \
+    && test -x /app/.venv/bin/kokoro-agent-evidence \
+    && test -x /app/.venv/bin/kokoro-agent-presentation
+
+ENTRYPOINT []
+CMD ["kokoro-agent-worker"]

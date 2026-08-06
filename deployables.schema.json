@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.internal/schemas/agent-deployables-v1.schema.json",
+  "title": "Kokoro Agent production deployable inventory",
+  "description": "Closed child-owned release policy input. It inventories only real console entrypoints and keeps every current process fail-closed until its listed launch blockers are removed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "image", "releasePolicyContract", "deployables"],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]{2,127}$"
+    },
+    "stringSet": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "listener": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "containerPort", "protocol", "exposure", "mtls"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "enum": ["connect-http2"] },
+        "exposure": { "enum": ["service"] },
+        "mtls": { "const": true }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["liveness", "readiness"],
+      "properties": {
+        "liveness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "status"],
+          "properties": {
+            "kind": { "const": "container-process" },
+            "status": { "const": "available" }
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "status", "dependencies"],
+          "properties": {
+            "kind": { "const": "dependency-aware" },
+            "status": { "const": "missing" },
+            "dependencies": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/identifier" },
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    },
+    "replicaPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum", "autoscaling"],
+      "properties": {
+        "minimum": { "const": 0 },
+        "maximum": { "const": 0 },
+        "autoscaling": { "const": "forbidden-while-blocked" }
+      }
+    },
+    "deployable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "command",
+        "processRole",
+        "defaultContainer",
+        "publicTraffic",
+        "activationAuthorized",
+        "runtimeTraffic",
+        "launchReadiness",
+        "listeners",
+        "inboundContracts",
+        "declaredInboundContracts",
+        "outboundContracts",
+        "requiredEnvironment",
+        "forbiddenEnvironment",
+        "secretClasses",
+        "probes",
+        "replicaPolicy",
+        "drain",
+        "launchBlockers",
+        "releaseOwner",
+        "sloOwner",
+        "runbookOwner"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "command": { "$ref": "#/$defs/identifier" },
+        "processRole": { "$ref": "#/$defs/identifier" },
+        "defaultContainer": { "type": "boolean" },
+        "publicTraffic": { "const": false },
+        "activationAuthorized": { "const": false },
+        "runtimeTraffic": { "const": false },
+        "launchReadiness": { "const": "blocked" },
+        "listeners": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/listener" },
+          "uniqueItems": true
+        },
+        "inboundContracts": { "$ref": "#/$defs/stringSet" },
+        "declaredInboundContracts": { "$ref": "#/$defs/stringSet" },
+        "outboundContracts": { "$ref": "#/$defs/stringSet" },
+        "requiredEnvironment": { "$ref": "#/$defs/stringSet" },
+        "forbiddenEnvironment": { "$ref": "#/$defs/stringSet" },
+        "secretClasses": { "$ref": "#/$defs/stringSet" },
+        "probes": { "$ref": "#/$defs/probes" },
+        "replicaPolicy": { "$ref": "#/$defs/replicaPolicy" },
+        "drain": { "$ref": "#/$defs/identifier" },
+        "launchBlockers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "releaseOwner": { "const": "agent" },
+        "sloOwner": { "const": "agent" },
+        "runbookOwner": { "const": "agent" }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "buildRoot",
+        "dockerfile",
+        "runtimeTarget",
+        "defaultCommand",
+        "runtimeUser",
+        "readOnlyRootFilesystem",
+        "writableTmpfs",
+        "serviceAccountToken",
+        "allowPrivilegeEscalation",
+        "capabilities",
+        "seccompProfile"
+      ],
+      "properties": {
+        "artifact": { "const": "kokoro-agent" },
+        "buildRoot": { "const": "." },
+        "dockerfile": { "const": "Dockerfile" },
+        "runtimeTarget": { "const": "runtime" },
+        "defaultCommand": { "const": "kokoro-agent-worker" },
+        "runtimeUser": { "const": "10001:10001" },
+        "readOnlyRootFilesystem": { "const": true },
+        "writableTmpfs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [{ "const": "/tmp" }],
+          "items": false
+        },
+        "serviceAccountToken": { "const": false },
+        "allowPrivilegeEscalation": { "const": false },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["add", "drop"],
+          "properties": {
+            "add": { "type": "array", "maxItems": 0 },
+            "drop": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "prefixItems": [{ "const": "ALL" }],
+              "items": false
+            }
+          }
+        },
+        "seccompProfile": { "const": "RuntimeDefault" }
+      }
+    },
+    "releasePolicyContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "inventoryRole",
+        "agentRuntimeReadsInventory",
+        "controlledFields"
+      ],
+      "properties": {
+        "authority": { "const": "root-release-orchestrator" },
+        "inventoryRole": { "const": "policy-input" },
+        "agentRuntimeReadsInventory": { "const": false },
+        "controlledFields": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            { "const": "activationAuthorized" },
+            { "const": "runtimeTraffic" },
+            { "const": "launchReadiness" },
+            { "const": "replicaPolicy" }
+          ],
+          "items": false
+        }
+      }
+    },
+    "deployables": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/deployable" },
+            {
+              "properties": {
+                "id": { "const": "kokoro-agent-worker" },
+                "command": { "const": "kokoro-agent-worker" },
+                "processRole": { "const": "durable-run-worker" },
+                "defaultContainer": { "const": true }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/deployable" },
+            {
+              "properties": {
+                "id": { "const": "kokoro-agent-evidence" },
+                "command": { "const": "kokoro-agent-evidence" },
+                "processRole": { "const": "execution-evidence-provider" },
+                "defaultContainer": { "const": false }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/deployable" },
+            {
+              "properties": {
+                "id": { "const": "kokoro-agent-presentation" },
+                "command": { "const": "kokoro-agent-presentation" },
+                "processRole": { "const": "presentation-provider" },
+                "defaultContainer": { "const": false }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    }
+  }
+}

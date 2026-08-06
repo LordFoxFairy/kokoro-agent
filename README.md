@@ -1,6 +1,6 @@
 # kokoro-agent
 
-Kokoro 三仓里的**执行层**：DeepAgents + LangChain worker。以 consumer-group 消费 run 请求流，
+Kokoro 的**执行层**：DeepAgents + LangChain worker。以 consumer-group 消费 run 请求流，
 跑 agent 循环，产出契约事件（`run.* / message.* / thinking.* / tool.* / todo.* / plan.* / subagent.*`，
 共 21 kind），写入 per-run 事件流。**不面向浏览器**，只供 `kokoro-session` 消费。
 
@@ -24,8 +24,8 @@ src/kokoro_agent/
 ├── execution/        【运行域】build_agent（DeepAgents 装配收窄为 InvokableAgent 端口）、
 │                     run_agent（invoke/终态认领/recursion 熔断）、events（RunEmitter：index 单点
 │                     递增、wire 截断、review 抑制）、approvals（HITL/审核帧构造与 resume 对齐）
-├── presentation/     【休眠候选边界】官方 Python AG-UI model → Kokoro strict typed candidate；
-│                     只自动映射无状态完整的 run start/success/error，不接浏览器或 RunEmitter
+├── presentation/     【Agent presentation authority】RunEmitter owner fact → official AG-UI model →
+│                     Mongo append-only candidate log；独立 mTLS Connect provider，不接浏览器
 ├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
 │                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
 ├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake
@@ -60,12 +60,34 @@ KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
   KOKORO_LOCAL_FAKE_MODEL=1 uv run kokoro-agent-worker
 ```
 
-接真实模型：去掉 `KOKORO_LOCAL_FAKE_MODEL`，`.env` 配 provider 凭据（见 `.env.example`，
-含 reasoning 抽取/web 工具/Langfuse/熔断等全部开关的注释）。**模型档位、sandbox backend、
+接真实模型：去掉 `KOKORO_LOCAL_FAKE_MODEL`，配置 Platform Model Gateway 的 mTLS client
+材料（见 `.env.example`；GA 不持 provider 凭据；该文件也列出 reasoning 抽取、web 工具、
+Langfuse 和熔断开关）。**模型档位、sandbox backend、
 skills/MCP/子代理预设、权限**全部由 kokoro-session 的 namespace profile 决定并经 wire 下发
 ——agent 只消费 RuntimeConfig，不自造政策。
 GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ownerId` /
 `workspaceId` 作为隔离辅助字段，也不要拼 `user:<id>` 这类业务前缀。
+
+## 生产发布事实
+
+[`deployables.yaml`](deployables.yaml) 是 Agent child-owned 的唯一进程库存，
+[`deployables.schema.json`](deployables.schema.json) 以 JSON Schema 2020-12 关闭未知字段。它只枚举
+三个真实 console entrypoint：`kokoro-agent-worker`、`kokoro-agent-evidence` 和
+`kokoro-agent-presentation`；不存在兼容 CLI、历史 shim 或隐式第四进程。Root release orchestrator
+读取该库存作为 policy input，Agent 运行时本身不读取也不修改 activation 字段。
+
+当前三个进程均为 `activationAuthorized: false`、`runtimeTraffic: false`、
+`launchReadiness: blocked`、零副本。Presentation 与当前 Evidence V2 Root boundary 仍为
+`contract-only`，而 Evidence 入口仍实际提供 V1，另有明确版本错配；Worker/Evidence 还受
+execution-owner lease epoch 与 terminal/outbox/evidence 原子性约束；全部进程都缺依赖感知
+readiness 实现。进程存活不等于依赖就绪，故镜像显式 `HEALTHCHECK NONE`，发布系统不得用通用
+TCP/PID 探针把这些阻断伪装成 ready。
+
+生产 Dockerfile 使用 pinned Python base digest 和 build-only pinned uv，将 non-editable package
+复制进无 uv/pip/cache 的 runtime stage，以 `10001:10001` 运行并支持只读根文件系统；仅 `/tmp`
+允许由编排器挂 tmpfs。库存同时要求禁止提权、drop `ALL` capabilities、RuntimeDefault seccomp 与
+禁用 service-account token。默认入口是 `kokoro-agent-worker`，另两个进程只允许通过库存里的精确
+command 覆盖。库存解除阻断并获得跨仓发布证据前，构建成功不构成 activation 授权。
 
 ## 能力面（全部经 单测 → 跨栈 e2e → 真模型 验证）
 
@@ -92,6 +114,8 @@ GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ow
 
 ```bash
 uv run ruff check . && uv run pyright && uv run pytest   # 本仓三件套
+uv run pytest tests/repository/test_deployment_inventory.py -q
+docker build --target runtime --tag kokoro-agent:verification .
 python3 ../scripts/e2e-v21-gate.py        # 跨栈确定性门禁（LocalFake，30 项）
 python3 ../scripts/chaos-verify.py        # 崩溃混沌：worker 收养 + session 恢复（11 项）
 python3 ../scripts/trace-verify.py        # Langfuse HITL trace 连续性（7 项）
@@ -114,5 +138,5 @@ python3 ../scripts/real-model-verify.py   # 真模型五场景（thinking/subage
   行内 `type: ignore` 全仓为零（同测执法）。
 - 异常 → `run.failed` 终态 fail-loud，worker 存活（单消息隔离，不崩调度循环）。
 
-> 注：本仓走 aliyun 镜像，`uv run` 后 `uv.lock` 可能被改写——非依赖变更时 `git checkout uv.lock`；
-> 真依赖变更用 `UV_NO_CONFIG=1 uv lock`。
+> 依赖变更必须用 `uv lock --no-config --default-index https://pypi.org/simple`，避免本机 uv
+> 配置把镜像 URL 噪音写进官方源 lock；验证用 `uv lock --check --no-config`。

@@ -1,0 +1,191 @@
+schemaVersion: 1
+image:
+  artifact: kokoro-agent
+  buildRoot: .
+  dockerfile: Dockerfile
+  runtimeTarget: runtime
+  defaultCommand: kokoro-agent-worker
+  runtimeUser: "10001:10001"
+  readOnlyRootFilesystem: true
+  writableTmpfs: [/tmp]
+  serviceAccountToken: false
+  allowPrivilegeEscalation: false
+  capabilities: { add: [], drop: [ALL] }
+  seccompProfile: RuntimeDefault
+releasePolicyContract:
+  authority: root-release-orchestrator
+  inventoryRole: policy-input
+  agentRuntimeReadsInventory: false
+  controlledFields:
+    - activationAuthorized
+    - runtimeTraffic
+    - launchReadiness
+    - replicaPolicy
+deployables:
+  - id: kokoro-agent-worker
+    command: kokoro-agent-worker
+    processRole: durable-run-worker
+    defaultContainer: true
+    publicTraffic: false
+    activationAuthorized: false
+    runtimeTraffic: false
+    launchReadiness: blocked
+    listeners: []
+    inboundContracts: []
+    declaredInboundContracts:
+      - session-agent-execution@v1
+    outboundContracts:
+      - hub-runtime@v1
+      - model-gateway@v1
+      - platform-media-runtime@v1
+    requiredEnvironment:
+      - KOKORO_REDIS_URL
+      - KOKORO_MONGO_URL
+      - KOKORO_MONGO_DB
+      - KOKORO_AGENT_PRODUCER_GENERATION
+      - KOKORO_MODEL_GATEWAY_URL
+      - KOKORO_MODEL_GATEWAY_CA_FILE
+      - KOKORO_MODEL_GATEWAY_CERT_FILE
+      - KOKORO_MODEL_GATEWAY_KEY_FILE
+      - KOKORO_HUB_RPC_URL
+      - KOKORO_HUB_RPC_SERVER_NAME
+      - KOKORO_HUB_RPC_CA_FILE
+      - KOKORO_HUB_RPC_CERT_FILE
+      - KOKORO_HUB_RPC_KEY_FILE
+      - KOKORO_HUB_ARTIFACT_CACHE_DIR
+      - KOKORO_MCP_EGRESS_MODE
+      - KOKORO_RETENTION_RUN_TTL_S
+    forbiddenEnvironment:
+      - KOKORO_LOCAL_FAKE_MODEL
+      - KOKORO_AGENT_MEMORY
+      - KOKORO_WEB_FETCH_ALLOW_PRIVATE
+    secretClasses:
+      - agent-mongodb
+      - agent-redis
+      - hub-runtime-mtls-client
+      - model-gateway-mtls-client
+    probes:
+      liveness: { kind: container-process, status: available }
+      readiness:
+        kind: dependency-aware
+        status: missing
+        dependencies:
+          - redis
+          - mongodb-replica-set
+          - hub-runtime-mtls
+          - model-gateway-mtls
+    replicaPolicy:
+      minimum: 0
+      maximum: 0
+      autoscaling: forbidden-while-blocked
+    drain: sigterm-bounded-lease-handoff
+    launchBlockers:
+      - dependency-aware-readiness-not-implemented
+      - execution-owner-lease-epoch-not-bound
+      - terminal-outbox-evidence-not-atomic
+    releaseOwner: agent
+    sloOwner: agent
+    runbookOwner: agent
+
+  - id: kokoro-agent-evidence
+    command: kokoro-agent-evidence
+    processRole: execution-evidence-provider
+    defaultContainer: false
+    publicTraffic: false
+    activationAuthorized: false
+    runtimeTraffic: false
+    launchReadiness: blocked
+    listeners:
+      - { name: connect, containerPort: 8443, protocol: connect-http2, exposure: service, mtls: true }
+    inboundContracts: []
+    declaredInboundContracts:
+      - agent-execution-evidence@v1
+    outboundContracts: []
+    requiredEnvironment:
+      - KOKORO_MONGO_URL
+      - KOKORO_MONGO_DB
+      - KOKORO_AGENT_PRODUCER_GENERATION
+      - KOKORO_AGENT_EVIDENCE_HOST
+      - KOKORO_AGENT_EVIDENCE_PORT
+      - KOKORO_AGENT_EVIDENCE_TLS_CERT
+      - KOKORO_AGENT_EVIDENCE_TLS_KEY
+      - KOKORO_AGENT_EVIDENCE_CALLER_CA_BUNDLE
+      - KOKORO_AGENT_EVIDENCE_ALLOWED_CALLERS
+    forbiddenEnvironment:
+      - KOKORO_AGENT_MEMORY
+    secretClasses:
+      - agent-mongodb
+      - evidence-mtls-server
+      - evidence-mtls-caller-ca
+    probes:
+      liveness: { kind: container-process, status: available }
+      readiness:
+        kind: dependency-aware
+        status: missing
+        dependencies:
+          - mongodb-replica-set
+          - evidence-connect-mtls-listener
+    replicaPolicy:
+      minimum: 0
+      maximum: 0
+      autoscaling: forbidden-while-blocked
+    drain: sigterm-http2-graceful
+    launchBlockers:
+      - root-boundary-contract-only
+      - root-boundary-version-mismatch
+      - dependency-aware-readiness-not-implemented
+      - execution-owner-lease-epoch-not-bound
+      - terminal-outbox-evidence-not-atomic
+    releaseOwner: agent
+    sloOwner: agent
+    runbookOwner: agent
+
+  - id: kokoro-agent-presentation
+    command: kokoro-agent-presentation
+    processRole: presentation-provider
+    defaultContainer: false
+    publicTraffic: false
+    activationAuthorized: false
+    runtimeTraffic: false
+    launchReadiness: blocked
+    listeners:
+      - { name: connect, containerPort: 8444, protocol: connect-http2, exposure: service, mtls: true }
+    inboundContracts: []
+    declaredInboundContracts:
+      - agent-presentation@v1
+    outboundContracts: []
+    requiredEnvironment:
+      - KOKORO_MONGO_URL
+      - KOKORO_MONGO_DB
+      - KOKORO_AGENT_PRODUCER_GENERATION
+      - KOKORO_AGENT_PRESENTATION_HOST
+      - KOKORO_AGENT_PRESENTATION_PORT
+      - KOKORO_AGENT_PRESENTATION_TLS_CERT
+      - KOKORO_AGENT_PRESENTATION_TLS_KEY
+      - KOKORO_AGENT_PRESENTATION_CALLER_CA_BUNDLE
+      - KOKORO_AGENT_PRESENTATION_ALLOWED_CALLERS
+    forbiddenEnvironment:
+      - KOKORO_AGENT_MEMORY
+    secretClasses:
+      - agent-mongodb
+      - presentation-mtls-server
+      - presentation-mtls-caller-ca
+    probes:
+      liveness: { kind: container-process, status: available }
+      readiness:
+        kind: dependency-aware
+        status: missing
+        dependencies:
+          - mongodb-replica-set
+          - presentation-connect-mtls-listener
+    replicaPolicy:
+      minimum: 0
+      maximum: 0
+      autoscaling: forbidden-while-blocked
+    drain: sigterm-http2-graceful
+    launchBlockers:
+      - root-boundary-contract-only
+      - dependency-aware-readiness-not-implemented
+    releaseOwner: agent
+    sloOwner: agent
+    runbookOwner: agent

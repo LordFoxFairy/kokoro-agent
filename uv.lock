@@ -1067,6 +1067,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "boto3-stubs-lite", extra = ["s3"] },
+    { name = "jsonschema" },
     { name = "protoc-gen-connectrpc" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1104,6 +1105,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "boto3-stubs-lite", extras = ["s3"], specifier = ">=1.43.40" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "protoc-gen-connectrpc", specifier = "==0.10.1" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8" },

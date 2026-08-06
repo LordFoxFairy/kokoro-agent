@@ -37,6 +37,7 @@ kokoro-agent-presentation = "kokoro_agent.presentation.main:main"
 [dependency-groups]
 dev = [
   "boto3-stubs-lite[s3]>=1.43.40",
+  "jsonschema>=4.26.0",
   "pyright>=1.1.380",
   "pytest>=8",
   "pytest-asyncio>=0.23",
@@ -49,9 +50,13 @@ dev = [
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# 随包分发的非 .py 资源（提示词正文），否则 wheel 会漏掉。
+# 随包分发的非 .py 运行时资源；生产镜像安装 non-editable package，不复制源码兜底。
 [tool.setuptools.package-data]
-kokoro_agent = ["run/*.md", "interaction/generated/*.json"]
+kokoro_agent = [
+  "prompts/*.md",
+  "interaction/generated/*.json",
+  "presentation/generated/*.json",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

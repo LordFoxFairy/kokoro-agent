@@ -17,9 +17,13 @@ Agent does not own Site identity, accounts, pricing, plans, credit deduction, Se
 
 ## Public boundary
 
-The process entrypoint is `kokoro_agent.worker.main`. `skills`, `hitl`, and the dormant internal
-`presentation` candidate adapter bound their public surface with `__init__.py` re-exports; `execution`
-and `worker` re-export nothing, so their public surface is the module-level symbols listed in their
+The only deployable process entrypoints are `kokoro-agent-worker` (`kokoro_agent.worker.main`),
+`kokoro-agent-evidence` (`kokoro_agent.evidence.main`), and `kokoro-agent-presentation`
+(`kokoro_agent.presentation.main`). [`deployables.yaml`](deployables.yaml) is their child-owned
+activation inventory and [`deployables.schema.json`](deployables.schema.json) closes its shape.
+There is no compatibility CLI or implicit deployment entrypoint. `skills`, `hitl`, and
+`presentation` bind their Python public surface with `__init__.py` re-exports; `execution` and
+`worker` re-export nothing, so their public surface is the module-level symbols listed in their
 component INDEX files.
 
 Hub runtime consumption is implemented only by `kokoro_agent.hub.HubExecutionAssemblyClient` over mTLS ConnectRPC. Each run binds the exact `agent_catalog_ref`, ordered grants, streamed Skill artifacts, and MCP Authorization material; there is no compatibility CLI or Hub persistence access.
@@ -46,9 +50,18 @@ Agent owns execution checkpoints, run leases, control/outbox state, and raw Agen
 
 Namespace is opaque and is the only GA isolation key. GA holds no provider credential: the Model Gateway mTLS client sends stable call identities plus the opaque authorization handle, while Platform resolves the authorized model and settles usage. Untrusted tool/artifact content is sandboxed and bounded.
 
-The Hub compatibility consumer emits only a closed success count and never emits caller credentials, resolved values, response bodies, or exception details.
+The Hub runtime consumer emits only a closed success count and never emits caller credentials,
+resolved values, response bodies, or exception details.
 
 The interpreter is pinned by `.python-version` (3.11), matching `requires-python` and the Pyright `pythonVersion`. CI installs uv without a Python version input, so without this file `uv sync --locked` resolves whichever interpreter the runner offers and the same lock runs under different interpreters.
+
+The production image uses a digest-pinned Python base, build-only pinned uv, and a non-editable
+package. Its runtime stage contains no uv/pip/cache path, runs as `10001:10001`, writes bytecode
+nowhere, and is compatible with a read-only root filesystem plus `/tmp` tmpfs. The inventory also
+forbids privilege escalation, drops every Linux capability, requires RuntimeDefault seccomp, and
+disables service-account token mounting. A generic image healthcheck is intentionally absent: the
+owner inventory records dependency-aware readiness as missing and keeps all three processes at zero
+replicas.
 
 ## Idempotency, failure, and recovery
 
@@ -64,6 +77,13 @@ Add runtime behavior through existing public packages and narrow protocols. Neve
 
 GA core semantics are frozen for the current Platform/Web/Session program. Graph, checkpoint, terminal, control, and handoff changes require prior user alignment.
 
+All three inventory entries are currently `activationAuthorized: false`, `runtimeTraffic: false`,
+`launchReadiness: blocked`. Worker and Evidence remain blocked on a monotonic execution-owner lease
+epoch plus atomic terminal/outbox/evidence commit; all three lack dependency-aware readiness.
+Presentation and the current Evidence V2 boundary also remain `contract-only` in the Root registry;
+the Evidence process still serves V1 and is explicitly blocked on that version mismatch. An image
+build or a live PID is not activation evidence and must not alter those flags.
+
 Interaction Protocol V2 is a dormant foundation, not an active Agent mode. Agent derives only the four Agent-owned
 application-request, interaction-owner, projection-event, and group-projection identities. Session-owned decision and
 resume refs remain opaque wire values. The generated Protobuf mirrors are distributed, but activation remains fail-closed
@@ -71,14 +91,15 @@ until Root-equivalent CEL/protovalidate, the decision-group identity helper, suc
 composition, and the release epoch are wired; the incomplete Pydantic pseudo-mirrors are intentionally not shipped.
 
 The official Python AG-UI SDK is pinned to `ag-ui-protocol==0.1.19` at Root's exact upstream commit.
-`kokoro_agent.presentation` constructs official models and then closes them into a frozen typed
-Agent-to-Session candidate envelope. It has no transport and is not wired into `RunEmitter`.
-`RUN_FINISHED` carries explicit official `success` and forbids `result`; Session must validate that
-outcome before deliberately projecting the narrower browser event. Candidate JCS digest, route,
-uint64 source ordinal, and canonical UTC millisecond time are recomputable identity inputs.
-The existing raw contract has no message-start fact, so current automatic mapping is deliberately
-limited to run start/success/error; Text/Activity awaits an atomic durable segment-transition source.
+`kokoro_agent.presentation` converts real `RunEmitter` owner facts to official models, closes them
+into frozen typed Agent-to-Session candidates, and commits the append-only Mongo presentation log
+before raw live publication. `kokoro-agent-presentation` exposes that log through the generated mTLS
+Connect service. This implemented provider does not make the Root `contract-only` boundary active;
+inventory activation stays blocked until the boundary lifecycle and dependency-aware readiness close.
 
 ## Verification
 
-Run `uv run ruff check .`, `uv run pyright`, and `uv run pytest` with required Redis/Mongo/MinIO dependencies available.
+Run `uv run ruff check .`, `uv run pyright`, and `uv run pytest` with required Redis/Mongo/MinIO
+dependencies available. The release metadata gate is
+`uv run pytest tests/repository/test_deployment_inventory.py -q`; the runtime image gate is
+`docker build --target runtime --tag kokoro-agent:verification .`.

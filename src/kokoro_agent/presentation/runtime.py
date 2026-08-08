@@ -1,4 +1,4 @@
-"""Production Agent facts to durable official AG-UI candidate batches.
+"""Production Agent facts to durable official AG-UI submission batches.
 
 This module owns presentation planning and the child-side pull/ack application ports.  It never
 owns browser identities, Session cursors or SSE frames; those remain Session authority.
@@ -40,11 +40,11 @@ from kokoro_agent.contract import (
     ToolInvoked,
     ToolReturned,
 )
-from kokoro_agent.presentation.adapter import build_agui_candidate
-from kokoro_agent.presentation.candidate import (
-    AgentAguiCandidateRoute,
-    AgentAguiCandidateSource,
-    AgentAguiEventCandidate,
+from kokoro_agent.presentation.adapter import build_submission
+from kokoro_agent.presentation.submission import (
+    SubmissionRoute,
+    SubmissionSource,
+    PresentationSubmission,
     canonical_recorded_at,
     recorded_at_milliseconds,
 )
@@ -108,7 +108,7 @@ class PresentationDecisionGroupState(_FrozenModel):
         return self
 
 
-class PresentationProjectionState(_FrozenModel):
+class PresentationState(_FrozenModel):
     internal_run_ref: str | None = None
     internal_thread_ref: str | None = None
     run_state: Literal["new", "running", "finished", "failed"] = "new"
@@ -118,7 +118,7 @@ class PresentationProjectionState(_FrozenModel):
     decision_groups: tuple[PresentationDecisionGroupState, ...] = ()
 
     @model_validator(mode="after")
-    def validate_durable_identities(self) -> PresentationProjectionState:
+    def validate_durable_identities(self) -> PresentationState:
         if (
             self.messages or self.owners or self.decision_groups
         ) and self.internal_run_ref is None:
@@ -217,88 +217,102 @@ class PresentationProjectionState(_FrozenModel):
         return self
 
 
-class PresentationCandidateBatch(_FrozenModel):
+class SubmissionBatch(_FrozenModel):
     source_event_ref: str = Field(min_length=1, max_length=128)
     source_payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    candidates: tuple[AgentAguiEventCandidate, ...]
-    next_state: PresentationProjectionState
+    submissions: tuple[PresentationSubmission, ...]
+    next_state: PresentationState
 
 
-class PresentationCandidateRecord(_FrozenModel):
-    presentation_ref: str = Field(
-        pattern=r"^agent\.presentation:sha256:[0-9a-f]{64}$"
+class DeliveryRecord(_FrozenModel):
+    record_ref: str = Field(
+        pattern=r"^presentation\.record:sha256:[0-9a-f]{64}$"
     )
     run_id: str = Field(min_length=1, max_length=128)
-    presentation_seq: int = Field(gt=0)
-    candidate_envelope_json: bytes = Field(min_length=1, max_length=128 * 1024)
-    envelope_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    delivery_seq: int = Field(gt=0, le=(1 << 64) - 1)
+    envelope_bytes: bytes = Field(min_length=1, max_length=128 * 1024)
+    envelope_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    submission_ref: str = Field(
+        pattern=r"^presentation\.submission:sha256:[0-9a-f]{64}$"
+    )
+    submission_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     recorded_at_ms: int = Field(ge=0)
     producer_instance_ref: str = Field(min_length=1, max_length=256)
     producer_generation: int = Field(gt=0)
 
     @model_validator(mode="after")
-    def validate_envelope(self) -> PresentationCandidateRecord:
-        if hashlib.sha256(self.candidate_envelope_json).hexdigest() != self.envelope_sha256:
+    def validate_envelope(self) -> DeliveryRecord:
+        expected_digest = f"sha256:{hashlib.sha256(self.envelope_bytes).hexdigest()}"
+        if expected_digest != self.envelope_digest:
             raise ValueError("presentation envelope digest mismatch")
-        AgentAguiEventCandidate.model_validate_json(self.candidate_envelope_json)
-        expected = _presentation_ref(
-            self.run_id, self.presentation_seq, self.envelope_sha256
-        )
-        if self.presentation_ref != expected:
+        submission = PresentationSubmission.model_validate_json(self.envelope_bytes)
+        if submission.envelope_bytes() != self.envelope_bytes:
+            raise ValueError("presentation envelope is not canonical")
+        if (
+            submission.submission_ref != self.submission_ref
+            or self.submission_digest != self.envelope_digest
+        ):
+            raise ValueError("presentation submission identity mismatch")
+        if self.recorded_at_ms != submission.event.timestamp:
+            raise ValueError("presentation recorded time mismatch")
+        if self.delivery_seq != int(submission.source.event_ordinal) + 1:
+            raise ValueError("delivery sequence does not follow event ordinal")
+        expected = _record_ref(self.run_id, self.delivery_seq, self.envelope_digest)
+        if self.record_ref != expected:
             raise ValueError("presentation record identity mismatch")
         return self
 
     @classmethod
-    def from_candidate(
+    def from_submission(
         cls,
         *,
         run_id: str,
-        presentation_seq: int,
-        candidate: AgentAguiEventCandidate,
+        delivery_seq: int,
+        submission: PresentationSubmission,
         producer_instance_ref: str,
         producer_generation: int,
-    ) -> PresentationCandidateRecord:
-        envelope = candidate.model_dump_json(
-            by_alias=True, exclude_none=True
-        ).encode("utf-8")
-        digest = hashlib.sha256(envelope).hexdigest()
+    ) -> DeliveryRecord:
+        envelope = submission.envelope_bytes()
+        digest = f"sha256:{hashlib.sha256(envelope).hexdigest()}"
         return cls(
-            presentation_ref=_presentation_ref(run_id, presentation_seq, digest),
+            record_ref=_record_ref(run_id, delivery_seq, digest),
             run_id=run_id,
-            presentation_seq=presentation_seq,
-            candidate_envelope_json=envelope,
-            envelope_sha256=digest,
-            recorded_at_ms=candidate.event.timestamp,
+            delivery_seq=delivery_seq,
+            envelope_bytes=envelope,
+            envelope_digest=digest,
+            submission_ref=submission.submission_ref,
+            submission_digest=digest,
+            recorded_at_ms=submission.event.timestamp,
             producer_instance_ref=producer_instance_ref,
             producer_generation=producer_generation,
         )
 
 
-class PresentationCandidateReader(Protocol):
+class DeliveryReader(Protocol):
     async def presentation_head(self, run_id: str) -> int: ...
 
-    async def pull_presentation_candidates(
+    async def pull_delivery_records(
         self,
         run_id: str,
-        after_presentation_seq: int,
-        through_presentation_seq: int,
+        after_delivery_seq: int,
+        through_delivery_seq: int,
         limit: int,
-    ) -> Sequence[PresentationCandidateRecord]: ...
+    ) -> Sequence[DeliveryRecord]: ...
 
 
-class PresentationCandidateWriter(Protocol):
+class DeliveryWriter(Protocol):
     async def append_presentation_event(
         self, event: AgentEvent, *, agent_thread_ref: str
-    ) -> tuple[PresentationCandidateRecord, ...] | None: ...
+    ) -> tuple[DeliveryRecord, ...] | None: ...
 
 
 class PresentationAdmissionReceipt(_FrozenModel):
-    presentation_seq: int = Field(gt=0)
-    presentation_ref: str = Field(
-        pattern=r"^agent\.presentation:sha256:[0-9a-f]{64}$"
+    delivery_seq: int = Field(gt=0)
+    record_ref: str = Field(
+        pattern=r"^presentation\.record:sha256:[0-9a-f]{64}$"
     )
-    candidate_ref: str = Field(
-        pattern=r"^agui_candidate:sha256:[0-9a-f]{64}$"
+    submission_ref: str = Field(
+        pattern=r"^presentation\.submission:sha256:[0-9a-f]{64}$"
     )
     session_receipt_ref: str = Field(min_length=1, max_length=256)
     session_effect_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -307,7 +321,7 @@ class PresentationAdmissionReceipt(_FrozenModel):
 class PresentationAcknowledgeCommand(_FrozenModel):
     run_id: str = Field(min_length=1, max_length=128)
     acknowledgement_ref: str = Field(min_length=1, max_length=256)
-    expected_acknowledged_through_presentation_seq: int = Field(ge=0)
+    expected_acknowledged_through_delivery_seq: int = Field(ge=0)
     receipts: tuple[PresentationAdmissionReceipt, ...] = Field(
         min_length=1, max_length=MAX_PRESENTATION_PAGE_SIZE
     )
@@ -315,13 +329,13 @@ class PresentationAcknowledgeCommand(_FrozenModel):
 
     @model_validator(mode="after")
     def validate_command(self) -> PresentationAcknowledgeCommand:
-        expected = self.expected_acknowledged_through_presentation_seq + 1
+        expected = self.expected_acknowledged_through_delivery_seq + 1
         if any(
-            receipt.presentation_seq != expected + offset
+            receipt.delivery_seq != expected + offset
             for offset, receipt in enumerate(self.receipts)
         ):
             raise ValueError("presentation acknowledgement must be contiguous")
-        if len({receipt.presentation_ref for receipt in self.receipts}) != len(
+        if len({receipt.record_ref for receipt in self.receipts}) != len(
             self.receipts
         ) or len({receipt.session_receipt_ref for receipt in self.receipts}) != len(
             self.receipts
@@ -330,8 +344,8 @@ class PresentationAcknowledgeCommand(_FrozenModel):
         if presentation_acknowledgement_digest(
             run_id=self.run_id,
             acknowledgement_ref=self.acknowledgement_ref,
-            expected_acknowledged_through_presentation_seq=(
-                self.expected_acknowledged_through_presentation_seq
+            expected_acknowledged_through_delivery_seq=(
+                self.expected_acknowledged_through_delivery_seq
             ),
             receipts=self.receipts,
         ) != self.request_effect_digest:
@@ -342,21 +356,21 @@ class PresentationAcknowledgeCommand(_FrozenModel):
 class PresentationQuarantineCommand(_FrozenModel):
     run_id: str = Field(min_length=1, max_length=128)
     rejection_ref: str = Field(min_length=1, max_length=256)
-    expected_acknowledged_through_presentation_seq: int = Field(ge=0)
-    presentation_seq: int = Field(gt=0)
-    presentation_ref: str = Field(
-        pattern=r"^agent\.presentation:sha256:[0-9a-f]{64}$"
+    expected_acknowledged_through_delivery_seq: int = Field(ge=0)
+    delivery_seq: int = Field(gt=0)
+    record_ref: str = Field(
+        pattern=r"^presentation\.record:sha256:[0-9a-f]{64}$"
     )
-    candidate_ref: str = Field(
-        pattern=r"^agui_candidate:sha256:[0-9a-f]{64}$"
+    submission_ref: str = Field(
+        pattern=r"^presentation\.submission:sha256:[0-9a-f]{64}$"
     )
     reason: str = Field(min_length=1, max_length=128)
     session_effect_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def validate_sequence(self) -> PresentationQuarantineCommand:
-        if self.presentation_seq != (
-            self.expected_acknowledged_through_presentation_seq + 1
+        if self.delivery_seq != (
+            self.expected_acknowledged_through_delivery_seq + 1
         ):
             raise ValueError("presentation quarantine must stop at the first gap")
         return self
@@ -364,21 +378,21 @@ class PresentationQuarantineCommand(_FrozenModel):
 
 class PresentationAcknowledgeState(_FrozenModel):
     run_id: str = Field(min_length=1, max_length=128)
-    acknowledged_through_presentation_seq: int = Field(ge=0)
+    acknowledged_through_delivery_seq: int = Field(ge=0)
     revision: int = Field(ge=0)
-    quarantined_presentation_seq: int | None = Field(default=None, gt=0)
+    quarantined_delivery_seq: int | None = Field(default=None, gt=0)
     quarantine_reason: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def validate_quarantine(self) -> PresentationAcknowledgeState:
-        if (self.quarantined_presentation_seq is None) != (
+        if (self.quarantined_delivery_seq is None) != (
             self.quarantine_reason is None
         ):
             raise ValueError("presentation quarantine shape invalid")
         if (
-            self.quarantined_presentation_seq is not None
-            and self.quarantined_presentation_seq
-            <= self.acknowledged_through_presentation_seq
+            self.quarantined_delivery_seq is not None
+            and self.quarantined_delivery_seq
+            <= self.acknowledged_through_delivery_seq
         ):
             raise ValueError("presentation quarantine is behind acknowledgement")
         return self
@@ -399,80 +413,80 @@ class PresentationAdmissionReceiptStore(Protocol):
     ) -> PresentationAcknowledgeState: ...
 
 
-class PresentationCandidatePage(_FrozenModel):
-    snapshot_through_presentation_seq: int = Field(ge=0)
-    records: tuple[PresentationCandidateRecord, ...]
-    next_after_presentation_seq: int | None = Field(default=None, ge=0)
+class DeliveryPage(_FrozenModel):
+    snapshot_through_delivery_seq: int = Field(ge=0)
+    records: tuple[DeliveryRecord, ...]
+    next_after_delivery_seq: int | None = Field(default=None, ge=0)
     has_more: bool
 
 
-class AgentPresentationService:
+class PresentationDeliveryService:
     """Child-owned application shape for the future Root Connect provider."""
 
-    def __init__(self, reader: PresentationCandidateReader) -> None:
+    def __init__(self, reader: DeliveryReader) -> None:
         self._reader = reader
 
-    async def pull_candidate_batches(
+    async def pull_records(
         self,
         *,
         run_id: str,
-        after_presentation_seq: int,
+        after_delivery_seq: int,
         page_size: int,
-        snapshot_through_presentation_seq: int | None = None,
-    ) -> PresentationCandidatePage:
+        snapshot_through_delivery_seq: int | None = None,
+    ) -> DeliveryPage:
         if (
             not run_id
             or len(run_id) > 128
             or run_id.strip() != run_id
-            or after_presentation_seq < 0
+            or after_delivery_seq < 0
             or page_size < 1
             or page_size > MAX_PRESENTATION_PAGE_SIZE
         ):
             raise ValueError("PRESENTATION_CURSOR_INVALID")
         head = (
             await self._reader.presentation_head(run_id)
-            if snapshot_through_presentation_seq is None
-            else snapshot_through_presentation_seq
+            if snapshot_through_delivery_seq is None
+            else snapshot_through_delivery_seq
         )
-        if head < after_presentation_seq:
+        if head < after_delivery_seq:
             raise ValueError("PRESENTATION_SNAPSHOT_INVALID")
         records = tuple(
-            await self._reader.pull_presentation_candidates(
-                run_id, after_presentation_seq, head, page_size + 1
+            await self._reader.pull_delivery_records(
+                run_id, after_delivery_seq, head, page_size + 1
             )
         )
         page = records[:page_size]
-        return PresentationCandidatePage(
-            snapshot_through_presentation_seq=head,
+        return DeliveryPage(
+            snapshot_through_delivery_seq=head,
             records=page,
-            next_after_presentation_seq=(
-                page[-1].presentation_seq if page else None
+            next_after_delivery_seq=(
+                page[-1].delivery_seq if page else None
             ),
             has_more=len(records) > page_size,
         )
 
-    async def acknowledge_candidate_admissions(
+    async def acknowledge_admissions(
         self,
         *,
         run_id: str,
         acknowledgement_ref: str,
-        expected_acknowledged_through_presentation_seq: int,
+        expected_acknowledged_through_delivery_seq: int,
         receipts: tuple[PresentationAdmissionReceipt, ...],
         request_effect_digest: str,
     ) -> PresentationAcknowledgeState:
         if not isinstance(self._reader, PresentationAdmissionReceiptStore):
             raise RuntimeError("PRESENTATION_ACK_PORT_UNAVAILABLE")
-        expected = expected_acknowledged_through_presentation_seq + 1
+        expected = expected_acknowledged_through_delivery_seq + 1
         if not receipts or any(
-            receipt.presentation_seq != expected + offset
+            receipt.delivery_seq != expected + offset
             for offset, receipt in enumerate(receipts)
         ):
             raise ValueError("PRESENTATION_ACK_SEQUENCE_INVALID")
         actual_digest = presentation_acknowledgement_digest(
             run_id=run_id,
             acknowledgement_ref=acknowledgement_ref,
-            expected_acknowledged_through_presentation_seq=(
-                expected_acknowledged_through_presentation_seq
+            expected_acknowledged_through_delivery_seq=(
+                expected_acknowledged_through_delivery_seq
             ),
             receipts=receipts,
         )
@@ -482,40 +496,40 @@ class AgentPresentationService:
             PresentationAcknowledgeCommand(
                 run_id=run_id,
                 acknowledgement_ref=acknowledgement_ref,
-                expected_acknowledged_through_presentation_seq=(
-                    expected_acknowledged_through_presentation_seq
+                expected_acknowledged_through_delivery_seq=(
+                    expected_acknowledged_through_delivery_seq
                 ),
                 receipts=receipts,
                 request_effect_digest=request_effect_digest,
             )
         )
 
-    async def quarantine_candidate_admission(
+    async def quarantine_submission(
         self,
         *,
         run_id: str,
         rejection_ref: str,
-        expected_acknowledged_through_presentation_seq: int,
-        presentation_seq: int,
-        presentation_ref: str,
-        candidate_ref: str,
+        expected_acknowledged_through_delivery_seq: int,
+        delivery_seq: int,
+        record_ref: str,
+        submission_ref: str,
         reason: str,
         session_effect_digest: str,
     ) -> PresentationAcknowledgeState:
         if not isinstance(self._reader, PresentationAdmissionReceiptStore):
             raise RuntimeError("PRESENTATION_ACK_PORT_UNAVAILABLE")
-        if presentation_seq != expected_acknowledged_through_presentation_seq + 1:
+        if delivery_seq != expected_acknowledged_through_delivery_seq + 1:
             raise ValueError("PRESENTATION_QUARANTINE_SEQUENCE_INVALID")
         return await self._reader.quarantine_presentation_admission(
             PresentationQuarantineCommand(
                 run_id=run_id,
                 rejection_ref=rejection_ref,
-                expected_acknowledged_through_presentation_seq=(
-                    expected_acknowledged_through_presentation_seq
+                expected_acknowledged_through_delivery_seq=(
+                    expected_acknowledged_through_delivery_seq
                 ),
-                presentation_seq=presentation_seq,
-                presentation_ref=presentation_ref,
-                candidate_ref=candidate_ref,
+                delivery_seq=delivery_seq,
+                record_ref=record_ref,
+                submission_ref=submission_ref,
                 reason=reason,
                 session_effect_digest=session_effect_digest,
             )
@@ -533,13 +547,13 @@ def presentation_acknowledgement_digest(
     *,
     run_id: str,
     acknowledgement_ref: str,
-    expected_acknowledged_through_presentation_seq: int,
+    expected_acknowledged_through_delivery_seq: int,
     receipts: tuple[PresentationAdmissionReceipt, ...],
 ) -> str:
     payload = {
         "acknowledgementRef": acknowledgement_ref,
-        "expectedAcknowledgedThroughPresentationSeq": (
-            expected_acknowledged_through_presentation_seq
+        "expectedAcknowledgedThroughDeliverySeq": (
+            expected_acknowledged_through_delivery_seq
         ),
         "receipts": [
             receipt.model_dump(mode="json", exclude_none=True) for receipt in receipts
@@ -767,14 +781,14 @@ def _source_event_ref(event: AgentEvent) -> str:
     return f"agent.source:{hashlib.sha256(material).hexdigest()}"
 
 
-def _candidate_source_ref(source_event_ref: str, member_ordinal: int) -> str:
+def _submission_source_ref(source_event_ref: str, member_ordinal: int) -> str:
     material = f"v1\0{source_event_ref}\0{member_ordinal}".encode()
     return f"agent.presentation.source:{hashlib.sha256(material).hexdigest()}"
 
 
-def _presentation_ref(run_id: str, sequence: int, digest: str) -> str:
-    material = f"v1\0{run_id}\0{sequence}\0{digest}".encode()
-    return f"agent.presentation:sha256:{hashlib.sha256(material).hexdigest()}"
+def _record_ref(run_id: str, sequence: int, digest: str) -> str:
+    material = f"kokoro-presentation-record-v1\0{run_id}\0{sequence}\0{digest}".encode()
+    return f"presentation.record:sha256:{hashlib.sha256(material).hexdigest()}"
 
 
 def _event_payload_digest(event: AgentEvent) -> str:
@@ -807,8 +821,8 @@ def _activity(
 
 def _events_for_source(
     event: AgentEvent,
-    state: PresentationProjectionState,
-) -> tuple[tuple[tuple[BaseEvent, str | None], ...], PresentationProjectionState]:
+    state: PresentationState,
+) -> tuple[tuple[tuple[BaseEvent, str | None], ...], PresentationState]:
     if state.run_state in {"finished", "failed"}:
         raise ValueError("PRESENTATION_RUN_TERMINAL")
     presentation_scoped = isinstance(
@@ -1073,7 +1087,7 @@ def _events_for_source(
             )
             next_run_state = "failed"
 
-    next_state = PresentationProjectionState(
+    next_state = PresentationState(
         internal_run_ref=state.internal_run_ref,
         internal_thread_ref=state.internal_thread_ref,
         run_state=next_run_state,
@@ -1087,9 +1101,9 @@ def _events_for_source(
 
 def plan_presentation_batch(
     event: AgentEvent,
-    state: PresentationProjectionState,
+    state: PresentationState,
     agent_thread_ref: str,
-) -> PresentationCandidateBatch:
+) -> SubmissionBatch:
     """Plan one complete source batch; persistence must commit the batch and state together."""
 
     if not agent_thread_ref.startswith("agent.thread:"):
@@ -1109,13 +1123,13 @@ def plan_presentation_batch(
 
     source_event_ref = _source_event_ref(event)
     planned, next_state = _events_for_source(event, state)
-    candidates: list[AgentAguiEventCandidate] = []
+    submissions: list[PresentationSubmission] = []
     for member, (official, message_ref) in enumerate(planned):
-        source = AgentAguiCandidateSource(
-            source_event_ref=_candidate_source_ref(source_event_ref, member),
-            source_ordinal=str(state.next_ordinal + member),
+        source = SubmissionSource(
+            source_event_ref=_submission_source_ref(source_event_ref, member),
+            event_ordinal=str(state.next_ordinal + member),
             recorded_at=canonical_recorded_at(event.timestamp),
-            route=AgentAguiCandidateRoute(
+            route=SubmissionRoute(
                 internal_run_ref=event.run_id,
                 internal_thread_ref=agent_thread_ref,
                 **(
@@ -1125,30 +1139,30 @@ def plan_presentation_batch(
                 ),
             ),
         )
-        candidates.append(build_agui_candidate(official, source=source))
-    return PresentationCandidateBatch(
+        submissions.append(build_submission(official, source=source))
+    return SubmissionBatch(
         source_event_ref=source_event_ref,
         source_payload_sha256=_event_payload_digest(event),
-        candidates=tuple(candidates),
+        submissions=tuple(submissions),
         next_state=next_state,
     )
 
 
 __all__ = [
-    "AgentPresentationService",
+    "PresentationDeliveryService",
     "MAX_PRESENTATION_PAGE_SIZE",
     "PresentationAcknowledgeCommand",
     "PresentationAcknowledgeState",
     "PresentationAdmissionReceipt",
     "PresentationAdmissionReceiptStore",
-    "PresentationCandidateBatch",
-    "PresentationCandidatePage",
-    "PresentationCandidateReader",
-    "PresentationCandidateRecord",
+    "SubmissionBatch",
+    "DeliveryPage",
+    "DeliveryReader",
+    "DeliveryRecord",
     "PresentationOwnerState",
-    "PresentationCandidateWriter",
+    "DeliveryWriter",
     "PresentationMessageState",
-    "PresentationProjectionState",
+    "PresentationState",
     "PresentationQuarantineCommand",
     "agent_thread_ref",
     "plan_presentation_batch",

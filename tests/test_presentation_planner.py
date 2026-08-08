@@ -26,21 +26,21 @@ from kokoro_agent.contract import (
     ToolReturnedPayload,
     agent_event_adapter,
 )
-from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
+from kokoro_agent.presentation.submission import PresentationSubmission
 from kokoro_agent.presentation.profile import (
     ClosedHitlActivity,
     ClosedRunErrorEvent,
     ClosedToolPreviewActivity,
 )
 from kokoro_agent.presentation.runtime import (
-    AgentPresentationService,
+    PresentationDeliveryService,
     PresentationAdmissionReceipt,
     PresentationAcknowledgeCommand,
     PresentationAcknowledgeState,
-    PresentationCandidateRecord,
+    DeliveryRecord,
     PresentationOwnerState,
     PresentationQuarantineCommand,
-    PresentationProjectionState,
+    PresentationState,
     presentation_acknowledgement_digest,
     agent_thread_ref,
     plan_presentation_batch,
@@ -87,45 +87,45 @@ def completed(index: int, value: str = "hello") -> MessageCompleted:
 
 
 def test_first_delta_atomically_plans_message_start_and_content() -> None:
-    run = plan_presentation_batch(started(), PresentationProjectionState(), THREAD)
+    run = plan_presentation_batch(started(), PresentationState(), THREAD)
     batch = plan_presentation_batch(delta(1), run.next_state, THREAD)
 
-    assert [candidate.event.type for candidate in batch.candidates] == [
+    assert [submission.event.type for submission in batch.submissions] == [
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
     ]
-    assert [candidate.source.source_ordinal for candidate in batch.candidates] == [
+    assert [submission.source.event_ordinal for submission in batch.submissions] == [
         "1",
         "2",
     ]
-    assert len({candidate.source.source_event_ref for candidate in batch.candidates}) == 2
+    assert len({submission.source.source_event_ref for submission in batch.submissions}) == 2
     assert all(
-        candidate.source.route.internal_message_ref == "agent.message:" + hashlib.sha256(
+        submission.source.route.internal_message_ref == "agent.message:" + hashlib.sha256(
             b"kokoro-agent-message-v1\0run.1\0message.1"
         ).hexdigest()
-        for candidate in batch.candidates
+        for submission in batch.submissions
     )
     assert batch.next_state.next_ordinal == 3
 
 
 def test_message_completion_ends_open_message_without_replaying_snapshot() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
 
     batch = plan_presentation_batch(completed(2), state, THREAD)
 
-    assert [candidate.event.type for candidate in batch.candidates] == [
+    assert [submission.event.type for submission in batch.submissions] == [
         "TEXT_MESSAGE_END"
     ]
     assert batch.next_state.messages[0].state == "closed"
 
 
 def test_completion_without_prior_delta_commits_whole_text_segment() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
 
     batch = plan_presentation_batch(completed(1, "complete answer"), state, THREAD)
 
-    assert [candidate.event.type for candidate in batch.candidates] == [
+    assert [submission.event.type for submission in batch.submissions] == [
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",
@@ -133,7 +133,7 @@ def test_completion_without_prior_delta_commits_whole_text_segment() -> None:
 
 
 def test_terminal_closes_every_open_message_before_finishing_run() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
     terminal = RunCompleted(
         kind="run.completed",
@@ -145,7 +145,7 @@ def test_terminal_closes_every_open_message_before_finishing_run() -> None:
 
     batch = plan_presentation_batch(terminal, state, THREAD)
 
-    assert [candidate.event.type for candidate in batch.candidates] == [
+    assert [submission.event.type for submission in batch.submissions] == [
         "TEXT_MESSAGE_END",
         "RUN_FINISHED",
     ]
@@ -154,7 +154,7 @@ def test_terminal_closes_every_open_message_before_finishing_run() -> None:
 
 
 def test_failure_closes_open_message_and_emits_safe_error() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
     terminal = RunFailed(
         kind="run.failed",
@@ -170,18 +170,18 @@ def test_failure_closes_open_message_and_emits_safe_error() -> None:
 
     batch = plan_presentation_batch(terminal, state, THREAD)
 
-    assert [candidate.event.type for candidate in batch.candidates] == [
+    assert [submission.event.type for submission in batch.submissions] == [
         "TEXT_MESSAGE_END",
         "RUN_ERROR",
     ]
-    terminal_event = batch.candidates[-1].event
+    terminal_event = batch.submissions[-1].event
     assert isinstance(terminal_event, ClosedRunErrorEvent)
     assert terminal_event.message == "The agent run failed."
     assert batch.next_state.run_state == "failed"
 
 
 def test_tool_projection_is_redacted_activity_and_never_contains_raw_args() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     event = ToolInvoked(
         kind="tool.invoked",
         run_id="run.1",
@@ -197,14 +197,14 @@ def test_tool_projection_is_redacted_activity_and_never_contains_raw_args() -> N
 
     batch = plan_presentation_batch(event, state, THREAD)
     rendered = [
-        candidate.model_dump_json(by_alias=True, exclude_none=True)
-        for candidate in batch.candidates
+        submission.model_dump_json(by_alias=True, exclude_none=True)
+        for submission in batch.submissions
     ]
 
-    assert [candidate.event.type for candidate in batch.candidates] == [
+    assert [submission.event.type for submission in batch.submissions] == [
         "ACTIVITY_SNAPSHOT",
     ]
-    activity = batch.candidates[-1].event
+    activity = batch.submissions[-1].event
     assert isinstance(activity, ClosedToolPreviewActivity)
     assert activity.activity_type == "kokoro.tool-preview.v1"
     assert activity.message_id.startswith("agent.activity:")
@@ -216,7 +216,7 @@ def test_tool_projection_is_redacted_activity_and_never_contains_raw_args() -> N
 
 
 def test_activity_identity_is_stable_for_owner_and_does_not_open_text_message() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     invoked = ToolInvoked(
         kind="tool.invoked",
         run_id="run.1",
@@ -245,10 +245,10 @@ def test_activity_identity_is_stable_for_owner_and_does_not_open_text_message() 
     )
     second = plan_presentation_batch(returned, first.next_state, THREAD)
 
-    assert [candidate.event.type for candidate in first.candidates] == ["ACTIVITY_SNAPSHOT"]
-    assert [candidate.event.type for candidate in second.candidates] == ["ACTIVITY_SNAPSHOT"]
-    first_activity = first.candidates[0].event
-    second_activity = second.candidates[0].event
+    assert [submission.event.type for submission in first.submissions] == ["ACTIVITY_SNAPSHOT"]
+    assert [submission.event.type for submission in second.submissions] == ["ACTIVITY_SNAPSHOT"]
+    first_activity = first.submissions[0].event
+    second_activity = second.submissions[0].event
     assert isinstance(first_activity, ClosedToolPreviewActivity)
     assert isinstance(second_activity, ClosedToolPreviewActivity)
     assert first_activity.message_id == second_activity.message_id
@@ -262,7 +262,7 @@ def test_activity_identity_is_stable_for_owner_and_does_not_open_text_message() 
 
 
 def test_semantically_identical_owner_replacement_is_idempotent() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     invoked = ToolInvoked(
         kind="tool.invoked",
         run_id="run.1",
@@ -277,13 +277,13 @@ def test_semantically_identical_owner_replacement_is_idempotent() -> None:
 
     second = plan_presentation_batch(duplicate, first.next_state, THREAD)
 
-    assert second.candidates == ()
+    assert second.submissions == ()
     assert second.next_state.owners == first.next_state.owners
     assert second.next_state.next_ordinal == first.next_state.next_ordinal
 
 
 def test_durable_projection_rejects_duplicate_owner_authority_key() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     running = plan_presentation_batch(
         ToolInvoked(
             kind="tool.invoked",
@@ -324,11 +324,11 @@ def test_durable_projection_rejects_duplicate_owner_authority_key() -> None:
     )
 
     with pytest.raises(ValueError, match="PRESENTATION_STATE_DUPLICATE_OWNER_KEY"):
-        PresentationProjectionState.model_validate(payload)
+        PresentationState.model_validate(payload)
 
 
 def test_durable_projection_rejects_duplicate_message_authority() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
     message = state.messages[0]
 
@@ -337,7 +337,7 @@ def test_durable_projection_rejects_duplicate_message_authority() -> None:
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DUPLICATE_INTERNAL_MESSAGE_REF"
     ):
-        PresentationProjectionState.model_validate(duplicate_ref)
+        PresentationState.model_validate(duplicate_ref)
 
     duplicate_segment = state.model_dump()
     duplicate_segment["messages"] = (
@@ -347,11 +347,11 @@ def test_durable_projection_rejects_duplicate_message_authority() -> None:
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DUPLICATE_SOURCE_SEGMENT_REF"
     ):
-        PresentationProjectionState.model_validate(duplicate_segment)
+        PresentationState.model_validate(duplicate_segment)
 
 
 def test_durable_projection_rejects_activity_message_placement_conflicts() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
     for index, tool_id in enumerate(("tool.1", "tool.2"), start=2):
         state = plan_presentation_batch(
@@ -380,7 +380,7 @@ def test_durable_projection_rejects_activity_message_placement_conflicts() -> No
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DUPLICATE_OWNER_MESSAGE_REF"
     ):
-        PresentationProjectionState.model_validate(duplicate_owner_placement)
+        PresentationState.model_validate(duplicate_owner_placement)
 
     cross_kind_placement = state.model_dump()
     cross_kind_placement["owners"] = (
@@ -392,11 +392,11 @@ def test_durable_projection_rejects_activity_message_placement_conflicts() -> No
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_MESSAGE_REF_CONFLICT"
     ):
-        PresentationProjectionState.model_validate(cross_kind_placement)
+        PresentationState.model_validate(cross_kind_placement)
 
 
 def test_durable_projection_rejects_duplicate_decision_group_authority() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     awaiting = ToolAwaitingApproval(
         kind="tool.awaiting_approval",
         run_id="run.1",
@@ -422,11 +422,11 @@ def test_durable_projection_rejects_duplicate_decision_group_authority() -> None
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DUPLICATE_DECISION_GROUP_KEY"
     ):
-        PresentationProjectionState.model_validate(payload)
+        PresentationState.model_validate(payload)
 
 
 def test_durable_projection_rejects_invalid_hitl_owner_references_and_membership() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(
         ToolAwaitingApproval(
             kind="tool.awaiting_approval",
@@ -459,14 +459,14 @@ def test_durable_projection_rejects_invalid_hitl_owner_references_and_membership
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DECISION_OWNER_REF_INVALID"
     ):
-        PresentationProjectionState.model_validate(invalid_ref)
+        PresentationState.model_validate(invalid_ref)
 
     orphaned_owner = state.model_dump()
     orphaned_owner["decision_groups"] = ()
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_HITL_OWNER_MEMBERSHIP_INVALID"
     ):
-        PresentationProjectionState.model_validate(orphaned_owner)
+        PresentationState.model_validate(orphaned_owner)
 
     mismatched_owner = state.model_dump()
     mismatched_owner["owners"] = (
@@ -477,7 +477,7 @@ def test_durable_projection_rejects_invalid_hitl_owner_references_and_membership
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_HITL_OWNER_MEMBERSHIP_INVALID"
     ):
-        PresentationProjectionState.model_validate(mismatched_owner)
+        PresentationState.model_validate(mismatched_owner)
 
     duplicate_owner_key = "agent.presentation-owner:sha256:" + "0" * 64
     duplicate_message_ref = "agent.activity:" + hashlib.sha256(
@@ -499,11 +499,11 @@ def test_durable_projection_rejects_invalid_hitl_owner_references_and_membership
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DUPLICATE_HITL_OWNER_MEMBERSHIP"
     ):
-        PresentationProjectionState.model_validate(duplicate_membership)
+        PresentationState.model_validate(duplicate_membership)
 
 
 def test_durable_projection_rejects_forged_message_placements() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
     forged_message = state.model_dump()
     forged_message["messages"] = (
@@ -514,7 +514,7 @@ def test_durable_projection_rejects_forged_message_placements() -> None:
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_MESSAGE_PLACEMENT_INVALID"
     ):
-        PresentationProjectionState.model_validate(forged_message)
+        PresentationState.model_validate(forged_message)
 
     state = plan_presentation_batch(
         ToolInvoked(
@@ -541,21 +541,21 @@ def test_durable_projection_rejects_forged_message_placements() -> None:
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_OWNER_PLACEMENT_INVALID"
     ):
-        PresentationProjectionState.model_validate(forged_owner)
+        PresentationState.model_validate(forged_owner)
 
 
 def test_durable_projection_requires_run_identity_for_owned_state() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(delta(1), state, THREAD).next_state
     payload = state.model_dump()
     payload["internal_run_ref"] = None
 
     with pytest.raises(ValueError, match="PRESENTATION_STATE_RUN_REF_REQUIRED"):
-        PresentationProjectionState.model_validate(payload)
+        PresentationState.model_validate(payload)
 
 
 def test_durable_projection_rejects_decision_group_reference_conflicts() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
 
     def awaiting(
         *, index: int, segment_id: str, tool_id: str, pending_tool_ids: list[str]
@@ -612,7 +612,7 @@ def test_durable_projection_rejects_decision_group_reference_conflicts() -> None
             ValueError,
             match="PRESENTATION_STATE_DECISION_GROUP_REFERENCE_CONFLICT",
         ):
-            PresentationProjectionState.model_validate(payload)
+            PresentationState.model_validate(payload)
 
     for field in ("decision_group_ref", "control_ref"):
         payload = state.model_dump()
@@ -624,7 +624,7 @@ def test_durable_projection_rejects_decision_group_reference_conflicts() -> None
             ValueError,
             match="PRESENTATION_STATE_DECISION_GROUP_PLACEMENT_INVALID",
         ):
-            PresentationProjectionState.model_validate(payload)
+            PresentationState.model_validate(payload)
 
     overlapping_owners = state.model_dump()
     overlapping_owners["decision_groups"] = (
@@ -641,11 +641,11 @@ def test_durable_projection_rejects_decision_group_reference_conflicts() -> None
     with pytest.raises(
         ValueError, match="PRESENTATION_STATE_DECISION_OWNER_REF_CONFLICT"
     ):
-        PresentationProjectionState.model_validate(overlapping_owners)
+        PresentationState.model_validate(overlapping_owners)
 
 
 def test_owner_replacement_rejects_time_regression_terminal_revival_and_overflow() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     invoked = ToolInvoked(
         kind="tool.invoked",
         run_id="run.1",
@@ -693,7 +693,7 @@ def test_owner_replacement_rejects_time_regression_terminal_revival_and_overflow
 
 
 def test_owner_identity_and_placement_are_immutable() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     invoked = ToolInvoked(
         kind="tool.invoked",
         run_id="run.1",
@@ -745,7 +745,7 @@ def test_owner_identity_and_placement_are_immutable() -> None:
 
 
 def test_hitl_group_allocates_private_complete_ancestry_once() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
 
     def awaiting(index: int, tool_id: str) -> ToolAwaitingApproval:
         return ToolAwaitingApproval(
@@ -768,8 +768,8 @@ def test_hitl_group_allocates_private_complete_ancestry_once() -> None:
 
     first = plan_presentation_batch(awaiting(1, "tool.A"), state, THREAD)
     second = plan_presentation_batch(awaiting(2, "tool.B"), first.next_state, THREAD)
-    first_event = first.candidates[0].event
-    second_event = second.candidates[0].event
+    first_event = first.submissions[0].event
+    second_event = second.submissions[0].event
 
     assert isinstance(first_event, ClosedHitlActivity)
     assert isinstance(second_event, ClosedHitlActivity)
@@ -786,7 +786,7 @@ def test_hitl_group_allocates_private_complete_ancestry_once() -> None:
 
 
 def test_hitl_approval_and_result_review_have_distinct_decision_identity() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
 
     def awaiting(*, index: int, kind: AwaitingKind) -> ToolAwaitingApproval:
         return ToolAwaitingApproval(
@@ -814,8 +814,8 @@ def test_hitl_approval_and_result_review_have_distinct_decision_identity() -> No
     review = plan_presentation_batch(
         awaiting(index=2, kind="result_review"), approval.next_state, THREAD
     )
-    approval_event = approval.candidates[0].event
-    review_event = review.candidates[0].event
+    approval_event = approval.submissions[0].event
+    review_event = review.submissions[0].event
 
     assert isinstance(approval_event, ClosedHitlActivity)
     assert isinstance(review_event, ClosedHitlActivity)
@@ -826,7 +826,7 @@ def test_hitl_approval_and_result_review_have_distinct_decision_identity() -> No
 
 
 def test_tool_activity_identity_is_scoped_to_main_or_exact_subagent() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     main = ToolInvoked(
         kind="tool.invoked",
         run_id="run.1",
@@ -871,9 +871,9 @@ def test_tool_activity_identity_is_scoped_to_main_or_exact_subagent() -> None:
         subagent_b, first_subagent_batch.next_state, THREAD
     )
 
-    main_activity = main_batch.candidates[0].event
-    first_subagent_activity = first_subagent_batch.candidates[0].event
-    second_subagent_activity = second_subagent_batch.candidates[0].event
+    main_activity = main_batch.submissions[0].event
+    first_subagent_activity = first_subagent_batch.submissions[0].event
+    second_subagent_activity = second_subagent_batch.submissions[0].event
     assert isinstance(main_activity, ClosedToolPreviewActivity)
     assert isinstance(first_subagent_activity, ClosedToolPreviewActivity)
     assert isinstance(second_subagent_activity, ClosedToolPreviewActivity)
@@ -891,7 +891,7 @@ def test_tool_activity_identity_is_scoped_to_main_or_exact_subagent() -> None:
 
 
 def test_structured_input_submit_is_projected_as_agui_respond_action() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     event = ToolAwaitingApproval(
         kind="tool.awaiting_approval",
         run_id="run.1",
@@ -911,14 +911,14 @@ def test_structured_input_submit_is_projected_as_agui_respond_action() -> None:
     )
 
     batch = plan_presentation_batch(event, state, THREAD)
-    activity = batch.candidates[0].event
+    activity = batch.submissions[0].event
 
     assert isinstance(activity, ClosedHitlActivity)
     assert activity.content.allowed_actions == ("respond", "reject")
 
 
-def test_run_error_candidate_never_contains_raw_exception_message() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+def test_run_error_submission_never_contains_raw_exception_message() -> None:
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     terminal = RunFailed(
         kind="run.failed",
         run_id="run.1",
@@ -932,16 +932,16 @@ def test_run_error_candidate_never_contains_raw_exception_message() -> None:
     )
 
     batch = plan_presentation_batch(terminal, state, THREAD)
-    rendered = batch.candidates[-1].model_dump_json(by_alias=True, exclude_none=True)
+    rendered = batch.submissions[-1].model_dump_json(by_alias=True, exclude_none=True)
 
     assert "sk-secret" not in rendered
     assert "private.internal" not in rendered
-    assert isinstance(batch.candidates[-1].event, ClosedRunErrorEvent)
-    assert batch.candidates[-1].event.message == "The agent run failed."
+    assert isinstance(batch.submissions[-1].event, ClosedRunErrorEvent)
+    assert batch.submissions[-1].event.message == "The agent run failed."
 
 
 def test_resume_reuses_state_and_rejects_message_reopen_or_post_terminal() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD).next_state
+    state = plan_presentation_batch(started(), PresentationState(), THREAD).next_state
     state = plan_presentation_batch(completed(1), state, THREAD).next_state
 
     with pytest.raises(ValueError, match="PRESENTATION_MESSAGE_CLOSED"):
@@ -1077,66 +1077,66 @@ async def test_fence_lost_is_typed_and_fail_fast_before_live_publish(drift: str)
 
 
 class _Reader:
-    def __init__(self, records: tuple[PresentationCandidateRecord, ...]) -> None:
+    def __init__(self, records: tuple[DeliveryRecord, ...]) -> None:
         self.records = records
 
     async def presentation_head(self, run_id: str) -> int:
         assert run_id == "run.1"
         return len(self.records)
 
-    async def pull_presentation_candidates(
-        self, run_id: str, after_presentation_seq: int, through_presentation_seq: int, limit: int
-    ) -> tuple[PresentationCandidateRecord, ...]:
+    async def pull_delivery_records(
+        self, run_id: str, after_delivery_seq: int, through_delivery_seq: int, limit: int
+    ) -> tuple[DeliveryRecord, ...]:
         assert run_id == "run.1"
         return tuple(
             record
             for record in self.records
-            if after_presentation_seq < record.presentation_seq <= through_presentation_seq
+            if after_delivery_seq < record.delivery_seq <= through_delivery_seq
         )[:limit]
 
 
 @pytest.mark.asyncio
 async def test_pull_service_freezes_snapshot_head_across_pages() -> None:
-    state = PresentationProjectionState()
-    batches: list[AgentAguiEventCandidate] = []
+    state = PresentationState()
+    batches: list[PresentationSubmission] = []
     for event in (started(), delta(1), completed(2)):
         batch = plan_presentation_batch(event, state, THREAD)
         state = batch.next_state
-        batches.extend(batch.candidates)
+        batches.extend(batch.submissions)
     records = tuple(
-        PresentationCandidateRecord.from_candidate(
+        DeliveryRecord.from_submission(
             run_id="run.1",
-            presentation_seq=index,
-            candidate=candidate,
+            delivery_seq=index,
+            submission=submission,
             producer_instance_ref="agent.pod.1",
             producer_generation=7,
         )
-        for index, candidate in enumerate(batches, start=1)
+        for index, submission in enumerate(batches, start=1)
     )
-    service = AgentPresentationService(_Reader(records))
+    service = PresentationDeliveryService(_Reader(records))
 
-    first = await service.pull_candidate_batches(
-        run_id="run.1", after_presentation_seq=0, page_size=2
+    first = await service.pull_records(
+        run_id="run.1", after_delivery_seq=0, page_size=2
     )
-    second = await service.pull_candidate_batches(
+    second = await service.pull_records(
         run_id="run.1",
-        after_presentation_seq=first.next_after_presentation_seq or 0,
+        after_delivery_seq=first.next_after_delivery_seq or 0,
         page_size=2,
-        snapshot_through_presentation_seq=first.snapshot_through_presentation_seq,
+        snapshot_through_delivery_seq=first.snapshot_through_delivery_seq,
     )
 
-    assert first.snapshot_through_presentation_seq == 4
+    assert first.snapshot_through_delivery_seq == 4
     assert first.has_more is True
-    assert second.snapshot_through_presentation_seq == 4
+    assert second.snapshot_through_delivery_seq == 4
     assert second.has_more is False
-    assert [record.presentation_seq for record in first.records + second.records] == [1, 2, 3, 4]
+    assert [record.delivery_seq for record in first.records + second.records] == [1, 2, 3, 4]
 
 
 class _DeliveryStore(_Reader):
-    def __init__(self, records: tuple[PresentationCandidateRecord, ...]) -> None:
+    def __init__(self, records: tuple[DeliveryRecord, ...]) -> None:
         super().__init__(records)
         self.state = PresentationAcknowledgeState(
-            run_id="run.1", acknowledged_through_presentation_seq=0, revision=0
+            run_id="run.1", acknowledged_through_delivery_seq=0, revision=0
         )
         self.commands: list[PresentationAcknowledgeCommand] = []
         self.quarantines: list[PresentationQuarantineCommand] = []
@@ -1147,7 +1147,7 @@ class _DeliveryStore(_Reader):
         self.commands.append(command)
         self.state = PresentationAcknowledgeState(
             run_id=command.run_id,
-            acknowledged_through_presentation_seq=command.receipts[-1].presentation_seq,
+            acknowledged_through_delivery_seq=command.receipts[-1].delivery_seq,
             revision=self.state.revision + 1,
         )
         return self.state
@@ -1164,7 +1164,7 @@ class _DeliveryStore(_Reader):
         self.quarantines.append(command)
         self.state = self.state.model_copy(update={
             "revision": self.state.revision + 1,
-            "quarantined_presentation_seq": command.presentation_seq,
+            "quarantined_delivery_seq": command.delivery_seq,
             "quarantine_reason": command.reason,
         })
         return self.state
@@ -1172,67 +1172,67 @@ class _DeliveryStore(_Reader):
 
 @pytest.mark.asyncio
 async def test_admission_ack_is_contiguous_digest_bound_and_cas_guarded() -> None:
-    state = plan_presentation_batch(started(), PresentationProjectionState(), THREAD)
-    record = PresentationCandidateRecord.from_candidate(
+    state = plan_presentation_batch(started(), PresentationState(), THREAD)
+    record = DeliveryRecord.from_submission(
         run_id="run.1",
-        presentation_seq=1,
-        candidate=state.candidates[0],
+        delivery_seq=1,
+        submission=state.submissions[0],
         producer_instance_ref="agent.pod.1",
         producer_generation=7,
     )
     store = _DeliveryStore((record,))
-    service = AgentPresentationService(store)
+    service = PresentationDeliveryService(store)
     receipt = PresentationAdmissionReceipt(
-        presentation_seq=1,
-        presentation_ref=record.presentation_ref,
-        candidate_ref=state.candidates[0].candidate_ref,
+        delivery_seq=1,
+        record_ref=record.record_ref,
+        submission_ref=state.submissions[0].submission_ref,
         session_receipt_ref="session.agui.receipt.1",
         session_effect_digest="sha256:" + "1" * 64,
     )
     digest = presentation_acknowledgement_digest(
         run_id="run.1",
         acknowledgement_ref="ack.1",
-        expected_acknowledged_through_presentation_seq=0,
+        expected_acknowledged_through_delivery_seq=0,
         receipts=(receipt,),
     )
 
-    result = await service.acknowledge_candidate_admissions(
+    result = await service.acknowledge_admissions(
         run_id="run.1",
         acknowledgement_ref="ack.1",
-        expected_acknowledged_through_presentation_seq=0,
+        expected_acknowledged_through_delivery_seq=0,
         receipts=(receipt,),
         request_effect_digest=digest,
     )
 
-    assert result.acknowledged_through_presentation_seq == 1
+    assert result.acknowledged_through_delivery_seq == 1
     assert store.commands[0].request_effect_digest == digest
 
 
 @pytest.mark.asyncio
 async def test_admission_ack_cannot_cross_gap_or_encode_permanent_rejection() -> None:
-    service = AgentPresentationService(_DeliveryStore(()))
+    service = PresentationDeliveryService(_DeliveryStore(()))
     skipped = PresentationAdmissionReceipt(
-        presentation_seq=2,
-        presentation_ref="agent.presentation:sha256:" + "2" * 64,
-        candidate_ref="agui_candidate:sha256:" + "3" * 64,
+        delivery_seq=2,
+        record_ref="presentation.record:sha256:" + "2" * 64,
+        submission_ref="presentation.submission:sha256:" + "3" * 64,
         session_receipt_ref="session.agui.receipt.2",
         session_effect_digest="sha256:" + "4" * 64,
     )
 
     with pytest.raises(ValueError, match="PRESENTATION_ACK_SEQUENCE_INVALID"):
-        await service.acknowledge_candidate_admissions(
+        await service.acknowledge_admissions(
             run_id="run.1",
             acknowledgement_ref="ack.gap",
-            expected_acknowledged_through_presentation_seq=0,
+            expected_acknowledged_through_delivery_seq=0,
             receipts=(skipped,),
             request_effect_digest="sha256:" + "0" * 64,
         )
 
     with pytest.raises(ValueError, match="PRESENTATION_ACK_DIGEST_INVALID"):
-        await service.acknowledge_candidate_admissions(
+        await service.acknowledge_admissions(
             run_id="run.1",
             acknowledgement_ref="ack.bad-digest",
-            expected_acknowledged_through_presentation_seq=1,
+            expected_acknowledged_through_delivery_seq=1,
             receipts=(skipped,),
             request_effect_digest="sha256:" + "0" * 64,
         )
@@ -1241,19 +1241,19 @@ async def test_admission_ack_cannot_cross_gap_or_encode_permanent_rejection() ->
 @pytest.mark.asyncio
 async def test_permanent_rejection_is_typed_quarantine_and_does_not_advance_ack() -> None:
     store = _DeliveryStore(())
-    service = AgentPresentationService(store)
+    service = PresentationDeliveryService(store)
 
-    state = await service.quarantine_candidate_admission(
+    state = await service.quarantine_submission(
         run_id="run.1",
         rejection_ref="reject.1",
-        expected_acknowledged_through_presentation_seq=0,
-        presentation_seq=1,
-        presentation_ref="agent.presentation:sha256:" + "2" * 64,
-        candidate_ref="agui_candidate:sha256:" + "3" * 64,
+        expected_acknowledged_through_delivery_seq=0,
+        delivery_seq=1,
+        record_ref="presentation.record:sha256:" + "2" * 64,
+        submission_ref="presentation.submission:sha256:" + "3" * 64,
         reason="SESSION_ADMISSION_PERMANENT_REJECT",
         session_effect_digest="sha256:" + "4" * 64,
     )
 
-    assert state.acknowledged_through_presentation_seq == 0
-    assert state.quarantined_presentation_seq == 1
-    assert store.quarantines[0].presentation_seq == 1
+    assert state.acknowledged_through_delivery_seq == 0
+    assert state.quarantined_delivery_seq == 1
+    assert store.quarantines[0].delivery_seq == 1

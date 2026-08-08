@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit official Agent AG-UI candidates for Root compatibility verification."""
+"""Emit official Agent AG-UI submissions for Root compatibility verification."""
 
 from __future__ import annotations
 
@@ -32,23 +32,23 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from kokoro_agent.presentation import (
-    AgentAguiCandidateRoute,
-    AgentAguiCandidateSource,
-    AgentAguiEventCandidate,
-    CandidateProtocolError,
-    build_agui_candidate,
+    SubmissionRoute,
+    SubmissionSource,
+    PresentationSubmission,
+    SubmissionProtocolError,
+    build_submission,
 )
-from kokoro_agent.presentation.candidate import canonical_recorded_at
+from kokoro_agent.presentation.submission import canonical_recorded_at
 
-AGUI_COMPATIBILITY_FIXTURE_PROFILE = (
-    "kokoro-agent-agui-compatibility-fixture.v1"
+PRESENTATION_COMPATIBILITY_FIXTURE_PROFILE = (
+    "kokoro-agent-presentation-compatibility-fixture.v1"
 )
-SESSION_AGUI_COMPATIBILITY_INPUT_PROFILE = (
-    "kokoro-session-agui-compatibility-input.v1"
+SESSION_PRESENTATION_COMPATIBILITY_INPUT_PROFILE = (
+    "kokoro-session-presentation-compatibility-input.v1"
 )
 MAXIMUM_INPUT_BYTES = 65_536
 MAXIMUM_OUTPUT_BYTES = 2_097_152
-MAXIMUM_CANDIDATE_ENVELOPE_BYTES = 131_072
+MAXIMUM_SUBMISSION_ENVELOPE_BYTES = 131_072
 MAXIMUM_TEXT_DELTAS = 8
 MAXIMUM_UINT64 = (1 << 64) - 1
 MAXIMUM_START_TIMESTAMP_MS = 253_402_300_799_987
@@ -94,15 +94,15 @@ _SourceEventPrefix = Annotated[
     ),
 ]
 _TextDelta = Annotated[str, StringConstraints(min_length=1, max_length=16_384)]
-_CandidateRef = Annotated[
+_SubmissionRef = Annotated[
     str,
-    StringConstraints(pattern=r"^agui_candidate:sha256:[0-9a-f]{64}$"),
+    StringConstraints(pattern=r"^presentation\.submission:sha256:[0-9a-f]{64}$"),
 ]
 _Base64Envelope = Annotated[
     str,
     StringConstraints(
         min_length=4,
-        max_length=((MAXIMUM_CANDIDATE_ENVELOPE_BYTES + 2) // 3) * 4,
+        max_length=((MAXIMUM_SUBMISSION_ENVELOPE_BYTES + 2) // 3) * 4,
         pattern=(
             r"^(?:[A-Za-z0-9+/]{4})*"
             r"(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
@@ -188,7 +188,7 @@ class AguiCompatibilityFixture(_ClosedModel):
 
 class AguiCompatibilityFixtureInput(_ClosedModel):
     profile_revision: Literal[
-        "kokoro-agent-agui-compatibility-fixture.v1"
+        "kokoro-agent-presentation-compatibility-fixture.v1"
     ]
     scope: CompatibilityScope
     producer: CompatibilityProducer
@@ -198,7 +198,7 @@ class AguiCompatibilityFixtureInput(_ClosedModel):
 
     @model_validator(mode="after")
     def validate_profile(self) -> AguiCompatibilityFixtureInput:
-        if self.profile_revision != AGUI_COMPATIBILITY_FIXTURE_PROFILE:
+        if self.profile_revision != PRESENTATION_COMPATIBILITY_FIXTURE_PROFILE:
             raise ValueError("fixture profile mismatch")
         return self
 
@@ -215,64 +215,64 @@ class CompatibilityMessageBinding(_ClosedModel):
     run_segment_ordinal: Literal[0]
 
 
-class CompatibilityCandidateBinding(_ClosedModel):
+class CompatibilitySubmissionBinding(_ClosedModel):
     source_event_ref: _Id
-    expected_source_ordinal: _Uint64
+    expected_event_ordinal: _Uint64
     internal_thread_ref: _AgentThreadRef
     event_type: CompatibilityEventType
     run: CompatibilityRunBinding
     message: CompatibilityMessageBinding | None = None
 
     @model_validator(mode="after")
-    def reject_explicit_null_message(self) -> CompatibilityCandidateBinding:
+    def reject_explicit_null_message(self) -> CompatibilitySubmissionBinding:
         if self.message is None and "message" in self.model_fields_set:
             raise ValueError("message must be absent rather than null")
         return self
 
 
-class CompatibilityCandidate(_ClosedModel):
-    candidate_ref: _CandidateRef
+class CompatibilitySubmission(_ClosedModel):
+    submission_ref: _SubmissionRef
     envelope_base64: _Base64Envelope
-    binding: CompatibilityCandidateBinding
+    binding: CompatibilitySubmissionBinding
 
 
-class SessionAguiCompatibilityInput(_ClosedModel):
+class SessionPresentationCompatibilityInput(_ClosedModel):
     profile_revision: Literal[
-        "kokoro-session-agui-compatibility-input.v1"
+        "kokoro-session-presentation-compatibility-input.v1"
     ]
     scope: CompatibilityScope
     producer: CompatibilityProducer
     cursor_authority: CompatibilityCursorAuthority
     replay_page_limit: Annotated[int, Field(strict=True, ge=1, le=512)]
-    candidates: Annotated[
-        tuple[CompatibilityCandidate, ...],
+    submissions: Annotated[
+        tuple[CompatibilitySubmission, ...],
         Field(min_length=7, max_length=5 + MAXIMUM_TEXT_DELTAS),
     ]
 
     @model_validator(mode="after")
-    def validate_sequence(self) -> SessionAguiCompatibilityInput:
+    def validate_sequence(self) -> SessionPresentationCompatibilityInput:
         ordinals = tuple(
-            candidate.binding.expected_source_ordinal
-            for candidate in self.candidates
+            submission.binding.expected_event_ordinal
+            for submission in self.submissions
         )
-        expected = tuple(str(index) for index in range(len(self.candidates)))
+        expected = tuple(str(index) for index in range(len(self.submissions)))
         if ordinals != expected:
-            raise ValueError("candidate ordinals are not contiguous")
+            raise ValueError("submission ordinals are not contiguous")
         return self
 
 
-def _candidate_source(
+def _submission_source(
     fixture: AguiCompatibilityFixture,
     *,
     ordinal: int,
     internal_message_ref: str | None,
-) -> AgentAguiCandidateSource:
+) -> SubmissionSource:
     timestamp = fixture.started_at_ms + ordinal
-    return AgentAguiCandidateSource(
+    return SubmissionSource(
         source_event_ref=f"{fixture.source_event_prefix}.{ordinal}",
-        source_ordinal=str(ordinal),
+        event_ordinal=str(ordinal),
         recorded_at=canonical_recorded_at(timestamp),
-        route=AgentAguiCandidateRoute(
+        route=SubmissionRoute(
             internal_run_ref=fixture.internal_run_ref,
             internal_thread_ref=fixture.internal_thread_ref,
             **(
@@ -354,16 +354,13 @@ def _official_events(
     return tuple(events)
 
 
-def _session_candidate(
-    candidate: AgentAguiEventCandidate,
-) -> CompatibilityCandidate:
-    envelope = candidate.model_dump_json(
-        by_alias=True,
-        exclude_none=True,
-    ).encode("utf-8")
-    if not envelope or len(envelope) > MAXIMUM_CANDIDATE_ENVELOPE_BYTES:
-        raise CompatibilityProviderError("AGUI_COMPAT_CANDIDATE_CAPACITY_EXCEEDED")
-    source = candidate.source
+def _session_submission(
+    submission: PresentationSubmission,
+) -> CompatibilitySubmission:
+    envelope = submission.envelope_bytes()
+    if not envelope or len(envelope) > MAXIMUM_SUBMISSION_ENVELOPE_BYTES:
+        raise CompatibilityProviderError("PRESENTATION_COMPAT_SUBMISSION_CAPACITY_EXCEEDED")
+    source = submission.source
     route = source.route
     message = (
         CompatibilityMessageBinding(
@@ -375,14 +372,14 @@ def _session_candidate(
         if route.internal_message_ref is not None
         else None
     )
-    return CompatibilityCandidate(
-        candidate_ref=candidate.candidate_ref,
+    return CompatibilitySubmission(
+        submission_ref=submission.submission_ref,
         envelope_base64=base64.b64encode(envelope).decode("ascii"),
-        binding=CompatibilityCandidateBinding(
+        binding=CompatibilitySubmissionBinding(
             source_event_ref=source.source_event_ref,
-            expected_source_ordinal=source.source_ordinal,
+            expected_event_ordinal=source.event_ordinal,
             internal_thread_ref=route.internal_thread_ref,
-            event_type=_compatibility_event_type(candidate),
+            event_type=_compatibility_event_type(submission),
             run=CompatibilityRunBinding(
                 internal_run_ref=route.internal_run_ref,
                 segment_ordinal=0,
@@ -393,9 +390,9 @@ def _session_candidate(
 
 
 def _compatibility_event_type(
-    candidate: AgentAguiEventCandidate,
+    submission: PresentationSubmission,
 ) -> CompatibilityEventType:
-    match candidate.event.type:
+    match submission.event.type:
         case "RUN_STARTED":
             return "RUN_STARTED"
         case "ACTIVITY_SNAPSHOT":
@@ -414,17 +411,17 @@ def _compatibility_event_type(
 
 def build_session_compatibility_input(
     source: AguiCompatibilityFixtureInput,
-) -> SessionAguiCompatibilityInput:
+) -> SessionPresentationCompatibilityInput:
     """Build Session input only through official models and the production adapter."""
 
     try:
         fixture = source.fixture
         events = _official_events(fixture)
-        candidates = tuple(
-            _session_candidate(
-                build_agui_candidate(
+        submissions = tuple(
+            _session_submission(
+                build_submission(
                     event,
-                    source=_candidate_source(
+                    source=_submission_source(
                         fixture,
                         ordinal=ordinal,
                         internal_message_ref=internal_message_ref,
@@ -433,16 +430,16 @@ def build_session_compatibility_input(
             )
             for ordinal, (event, internal_message_ref) in enumerate(events)
         )
-        return SessionAguiCompatibilityInput(
-            profile_revision=SESSION_AGUI_COMPATIBILITY_INPUT_PROFILE,
+        return SessionPresentationCompatibilityInput(
+            profile_revision=SESSION_PRESENTATION_COMPATIBILITY_INPUT_PROFILE,
             scope=source.scope,
             producer=source.producer,
             cursor_authority=source.cursor_authority,
             replay_page_limit=source.replay_page_limit,
-            candidates=candidates,
+            submissions=submissions,
         )
-    except (CandidateProtocolError, ValidationError, ValueError) as error:
-        raise CompatibilityProviderError("AGUI_COMPAT_CANDIDATE_INVALID") from error
+    except (SubmissionProtocolError, ValidationError, ValueError) as error:
+        raise CompatibilityProviderError("PRESENTATION_COMPAT_SUBMISSION_INVALID") from error
 
 
 def read_bounded_regular_file(path: Path) -> bytes:

@@ -1,4 +1,4 @@
-"""Closed Agent candidate subset of the pinned official AG-UI vocabulary."""
+"""Closed Agent submission subset of the pinned official AG-UI vocabulary."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-AGUI_CANDIDATE_PROFILE_REVISION = "kokoro-agent-agui-candidate.v1"
 AGUI_UPSTREAM_COMMIT = "54f13419055b4d0f442c71e1efab18b310982ce1"
 AGUI_UPSTREAM_PYTHON_VERSION = "0.1.19"
 MAX_OFFICIAL_EVENT_JSON_BYTES = 64 * 1024
@@ -371,7 +370,6 @@ closed_agui_event_adapter: TypeAdapter[ClosedAguiEvent] = TypeAdapter(ClosedAgui
 
 
 __all__ = [
-    "AGUI_CANDIDATE_PROFILE_REVISION",
     "AGUI_UPSTREAM_COMMIT",
     "AGUI_UPSTREAM_PYTHON_VERSION",
     "ALLOWED_ACTIVITY_TYPES",

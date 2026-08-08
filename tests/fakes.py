@@ -40,8 +40,8 @@ from kokoro_agent.evidence.models import (
 from kokoro_agent.presentation.runtime import (
     PresentationAcknowledgeCommand,
     PresentationAcknowledgeState,
-    PresentationCandidateRecord,
-    PresentationProjectionState,
+    DeliveryRecord,
+    PresentationState,
     PresentationQuarantineCommand,
     plan_presentation_batch,
 )
@@ -180,12 +180,12 @@ class FakeLedger:
             tuple[str, tuple[tuple[str, DurableOutputRecord], ...]],
         ] = {}
         self.output_text_seq: dict[tuple[str, str], int] = {}
-        self.presentation_records: dict[str, list[PresentationCandidateRecord]] = {}
-        self.presentation_states: dict[str, PresentationProjectionState] = {}
-        self.presentation_sources: dict[
-            tuple[str, str], tuple[str, tuple[PresentationCandidateRecord, ...]]
+        self.presentation_records: dict[str, list[DeliveryRecord]] = {}
+        self.presentation_planner_states: dict[str, PresentationState] = {}
+        self.presentation_source_commits: dict[
+            tuple[str, str], tuple[str, tuple[DeliveryRecord, ...]]
         ] = {}
-        self.presentation_delivery: dict[str, PresentationAcknowledgeState] = {}
+        self.presentation_delivery_states: dict[str, PresentationAcknowledgeState] = {}
         self.run_stream_producers: dict[str, tuple[str, int]] = {}
         self.assembly_digests: dict[str, str] = {}
         self.owner_heads: dict[str, int] = {}
@@ -565,50 +565,53 @@ class FakeLedger:
 
     async def append_presentation_event(
         self, event: AgentEvent, *, agent_thread_ref: str
-    ) -> tuple[PresentationCandidateRecord, ...] | None:
+    ) -> tuple[DeliveryRecord, ...] | None:
         producer = self.run_stream_producers.get(event.run_id)
         if producer is None:
             return None
-        state = self.presentation_states.get(
-            event.run_id, PresentationProjectionState()
+        state = self.presentation_planner_states.get(
+            event.run_id, PresentationState()
         )
         batch = plan_presentation_batch(event, state, agent_thread_ref)
         identity = (event.run_id, batch.source_event_ref)
-        existing = self.presentation_sources.get(identity)
+        existing = self.presentation_source_commits.get(identity)
         if existing is not None:
             digest, records = existing
             if digest != batch.source_payload_sha256:
                 raise ValueError("PRESENTATION_SOURCE_CONFLICT")
             return records
         records = tuple(
-            PresentationCandidateRecord.from_candidate(
+            DeliveryRecord.from_submission(
                 run_id=event.run_id,
-                presentation_seq=int(candidate.source.source_ordinal) + 1,
-                candidate=candidate,
+                delivery_seq=int(submission.source.event_ordinal) + 1,
+                submission=submission,
                 producer_instance_ref=producer[0],
                 producer_generation=producer[1],
             )
-            for candidate in batch.candidates
+            for submission in batch.submissions
         )
         self.presentation_records.setdefault(event.run_id, []).extend(records)
-        self.presentation_states[event.run_id] = batch.next_state
-        self.presentation_sources[identity] = (batch.source_payload_sha256, records)
+        self.presentation_planner_states[event.run_id] = batch.next_state
+        self.presentation_source_commits[identity] = (
+            batch.source_payload_sha256,
+            records,
+        )
         return records
 
     async def presentation_head(self, run_id: str) -> int:
         return len(self.presentation_records.get(run_id, ()))
 
-    async def pull_presentation_candidates(
+    async def pull_delivery_records(
         self,
         run_id: str,
-        after_presentation_seq: int,
-        through_presentation_seq: int,
+        after_delivery_seq: int,
+        through_delivery_seq: int,
         limit: int,
-    ) -> tuple[PresentationCandidateRecord, ...]:
+    ) -> tuple[DeliveryRecord, ...]:
         return tuple(
             record
             for record in self.presentation_records.get(run_id, ())
-            if after_presentation_seq < record.presentation_seq <= through_presentation_seq
+            if after_delivery_seq < record.delivery_seq <= through_delivery_seq
         )[:limit]
 
     async def acknowledge_presentation_admissions(
@@ -616,17 +619,17 @@ class FakeLedger:
     ) -> PresentationAcknowledgeState:
         current = await self.get_presentation_delivery_state(command.run_id)
         if (
-            current.acknowledged_through_presentation_seq
-            != command.expected_acknowledged_through_presentation_seq
-            or current.quarantined_presentation_seq is not None
+            current.acknowledged_through_delivery_seq
+            != command.expected_acknowledged_through_delivery_seq
+            or current.quarantined_delivery_seq is not None
         ):
             raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
         state = PresentationAcknowledgeState(
             run_id=command.run_id,
-            acknowledged_through_presentation_seq=command.receipts[-1].presentation_seq,
+            acknowledged_through_delivery_seq=command.receipts[-1].delivery_seq,
             revision=current.revision + 1,
         )
-        self.presentation_delivery[command.run_id] = state
+        self.presentation_delivery_states[command.run_id] = state
         return state
 
     async def quarantine_presentation_admission(
@@ -635,22 +638,22 @@ class FakeLedger:
         current = await self.get_presentation_delivery_state(command.run_id)
         state = PresentationAcknowledgeState(
             run_id=command.run_id,
-            acknowledged_through_presentation_seq=current.acknowledged_through_presentation_seq,
+            acknowledged_through_delivery_seq=current.acknowledged_through_delivery_seq,
             revision=current.revision + 1,
-            quarantined_presentation_seq=command.presentation_seq,
+            quarantined_delivery_seq=command.delivery_seq,
             quarantine_reason=command.reason,
         )
-        self.presentation_delivery[command.run_id] = state
+        self.presentation_delivery_states[command.run_id] = state
         return state
 
     async def get_presentation_delivery_state(
         self, run_id: str
     ) -> PresentationAcknowledgeState:
-        return self.presentation_delivery.get(
+        return self.presentation_delivery_states.get(
             run_id,
             PresentationAcknowledgeState(
                 run_id=run_id,
-                acknowledged_through_presentation_seq=0,
+                acknowledged_through_delivery_seq=0,
                 revision=0,
             ),
         )

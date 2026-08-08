@@ -55,7 +55,6 @@ build-backend = "setuptools.build_meta"
 kokoro_agent = [
   "prompts/*.md",
   "interaction/generated/*.json",
-  "presentation/generated/*.json",
 ]
 
 [tool.pytest.ini_options]

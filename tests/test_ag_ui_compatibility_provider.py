@@ -15,15 +15,15 @@ from ag_ui.core import (
 )
 from pydantic import ValidationError
 
-from kokoro_agent.presentation import AgentAguiEventCandidate
+from kokoro_agent.presentation import PresentationSubmission
 from kokoro_agent.presentation.profile import (
     ClosedSafeSummaryActivity,
     ClosedTextContentEvent,
     ClosedTextEndEvent,
     ClosedTextStartEvent,
 )
-from scripts.compat.agui_candidate_provider import (
-    AGUI_COMPATIBILITY_FIXTURE_PROFILE,
+from scripts.compat.ag_ui_submission_provider import (
+    PRESENTATION_COMPATIBILITY_FIXTURE_PROFILE,
     AguiCompatibilityFixtureInput,
     CompatibilityProviderError,
     build_session_compatibility_input,
@@ -36,7 +36,7 @@ from scripts.compat.agui_candidate_provider import (
 def _fixture() -> AguiCompatibilityFixtureInput:
     return AguiCompatibilityFixtureInput.model_validate(
         {
-            "profileRevision": AGUI_COMPATIBILITY_FIXTURE_PROFILE,
+            "profileRevision": PRESENTATION_COMPATIBILITY_FIXTURE_PROFILE,
             "scope": {
                 "siteId": "site.compat.1",
                 "sessionId": "session.compat.1",
@@ -61,24 +61,24 @@ def _fixture() -> AguiCompatibilityFixtureInput:
     )
 
 
-def test_provider_uses_production_candidates_for_complete_official_sequence() -> None:
+def test_provider_uses_production_submissions_for_complete_official_sequence() -> None:
     output = build_session_compatibility_input(_fixture()).model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
 
-    assert output["profileRevision"] == "kokoro-session-agui-compatibility-input.v1"
+    assert output["profileRevision"] == "kokoro-session-presentation-compatibility-input.v1"
     assert output["scope"] == {
         "siteId": "site.compat.1",
         "sessionId": "session.compat.1",
         "streamEpoch": "1",
     }
-    assert len(output["candidates"]) == 7
+    assert len(output["submissions"]) == 7
 
     envelopes = [
-        AgentAguiEventCandidate.model_validate_json(
-            base64.b64decode(candidate["envelopeBase64"], validate=True)
+        PresentationSubmission.model_validate_json(
+            base64.b64decode(submission["envelopeBase64"], validate=True)
         )
-        for candidate in output["candidates"]
+        for submission in output["submissions"]
     ]
     assert [envelope.event.type for envelope in envelopes] == [
         "RUN_STARTED",
@@ -104,7 +104,7 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
         )
         for official_type, envelope in zip(official_types, envelopes, strict=True)
     )
-    assert [envelope.source.source_ordinal for envelope in envelopes] == [
+    assert [envelope.source.event_ordinal for envelope in envelopes] == [
         "0",
         "1",
         "2",
@@ -113,27 +113,27 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
         "5",
         "6",
     ]
-    assert [candidate["binding"]["sourceEventRef"] for candidate in output["candidates"]] == [
+    assert [submission["binding"]["sourceEventRef"] for submission in output["submissions"]] == [
         f"agent.event.compat.{ordinal}" for ordinal in range(7)
     ]
-    assert [candidate["binding"]["expectedSourceOrdinal"] for candidate in output["candidates"]] == [
+    assert [submission["binding"]["expectedEventOrdinal"] for submission in output["submissions"]] == [
         str(ordinal) for ordinal in range(7)
     ]
     assert all(
-        candidate["candidateRef"] == envelope.candidate_ref
-        for candidate, envelope in zip(output["candidates"], envelopes, strict=True)
+        submission["submissionRef"] == envelope.submission_ref
+        for submission, envelope in zip(output["submissions"], envelopes, strict=True)
     )
-    assert "message" not in output["candidates"][0]["binding"]
-    assert "message" not in output["candidates"][-1]["binding"]
+    assert "message" not in output["submissions"][0]["binding"]
+    assert "message" not in output["submissions"][-1]["binding"]
     assert all(
-        candidate["binding"]["message"]
+        submission["binding"]["message"]
         == {
             "internalMessageRef": "message.compat.1",
             "segmentOrdinal": 0,
             "runInternalRunRef": "run.compat.1",
             "runSegmentOrdinal": 0,
         }
-        for candidate in output["candidates"][2:-1]
+        for submission in output["submissions"][2:-1]
     )
     activity = envelopes[1].event
     assert isinstance(activity, ClosedSafeSummaryActivity)
@@ -146,7 +146,7 @@ def test_provider_uses_production_candidates_for_complete_official_sequence() ->
             (ClosedTextStartEvent, ClosedTextContentEvent, ClosedTextEndEvent),
         )
     }
-    assert output["candidates"][1]["binding"]["message"]["internalMessageRef"] == (
+    assert output["submissions"][1]["binding"]["message"]["internalMessageRef"] == (
         "activity.compat.1"
     )
 
@@ -198,7 +198,7 @@ def test_cli_is_one_line_json_and_rejects_unknown_fields(tmp_path: Path) -> None
     assert rendered.endswith("\n")
     assert rendered.count("\n") == 1
     assert json.loads(rendered)["profileRevision"] == (
-        "kokoro-session-agui-compatibility-input.v1"
+        "kokoro-session-presentation-compatibility-input.v1"
     )
 
     raw = _fixture().model_dump(mode="json", by_alias=True)
@@ -223,7 +223,7 @@ def test_process_boundary_emits_only_json_or_stable_error(
     assert success.err == ""
     assert success.out.count("\n") == 1
     assert json.loads(success.out)["profileRevision"] == (
-        "kokoro-session-agui-compatibility-input.v1"
+        "kokoro-session-presentation-compatibility-input.v1"
     )
 
     assert main(("--unknown", str(input_path))) == 2

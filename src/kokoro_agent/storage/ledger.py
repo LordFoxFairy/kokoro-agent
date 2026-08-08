@@ -17,7 +17,7 @@ from kokoro_agent.evidence.models import (
 from kokoro_agent.presentation.runtime import (
     PresentationAcknowledgeCommand,
     PresentationAcknowledgeState,
-    PresentationCandidateRecord,
+    DeliveryRecord,
     PresentationQuarantineCommand,
 )
 from kokoro_agent.presentation.provider import PresentationProviderStore
@@ -27,11 +27,11 @@ from kokoro_agent.storage.mongo import (
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
-    AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION,
-    AGENT_PRESENTATION_CANDIDATE_COLLECTION,
-    AGENT_PRESENTATION_DELIVERY_COLLECTION,
-    AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION,
-    AGENT_PRESENTATION_STATE_COLLECTION,
+    AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION,
+    AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION,
+    AGENT_PRESENTATION_PLANNER_STATE_COLLECTION,
     ControlInboxRecord,
     MongoLedger,
     OutboxFrame,
@@ -152,17 +152,17 @@ class RunLedger(ExecutionContextStore, Protocol):
 
     async def append_presentation_event(
         self, event: AgentEvent, *, agent_thread_ref: str
-    ) -> tuple[PresentationCandidateRecord, ...] | None: ...
+    ) -> tuple[DeliveryRecord, ...] | None: ...
 
     async def presentation_head(self, run_id: str) -> int: ...
 
-    async def pull_presentation_candidates(
+    async def pull_delivery_records(
         self,
         run_id: str,
-        after_presentation_seq: int,
-        through_presentation_seq: int,
+        after_delivery_seq: int,
+        through_delivery_seq: int,
         limit: int,
-    ) -> tuple[PresentationCandidateRecord, ...]: ...
+    ) -> tuple[DeliveryRecord, ...]: ...
 
     async def acknowledge_presentation_admissions(
         self, command: PresentationAcknowledgeCommand
@@ -376,40 +376,40 @@ async def make_ledger(
             name="run_output_source_batch_unique",
             unique=True,
         )
-        presentation_candidates = collection.database[
-            AGENT_PRESENTATION_CANDIDATE_COLLECTION
+        presentation_records = collection.database[
+            AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION
         ]
-        await presentation_candidates.create_index(
-            [("run_id", 1), ("presentation_seq", 1)],
-            name="run_presentation_seq_unique",
+        await presentation_records.create_index(
+            [("run_id", 1), ("delivery_seq", 1)],
+            name="run_delivery_seq_unique",
             unique=True,
         )
-        await presentation_candidates.create_index(
-            [("run_id", 1), ("presentation_ref", 1)],
-            name="run_presentation_ref_unique",
+        await presentation_records.create_index(
+            [("run_id", 1), ("record_ref", 1)],
+            name="run_record_ref_unique",
             unique=True,
         )
-        presentation_source_batches = collection.database[
-            AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION
+        presentation_source_commits = collection.database[
+            AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION
         ]
-        await presentation_source_batches.create_index(
+        await presentation_source_commits.create_index(
             [("run_id", 1), ("source_event_ref", 1)],
-            name="run_presentation_source_unique",
+            name="run_source_event_ref_unique",
             unique=True,
         )
-        await collection.database[AGENT_PRESENTATION_STATE_COLLECTION].create_index(
-            [("_id", 1), ("revision", 1)],
-            name="presentation_state_revision",
+        await collection.database[AGENT_PRESENTATION_PLANNER_STATE_COLLECTION].create_index(
+            [("_id", 1), ("planner_revision", 1)],
+            name="planner_state_revision",
         )
-        await collection.database[AGENT_PRESENTATION_DELIVERY_COLLECTION].create_index(
-            [("_id", 1), ("revision", 1)],
-            name="presentation_delivery_revision",
+        await collection.database[AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION].create_index(
+            [("_id", 1), ("status_revision", 1)],
+            name="delivery_status_revision",
         )
         await collection.database[
-            AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION
+            AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION
         ].create_index(
             [("run_id", 1), ("_id", 1)],
-            name="presentation_admission_command_unique",
+            name="admission_command_receipt_unique",
             unique=True,
         )
         yield MongoLedger(

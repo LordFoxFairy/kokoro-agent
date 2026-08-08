@@ -25,7 +25,7 @@ src/kokoro_agent/
 │                     run_agent（invoke/终态认领/recursion 熔断）、events（RunEmitter：index 单点
 │                     递增、wire 截断、review 抑制）、approvals（HITL/审核帧构造与 resume 对齐）
 ├── presentation/     【Agent presentation authority】RunEmitter owner fact → official AG-UI model →
-│                     Mongo append-only candidate log；独立 mTLS Connect provider，不接浏览器
+│                     Mongo append-only Submission/DeliveryRecord log；独立 mTLS Connect provider，不接浏览器
 ├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
 │                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
 ├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake

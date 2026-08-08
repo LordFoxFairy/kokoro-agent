@@ -91,11 +91,12 @@ until Root-equivalent CEL/protovalidate, the decision-group identity helper, suc
 composition, and the release epoch are wired; the incomplete Pydantic pseudo-mirrors are intentionally not shipped.
 
 The official Python AG-UI SDK is pinned to `ag-ui-protocol==0.1.19` at Root's exact upstream commit.
-`kokoro_agent.presentation` converts real `RunEmitter` owner facts to official models, closes them
-into frozen typed Agent-to-Session candidates, and commits the append-only Mongo presentation log
-before raw live publication. `kokoro-agent-presentation` exposes that log through the generated mTLS
-Connect service. This implemented provider does not make the Root `contract-only` boundary active;
-inventory activation stays blocked until the boundary lifecycle and dependency-aware readiness close.
+`kokoro_agent.presentation` converts real `RunEmitter` owner facts directly into frozen Root R1
+`PresentationSubmission` values and commits canonical envelopes to the append-only Mongo delivery log
+before raw live publication. `kokoro-agent-presentation` exposes persisted `DeliveryRecord` values
+through the generated mTLS Connect service. This implemented provider does not make the Root
+`contract-only` boundary active; inventory activation stays blocked until the boundary lifecycle and
+dependency-aware readiness close.
 
 ## Verification
 

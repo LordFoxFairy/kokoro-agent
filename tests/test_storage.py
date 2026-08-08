@@ -56,11 +56,11 @@ from kokoro_agent.storage.mongo import (
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
-    AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION,
-    AGENT_PRESENTATION_CANDIDATE_COLLECTION,
-    AGENT_PRESENTATION_DELIVERY_COLLECTION,
-    AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION,
-    AGENT_PRESENTATION_STATE_COLLECTION,
+    AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION,
+    AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION,
+    AGENT_PRESENTATION_PLANNER_STATE_COLLECTION,
     DISPATCH_DLQ_COLLECTION,
     MongoLedger,
 )
@@ -136,11 +136,11 @@ async def _mongo_store(clock: FakeClock) -> AsyncGenerator[RunLedger]:
         await coll.database[AGENT_EXECUTION_EVIDENCE_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_COLLECTION].drop()
         await coll.database[AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION].drop()
-        await coll.database[AGENT_PRESENTATION_CANDIDATE_COLLECTION].drop()
-        await coll.database[AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION].drop()
-        await coll.database[AGENT_PRESENTATION_STATE_COLLECTION].drop()
-        await coll.database[AGENT_PRESENTATION_DELIVERY_COLLECTION].drop()
-        await coll.database[AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_PLANNER_STATE_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION].drop()
+        await coll.database[AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION].drop()
         await client.close()
 
 
@@ -174,11 +174,11 @@ async def _mongo_takeover_stores(
             AGENT_EXECUTION_EVIDENCE_COLLECTION,
             AGENT_DURABLE_OUTPUT_COLLECTION,
             AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
-            AGENT_PRESENTATION_CANDIDATE_COLLECTION,
-            AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION,
-            AGENT_PRESENTATION_STATE_COLLECTION,
-            AGENT_PRESENTATION_DELIVERY_COLLECTION,
-            AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION,
+            AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION,
+            AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION,
+            AGENT_PRESENTATION_PLANNER_STATE_COLLECTION,
+            AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION,
+            AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION,
         ):
             await coll.database[name].drop()
         await client.close()
@@ -233,7 +233,7 @@ async def test_takeover_changes_execution_fence_not_run_stream_identity() -> Non
         )
         assert stale.status == "fence_lost"
 
-        presentation = await executor_b.pull_presentation_candidates(run_id, 0, 4, 10)
+        presentation = await executor_b.pull_delivery_records(run_id, 0, 4, 10)
         outputs = await executor_b.pull_durable_output_records(run_id, 0, 10)
         evidence = await executor_b.pull_durable_execution_evidence(run_id, 0, 10)
         assert len(presentation) == 4
@@ -312,6 +312,9 @@ async def test_presentation_authority_replays_and_closes_admission_delivery() ->
         )
         assert page.snapshot_through_delivery_seq == 3
         assert [record.delivery_seq for record in page.records] == [1, 2, 3]
+        assert first[0].envelope_bytes == page.records[0].envelope_bytes
+        assert first[0].submission_ref == page.records[0].submission_ref
+        assert first[0].submission_digest == page.records[0].submission_digest
         assert page.has_more is False
         command = common_wire.CommandIdentityV2(
             command_id="a" * 32,
@@ -964,6 +967,80 @@ async def test_output_factory_creates_canonical_output_indexes() -> None:
         assert source_batch_indexes["run_output_source_batch_unique"]["key"] == [
             ("run_id", 1),
             ("source_event_ref", 1),
+        ]
+    finally:
+        await client.drop_database(settings.mongo_db)
+        await client.close()
+
+
+async def test_presentation_factory_creates_only_delivery_indexes() -> None:
+    settings = _settings(f"kokoro_presentation_index_{uuid.uuid4().hex}")
+    async with make_ledger(settings):
+        pass
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
+    try:
+        database = client[settings.mongo_db]
+        expected = {
+            AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION,
+            AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION,
+            AGENT_PRESENTATION_PLANNER_STATE_COLLECTION,
+            AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION,
+            AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION,
+        }
+        collection_names = set(await database.list_collection_names())
+        assert expected <= collection_names
+        retired_suffixes = (
+            "candi" + "date",
+            "source_" + "batch",
+            "state",
+            "delivery",
+            "admission_" + "command",
+        )
+        assert {
+            "agent_presentation_" + suffix for suffix in retired_suffixes
+        }.isdisjoint(collection_names)
+
+        record_indexes = await database[
+            AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION
+        ].index_information()
+        assert record_indexes["run_delivery_seq_unique"]["key"] == [
+            ("run_id", 1),
+            ("delivery_seq", 1),
+        ]
+        assert record_indexes["run_record_ref_unique"]["key"] == [
+            ("run_id", 1),
+            ("record_ref", 1),
+        ]
+        assert record_indexes["run_delivery_seq_unique"]["unique"] is True
+        assert record_indexes["run_record_ref_unique"]["unique"] is True
+
+        source_indexes = await database[
+            AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION
+        ].index_information()
+        assert source_indexes["run_source_event_ref_unique"]["key"] == [
+            ("run_id", 1),
+            ("source_event_ref", 1),
+        ]
+        planner_indexes = await database[
+            AGENT_PRESENTATION_PLANNER_STATE_COLLECTION
+        ].index_information()
+        assert planner_indexes["planner_state_revision"]["key"] == [
+            ("_id", 1),
+            ("planner_revision", 1),
+        ]
+        delivery_indexes = await database[
+            AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION
+        ].index_information()
+        assert delivery_indexes["delivery_status_revision"]["key"] == [
+            ("_id", 1),
+            ("status_revision", 1),
+        ]
+        receipt_indexes = await database[
+            AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION
+        ].index_information()
+        assert receipt_indexes["admission_command_receipt_unique"]["key"] == [
+            ("run_id", 1),
+            ("_id", 1),
         ]
     finally:
         await client.drop_database(settings.mongo_db)

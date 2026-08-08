@@ -221,7 +221,6 @@ def test_non_editable_wheel_declares_every_runtime_package_resource() -> None:
     assert project["tool"]["setuptools"]["package-data"]["kokoro_agent"] == [
         "prompts/*.md",
         "interaction/generated/*.json",
-        "presentation/generated/*.json",
     ]
     assert "jsonschema>=4.26.0" in project["dependency-groups"]["dev"]
 

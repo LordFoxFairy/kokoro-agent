@@ -72,12 +72,11 @@ from kokoro_agent.evidence.models import (
 from kokoro_agent.presentation.runtime import (
     PresentationAcknowledgeCommand,
     PresentationAcknowledgeState,
-    PresentationCandidateRecord,
-    PresentationProjectionState,
+    DeliveryRecord,
+    PresentationState,
     PresentationQuarantineCommand,
     plan_presentation_batch,
 )
-from kokoro_agent.presentation.candidate import AgentAguiEventCandidate
 from kokoro_agent.presentation.integrity import (
     delivery_record_digest,
     delivery_status_digest,
@@ -91,12 +90,12 @@ DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
 AGENT_DURABLE_OUTPUT_COLLECTION = "agent_durable_output"
 AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION = "agent_durable_output_source_batch"
-AGENT_PRESENTATION_CANDIDATE_COLLECTION = "agent_presentation_candidate"
-AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION = "agent_presentation_source_batch"
-AGENT_PRESENTATION_STATE_COLLECTION = "agent_presentation_state"
-AGENT_PRESENTATION_DELIVERY_COLLECTION = "agent_presentation_delivery"
-AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION = (
-    "agent_presentation_admission_command"
+AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION = "agent_presentation_delivery_record"
+AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION = "agent_presentation_source_commit"
+AGENT_PRESENTATION_PLANNER_STATE_COLLECTION = "agent_presentation_planner_state"
+AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION = "agent_presentation_delivery_state"
+AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION = (
+    "agent_presentation_admission_command_receipt"
 )
 
 _T = TypeVar("_T")
@@ -154,30 +153,18 @@ def _presentation_timestamp(timestamp_ms: int) -> Timestamp:
 
 
 def _presentation_delivery_record(
-    record: PresentationCandidateRecord,
+    record: DeliveryRecord,
     *,
     previous_record_digest: str,
 ) -> presentation_wire.DeliveryRecord:
-    candidate = AgentAguiEventCandidate.model_validate_json(
-        record.candidate_envelope_json
-    )
-    submission = PresentationSubmission.from_candidate(candidate)
-    envelope = submission.envelope_bytes()
-    envelope_digest = f"sha256:{hashlib.sha256(envelope).hexdigest()}"
-    record_identity = hashlib.sha256(
-        (
-            f"kokoro-presentation-record-v1\0{record.run_id}\0"
-            f"{record.presentation_seq}\0{envelope_digest}"
-        ).encode()
-    ).hexdigest()
     value = presentation_wire.DeliveryRecord(
-        record_ref=f"presentation.record:sha256:{record_identity}",
-        previous_delivery_seq=record.presentation_seq - 1,
-        delivery_seq=record.presentation_seq,
-        envelope_bytes=envelope,
-        envelope_digest=envelope_digest,
-        submission_ref=submission.submission_ref,
-        submission_digest=envelope_digest,
+        record_ref=record.record_ref,
+        previous_delivery_seq=record.delivery_seq - 1,
+        delivery_seq=record.delivery_seq,
+        envelope_bytes=record.envelope_bytes,
+        envelope_digest=record.envelope_digest,
+        submission_ref=record.submission_ref,
+        submission_digest=record.submission_digest,
         recorded_at=_presentation_timestamp(record.recorded_at_ms),
         producer=producer_fence(
             record.producer_instance_ref, record.producer_generation
@@ -273,11 +260,11 @@ def _delivery_state(
     if document is None:
         return PresentationAcknowledgeState(
             run_id=run_id,
-            acknowledged_through_presentation_seq=0,
+            acknowledged_through_delivery_seq=0,
             revision=0,
         )
     public = {key: value for key, value in document.items() if key != "_id"}
-    return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(public)
+    return _PRESENTATION_DELIVERY_STATE_ADAPTER.validate_python(public)
 
 
 async def _replace_delivery_state(
@@ -451,13 +438,13 @@ _DURABLE_EVIDENCE_ADAPTER: TypeAdapter[DurableExecutionEvidence] = TypeAdapter(
 _DURABLE_OUTPUT_ADAPTER: TypeAdapter[DurableOutputRecord] = TypeAdapter(
     DurableOutputRecord
 )
-_PRESENTATION_RECORD_ADAPTER: TypeAdapter[PresentationCandidateRecord] = TypeAdapter(
-    PresentationCandidateRecord
+_DELIVERY_RECORD_ADAPTER: TypeAdapter[DeliveryRecord] = TypeAdapter(
+    DeliveryRecord
 )
-_PRESENTATION_STATE_ADAPTER: TypeAdapter[PresentationProjectionState] = TypeAdapter(
-    PresentationProjectionState
+_PRESENTATION_PLANNER_STATE_ADAPTER: TypeAdapter[PresentationState] = TypeAdapter(
+    PresentationState
 )
-_PRESENTATION_ACK_STATE_ADAPTER: TypeAdapter[PresentationAcknowledgeState] = (
+_PRESENTATION_DELIVERY_STATE_ADAPTER: TypeAdapter[PresentationAcknowledgeState] = (
     TypeAdapter(PresentationAcknowledgeState)
 )
 
@@ -551,20 +538,20 @@ class MongoLedger:
         self._output_source_batches = collection.database[
             AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION
         ]
-        self._presentation_candidates = collection.database[
-            AGENT_PRESENTATION_CANDIDATE_COLLECTION
+        self._presentation_records = collection.database[
+            AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION
         ]
-        self._presentation_source_batches = collection.database[
-            AGENT_PRESENTATION_SOURCE_BATCH_COLLECTION
+        self._presentation_source_commits = collection.database[
+            AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION
         ]
-        self._presentation_states = collection.database[
-            AGENT_PRESENTATION_STATE_COLLECTION
+        self._presentation_planner_states = collection.database[
+            AGENT_PRESENTATION_PLANNER_STATE_COLLECTION
         ]
-        self._presentation_delivery = collection.database[
-            AGENT_PRESENTATION_DELIVERY_COLLECTION
+        self._presentation_delivery_states = collection.database[
+            AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION
         ]
-        self._presentation_admission_commands = collection.database[
-            AGENT_PRESENTATION_ADMISSION_COMMAND_COLLECTION
+        self._presentation_admission_command_receipts = collection.database[
+            AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION
         ]
 
     async def _run_evidence_transaction(
@@ -1252,17 +1239,17 @@ class MongoLedger:
 
     async def append_presentation_event(
         self, event: AgentEvent, *, agent_thread_ref: str
-    ) -> tuple[PresentationCandidateRecord, ...] | None:
+    ) -> tuple[DeliveryRecord, ...] | None:
         """Commit one source fact's complete official AG-UI batch and state transition.
 
-        START+CONTENT, terminal END+RUN terminal, source marker, candidate records and the
+        START+CONTENT, terminal END+RUN terminal, source marker, delivery records and the
         projection head are born in one Mongo transaction. Replays return the exact records.
         """
 
         source_seed = hashlib.sha256(
             f"v1\0{event.run_id}\0{event.kind}\0{event.event_id or f'index:{event.index}'}".encode()
         ).hexdigest()
-        marker_id = f"presentation_batch_{source_seed}"
+        marker_id = f"presentation_commit_{source_seed}"
         source_payload_sha256 = hashlib.sha256(
             json.dumps(
                 event.model_dump(mode="json", exclude_none=True),
@@ -1274,7 +1261,7 @@ class MongoLedger:
 
         async def append(
             session: AsyncClientSession | None,
-        ) -> tuple[PresentationCandidateRecord, ...] | None:
+        ) -> tuple[DeliveryRecord, ...] | None:
             authority = await self._coll.find_one(
                 {"_id": event.run_id},
                 {
@@ -1286,7 +1273,7 @@ class MongoLedger:
             if authority is None:
                 return None
             stream_instance_ref, stream_generation = _run_stream_producer(authority)
-            existing_marker = await self._presentation_source_batches.find_one(
+            existing_marker = await self._presentation_source_commits.find_one(
                 {"_id": marker_id}, session=session
             )
             if existing_marker is not None:
@@ -1299,78 +1286,81 @@ class MongoLedger:
                     raise ValueError("PRESENTATION_SOURCE_CONFLICT")
                 rows = [
                     row
-                    async for row in self._presentation_candidates.find(
+                    async for row in self._presentation_records.find(
                         {
                             "run_id": event.run_id,
-                            "source_batch_ref": marker_id,
+                            "source_commit_ref": marker_id,
                         },
                         {
                             "_id": 0,
-                            "source_batch_ref": 0,
+                            "source_commit_ref": 0,
                             "delivery_record_proto": 0,
                         },
                         session=session,
-                    ).sort("presentation_seq", 1)
+                    ).sort("delivery_seq", 1)
                 ]
-                if len(rows) != existing_marker.get("batch_size"):
+                if len(rows) != existing_marker.get("submission_count"):
                     raise ValueError("PRESENTATION_SOURCE_PARTIAL")
                 records = tuple(
-                    _PRESENTATION_RECORD_ADAPTER.validate_python(row) for row in rows
+                    _DELIVERY_RECORD_ADAPTER.validate_python(row) for row in rows
                 )
                 ordered_digest = hashlib.sha256(
-                    b"".join(bytes.fromhex(row.envelope_sha256) for row in records)
+                    b"".join(
+                        bytes.fromhex(row.envelope_digest.removeprefix("sha256:"))
+                        for row in records
+                    )
                 ).hexdigest()
-                if ordered_digest != existing_marker.get("ordered_envelope_sha256"):
+                if ordered_digest != existing_marker.get("ordered_envelope_digest"):
                     raise ValueError("PRESENTATION_SOURCE_CONFLICT")
-                first_seq = existing_marker.get("first_presentation_seq")
+                first_seq = existing_marker.get("first_delivery_seq")
                 if records and (
                     not isinstance(first_seq, int)
                     or any(
-                        record.presentation_seq != first_seq + offset
+                        record.delivery_seq != first_seq + offset
                         for offset, record in enumerate(records)
                     )
                 ):
                     raise ValueError("PRESENTATION_SOURCE_PARTIAL")
                 return records
 
-            state_doc = await self._presentation_states.find_one(
+            state_doc = await self._presentation_planner_states.find_one(
                 {"_id": event.run_id}, session=session
             )
             if state_doc is None:
                 revision = 0
-                state = PresentationProjectionState()
+                state = PresentationState()
             else:
-                revision_value = state_doc.get("revision")
+                revision_value = state_doc.get("planner_revision")
                 if not isinstance(revision_value, int) or revision_value < 1:
                     raise TypeError("PRESENTATION_STATE_REVISION_INVALID")
                 revision = revision_value
-                state = _PRESENTATION_STATE_ADAPTER.validate_python(
+                state = _PRESENTATION_PLANNER_STATE_ADAPTER.validate_python(
                     state_doc.get("state"), strict=False
                 )
             batch = plan_presentation_batch(event, state, agent_thread_ref)
             records = tuple(
-                PresentationCandidateRecord.from_candidate(
+                DeliveryRecord.from_submission(
                     run_id=event.run_id,
-                    presentation_seq=int(candidate.source.source_ordinal) + 1,
-                    candidate=candidate,
+                    delivery_seq=int(submission.source.event_ordinal) + 1,
+                    submission=submission,
                     producer_instance_ref=stream_instance_ref,
                     producer_generation=stream_generation,
                 )
-                for candidate in batch.candidates
+                for submission in batch.submissions
             )
             delivery_records: list[presentation_wire.DeliveryRecord] = []
             if records:
-                first_sequence = records[0].presentation_seq
+                first_sequence = records[0].delivery_seq
                 producer = producer_fence(stream_instance_ref, stream_generation)
                 if first_sequence == 1:
                     previous_record_digest = record_chain_genesis_digest(
                         event.run_id, producer
                     )
                 else:
-                    previous = await self._presentation_candidates.find_one(
+                    previous = await self._presentation_records.find_one(
                         {
                             "run_id": event.run_id,
-                            "presentation_seq": first_sequence - 1,
+                            "delivery_seq": first_sequence - 1,
                         },
                         {"delivery_record_proto": 1},
                         session=session,
@@ -1392,7 +1382,10 @@ class MongoLedger:
                     delivery_records.append(delivery_record)
                     previous_record_digest = delivery_record.record_digest
             ordered_digest = hashlib.sha256(
-                b"".join(bytes.fromhex(record.envelope_sha256) for record in records)
+                b"".join(
+                    bytes.fromhex(record.envelope_digest.removeprefix("sha256:"))
+                    for record in records
+                )
             ).hexdigest()
             marker: dict[str, object] = {
                 "_id": marker_id,
@@ -1400,37 +1393,37 @@ class MongoLedger:
                 "agent_thread_ref": agent_thread_ref,
                 "source_event_ref": batch.source_event_ref,
                 "source_payload_sha256": batch.source_payload_sha256,
-                "batch_size": len(records),
-                "ordered_envelope_sha256": ordered_digest,
-                "first_presentation_seq": (
-                    records[0].presentation_seq if records else None
+                "submission_count": len(records),
+                "ordered_envelope_digest": ordered_digest,
+                "first_delivery_seq": (
+                    records[0].delivery_seq if records else None
                 ),
                 "recorded_at_ms": event.timestamp,
             }
             next_state_doc: dict[str, object] = {
                 "_id": event.run_id,
-                "revision": revision + 1,
+                "planner_revision": revision + 1,
                 "state": batch.next_state.model_dump(mode="python"),
             }
             if revision == 0:
-                await self._presentation_states.insert_one(
+                await self._presentation_planner_states.insert_one(
                     next_state_doc, session=session
                 )
             else:
-                advanced = await self._presentation_states.replace_one(
-                    {"_id": event.run_id, "revision": revision},
+                advanced = await self._presentation_planner_states.replace_one(
+                    {"_id": event.run_id, "planner_revision": revision},
                     next_state_doc,
                     session=session,
                 )
                 if advanced.modified_count != 1:
                     raise _OutputAppendContention
             if records:
-                await self._presentation_candidates.insert_many(
+                await self._presentation_records.insert_many(
                     [
                         {
-                            "_id": record.presentation_ref,
+                            "_id": record.record_ref,
                             **record.model_dump(mode="python"),
-                            "source_batch_ref": marker_id,
+                            "source_commit_ref": marker_id,
                             "delivery_record_proto": delivery_record.SerializeToString(
                                 deterministic=True
                             ),
@@ -1442,7 +1435,7 @@ class MongoLedger:
                     ordered=True,
                     session=session,
                 )
-            await self._presentation_source_batches.insert_one(
+            await self._presentation_source_commits.insert_one(
                 marker, session=session
             )
             return records
@@ -1456,7 +1449,7 @@ class MongoLedger:
         raise AssertionError("unreachable presentation append retry")
 
     async def presentation_head(self, run_id: str) -> int:
-        row = await self._presentation_states.find_one(
+        row = await self._presentation_planner_states.find_one(
             {"_id": run_id}, {"state.next_ordinal": 1}
         )
         if row is None:
@@ -1464,46 +1457,46 @@ class MongoLedger:
         state = row.get("state")
         if not isinstance(state, dict):
             raise TypeError("PRESENTATION_STATE_INVALID")
-        value = _PRESENTATION_STATE_ADAPTER.validate_python(
+        value = _PRESENTATION_PLANNER_STATE_ADAPTER.validate_python(
             state, strict=False
         ).next_ordinal
         return value
 
-    async def pull_presentation_candidates(
+    async def pull_delivery_records(
         self,
         run_id: str,
-        after_presentation_seq: int,
-        through_presentation_seq: int,
+        after_delivery_seq: int,
+        through_delivery_seq: int,
         limit: int,
-    ) -> tuple[PresentationCandidateRecord, ...]:
+    ) -> tuple[DeliveryRecord, ...]:
         if (
-            after_presentation_seq < 0
-            or through_presentation_seq < after_presentation_seq
+            after_delivery_seq < 0
+            or through_delivery_seq < after_delivery_seq
             or limit < 1
             or limit > 257
         ):
             raise ValueError("PRESENTATION_CURSOR_INVALID")
         cursor = (
-            self._presentation_candidates.find(
+            self._presentation_records.find(
                 {
                     "run_id": run_id,
-                    "presentation_seq": {
-                        "$gt": after_presentation_seq,
-                        "$lte": through_presentation_seq,
+                    "delivery_seq": {
+                        "$gt": after_delivery_seq,
+                        "$lte": through_delivery_seq,
                     },
                 },
                 {
                     "_id": 0,
-                    "source_batch_ref": 0,
+                    "source_commit_ref": 0,
                     "delivery_record_proto": 0,
                 },
             )
-            .sort("presentation_seq", 1)
+            .sort("delivery_seq", 1)
             .limit(limit)
         )
-        records: list[PresentationCandidateRecord] = []
+        records: list[DeliveryRecord] = []
         async for row in cursor:
-            records.append(_PRESENTATION_RECORD_ADAPTER.validate_python(row))
+            records.append(_DELIVERY_RECORD_ADAPTER.validate_python(row))
         return tuple(records)
 
     async def check_presentation_provider_active(self) -> None:
@@ -1532,8 +1525,8 @@ class MongoLedger:
     ) -> presentation_wire.DeliveryRecord | None:
         if delivery_seq < 1:
             return None
-        document = await self._presentation_candidates.find_one(
-            {"run_id": run_id, "presentation_seq": delivery_seq},
+        document = await self._presentation_records.find_one(
+            {"run_id": run_id, "delivery_seq": delivery_seq},
             {"delivery_record_proto": 1},
         )
         encoded = None if document is None else document.get("delivery_record_proto")
@@ -1559,17 +1552,17 @@ class MongoLedger:
         ):
             raise ValueError("PRESENTATION_CURSOR_INVALID")
         cursor = (
-            self._presentation_candidates.find(
+            self._presentation_records.find(
                 {
                     "run_id": run_id,
-                    "presentation_seq": {
+                    "delivery_seq": {
                         "$gt": after_delivery_seq,
                         "$lte": through_delivery_seq,
                     },
                 },
                 {"delivery_record_proto": 1},
             )
-            .sort("presentation_seq", 1)
+            .sort("delivery_seq", 1)
             .limit(limit)
         )
         records: list[presentation_wire.DeliveryRecord] = []
@@ -1599,16 +1592,16 @@ class MongoLedger:
         if authority is None:
             raise ValueError("PRESENTATION_RUN_NOT_FOUND")
         instance_ref, generation = _run_stream_producer(authority)
-        first = await self._presentation_candidates.find_one(
+        first = await self._presentation_records.find_one(
             {"run_id": run_id},
             {"recorded_at_ms": 1},
-            sort=[("presentation_seq", 1)],
+            sort=[("delivery_seq", 1)],
             session=session,
         )
         initial_updated_at_ms = 0 if first is None else first.get("recorded_at_ms")
         if not isinstance(initial_updated_at_ms, int) or initial_updated_at_ms < 0:
             raise TypeError("PRESENTATION_DELIVERY_STATE_INVALID")
-        document = await self._presentation_delivery.find_one(
+        document = await self._presentation_delivery_states.find_one(
             {"_id": run_id}, session=session
         )
         return _presentation_delivery_status(
@@ -1626,7 +1619,7 @@ class MongoLedger:
         if run_id is None:
             if original_command is None:
                 raise ValueError("PRESENTATION_STATUS_LOOKUP_INVALID")
-            receipt = await self._presentation_admission_commands.find_one(
+            receipt = await self._presentation_admission_command_receipts.find_one(
                 {"original_command_id": original_command.command_id},
                 {"run_id": 1, "original_command_proto": 1},
             )
@@ -1654,7 +1647,7 @@ class MongoLedger:
         async def acknowledge(
             session: AsyncClientSession | None,
         ) -> presentation_wire.DeliveryStatus:
-            existing = await self._presentation_admission_commands.find_one(
+            existing = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}, session=session
             )
             if existing is not None:
@@ -1681,10 +1674,10 @@ class MongoLedger:
             ):
                 raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
             for receipt in effect.receipts:
-                document = await self._presentation_candidates.find_one(
+                document = await self._presentation_records.find_one(
                     {
                         "run_id": effect.run_id,
-                        "presentation_seq": receipt.delivery_seq,
+                        "delivery_seq": receipt.delivery_seq,
                     },
                     {"delivery_record_proto": 1},
                     session=session,
@@ -1719,18 +1712,18 @@ class MongoLedger:
             status.status_digest = delivery_status_digest(status)
             next_document = _presentation_delivery_document(status)
             if current.status_revision == 1:
-                await self._presentation_delivery.insert_one(
+                await self._presentation_delivery_states.insert_one(
                     next_document, session=session
                 )
             else:
-                updated = await self._presentation_delivery.replace_one(
+                updated = await self._presentation_delivery_states.replace_one(
                     {"_id": effect.run_id, "status_revision": current.status_revision},
                     next_document,
                     session=session,
                 )
                 if updated.modified_count != 1:
                     raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
-            await self._presentation_admission_commands.insert_one(
+            await self._presentation_admission_command_receipts.insert_one(
                 {
                     "_id": marker_id,
                     "run_id": effect.run_id,
@@ -1747,7 +1740,7 @@ class MongoLedger:
         try:
             return await self._run_evidence_transaction(acknowledge)
         except DuplicateKeyError:
-            duplicate = await self._presentation_admission_commands.find_one(
+            duplicate = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}
             )
             if (
@@ -1775,7 +1768,7 @@ class MongoLedger:
         async def quarantine(
             session: AsyncClientSession | None,
         ) -> presentation_wire.DeliveryStatus:
-            existing = await self._presentation_admission_commands.find_one(
+            existing = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}, session=session
             )
             if existing is not None:
@@ -1801,10 +1794,10 @@ class MongoLedger:
                 or current.status_revision != effect.expected_status_revision
             ):
                 raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
-            document = await self._presentation_candidates.find_one(
+            document = await self._presentation_records.find_one(
                 {
                     "run_id": effect.run_id,
-                    "presentation_seq": effect.delivery_seq,
+                    "delivery_seq": effect.delivery_seq,
                 },
                 {"delivery_record_proto": 1},
                 session=session,
@@ -1850,14 +1843,14 @@ class MongoLedger:
                 status.terminal_seal.CopyFrom(current.terminal_seal)
             status.status_digest = delivery_status_digest(status)
             next_document = _presentation_delivery_document(status)
-            updated = await self._presentation_delivery.replace_one(
+            updated = await self._presentation_delivery_states.replace_one(
                 {"_id": effect.run_id, "status_revision": current.status_revision},
                 next_document,
                 session=session,
             )
             if updated.modified_count != 1:
                 raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
-            await self._presentation_admission_commands.insert_one(
+            await self._presentation_admission_command_receipts.insert_one(
                 {
                     "_id": marker_id,
                     "run_id": effect.run_id,
@@ -1874,7 +1867,7 @@ class MongoLedger:
         try:
             return await self._run_evidence_transaction(quarantine)
         except DuplicateKeyError:
-            duplicate = await self._presentation_admission_commands.find_one(
+            duplicate = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}
             )
             if (
@@ -1902,57 +1895,57 @@ class MongoLedger:
         async def acknowledge(
             session: AsyncClientSession | None,
         ) -> PresentationAcknowledgeState:
-            existing = await self._presentation_admission_commands.find_one(
+            existing = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}, session=session
             )
             if existing is not None:
                 if existing.get("command_digest") != command.request_effect_digest:
                     raise ValueError("PRESENTATION_ACK_REPLAY_CONFLICT")
-                return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+                return _PRESENTATION_DELIVERY_STATE_ADAPTER.validate_python(
                     existing.get("effect")
                 )
-            current_doc = await self._presentation_delivery.find_one(
+            current_doc = await self._presentation_delivery_states.find_one(
                 {"_id": command.run_id}, session=session
             )
             current = _delivery_state(command.run_id, current_doc)
-            if current.quarantined_presentation_seq is not None:
+            if current.quarantined_delivery_seq is not None:
                 raise ValueError("PRESENTATION_DELIVERY_QUARANTINED")
             if (
-                current.acknowledged_through_presentation_seq
-                != command.expected_acknowledged_through_presentation_seq
+                current.acknowledged_through_delivery_seq
+                != command.expected_acknowledged_through_delivery_seq
             ):
                 raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
             for receipt in command.receipts:
-                record = await self._presentation_candidates.find_one(
+                record = await self._presentation_records.find_one(
                     {
                         "run_id": command.run_id,
-                        "presentation_seq": receipt.presentation_seq,
+                        "delivery_seq": receipt.delivery_seq,
                     },
-                    {"presentation_ref": 1, "candidate_envelope_json": 1},
+                    {"record_ref": 1, "envelope_bytes": 1},
                     session=session,
                 )
-                if record is None or record.get("presentation_ref") != receipt.presentation_ref:
+                if record is None or record.get("record_ref") != receipt.record_ref:
                     raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
-                envelope_bytes = record.get("candidate_envelope_json")
+                envelope_bytes = record.get("envelope_bytes")
                 if not isinstance(envelope_bytes, bytes):
                     raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
-                envelope = AgentAguiEventCandidate.model_validate_json(envelope_bytes)
-                if envelope.candidate_ref != receipt.candidate_ref:
+                envelope = PresentationSubmission.model_validate_json(envelope_bytes)
+                if envelope.submission_ref != receipt.submission_ref:
                     raise ValueError("PRESENTATION_ACK_RECORD_CONFLICT")
             effect = PresentationAcknowledgeState(
                 run_id=command.run_id,
-                acknowledged_through_presentation_seq=(
-                    command.receipts[-1].presentation_seq
+                acknowledged_through_delivery_seq=(
+                    command.receipts[-1].delivery_seq
                 ),
                 revision=current.revision + 1,
             )
             await _replace_delivery_state(
-                self._presentation_delivery,
+                self._presentation_delivery_states,
                 current,
                 effect,
                 session=session,
             )
-            await self._presentation_admission_commands.insert_one(
+            await self._presentation_admission_command_receipts.insert_one(
                 {
                     "_id": marker_id,
                     "run_id": command.run_id,
@@ -1971,7 +1964,7 @@ class MongoLedger:
         try:
             return await self._run_evidence_transaction(acknowledge)
         except DuplicateKeyError:
-            duplicate = await self._presentation_admission_commands.find_one(
+            duplicate = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}
             )
             if (
@@ -1979,7 +1972,7 @@ class MongoLedger:
                 or duplicate.get("command_digest") != command.request_effect_digest
             ):
                 raise ValueError("PRESENTATION_ACK_REPLAY_CONFLICT") from None
-            return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+            return _PRESENTATION_DELIVERY_STATE_ADAPTER.validate_python(
                 duplicate.get("effect")
             )
 
@@ -1994,60 +1987,60 @@ class MongoLedger:
         async def quarantine(
             session: AsyncClientSession | None,
         ) -> PresentationAcknowledgeState:
-            existing = await self._presentation_admission_commands.find_one(
+            existing = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}, session=session
             )
             if existing is not None:
                 if existing.get("command_digest") != command_digest:
                     raise ValueError("PRESENTATION_QUARANTINE_REPLAY_CONFLICT")
-                return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+                return _PRESENTATION_DELIVERY_STATE_ADAPTER.validate_python(
                     existing.get("effect")
                 )
-            current_doc = await self._presentation_delivery.find_one(
+            current_doc = await self._presentation_delivery_states.find_one(
                 {"_id": command.run_id}, session=session
             )
             current = _delivery_state(command.run_id, current_doc)
-            if current.quarantined_presentation_seq is not None:
+            if current.quarantined_delivery_seq is not None:
                 raise ValueError("PRESENTATION_DELIVERY_QUARANTINED")
             if (
-                current.acknowledged_through_presentation_seq
-                != command.expected_acknowledged_through_presentation_seq
-                or command.presentation_seq
-                != current.acknowledged_through_presentation_seq + 1
+                current.acknowledged_through_delivery_seq
+                != command.expected_acknowledged_through_delivery_seq
+                or command.delivery_seq
+                != current.acknowledged_through_delivery_seq + 1
             ):
                 raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
-            record = await self._presentation_candidates.find_one(
+            record = await self._presentation_records.find_one(
                 {
                     "run_id": command.run_id,
-                    "presentation_seq": command.presentation_seq,
+                    "delivery_seq": command.delivery_seq,
                 },
-                {"presentation_ref": 1, "candidate_envelope_json": 1},
+                {"record_ref": 1, "envelope_bytes": 1},
                 session=session,
             )
-            if record is None or record.get("presentation_ref") != command.presentation_ref:
+            if record is None or record.get("record_ref") != command.record_ref:
                 raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
-            envelope_bytes = record.get("candidate_envelope_json")
+            envelope_bytes = record.get("envelope_bytes")
             if not isinstance(envelope_bytes, bytes):
                 raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
-            envelope = AgentAguiEventCandidate.model_validate_json(envelope_bytes)
-            if envelope.candidate_ref != command.candidate_ref:
+            envelope = PresentationSubmission.model_validate_json(envelope_bytes)
+            if envelope.submission_ref != command.submission_ref:
                 raise ValueError("PRESENTATION_QUARANTINE_RECORD_CONFLICT")
             effect = PresentationAcknowledgeState(
                 run_id=command.run_id,
-                acknowledged_through_presentation_seq=(
-                    current.acknowledged_through_presentation_seq
+                acknowledged_through_delivery_seq=(
+                    current.acknowledged_through_delivery_seq
                 ),
                 revision=current.revision + 1,
-                quarantined_presentation_seq=command.presentation_seq,
+                quarantined_delivery_seq=command.delivery_seq,
                 quarantine_reason=command.reason,
             )
             await _replace_delivery_state(
-                self._presentation_delivery,
+                self._presentation_delivery_states,
                 current,
                 effect,
                 session=session,
             )
-            await self._presentation_admission_commands.insert_one(
+            await self._presentation_admission_command_receipts.insert_one(
                 {
                     "_id": marker_id,
                     "run_id": command.run_id,
@@ -2063,7 +2056,7 @@ class MongoLedger:
         try:
             return await self._run_evidence_transaction(quarantine)
         except DuplicateKeyError:
-            duplicate = await self._presentation_admission_commands.find_one(
+            duplicate = await self._presentation_admission_command_receipts.find_one(
                 {"_id": marker_id}
             )
             if (
@@ -2071,7 +2064,7 @@ class MongoLedger:
                 or duplicate.get("command_digest") != command_digest
             ):
                 raise ValueError("PRESENTATION_QUARANTINE_REPLAY_CONFLICT") from None
-            return _PRESENTATION_ACK_STATE_ADAPTER.validate_python(
+            return _PRESENTATION_DELIVERY_STATE_ADAPTER.validate_python(
                 duplicate.get("effect")
             )
 
@@ -2080,7 +2073,7 @@ class MongoLedger:
     ) -> PresentationAcknowledgeState:
         return _delivery_state(
             run_id,
-            await self._presentation_delivery.find_one({"_id": run_id}),
+            await self._presentation_delivery_states.find_one({"_id": run_id}),
         )
 
     async def get_durable_retention_stats(self) -> DurableRetentionStats:

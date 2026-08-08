@@ -8,8 +8,8 @@
 - LangChain/LangGraph/DeepAgents 执行。
 - tools、skills、MCP client、subagents、HITL、sandbox。
 - checkpoint、memory、run state、raw execution events。
-- official AG-UI internal candidate construction、durable presentation source batch 与
-  Agent→Session pull/ack/quarantine application port。
+- official AG-UI adapter 到 Root R1 `PresentationSubmission` 的直接构造、durable source
+  commit / `DeliveryRecord` 与 Agent→Session pull/ack/quarantine application port。
 - run 级别的 capability 装配和执行生命周期。
 
 ## Does Not Own

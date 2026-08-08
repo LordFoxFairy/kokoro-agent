@@ -5,75 +5,66 @@ owners:
   - "@LordFoxFairy"
 ---
 
-# presentation — production official AG-UI output boundary
+# presentation — Root R1 submission and delivery boundary
 
 ## Responsibilities
 
-Convert real `RunEmitter` owner facts into the Root-pinned official Python AG-UI models, close them
-through Kokoro's strict profile, and commit an append-only Agent presentation log before live raw-event
+Convert real `RunEmitter` owner facts through the pinned official AG-UI SDK adapter into strict
+`PresentationSubmission` values, then commit an append-only Agent delivery log before live raw-event
 publication. This is the only Agent-owned browser-presentation semantic output.
 
-`runtime.py` owns the stateful source-batch projector and child application port:
+`runtime.py` owns the stateful source planner and child delivery application port:
 
+- the first submission has `eventOrdinal = "0"`, every later submission advances exactly one, and
+  `deliverySeq = eventOrdinal + 1`;
 - first text delta atomically creates `TEXT_MESSAGE_START + TEXT_MESSAGE_CONTENT`;
-- a completion without deltas atomically creates START + optional CONTENT + END;
+- completion without deltas atomically creates START + optional CONTENT + END;
 - terminal/failure closes every open message before RUN_FINISHED/RUN_ERROR;
-- one source fact may create multiple candidates, each with a stable run-global ordinal, member source
-  identity and candidate digest;
-- tool, HITL, plan and subagent facts become closed, redacted `ACTIVITY_SNAPSHOT` values. Safe-summary,
-  notice and error remain closed candidate arms but have no production source until a real safe owner fact
-  exists. Agent cannot emit Platform-owned media, artifact or cost Activity. Raw args, raw results, provider
-  data, secrets, reasoning and subagent text never enter the presentation log;
-- `PresentationOwnerState` allocates owner version `1` on the first semantic replacement and advances a
-  positive uint64 decimal **string** only when that owner's semantic fingerprint changes. It is independent
-  from candidate ordinal, presentation sequence, durable sequence and Python/JavaScript numeric transport.
-  Exact semantic replay emits no new candidate; identity/placement drift, time regression, terminal revival
-  and uint64 overflow fail closed;
-- HITL presentation groups are allocated once from the complete ordered pending frame. Agent stores only
-  domain-separated private hashes for owner/group/control identity, emits pending proposals without receipt
-  authority, and requires Session to remap every private ancestry ref before browser projection;
-- an opaque Agent thread ref is domain-separated from namespace + inbound thread identity. Agent never
-  forwards a Session/browser thread identifier.
+- tool, HITL, plan, and subagent facts become closed, redacted `ACTIVITY_SNAPSHOT` values;
+- `PresentationOwnerState` advances its positive uint64 decimal `ownerVersion` only when the owner's
+  semantic fingerprint changes. Replay emits no new Submission; identity/placement drift, time
+  regression, terminal revival, and overflow fail closed;
+- HITL groups retain private Agent ancestry only. Session owns public binding and receipt authority.
+
+`adapter.py` is the sole official AG-UI SDK trust boundary. It closes an upstream SDK model and
+directly seals the Root R1 `PresentationSubmission`; no intermediate envelope or conversion bridge
+exists. `submission.py` owns the strict envelope, canonical UTC/JCS encoding, event digest, and
+`presentation.submission:sha256:` identity.
 
 ## Durability and delivery
 
-Mongo commits source marker, full ordered candidate batch and next projection state—including owner/group
-authority—in one transaction under the existing projection revision CAS.
-Replay must reproduce the exact batch or fail closed. Candidate sequence is independent from raw live
-index, lifecycle durable sequence and execution-output sequence.
+Mongo commits a source commit, its complete ordered Submission batch, and the next planner state in
+one transaction. Each `DeliveryRecord` persists the canonical Submission bytes, digest, and identity.
+The generated wire record is serialized once in that append transaction; provider pull returns the
+persisted wire bytes and never rebuilds an envelope.
 
-`RunEmitter` has one production mapping path: `plan_presentation_batch` inside the fenced owner-event
-unit of work. `adapter.py` only closes and seals an already-planned official SDK event; it does not map
-Agent facts. There is no stateless or compatibility mapper that can bypass projection state.
+The unpublished baseline uses only these five collections:
 
-`AgentPresentationService` freezes a snapshot head on the first pull and pages only through that head.
-The future Root Connect provider maps this child application shape without changing its semantics:
+- `agent_presentation_delivery_record`;
+- `agent_presentation_source_commit`;
+- `agent_presentation_planner_state`;
+- `agent_presentation_delivery_state`;
+- `agent_presentation_admission_command_receipt`.
 
-- `PullCandidateBatches` returns ordered candidate envelopes plus record/envelope digests and producer
-  instance/generation fencing;
-- `AcknowledgeCandidateAdmissions` advances only a contiguous prefix under expected-watermark CAS and
-  an idempotent request/effect digest;
-- `GetDeliveryStatus` exposes acknowledged-through/revision/quarantine;
-- a permanent Session rejection is a typed quarantine at the first gap. It never advances the ACK
-  watermark and cannot be represented as success.
+Startup creates only the new indexes. There is no old-name read, dual write, alias, migration, or
+automatic reinterpretation path.
 
-No candidate is garbage-collected merely because it was pulled. GC remains forbidden until the typed
-Session admission receipt has advanced the contiguous acknowledgement watermark.
+`PresentationDeliveryService` and `PresentationConnectService` preserve frozen-head paging,
+producer generation fencing, contiguous ACK, first-gap quarantine, replay identity, delivery-chain
+digests, and terminal seals. Nothing is garbage-collected merely because it was pulled.
 
-## Boundary with execution evidence and Session
+## Public surface and dependencies
 
-`PullDurableOutputRecords` remains non-browser execution evidence for audit, business projection and
-recovery. Web/AG-UI must never consume it. Agent does not own Site/Session binding, public run/message
-identity, browser cursor, durable Session projection, snapshot repair, SSE or HITL decision authority.
+`__init__.py` exports Submission construction and stable delivery models only. `provider.py` maps the
+generated Connect service to the storage port. `RunSupervisor -> RunEmitter -> commit_owner_event`
+remains the single production activation path. The Agent-local compatibility command uses the same
+public `build_submission` adapter and is not a second implementation.
 
-The compatibility CLI exercises the same strict builder but is not production activation. Production
-activation is `RunSupervisor -> RunEmitter -> commit_owner_event -> Mongo presentation log`.
-
-The Root integrity corpus under `presentation/generated/` is a generated mirror with a pinned Root
-revision and SHA-256 provenance. Independent Agent CI reads that mirror and never reaches into a Root
-checkout; the sync script remains the only update path, so the mirror is not a second authority.
+`PullDurableOutputRecords` remains non-browser execution evidence. Agent does not own Site/Session
+binding, public run/message identity, browser cursor, durable Session projection, snapshot repair,
+SSE, or HITL decision authority.
 
 ## Verification
 
-Run `uv run pytest tests/test_agui_production_presentation.py tests/test_invoke.py tests/test_supervisor.py -q`,
-then `uv run ruff check .` and `uv run pyright`.
+Run `uv run pytest tests/test_presentation_submission.py tests/test_presentation_planner.py
+tests/test_storage.py -q`, then `uv run ruff check .`, `uv run pyright`, and `uv run pytest`.

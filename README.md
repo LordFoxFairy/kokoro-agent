@@ -116,7 +116,8 @@ command 覆盖。库存解除阻断并获得跨仓发布证据前，构建成功
 uv run ruff check . && uv run pyright && uv run pytest   # 本仓三件套
 uv run pytest tests/repository/test_deployment_inventory.py -q
 docker build --target runtime --tag kokoro-agent:verification .
-python3 ../scripts/e2e-v21-gate.py        # 跨栈确定性门禁（LocalFake，30 项）
+node ../scripts/repository/run-pinned-compatibility.mjs \
+  --tree head --evidence tmp/compatibility-direct.json  # exact-pin Direct 跨仓闭环
 python3 ../scripts/chaos-verify.py        # 崩溃混沌：worker 收养 + session 恢复（11 项）
 python3 ../scripts/trace-verify.py        # Langfuse HITL trace 连续性（7 项）
 python3 ../scripts/real-model-verify.py   # 真模型五场景（thinking/subagent/search/skills/execute）

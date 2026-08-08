@@ -46,7 +46,10 @@ The unpublished baseline uses only these five collections:
 - `agent_presentation_delivery_state`;
 - `agent_presentation_admission_command_receipt`.
 
-Startup creates only the new indexes. There is no old-name read, dual write, alias, migration, or
+`store_baseline.py` freezes one revision and digest over the exact JSON validators and the three
+query/uniqueness indexes that delivery actually needs. Startup creates that baseline only for an
+empty Presentation store; otherwise it rejects retired collections, mixed baselines, validator
+drift, and missing or extra indexes. There is no old-name read, dual write, alias, migration, or
 automatic reinterpretation path.
 
 `DeliveryService` preserves frozen-head paging,
@@ -69,3 +72,6 @@ SSE, or HITL decision authority.
 
 Run `uv run pytest tests/test_presentation_submission.py tests/test_presentation_planner.py
 tests/test_storage.py -q`, then `uv run ruff check .`, `uv run pyright`, and `uv run pytest`.
+
+The formal Agent core-freeze mirror remains pending the Root-generated registry and corpus. Agent
+does not synthesize a parallel authority while that Root artifact is pending.

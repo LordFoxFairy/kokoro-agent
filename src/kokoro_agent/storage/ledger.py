@@ -16,17 +16,13 @@ from kokoro_agent.evidence.models import (
 )
 from kokoro_agent.presentation.delivery import PresentationProviderStore
 from kokoro_agent.presentation.model import DeliveryRecord
+from kokoro_agent.presentation.store_baseline import ensure_presentation_store_baseline
 from kokoro_agent.contract import AgentEvent
 from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
     AGENT_DURABLE_OUTPUT_COLLECTION,
     AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION,
     AGENT_EXECUTION_EVIDENCE_COLLECTION,
-    AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION,
-    AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION,
-    AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION,
-    AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION,
-    AGENT_PRESENTATION_PLANNER_STATE_COLLECTION,
     ControlInboxRecord,
     MongoLedger,
     OutboxFrame,
@@ -351,42 +347,7 @@ async def make_ledger(
             name="run_output_source_batch_unique",
             unique=True,
         )
-        presentation_records = collection.database[
-            AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION
-        ]
-        await presentation_records.create_index(
-            [("run_id", 1), ("delivery_seq", 1)],
-            name="run_delivery_seq_unique",
-            unique=True,
-        )
-        await presentation_records.create_index(
-            [("run_id", 1), ("record_ref", 1)],
-            name="run_record_ref_unique",
-            unique=True,
-        )
-        presentation_source_commits = collection.database[
-            AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION
-        ]
-        await presentation_source_commits.create_index(
-            [("run_id", 1), ("source_event_ref", 1)],
-            name="run_source_event_ref_unique",
-            unique=True,
-        )
-        await collection.database[AGENT_PRESENTATION_PLANNER_STATE_COLLECTION].create_index(
-            [("_id", 1), ("planner_revision", 1)],
-            name="planner_state_revision",
-        )
-        await collection.database[AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION].create_index(
-            [("_id", 1), ("status_revision", 1)],
-            name="delivery_status_revision",
-        )
-        await collection.database[
-            AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION
-        ].create_index(
-            [("run_id", 1), ("_id", 1)],
-            name="admission_command_receipt_unique",
-            unique=True,
-        )
+        await ensure_presentation_store_baseline(collection.database)
         yield MongoLedger(
             collection,
             ttl_ms=settings.lease_ttl_ms,

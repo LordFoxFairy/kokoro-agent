@@ -9,6 +9,8 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import pytest
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 
@@ -18,6 +20,7 @@ from kokoro.common.v2 import command_envelope_pb2 as common_wire
 
 from fakes import request
 from kokoro_agent.contract import (
+    AgentEvent,
     MessageDelta,
     MessageDeltaPayload,
     PlanProposal,
@@ -404,6 +407,175 @@ async def test_presentation_authority_replays_and_closes_admission_delivery() ->
         assert quarantined.status.quarantine.reason_code == (
             "SESSION_ADMISSION_PERMANENT_REJECT"
         )
+
+
+async def test_first_presentation_record_can_be_quarantined_and_replayed() -> None:
+    clock = FakeClock()
+    async with _mongo_store(clock) as raw_store:
+        assert isinstance(raw_store, MongoLedger)
+        store = raw_store
+        run_id = "run-first-presentation-quarantine"
+        assert await store.try_claim(request(run_id), OWNER) is True
+        thread_ref = "agent.thread:" + "f" * 64
+        appended = await store.append_presentation_event(
+            RunStarted(
+                kind="run.started",
+                run_id=run_id,
+                index=0,
+                timestamp=clock.now,
+                payload=RunStartedPayload(),
+            ),
+            agent_thread_ref=thread_ref,
+        )
+        assert appended is not None and len(appended) == 1
+        service = PresentationConnectService(store)
+        producer = await store.presentation_provider_fence(run_id)
+        page = await service.pull_records(
+            presentation_wire.PullRecordsRequest(
+                run_id=run_id,
+                producer=producer,
+                page_size=1,
+            ),
+            None,
+        )
+        record = page.records[0]
+        command = common_wire.CommandIdentityV2(
+            command_id="c" * 32,
+            idempotency_key="presentation-first-quarantine",
+            digest_algorithm=(
+                common_wire.COMMAND_DIGEST_ALGORITHM_V2_SHA256_COMMAND_ENVELOPE
+            ),
+            request_digest="3" * 64,
+        )
+        effect = presentation_wire.QuarantineSubmissionEffect(
+            run_id=run_id,
+            producer=producer,
+            expected_acknowledged_through=0,
+            expected_status_revision=page.delivery_status.status_revision,
+            idempotency_ref="presentation.first.quarantine",
+            delivery_seq=1,
+            record_ref=record.record_ref,
+            record_digest=record.record_digest,
+            submission_ref=record.submission_ref,
+            submission_digest=record.submission_digest,
+            rejection_class=presentation_wire.REJECTION_CLASS_PERMANENT,
+            reason_code="SESSION_ADMISSION_PERMANENT_REJECT",
+            session_rejection_digest="sha256:" + "3" * 64,
+            effect_digest_domain=QUARANTINE_EFFECT_DOMAIN,
+            effect_digest="sha256:" + "0" * 64,
+        )
+        effect.effect_digest = effect_digest(effect, QUARANTINE_EFFECT_DOMAIN)
+        quarantine_request = presentation_wire.QuarantineSubmissionRequest(
+            command=command,
+            effect=effect,
+        )
+
+        first = await service.quarantine_submission(quarantine_request, None)
+        replay = await service.quarantine_submission(quarantine_request, None)
+
+        assert replay == first
+        assert first.status.status_revision == 2
+        assert first.status.quarantine.delivery_seq == 1
+
+        drifted = presentation_wire.QuarantineSubmissionRequest()
+        drifted.CopyFrom(quarantine_request)
+        drifted.effect.reason_code = "SESSION_ADMISSION_DIFFERENT_REJECT"
+        drifted.effect.effect_digest = effect_digest(
+            drifted.effect, QUARANTINE_EFFECT_DOMAIN
+        )
+        with pytest.raises(ConnectError) as raised:
+            await service.quarantine_submission(drifted, None)
+        assert raised.value.code == Code.INVALID_ARGUMENT
+        assert raised.value.message == "PRESENTATION_QUARANTINE_REPLAY_CONFLICT"
+
+
+async def test_terminal_submission_seal_is_persisted_replayed_and_write_once() -> None:
+    settings = _settings(f"kokoro_presentation_terminal_{uuid.uuid4().hex}")
+    run_id = "run-presentation-terminal"
+    thread_ref = "agent.thread:" + "e" * 64
+    terminal_event: AgentEvent | None = None
+    try:
+        async with make_ledger(settings) as raw_store:
+            assert isinstance(raw_store, MongoLedger)
+            store = raw_store
+            assert await store.try_claim(request(run_id), OWNER) is True
+            started = await store.commit_owner_event(
+                run_id=run_id,
+                expected_index=0,
+                kind="run.started",
+                payload=RunStartedPayload(),
+                lease_owner_ref=OWNER,
+                agent_thread_ref=thread_ref,
+            )
+            assert started.status == "committed"
+            terminal = await store.commit_owner_event(
+                run_id=run_id,
+                expected_index=1,
+                kind="run.failed",
+                payload=RunFailedPayload(
+                    code="internal_error",
+                    error_kind="RuntimeError",
+                    message="failed",
+                ),
+                lease_owner_ref=OWNER,
+                agent_thread_ref=thread_ref,
+            )
+            assert terminal.status == "committed" and terminal.event is not None
+            terminal_event = terminal.event
+            evidence = await store.pull_durable_execution_evidence(run_id, 0, 10)
+            terminal_evidence = evidence[-1]
+            status = await store.presentation_provider_status(run_id, None)
+            head = await store.presentation_provider_head(run_id)
+            head_record = await store.presentation_provider_record(run_id, head)
+            assert head_record is not None
+
+            assert status.HasField("terminal_seal")
+            assert status.terminal_seal.sealed_through_delivery_seq == head
+            assert status.terminal_seal.sealed_head_record_digest == (
+                head_record.record_digest
+            )
+            assert status.terminal_seal.terminal_evidence_ref == (
+                terminal_evidence.evidence_ref
+            )
+            assert status.terminal_seal.terminal_evidence_payload_digest == (
+                "sha256:" + terminal_evidence.payload_sha256
+            )
+            assert status.terminal_seal.terminal_disposition == (
+                presentation_wire.TERMINAL_DISPOSITION_FAILED
+            )
+
+        async with make_ledger(settings) as raw_resumed:
+            assert isinstance(raw_resumed, MongoLedger)
+            assert terminal_event is not None
+            restored = await raw_resumed.presentation_provider_status(run_id, None)
+            assert restored.HasField("terminal_seal")
+            replay = await raw_resumed.append_presentation_event(
+                terminal_event,
+                agent_thread_ref=thread_ref,
+            )
+            assert replay is not None
+            mutated = terminal_event.model_copy(
+                update={
+                    "payload": RunFailedPayload(
+                        code="internal_error",
+                        error_kind="RuntimeError",
+                        message="mutated",
+                    )
+                }
+            )
+            with pytest.raises(ValueError, match="PRESENTATION_SOURCE_CONFLICT"):
+                await raw_resumed.append_presentation_event(
+                    mutated,
+                    agent_thread_ref=thread_ref,
+                )
+            final = await raw_resumed.presentation_provider_status(run_id, None)
+            assert final.terminal_seal == restored.terminal_seal
+    finally:
+        client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(_MONGO_URL)
+        try:
+            await client.drop_database(settings.mongo_db)
+        finally:
+            await client.close()
 
 
 # --- 共用行为矩阵：任意 RunLedger 实例逐条对标 ---
@@ -1016,12 +1188,8 @@ async def test_presentation_factory_creates_only_delivery_indexes() -> None:
             ("run_id", 1),
             ("delivery_seq", 1),
         ]
-        assert record_indexes["run_record_ref_unique"]["key"] == [
-            ("run_id", 1),
-            ("record_ref", 1),
-        ]
         assert record_indexes["run_delivery_seq_unique"]["unique"] is True
-        assert record_indexes["run_record_ref_unique"]["unique"] is True
+        assert set(record_indexes) == {"_id_", "run_delivery_seq_unique"}
 
         source_indexes = await database[
             AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION
@@ -1030,27 +1198,22 @@ async def test_presentation_factory_creates_only_delivery_indexes() -> None:
             ("run_id", 1),
             ("source_event_ref", 1),
         ]
+        assert set(source_indexes) == {"_id_", "run_source_event_ref_unique"}
         planner_indexes = await database[
             AGENT_PRESENTATION_PLANNER_STATE_COLLECTION
         ].index_information()
-        assert planner_indexes["planner_state_revision"]["key"] == [
-            ("_id", 1),
-            ("planner_revision", 1),
-        ]
+        assert set(planner_indexes) == {"_id_"}
         delivery_indexes = await database[
             AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION
         ].index_information()
-        assert delivery_indexes["delivery_status_revision"]["key"] == [
-            ("_id", 1),
-            ("status_revision", 1),
-        ]
+        assert set(delivery_indexes) == {"_id_"}
         receipt_indexes = await database[
             AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION
         ].index_information()
-        assert receipt_indexes["admission_command_receipt_unique"]["key"] == [
-            ("run_id", 1),
-            ("_id", 1),
+        assert receipt_indexes["admission_original_command_unique"]["key"] == [
+            ("original_command_id", 1),
         ]
+        assert set(receipt_indexes) == {"_id_", "admission_original_command_unique"}
     finally:
         await client.drop_database(settings.mongo_db)
         await client.close()

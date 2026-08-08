@@ -13,6 +13,7 @@ def test_presentation_package_has_the_closed_maintainable_layout() -> None:
         "planner.py",
         "delivery.py",
         "integrity.py",
+        "store_baseline.py",
         "adapters/__init__.py",
         "adapters/ag_ui.py",
         "adapters/connect.py",

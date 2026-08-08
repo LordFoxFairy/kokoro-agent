@@ -74,6 +74,13 @@ from kokoro_agent.presentation.model import (
     PresentationState,
 )
 from kokoro_agent.presentation.planner import plan_presentation_batch
+from kokoro_agent.presentation.store_baseline import (
+    AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION,
+    AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION,
+    AGENT_PRESENTATION_PLANNER_STATE_COLLECTION,
+    AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION,
+)
 from kokoro_agent.presentation.integrity import (
     delivery_record_digest,
     delivery_status_digest,
@@ -86,14 +93,6 @@ DISPATCH_DLQ_COLLECTION = "dispatch_dlq"
 AGENT_EXECUTION_EVIDENCE_COLLECTION = "agent_execution_evidence"
 AGENT_DURABLE_OUTPUT_COLLECTION = "agent_durable_output"
 AGENT_DURABLE_OUTPUT_SOURCE_BATCH_COLLECTION = "agent_durable_output_source_batch"
-AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION = "agent_presentation_delivery_record"
-AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION = "agent_presentation_source_commit"
-AGENT_PRESENTATION_PLANNER_STATE_COLLECTION = "agent_presentation_planner_state"
-AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION = "agent_presentation_delivery_state"
-AGENT_PRESENTATION_ADMISSION_COMMAND_RECEIPT_COLLECTION = (
-    "agent_presentation_admission_command_receipt"
-)
-
 _T = TypeVar("_T")
 _OUTPUT_APPEND_MAX_ATTEMPTS = 64
 _ACTIVE_TRANSACTION_DEPTH: ContextVar[int] = ContextVar(
@@ -204,6 +203,7 @@ def _presentation_delivery_status(
         for key, target in (
             ("last_command_proto", status.last_command),
             ("quarantine_proto", status.quarantine),
+            ("terminal_seal_proto", status.terminal_seal),
         ):
             encoded = document.get(key)
             if encoded is not None:
@@ -237,7 +237,41 @@ def _presentation_delivery_document(
         document["quarantine_proto"] = status.quarantine.SerializeToString(
             deterministic=True
         )
+    if status.HasField("terminal_seal"):
+        document["terminal_seal_proto"] = status.terminal_seal.SerializeToString(
+            deterministic=True
+        )
     return document
+
+
+async def _commit_presentation_delivery_status(
+    collection: AsyncCollection[dict[str, object]],
+    *,
+    current: presentation_wire.DeliveryStatus,
+    effect: presentation_wire.DeliveryStatus,
+    conflict_code: str,
+    session: AsyncClientSession | None,
+) -> None:
+    if current.HasField("terminal_seal") and (
+        not effect.HasField("terminal_seal")
+        or effect.terminal_seal != current.terminal_seal
+    ):
+        raise ValueError("PRESENTATION_TERMINAL_SEAL_IMMUTABLE")
+    document = _presentation_delivery_document(effect)
+    updated = await collection.replace_one(
+        {"_id": current.run_id, "status_revision": current.status_revision},
+        document,
+        session=session,
+    )
+    if updated.modified_count == 1:
+        return
+    if current.status_revision == 1:
+        try:
+            await collection.insert_one(document, session=session)
+            return
+        except DuplicateKeyError as error:
+            raise ValueError(conflict_code) from error
+    raise ValueError(conflict_code)
 
 
 def _now_ms() -> int:
@@ -731,13 +765,6 @@ class MongoLedger:
                 if outputs is None:
                     raise RuntimeError("OWNER_EVENT_OUTPUT_REJECTED")
 
-            if agent_thread_ref is not None:
-                presentation = await self.append_presentation_event(
-                    owner_event, agent_thread_ref=agent_thread_ref
-                )
-                if presentation is None:
-                    raise RuntimeError("OWNER_EVENT_PRESENTATION_REJECTED")
-
             committed_event = owner_event
             if is_critical_event_kind(kind):
                 staged = await self.stage_critical_frame(
@@ -759,6 +786,12 @@ class MongoLedger:
                         "event_id": staged.event_id,
                     }
                 )
+            if agent_thread_ref is not None:
+                presentation = await self.append_presentation_event(
+                    committed_event, agent_thread_ref=agent_thread_ref
+                )
+                if presentation is None:
+                    raise RuntimeError("OWNER_EVENT_PRESENTATION_REJECTED")
             return OwnerEventCommitResult(status="committed", event=committed_event)
 
         try:
@@ -1183,6 +1216,68 @@ class MongoLedger:
         )
         return [_DURABLE_OUTPUT_ADAPTER.validate_python(row) async for row in cursor]
 
+    async def _seal_terminal_presentation(
+        self,
+        event: AgentEvent,
+        head: presentation_wire.DeliveryRecord,
+        *,
+        session: AsyncClientSession | None,
+    ) -> None:
+        if event.event_id is None:
+            raise ValueError("PRESENTATION_TERMINAL_EVIDENCE_MISSING")
+        evidence_document = await self._evidence.find_one(
+            {"run_id": event.run_id, "event_id": event.event_id},
+            {"_id": 0},
+            session=session,
+        )
+        if evidence_document is None:
+            raise ValueError("PRESENTATION_TERMINAL_EVIDENCE_MISSING")
+        evidence = _DURABLE_EVIDENCE_ADAPTER.validate_python(evidence_document)
+        if (
+            evidence.kind != event.kind
+            or evidence.producer_instance_ref != head.producer.producer_instance_ref
+            or evidence.producer_generation != head.producer.producer_generation
+        ):
+            raise ValueError("PRESENTATION_TERMINAL_EVIDENCE_CONFLICT")
+        if event.kind == "run.failed":
+            disposition = presentation_wire.TERMINAL_DISPOSITION_FAILED
+        elif isinstance(event.payload, RunCompletedPayload):
+            disposition = (
+                presentation_wire.TERMINAL_DISPOSITION_CANCELED
+                if event.payload.status == "cancelled"
+                else presentation_wire.TERMINAL_DISPOSITION_COMPLETED
+            )
+        else:
+            raise ValueError("PRESENTATION_TERMINAL_EVIDENCE_CONFLICT")
+        seal = presentation_wire.TerminalSeal(
+            sealed_through_delivery_seq=head.delivery_seq,
+            sealed_head_record_digest=head.record_digest,
+            terminal_evidence_ref=evidence.evidence_ref,
+            terminal_evidence_payload_digest="sha256:" + evidence.payload_sha256,
+            terminal_disposition=disposition,
+            sealed_at=_presentation_timestamp(evidence.recorded_at_ms),
+        )
+        current = await self._presentation_provider_status_for_run(
+            event.run_id, session=session
+        )
+        if current.HasField("terminal_seal"):
+            if current.terminal_seal != seal:
+                raise ValueError("PRESENTATION_TERMINAL_SEAL_IMMUTABLE")
+            return
+        status = presentation_wire.DeliveryStatus()
+        status.CopyFrom(current)
+        status.status_revision = current.status_revision + 1
+        status.updated_at.CopyFrom(seal.sealed_at)
+        status.terminal_seal.CopyFrom(seal)
+        status.status_digest = delivery_status_digest(status)
+        await _commit_presentation_delivery_status(
+            self._presentation_delivery_states,
+            current=current,
+            effect=status,
+            conflict_code="PRESENTATION_TERMINAL_SEAL_CAS_CONFLICT",
+            session=session,
+        )
+
     async def append_presentation_event(
         self, event: AgentEvent, *, agent_thread_ref: str
     ) -> tuple[DeliveryRecord, ...] | None:
@@ -1379,6 +1474,14 @@ class MongoLedger:
                         )
                     ],
                     ordered=True,
+                    session=session,
+                )
+            if is_terminal_event_kind(event.kind):
+                if not delivery_records:
+                    raise ValueError("PRESENTATION_TERMINAL_RECORD_MISSING")
+                await self._seal_terminal_presentation(
+                    event,
+                    delivery_records[-1],
                     session=session,
                 )
             await self._presentation_source_commits.insert_one(
@@ -1619,19 +1722,13 @@ class MongoLedger:
             if current.HasField("terminal_seal"):
                 status.terminal_seal.CopyFrom(current.terminal_seal)
             status.status_digest = delivery_status_digest(status)
-            next_document = _presentation_delivery_document(status)
-            if current.status_revision == 1:
-                await self._presentation_delivery_states.insert_one(
-                    next_document, session=session
-                )
-            else:
-                updated = await self._presentation_delivery_states.replace_one(
-                    {"_id": effect.run_id, "status_revision": current.status_revision},
-                    next_document,
-                    session=session,
-                )
-                if updated.modified_count != 1:
-                    raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
+            await _commit_presentation_delivery_status(
+                self._presentation_delivery_states,
+                current=current,
+                effect=status,
+                conflict_code="PRESENTATION_ACK_CAS_CONFLICT",
+                session=session,
+            )
             await self._presentation_admission_command_receipts.insert_one(
                 {
                     "_id": marker_id,
@@ -1751,14 +1848,13 @@ class MongoLedger:
             if current.HasField("terminal_seal"):
                 status.terminal_seal.CopyFrom(current.terminal_seal)
             status.status_digest = delivery_status_digest(status)
-            next_document = _presentation_delivery_document(status)
-            updated = await self._presentation_delivery_states.replace_one(
-                {"_id": effect.run_id, "status_revision": current.status_revision},
-                next_document,
+            await _commit_presentation_delivery_status(
+                self._presentation_delivery_states,
+                current=current,
+                effect=status,
+                conflict_code="PRESENTATION_QUARANTINE_CAS_CONFLICT",
                 session=session,
             )
-            if updated.modified_count != 1:
-                raise ValueError("PRESENTATION_QUARANTINE_CAS_CONFLICT")
             await self._presentation_admission_command_receipts.insert_one(
                 {
                     "_id": marker_id,

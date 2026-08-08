@@ -1,5 +1,6 @@
-# GENERATED — DO NOT EDIT. Source: contract/spec/storage.yaml
-# Regenerate: python3 contract/generate.py
+# GENERATED — DO NOT EDIT. Kokoro Root authority: contract/spec/storage.yaml
+# Root materialization (run from Kokoro Root): uv run --locked python contract/generate.py --output-root OUTPUT_ROOT
+# Consumer regeneration (run from Kokoro Root): node contract/generate.mjs --consumer CONSUMER --source-root ROOT --output-repository CONSUMER_REPOSITORY
 from __future__ import annotations
 
 from typing import Annotated, Literal

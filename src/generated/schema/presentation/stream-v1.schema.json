@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.kokoro.invalid/presentation/stream-v1.schema.json",
-  "title": "Kokoro Presentation authorized stream page v1",
-  "description": "One frozen authorized replay page. Cursors belong to this read-time envelope; each nested AG-UI wire frame remains the exact immutable persisted frame.",
+  "title": "Kokoro Presentation authorized stream response v1",
+  "description": "One frozen authorized replay page or non-durable draining SSE event. Cursors belong to this read-time envelope; each authorized item carries the exact persisted RFC 8785/JCS UTF-8 bytes of one immutable full AG-UI frame.",
   "oneOf": [
     {
       "$ref": "#/$defs/replayPage"
     },
     {
-      "$ref": "#/$defs/draining"
+      "$ref": "#/$defs/drainingEvent"
     }
   ],
   "$defs": {
@@ -40,7 +40,8 @@
       "required": [
         "cursor",
         "durableSeq",
-        "frame"
+        "eventName",
+        "dataUtf8"
       ],
       "properties": {
         "cursor": {
@@ -49,8 +50,12 @@
         "durableSeq": {
           "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
         },
-        "frame": {
-          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json"
+        "eventName": {
+          "$ref": "https://contracts.kokoro.invalid/presentation/ag-ui-frame-v1.schema.json#/$defs/eventType"
+        },
+        "dataUtf8": {
+          "type": "string",
+          "minLength": 2
         }
       }
     },
@@ -110,7 +115,24 @@
         }
       }
     },
-    "draining": {
+    "drainingEvent": {
+      "type": "object",
+      "description": "One non-durable outer SSE event. The serializer emits eventName and data but no id field.",
+      "additionalProperties": false,
+      "required": [
+        "eventName",
+        "data"
+      ],
+      "properties": {
+        "eventName": {
+          "const": "kokoro.presentation.draining.v1"
+        },
+        "data": {
+          "$ref": "#/$defs/drainingData"
+        }
+      }
+    },
+    "drainingData": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -119,7 +141,6 @@
         "siteId",
         "sessionId",
         "streamEpoch",
-        "lastDurableCursor",
         "action"
       ],
       "properties": {
@@ -139,7 +160,8 @@
           "$ref": "https://contracts.kokoro.invalid/presentation/domain-event-v1.schema.json#/$defs/positiveUint64"
         },
         "lastDurableCursor": {
-          "$ref": "#/$defs/cursor"
+          "$ref": "#/$defs/cursor",
+          "description": "Exact Last-Event-ID from this attach request, returned for retry without advancement; omitted when the first attach had no cursor."
         },
         "action": {
           "const": "retry-same-cursor"

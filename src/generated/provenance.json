@@ -2,7 +2,7 @@
   "contractRevision": "kokoro.generated-artifact-provenance.v1",
   "boundaryId": "generated-kokoro-agent@v1",
   "consumerRepository": "kokoro-agent",
-  "sourceRootCommit": "d4eb9d66af9f403c043808a297e9c1ae29d7853b",
+  "sourceRootCommit": "4ad3356bb15ba745626f450c9fee369c2f266623",
   "sourceFiles": [
     {
       "path": "contract/buf.lock",
@@ -11,6 +11,10 @@
     {
       "path": "contract/buf.yaml",
       "sha256": "sha256:b71f20db373671d58f73156590cbeaf8fc1c470fe2fe1d69752808f0b4e80e1c"
+    },
+    {
+      "path": "contract/corpus/agent-core-freeze-v1.json",
+      "sha256": "sha256:b50c59abf4f7660de9fbe92ca04b640af110ed9200e6a2f18c027941901398b3"
     },
     {
       "path": "contract/corpus/interaction-identity-v2.json",
@@ -22,7 +26,7 @@
     },
     {
       "path": "contract/corpus/presentation-v1.json",
-      "sha256": "sha256:692b98d30fea9ed7e5a81239ea0e368add84fba685bc70d10f29eb3201661706"
+      "sha256": "sha256:cd1004f033ec135619b16238fa865fa772b5eb0c5ccef09904d3ec523a1f893d"
     },
     {
       "path": "contract/corpus/projection-integrity-v1.json",
@@ -46,11 +50,11 @@
     },
     {
       "path": "contract/generate.mjs",
-      "sha256": "sha256:54afdeae2b68426726c629a411f4db2f059dfab9a8518d8da8e4ebc6a9efa5fb"
+      "sha256": "sha256:0476a14b5d28364697cc229306ab72418a3b95ac2534f560c636ef40d14b1711"
     },
     {
       "path": "contract/generate.py",
-      "sha256": "sha256:90942812f572508ae7e05cfbb7ce04520514747854d86e92e566c6f9ad3745c6"
+      "sha256": "sha256:3e664a6a07c9506de185f013b91c910072d72598ea7c2f9da3fa0ab8eec9d45b"
     },
     {
       "path": "contract/lib/committed-worktree.mjs",
@@ -58,7 +62,7 @@
     },
     {
       "path": "contract/lib/generation/consumer-manifest.mjs",
-      "sha256": "sha256:245f3a29042c70adbd99e522b7ea5e6a66f7f8d1bc27b0b29b4cc1d899e17498"
+      "sha256": "sha256:d7c03457804c4921d62c2c5fe79e5200fe9b6ad853f79ae0d8f2dee752f1f1e3"
     },
     {
       "path": "contract/lib/generation/output-transaction.mjs",
@@ -66,7 +70,7 @@
     },
     {
       "path": "contract/lib/generation/presentation-typescript.mjs",
-      "sha256": "sha256:e59f1c88deb29fc0719b159fb9b09a3a49dd3b0d226b88b9bc0a2b1d25607c60"
+      "sha256": "sha256:7d20f54f8e1f42a7a2ca8a7b1aec0a40060435468648c5db753b7b30be5786ff"
     },
     {
       "path": "contract/lib/generation/stage-consumer.mjs",
@@ -270,11 +274,11 @@
     },
     {
       "path": "contract/registry/generated-consumers.schema.json",
-      "sha256": "sha256:f07aabfee5de36810c99c8dc999c0c544c7484d193f8f2d57bcd73ada794517d"
+      "sha256": "sha256:721afc9e8e142744eb5e74b9385e7877d139415150e99a2e8aaba9ae4ae317bd"
     },
     {
       "path": "contract/registry/generated-consumers.yaml",
-      "sha256": "sha256:0dabd9f7f713f1c42f21e0ab43af79c3c19d96eea4d6ce440e8429d14c805d26"
+      "sha256": "sha256:c8e8836147ae545e1383f9a731dbfae80f5a07c352e1a5d4a00f855a5018e48b"
     },
     {
       "path": "contract/registry/platform-session-authorization-v1.yaml",
@@ -294,11 +298,15 @@
     },
     {
       "path": "contract/registry/presentation/INDEX.md",
-      "sha256": "sha256:47e65a1cbbd71500cf74a34a7d79629f28f9d292ccd701a527b81677d57b8418"
+      "sha256": "sha256:5a667616bdaa24541fe8ec7b4a61822eeaf14f2fbe40444ef3620589a1008491"
     },
     {
       "path": "contract/registry/presentation/ag-ui-version-lock.yaml",
       "sha256": "sha256:2e7d950ab9f5d7f21067d21c9ca6baba3159facbc916b4fd95791cfd486d5462"
+    },
+    {
+      "path": "contract/registry/presentation/agent-core-freeze-v1.yaml",
+      "sha256": "sha256:8d4725a3aa8f77cfff2ce1af3d74f24082ca99b73f6bb341916930ed166a2f2c"
     },
     {
       "path": "contract/registry/presentation/state-policy-v1.yaml",
@@ -306,7 +314,7 @@
     },
     {
       "path": "contract/registry/presentation/stream-policy-v1.yaml",
-      "sha256": "sha256:d38a958b200d8f908572529da8a547cf96fdbab8031acd30d57e7dfe37b16717"
+      "sha256": "sha256:6223cdec8a737a1ff03f45d56838e4b41fb3991964d7da00d5883c281832067f"
     },
     {
       "path": "contract/registry/presentation/submission-policy-v1.yaml",
@@ -314,7 +322,7 @@
     },
     {
       "path": "contract/registry/presentation/wire-profile-v1.yaml",
-      "sha256": "sha256:3a1f39d054dc0384a3f7c67abf879ba21b313949e6e12f2eab57506eb5c7685b"
+      "sha256": "sha256:71726fd44d047ede36c4cf583472fafe905d2514472eee050504249674b7904c"
     },
     {
       "path": "contract/registry/root-contract-hard-cut-ledger-v1.yaml",
@@ -378,7 +386,7 @@
     },
     {
       "path": "contract/spec/presentation/ag-ui-frame-v1.yaml",
-      "sha256": "sha256:8e89177b3f5fcdb79f5fc0a26c46d8de6c504047ee181ae884103d401bdb61b7"
+      "sha256": "sha256:da030332d86eba33f0d9c0b610b40575429310abfab6cceb3c8765d56a4a77d0"
     },
     {
       "path": "contract/spec/presentation/ag-ui-submission-event-v1.yaml",
@@ -410,7 +418,7 @@
     },
     {
       "path": "contract/spec/presentation/stream-v1.yaml",
-      "sha256": "sha256:26459aa9c97ce31933dbef684265823252ea12c4756df323db0d6658af68f86c"
+      "sha256": "sha256:10e4f63e5908730d5889928845ec005a94c0ba3ee7b1eb978be48052d3e372c9"
     },
     {
       "path": "contract/spec/presentation/submission-v1.yaml",
@@ -534,7 +542,7 @@
     },
     {
       "path": "src/generated/contracts/presentation/corpus-v1.json",
-      "sha256": "sha256:692b98d30fea9ed7e5a81239ea0e368add84fba685bc70d10f29eb3201661706"
+      "sha256": "sha256:cd1004f033ec135619b16238fa865fa772b5eb0c5ccef09904d3ec523a1f893d"
     },
     {
       "path": "src/generated/contracts/presentation/state-policy-v1.yaml",
@@ -542,7 +550,7 @@
     },
     {
       "path": "src/generated/contracts/presentation/stream-policy-v1.yaml",
-      "sha256": "sha256:d38a958b200d8f908572529da8a547cf96fdbab8031acd30d57e7dfe37b16717"
+      "sha256": "sha256:6223cdec8a737a1ff03f45d56838e4b41fb3991964d7da00d5883c281832067f"
     },
     {
       "path": "src/generated/contracts/presentation/submission-policy-v1.yaml",
@@ -550,7 +558,7 @@
     },
     {
       "path": "src/generated/contracts/presentation/wire-profile-v1.yaml",
-      "sha256": "sha256:3a1f39d054dc0384a3f7c67abf879ba21b313949e6e12f2eab57506eb5c7685b"
+      "sha256": "sha256:71726fd44d047ede36c4cf583472fafe905d2514472eee050504249674b7904c"
     },
     {
       "path": "src/generated/schema/control.yaml",
@@ -562,7 +570,7 @@
     },
     {
       "path": "src/generated/schema/presentation/ag-ui-frame-v1.schema.json",
-      "sha256": "sha256:8e89177b3f5fcdb79f5fc0a26c46d8de6c504047ee181ae884103d401bdb61b7"
+      "sha256": "sha256:da030332d86eba33f0d9c0b610b40575429310abfab6cceb3c8765d56a4a77d0"
     },
     {
       "path": "src/generated/schema/presentation/ag-ui-submission-event-v1.schema.json",
@@ -594,7 +602,7 @@
     },
     {
       "path": "src/generated/schema/presentation/stream-v1.schema.json",
-      "sha256": "sha256:26459aa9c97ce31933dbef684265823252ea12c4756df323db0d6658af68f86c"
+      "sha256": "sha256:10e4f63e5908730d5889928845ec005a94c0ba3ee7b1eb978be48052d3e372c9"
     },
     {
       "path": "src/generated/schema/presentation/submission-v1.schema.json",
@@ -722,24 +730,24 @@
     },
     {
       "path": "src/kokoro_agent/contract/__init__.py",
-      "sha256": "sha256:186e0db4330d728a4f3e115fa94d70fbcf5d831d0562d6342390b5ad9d7353b6"
+      "sha256": "sha256:3b2e205fc06ff521ba69d1c6a2e8564447c09b6a7be70ce621a2f83558870e1e"
     },
     {
       "path": "src/kokoro_agent/contract/control.py",
-      "sha256": "sha256:daac114d05aa0d406aacd6bc2feab80b6f9e79c3af64d59a117b54c8f38d4593"
+      "sha256": "sha256:0ad52a5ae2199faeb63e66e093e86146f4147da00cf95069d04797bbb6ebb3c5"
     },
     {
       "path": "src/kokoro_agent/contract/events.py",
-      "sha256": "sha256:cbe265256112d14ad2ebe2a5a2ad87a18b10c4503807e3577cf7761a91d7cf13"
+      "sha256": "sha256:c909752b8533b57c167acae4ed671d278cb1129bd7cffb35746ff77657aa6a09"
     },
     {
       "path": "src/kokoro_agent/contract/storage.py",
-      "sha256": "sha256:f2c45532abcec27d9eb0753b01edcc46814316b5f8575a421894575556e1e5f9"
+      "sha256": "sha256:84edf3b66179194e45253707ec5dfe8d666bf66a35193ab642f65c96cc1dbe54"
     },
     {
       "path": "src/kokoro_agent/contract/streams.py",
-      "sha256": "sha256:a3973bd5eb34895b495b91946e544b75e223f0af0b9990861f0def766ff19efa"
+      "sha256": "sha256:56b10698342e86785bafa4a196fa44f68b2f8ed145ffe5754a6549af14fdadd3"
     }
   ],
-  "manifestDigest": "sha256:d7f25799ed4763879fae407f66e1de1cc0d20b4e2264f4fb947bed99cacd5958"
+  "manifestDigest": "sha256:7b3e3ecc97e666b5a9ca4214d7fb89c8365ea5dbd01f5c348fe74ee2bdc7316e"
 }

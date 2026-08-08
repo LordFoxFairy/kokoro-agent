@@ -5,13 +5,17 @@
   "protocol": "sse",
   "transport": {
     "eventId": "opaque-session-cursor",
-    "eventName": "exact-inner-event-type",
+    "eventName": "outer-equals-full-wire-frame-eventName-equals-inner-event-type",
     "resumeHeader": "Last-Event-ID",
     "queryCursor": "same-opaque-cursor-or-absent",
     "cursorGapAction": "http-snapshot-required",
+    "drainingEventName": "kokoro.presentation.draining.v1",
+    "drainingEventId": "absent",
     "drainingDurability": "non-durable",
     "drainingAction": "retry-same-cursor",
-    "stockClientTransport": "forbidden"
+    "drainingRetryCursor": "same-last-durable-cursor-or-absent-on-first-attach",
+    "stockClientTransport": "forbidden",
+    "dataUtf8": "exact-persisted-jcs-full-wire-frame"
   },
   "recovery": {
     "hydrateAuthority": "session-browser-v3-http-snapshot",

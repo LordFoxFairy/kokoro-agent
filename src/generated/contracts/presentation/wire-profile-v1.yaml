@@ -223,5 +223,11 @@
     "maximumArrayItems": 256,
     "maximumIdBytes": 128
   },
-  "wireProfileRevision": "kokoro.presentation.ag-ui-frame.v1"
+  "wireProfileRevision": "kokoro.presentation.ag-ui-frame.v1",
+  "serialization": {
+    "frameDigestPayload": "rfc8785-jcs-inner-frameData",
+    "sseDataUtf8": "rfc8785-jcs-full-ag-ui-frame-after-frameDigest",
+    "persistenceAuthority": "exact-sse-data-utf8-bytes-only",
+    "httpData": "exact-persisted-sse-data-utf8-no-reserialize"
+  }
 }

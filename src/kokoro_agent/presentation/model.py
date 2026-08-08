@@ -68,11 +68,7 @@ def _canonical_milliseconds_since_epoch(value: str) -> int:
     _canonical_milliseconds(value)
     moment = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
     delta = moment - _EPOCH
-    return (
-        delta.days * 86_400_000
-        + delta.seconds * 1_000
-        + delta.microseconds // 1_000
-    )
+    return delta.days * 86_400_000 + delta.seconds * 1_000 + delta.microseconds // 1_000
 
 
 class _StrictAliasModel(BaseModel):
@@ -138,10 +134,7 @@ class _OwnerContent(_StrictAliasModel):
     @field_validator("owner_version")
     @classmethod
     def _bounded_owner_version(cls, value: str) -> str:
-        if (
-            len(value) == len(MAX_UINT64_DECIMAL)
-            and value > MAX_UINT64_DECIMAL
-        ):
+        if len(value) == len(MAX_UINT64_DECIMAL) and value > MAX_UINT64_DECIMAL:
             raise ValueError("ownerVersion exceeds uint64")
         return value
 
@@ -229,9 +222,9 @@ class NoticeContent(_OwnerContent):
     code: _Id
     message: _SafeText
     severity: Literal["info", "warning"]
-    retry_class: Literal[
-        "never", "after-delay", "after-user-action", "reconcile-receipt"
-    ] | None = None
+    retry_class: (
+        Literal["never", "after-delay", "after-user-action", "reconcile-receipt"] | None
+    ) = None
 
 
 class ErrorContent(_OwnerContent):
@@ -347,16 +340,12 @@ _AgentThreadRef = Annotated[
         pattern=r"^agent\.thread:[A-Za-z0-9][A-Za-z0-9._:-]*$",
     ),
 ]
-_Sha256Digest = Annotated[
-    str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")
-]
+_Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 _SubmissionRef = Annotated[
     str,
     StringConstraints(pattern=r"^presentation\.submission:sha256:[0-9a-f]{64}$"),
 ]
-_Uint64Decimal = Annotated[
-    str, StringConstraints(pattern=r"^(0|[1-9][0-9]{0,19})$")
-]
+_Uint64Decimal = Annotated[str, StringConstraints(pattern=r"^(0|[1-9][0-9]{0,19})$")]
 _SubmissionCanonicalUtcMilliseconds = Annotated[
     str,
     StringConstraints(
@@ -429,9 +418,7 @@ def recorded_at_milliseconds(recorded_at: str) -> int:
         raise ValueError("recordedAt is not canonical UTC milliseconds") from error
     delta = moment - _SUBMISSION_EPOCH
     milliseconds = (
-        delta.days * 86_400_000
-        + delta.seconds * 1_000
-        + delta.microseconds // 1_000
+        delta.days * 86_400_000 + delta.seconds * 1_000 + delta.microseconds // 1_000
     )
     if canonical_recorded_at(milliseconds) != recorded_at:
         raise ValueError("recordedAt is not canonical UTC milliseconds")
@@ -465,9 +452,11 @@ def _jcs_text(value: JsonValue) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_jcs_text(item) for item in value) + "]"
     keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
-    return "{" + ",".join(
-        f"{_jcs_string(key)}:{_jcs_text(value[key])}" for key in keys
-    ) + "}"
+    return (
+        "{"
+        + ",".join(f"{_jcs_string(key)}:{_jcs_text(value[key])}" for key in keys)
+        + "}"
+    )
 
 
 def canonical_json_bytes(value: JsonValue) -> bytes:
@@ -568,7 +557,11 @@ class PresentationSubmission(_SubmissionModel):
         return canonical_json_bytes(
             self.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
+
+
 HITL_OWNER_REF_PREFIX = "agent.hitl-owner:sha256:"
+
+
 class _FrozenModel(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -598,12 +591,9 @@ class PresentationOwnerState(_FrozenModel):
 
     @model_validator(mode="after")
     def validate_version(self) -> PresentationOwnerState:
-        if (
-            len(self.owner_version) > len(MAX_UINT64_DECIMAL)
-            or (
-                len(self.owner_version) == len(MAX_UINT64_DECIMAL)
-                and self.owner_version > MAX_UINT64_DECIMAL
-            )
+        if len(self.owner_version) > len(MAX_UINT64_DECIMAL) or (
+            len(self.owner_version) == len(MAX_UINT64_DECIMAL)
+            and self.owner_version > MAX_UINT64_DECIMAL
         ):
             raise ValueError("ownerVersion exceeds uint64")
         recorded_at_milliseconds(self.updated_at)
@@ -740,9 +730,7 @@ class SubmissionBatch(_FrozenModel):
 
 
 class DeliveryRecord(_FrozenModel):
-    record_ref: str = Field(
-        pattern=r"^presentation\.record:sha256:[0-9a-f]{64}$"
-    )
+    record_ref: str = Field(pattern=r"^presentation\.record:sha256:[0-9a-f]{64}$")
     run_id: str = Field(min_length=1, max_length=128)
     delivery_seq: int = Field(gt=0, le=(1 << 64) - 1)
     envelope_bytes: bytes = Field(min_length=1, max_length=128 * 1024)
@@ -803,6 +791,8 @@ class DeliveryRecord(_FrozenModel):
             producer_instance_ref=producer_instance_ref,
             producer_generation=producer_generation,
         )
+
+
 def agent_thread_ref(namespace: str, thread_id: str) -> str:
     if not namespace or not thread_id:
         raise ValueError("PRESENTATION_THREAD_SCOPE_INVALID")
@@ -816,7 +806,9 @@ def derive_message_ref(run_id: str, segment_id: str) -> str:
 
 
 def activity_message_ref(run_id: str, activity_type: str, owner_ref: str) -> str:
-    material = f"kokoro-agent-activity-v1\0{run_id}\0{activity_type}\0{owner_ref}".encode()
+    material = (
+        f"kokoro-agent-activity-v1\0{run_id}\0{activity_type}\0{owner_ref}".encode()
+    )
     return f"agent.activity:{hashlib.sha256(material).hexdigest()}"
 
 
@@ -840,9 +832,11 @@ def fingerprint(domain: str, value: object) -> str:
     digest = hashlib.sha256(domain.encode() + b"\0" + encoded).hexdigest()
     return f"sha256:{digest}"
 
+
 def _record_ref(run_id: str, sequence: int, digest: str) -> str:
     material = f"kokoro-presentation-record-v1\0{run_id}\0{sequence}\0{digest}".encode()
     return f"presentation.record:sha256:{hashlib.sha256(material).hexdigest()}"
+
 
 __all__ = [
     "DeliveryRecord",

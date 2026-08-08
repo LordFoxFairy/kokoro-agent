@@ -51,6 +51,7 @@ from kokoro_agent.presentation.model import (
     canonical_recorded_at,
 )
 
+
 def _increment_uint64_decimal(value: str) -> str:
     if value == MAX_UINT64_DECIMAL:
         raise ValueError("PRESENTATION_OWNER_VERSION_OVERFLOW")
@@ -107,7 +108,10 @@ def _plan_owner_activity(
     if current is None:
         owner_version = "1"
     else:
-        if current.activity_type != activity_type or current.identity_fingerprint != identity_fingerprint:
+        if (
+            current.activity_type != activity_type
+            or current.identity_fingerprint != identity_fingerprint
+        ):
             raise ValueError("PRESENTATION_OWNER_IDENTITY_CONFLICT")
         if current.message_ref != message_ref:
             raise ValueError("PRESENTATION_OWNER_PLACEMENT_CONFLICT")
@@ -326,7 +330,11 @@ def _events_for_source(
                 state="open",
                 opened_ordinal=state.next_ordinal,
             )
-        text = event.payload.delta if isinstance(event, MessageDelta) else event.payload.content
+        text = (
+            event.payload.delta
+            if isinstance(event, MessageDelta)
+            else event.payload.content
+        )
         if text and (isinstance(event, MessageDelta) or not message.text_seen):
             for offset in range(0, len(text), 16_384):
                 planned.append(
@@ -343,9 +351,7 @@ def _events_for_source(
         if isinstance(event, MessageCompleted):
             planned.append(
                 (
-                    make_text_end(
-                        message_id=message_ref, timestamp=event.timestamp
-                    ),
+                    make_text_end(message_id=message_ref, timestamp=event.timestamp),
                     message_ref,
                 )
             )
@@ -412,7 +418,9 @@ def _events_for_source(
                 ),
                 "title": _clip(event.payload.name, 1_024),
                 "description": _clip(event.payload.description),
-                "allowedActions": _presentation_actions(event.payload.allowed_decisions),
+                "allowedActions": _presentation_actions(
+                    event.payload.allowed_decisions
+                ),
                 "status": "pending",
             },
             owners=owners,
@@ -570,9 +578,7 @@ def plan_presentation_batch(
                 internal_run_ref=event.run_id,
                 internal_thread_ref=agent_thread_ref,
                 **(
-                    {}
-                    if message_ref is None
-                    else {"internal_message_ref": message_ref}
+                    {} if message_ref is None else {"internal_message_ref": message_ref}
                 ),
             ),
         )
@@ -583,5 +589,6 @@ def plan_presentation_batch(
         submissions=tuple(submissions),
         next_state=next_state,
     )
+
 
 __all__ = ["agent_thread_ref", "plan_presentation_batch"]

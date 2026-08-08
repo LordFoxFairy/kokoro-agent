@@ -16,12 +16,8 @@ PRESENTATION_STORE_BASELINE_REVISION: Final = (
 AGENT_PRESENTATION_DELIVERY_RECORD_COLLECTION: Final = (
     "agent_presentation_delivery_record"
 )
-AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION: Final = (
-    "agent_presentation_source_commit"
-)
-AGENT_PRESENTATION_PLANNER_STATE_COLLECTION: Final = (
-    "agent_presentation_planner_state"
-)
+AGENT_PRESENTATION_SOURCE_COMMIT_COLLECTION: Final = "agent_presentation_source_commit"
+AGENT_PRESENTATION_PLANNER_STATE_COLLECTION: Final = "agent_presentation_planner_state"
 AGENT_PRESENTATION_DELIVERY_STATE_COLLECTION: Final = (
     "agent_presentation_delivery_state"
 )
@@ -374,8 +370,7 @@ async def ensure_presentation_store_baseline(
     retired = names.intersection(PRESENTATION_RETIRED_COLLECTIONS)
     if retired:
         raise PresentationStoreBaselineError(
-            "PRESENTATION_STORE_RETIRED_COLLECTION_PRESENT:"
-            + ",".join(sorted(retired))
+            "PRESENTATION_STORE_RETIRED_COLLECTION_PRESENT:" + ",".join(sorted(retired))
         )
     present = names.intersection(PRESENTATION_COLLECTIONS)
     if not present:

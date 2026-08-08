@@ -45,9 +45,7 @@ class PresentationServerSettings(BaseModel):
         if tls_cert is None or tls_key is None or caller_ca_bundle is None:
             raise ValueError("PRESENTATION_MTLS_REQUIRED")
         callers = frozenset(
-            caller.strip()
-            for caller in allowed_callers.split(",")
-            if caller.strip()
+            caller.strip() for caller in allowed_callers.split(",") if caller.strip()
         )
         return cls(
             host=host,
@@ -70,8 +68,7 @@ def build_hypercorn_config(
     config.ca_certs = str(settings.caller_ca_bundle)
     config.verify_mode = ssl.VerifyMode.CERT_REQUIRED
     config.verify_flags = (
-        ssl.VerifyFlags.VERIFY_X509_STRICT
-        | ssl.VerifyFlags.VERIFY_X509_PARTIAL_CHAIN
+        ssl.VerifyFlags.VERIFY_X509_STRICT | ssl.VerifyFlags.VERIFY_X509_PARTIAL_CHAIN
     )
     config.alpn_protocols = ["h2"]
     return config

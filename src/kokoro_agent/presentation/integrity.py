@@ -60,9 +60,7 @@ def producer_fence(
     )
 
 
-def record_chain_genesis_digest(
-    run_id: str, producer: wire.ProducerFence
-) -> str:
+def record_chain_genesis_digest(run_id: str, producer: wire.ProducerFence) -> str:
     return _typed_digest(
         wire.RecordChainGenesisDigestPayload(
             run_id=run_id,
@@ -71,9 +69,7 @@ def record_chain_genesis_digest(
     )
 
 
-def delivery_record_digest(
-    run_id: str, record: wire.DeliveryRecord
-) -> str:
+def delivery_record_digest(run_id: str, record: wire.DeliveryRecord) -> str:
     return _typed_digest(
         wire.DeliveryRecordDigestPayload(
             run_id=run_id,
@@ -110,9 +106,7 @@ def delivery_status_digest(status: wire.DeliveryStatus) -> str:
     payload = wire.DeliveryStatusDigestPayload(
         run_id=status.run_id,
         producer=status.producer,
-        acknowledged_through_delivery_seq=(
-            status.acknowledged_through_delivery_seq
-        ),
+        acknowledged_through_delivery_seq=(status.acknowledged_through_delivery_seq),
         status_revision=status.status_revision,
         updated_at=status.updated_at,
     )
@@ -124,9 +118,7 @@ def delivery_status_digest(status: wire.DeliveryStatus) -> str:
         if status.HasField(field):
             getattr(payload, field).CopyFrom(getattr(status, field))
     if status.HasField("acknowledged_head_record_digest"):
-        payload.acknowledged_head_record_digest = (
-            status.acknowledged_head_record_digest
-        )
+        payload.acknowledged_head_record_digest = status.acknowledged_head_record_digest
     return _typed_digest(payload)
 
 

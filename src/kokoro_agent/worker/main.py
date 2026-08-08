@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 from collections.abc import Awaitable, Callable
 import functools
 import logging
@@ -31,6 +32,7 @@ from kokoro_agent.content_source import make_asset_source
 from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.hub import HubExecutionAssemblyClient
 from kokoro_agent.mcp.egress import configure_egress_mode
+from kokoro_agent.readiness import check_process_readiness
 from kokoro_agent.skills.hub import (
     PackageStore,
     S3Credentials,
@@ -151,10 +153,23 @@ async def _serve(config: AppConfig) -> None:
             LOGGER.info("graceful shutdown: drained=%s", drained)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="kokoro-agent-worker")
+    parser.add_argument("--readiness", action="store_true")
+    arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
     config = AppConfig.from_env(os.environ)
+    if arguments.readiness:
+        result = asyncio.run(check_process_readiness(config.worker_readiness))
+        if not result.ready:
+            LOGGER.error(
+                "readiness failed: dependencies=%s",
+                ",".join(result.failed_dependencies),
+            )
+            raise SystemExit(1)
+        LOGGER.info("readiness ready")
+        return
     # 启动期配置快照（secret 掩码）：一眼看清本进程实际生效的配置，便于排障。
     log_config_summary(config, LOGGER)
     asyncio.run(_serve(config))

@@ -45,10 +45,20 @@
         "readiness": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "status", "dependencies"],
+          "required": ["kind", "status", "command", "dependencies"],
           "properties": {
             "kind": { "const": "dependency-aware" },
-            "status": { "const": "missing" },
+            "status": { "const": "available" },
+            "command": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                { "$ref": "#/$defs/identifier" },
+                { "const": "--readiness" }
+              ],
+              "items": false
+            },
             "dependencies": {
               "type": "array",
               "minItems": 1,

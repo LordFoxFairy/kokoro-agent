@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import re
-import stat
-from pathlib import Path
 from typing import Annotated, Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
@@ -32,9 +29,9 @@ from pydantic import (
 from kokoro.platform.media.v1 import media_canonical_pb2 as canonical_pb
 from kokoro.platform.media.v1 import media_runtime_pb2 as media_pb
 from kokoro.platform.media.v1.media_runtime_connect import MediaRuntimeServiceClient
+from kokoro_agent.security import read_secure_tls_material
 
 _FINGERPRINT_DOMAIN = b"kokoro.platform.media.agent-image-submit.v1\0"
-_MAX_TLS_BYTES = 256 * 1024
 _MAX_RESPONSE_BYTES = 256 * 1024
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REFERENCE = Annotated[
@@ -255,10 +252,18 @@ class ConnectMediaOperationPort:
         if client is None:
             address = _media_address(settings.rpc_url)
             transport = pyqwest.HTTPTransport(
-                tls_ca_cert=_tls_file(settings.ca_file, "CA"),
+                tls_ca_cert=read_secure_tls_material(
+                    settings.ca_file, error_code="MEDIA_RUNTIME_TLS_CA_INVALID"
+                ),
                 tls_include_system_certs=False,
-                tls_key=_tls_file(settings.key_file, "KEY", private=True),
-                tls_cert=_tls_file(settings.cert_file, "CERT"),
+                tls_key=read_secure_tls_material(
+                    settings.key_file,
+                    error_code="MEDIA_RUNTIME_TLS_KEY_INVALID",
+                    private=True,
+                ),
+                tls_cert=read_secure_tls_material(
+                    settings.cert_file, error_code="MEDIA_RUNTIME_TLS_CERT_INVALID"
+                ),
                 http_version=pyqwest.HTTPVersion.HTTP2,
                 enable_cookie_store=False,
             )
@@ -607,29 +612,3 @@ def _media_address(value: str) -> str:
     ):
         raise ValueError("MEDIA_RUNTIME_URL_INVALID")
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-
-
-def _tls_file(value: str, kind: str, *, private: bool = False) -> bytes:
-    path = Path(value)
-    try:
-        before = path.lstat()
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            opened = os.fstat(descriptor)
-            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-                raise OSError("changed")
-            material = os.read(descriptor, _MAX_TLS_BYTES + 1)
-        finally:
-            os.close(descriptor)
-    except OSError as error:
-        raise ValueError(f"MEDIA_RUNTIME_TLS_{kind}_INVALID") from error
-    if (
-        not path.is_absolute()
-        or path.is_symlink()
-        or not stat.S_ISREG(before.st_mode)
-        or not 1 <= before.st_size <= _MAX_TLS_BYTES
-        or len(material) != before.st_size
-        or (private and before.st_mode & 0o077 != 0)
-    ):
-        raise ValueError(f"MEDIA_RUNTIME_TLS_{kind}_INVALID")
-    return material

@@ -16,7 +16,6 @@ import hashlib
 import json
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
-from pathlib import Path
 from typing import Any, Protocol, TypeGuard
 from urllib.parse import urlsplit, urlunsplit
 
@@ -56,6 +55,7 @@ from kokoro_agent.model.streaming import (
     aiter_verified_model_stream,
     iter_verified_model_stream,
 )
+from kokoro_agent.security import read_secure_tls_material
 
 _stream_checkpoint_namespace: ContextVar[str | None] = ContextVar(
     "model_gateway_stream_checkpoint_namespace",
@@ -164,9 +164,17 @@ class PlatformModelGatewayChatModel(BaseChatModel):
             if gateway_url is None or ca_file is None or cert_file is None or key_file is None:
                 raise ValueError("MODEL_GATEWAY_MTLS_CONFIGURATION_REQUIRED")
             address = _gateway_address(gateway_url)
-            ca = _tls_file(ca_file, "MODEL_GATEWAY_CA_FILE_INVALID")
-            cert = _tls_file(cert_file, "MODEL_GATEWAY_CERT_FILE_INVALID")
-            key = _tls_file(key_file, "MODEL_GATEWAY_KEY_FILE_INVALID")
+            ca = read_secure_tls_material(
+                ca_file, error_code="MODEL_GATEWAY_CA_FILE_INVALID"
+            )
+            cert = read_secure_tls_material(
+                cert_file, error_code="MODEL_GATEWAY_CERT_FILE_INVALID"
+            )
+            key = read_secure_tls_material(
+                key_file,
+                error_code="MODEL_GATEWAY_KEY_FILE_INVALID",
+                private=True,
+            )
             async_http = pyqwest.Client(
                 pyqwest.HTTPTransport(
                     tls_ca_cert=ca,
@@ -631,13 +639,3 @@ def _gateway_address(value: str) -> str:
     ):
         raise ValueError("MODEL_GATEWAY_URL_INVALID")
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-
-
-def _tls_file(value: str, code: str) -> bytes:
-    path = Path(value)
-    if not path.is_absolute() or not path.is_file():
-        raise ValueError(code)
-    material = path.read_bytes()
-    if not material or len(material) > 256 * 1024:
-        raise ValueError(code)
-    return material

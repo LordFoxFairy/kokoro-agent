@@ -57,6 +57,11 @@ producer generation fencing, contiguous ACK, first-gap quarantine, replay identi
 digests, and terminal seals. `adapters/connect.py` only translates the generated Connect surface.
 Nothing is garbage-collected merely because it was pulled.
 
+`kokoro-agent-presentation --readiness` runs the Mongo replica-set transaction probe concurrently
+with the real mTLS/HTTP2 `CheckActive` RPC and requires the exact contract revision. Dependency
+failure returns non-zero without exposing URLs, certificate paths, credentials, or remote details;
+the next invocation becomes green after recovery.
+
 ## Public surface and dependencies
 
 `__init__.py` exports Submission construction and stable delivery models only. `delivery.py` owns the

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, field_validator
 
@@ -23,6 +24,12 @@ from kokoro_agent.hub import HubRuntimeSettings
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.platform import MediaRuntimeSettings
+from kokoro_agent.readiness import (
+    MongoReadinessSettings,
+    MtlsRpcReadinessSettings,
+    ProcessReadinessSettings,
+    RedisReadinessSettings,
+)
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.storage.checkpoints import CheckpointSettings
 from kokoro_agent.storage.ledger import (
@@ -161,6 +168,45 @@ class AppConfig(BaseModel):
     presentation_allowed_callers: str = Field(
         default="kokoro-session",
         validation_alias="KOKORO_AGENT_PRESENTATION_ALLOWED_CALLERS",
+    )
+
+    # --- independent exec readiness commands ---
+    readiness_timeout_ms: int = Field(
+        default=2_000,
+        ge=100,
+        le=30_000,
+        validation_alias="KOKORO_AGENT_READINESS_TIMEOUT_MS",
+    )
+    evidence_readiness_url: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_EVIDENCE_READINESS_URL"
+    )
+    evidence_readiness_ca_file: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_EVIDENCE_READINESS_CA_FILE",
+    )
+    evidence_readiness_cert_file: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_EVIDENCE_READINESS_CERT_FILE",
+    )
+    evidence_readiness_key_file: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_EVIDENCE_READINESS_KEY_FILE",
+    )
+    presentation_readiness_url: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_PRESENTATION_READINESS_URL",
+    )
+    presentation_readiness_ca_file: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_PRESENTATION_READINESS_CA_FILE",
+    )
+    presentation_readiness_cert_file: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_PRESENTATION_READINESS_CERT_FILE",
+    )
+    presentation_readiness_key_file: OptStr = Field(
+        default=None,
+        validation_alias="KOKORO_AGENT_PRESENTATION_READINESS_KEY_FILE",
     )
 
     # --- sandbox 域 ---
@@ -398,6 +444,117 @@ class AppConfig(BaseModel):
             cert_file=cert_file,
             key_file=key_file,
             timeout_ms=self.media_rpc_timeout_ms,
+        )
+
+    @property
+    def worker_readiness(self) -> ProcessReadinessSettings:
+        model_values = (
+            self.model_gateway_url,
+            self.model_gateway_ca_file,
+            self.model_gateway_cert_file,
+            self.model_gateway_key_file,
+        )
+        hub_values = (
+            self.hub_rpc_url,
+            self.hub_rpc_ca_file,
+            self.hub_rpc_cert_file,
+            self.hub_rpc_key_file,
+        )
+        if self.local_fake or any(value is None for value in (*model_values, *hub_values)):
+            raise ValueError("READINESS_WORKER_CONFIGURATION_REQUIRED")
+        model_url, model_ca, model_cert, model_key = model_values
+        hub_url, hub_ca, hub_cert, hub_key = hub_values
+        assert model_url is not None and model_ca is not None
+        assert model_cert is not None and model_key is not None
+        assert hub_url is not None and hub_ca is not None
+        assert hub_cert is not None and hub_key is not None
+        hub_host = urlsplit(hub_url).hostname
+        if (
+            self.hub_rpc_server_name is None
+            or hub_host is None
+            or hub_host.casefold() != self.hub_rpc_server_name.casefold()
+        ):
+            raise ValueError("READINESS_WORKER_CONFIGURATION_REQUIRED")
+        return ProcessReadinessSettings(
+            role="worker",
+            timeout_ms=self.readiness_timeout_ms,
+            mongo=MongoReadinessSettings(
+                url=self.mongo_url,
+                database=self.mongo_db,
+                timeout_ms=self.readiness_timeout_ms,
+            ),
+            redis=RedisReadinessSettings(
+                url=self.redis_url, timeout_ms=self.readiness_timeout_ms
+            ),
+            hub=MtlsRpcReadinessSettings(
+                url=hub_url,
+                ca_file=hub_ca,
+                cert_file=hub_cert,
+                key_file=hub_key,
+                timeout_ms=self.readiness_timeout_ms,
+            ),
+            model_gateway=MtlsRpcReadinessSettings(
+                url=model_url,
+                ca_file=model_ca,
+                cert_file=model_cert,
+                key_file=model_key,
+                timeout_ms=self.readiness_timeout_ms,
+            ),
+        )
+
+    def _provider_readiness(
+        self,
+        *,
+        role: str,
+        url: str | None,
+        ca_file: str | None,
+        cert_file: str | None,
+        key_file: str | None,
+    ) -> ProcessReadinessSettings:
+        if (
+            url is None
+            or ca_file is None
+            or cert_file is None
+            or key_file is None
+        ):
+            raise ValueError(f"READINESS_{role.upper()}_CONFIGURATION_REQUIRED")
+        if role not in ("evidence", "presentation"):
+            raise AssertionError("invalid provider readiness role")
+        return ProcessReadinessSettings(
+            role=role,
+            timeout_ms=self.readiness_timeout_ms,
+            mongo=MongoReadinessSettings(
+                url=self.mongo_url,
+                database=self.mongo_db,
+                timeout_ms=self.readiness_timeout_ms,
+            ),
+            listener=MtlsRpcReadinessSettings(
+                url=url,
+                ca_file=ca_file,
+                cert_file=cert_file,
+                key_file=key_file,
+                timeout_ms=self.readiness_timeout_ms,
+            ),
+        )
+
+    @property
+    def evidence_readiness(self) -> ProcessReadinessSettings:
+        return self._provider_readiness(
+            role="evidence",
+            url=self.evidence_readiness_url,
+            ca_file=self.evidence_readiness_ca_file,
+            cert_file=self.evidence_readiness_cert_file,
+            key_file=self.evidence_readiness_key_file,
+        )
+
+    @property
+    def presentation_readiness(self) -> ProcessReadinessSettings:
+        return self._provider_readiness(
+            role="presentation",
+            url=self.presentation_readiness_url,
+            ca_file=self.presentation_readiness_ca_file,
+            cert_file=self.presentation_readiness_cert_file,
+            key_file=self.presentation_readiness_key_file,
         )
 
     @property

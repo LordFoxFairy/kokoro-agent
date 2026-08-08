@@ -30,6 +30,12 @@ Skills and MCP definitions are never loaded from local YAML, environment JSON, s
 databases, or seed directories. Each run calls the injected capability resolver once before
 tool construction and receives a verified immutable execution assembly.
 
+`kokoro-agent-worker --readiness` is an independent bounded exec probe. It concurrently proves a
+writable Mongo replica set with a real transaction, the exact Redis stream/group/claim/ack feature
+set, and authenticated HTTP/2 Connect application paths for Hub and Model Gateway. The deliberately
+invalid RPC probes accept only each service's exact safe `INVALID_ARGUMENT` domain response and
+cannot reach capability lookup, model execution, or billing.
+
 ## Runtime invariants
 
 - Incoming messages pass `parse_inbound`; `RunRequest` tool names are validated immediately after

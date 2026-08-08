@@ -35,8 +35,8 @@ USER 10001:10001
 EXPOSE 8443 8444
 STOPSIGNAL SIGTERM
 
-# The owner inventory deliberately records dependency-aware readiness as missing and blocks every
-# deployment. A generic image-level probe would hide that fact, so orchestration must not inherit one.
+# Each role exposes its own dependency-aware `--readiness` exec command in the owner inventory.
+# A generic image-level probe would conflate role dependencies and liveness, so none is inherited.
 HEALTHCHECK NONE
 
 RUN test -x /app/.venv/bin/kokoro-agent-worker \

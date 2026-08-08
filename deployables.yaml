@@ -55,6 +55,7 @@ deployables:
       - KOKORO_HUB_ARTIFACT_CACHE_DIR
       - KOKORO_MCP_EGRESS_MODE
       - KOKORO_RETENTION_RUN_TTL_S
+      - KOKORO_AGENT_READINESS_TIMEOUT_MS
     forbiddenEnvironment:
       - KOKORO_LOCAL_FAKE_MODEL
       - KOKORO_AGENT_MEMORY
@@ -68,21 +69,22 @@ deployables:
       liveness: { kind: container-process, status: available }
       readiness:
         kind: dependency-aware
-        status: missing
+        status: available
+        command: [kokoro-agent-worker, --readiness]
         dependencies:
-          - redis
+          - redis-streams
           - mongodb-replica-set
-          - hub-runtime-mtls
-          - model-gateway-mtls
+          - hub-runtime-mtls-rpc
+          - model-gateway-mtls-rpc
     replicaPolicy:
       minimum: 0
       maximum: 0
       autoscaling: forbidden-while-blocked
     drain: sigterm-bounded-lease-handoff
     launchBlockers:
-      - dependency-aware-readiness-not-implemented
       - execution-owner-lease-epoch-not-bound
       - terminal-outbox-evidence-not-atomic
+      - root-k8s-secret-mount-contract-mismatch
     releaseOwner: agent
     sloOwner: agent
     runbookOwner: agent
@@ -111,17 +113,24 @@ deployables:
       - KOKORO_AGENT_EVIDENCE_TLS_KEY
       - KOKORO_AGENT_EVIDENCE_CALLER_CA_BUNDLE
       - KOKORO_AGENT_EVIDENCE_ALLOWED_CALLERS
+      - KOKORO_AGENT_READINESS_TIMEOUT_MS
+      - KOKORO_AGENT_EVIDENCE_READINESS_URL
+      - KOKORO_AGENT_EVIDENCE_READINESS_CA_FILE
+      - KOKORO_AGENT_EVIDENCE_READINESS_CERT_FILE
+      - KOKORO_AGENT_EVIDENCE_READINESS_KEY_FILE
     forbiddenEnvironment:
       - KOKORO_AGENT_MEMORY
     secretClasses:
       - agent-mongodb
       - evidence-mtls-server
       - evidence-mtls-caller-ca
+      - evidence-readiness-mtls-client
     probes:
       liveness: { kind: container-process, status: available }
       readiness:
         kind: dependency-aware
-        status: missing
+        status: available
+        command: [kokoro-agent-evidence, --readiness]
         dependencies:
           - mongodb-replica-set
           - evidence-connect-mtls-listener
@@ -133,9 +142,9 @@ deployables:
     launchBlockers:
       - root-boundary-contract-only
       - root-boundary-version-mismatch
-      - dependency-aware-readiness-not-implemented
       - execution-owner-lease-epoch-not-bound
       - terminal-outbox-evidence-not-atomic
+      - root-k8s-secret-mount-contract-mismatch
     releaseOwner: agent
     sloOwner: agent
     runbookOwner: agent
@@ -164,17 +173,24 @@ deployables:
       - KOKORO_AGENT_PRESENTATION_TLS_KEY
       - KOKORO_AGENT_PRESENTATION_CALLER_CA_BUNDLE
       - KOKORO_AGENT_PRESENTATION_ALLOWED_CALLERS
+      - KOKORO_AGENT_READINESS_TIMEOUT_MS
+      - KOKORO_AGENT_PRESENTATION_READINESS_URL
+      - KOKORO_AGENT_PRESENTATION_READINESS_CA_FILE
+      - KOKORO_AGENT_PRESENTATION_READINESS_CERT_FILE
+      - KOKORO_AGENT_PRESENTATION_READINESS_KEY_FILE
     forbiddenEnvironment:
       - KOKORO_AGENT_MEMORY
     secretClasses:
       - agent-mongodb
       - presentation-mtls-server
       - presentation-mtls-caller-ca
+      - presentation-readiness-mtls-client
     probes:
       liveness: { kind: container-process, status: available }
       readiness:
         kind: dependency-aware
-        status: missing
+        status: available
+        command: [kokoro-agent-presentation, --readiness]
         dependencies:
           - mongodb-replica-set
           - presentation-connect-mtls-listener
@@ -185,7 +201,7 @@ deployables:
     drain: sigterm-http2-graceful
     launchBlockers:
       - root-boundary-contract-only
-      - dependency-aware-readiness-not-implemented
+      - root-k8s-secret-mount-contract-mismatch
     releaseOwner: agent
     sloOwner: agent
     runbookOwner: agent

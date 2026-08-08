@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import logging
 import os
 
@@ -19,6 +20,7 @@ from kokoro.agent.presentation.v1.presentation_connect import (
 from kokoro_agent.config import AppConfig
 from kokoro_agent.presentation.adapters.connect import PresentationConnectService
 from kokoro_agent.presentation.delivery import PresentationProviderStore
+from kokoro_agent.readiness import check_process_readiness
 from kokoro_agent.presentation.server import (
     PresentationServerSettings,
     build_hypercorn_config,
@@ -50,10 +52,23 @@ async def _serve(config: AppConfig, settings: PresentationServerSettings) -> Non
         await serve_asgi(app, build_hypercorn_config(settings))
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="kokoro-agent-presentation")
+    parser.add_argument("--readiness", action="store_true")
+    arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     load_dotenv()
     config = AppConfig.from_env(os.environ)
+    if arguments.readiness:
+        result = asyncio.run(check_process_readiness(config.presentation_readiness))
+        if not result.ready:
+            LOGGER.error(
+                "readiness failed: dependencies=%s",
+                ",".join(result.failed_dependencies),
+            )
+            raise SystemExit(1)
+        LOGGER.info("readiness ready")
+        return
     settings = PresentationServerSettings.from_values(
         host=config.presentation_host,
         port=config.presentation_port,

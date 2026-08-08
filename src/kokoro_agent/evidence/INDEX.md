@@ -39,6 +39,11 @@ The canonical `agent_durable_output` index inventory is `run_output_seq_unique`
 index serves the latest-text lookup used when computing snapshot replacement boundaries.
 `agent_durable_output_source_batch` separately owns `run_output_source_batch_unique`.
 
+`kokoro-agent-evidence --readiness` runs the Mongo replica-set transaction probe concurrently with
+an authenticated HTTP/2 call through the real Evidence listener. The listener probe performs only
+an indexed missing-run `GetRunDurableCheckpoint` read and requires the closed `not_found` response.
+It never treats a TCP accept, plaintext listener, or arbitrary Connect error as ready.
+
 The storage adapter can delete output rows, private source-batch markers, and evidence rows with
 an eligible run in one Mongo transaction, but that destructive path is not operationally enabled.
 `KOKORO_RETENTION_RUN_TTL_S`

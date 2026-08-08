@@ -59,9 +59,9 @@ The production image uses a digest-pinned Python base, build-only pinned uv, and
 package. Its runtime stage contains no uv/pip/cache path, runs as `10001:10001`, writes bytecode
 nowhere, and is compatible with a read-only root filesystem plus `/tmp` tmpfs. The inventory also
 forbids privilege escalation, drops every Linux capability, requires RuntimeDefault seccomp, and
-disables service-account token mounting. A generic image healthcheck is intentionally absent: the
-owner inventory records dependency-aware readiness as missing and keeps all three processes at zero
-replicas.
+disables service-account token mounting. A generic image healthcheck is intentionally absent: each
+entrypoint instead exposes a role-specific dependency-aware `--readiness` exec command; liveness
+remains process-only.
 
 ## Idempotency, failure, and recovery
 
@@ -79,7 +79,11 @@ GA core semantics are frozen for the current Platform/Web/Session program. Graph
 
 All three inventory entries are currently `activationAuthorized: false`, `runtimeTraffic: false`,
 `launchReadiness: blocked`. Worker and Evidence remain blocked on a monotonic execution-owner lease
-epoch plus atomic terminal/outbox/evidence commit; all three lack dependency-aware readiness.
+epoch plus the terminal/outbox/evidence proof gate. Dependency-aware readiness itself is available:
+Worker proves Mongo transactions, Redis consumer primitives, and exact authenticated Hub/Model RPC
+paths concurrently; Evidence and Presentation prove Mongo plus their real authenticated listener.
+Root K8s Secret/readiness-client material remains a separate launch blocker until its manifest is
+synchronized.
 Presentation and the current Evidence V2 boundary also remain `contract-only` in the Root registry;
 the Evidence process still serves V1 and is explicitly blocked on that version mismatch. An image
 build or a live PID is not activation evidence and must not alter those flags.
@@ -96,7 +100,7 @@ The official Python AG-UI SDK is pinned to `ag-ui-protocol==0.1.19` at Root's ex
 before raw live publication. `kokoro-agent-presentation` exposes persisted `DeliveryRecord` values
 through the generated mTLS Connect service. This implemented provider does not make the Root
 `contract-only` boundary active; inventory activation stays blocked until the boundary lifecycle and
-dependency-aware readiness close.
+Root deployment wiring close.
 
 ## Verification
 

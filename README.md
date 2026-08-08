@@ -79,9 +79,14 @@ GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ow
 当前三个进程均为 `activationAuthorized: false`、`runtimeTraffic: false`、
 `launchReadiness: blocked`、零副本。Presentation 与当前 Evidence V2 Root boundary 仍为
 `contract-only`，而 Evidence 入口仍实际提供 V1，另有明确版本错配；Worker/Evidence 还受
-execution-owner lease epoch 与 terminal/outbox/evidence 原子性约束；全部进程都缺依赖感知
-readiness 实现。进程存活不等于依赖就绪，故镜像显式 `HEALTHCHECK NONE`，发布系统不得用通用
-TCP/PID 探针把这些阻断伪装成 ready。
+execution-owner lease epoch 与 terminal/outbox/evidence 原子性约束。三个现有 entrypoint 都提供
+`--readiness` exec：Worker 并发验证 Mongo replica-set transaction R/W、Redis Streams consumer
+能力、Hub 与 Model Gateway 的精确 mTLS ConnectRPC；Evidence/Presentation 并发验证 Mongo 与
+各自真实 mTLS listener。失败只报告依赖名并非零退出，恢复后转绿；进程存活仍只属于 liveness。
+镜像保留 `HEALTHCHECK NONE`，因为通用 TCP/PID 探针会混淆三个角色的依赖面。
+
+Root K8s 尚需把 Secret AtomicWriter 挂载、只读权限和 readiness client 材料同步到该命令契约；
+库存因此保留 `root-k8s-secret-mount-contract-mismatch`，在 Root 实证闭合前不放副本。
 
 生产 Dockerfile 使用 pinned Python base digest 和 build-only pinned uv，将 non-editable package
 复制进无 uv/pip/cache 的 runtime stage，以 `10001:10001` 运行并支持只读根文件系统；仅 `/tmp`
@@ -116,6 +121,9 @@ command 覆盖。库存解除阻断并获得跨仓发布证据前，构建成功
 uv run ruff check . && uv run pyright && uv run pytest   # 本仓三件套
 uv run pytest tests/repository/test_deployment_inventory.py -q
 docker build --target runtime --tag kokoro-agent:verification .
+kokoro-agent-worker --readiness
+kokoro-agent-evidence --readiness
+kokoro-agent-presentation --readiness
 node ../scripts/repository/run-pinned-compatibility.mjs \
   --tree head --evidence tmp/compatibility-direct.json  # exact-pin Direct 跨仓闭环
 python3 ../scripts/chaos-verify.py        # 崩溃混沌：worker 收养 + session 恢复（11 项）

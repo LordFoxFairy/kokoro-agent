@@ -25,6 +25,7 @@ from kokoro.platform.capability.v1 import capability_catalog_pb2 as capability_p
 from kokoro.platform.capability.v1.capability_catalog_connect import HubRuntimeServiceClient
 from kokoro_agent.contract import McpGrant, SkillGrant
 from kokoro_agent.mcp.config import McpServerConfig
+from kokoro_agent.security import read_secure_tls_material
 from kokoro_agent.skills.hub import (
     MAX_PACKAGE_BYTES,
     SkillHub,
@@ -121,9 +122,17 @@ class HubExecutionAssemblyClient:
         self._cache = _ArtifactCache(Path(settings.artifact_cache_dir))
         address = _hub_address(settings.rpc_url, settings.server_name)
         if client is None:
-            ca = _tls_file(settings.ca_file, "ca")
-            cert = _tls_file(settings.cert_file, "cert")
-            key = _tls_file(settings.key_file, "key", private=True)
+            ca = read_secure_tls_material(
+                settings.ca_file, error_code="HUB_RUNTIME_TLS_CA_INVALID"
+            )
+            cert = read_secure_tls_material(
+                settings.cert_file, error_code="HUB_RUNTIME_TLS_CERT_INVALID"
+            )
+            key = read_secure_tls_material(
+                settings.key_file,
+                error_code="HUB_RUNTIME_TLS_KEY_INVALID",
+                private=True,
+            )
             if b"BEGIN CERTIFICATE" not in ca or b"BEGIN CERTIFICATE" not in cert:
                 raise ValueError("HUB_RUNTIME_TLS_CERTIFICATE_INVALID")
             if b"PRIVATE KEY" not in key:
@@ -546,38 +555,6 @@ def _hub_address(value: str, server_name: str) -> str:
     ):
         raise ValueError("HUB_RUNTIME_RPC_IDENTITY_INVALID")
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-
-
-def _tls_file(value: str, kind: str, *, private: bool = False) -> bytes:
-    path = Path(value)
-    try:
-        before = path.lstat()
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        try:
-            opened = os.fstat(descriptor)
-            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-                raise OSError("changed")
-            material = os.read(descriptor, 256 * 1024 + 1)
-        finally:
-            os.close(descriptor)
-    except OSError as error:
-        raise ValueError(f"HUB_RUNTIME_TLS_{kind.upper()}_INVALID") from error
-    if (
-        not path.is_absolute()
-        or path.is_symlink()
-        or not stat_is_regular(before.st_mode)
-        or before.st_size < 1
-        or before.st_size > 256 * 1024
-        or len(material) != before.st_size
-        or (private and before.st_mode & 0o077 != 0)
-    ):
-        raise ValueError(f"HUB_RUNTIME_TLS_{kind.upper()}_INVALID")
-    return material
-
-
-def stat_is_regular(mode: int) -> bool:
-    return stat.S_ISREG(mode)
 
 
 def _reference(value: str, maximum: int) -> bool:

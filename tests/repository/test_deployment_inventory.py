@@ -86,7 +86,7 @@ def test_inventory_binds_only_real_console_entrypoints_and_no_compatibility_shim
     )
 
 
-def test_every_process_stays_explicitly_blocked_until_its_real_readiness_closes() -> None:
+def test_every_process_exposes_real_readiness_while_release_policy_stays_blocked() -> None:
     deployables = {
         item["id"]: item for item in _inventory()["deployables"]
     }
@@ -105,9 +105,14 @@ def test_every_process_stays_explicitly_blocked_until_its_real_readiness_closes(
             "status": "available",
         }
         assert deployable["probes"]["readiness"]["kind"] == "dependency-aware"
-        assert deployable["probes"]["readiness"]["status"] == "missing"
+        assert deployable["probes"]["readiness"]["status"] == "available"
+        assert deployable["probes"]["readiness"]["command"] == [
+            deployable["command"],
+            "--readiness",
+        ]
         assert deployable["probes"]["readiness"]["dependencies"]
-        assert "dependency-aware-readiness-not-implemented" in deployable["launchBlockers"]
+        assert "dependency-aware-readiness-not-implemented" not in deployable["launchBlockers"]
+        assert "root-k8s-secret-mount-contract-mismatch" in deployable["launchBlockers"]
 
     execution_blockers = {
         "execution-owner-lease-epoch-not-bound",
@@ -168,6 +173,21 @@ def test_listener_and_contract_inventory_matches_the_three_process_boundaries() 
     assert deployables["kokoro-agent-presentation"]["declaredInboundContracts"] == [
         "agent-presentation@v1"
     ]
+
+    assert {
+        "KOKORO_AGENT_READINESS_TIMEOUT_MS",
+        "KOKORO_AGENT_EVIDENCE_READINESS_URL",
+        "KOKORO_AGENT_EVIDENCE_READINESS_CA_FILE",
+        "KOKORO_AGENT_EVIDENCE_READINESS_CERT_FILE",
+        "KOKORO_AGENT_EVIDENCE_READINESS_KEY_FILE",
+    } <= set(deployables["kokoro-agent-evidence"]["requiredEnvironment"])
+    assert {
+        "KOKORO_AGENT_READINESS_TIMEOUT_MS",
+        "KOKORO_AGENT_PRESENTATION_READINESS_URL",
+        "KOKORO_AGENT_PRESENTATION_READINESS_CA_FILE",
+        "KOKORO_AGENT_PRESENTATION_READINESS_CERT_FILE",
+        "KOKORO_AGENT_PRESENTATION_READINESS_KEY_FILE",
+    } <= set(deployables["kokoro-agent-presentation"]["requiredEnvironment"])
 
     evidence_entrypoint = (ROOT / "src/kokoro_agent/evidence/main.py").read_text()
     presentation_entrypoint = (ROOT / "src/kokoro_agent/presentation/main.py").read_text()
@@ -268,3 +288,5 @@ def test_architecture_docs_expose_the_inventory_without_stale_presentation_claim
     assert "【休眠候选边界】" not in readme
     assert "It has no transport and is not wired into `RunEmitter`" not in index
     assert "The Hub compatibility consumer" not in index
+    assert "readiness as missing" not in index
+    assert "缺依赖感知" not in readme

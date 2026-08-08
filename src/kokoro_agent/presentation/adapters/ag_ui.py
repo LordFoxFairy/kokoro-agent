@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
 from ag_ui.core import (
     ActivitySnapshotEvent,
     BaseEvent,
@@ -15,25 +17,36 @@ from ag_ui.core import (
 )
 from pydantic import ValidationError
 
-from kokoro_agent.presentation.profile import (
-    ALLOWED_OFFICIAL_EVENT_TYPES,
+from kokoro_agent.presentation.model import (
     CLOSED_ACTIVITY_CLASSES,
     ClosedActivityEvent,
-    ClosedAguiEvent,
     ClosedRunFinishedEvent,
     ClosedRunStartedEvent,
     ClosedTextContentEvent,
     ClosedTextEndEvent,
     ClosedTextStartEvent,
-    closed_agui_event_adapter,
-)
-from kokoro_agent.presentation.submission import (
     PRESENTATION_SUBMISSION_CONTRACT_REVISION,
     PresentationSubmission,
+    SubmissionEvent,
     SubmissionSource,
     canonical_recorded_at,
     event_digest,
+    submission_event_adapter,
     submission_identity,
+)
+
+AGUI_UPSTREAM_COMMIT = "54f13419055b4d0f442c71e1efab18b310982ce1"
+AGUI_UPSTREAM_PYTHON_VERSION = "0.1.19"
+ALLOWED_OFFICIAL_EVENT_TYPES = frozenset(
+    {
+        "RUN_STARTED",
+        "RUN_FINISHED",
+        "RUN_ERROR",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "ACTIVITY_SNAPSHOT",
+    }
 )
 
 _ALLOWED_OFFICIAL_CLASSES = (
@@ -44,6 +57,15 @@ _ALLOWED_OFFICIAL_CLASSES = (
     TextMessageContentEvent,
     TextMessageEndEvent,
     ActivitySnapshotEvent,
+)
+OfficialEvent: TypeAlias = (
+    RunStartedEvent
+    | RunFinishedEvent
+    | RunErrorEvent
+    | TextMessageStartEvent
+    | TextMessageContentEvent
+    | TextMessageEndEvent
+    | ActivitySnapshotEvent
 )
 
 
@@ -61,7 +83,7 @@ def _closed_submission_source(source: SubmissionSource) -> SubmissionSource:
         ) from error
 
 
-def _closed_official_event(event: BaseEvent) -> ClosedAguiEvent:
+def _closed_official_event(event: BaseEvent) -> SubmissionEvent:
     if (
         not isinstance(event, _ALLOWED_OFFICIAL_CLASSES)
         or event.type.value not in ALLOWED_OFFICIAL_EVENT_TYPES
@@ -78,7 +100,7 @@ def _closed_official_event(event: BaseEvent) -> ClosedAguiEvent:
             raise SubmissionProtocolError("RUN_FINISHED_RESULT_FORBIDDEN")
     try:
         upstream_json = event.model_dump_json(by_alias=True, exclude_none=True)
-        closed = closed_agui_event_adapter.validate_json(upstream_json)
+        closed = submission_event_adapter.validate_json(upstream_json)
     except (TypeError, ValueError, ValidationError) as error:
         raise SubmissionProtocolError("AGUI_EVENT_SHAPE_FORBIDDEN") from error
     try:
@@ -94,7 +116,7 @@ def _closed_official_event(event: BaseEvent) -> ClosedAguiEvent:
     return closed
 
 
-def _validate_source_scope(event: ClosedAguiEvent, source: SubmissionSource) -> None:
+def _validate_source_scope(event: SubmissionEvent, source: SubmissionSource) -> None:
     route = source.route
     if canonical_recorded_at(event.timestamp) != source.recorded_at:
         raise SubmissionProtocolError("AGUI_EVENT_TIMESTAMP_CONFLICT")
@@ -148,7 +170,71 @@ def build_submission(
         raise SubmissionProtocolError("PRESENTATION_SUBMISSION_INVALID") from error
 
 
+def make_run_started(*, thread_id: str, run_id: str, timestamp: int) -> OfficialEvent:
+    return RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=timestamp)
+
+
+def make_run_finished(
+    *, thread_id: str, run_id: str, timestamp: int, outcome: object | None = None
+) -> OfficialEvent:
+    del outcome
+    return RunFinishedEvent(
+        thread_id=thread_id,
+        run_id=run_id,
+        timestamp=timestamp,
+        outcome=RunFinishedSuccessOutcome(),
+    )
+
+
+def make_run_error(*, message: str, code: str, timestamp: int) -> OfficialEvent:
+    return RunErrorEvent(message=message, code=code, timestamp=timestamp)
+
+
+def make_text_start(
+    *, message_id: str, role: Literal["assistant"], timestamp: int
+) -> OfficialEvent:
+    return TextMessageStartEvent(
+        message_id=message_id,
+        role=role,
+        timestamp=timestamp,
+    )
+
+
+def make_text_content(*, message_id: str, delta: str, timestamp: int) -> OfficialEvent:
+    return TextMessageContentEvent(
+        message_id=message_id,
+        delta=delta,
+        timestamp=timestamp,
+    )
+
+
+def make_text_end(*, message_id: str, timestamp: int) -> OfficialEvent:
+    return TextMessageEndEvent(message_id=message_id, timestamp=timestamp)
+
+
+def make_activity_snapshot(
+    *, message_id: str, timestamp: int, activity_type: str, content: dict[str, object]
+) -> OfficialEvent:
+    return ActivitySnapshotEvent(
+        message_id=message_id,
+        activity_type=activity_type,
+        content=content,
+        replace=True,
+        timestamp=timestamp,
+    )
+
+
 __all__ = [
+    "AGUI_UPSTREAM_COMMIT",
+    "AGUI_UPSTREAM_PYTHON_VERSION",
+    "OfficialEvent",
     "SubmissionProtocolError",
     "build_submission",
+    "make_activity_snapshot",
+    "make_run_error",
+    "make_run_finished",
+    "make_run_started",
+    "make_text_content",
+    "make_text_end",
+    "make_text_start",
 ]

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 from kokoro_agent.presentation.main import build_presentation_app
-from kokoro_agent.presentation.provider import PresentationProviderStore
+from kokoro_agent.presentation.delivery import PresentationProviderStore
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -16,7 +16,7 @@ from ag_ui.core import (
 from pydantic import ValidationError
 
 from kokoro_agent.presentation import PresentationSubmission
-from kokoro_agent.presentation.profile import (
+from kokoro_agent.presentation.model import (
     ClosedSafeSummaryActivity,
     ClosedTextContentEvent,
     ClosedTextEndEvent,

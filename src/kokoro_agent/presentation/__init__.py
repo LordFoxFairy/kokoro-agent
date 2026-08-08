@@ -1,43 +1,33 @@
-"""Root R1 submission construction and durable Agent presentation delivery port."""
+"""Root R1 Submission construction and durable Agent Presentation delivery."""
 
-from kokoro_agent.presentation.adapter import (
+from kokoro_agent.presentation.adapters.ag_ui import (
+    AGUI_UPSTREAM_COMMIT,
+    AGUI_UPSTREAM_PYTHON_VERSION,
     SubmissionProtocolError,
     build_submission,
 )
-from kokoro_agent.presentation.profile import (
-    AGUI_UPSTREAM_COMMIT,
-    AGUI_UPSTREAM_PYTHON_VERSION,
+from kokoro_agent.presentation.delivery import (
+    DeliveryService,
+    PresentationProviderStore,
 )
-from kokoro_agent.presentation.runtime import (
-    DeliveryPage,
-    DeliveryRecord,
-    PresentationAcknowledgeCommand,
-    PresentationAcknowledgeState,
-    PresentationAdmissionReceipt,
-    PresentationDeliveryService,
-    PresentationQuarantineCommand,
-    agent_thread_ref,
-    plan_presentation_batch,
-    presentation_acknowledgement_digest,
-)
-from kokoro_agent.presentation.submission import (
+from kokoro_agent.presentation.model import (
     PRESENTATION_SUBMISSION_CONTRACT_REVISION,
+    DeliveryRecord,
+    PresentationState,
     PresentationSubmission,
     SubmissionRoute,
     SubmissionSource,
 )
+from kokoro_agent.presentation.planner import agent_thread_ref, plan_presentation_batch
 
 __all__ = [
     "AGUI_UPSTREAM_COMMIT",
     "AGUI_UPSTREAM_PYTHON_VERSION",
     "PRESENTATION_SUBMISSION_CONTRACT_REVISION",
-    "DeliveryPage",
     "DeliveryRecord",
-    "PresentationAcknowledgeCommand",
-    "PresentationAcknowledgeState",
-    "PresentationAdmissionReceipt",
-    "PresentationDeliveryService",
-    "PresentationQuarantineCommand",
+    "DeliveryService",
+    "PresentationProviderStore",
+    "PresentationState",
     "PresentationSubmission",
     "SubmissionProtocolError",
     "SubmissionRoute",
@@ -45,5 +35,4 @@ __all__ = [
     "agent_thread_ref",
     "build_submission",
     "plan_presentation_batch",
-    "presentation_acknowledgement_digest",
 ]

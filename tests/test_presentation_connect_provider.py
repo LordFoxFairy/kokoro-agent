@@ -11,10 +11,8 @@ from kokoro_agent.presentation.integrity import (
     effect_digest,
     producer_fence,
 )
-from kokoro_agent.presentation.provider import (
-    AGENT_PRESENTATION_CONTRACT_REVISION,
-    PresentationConnectService,
-)
+from kokoro_agent.presentation.adapters.connect import PresentationConnectService
+from kokoro_agent.presentation.delivery import AGENT_PRESENTATION_CONTRACT_REVISION
 
 
 RUN_ID = "internal.run.1"

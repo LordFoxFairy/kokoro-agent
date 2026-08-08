@@ -36,7 +36,7 @@ from kokoro_agent.presentation.integrity import (
     QUARANTINE_EFFECT_DOMAIN,
     effect_digest,
 )
-from kokoro_agent.presentation.provider import PresentationConnectService
+from kokoro_agent.presentation.adapters.connect import PresentationConnectService
 from kokoro_agent.evidence.models import (
     append_output_digest,
     durable_output_draft_for_event,
@@ -233,22 +233,31 @@ async def test_takeover_changes_execution_fence_not_run_stream_identity() -> Non
         )
         assert stale.status == "fence_lost"
 
-        presentation = await executor_b.pull_delivery_records(run_id, 0, 4, 10)
+        presentation = await executor_b.pull_presentation_provider_records(
+            run_id, 0, 4, 10
+        )
         outputs = await executor_b.pull_durable_output_records(run_id, 0, 10)
         evidence = await executor_b.pull_durable_execution_evidence(run_id, 0, 10)
         assert len(presentation) == 4
         assert len(outputs) == 2
         assert len(evidence) == 2
-        lane_fences = [
+        presentation_fence = {
+            (
+                record.producer.producer_instance_ref,
+                record.producer.producer_generation,
+            )
+            for record in presentation
+        }
+        durable_lane_fences = [
             {
                 (record.producer_instance_ref, record.producer_generation)
                 for record in lane
             }
-            for lane in (presentation, outputs, evidence)
+            for lane in (outputs, evidence)
         ]
-        assert lane_fences == [lane_fences[0], lane_fences[0], lane_fences[0]]
-        assert len(lane_fences[0]) == 1
-        stream_ref, _generation = next(iter(lane_fences[0]))
+        assert durable_lane_fences == [presentation_fence, presentation_fence]
+        assert len(presentation_fence) == 1
+        stream_ref, _generation = next(iter(presentation_fence))
         assert stream_ref not in {"executor-a", "executor-b"}
 
 

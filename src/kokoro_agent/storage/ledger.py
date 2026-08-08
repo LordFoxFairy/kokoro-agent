@@ -14,13 +14,8 @@ from kokoro_agent.evidence.models import (
     DurableOutputRecord,
     DurableRetentionStats,
 )
-from kokoro_agent.presentation.runtime import (
-    PresentationAcknowledgeCommand,
-    PresentationAcknowledgeState,
-    DeliveryRecord,
-    PresentationQuarantineCommand,
-)
-from kokoro_agent.presentation.provider import PresentationProviderStore
+from kokoro_agent.presentation.delivery import PresentationProviderStore
+from kokoro_agent.presentation.model import DeliveryRecord
 from kokoro_agent.contract import AgentEvent
 from kokoro_agent.evidence.service import ExecutionEvidenceReader
 from kokoro_agent.storage.mongo import (
@@ -155,26 +150,6 @@ class RunLedger(ExecutionContextStore, Protocol):
     ) -> tuple[DeliveryRecord, ...] | None: ...
 
     async def presentation_head(self, run_id: str) -> int: ...
-
-    async def pull_delivery_records(
-        self,
-        run_id: str,
-        after_delivery_seq: int,
-        through_delivery_seq: int,
-        limit: int,
-    ) -> tuple[DeliveryRecord, ...]: ...
-
-    async def acknowledge_presentation_admissions(
-        self, command: PresentationAcknowledgeCommand
-    ) -> PresentationAcknowledgeState: ...
-
-    async def quarantine_presentation_admission(
-        self, command: PresentationQuarantineCommand
-    ) -> PresentationAcknowledgeState: ...
-
-    async def get_presentation_delivery_state(
-        self, run_id: str
-    ) -> PresentationAcknowledgeState: ...
 
     async def get_durable_retention_stats(self) -> DurableRetentionStats: ...
 

@@ -38,7 +38,7 @@ from kokoro_agent.presentation import (
     SubmissionProtocolError,
     build_submission,
 )
-from kokoro_agent.presentation.submission import canonical_recorded_at
+from kokoro_agent.presentation.model import canonical_recorded_at
 
 PRESENTATION_COMPATIBILITY_FIXTURE_PROFILE = (
     "kokoro-agent-presentation-compatibility-fixture.v1"

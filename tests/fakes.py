@@ -37,14 +37,11 @@ from kokoro_agent.evidence.models import (
     DurableOutputRecord,
     make_durable_output_record,
 )
-from kokoro_agent.presentation.runtime import (
-    PresentationAcknowledgeCommand,
-    PresentationAcknowledgeState,
+from kokoro_agent.presentation.model import (
     DeliveryRecord,
     PresentationState,
-    PresentationQuarantineCommand,
-    plan_presentation_batch,
 )
+from kokoro_agent.presentation.planner import plan_presentation_batch
 from kokoro_agent.storage.ledger import (
     ControlInboxRecord,
     DurableRetentionStats,
@@ -185,7 +182,6 @@ class FakeLedger:
         self.presentation_source_commits: dict[
             tuple[str, str], tuple[str, tuple[DeliveryRecord, ...]]
         ] = {}
-        self.presentation_delivery_states: dict[str, PresentationAcknowledgeState] = {}
         self.run_stream_producers: dict[str, tuple[str, int]] = {}
         self.assembly_digests: dict[str, str] = {}
         self.owner_heads: dict[str, int] = {}
@@ -600,63 +596,6 @@ class FakeLedger:
 
     async def presentation_head(self, run_id: str) -> int:
         return len(self.presentation_records.get(run_id, ()))
-
-    async def pull_delivery_records(
-        self,
-        run_id: str,
-        after_delivery_seq: int,
-        through_delivery_seq: int,
-        limit: int,
-    ) -> tuple[DeliveryRecord, ...]:
-        return tuple(
-            record
-            for record in self.presentation_records.get(run_id, ())
-            if after_delivery_seq < record.delivery_seq <= through_delivery_seq
-        )[:limit]
-
-    async def acknowledge_presentation_admissions(
-        self, command: PresentationAcknowledgeCommand
-    ) -> PresentationAcknowledgeState:
-        current = await self.get_presentation_delivery_state(command.run_id)
-        if (
-            current.acknowledged_through_delivery_seq
-            != command.expected_acknowledged_through_delivery_seq
-            or current.quarantined_delivery_seq is not None
-        ):
-            raise ValueError("PRESENTATION_ACK_CAS_CONFLICT")
-        state = PresentationAcknowledgeState(
-            run_id=command.run_id,
-            acknowledged_through_delivery_seq=command.receipts[-1].delivery_seq,
-            revision=current.revision + 1,
-        )
-        self.presentation_delivery_states[command.run_id] = state
-        return state
-
-    async def quarantine_presentation_admission(
-        self, command: PresentationQuarantineCommand
-    ) -> PresentationAcknowledgeState:
-        current = await self.get_presentation_delivery_state(command.run_id)
-        state = PresentationAcknowledgeState(
-            run_id=command.run_id,
-            acknowledged_through_delivery_seq=current.acknowledged_through_delivery_seq,
-            revision=current.revision + 1,
-            quarantined_delivery_seq=command.delivery_seq,
-            quarantine_reason=command.reason,
-        )
-        self.presentation_delivery_states[command.run_id] = state
-        return state
-
-    async def get_presentation_delivery_state(
-        self, run_id: str
-    ) -> PresentationAcknowledgeState:
-        return self.presentation_delivery_states.get(
-            run_id,
-            PresentationAcknowledgeState(
-                run_id=run_id,
-                acknowledged_through_delivery_seq=0,
-                revision=0,
-            ),
-        )
 
     async def get_durable_retention_stats(self) -> DurableRetentionStats:
         return DurableRetentionStats(

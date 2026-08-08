@@ -13,7 +13,7 @@ Convert real `RunEmitter` owner facts through the pinned official AG-UI SDK adap
 `PresentationSubmission` values, then commit an append-only Agent delivery log before live raw-event
 publication. This is the only Agent-owned browser-presentation semantic output.
 
-`runtime.py` owns the stateful source planner and child delivery application port:
+`planner.py` owns the stateful source planner:
 
 - the first submission has `eventOrdinal = "0"`, every later submission advances exactly one, and
   `deliverySeq = eventOrdinal + 1`;
@@ -26,9 +26,9 @@ publication. This is the only Agent-owned browser-presentation semantic output.
   regression, terminal revival, and overflow fail closed;
 - HITL groups retain private Agent ancestry only. Session owns public binding and receipt authority.
 
-`adapter.py` is the sole official AG-UI SDK trust boundary. It closes an upstream SDK model and
+`adapters/ag_ui.py` is the sole official AG-UI SDK trust boundary. It closes an upstream SDK model and
 directly seals the Root R1 `PresentationSubmission`; no intermediate envelope or conversion bridge
-exists. `submission.py` owns the strict envelope, canonical UTC/JCS encoding, event digest, and
+exists. `model.py` owns the strict envelope, canonical UTC/JCS encoding, event digest, and
 `presentation.submission:sha256:` identity.
 
 ## Durability and delivery
@@ -49,14 +49,15 @@ The unpublished baseline uses only these five collections:
 Startup creates only the new indexes. There is no old-name read, dual write, alias, migration, or
 automatic reinterpretation path.
 
-`PresentationDeliveryService` and `PresentationConnectService` preserve frozen-head paging,
+`DeliveryService` preserves frozen-head paging,
 producer generation fencing, contiguous ACK, first-gap quarantine, replay identity, delivery-chain
-digests, and terminal seals. Nothing is garbage-collected merely because it was pulled.
+digests, and terminal seals. `adapters/connect.py` only translates the generated Connect surface.
+Nothing is garbage-collected merely because it was pulled.
 
 ## Public surface and dependencies
 
-`__init__.py` exports Submission construction and stable delivery models only. `provider.py` maps the
-generated Connect service to the storage port. `RunSupervisor -> RunEmitter -> commit_owner_event`
+`__init__.py` exports Submission construction and stable delivery models only. `delivery.py` owns the
+single storage port and application service. `RunSupervisor -> RunEmitter -> commit_owner_event`
 remains the single production activation path. The Agent-local compatibility command uses the same
 public `build_submission` adapter and is not a second implementation.
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from importlib.metadata import version
+from pathlib import Path
+from typing import cast
 
 import pytest
 from ag_ui.core import (
@@ -26,10 +29,14 @@ from kokoro_agent.presentation import (
     SubmissionProtocolError,
     build_submission,
 )
-from kokoro_agent.presentation.submission import event_jcs_bytes
+from kokoro_agent.presentation.model import canonical_json_bytes, event_jcs_bytes
 
 
 TIMESTAMP = 0
+ROOT_PRESENTATION_CORPUS = (
+    Path(__file__).resolve().parents[1]
+    / "src/generated/contracts/presentation/corpus-v1.json"
+)
 SOURCE = SubmissionSource(
     source_event_ref="source.event.1",
     event_ordinal="0",
@@ -541,6 +548,43 @@ def test_lone_surrogates_are_rejected_before_digesting() -> None:
             ),
             source=source,
         )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "e\u0301",
+        {"e\u0301": "value"},
+        {"outer": [{"inner": "e\u0301"}]},
+    ],
+    ids=("scalar", "key", "nested-value"),
+)
+def test_jcs_rejects_every_non_nfc_key_and_string_value(value: JsonValue) -> None:
+    with pytest.raises(ValueError, match="NFC"):
+        canonical_json_bytes(value)
+
+
+def test_root_submission_corpus_is_accepted_and_rejected_exactly() -> None:
+    corpus = cast(dict[str, object], json.loads(ROOT_PRESENTATION_CORPUS.read_text()))
+    submissions = cast(dict[str, object], corpus["submissions"])
+    accepted = cast(list[dict[str, object]], submissions["accepted"])
+    rejected = cast(list[dict[str, object]], submissions["rejected"])
+
+    parsed = [
+        PresentationSubmission.model_validate_json(json.dumps(row["submission"]))
+        for row in accepted
+    ]
+    assert len(parsed) == 14
+    assert all(
+        item.envelope_bytes()
+        == canonical_json_bytes(
+            item.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+        for item in parsed
+    )
+    for row in rejected:
+        with pytest.raises(ValidationError):
+            PresentationSubmission.model_validate_json(json.dumps(row["submission"]))
 
 
 def test_submission_envelope_rejects_extra_and_tampered_material() -> None:

@@ -17,10 +17,8 @@ from kokoro.agent.presentation.v1.presentation_connect import (
     PresentationServiceASGIApplication,
 )
 from kokoro_agent.config import AppConfig
-from kokoro_agent.presentation.provider import (
-    PresentationConnectService,
-    PresentationProviderStore,
-)
+from kokoro_agent.presentation.adapters.connect import PresentationConnectService
+from kokoro_agent.presentation.delivery import PresentationProviderStore
 from kokoro_agent.presentation.server import (
     PresentationServerSettings,
     build_hypercorn_config,

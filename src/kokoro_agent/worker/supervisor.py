@@ -51,7 +51,7 @@ from kokoro_agent.execution.approvals import (
 )
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event, run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.presentation.runtime import agent_thread_ref
+from kokoro_agent.presentation.model import agent_thread_ref
 from kokoro_agent.agents.base import AssembledAgent
 from kokoro_agent.state import RunScope
 from kokoro_agent.storage.ledger import (

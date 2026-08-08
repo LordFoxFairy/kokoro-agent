@@ -5,12 +5,12 @@ from pathlib import Path
 
 from ag_ui.core import RunStartedEvent
 
-import kokoro_agent.presentation.adapter as presentation_adapter
-import kokoro_agent.presentation.runtime as presentation_runtime
+import kokoro_agent.presentation.adapters.ag_ui as presentation_adapter
+import kokoro_agent.presentation.model as presentation_model
 import kokoro_agent.storage.mongo as presentation_storage
 import pytest
 from pydantic import ValidationError
-from kokoro_agent.presentation.submission import (
+from kokoro_agent.presentation.model import (
     PresentationSubmission,
     SubmissionRoute,
     SubmissionSource,
@@ -54,7 +54,7 @@ def test_official_adapter_builds_root_submission_directly() -> None:
 
 def test_delivery_record_persists_the_canonical_submission_envelope() -> None:
     builder = getattr(presentation_adapter, "build_submission", None)
-    record_type = getattr(presentation_runtime, "DeliveryRecord", None)
+    record_type = getattr(presentation_model, "DeliveryRecord", None)
 
     assert builder is not None
     assert record_type is not None, "runtime must expose DeliveryRecord"
@@ -84,7 +84,7 @@ def test_delivery_record_persists_the_canonical_submission_envelope() -> None:
 
 def test_delivery_record_rejects_recorded_time_drift() -> None:
     builder = getattr(presentation_adapter, "build_submission", None)
-    record_type = getattr(presentation_runtime, "DeliveryRecord", None)
+    record_type = getattr(presentation_model, "DeliveryRecord", None)
     assert builder is not None and record_type is not None
     submission = builder(
         RunStartedEvent(
@@ -110,7 +110,7 @@ def test_delivery_record_rejects_recorded_time_drift() -> None:
 
 def test_delivery_sequence_is_submission_ordinal_plus_one() -> None:
     builder = getattr(presentation_adapter, "build_submission", None)
-    record_type = getattr(presentation_runtime, "DeliveryRecord", None)
+    record_type = getattr(presentation_model, "DeliveryRecord", None)
     assert builder is not None and record_type is not None
     submission = builder(
         RunStartedEvent(
@@ -125,6 +125,29 @@ def test_delivery_sequence_is_submission_ordinal_plus_one() -> None:
         record_type.from_submission(
             run_id="run.1",
             delivery_seq=2,
+            submission=submission,
+            producer_instance_ref="producer.1",
+            producer_generation=1,
+        )
+
+
+def test_delivery_record_rejects_submission_from_another_run() -> None:
+    builder = getattr(presentation_adapter, "build_submission", None)
+    record_type = getattr(presentation_model, "DeliveryRecord", None)
+    assert builder is not None and record_type is not None
+    submission = builder(
+        RunStartedEvent(
+            thread_id="agent.thread:thread.1",
+            run_id="run.1",
+            timestamp=1_000,
+        ),
+        source=_source(),
+    )
+
+    with pytest.raises(ValidationError, match="run scope"):
+        record_type.from_submission(
+            run_id="run.other",
+            delivery_seq=1,
             submission=submission,
             producer_instance_ref="producer.1",
             producer_generation=1,

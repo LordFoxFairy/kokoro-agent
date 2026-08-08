@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: agent.compat
+owners:
+  - "@LordFoxFairy"
+---
+
 # compatibility commands
 
 Root compatibility gates invoke these child-owned commands as independent processes. They may use

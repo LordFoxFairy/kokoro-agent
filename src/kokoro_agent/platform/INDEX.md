@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: agent.platform
+owners:
+  - "@LordFoxFairy"
+---
+
 # Platform ports
 
 - `media.py` — private Media Runtime port. It translates GA product intent into the

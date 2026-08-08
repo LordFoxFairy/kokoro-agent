@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: agent.evidence
+owners:
+  - "@LordFoxFairy"
+---
+
 # Execution evidence
 
 This package is the Agent-owned reconciliation boundary for durable execution facts. It

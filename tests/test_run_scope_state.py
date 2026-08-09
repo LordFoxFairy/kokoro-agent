@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from fakes import FakeLedger, completed_execution_context, usage_recorder
+from fakes import FakeLedger, completed_execution_context, request, usage_recorder
 from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.execution.protocols import InvokableAgent
 from kokoro_agent.execution.events import RunEmitter
@@ -49,7 +49,17 @@ async def _invoke(
     agent: InvokableAgent, payload: object, run_id: str, bus: RedisStream
 ) -> bool:
     ledger = FakeLedger()
-    return await invoke_once(
+    scope = _scope()
+    claimed = await ledger.try_claim(
+        request(
+            run_id,
+            session_id=scope.session_id,
+            thread_id=scope.thread_id,
+            namespace=scope.namespace,
+        )
+    )
+    assert claimed is True
+    terminal = await invoke_once(
         RunEmitter(bus, run_id, outbox=ledger),
         agent,
         {
@@ -62,6 +72,9 @@ async def _invoke(
         prepare_completed=lambda: completed_execution_context(run_id),
         record_usage=usage_recorder()[0],
     )
+    assert all(row["kind"] != "run.failed" for row in ledger.outbox.get(run_id, ()))
+    assert f"ctx_test_{run_id}" in ledger.execution_completions
+    return terminal
 
 
 async def test_tool_reads_scope_from_state(stream: RedisStream) -> None:

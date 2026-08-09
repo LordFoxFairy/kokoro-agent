@@ -31,6 +31,10 @@ ALLOWED: dict[str, frozenset[str]] = {
     "src/kokoro_agent/evidence/main.py": frozenset({"reportUnknownVariableType"}),
     # 同一 Hypercorn 边界；Presentation 入口只传 ASGI app。
     "src/kokoro_agent/presentation/main.py": frozenset({"reportUnknownVariableType"}),
+    # Hypercorn serve 的同一未参数化 WSGI fallback；mTLS 集成测试只传 ASGI app。
+    "tests/test_readiness_mtls_integration.py": frozenset(
+        {"reportUnknownVariableType"}
+    ),
     # LangGraph 编译图泛型暴露部分 unknown overload，仅存在于执行上下文测试驱动器。
     "tests/test_execution_context.py": frozenset(
         {"reportUnknownMemberType", "reportArgumentType"}

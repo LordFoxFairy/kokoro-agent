@@ -277,7 +277,7 @@ async def check_redis_streams(settings: RedisReadinessSettings) -> None:
         socket_timeout=timeout_s,
     )
     suffix = uuid.uuid4().hex
-    stream = f"kokoro:readiness:{suffix}"
+    stream = f"readiness:kokoro-agent:{suffix}"
     group = f"readiness-{suffix}"
     try:
         async with asyncio.timeout(timeout_s):

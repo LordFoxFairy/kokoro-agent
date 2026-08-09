@@ -130,6 +130,87 @@ async def test_redis_readiness_exercises_stream_group_claim_and_ack() -> None:
     )
 
 
+async def test_redis_readiness_uses_private_scratch_namespace_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingRedis:
+        def __init__(self) -> None:
+            self.stream_names: list[str] = []
+            self.deleted: list[str] = []
+
+        async def xgroup_create(
+            self, stream: str, _group: str, *, id: str, mkstream: bool
+        ) -> None:
+            assert id == "0"
+            assert mkstream is True
+            self.stream_names.append(stream)
+
+        async def xadd(self, stream: str, _fields: Mapping[str, str]) -> str:
+            self.stream_names.append(stream)
+            return "1-0"
+
+        async def xreadgroup(
+            self,
+            _group: str,
+            _consumer: str,
+            streams: Mapping[str, str],
+            *,
+            count: int,
+            block: int,
+        ) -> list[tuple[str, list[tuple[str, dict[str, str]]]]]:
+            assert count == 1
+            assert block == 100
+            self.stream_names.extend(streams)
+            return [(next(iter(streams)), [("1-0", {"probe": "stream-consumer"})])]
+
+        async def xautoclaim(
+            self,
+            stream: str,
+            _group: str,
+            _consumer: str,
+            *,
+            min_idle_time: int,
+            start_id: str,
+            count: int,
+        ) -> tuple[str, list[tuple[str, dict[str, str]]], list[str]]:
+            assert min_idle_time == 0
+            assert start_id == "0-0"
+            assert count == 1
+            self.stream_names.append(stream)
+            return ("0-0", [("1-0", {"probe": "stream-consumer"})], [])
+
+        async def xack(self, stream: str, _group: str, _entry_id: str) -> int:
+            self.stream_names.append(stream)
+            return 1
+
+        async def xpending(self, stream: str, _group: str) -> dict[str, int]:
+            self.stream_names.append(stream)
+            return {"pending": 0}
+
+        async def delete(self, stream: str) -> None:
+            self.deleted.append(stream)
+
+        async def aclose(self) -> None:
+            return None
+
+    redis = RecordingRedis()
+
+    def fake_from_url(*_args: object, **_kwargs: object) -> RecordingRedis:
+        return redis
+
+    monkeypatch.setattr("kokoro_agent.readiness.from_url", fake_from_url)
+
+    await check_redis_streams(
+        RedisReadinessSettings(url="redis://fixture.invalid/0", timeout_ms=100)
+    )
+
+    assert redis.stream_names
+    assert all(
+        stream.startswith("readiness:kokoro-agent:") for stream in redis.stream_names
+    )
+    assert redis.deleted == [redis.stream_names[0]]
+
+
 def test_only_exact_authenticated_application_error_counts_as_rpc_ready() -> None:
     expected_authenticated_rpc_result(
         ConnectError(Code.INVALID_ARGUMENT, "execution assembly request invalid"),

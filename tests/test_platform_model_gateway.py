@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+import asyncio
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from deepagents.backends.state import StateBackend
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.stream import CustomTransformer
 
 from kokoro.platform.model.v1 import model_gateway_pb2 as gateway_pb
+from kokoro_agent.execution.build_agent import build_agent
 from kokoro_agent.model.platform_gateway import (
     ModelGatewayUnavailable,
     PlatformModelGatewayChatModel,
@@ -17,6 +22,7 @@ from kokoro_agent.model.streaming import (
     model_stream_frame_digest,
     model_stream_payload_bytes,
 )
+from kokoro_agent.state import RunScope
 
 AUTHORIZATION_HANDLE = f"model-authorization:sha256:{'a' * 64}"
 ZERO_DIGEST = "0" * 64
@@ -181,6 +187,113 @@ async def test_async_stream_uses_checkpoint_identity_from_public_config() -> Non
     request = async_client.stream_requests[0].invocation
     assert request.logical_call_ref.startswith("model-call:sha256:")
     assert request.attempt_ref.startswith("model-attempt:sha256:")
+
+
+@pytest.mark.filterwarnings("ignore:The v3 streaming protocol on Pregel is experimental")
+async def test_real_deep_agent_text_block_system_prompt_reaches_gateway_once() -> None:
+    async_client = RecordingAsyncClient()
+    subject = build_agent(
+        model=model(RecordingSyncClient(), async_client=async_client),
+        tools=[],
+        system_prompt="Fixture system prompt.",
+        subagents=[],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on={},
+        backend=StateBackend(),
+    )
+    scope = RunScope(namespace="fixture", session_id="session-1", run_id="run-1", thread_id="thread-1")
+    config: RunnableConfig = {
+        "configurable": {"thread_id": scope.scoped_thread_id},
+        "metadata": {"kokoro_run_id": scope.run_id},
+    }
+
+    events = await subject.astream_events(
+        {
+            "messages": [HumanMessage(content="hello")],
+            "scope": scope.as_state(),
+            "assembly_digest": "a" * 64,
+        },
+        version="v3",
+        config=config,
+        transformers=[CustomTransformer],
+    )
+    async with events:
+        await asyncio.gather(
+            _drain(events.messages),
+            _drain(events.tool_calls),
+            _drain(events.subagents),
+            _drain(events.custom),
+        )
+
+    assert len(async_client.stream_requests) == 1
+    request = async_client.stream_requests[0].invocation.request
+    assert request.messages[0].role == gateway_pb.MODEL_MESSAGE_ROLE_SYSTEM
+    assert request.messages[0].content.startswith("Fixture system prompt.")
+    assert request.messages[-1].content == "hello"
+    state = await subject.aget_state(config)
+    state_messages: object = state.values.get("messages")
+    assert isinstance(state_messages, list)
+    assert isinstance(state_messages[-1], AIMessage)
+    assert state_messages[-1].text == "hello"
+
+
+def test_standard_text_blocks_are_normalized_to_equivalent_text() -> None:
+    client = RecordingSyncClient()
+    equivalent_client = RecordingSyncClient()
+
+    result = model(client).invoke(
+        [
+            SystemMessage(
+                content=[
+                    {"type": "text", "text": "first"},
+                    {"type": "text", "text": " second"},
+                ]
+            ),
+            HumanMessage(content="hello"),
+        ],
+        config=invocation_config(),
+    )
+    model(equivalent_client).invoke(
+        [SystemMessage(content="first second"), HumanMessage(content="hello")],
+        config=invocation_config(),
+    )
+
+    assert client.invoke_requests[0].request.messages[0].content == "first second"
+    assert client.invoke_requests[0] == equivalent_client.invoke_requests[0]
+    assert result.usage_metadata == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "image", "url": "https://invalid.example/image.png"}],
+        [{"type": "tool_call", "id": "tool-1", "name": "probe", "args": {}}],
+        [{"type": "unknown", "text": "not a standard text block"}],
+        [{"type": "text", "text": 1}],
+        [
+            {"type": "text", "text": "safe"},
+            {"type": "image", "url": "https://invalid.example/image.png"},
+        ],
+    ],
+)
+def test_non_text_content_blocks_remain_rejected(
+    content: list[str | dict[str, object]],
+) -> None:
+    client = RecordingSyncClient()
+
+    with pytest.raises(ValueError, match="^MODEL_GATEWAY_NON_TEXT_MESSAGE_UNSUPPORTED$"):
+        model(client).invoke(
+            [SystemMessage(content=content)],
+            config=invocation_config(),
+        )
+
+    assert client.invoke_requests == []
+
+
+async def _drain(values: AsyncIterable[object]) -> None:
+    async for _value in values:
+        pass
 
 
 def stream_frames(attempt_ref: str) -> list[gateway_pb.StreamModelResponse]:

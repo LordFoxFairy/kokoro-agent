@@ -471,9 +471,7 @@ class PlatformModelGatewayChatModel(BaseChatModel):
 
 
 def _message(message: BaseMessage) -> gateway_pb.ModelMessage:
-    content: object = message.content
-    if not isinstance(content, str):
-        raise ValueError("MODEL_GATEWAY_NON_TEXT_MESSAGE_UNSUPPORTED")
+    content = _text_message_content(message)
     fields: dict[str, Any] = {"content": content}
     if message.name is not None:
         fields["name"] = message.name
@@ -499,6 +497,23 @@ def _message(message: BaseMessage) -> gateway_pb.ModelMessage:
     else:
         raise ValueError(f"MODEL_GATEWAY_MESSAGE_TYPE_UNSUPPORTED:{message.type}")
     return gateway_pb.ModelMessage(**fields)
+
+
+def _text_message_content(message: BaseMessage) -> str:
+    content: object = message.content
+    if isinstance(content, str):
+        return content
+    if not content:
+        raise ValueError("MODEL_GATEWAY_NON_TEXT_MESSAGE_UNSUPPORTED")
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, Mapping) or block.get("type") != "text":
+            raise ValueError("MODEL_GATEWAY_NON_TEXT_MESSAGE_UNSUPPORTED")
+        text = block.get("text")
+        if not isinstance(text, str):
+            raise ValueError("MODEL_GATEWAY_NON_TEXT_MESSAGE_UNSUPPORTED")
+        parts.append(text)
+    return "".join(parts)
 
 
 def _tools(

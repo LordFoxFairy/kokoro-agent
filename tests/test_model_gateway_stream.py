@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.messages.ai import UsageMetadata
 
 from kokoro.platform.model.v1 import model_gateway_pb2 as gateway_pb
+from kokoro_agent.model import streaming as streaming_module
 from kokoro_agent.model.streaming import (
     ModelStreamOutcomeUnknown,
     ModelStreamProtocolError,
@@ -382,3 +383,139 @@ def test_non_retryable_rpc_error_is_not_replayed() -> None:
         list(iter_verified_model_stream(client, _request(), timeout_ms=1_000))
     assert raised.value.rpc_code == "PERMISSION_DENIED"
     assert client.calls == 1
+
+
+class FakeMonotonicClock:
+    def __init__(self) -> None:
+        self.now_ns = 0
+
+    def monotonic_ns(self) -> int:
+        return self.now_ns
+
+    def advance_ms(self, milliseconds: int) -> None:
+        self.now_ns += milliseconds * 1_000_000
+
+
+class BudgetedSyncClient:
+    def __init__(
+        self,
+        frames: list[gateway_pb.StreamModelResponse],
+        clock: FakeMonotonicClock,
+    ) -> None:
+        self.frames = frames
+        self.clock = clock
+        self.requests: list[gateway_pb.StreamModelRequest] = []
+        self.timeouts: list[int | None] = []
+
+    def stream_model(
+        self,
+        request: gateway_pb.StreamModelRequest,
+        *,
+        timeout_ms: int | None = None,
+    ) -> Iterator[gateway_pb.StreamModelResponse]:
+        self.requests.append(request)
+        self.timeouts.append(timeout_ms)
+
+        def run() -> Iterator[gateway_pb.StreamModelResponse]:
+            if request.after_sequence == 0:
+                yield self.frames[0]
+                yield self.frames[1]
+                self.clock.advance_ms(40_000)
+            else:
+                assert request.after_sequence == 2
+                self.clock.advance_ms(20_000)
+            raise ConnectError(Code.UNAVAILABLE, "disconnected")
+
+        return run()
+
+
+def test_sync_reconnects_share_one_logical_invocation_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeMonotonicClock()
+    monkeypatch.setattr(
+        streaming_module,
+        "monotonic_ns",
+        clock.monotonic_ns,
+        raising=False,
+    )
+    client = BudgetedSyncClient(_happy_frames(), clock)
+    invocation = _request()
+    original = invocation.SerializeToString(deterministic=True)
+
+    with pytest.raises(ModelStreamTransportError) as raised:
+        list(iter_verified_model_stream(client, invocation, timeout_ms=60_000))
+
+    assert raised.value.rpc_code == "DEADLINE_EXCEEDED"
+    assert client.timeouts == [60_000, 20_000]
+    assert [request.after_sequence for request in client.requests] == [0, 2]
+    assert all(
+        request.invocation.SerializeToString(deterministic=True) == original
+        for request in client.requests
+    )
+    assert all(request.invocation.attempt_ref == ATTEMPT for request in client.requests)
+
+
+class BudgetedAsyncClient:
+    def __init__(
+        self,
+        frames: list[gateway_pb.StreamModelResponse],
+        clock: FakeMonotonicClock,
+    ) -> None:
+        self.frames = frames
+        self.clock = clock
+        self.requests: list[gateway_pb.StreamModelRequest] = []
+        self.timeouts: list[int | None] = []
+
+    def stream_model(
+        self,
+        request: gateway_pb.StreamModelRequest,
+        *,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[gateway_pb.StreamModelResponse]:
+        self.requests.append(request)
+        self.timeouts.append(timeout_ms)
+
+        async def run() -> AsyncIterator[gateway_pb.StreamModelResponse]:
+            if request.after_sequence == 0:
+                yield self.frames[0]
+                yield self.frames[1]
+                self.clock.advance_ms(40_000)
+            else:
+                assert request.after_sequence == 2
+                self.clock.advance_ms(20_000)
+            raise ConnectError(Code.UNAVAILABLE, "disconnected")
+
+        return run()
+
+
+async def test_async_reconnects_share_one_logical_invocation_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeMonotonicClock()
+    monkeypatch.setattr(
+        streaming_module,
+        "monotonic_ns",
+        clock.monotonic_ns,
+        raising=False,
+    )
+    client = BudgetedAsyncClient(_happy_frames(), clock)
+    invocation = _request()
+    original = invocation.SerializeToString(deterministic=True)
+
+    with pytest.raises(ModelStreamTransportError) as raised:
+        async for _chunk in aiter_verified_model_stream(
+            client,
+            invocation,
+            timeout_ms=60_000,
+        ):
+            pass
+
+    assert raised.value.rpc_code == "DEADLINE_EXCEEDED"
+    assert client.timeouts == [60_000, 20_000]
+    assert [request.after_sequence for request in client.requests] == [0, 2]
+    assert all(
+        request.invocation.SerializeToString(deterministic=True) == original
+        for request in client.requests
+    )
+    assert all(request.invocation.attempt_ref == ATTEMPT for request in client.requests)

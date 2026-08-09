@@ -14,6 +14,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from time import monotonic_ns
 from typing import Protocol
 
 from connectrpc.code import Code
@@ -34,6 +35,7 @@ _MAX_PAYLOAD_BYTES = 12 * 1024 * 1024
 _MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _MAX_TOOL_ARGUMENT_BYTES = 1024 * 1024
 _MAX_RECONNECTS = 3
+_NANOSECONDS_PER_MILLISECOND = 1_000_000
 _DOMAIN = b"kokoro.platform.model.stream-frame.v1"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _RETRYABLE_RPC_CODES = frozenset(
@@ -93,6 +95,13 @@ class ModelStreamOutcomeUnknown(ModelStreamError):
         super().__init__("MODEL_GATEWAY_OUTCOME_UNKNOWN")
         self.invocation_ref = invocation_ref
         self.attempt_ref = attempt_ref
+
+
+def _remaining_timeout_ms(deadline_ns: int) -> int:
+    remaining_ms = (deadline_ns - monotonic_ns()) // _NANOSECONDS_PER_MILLISECOND
+    if remaining_ms <= 0:
+        raise ModelStreamTransportError("DEADLINE_EXCEEDED")
+    return remaining_ms
 
 
 @dataclass(slots=True)
@@ -315,13 +324,15 @@ def iter_verified_model_stream(
 ) -> Iterator[ChatGenerationChunk]:
     verifier = ModelStreamVerifier(invocation.attempt_ref)
     reconnects = 0
+    deadline_ns = monotonic_ns() + timeout_ms * _NANOSECONDS_PER_MILLISECOND
+    remaining_timeout_ms = timeout_ms
     while not verifier.terminal:
         request = gateway_pb.StreamModelRequest(
             invocation=invocation,
             after_sequence=verifier.after_sequence,
         )
         try:
-            for frame in client.stream_model(request, timeout_ms=timeout_ms):
+            for frame in client.stream_model(request, timeout_ms=remaining_timeout_ms):
                 chunk = verifier.consume(frame)
                 if chunk is not None:
                     yield chunk
@@ -338,6 +349,7 @@ def iter_verified_model_stream(
             reconnects += 1
             if reconnects > _MAX_RECONNECTS:
                 raise ModelStreamTransportError(error.code.name) from None
+        remaining_timeout_ms = _remaining_timeout_ms(deadline_ns)
     verifier.finish()
 
 
@@ -349,13 +361,18 @@ async def aiter_verified_model_stream(
 ) -> AsyncIterator[ChatGenerationChunk]:
     verifier = ModelStreamVerifier(invocation.attempt_ref)
     reconnects = 0
+    deadline_ns = monotonic_ns() + timeout_ms * _NANOSECONDS_PER_MILLISECOND
+    remaining_timeout_ms = timeout_ms
     while not verifier.terminal:
         request = gateway_pb.StreamModelRequest(
             invocation=invocation,
             after_sequence=verifier.after_sequence,
         )
         try:
-            async for frame in client.stream_model(request, timeout_ms=timeout_ms):
+            async for frame in client.stream_model(
+                request,
+                timeout_ms=remaining_timeout_ms,
+            ):
                 chunk = verifier.consume(frame)
                 if chunk is not None:
                     yield chunk
@@ -372,6 +389,7 @@ async def aiter_verified_model_stream(
             reconnects += 1
             if reconnects > _MAX_RECONNECTS:
                 raise ModelStreamTransportError(error.code.name) from None
+        remaining_timeout_ms = _remaining_timeout_ms(deadline_ns)
     verifier.finish()
 
 

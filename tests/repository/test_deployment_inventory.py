@@ -217,6 +217,32 @@ def test_production_image_is_pinned_non_root_and_read_only_compatible() -> None:
         assert f"/app/.venv/bin/{entrypoint}" in runtime
 
 
+def test_builder_fetches_the_locked_git_dependency_without_shipping_git() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    build = dockerfile.split(" AS build\n", maxsplit=1)[1].split(
+        "FROM ${PYTHON_IMAGE} AS runtime\n", maxsplit=1
+    )[0]
+    runtime = dockerfile.split(" AS runtime\n", maxsplit=1)[1]
+
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        uv_sources = tomllib.load(handle)["tool"]["uv"]["sources"]
+    assert uv_sources["ag-ui-protocol"] == {
+        "git": "https://github.com/ag-ui-protocol/ag-ui",
+        "rev": "54f13419055b4d0f442c71e1efab18b310982ce1",
+        "subdirectory": "sdks/python",
+    }
+
+    git_install = "apt-get install -y --no-install-recommends git"
+    first_sync = "uv sync --frozen --no-dev --no-install-project"
+    assert "apt-get update" in build
+    assert git_install in build
+    assert "rm -rf /var/lib/apt/lists/*" in build
+    assert build.index(git_install) < build.index(first_sync)
+    assert "apt-get" not in runtime
+    assert "git" not in runtime
+    assert "COPY --from=build --chown=10001:10001 /app/.venv /app/.venv" in runtime
+
+
 def test_non_editable_wheel_declares_every_runtime_package_resource() -> None:
     with (ROOT / "pyproject.toml").open("rb") as handle:
         project = tomllib.load(handle)

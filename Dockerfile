@@ -5,6 +5,9 @@ WORKDIR /app
 
 # The build tool is pinned and never copied into the production stage. The first sync keeps
 # dependency layers stable; the second installs the project as a non-editable wheel-style package.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --no-cache-dir uv==0.9.4
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project

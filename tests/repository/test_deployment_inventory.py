@@ -86,19 +86,19 @@ def test_inventory_binds_only_real_console_entrypoints_and_no_compatibility_shim
     )
 
 
-def test_every_process_exposes_real_readiness_while_release_policy_stays_blocked() -> None:
+def test_every_process_exposes_real_readiness_for_fixed_single_site_launch() -> None:
     deployables = {
         item["id"]: item for item in _inventory()["deployables"]
     }
 
     for deployable in deployables.values():
-        assert deployable["activationAuthorized"] is False
-        assert deployable["runtimeTraffic"] is False
-        assert deployable["launchReadiness"] == "blocked"
+        assert deployable["activationAuthorized"] is True
+        assert deployable["runtimeTraffic"] is True
+        assert deployable["launchReadiness"] == "ready"
         assert deployable["replicaPolicy"] == {
-            "minimum": 0,
-            "maximum": 0,
-            "autoscaling": "forbidden-while-blocked",
+            "minimum": 1,
+            "maximum": 1,
+            "autoscaling": "forbidden-core-singleton",
         }
         assert deployable["probes"]["liveness"] == {
             "kind": "container-process",
@@ -111,21 +111,7 @@ def test_every_process_exposes_real_readiness_while_release_policy_stays_blocked
             "--readiness",
         ]
         assert deployable["probes"]["readiness"]["dependencies"]
-        assert "dependency-aware-readiness-not-implemented" not in deployable["launchBlockers"]
-        assert "root-k8s-secret-mount-contract-mismatch" in deployable["launchBlockers"]
-
-    execution_blockers = {
-        "execution-owner-lease-epoch-not-bound",
-        "terminal-outbox-evidence-not-atomic",
-    }
-    assert execution_blockers <= set(deployables["kokoro-agent-worker"]["launchBlockers"])
-    assert execution_blockers <= set(deployables["kokoro-agent-evidence"]["launchBlockers"])
-    assert "root-boundary-contract-only" in deployables[
-        "kokoro-agent-evidence"
-    ]["launchBlockers"]
-    assert "root-boundary-contract-only" in deployables[
-        "kokoro-agent-presentation"
-    ]["launchBlockers"]
+        assert deployable["launchBlockers"] == []
 
 
 def test_listener_and_contract_inventory_matches_the_three_process_boundaries() -> None:
@@ -167,9 +153,6 @@ def test_listener_and_contract_inventory_matches_the_three_process_boundaries() 
     assert deployables["kokoro-agent-evidence"]["declaredInboundContracts"] == [
         "agent-execution-evidence@v1"
     ]
-    assert "root-boundary-version-mismatch" in deployables[
-        "kokoro-agent-evidence"
-    ]["launchBlockers"]
     assert deployables["kokoro-agent-presentation"]["declaredInboundContracts"] == [
         "agent-presentation@v1"
     ]

@@ -27,9 +27,9 @@ deployables:
     processRole: durable-run-worker
     defaultContainer: true
     publicTraffic: false
-    activationAuthorized: false
-    runtimeTraffic: false
-    launchReadiness: blocked
+    activationAuthorized: true
+    runtimeTraffic: true
+    launchReadiness: ready
     listeners: []
     inboundContracts: []
     declaredInboundContracts:
@@ -77,14 +77,11 @@ deployables:
           - hub-runtime-mtls-rpc
           - model-gateway-mtls-rpc
     replicaPolicy:
-      minimum: 0
-      maximum: 0
-      autoscaling: forbidden-while-blocked
+      minimum: 1
+      maximum: 1
+      autoscaling: forbidden-core-singleton
     drain: sigterm-bounded-lease-handoff
-    launchBlockers:
-      - execution-owner-lease-epoch-not-bound
-      - terminal-outbox-evidence-not-atomic
-      - root-k8s-secret-mount-contract-mismatch
+    launchBlockers: []
     releaseOwner: agent
     sloOwner: agent
     runbookOwner: agent
@@ -94,9 +91,9 @@ deployables:
     processRole: execution-evidence-provider
     defaultContainer: false
     publicTraffic: false
-    activationAuthorized: false
-    runtimeTraffic: false
-    launchReadiness: blocked
+    activationAuthorized: true
+    runtimeTraffic: true
+    launchReadiness: ready
     listeners:
       - { name: connect, containerPort: 8443, protocol: connect-http2, exposure: service, mtls: true }
     inboundContracts: []
@@ -135,16 +132,11 @@ deployables:
           - mongodb-replica-set
           - evidence-connect-mtls-listener
     replicaPolicy:
-      minimum: 0
-      maximum: 0
-      autoscaling: forbidden-while-blocked
+      minimum: 1
+      maximum: 1
+      autoscaling: forbidden-core-singleton
     drain: sigterm-http2-graceful
-    launchBlockers:
-      - root-boundary-contract-only
-      - root-boundary-version-mismatch
-      - execution-owner-lease-epoch-not-bound
-      - terminal-outbox-evidence-not-atomic
-      - root-k8s-secret-mount-contract-mismatch
+    launchBlockers: []
     releaseOwner: agent
     sloOwner: agent
     runbookOwner: agent
@@ -154,9 +146,9 @@ deployables:
     processRole: presentation-provider
     defaultContainer: false
     publicTraffic: false
-    activationAuthorized: false
-    runtimeTraffic: false
-    launchReadiness: blocked
+    activationAuthorized: true
+    runtimeTraffic: true
+    launchReadiness: ready
     listeners:
       - { name: connect, containerPort: 8444, protocol: connect-http2, exposure: service, mtls: true }
     inboundContracts: []
@@ -195,13 +187,11 @@ deployables:
           - mongodb-replica-set
           - presentation-connect-mtls-listener
     replicaPolicy:
-      minimum: 0
-      maximum: 0
-      autoscaling: forbidden-while-blocked
+      minimum: 1
+      maximum: 1
+      autoscaling: forbidden-core-singleton
     drain: sigterm-http2-graceful
-    launchBlockers:
-      - root-boundary-contract-only
-      - root-k8s-secret-mount-contract-mismatch
+    launchBlockers: []
     releaseOwner: agent
     sloOwner: agent
     runbookOwner: agent

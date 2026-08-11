@@ -77,16 +77,13 @@ Add runtime behavior through existing public packages and narrow protocols. Neve
 
 GA core semantics are frozen for the current Platform/Web/Session program. Graph, checkpoint, terminal, control, and handoff changes require prior user alignment.
 
-All three inventory entries are currently `activationAuthorized: false`, `runtimeTraffic: false`,
-`launchReadiness: blocked`. Worker and Evidence remain blocked on a monotonic execution-owner lease
-epoch plus the terminal/outbox/evidence proof gate. Dependency-aware readiness itself is available:
-Worker proves Mongo transactions, Redis consumer primitives, and exact authenticated Hub/Model RPC
-paths concurrently; Evidence and Presentation prove Mongo plus their real authenticated listener.
-Root K8s Secret/readiness-client material remains a separate launch blocker until its manifest is
-synchronized.
-Presentation and the current Evidence V2 boundary also remain `contract-only` in the Root registry;
-the Evidence process still serves V1 and is explicitly blocked on that version mismatch. An image
-build or a live PID is not activation evidence and must not alter those flags.
+All three inventory entries are authorized for the fixed single-Site core profile with
+`activationAuthorized: true`, `runtimeTraffic: true`, `launchReadiness: ready`, one fixed replica and
+no autoscaling. Root's V1 contracts, transaction/fence evidence and Compose runtime materials close
+the former launch blockers. Dependency-aware readiness remains mandatory: Worker proves Mongo
+transactions, Redis consumer primitives, and exact authenticated Hub/Model RPC paths concurrently;
+Evidence and Presentation prove Mongo plus their real authenticated listener. This scope-specific
+authorization does not claim multi-replica, Kubernetes, autoscaling or whole-platform readiness.
 
 Interaction Protocol V2 is a dormant foundation, not an active Agent mode. Agent derives only the four Agent-owned
 application-request, interaction-owner, projection-event, and group-projection identities. Session-owned decision and
@@ -98,9 +95,8 @@ The official Python AG-UI SDK is pinned to `ag-ui-protocol==0.1.19` at Root's ex
 `kokoro_agent.presentation` converts real `RunEmitter` owner facts directly into frozen Root R1
 `PresentationSubmission` values and commits canonical envelopes to the append-only Mongo delivery log
 before raw live publication. `kokoro-agent-presentation` exposes persisted `DeliveryRecord` values
-through the generated mTLS Connect service. This implemented provider does not make the Root
-`contract-only` boundary active; inventory activation stays blocked until the boundary lifecycle and
-Root deployment wiring close.
+through the generated mTLS Connect service; the Root fixed-core composition pins and wires this V1
+boundary together with the Evidence V1 provider.
 
 ## Verification
 

@@ -76,23 +76,23 @@ GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ow
 `kokoro-agent-presentation`；不存在兼容 CLI、历史 shim 或隐式第四进程。Root release orchestrator
 读取该库存作为 policy input，Agent 运行时本身不读取也不修改 activation 字段。
 
-当前三个进程均为 `activationAuthorized: false`、`runtimeTraffic: false`、
-`launchReadiness: blocked`、零副本。Presentation 与当前 Evidence V2 Root boundary 仍为
-`contract-only`，而 Evidence 入口仍实际提供 V1，另有明确版本错配；Worker/Evidence 还受
-execution-owner lease epoch 与 terminal/outbox/evidence 原子性约束。三个现有 entrypoint 都提供
+固定单 Site 的首版 core profile 已将三个进程设为 `activationAuthorized: true`、
+`runtimeTraffic: true`、`launchReadiness: ready`，各固定一个副本且禁止自动扩缩容。Root 的 V1
+契约、事务/fence 证据和 Compose 运行材料已闭合此前的 launch blocker，因此库存中的
+`launchBlockers` 为空。三个现有 entrypoint 都提供
 `--readiness` exec：Worker 并发验证 Mongo replica-set transaction R/W、Redis Streams consumer
 能力、Hub 与 Model Gateway 的精确 mTLS ConnectRPC；Evidence/Presentation 并发验证 Mongo 与
 各自真实 mTLS listener。失败只报告依赖名并非零退出，恢复后转绿；进程存活仍只属于 liveness。
 镜像保留 `HEALTHCHECK NONE`，因为通用 TCP/PID 探针会混淆三个角色的依赖面。
 
-Root K8s 尚需把 Secret AtomicWriter 挂载、只读权限和 readiness client 材料同步到该命令契约；
-库存因此保留 `root-k8s-secret-mount-contract-mismatch`，在 Root 实证闭合前不放副本。
+该授权只描述 Root 固定单机、单 Site 的 core 装配，不代表多副本、自动扩缩容、Kubernetes 或整个平台
+已达到生产就绪；这些能力需要独立的发布证据和库存变更。
 
 生产 Dockerfile 使用 pinned Python base digest 和 build-only pinned uv，将 non-editable package
 复制进无 uv/pip/cache 的 runtime stage，以 `10001:10001` 运行并支持只读根文件系统；仅 `/tmp`
 允许由编排器挂 tmpfs。库存同时要求禁止提权、drop `ALL` capabilities、RuntimeDefault seccomp 与
 禁用 service-account token。默认入口是 `kokoro-agent-worker`，另两个进程只允许通过库存里的精确
-command 覆盖。库存解除阻断并获得跨仓发布证据前，构建成功不构成 activation 授权。
+command 覆盖。镜像构建成功本身仍不替代 Root 对 exact pin、运行材料和真实业务旅程的发布验证。
 
 ## 能力面（全部经 单测 → 跨栈 e2e → 真模型 验证）
 

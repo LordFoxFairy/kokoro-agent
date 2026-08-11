@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kokoro.internal/schemas/agent-deployables-v1.schema.json",
   "title": "Kokoro Agent production deployable inventory",
-  "description": "Closed child-owned release policy input. It inventories only real console entrypoints and keeps every current process fail-closed until its listed launch blockers are removed.",
+  "description": "Closed child-owned release policy input for the fixed single-Site core profile. It inventories only real console entrypoints and authorizes exactly one non-autoscaled instance of each process.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "image", "releasePolicyContract", "deployables"],
@@ -74,9 +74,9 @@
       "additionalProperties": false,
       "required": ["minimum", "maximum", "autoscaling"],
       "properties": {
-        "minimum": { "const": 0 },
-        "maximum": { "const": 0 },
-        "autoscaling": { "const": "forbidden-while-blocked" }
+        "minimum": { "const": 1 },
+        "maximum": { "const": 1 },
+        "autoscaling": { "const": "forbidden-core-singleton" }
       }
     },
     "deployable": {
@@ -112,9 +112,9 @@
         "processRole": { "$ref": "#/$defs/identifier" },
         "defaultContainer": { "type": "boolean" },
         "publicTraffic": { "const": false },
-        "activationAuthorized": { "const": false },
-        "runtimeTraffic": { "const": false },
-        "launchReadiness": { "const": "blocked" },
+        "activationAuthorized": { "const": true },
+        "runtimeTraffic": { "const": true },
+        "launchReadiness": { "const": "ready" },
         "listeners": {
           "type": "array",
           "items": { "$ref": "#/$defs/listener" },
@@ -131,7 +131,7 @@
         "drain": { "$ref": "#/$defs/identifier" },
         "launchBlockers": {
           "type": "array",
-          "minItems": 1,
+          "maxItems": 0,
           "items": { "$ref": "#/$defs/identifier" },
           "uniqueItems": true
         },

@@ -2,7 +2,7 @@
   "contractRevision": "kokoro.generated-artifact-provenance.v1",
   "boundaryId": "generated-kokoro-agent@v1",
   "consumerRepository": "kokoro-agent",
-  "sourceRootCommit": "52cb57431b945f4058c3dba095112503290760c4",
+  "sourceRootCommit": "f88209d7b504150f9da23e2c95c3043017a30513",
   "sourceFiles": [
     {
       "path": "contract/buf.lock",
@@ -54,7 +54,7 @@
     },
     {
       "path": "contract/generate.py",
-      "sha256": "sha256:abbfe5069edeba6a1bf58b25db894caf630c61b997d31e739a1d22aeb3e81e4a"
+      "sha256": "sha256:a2f847c41c9e6e6ffc984cd96722525c7c184222fdbeab4beffad28d840d89da"
     },
     {
       "path": "contract/lib/committed-worktree.mjs",
@@ -753,5 +753,5 @@
       "sha256": "sha256:56b10698342e86785bafa4a196fa44f68b2f8ed145ffe5754a6549af14fdadd3"
     }
   ],
-  "manifestDigest": "sha256:5007c421714b546334b8c016f1db183682d8a28efc6c0841e6ea09a1cb3fac48"
+  "manifestDigest": "sha256:3a5f097c01e43ae08594d313ebc6da6d8627716a3558f93dcd94907d550cbf47"
 }

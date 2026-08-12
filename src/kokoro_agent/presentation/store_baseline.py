@@ -7,7 +7,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, TypedDict
 
+from pymongo import ReadPreference
+from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.errors import PyMongoError
+from pymongo.read_concern import ReadConcern
+from pymongo.write_concern import WriteConcern
 from pydantic import TypeAdapter
 
 PRESENTATION_STORE_BASELINE_REVISION: Final = (
@@ -281,30 +286,6 @@ if _COMPUTED_BASELINE_DIGEST != PRESENTATION_STORE_BASELINE_DIGEST:
     raise RuntimeError("PRESENTATION_STORE_BASELINE_REBASELINE_REQUIRED")
 
 
-async def _create_baseline(database: AsyncDatabase[dict[str, object]]) -> None:
-    created: list[str] = []
-    try:
-        for spec in _COLLECTION_SPECS:
-            name = str(spec["name"])
-            collection = await database.create_collection(
-                name,
-                validator=spec["validator"],
-                validationLevel="strict",
-                validationAction="error",
-            )
-            created.append(name)
-            for index in spec["indexes"]:
-                await collection.create_index(
-                    list(index["keys"]),
-                    name=index["name"],
-                    unique=index["unique"],
-                )
-    except Exception:
-        for name in reversed(created):
-            await database[name].drop()
-        raise
-
-
 async def _collection_options(
     database: AsyncDatabase[dict[str, object]], name: str
 ) -> dict[str, Any]:
@@ -320,6 +301,37 @@ async def _collection_options(
     if not isinstance(options, dict):
         raise PresentationStoreBaselineError("PRESENTATION_STORE_VALIDATOR_DRIFT")
     return _OPTIONS_ADAPTER.validate_python(options)
+
+
+async def _create_baseline_transactionally(
+    database: AsyncDatabase[dict[str, object]],
+) -> None:
+    async with database.client.start_session() as session:
+
+        async def create(active: AsyncClientSession) -> None:
+            for spec in _COLLECTION_SPECS:
+                collection = await database.create_collection(
+                    str(spec["name"]),
+                    validator=spec["validator"],
+                    validationLevel="strict",
+                    validationAction="error",
+                    check_exists=False,
+                    session=active,
+                )
+                for index in spec["indexes"]:
+                    await collection.create_index(
+                        list(index["keys"]),
+                        name=index["name"],
+                        unique=index["unique"],
+                        session=active,
+                    )
+
+        await session.with_transaction(
+            create,
+            read_concern=ReadConcern("local"),
+            write_concern=WriteConcern("majority"),
+            read_preference=ReadPreference.PRIMARY,
+        )
 
 
 async def _verify_baseline(database: AsyncDatabase[dict[str, object]]) -> None:
@@ -361,20 +373,37 @@ async def _verify_baseline(database: AsyncDatabase[dict[str, object]]) -> None:
             )
 
 
+def _reject_retired_collections(names: set[str]) -> None:
+    retired = names.intersection(PRESENTATION_RETIRED_COLLECTIONS)
+    if retired:
+        raise PresentationStoreBaselineError(
+            "PRESENTATION_STORE_RETIRED_COLLECTION_PRESENT:"
+            + ",".join(sorted(retired))
+        )
+
+
 async def ensure_presentation_store_baseline(
     database: AsyncDatabase[dict[str, object]],
 ) -> None:
     """Create an empty exact baseline or verify an existing one exactly."""
 
     names = set(await database.list_collection_names())
-    retired = names.intersection(PRESENTATION_RETIRED_COLLECTIONS)
-    if retired:
-        raise PresentationStoreBaselineError(
-            "PRESENTATION_STORE_RETIRED_COLLECTION_PRESENT:" + ",".join(sorted(retired))
-        )
+    _reject_retired_collections(names)
     present = names.intersection(PRESENTATION_COLLECTIONS)
     if not present:
-        await _create_baseline(database)
+        try:
+            await _create_baseline_transactionally(database)
+        except PyMongoError:
+            # A concurrent first-start transaction may have committed the exact
+            # baseline. Only that complete verified state is accepted.
+            names = set(await database.list_collection_names())
+            _reject_retired_collections(names)
+            if names.intersection(PRESENTATION_COLLECTIONS) != set(
+                PRESENTATION_COLLECTIONS
+            ):
+                raise
+        _reject_retired_collections(set(await database.list_collection_names()))
+        await _verify_baseline(database)
         return
     if present != set(PRESENTATION_COLLECTIONS):
         raise PresentationStoreBaselineError("PRESENTATION_STORE_MIXED_BASELINE")

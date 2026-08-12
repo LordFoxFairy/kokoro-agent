@@ -47,10 +47,12 @@ The unpublished baseline uses only these five collections:
 - `agent_presentation_admission_command_receipt`.
 
 `store_baseline.py` freezes one revision and digest over the exact JSON validators and the three
-query/uniqueness indexes that delivery actually needs. Startup creates that baseline only for an
-empty Presentation store; otherwise it rejects retired collections, mixed baselines, validator
-drift, and missing or extra indexes. There is no old-name read, dual write, alias, migration, or
-automatic reinterpretation path.
+query/uniqueness indexes that delivery actually needs. Startup creates all five collections and
+their indexes atomically in one Mongo transaction only for an empty Presentation store; concurrent
+first-start initializers accept only a fully committed baseline that passes the same exact
+verification. Otherwise startup rejects retired collections, mixed baselines, validator drift, and
+missing or extra indexes. There is no old-name read, dual write, alias, migration, or automatic
+reinterpretation path.
 
 `DeliveryService` preserves frozen-head paging,
 producer generation fencing, contiguous ACK, first-gap quarantine, replay identity, delivery-chain

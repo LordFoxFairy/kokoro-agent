@@ -26,7 +26,7 @@ from kokoro_agent.tools.web_search import (
 class ProcessToolbox:
     """worker 启动构建一次，逐请求出恒挂底座。"""
 
-    # 进程配置态工具（当前=联网工具 web_search/web_fetch；web=互联网，非 kokoro-web）。
+    # 进程配置态工具（当前=联网工具 web_search/web_fetch；Web 仅是互联网能力名）。
     configured: tuple[BaseTool, ...]
 
     def tools_for(self, namespace: str) -> tuple[BaseTool, ...]:

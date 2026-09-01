@@ -1,7 +1,6 @@
-"""共享真后端 fixture：redis 传输 + mongo checkpoint/ledger/store。
+"""共享真后端 fixture：Redis 传输 + PostgreSQL durable state。
 
-存储收敛后无内存假件——测试直连真服务（docker 起 redis+mongo）。服务缺失即
-fail-loud（不 skip、不灌绿数）。每 fixture 用唯一 db/collection 隔离，串行安全。
+阶段1不再使用 Mongo/MySQL 运行时依赖；测试直连真服务，缺失即 fail-loud。
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from collections.abc import AsyncGenerator
 import pytest
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
-from pymongo import AsyncMongoClient
 
 from kokoro_agent.storage.checkpoints import CheckpointSettings, make_checkpointer
 from kokoro_agent.storage.ledger import (
@@ -23,35 +21,49 @@ from kokoro_agent.storage.ledger import (
     make_ledger,
 )
 from kokoro_agent.storage.memory_store import make_memory_store
+from kokoro_agent.storage.postgres import connect_pg
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 from kokoro_agent.streams.redis import RedisStream
 
 REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
-MONGO_URL = os.environ.get("KOKORO_MONGO_URL", "mongodb://127.0.0.1:27017")
+DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "postgresql://127.0.0.1/postgres")
+
+_INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "ledger"})
 
 
-def _unique_db() -> str:
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Derive coarse gates from directories and mixed-test gates from service fixtures."""
+    integration = pytest.mark.integration
+    e2e = pytest.mark.e2e
+    for item in items:
+        path = item.path.as_posix()
+        if "/tests/e2e/" in path:
+            item.add_marker(e2e)
+            continue
+        if "/tests/integration/" in path:
+            item.add_marker(integration)
+            continue
+        fixture_names = item.fixturenames if isinstance(item, pytest.Function) else ()
+        if _INTEGRATION_FIXTURES.intersection(fixture_names):
+            item.add_marker(integration)
+
+
+def _unique_schema() -> str:
     return f"kokoro_test_{uuid.uuid4().hex}"
 
 
-async def require_mongo() -> None:
-    """真 mongo 前置：不可达即 fail-loud（RuntimeError），绝不 skip。"""
-    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(
-        MONGO_URL, serverSelectionTimeoutMS=1000
-    )
-    try:
-        await client.admin.command("ping")
-    except Exception as exc:  # noqa: BLE001 — 服务缺失显式炸，不静默 skip
-        raise RuntimeError(f"mongo required but unreachable at {MONGO_URL}: {exc}") from exc
-    finally:
-        await client.close()
+async def require_postgres() -> None:
+    """真 PostgreSQL 前置：不可达即 fail-loud（RuntimeError），绝不 skip."""
+    async with connect_pg(DATABASE_URL) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT 1")
 
 
 async def require_redis() -> None:
-    """真 redis 前置：不可达即 fail-loud（RuntimeError），绝不 skip。"""
+    """真 Redis 前置：不可达即 fail-loud（RuntimeError），绝不 skip。"""
     port = RedisStream(REDIS_URL, block_ms=100)
     try:
-        await port.read_all("kokoro-test-ping")  # 公开 API 探活
+        await port.read_all("kokoro-test-ping")
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"redis required but unreachable at {REDIS_URL}: {exc}") from exc
     finally:
@@ -60,7 +72,7 @@ async def require_redis() -> None:
 
 @pytest.fixture
 async def stream() -> AsyncGenerator[RedisStream, None]:
-    """真 redis 传输；测试用唯一 session/stream 名自隔离。"""
+    """真 Redis 传输；测试用唯一 session/stream 名自隔离。"""
     await require_redis()
     port = make_stream(StreamSettings(redis_url=REDIS_URL))
     assert isinstance(port, RedisStream)
@@ -72,28 +84,30 @@ async def stream() -> AsyncGenerator[RedisStream, None]:
 
 @pytest.fixture
 async def checkpointer() -> AsyncGenerator[BaseCheckpointSaver[str], None]:
-    """真 mongo checkpointer；唯一 db 隔离。"""
-    await require_mongo()
-    settings = CheckpointSettings(mongo_url=MONGO_URL, mongo_db=_unique_db())
+    """真 PostgreSQL checkpointer；唯一 schema 隔离。"""
+    await require_postgres()
+    settings = CheckpointSettings(database_url=DATABASE_URL, schema_name=_unique_schema())
     async with make_checkpointer(settings) as saver:
         yield saver
 
 
 @pytest.fixture
 async def memory_store() -> AsyncGenerator[BaseStore, None]:
-    """真 mongo 长期记忆 store；唯一 db 隔离。"""
-    await require_mongo()
-    settings = CheckpointSettings(mongo_url=MONGO_URL, mongo_db=_unique_db())
+    """真 PostgreSQL 长期记忆 store；唯一 schema 隔离。"""
+    await require_postgres()
+    settings = CheckpointSettings(database_url=DATABASE_URL, schema_name=_unique_schema())
     async with make_memory_store(settings) as store:
         yield store
 
 
 @pytest.fixture
 async def ledger() -> AsyncGenerator[RunLedger, None]:
-    """真 mongo ledger；唯一 db 隔离。"""
-    await require_mongo()
+    """真 PostgreSQL ledger；唯一 schema 隔离。"""
+    await require_postgres()
     settings = LedgerSettings(
-        mongo_url=MONGO_URL, mongo_db=_unique_db(), lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000
+        database_url=DATABASE_URL,
+        schema_name=_unique_schema(),
+        lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
     )
     async with make_ledger(settings) as run_ledger:
         yield run_ledger

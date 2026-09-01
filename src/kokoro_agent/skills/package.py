@@ -1,4 +1,4 @@
-"""skills 资产库（Skills V2）：启动快照整包装载，供给期物化进 run 的 backend。
+"""Skill 包格式：本地 fixture 写入时校验，运行时由只读 backend 提供。
 
 规范对齐 Anthropic agent skills（deepagents 原生 SkillsMiddleware 消费）：
 每 skill 一目录，SKILL.md 必须带 YAML frontmatter（name 与目录同名、description
@@ -14,7 +14,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 
-class SkillAssetError(Exception):
+class SkillPackageError(Exception):
     pass
 
 
@@ -33,18 +33,18 @@ _FRONTMATTER_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, obj
 def parse_frontmatter(name: str, skill_md: str) -> SkillFrontmatter:
     """装载期校验（fail-loud）：--- 包裹的 YAML 头、name 与目录同名、description 非空。"""
     if not skill_md.startswith("---"):
-        raise SkillAssetError(f"skill {name!r}: SKILL.md missing YAML frontmatter (--- block)")
+        raise SkillPackageError(f"skill {name!r}: SKILL.md missing YAML frontmatter (--- block)")
     parts = skill_md.split("---", 2)
     if len(parts) < 3:
-        raise SkillAssetError(f"skill {name!r}: unterminated frontmatter block")
+        raise SkillPackageError(f"skill {name!r}: unterminated frontmatter block")
     raw = yaml.safe_load(parts[1])
     if not isinstance(raw, Mapping):
-        raise SkillAssetError(f"skill {name!r}: frontmatter is not a mapping")
+        raise SkillPackageError(f"skill {name!r}: frontmatter is not a mapping")
     meta = SkillFrontmatter.model_validate(_FRONTMATTER_ADAPTER.validate_python(raw))
     if meta.name != name:
-        raise SkillAssetError(
+        raise SkillPackageError(
             f"skill {name!r}: frontmatter name {meta.name!r} must match directory name"
         )
     if meta.description.strip() == "":
-        raise SkillAssetError(f"skill {name!r}: frontmatter description must be non-empty")
+        raise SkillPackageError(f"skill {name!r}: frontmatter description must be non-empty")
     return meta

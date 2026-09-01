@@ -1,5 +1,5 @@
 # kokoro-agent 生产镜像（Python 3.11 + uv）。worker 进程（kokoro-agent-worker），非 HTTP 服务。
-# 依赖：redis / mongo / litellm（KOKORO_LITELLM_BASE_URL）；env 运行时注入。
+# 依赖：redis / postgresql / litellm（KOKORO_LITELLM_BASE_URL）；env 运行时注入。
 FROM python:3.11-slim
 WORKDIR /app
 

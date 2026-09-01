@@ -1,4 +1,4 @@
-"""workspace S3 归档（ADR-009）：写入口增量上传 + execute/upload 后全量兜底，失败可见不阻塞。"""
+"""GA workspace S3-compatible persistence; unrelated to Storage Artifacts/Skill bytes."""
 
 from __future__ import annotations
 
@@ -38,37 +38,23 @@ class S3Workspace(BaseModel):
     force_path_style: bool = True
 
 
-# 存储位形（local/s3）为通用形状：workspace 归档、skills hub 包体、deliveries 冻结件共用。
-StoreLocation = LocalWorkspace | S3Workspace
-
-
-class StorageFile(BaseModel):
-    """ADR-009 存储配置文件（session/agent 双侧读同一 yaml）：按域分节。"""
+class WorkspaceFile(BaseModel):
+    """GA workspace persistence config; external Storage is a separate client."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     workspace: LocalWorkspace | S3Workspace
-    # skills hub 包体权威源（内容寻址 zip）；缺省=hub 不可用（seed 时 fail-loud 提示配置）。
-    hub: LocalWorkspace | S3Workspace | None = None
-    # 交付成果冻结件（content-hash keyed，不可变写）；块D 消费，schema 此处一并定死。
-    deliveries: LocalWorkspace | S3Workspace | None = None
 
 
-_STORAGE_ADAPTER: TypeAdapter[StorageFile] = TypeAdapter(StorageFile)
-
-
-def load_storage_file(path: str | None) -> StorageFile | None:
-    """缺省 None = local 默认档（无归档/无 hub 包体/无 deliveries）。"""
-    if path is None or path == "":
-        return None
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    return _STORAGE_ADAPTER.validate_python(raw)
+_WORKSPACE_ADAPTER: TypeAdapter[WorkspaceFile] = TypeAdapter(WorkspaceFile)
 
 
 def load_workspace_config(path: str | None) -> LocalWorkspace | S3Workspace | None:
-    """既有调用面：只取 workspace 节。"""
-    storage = load_storage_file(path)
-    return None if storage is None else storage.workspace
+    """Load only GA's workspace section; Skill packages and Artifacts use public clients."""
+    if path is None or path == "":
+        return None
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    return _WORKSPACE_ADAPTER.validate_python(raw).workspace
 
 
 class S3Archiver:

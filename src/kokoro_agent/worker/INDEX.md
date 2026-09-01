@@ -1,5 +1,8 @@
 # worker — 进程入口与长驻调度
 
+worker 只负责传输、Run 生命周期和共享服务装配。Skill/MCP/Storage 的 owner 通过 public contract
+提供，worker 只注入已解析的 reader/client，不执行外部域的 CRUD 或初始化写入。
+
 ## 职责
 
 kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervisor 长驻消费请求流。
@@ -7,13 +10,19 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 
 ## 公开 API
 
-- `main.py`：`main()` 进程入口（`AppConfig.from_env` 单点读 env → make_stream/checkpointer/
-  ledger/memory_store/skill_hub → `seed_official` → `AssembleDeps` → `RunSupervisor.serve`）。
+- `main.py`：`main()` 标准进程入口；`serve(config, clients)` 是部署装配入口。`AppConfig.from_env`
+  单点读 env → 创建 GA 自有 Redis stream + PostgreSQL checkpointer/ledger/memory/chat → 注入可选 public clients →
+  `AgentFactory` → `RunSupervisor.serve`。标准 CLI 的 owner clients 为空能力，不直读外部私库。
   SIGTERM 优雅停机：停消费新请求，`drain` 限时等活跃 run 收尾，超时交 TTL 租约重拾。
+- `services.py`：`WorkerClients` 是部署期可选 owner-client 集；`WorkerServices` 集中保存 worker
+  warm 时创建一次的模型、checkpoint、ledger、store、sandbox 和窄 clients。两者都不是 caller
+  input、Service Locator 或 Feature 配方。`WorkerClients.delivery` 是可选 Storage Artifact
+  facade；缺席时只不装配 deliver tool。
 - `supervisor.py`：`RunSupervisor`（注入式装配；RunLedger 持有去重/租约/原 request/终态认领
   四类真相）。
   - `serve(bus)`：consumer group 消费 REQUESTS_STREAM；RunRequest 走 CAS claim→durable claim
-    后 ACK（R1）；启动即跑 `_republish_outbox`（R4 critical outbox queued 行按 seq 序幂等补发）与
+    后 ACK（R1）；用户消息 durable 写入先于 dispatch claim；启动即跑
+    `_republish_outbox`（R4 critical outbox queued 行按 seq 序幂等补发）与
     `_reapply_pending_control`（R2 control inbox 续办）。per-message 隔离，单条失败收口 run.failed。
   - `dispatch(bus, msg)`：RunRequest→认领起跑 / RunResume→帧对齐续跑 / RunSteer→信箱入账
     （keep-first；注入由 SteeringMiddleware 下一模型轮消费）/ RunCancel→原子认领终态补发 cancelled。
@@ -27,10 +36,10 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 ## 关键协作者
 
 - 下游依赖：`execution/`（invoke_once/RunEmitter/approvals 全套）、`storage/ledger`（RunLedger）、
-  `streams/`（StreamProtocol）、`agents/`（assemble 配方）、`skills/hub`、`sandbox/`、
+  `streams/`（StreamProtocol）、`features/` + `agent_factory.py`（Feature 装配）、`skills/`、`sandbox/`、
   `mcp/config`、`contract`。
-- 上游：kokoro-session 经 redis streams 投递 RunRequest（REQUESTS_STREAM）与 per-run
-  control 流（resume/cancel/steer）。
+- 上游：kokoro-bff 内部 Chat 模块经 Redis Streams 投递 RunRequest（REQUESTS_STREAM）与
+  per-run control 流（resume/cancel/steer）。
 - `metrics`（OBS-1）：claim 胜负/inbox 相位/outbox 相位/租约 gauge 埋点（fail-open，只观测）；
   `main` 在 `KOKORO_AGENT_METRICS_PORT` 配置时起 prometheus_client 端点（缺省关）。
 
@@ -42,7 +51,8 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
   任务（监听可能是当前任务），删流后 NOGROUP 属干净收束。
 - Semaphore（默认 8）仅限活跃 invoke：暂停态不持有额度，resume 重新竞争。
 - 终态统一漏斗 `_teardown_control`：沙箱回收 → 事件流 TTL → 删 control 流 → 收监听。
-- emitter 缓存 per-run；miss 时 `RunEmitter.attach` 从流重建 index 续接（幂等链不碰撞）。
+- emitter 缓存 per-run；miss 时 `RunEmitter.attach` 同时读取 Redis live history 与 durable
+  `chat_events.source_index`，Redis 被清空后仍不会回卷 GA event identity。
 
 ## 扩展规则
 

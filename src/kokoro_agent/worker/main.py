@@ -1,10 +1,9 @@
-"""进程入口（纯调度域装配）：env 一次解析 → 共享件 → 编排配方注入 Supervisor.serve。"""
+"""进程入口（纯调度域装配）：env 一次解析 → 共享服务 → 注入 Supervisor.serve。"""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-import functools
 import logging
 import os
 import signal
@@ -16,30 +15,21 @@ from kokoro_agent.config import AppConfig, log_config_summary
 from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
-from kokoro_agent.agents import AssembleDeps, approval_names, assemble
-from kokoro_agent.contract import Backend
+from kokoro_agent.agent_factory import AgentFactory
+from kokoro_agent.worker.services import WorkerClients, WorkerServices
+from kokoro_agent.policy import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
-from kokoro_agent.sandbox.archive import LocalWorkspace, load_storage_file
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.storage.checkpoints import make_checkpointer
 from kokoro_agent.storage.memory_store import make_memory_store
 from kokoro_agent.storage.ledger import make_ledger
 from kokoro_agent.streams.factory import make_stream
-from kokoro_agent.content_source import make_asset_source
-from kokoro_agent.prompts import PromptLibrary
 from kokoro_agent.mcp.config import load_mcp_servers
-from kokoro_agent.mcp.registry import McpRegistrySettings, make_mcp_registry
-from kokoro_agent.skills.hub import (
-    PackageStore,
-    S3Credentials,
-    SkillHubSettings,
-    make_package_store,
-    make_skill_hub,
-    seed_official,
-)
-from kokoro_agent.subagents import build_catalog
+from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
+from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
+from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
 
 LOGGER = logging.getLogger(__name__)
 
@@ -65,96 +55,68 @@ def _sandbox_teardown(config: AppConfig) -> "Callable[[Backend, str | None], Awa
     return teardown
 
 
-def skill_hub_settings(config: AppConfig) -> SkillHubSettings:
-    """hub 存储位形取 ADR-009 文件 hub 节；缺省=local ./kokoro_hub（dev 零配置可跑）。
-    s3 凭据复用 workspace 对（同一对象存储集群，env-only）。"""
-    storage = load_storage_file(config.workspace_config)
-    packages = (
-        storage.hub
-        if storage is not None and storage.hub is not None
-        else LocalWorkspace(type="local", root="./kokoro_hub")
-    )
-    return SkillHubSettings(
-        mongo_url=config.ledger.mongo_url,
-        mongo_db=config.ledger.mongo_db,
-        packages=packages,
-        s3_access_key=config.workspace_s3_access_key,
-        s3_secret_key=config.workspace_s3_secret_key,
-    )
-
-
-def deliveries_store(config: AppConfig) -> PackageStore | None:
-    """交付冻结件存储位形取 ADR-009 文件 deliveries 节；缺省=None（deliver 工具降级不炸）。
-    s3 凭据复用 workspace 对（同集群，env-only，同 skill_hub_settings 做法）。"""
-    storage = load_storage_file(config.workspace_config)
-    location = storage.deliveries if storage is not None else None
-    if location is None:
-        return None
-    credentials = (
-        S3Credentials(
-            access_key=config.workspace_s3_access_key,
-            secret_key=config.workspace_s3_secret_key,
-        )
-        if config.workspace_s3_access_key is not None
-        and config.workspace_s3_secret_key is not None
-        else None
-    )
-    return make_package_store(location, credentials)
-
-
 def _consumer_name() -> str:
-    # consumer-group 内的成员身份：主机+pid 保多 pod/多进程不撞名。
+    # consumer-group 内的子代理身份：主机+pid 保多 pod/多进程不撞名。
     return f"{socket.gethostname()}-{os.getpid()}"
 
 
-async def _serve(config: AppConfig) -> None:
+async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None:
+    """Run one worker with deployment-selected public clients.
+
+    The standard CLI supplies none. Embedded deployments may inject Capability/Storage
+    adapters here without changing Agent, Feature or Run request APIs.
+    """
+    owner_clients = clients or WorkerClients()
+    # egress is a worker-wide connection policy. Configure it from the already
+    # validated AppConfig snapshot; the MCP connection layer never reads env.
+    configure_egress_mode(
+        egress_mode_from_env({"KOKORO_MCP_EGRESS_MODE": config.mcp_egress_mode})
+    )
     # OBS-1 metrics 端点（缺省关）：显式配置端口才起，绝不阻断 worker 主职。
     if config.metrics_port is not None:
         start_metrics_server(config.metrics_port)
     bus = make_stream(config.stream)
-    catalog = build_catalog(config.custom_subagents_json, config.enabled_builtin_subagents)
-    # 启动装载部署资产（local/s3 同口）：prompts 进内存（部署级人格）；skills 目录只是
-    # seed 输入——真源是 Mongo（多租户），启动 upsert 幂等同步（hash 未变不写）。
-    asset_source = make_asset_source(config.assets)
-    raw_skills = asset_source.load_skills()
-    prompts = PromptLibrary(asset_source.load_personas())
-    # 进程级共享 checkpointer + run 状态存储：mongo 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
+    subagent_catalog = build_subagent_catalog(
+        config.custom_subagents_json, config.enabled_builtin_subagents
+    )
+    # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
         make_ledger(config.ledger) as store,
         make_memory_store(config.checkpoint) as memory_store,
-        make_skill_hub(skill_hub_settings(config)) as skill_hub,
-        # MCP Mongo 注册表读路（hub 同库）：env 在此显式注入（进程环境只在本模块读取）。
-        make_mcp_registry(
-            McpRegistrySettings(mongo_url=config.ledger.mongo_url, mongo_db=config.ledger.mongo_db),
-            os.environ,
-        ) as mcp_registry,
+        make_chat_store(
+            ChatStoreSettings(
+                database_url=config.database_url,
+                schema_name=config.database_schema,
+            )
+        ) as chat_store,
     ):
-        await seed_official(skill_hub, raw_skills)
-        deps = AssembleDeps(
+        services = WorkerServices(
             model=config.model,
             sandbox=config.sandbox,
             run_token_budget=config.run_token_budget,
-            catalog=catalog,
+            subagent_catalog=subagent_catalog,
             toolbox=toolbox_from_config(config),
             checkpointer=saver,
             ledger=store,
             memory_store=memory_store,
-            skill_hub=skill_hub,
-            prompts=prompts,
+            skill_client=owner_clients.skill_client,
+            skill_reader=owner_clients.skill_reader,
             # MCP server 定义双源：部署 yaml 启动即加载校验（含 ${ENV} 凭据展开，fail-loud）
-            # 为 official 基线；Mongo 注册表（hub 写面）在装配期 per-run 合并覆盖。
+            # 为部署基线；注册表在装配期按本次 Run 快照合并覆盖。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
-            mcp_registry=mcp_registry,
-            # 交付冻结件存储（deliveries 节）；缺省=None → deliver 工具恒挂但调用降级。
-            deliveries=deliveries_store(config),
+            mcp_client=owner_clients.mcp,
+            delivery=owner_clients.delivery,
         )
+        agent_factory = AgentFactory(services)
         supervisor = RunSupervisor(
-            agent_builder=functools.partial(assemble, deps),
+            agent_builder=agent_factory.build,
             store=store,
-            approval_tool_names=approval_names,
+            approval_tool_names=agent_factory.approval_names,
+            backend_for=agent_factory.backend_for,
             trace_factory=lambda request: trace_config(config.observability, request),
-            source_for=catalog.source_for,
+            source_for=subagent_catalog.source_for,
+            feature_for=agent_factory.feature,
             consumer=_consumer_name(),
             heartbeat_s=config.lease_heartbeat_s,
             recursion_limit=config.recursion_limit,
@@ -162,6 +124,7 @@ async def _serve(config: AppConfig) -> None:
             run_ttl_s=config.retention_run_ttl_s,
             outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
+            chat_store=chat_store,
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
         serve_task = asyncio.create_task(supervisor.serve(bus))
@@ -181,7 +144,7 @@ def main() -> None:
     config = AppConfig.from_env(os.environ)
     # 启动期配置快照（secret 掩码）：一眼看清本进程实际生效的配置，便于排障。
     log_config_summary(config, LOGGER)
-    asyncio.run(_serve(config))
+    asyncio.run(serve(config))
 
 
 if __name__ == "__main__":

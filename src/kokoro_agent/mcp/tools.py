@@ -6,7 +6,7 @@ schema/顺序漂移、本 run 的 server 集差异都不改工具面字节，前
 首次使用才连；运行时不可达降级为该次调用的 error 文本（不拖死 run）。
 """
 
-# BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，build_agent 同类豁免）。
+# BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，create_deep_agent 同类豁免）。
 # pyright: reportUnknownMemberType=false
 
 from __future__ import annotations

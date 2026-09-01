@@ -1,32 +1,42 @@
-"""RunLedger 契约与后端工厂：多 pod 去重、TTL 租约、HITL 暂停哨兵、终态原子认领。"""
+"""RunLedger 契约与 PostgreSQL 后端工厂：多 pod 去重、TTL 租约、HITL 暂停哨兵、终态认领。"""
+
+# The adapter deliberately builds qualified SQL identifiers at runtime and
+# consumes psycopg dict rows. The package stubs currently model only literal
+# SQL/tuple rows, so those boundary diagnostics are covered by ruff/tests.
+# pyright: reportCallIssue=false, reportArgumentType=false, reportReturnType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportIncompatibleMethodOverride=false, reportUnusedClass=false
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated, Protocol
+from datetime import UTC, datetime
+from typing import Annotated, Any, Protocol
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.storage.mongo import (
-    ControlInboxRecord,
-    MongoLedger,
-    OutboxFrame,
-    ReceiptReconcile,
-    StagedFrame,
-    ToolJournalRecord,
-    make_mongo_collection,
-)
+from kokoro_agent.storage.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
 
 DEFAULT_LEASE_TTL_S = 90
 
-# 这些记录类型定义在低层 mongo 模块（避免 ledger↔mongo 循环）；此处再导出为 ledger 面契约。
+RUN_CLAIMS_TABLE = "kokoro_agent_runs"
+RUN_DISPATCHES_TABLE = "kokoro_agent_run_dispatches"
+RUN_DLQ_TABLE = "kokoro_agent_run_dlq"
+RUN_OUTBOX_TABLE = "kokoro_agent_run_outbox"
+RUN_RECEIPTS_TABLE = "kokoro_agent_run_receipts"
+RUN_RECEIPT_MANIFESTS_TABLE = "kokoro_agent_run_receipt_manifests"
+CONTROL_INBOX_TABLE = "kokoro_agent_control_inbox"
+RUN_STEERS_TABLE = "kokoro_agent_run_steers"
+TOOL_RESULTS_TABLE = "kokoro_agent_tool_results"
+TOOL_JOURNAL_TABLE = "kokoro_agent_tool_journal"
+
 __all__ = [
     "ControlInboxRecord",
     "DEFAULT_LEASE_TTL_S",
     "LedgerSettings",
     "OutboxFrame",
+    "PgLedger",
     "ReceiptReconcile",
     "RunLedger",
     "StagedFrame",
@@ -36,18 +46,355 @@ __all__ = [
 
 
 class RunLedger(Protocol):
+    async def try_claim(self, request: RunRequest, owner: str) -> bool: ...
+
+    async def claim_dispatch(self, run_id: str, consumer: str) -> bool: ...
+
+    async def quarantine_dispatch(self, raw_hash: str, source: str, reason: str) -> None: ...
+
+    async def stage_critical_frame(
+        self,
+        run_id: str,
+        kind: str,
+        index: int,
+        timestamp: int,
+        payload_json: str,
+        *,
+        terminal: bool,
+    ) -> StagedFrame | None: ...
+
+    async def mark_critical_published(self, run_id: str, durable_seq: int) -> None: ...
+
+    async def list_unpublished_outbox(self) -> list[OutboxFrame]: ...
+
+    async def list_open_outbox_runs(self) -> list[str]: ...
+
+    async def reconcile_receipts(
+        self, run_id: str, republish_grace_ms: int = 30_000
+    ) -> ReceiptReconcile: ...
+
+    async def record_control_inbox(
+        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+    ) -> bool: ...
+
+    async def mark_control_applied(self, run_id: str, decision_id: str) -> None: ...
+
+    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None: ...
+
+    async def list_pending_control_inbox(self) -> list[ControlInboxRecord]: ...
+
+    async def renew(self, run_id: str, owner: str) -> bool: ...
+
+    async def adopt(self, run_id: str, owner: str) -> None: ...
+
+    async def pause(self, run_id: str) -> None: ...
+
+    async def reclaim_expired(self, owner: str) -> list[RunRequest]: ...
+
+    async def get_request(self, run_id: str) -> RunRequest | None: ...
+
+    async def list_paused(self) -> list[str]: ...
+
+    async def add_tokens(self, run_id: str, count: int) -> int: ...
+
+    async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]: ...
+
+    async def purge_terminal(self, max_age_ms: int) -> int: ...
+
+    async def try_mark_terminal(self, run_id: str) -> bool: ...
+
+    async def is_terminal(self, run_id: str) -> bool: ...
+
+    async def add_steer(self, run_id: str, message_id: str, content: str) -> None: ...
+
+    async def peek_steers(self, run_id: str) -> list[tuple[str, str]]: ...
+
+    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None: ...
+
+    async def put_tool_result(self, run_id: str, tool_id: str, result: str, is_error: bool) -> None: ...
+
+    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None: ...
+
+    async def journal_tool_started(self, run_id: str, tool_call_id: str, name: str) -> bool: ...
+
+    async def journal_tool_finished(
+        self, run_id: str, tool_call_id: str, result: str, is_error: bool
+    ) -> None: ...
+
+    async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None: ...
+
+    async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None: ...
+
+    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None: ...
+
+    async def get_sandbox_id(self, run_id: str) -> str | None: ...
+
+
+class ControlInboxRecord(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    run_id: str
+    decision_id: str
+    fingerprint: str | None = None
+    body: str
+
+
+class ToolJournalRecord(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    name: str
+    status: str
+    result: str
+    is_error: bool
+
+
+class _OutboxEntry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    durable_seq: int
+    event_id: str
+    kind: str
+    status: str
+    index: int | None = None
+    timestamp: int | None = None
+    payload_json: str | None = None
+    published_at: int | None = None
+
+
+class StagedFrame(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    durable_seq: int
+    event_id: str
+
+
+class OutboxFrame(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    run_id: str
+    durable_seq: int
+    event_id: str
+    kind: str
+    index: int
+    timestamp: int
+    payload_json: str
+
+
+class ReceiptReconcile(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    rejected_seq: int | None = None
+    receipt_state_lost: bool = False
+    consumed_through: int | None = None
+    close_requested: bool = False
+    republish: list[OutboxFrame] = Field(default_factory=list)
+
+
+class LedgerSettings(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    database_url: str
+    schema_name: str = DEFAULT_PG_SCHEMA
+    lease_ttl_ms: Annotated[int, Field(gt=0)]
+
+
+class PgLedger:
+    def __init__(
+        self,
+        database_url: str,
+        ttl_ms: int,
+        schema: str = DEFAULT_PG_SCHEMA,
+        clock: Callable[[], int] | None = None,
+    ) -> None:
+        self._database_url = database_url
+        self._schema = schema
+        self._ttl_ms = ttl_ms
+        self._clock = clock or _now_ms
+
+    async def setup(self) -> None:
+        async with connect_pg(self._database_url) as conn:
+            await ensure_schema(conn, self._schema)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text PRIMARY KEY,
+                        request_json text,
+                        owner text,
+                        lease_expires_at bigint,
+                        terminal boolean NOT NULL DEFAULT FALSE,
+                        terminal_at bigint,
+                        durable_counter bigint NOT NULL DEFAULT 0,
+                        terminal_fence_seq bigint,
+                        token_total bigint NOT NULL DEFAULT 0,
+                        usage_input_total bigint NOT NULL DEFAULT 0,
+                        usage_output_total bigint NOT NULL DEFAULT 0,
+                        sandbox_id text
+                    )
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text PRIMARY KEY,
+                        session_id text NOT NULL,
+                        namespace text NOT NULL,
+                        fence text NOT NULL,
+                        status text NOT NULL,
+                        deadline_at bigint NOT NULL,
+                        claimed_by text,
+                        created_at bigint NOT NULL,
+                        updated_at bigint NOT NULL
+                    )
+                    """.format(qualified(self._schema, RUN_DISPATCHES_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        raw_hash text PRIMARY KEY,
+                        source text NOT NULL,
+                        reason text NOT NULL,
+                        at bigint NOT NULL
+                    )
+                    """.format(qualified(self._schema, RUN_DLQ_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text NOT NULL,
+                        durable_seq bigint NOT NULL,
+                        event_id text NOT NULL UNIQUE,
+                        kind text NOT NULL,
+                        status text NOT NULL,
+                        index_value bigint,
+                        timestamp bigint,
+                        payload_json text,
+                        published_at bigint,
+                        PRIMARY KEY (run_id, durable_seq)
+                    )
+                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text NOT NULL,
+                        durable_seq bigint NOT NULL,
+                        event_id text NOT NULL,
+                        status text NOT NULL,
+                        reason text,
+                        created_at bigint NOT NULL,
+                        PRIMARY KEY (run_id, durable_seq)
+                    )
+                    """.format(qualified(self._schema, RUN_RECEIPTS_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text PRIMARY KEY,
+                        persisted_seq bigint NOT NULL DEFAULT 0,
+                        projected_seq bigint NOT NULL DEFAULT 0,
+                        consumed_seq bigint NOT NULL DEFAULT 0,
+                        producer_close_requested boolean NOT NULL DEFAULT FALSE,
+                        producer_closed boolean NOT NULL DEFAULT FALSE,
+                        updated_at bigint NOT NULL
+                    )
+                    """.format(qualified(self._schema, RUN_RECEIPT_MANIFESTS_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text NOT NULL,
+                        decision_id text NOT NULL,
+                        fingerprint text,
+                        status text NOT NULL,
+                        body text NOT NULL,
+                        created_at bigint NOT NULL,
+                        updated_at bigint NOT NULL,
+                        PRIMARY KEY (run_id, decision_id)
+                    )
+                    """.format(qualified(self._schema, CONTROL_INBOX_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text NOT NULL,
+                        message_id text NOT NULL,
+                        content text NOT NULL,
+                        created_at bigint NOT NULL,
+                        PRIMARY KEY (run_id, message_id)
+                    )
+                    """.format(qualified(self._schema, RUN_STEERS_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text NOT NULL,
+                        tool_id text NOT NULL,
+                        result text NOT NULL,
+                        is_error boolean NOT NULL,
+                        PRIMARY KEY (run_id, tool_id)
+                    )
+                    """.format(qualified(self._schema, TOOL_RESULTS_TABLE))
+                )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        run_id text NOT NULL,
+                        tool_call_id text NOT NULL,
+                        name text NOT NULL,
+                        status text NOT NULL,
+                        result text NOT NULL,
+                        is_error boolean NOT NULL,
+                        PRIMARY KEY (run_id, tool_call_id)
+                    )
+                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE))
+                )
+
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
-        # 原子认领新 run：首个认领者持有 TTL 租约并返 True，重复广播去重返 False。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, request_json, owner, lease_expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (run_id) DO NOTHING
+                    RETURNING run_id
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (
+                        request.run_id,
+                        request.model_dump_json(),
+                        owner,
+                        self._clock() + self._ttl_ms,
+                    ),
+                )
+                return await cur.fetchone() is not None
 
     async def claim_dispatch(self, run_id: str, consumer: str) -> bool:
-        # dispatch CAS（D5）：run_dispatches pending→claimed。True=授权执行；False=迟到(expired)
-        # /重复(claimed)帧丢弃不执行。无 intent 记录=兼容放行（执行去重仍由 try_claim 兜底）。
-        ...
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = 'claimed', claimed_by = %s, updated_at = %s
+                    WHERE run_id = %s AND status = 'pending' AND deadline_at > %s
+                    RETURNING run_id
+                    """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                    (consumer, now, run_id, now),
+                )
+                return await cur.fetchone() is not None
 
     async def quarantine_dispatch(self, raw_hash: str, source: str, reason: str) -> None:
-        # 不可解析帧死信：记 {raw_hash,source,reason,at} 后由调用方 ACK（坏帧无 identity 不重投）。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (raw_hash, source, reason, at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (raw_hash) DO NOTHING
+                    """.format(qualified(self._schema, RUN_DLQ_TABLE)),
+                    (raw_hash, source, reason, self._clock()),
+                )
 
     async def stage_critical_frame(
         self,
@@ -59,154 +406,719 @@ class RunLedger(Protocol):
         *,
         terminal: bool,
     ) -> StagedFrame | None:
-        # R4：分配 per-run durable_seq（从 1）+ event_id，落 outbox queued 行；终态帧 CAS 设
-        # local fence。返回 None=post-fence（seq>fence）→superseded 摘要落库、caller 不发布。
-        ...
+        event_id = f"evt_{uuid4().hex}"
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await self._seed_run_row(cur, run_id)
+                    await cur.execute(
+                        """
+                        SELECT durable_counter, terminal_fence_seq
+                        FROM {}
+                        WHERE run_id = %s
+                        FOR UPDATE
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (run_id,),
+                    )
+                    row = await cur.fetchone()
+                    assert row is not None
+                    seq = int(row["durable_counter"]) + 1
+                    fence = row["terminal_fence_seq"]
+                    if terminal and fence is None:
+                        fence = seq
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET durable_counter = %s, terminal_fence_seq = %s
+                        WHERE run_id = %s
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (seq, fence, run_id),
+                    )
+                    if fence is not None and seq > int(fence):
+                        await cur.execute(
+                            """
+                            INSERT INTO {} (
+                                run_id, durable_seq, event_id, kind, status, index_value,
+                                timestamp, payload_json, published_at
+                            ) VALUES (%s, %s, %s, %s, 'superseded', %s, %s, %s, NULL)
+                            """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                            (run_id, seq, event_id, kind, index, timestamp, payload_json),
+                        )
+                        return None
+                    await cur.execute(
+                        """
+                        INSERT INTO {} (
+                            run_id, durable_seq, event_id, kind, status, index_value,
+                            timestamp, payload_json, published_at
+                        ) VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s, NULL)
+                        """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                        (run_id, seq, event_id, kind, index, timestamp, payload_json),
+                    )
+        return StagedFrame(durable_seq=seq, event_id=event_id)
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
-        # publish 确认：outbox 行 queued→published。补发前崩溃留 queued，scanner 幂等补发。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = 'published', published_at = %s
+                    WHERE run_id = %s AND durable_seq = %s AND status = 'queued'
+                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                    (self._clock(), run_id, durable_seq),
+                )
 
     async def list_unpublished_outbox(self) -> list[OutboxFrame]:
-        # 补发扫描：queued 的 critical 行（落库但发布未确认）——重建 wire 帧按 seq 序补发。
-        ...
+        rows = await self._fetch_outbox("status = 'queued'")
+        return [_outbox_row_to_frame(row) for row in rows]
 
     async def list_open_outbox_runs(self) -> list[str]:
-        # 回执对账扫描：仍有 queued/published（未 consumed 收敛）outbox 行的 run。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT DISTINCT run_id
+                    FROM {}
+                    WHERE status IN ('queued', 'published')
+                    ORDER BY run_id ASC
+                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE))
+                )
+                rows = await cur.fetchall()
+        return [str(row["run_id"]) for row in rows]
 
     async def reconcile_receipts(
         self, run_id: str, republish_grace_ms: int = 30_000
     ) -> ReceiptReconcile:
-        # consume/close 握手：读 session 回执→推进 consumed→硬删已确认行；rejected NACK /
-        # receipt_state_lost / producer_close_requested 各自收口（写者分域 CAS）。published 无回执
-        # 且超 republish_grace_ms 的行→republish 列表交调用方复用固定身份重发（session 去重幂等）。
-        ...
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT durable_seq, event_id, kind, status, index_value, timestamp,
+                               payload_json, published_at
+                        FROM {}
+                        WHERE run_id = %s AND status IN ('queued', 'published')
+                        ORDER BY durable_seq ASC
+                        """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                        (run_id,),
+                    )
+                    live_rows = await cur.fetchall()
+                    if not live_rows:
+                        return ReceiptReconcile()
+                    await cur.execute(
+                        """
+                        SELECT durable_seq, event_id, status, reason, created_at
+                        FROM {}
+                        WHERE run_id = %s
+                        ORDER BY durable_seq ASC
+                        """.format(qualified(self._schema, RUN_RECEIPTS_TABLE)),
+                        (run_id,),
+                    )
+                    receipt_rows = await cur.fetchall()
+                    receipts = {int(row["durable_seq"]): dict(row) for row in receipt_rows}
+                    rejected = sorted(
+                        seq for seq, row in receipts.items() if row["status"] == "rejected"
+                    )
+                    if rejected:
+                        seq = rejected[0]
+                        await cur.execute(
+                            """
+                            UPDATE {}
+                            SET terminal_fence_seq = CASE
+                                WHEN terminal_fence_seq IS NULL OR terminal_fence_seq > %s
+                                THEN %s
+                                ELSE terminal_fence_seq
+                            END
+                            WHERE run_id = %s
+                            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                            (seq, seq, run_id),
+                        )
+                        return ReceiptReconcile(rejected_seq=seq)
+                    republish = []
+                    for row in live_rows:
+                        durable_seq = int(row["durable_seq"])
+                        published_at = row["published_at"]
+                        if (
+                            row["status"] == "published"
+                            and durable_seq not in receipts
+                            and published_at is not None
+                            and now - int(published_at) >= republish_grace_ms
+                        ):
+                            republish.append(_outbox_row_to_frame(row, run_id=run_id))
+                    for frame in republish:
+                        await cur.execute(
+                            """
+                            UPDATE {}
+                            SET published_at = %s
+                            WHERE run_id = %s AND durable_seq = %s
+                            """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                            (now, run_id, frame.durable_seq),
+                        )
+                    await cur.execute(
+                        """
+                        SELECT run_id, persisted_seq, projected_seq, consumed_seq,
+                               producer_close_requested, producer_closed, updated_at
+                        FROM {}
+                        WHERE run_id = %s
+                        """.format(qualified(self._schema, RUN_RECEIPT_MANIFESTS_TABLE)),
+                        (run_id,),
+                    )
+                    manifest = await cur.fetchone()
+                    if manifest is None:
+                        return ReceiptReconcile(receipt_state_lost=True, republish=republish)
+                    consumed = int(manifest["consumed_seq"])
+                    advanced = consumed
+                    while True:
+                        next_seq = advanced + 1
+                        receipt = receipts.get(next_seq)
+                        if receipt is None or receipt["status"] != "persisted":
+                            break
+                        row = next(
+                            (row for row in live_rows if int(row["durable_seq"]) == next_seq),
+                            None,
+                        )
+                        if row is None or row["event_id"] != receipt["event_id"]:
+                            break
+                        advanced = next_seq
+                    if advanced > consumed:
+                        await cur.execute(
+                            """
+                            INSERT INTO {} (
+                                run_id, persisted_seq, projected_seq, consumed_seq,
+                                producer_close_requested, producer_closed, updated_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (run_id) DO UPDATE SET
+                                consumed_seq = EXCLUDED.consumed_seq,
+                                updated_at = EXCLUDED.updated_at
+                            """.format(qualified(self._schema, RUN_RECEIPT_MANIFESTS_TABLE)),
+                            (
+                                run_id,
+                                advanced,
+                                int(manifest["projected_seq"]),
+                                advanced,
+                                bool(manifest["producer_close_requested"]),
+                                bool(manifest["producer_closed"]),
+                                now,
+                            ),
+                        )
+                        await cur.execute(
+                            """
+                            DELETE FROM {}
+                            WHERE run_id = %s AND durable_seq <= %s
+                            """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                            (run_id, advanced),
+                        )
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) AS open_count
+                        FROM {}
+                        WHERE run_id = %s AND status IN ('queued', 'published')
+                        """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
+                        (run_id,),
+                    )
+                    open_count_row = await cur.fetchone()
+                    if open_count_row is None:
+                        raise RuntimeError(f"failed to count open outbox rows for {run_id!r}")
+                    open_count = int(open_count_row["open_count"])
+                    fence_row = await self._get_claim_row(cur, run_id)
+                    fence = fence_row["terminal_fence_seq"] if fence_row is not None else None
+                    close_requested = False
+                    if fence is not None and advanced >= int(fence) and open_count == 0:
+                        await cur.execute(
+                            """
+                            UPDATE {}
+                            SET producer_close_requested = TRUE, updated_at = %s
+                            WHERE run_id = %s AND producer_close_requested = FALSE
+                            """.format(qualified(self._schema, RUN_RECEIPT_MANIFESTS_TABLE)),
+                            (now, run_id),
+                        )
+                        close_requested = True
+                    return ReceiptReconcile(
+                        consumed_through=advanced if advanced > consumed else None,
+                        close_requested=close_requested,
+                        republish=republish,
+                    )
 
     async def record_control_inbox(
         self, run_id: str, decision_id: str, fingerprint: str | None, body: str
     ) -> bool:
-        # R2 control inbox：keep-first 落 {decision_id,fingerprint,status:persisted,body}。
-        # 首次落库返 True（persisted，续 apply）；重复 decision_id（重发/重投）返 False（丢弃不重放）。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT terminal
+                    FROM {}
+                    WHERE run_id = %s
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (run_id,),
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    return False
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, decision_id, fingerprint, status, body, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'persisted', %s, %s, %s)
+                    ON CONFLICT (run_id, decision_id) DO NOTHING
+                    RETURNING decision_id
+                    """.format(qualified(self._schema, CONTROL_INBOX_TABLE)),
+                    (run_id, decision_id, fingerprint, body, self._clock(), self._clock()),
+                )
+                return await cur.fetchone() is not None
 
     async def mark_control_applied(self, run_id: str, decision_id: str) -> None:
-        # apply（Command resume/cancel）+ checkpoint 后置 applied：仅 persisted→applied 前向推进。
-        ...
+        await self._update_control_status(run_id, decision_id, "applied")
 
     async def mark_control_superseded(self, run_id: str, decision_id: str) -> None:
-        # 重启续办发现 stale（fingerprint 不匹配/已终态）：标 superseded 不 apply。
-        ...
+        await self._update_control_status(run_id, decision_id, "superseded")
 
     async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
-        # 重启补办扫描：persisted 未 applied 且非终态的 control 条目。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT i.run_id, i.decision_id, i.fingerprint, i.body
+                    FROM {} i
+                    JOIN {} r ON r.run_id = i.run_id
+                    WHERE i.status = 'persisted' AND r.terminal = FALSE
+                    ORDER BY i.run_id ASC, i.decision_id ASC
+                    """.format(
+                        qualified(self._schema, CONTROL_INBOX_TABLE),
+                        qualified(self._schema, RUN_CLAIMS_TABLE),
+                    )
+                )
+                rows = await cur.fetchall()
+        return [ControlInboxRecord(**dict(row)) for row in rows]
 
     async def renew(self, run_id: str, owner: str) -> bool:
-        # 严格属主续租（fencing）：仅当前 owner 可续；False=所有权已被他处夺走，
-        # 调用方必须让渡本地执行（裂脑双跑收窄到一个心跳窗）。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET lease_expires_at = %s
+                    WHERE run_id = %s AND owner = %s AND terminal = FALSE
+                    RETURNING run_id
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (self._clock() + self._ttl_ms, run_id, owner),
+                )
+                return await cur.fetchone() is not None
 
     async def adopt(self, run_id: str, owner: str) -> None:
-        # 所有权交接（resume 收养/过期重拾的赢家）：置 owner 并恢复活跃租约。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET owner = %s, lease_expires_at = %s
+                    WHERE run_id = %s AND terminal = FALSE
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (owner, self._clock() + self._ttl_ms, run_id),
+                )
 
     async def pause(self, run_id: str) -> None:
-        # HITL 暂停：租约置哨兵，等人期间不参与过期重拾。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET lease_expires_at = NULL
+                    WHERE run_id = %s AND terminal = FALSE
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (run_id,),
+                )
 
     async def reclaim_expired(self, owner: str) -> list[RunRequest]:
-        # 过期且无终态的 run 原子重认领并连同原始 request 返回，供从 checkpoint 续跑。
-        ...
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET owner = %s, lease_expires_at = %s
+                    WHERE terminal = FALSE AND lease_expires_at IS NOT NULL AND lease_expires_at <= %s
+                    RETURNING request_json
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (owner, now + self._ttl_ms, now),
+                )
+                rows = await cur.fetchall()
+        return [
+            RunRequest.model_validate_json(row["request_json"])
+            for row in rows
+            if row["request_json"] is not None
+        ]
 
     async def get_request(self, run_id: str) -> RunRequest | None:
-        # 取原 request 供 resume 重建 agent。
-        ...
+        row = await self._get_claim_row(run_id)
+        if row is None or row["request_json"] is None:
+            return None
+        return RunRequest.model_validate_json(row["request_json"])
 
     async def list_paused(self) -> list[str]:
-        # 哨兵暂停且非终态的 run：control 监听收养的数据源（认领 worker 崩溃后接续 HITL）。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT run_id
+                    FROM {}
+                    WHERE terminal = FALSE AND lease_expires_at IS NULL AND request_json IS NOT NULL
+                    ORDER BY run_id ASC
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE))
+                )
+                rows = await cur.fetchall()
+        return [str(row["run_id"]) for row in rows]
 
     async def add_tokens(self, run_id: str, count: int) -> int:
-        # token 预算的跨段累计（resume 重建不清零）：原子加并返回累计值。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, token_total)
+                    VALUES (%s, %s)
+                    ON CONFLICT (run_id) DO UPDATE SET token_total = token_total + EXCLUDED.token_total
+                    RETURNING token_total
+                    """.format(
+                        qualified(self._schema, RUN_CLAIMS_TABLE),
+                    ),
+                    (run_id, count),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"failed to add tokens for {run_id!r}")
+        return int(row["token_total"])
 
     async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]:
-        # run.completed 用量真源：跨段累计 input/output（与预算计数分开，语义不同）。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, usage_input_total, usage_output_total)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        usage_input_total = usage_input_total + EXCLUDED.usage_input_total,
+                        usage_output_total = usage_output_total + EXCLUDED.usage_output_total
+                    RETURNING usage_input_total, usage_output_total
+                    """.format(
+                        qualified(self._schema, RUN_CLAIMS_TABLE),
+                    ),
+                    (run_id, input_tokens, output_tokens),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"failed to add usage for {run_id!r}")
+        return int(row["usage_input_total"]), int(row["usage_output_total"])
 
     async def purge_terminal(self, max_age_ms: int) -> int:
-        # retention 清扫：终态且超龄的 run 连同附属（tool_results/计数/信箱）整体清除，返回条数。
-        ...
+        cutoff = self._clock() - max_age_ms
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT run_id
+                        FROM {}
+                        WHERE terminal = TRUE AND terminal_at IS NOT NULL AND terminal_at <= %s
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (cutoff,),
+                    )
+                    rows = await cur.fetchall()
+                    run_ids = [str(row["run_id"]) for row in rows]
+                    if not run_ids:
+                        return 0
+                    await self._delete_run_rows(cur, run_ids)
+                    await cur.execute(
+                        "DELETE FROM {} WHERE run_id = ANY(%s)".format(
+                            qualified(self._schema, RUN_CLAIMS_TABLE)
+                        ),
+                        (run_ids,),
+                    )
+        return len(run_ids)
 
     async def try_mark_terminal(self, run_id: str) -> bool:
-        # 原子认领终态：首个认领者返 True，杜绝重复终态事件。
-        ...
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, terminal, terminal_at, lease_expires_at)
+                    VALUES (%s, TRUE, %s, NULL)
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        terminal = TRUE,
+                        terminal_at = COALESCE(terminal_at, EXCLUDED.terminal_at),
+                        lease_expires_at = NULL
+                    WHERE terminal = FALSE
+                    RETURNING run_id
+                    """.format(
+                        qualified(self._schema, RUN_CLAIMS_TABLE),
+                    ),
+                    (run_id, now),
+                )
+                return await cur.fetchone() is not None
 
     async def is_terminal(self, run_id: str) -> bool:
-        # 只读查：resume stale 闸。
-        ...
+        row = await self._get_claim_row(run_id)
+        return bool(row and row["terminal"])
 
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
-        # steering 信箱：keep-first 幂等（message_id 重放不覆盖）；未认领 run 安全丢弃。
-        ...
+        row = await self._get_claim_row(run_id)
+        if row is None or bool(row["terminal"]):
+            return
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, message_id, content, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (run_id, message_id) DO NOTHING
+                    """.format(qualified(self._schema, RUN_STEERS_TABLE)),
+                    (run_id, message_id, content, self._clock()),
+                )
 
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
-        # 非破坏读信箱（按到达序返回 (message_id, content)）：模型轮前注入。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT message_id, content
+                    FROM {}
+                    WHERE run_id = %s
+                    ORDER BY created_at ASC, message_id ASC
+                    """.format(qualified(self._schema, RUN_STEERS_TABLE)),
+                    (run_id,),
+                )
+                rows = await cur.fetchall()
+        return [(str(row["message_id"]), str(row["content"])) for row in rows]
 
     async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
-        # 确认消费：仅删除已随 checkpoint 落定的插话（下一轮见证原子性——排空绝不先于落盘）。
-        ...
+        if not message_ids:
+            return
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    DELETE FROM {}
+                    WHERE run_id = %s AND message_id = ANY(%s)
+                    """.format(qualified(self._schema, RUN_STEERS_TABLE)),
+                    (run_id, message_ids),
+                )
 
     async def put_tool_result(
         self, run_id: str, tool_id: str, result: str, is_error: bool
     ) -> None:
-        # 结果审核暂停的双执行防护：首跑结果 keep-first 落盘，resume 重入命中即跳过工具执行。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, tool_id, result, is_error)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (run_id, tool_id) DO NOTHING
+                    """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
+                    (run_id, tool_id, result, is_error),
+                )
 
-    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None: ...
+    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT result, is_error
+                    FROM {}
+                    WHERE run_id = %s AND tool_id = %s
+                    """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
+                    (run_id, tool_id),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return str(row["result"]), bool(row["is_error"])
 
     async def journal_tool_started(self, run_id: str, tool_call_id: str, name: str) -> bool:
-        # R3 tool effect journal：副作用工具执行前落 started 行（keep-first，锚=tool_call_id）。
-        # True=首次落库（续执行）；False=行已存在（重入/并发，不覆盖）。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, tool_call_id, name, status, result, is_error)
+                    VALUES (%s, %s, %s, 'started', '', FALSE)
+                    ON CONFLICT (run_id, tool_call_id) DO NOTHING
+                    RETURNING tool_call_id
+                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                    (run_id, tool_call_id, name),
+                )
+                return await cur.fetchone() is not None
 
     async def journal_tool_finished(
         self, run_id: str, tool_call_id: str, result: str, is_error: bool
     ) -> None:
-        # 工具返回后 started→succeeded|failed（附记录结果供重放短路）；仅推进 started 行。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = %s, result = %s, is_error = %s
+                    WHERE run_id = %s AND tool_call_id = %s AND status = 'started'
+                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                    ("failed" if is_error else "succeeded", result, is_error, run_id, tool_call_id),
+                )
 
     async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
-        # 工具内 interrupt（HITL 暂停≠崩溃）：撤销本次 started 行（视同无行），resume 重进不被误拦。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    DELETE FROM {}
+                    WHERE run_id = %s AND tool_call_id = %s
+                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                    (run_id, tool_call_id),
+                )
 
     async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
-        # 重放守门读侧：无行=正常执行；succeeded/failed=短路记录结果；started=unknown-outcome。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT name, status, result, is_error
+                    FROM {}
+                    WHERE run_id = %s AND tool_call_id = %s
+                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                    (run_id, tool_call_id),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return ToolJournalRecord(**dict(row))
 
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
-        # e2b run 级箱绑定（keep-first）：HITL resume 重连既往 sandbox，暂停期文件不丢。
-        ...
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (run_id, sandbox_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT (run_id) DO UPDATE SET sandbox_id = COALESCE(sandbox_id, EXCLUDED.sandbox_id)
+                    """.format(
+                        qualified(self._schema, RUN_CLAIMS_TABLE),
+                    ),
+                    (run_id, sandbox_id),
+                )
 
-    async def get_sandbox_id(self, run_id: str) -> str | None: ...
+    async def get_sandbox_id(self, run_id: str) -> str | None:
+        row = await self._get_claim_row(run_id)
+        if row is None:
+            return None
+        return row["sandbox_id"]
 
+    async def _seed_run_row(self, cur: Any, run_id: str) -> None:
+        await cur.execute(
+            """
+            INSERT INTO {} (run_id)
+            VALUES (%s)
+            ON CONFLICT (run_id) DO NOTHING
+            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+            (run_id,),
+        )
 
-class LedgerSettings(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    async def _get_claim_row(self, run_id: str) -> dict[str, Any] | None:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                return await self._select_claim_row(cur, run_id)
 
-    mongo_url: str
-    mongo_db: str
-    lease_ttl_ms: Annotated[int, Field(gt=0)]
+    async def _select_claim_row(self, cur: Any, run_id: str) -> dict[str, Any] | None:
+        await cur.execute(
+            """
+            SELECT run_id, request_json, owner, lease_expires_at, terminal, terminal_at,
+                   durable_counter, terminal_fence_seq, token_total, usage_input_total,
+                   usage_output_total, sandbox_id
+            FROM {}
+            WHERE run_id = %s
+            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+            (run_id,),
+        )
+        row = await cur.fetchone()
+        return None if row is None else dict(row)
+
+    async def _get_dispatch_rows(self, run_id: str) -> list[dict[str, Any]]:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT run_id, session_id, namespace, fence, status, deadline_at,
+                           claimed_by, created_at, updated_at
+                    FROM {}
+                    WHERE run_id = %s
+                    """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                    (run_id,),
+                )
+                return [dict(row) for row in await cur.fetchall()]
+
+    async def _update_control_status(self, run_id: str, decision_id: str, status: str) -> None:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = %s, updated_at = %s
+                    WHERE run_id = %s AND decision_id = %s AND status = 'persisted'
+                    """.format(qualified(self._schema, CONTROL_INBOX_TABLE)),
+                    (status, self._clock(), run_id, decision_id),
+                )
+
+    async def _fetch_outbox(self, where_sql: str) -> list[dict[str, Any]]:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT run_id, durable_seq, event_id, kind, status, index_value,
+                           timestamp, payload_json, published_at
+                    FROM {}
+                    WHERE {}
+                    ORDER BY run_id ASC, durable_seq ASC
+                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE), where_sql)
+                )
+                return [dict(row) for row in await cur.fetchall()]
+
+    async def _delete_run_rows(self, cur: Any, run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+        for table in (
+            RUN_OUTBOX_TABLE,
+            RUN_RECEIPTS_TABLE,
+            RUN_RECEIPT_MANIFESTS_TABLE,
+            CONTROL_INBOX_TABLE,
+            RUN_STEERS_TABLE,
+            TOOL_RESULTS_TABLE,
+            TOOL_JOURNAL_TABLE,
+            RUN_DISPATCHES_TABLE,
+        ):
+            await cur.execute(
+                "DELETE FROM {} WHERE run_id = ANY(%s)".format(qualified(self._schema, table)),
+                (run_ids,),
+            )
 
 
 @asynccontextmanager
 async def make_ledger(
     settings: LedgerSettings,
 ) -> AsyncGenerator[RunLedger, None]:
-    client, collection = make_mongo_collection(settings.mongo_url, settings.mongo_db)
+    store = PgLedger(settings.database_url, settings.lease_ttl_ms, settings.schema_name)
+    await store.setup()
     try:
-        yield MongoLedger(collection, ttl_ms=settings.lease_ttl_ms)
+        yield store
     finally:
-        await client.close()
+        pass
+
+
+def _outbox_row_to_frame(row: dict[str, Any], *, run_id: str | None = None) -> OutboxFrame:
+    return OutboxFrame(
+        run_id=str(run_id or row["run_id"]),
+        durable_seq=int(row["durable_seq"]),
+        event_id=str(row["event_id"]),
+        kind=str(row["kind"]),
+        index=int(row["index_value"]),
+        timestamp=int(row["timestamp"]),
+        payload_json=str(row["payload_json"]),
+    )
+
+
+def _now_ms() -> int:
+    return int(datetime.now(tz=UTC).timestamp() * 1000)

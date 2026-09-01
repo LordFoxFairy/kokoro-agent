@@ -8,8 +8,9 @@ from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, SecretStr
 
-from kokoro_agent.contract import ModelConfig
-from kokoro_agent.model.local_fake import hitl_script, make_local_fake_chat_model
+from kokoro_agent.policy import ModelConfig
+
+_REQUESTED_MODEL_PROVIDER_ALLOWLIST = frozenset({"anthropic", "litellm", "openai"})
 
 
 class ChatModelSettings(BaseModel):
@@ -18,9 +19,6 @@ class ChatModelSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     disable_streaming: bool
-    local_fake: bool
-    # 假模型脚本档："default"（todo+文本）或 "hitl"（ask_user+审批暂停），供跨栈 e2e。
-    local_fake_script: str
     openai_api_key: SecretStr | None
     openai_base_url: str | None
     # openai 兼容端点（GLM/DeepSeek）带 reasoning_content 时置 1：ChatOpenAI 明文拒收该字段。
@@ -33,9 +31,6 @@ class ChatModelSettings(BaseModel):
 
 
 def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
-    if settings.local_fake:
-        script = hitl_script() if settings.local_fake_script == "hitl" else None
-        return make_local_fake_chat_model(script)
     if model.provider == "openai":
         return _build_openai_model(settings, model)
     if model.provider == "anthropic":
@@ -43,6 +38,36 @@ def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChat
     if model.provider == "litellm":
         return _build_litellm_model(settings, model)
     raise ValueError(f"unsupported model provider: {model.provider!r}")
+
+
+def select_model_label(label: str | None, fallback: ModelConfig) -> ModelConfig:
+    """Translate the narrow Root model label into a worker model setting.
+
+    The launch contract intentionally carries only ``provider:name`` rather
+    than a provider configuration.  Credentials and endpoint selection stay
+    in ``ChatModelSettings``; a missing label keeps the Feature/Agent default.
+    """
+
+    if label is None:
+        return fallback
+    provider, separator, name = label.partition(":")
+    if separator == "":
+        provider, name = fallback.provider, provider
+    if not provider or not name:
+        raise ValueError("requested_model_label must be provider:name or a non-empty model name")
+    if provider not in _REQUESTED_MODEL_PROVIDER_ALLOWLIST:
+        raise ValueError(f"requested_model_label provider {provider!r} is not allowlisted")
+    if provider != fallback.provider:
+        raise ValueError(
+            "requested_model_label provider must match the Feature/Agent model provider "
+            f"({fallback.provider!r})"
+        )
+    return ModelConfig(
+        provider=provider,
+        name=name,
+        effort=fallback.effort,
+        thinking=fallback.thinking,
+    )
 
 
 def _thinking_effort(model: ModelConfig, *, off: str) -> str | None:

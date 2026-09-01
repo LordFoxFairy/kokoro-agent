@@ -1,9 +1,12 @@
-"""LangGraph/DeepAgents 的窄 runtime_checkable 端口：私有泛型止步于此。"""
+"""DeepAgents 原生可调用对象的窄 runtime_checkable 视图。
+
+这里仅描述执行层实际使用的官方 runnable 方法，不创建新的 Agent runtime 或 state。
+"""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Mapping, Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -85,7 +88,7 @@ class AgentRunStream(_RunProjections, Protocol):
 
 
 @runtime_checkable
-class StateView(Protocol):
+class NativeStateSnapshot(Protocol):
     """checkpoint 快照的窄视图（StateSnapshot）：暂停取 typed interrupts，消息取 values。"""
 
     @property
@@ -95,8 +98,8 @@ class StateView(Protocol):
 
 
 @runtime_checkable
-class InvokableAgent(Protocol):
-    """编译后 langgraph 图的窄契约：v3 流入口 + 状态查询。"""
+class AgentRunnable(Protocol):
+    """DeepAgents（或官方 Swarm）runnable 的最小调用面：v3 流入口 + 状态查询。"""
 
     async def astream_events(
         self,
@@ -107,4 +110,22 @@ class InvokableAgent(Protocol):
         transformers: Sequence[type[StreamTransformer]],
     ) -> AgentRunStream: ...
 
-    async def aget_state(self, config: RunnableConfig) -> StateView: ...
+    async def aget_state(self, config: RunnableConfig) -> NativeStateSnapshot: ...
+
+
+def is_agent_runnable(value: object) -> TypeGuard[AgentRunnable]:
+    """Recognize the native DeepAgents/LangGraph call surface GA consumes."""
+
+    return callable(getattr(value, "astream_events", None)) and callable(
+        getattr(value, "aget_state", None)
+    )
+
+
+def require_agent_runnable(value: object) -> AgentRunnable:
+    """Validate a third-party construction result without wrapping its runtime."""
+
+    if not is_agent_runnable(value):
+        raise TypeError(
+            "DeepAgents returned an object without its native call surface"
+        )
+    return value

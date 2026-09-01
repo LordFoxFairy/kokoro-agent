@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable, Mapping
 
@@ -42,12 +43,16 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
+from kokoro_agent.chat.projection import project_chat_fact
+from kokoro_agent.chat.models import ChatEventRecord
+from kokoro_agent.chat.store import ChatStore
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
 SourceResolver = Callable[[str], SubagentSource]
+LOGGER = logging.getLogger(__name__)
 
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
 # 其余 live 帧（delta/tool 过程帧）不占 seq、丢了由 checkpoint 重建。
@@ -119,6 +124,9 @@ class RunEmitter:
         tool_segments: dict[str, str] | None = None,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunLedger | None = None,
+        namespace: str | None = None,
+        session_id: str | None = None,
+        chat_store: ChatStore | None = None,
     ) -> None:
         self._bus = bus
         self._run_id = run_id
@@ -129,9 +137,14 @@ class RunEmitter:
         # tool_id → 归属 segment：awaiting 携带 AIMessage 段，resume 后的 invoked/returned
         # 只有 tool_call_id 兜底段——继承归属段，一次工具调用在渲染侧恒为一段。
         self._tool_segments = tool_segments if tool_segments is not None else {}
-        # R4 durable outbox（None=纯 live 发布，向后兼容）：critical 帧经此分配 durable_seq/event_id、
+        # R4 durable outbox（None=不启用 critical durability，供独立 emitter 使用）：critical 帧经此分配 durable_seq/event_id、
         # 落 queued 行、发布后置 published。live 序（index）不动，durable_seq 独立并行。
         self._outbox = outbox
+        if len({namespace is None, session_id is None, chat_store is None}) != 1:
+            raise ValueError("namespace, session_id and chat_store must be configured together")
+        self._namespace = namespace
+        self._session_id = session_id
+        self._chat_store = chat_store
 
     @property
     def run_id(self) -> str:
@@ -149,6 +162,9 @@ class RunEmitter:
         run_id: str,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunLedger | None = None,
+        namespace: str | None = None,
+        session_id: str | None = None,
+        chat_store: ChatStore | None = None,
     ) -> RunEmitter:
         # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
         # 同时从历史 awaiting 事件重建 tool_id→segment 归属（漂移正发生在 resume 重建之后）。
@@ -159,7 +175,21 @@ class RunEmitter:
             next_index = max(next_index, event.index + 1)
             if isinstance(event.payload, ToolAwaitingApprovalPayload):
                 tool_segments[event.payload.tool_id] = event.payload.segment_id
-        return cls(bus, run_id, next_index, tool_segments, review_tool_names, outbox)
+        if chat_store is not None:
+            if namespace is None:
+                raise ValueError("namespace is required with chat_store")
+            next_index = max(next_index, await chat_store.next_source_index(namespace, run_id))
+        return cls(
+            bus,
+            run_id,
+            next_index,
+            tool_segments,
+            review_tool_names,
+            outbox,
+            namespace,
+            session_id,
+            chat_store,
+        )
 
     def _with_owner_segment(self, payload: AgentEventPayload) -> AgentEventPayload:
         if isinstance(payload, ToolAwaitingApprovalPayload):
@@ -209,6 +239,7 @@ class RunEmitter:
             event = agent_event_adapter.validate_python(
                 {**base, "durable_seq": staged.durable_seq, "event_id": staged.event_id}
             )
+            await self._persist_chat(payload, index, timestamp)
             self._next_index += 1
             await self._bus.publish(
                 run_events_stream(self._run_id),
@@ -219,6 +250,7 @@ class RunEmitter:
             metrics.record_outbox("published")
             return
         event = agent_event_adapter.validate_python(base)
+        await self._persist_chat(payload, index, timestamp)
         self._next_index += 1
         # exclude_none：契约 optional 字段的 None 即"缺席"；null 上 wire 会被 session 的 zod .optional() 拒收。
         await self._bus.publish(
@@ -227,6 +259,20 @@ class RunEmitter:
             maxlen=RUN_EVENTS_MAXLEN,
         )
 
+    async def _persist_chat(
+        self, payload: AgentEventPayload, index: int, timestamp: int
+    ) -> ChatEventRecord | None:
+        if self._chat_store is None or self._session_id is None or self._namespace is None:
+            return None
+        projection = project_chat_fact(
+            namespace=self._namespace,
+            session_id=self._session_id,
+            run_id=self._run_id,
+            source_index=index,
+            timestamp=timestamp,
+            payload=payload,
+        )
+        return None if projection is None else await self._chat_store.append(projection)
 
 def outbox_wire_event(frame: OutboxFrame) -> dict[str, JsonValue]:
     """queued outbox 行 → 补发用 wire 帧（复用原 index/timestamp/durable_seq/event_id，幂等不漂移）。"""
@@ -242,6 +288,23 @@ def outbox_wire_event(frame: OutboxFrame) -> dict[str, JsonValue]:
         }
     )
     return event.model_dump(exclude_none=True)
+
+
+async def persist_outbox_chat_event(
+    store: ChatStore, namespace: str, session_id: str, frame: OutboxFrame
+) -> ChatEventRecord | None:
+    """Idempotently restore the durable chat fact before an outbox Redis replay."""
+
+    event = agent_event_adapter.validate_python(outbox_wire_event(frame))
+    projection = project_chat_fact(
+        namespace=namespace,
+        session_id=session_id,
+        run_id=frame.run_id,
+        source_index=frame.index,
+        timestamp=frame.timestamp,
+        payload=event.payload,
+    )
+    return None if projection is None else await store.append(projection)
 
 
 # --- 投影 → payload 映射（v3 typed projection 元素转 contract 载荷的唯一地点） ---

@@ -38,10 +38,10 @@ class McpServerConfig(BaseModel):
 class McpServerUnavailable(BaseModel):
     """已占名但不可用的定义位：名字是已知的（不触发未知名 fail-loud），定义不可用。
 
-    来源（mcp/registry.py 双源合并）：
-    - 活跃禁用文档遮蔽同名低层定义、不回退（对齐 kokoro-hub 侧语义：绝不静默回退到官方凭据）；
-    - secret_ref=`handle:srt_...` 但本 run 批解失败（hub 不可达/跨 namespace/未配解析出口）。
-    （`secret:path` 已废除为 fail-loud，不再降级为本位——见 mcp/registry.py D1。）
+    来源（mcp/local_registry.py 双源合并）：
+    - 活跃禁用文档遮蔽同名低层定义、不回退（Capability owner 的 fail-closed 语义）；
+    - secret_ref=`handle:srt_...` 但本 run 批解失败（Capability 不可达/跨 namespace/未配解析出口）。
+    （`secret:path` 已废除为 fail-loud，不再降级为本位——见 mcp/local_registry.py。）
     装配不炸；list 标注不可用，describe/call 返回 error 文本（不可达降级同轴）。
     """
 

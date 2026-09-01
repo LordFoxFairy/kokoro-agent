@@ -1,13 +1,12 @@
-"""内置 agent prompt 资产（随包出厂的 <name>.md）与 system prompt 组合口。
+"""内置 Agent prompt 资产（随包出厂的 ``<name>.md``）。
 
-部署扩展 prompt 归 content_source（PromptLibrary 快照，同名覆盖内置）；此处只管出厂件。
+Prompt 是 Agent/Feature 的静态装配输入；用户或项目内容不通过本包覆盖 prompt。Skill 由
+DeepAgents 原生 SkillsMiddleware 注入元数据，并通过原生 ``read_file`` 渐进读取。
 """
 
 from __future__ import annotations
 
 from importlib.resources import files
-
-from kokoro_agent.prompts.library import PromptLibrary
 
 
 def load_prompt(name: str) -> str:
@@ -16,4 +15,4 @@ def load_prompt(name: str) -> str:
 
 GENERAL_PROMPT: str = load_prompt("general")
 
-__all__ = ["GENERAL_PROMPT", "PromptLibrary", "load_prompt"]
+__all__ = ["GENERAL_PROMPT", "load_prompt"]

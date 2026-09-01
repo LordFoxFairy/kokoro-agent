@@ -1,13 +1,13 @@
 [project]
 name = "kokoro-agent"
 version = "2.0.0"
-description = "Kokoro agent runtime"
+description = "Kokoro GA DeepAgents worker"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "beautifulsoup4>=4.15.0",
   "boto3>=1.43.40",
-  "deepagents",
+  "deepagents==0.6.6",
   "e2b>=2.30.0",
   "httpx>=0.28.1",
   "langchain",
@@ -16,16 +16,18 @@ dependencies = [
   "langchain-mcp-adapters>=0.3.0",
   "langchain-openai>=1.2.2",
   "langfuse>=4.7.1",
-  "langgraph-checkpoint-mongodb>=0.4.0",
-  "langgraph-store-mongodb>=0.3.0",
+  "langgraph-checkpoint-postgres>=2.0.21",
+  "langgraph-swarm==0.1.0",
   "mypy-boto3-s3>=1.43.31",
   "prometheus-client>=0.20.0",
   "pydantic>=2",
   "python-dotenv>=1.2.2",
+  "psycopg[binary]>=3.2.10",
   "redis>=5",
 ]
 
 [project.scripts]
+kokoro-agent = "kokoro_agent.cli:main"
 kokoro-agent-worker = "kokoro_agent.worker.main:main"
 
 [dependency-groups]
@@ -44,18 +46,27 @@ build-backend = "setuptools.build_meta"
 
 # 随包分发的非 .py 资源（提示词正文），否则 wheel 会漏掉。
 [tool.setuptools.package-data]
-kokoro_agent = ["run/*.md"]
+kokoro_agent = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+addopts = "-m 'not integration and not e2e'"
+markers = [
+  "integration: requires Redis, PostgreSQL, Docker, MinIO, or another local service",
+  "e2e: exercises the complete worker/runtime path with external services",
+]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests/unit", "tests/contract", "tests/support"]
+exclude = ["tests/integration", "tests/e2e", "src/kokoro_agent/generated"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 # langgraph 1.2 core 的 stream/pregel 子模块缺 pyright stub（py.typed 未覆盖）；仅关第三方 stub 提示，不削弱本仓代码检查。
 reportMissingTypeStubs = false
+
+[tool.ruff]
+exclude = ["src/kokoro_agent/generated"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -68,7 +79,7 @@ module = ["redis.*", "langfuse.*"]
 ignore_missing_imports = true
 
 # numpy 2.5 的 .pyi 用 PEP 695 type 语句(py3.12+)，mypy 在 3.11 目标下解析报 syntax；
-# numpy 仅经 mongo checkpointer(langchain-mongodb) 传递引入、本仓不直接用，跳过跟随其源/stub。
+# numpy 仅经第三方依赖传递引入，本仓不直接用，跳过跟随其源/stub。
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"

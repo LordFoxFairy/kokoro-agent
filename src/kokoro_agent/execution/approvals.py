@@ -19,7 +19,7 @@ from kokoro_agent.contract import (
     ToolReturnedPayload,
 )
 from kokoro_agent.execution.events import clip_result
-from kokoro_agent.execution.protocols import StateView
+from kokoro_agent.execution.protocols import NativeStateSnapshot
 from kokoro_agent.hitl import INPUT_DECISIONS, REVIEW_DECISIONS, HumanRequest
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
@@ -147,7 +147,7 @@ def input_entries(interrupts: tuple[Interrupt, ...]) -> list[InputEntry] | None:
     return entries
 
 
-def input_frame(snapshot: StateView, entries: Sequence[InputEntry]) -> PendingFrame:
+def input_frame(snapshot: NativeStateSnapshot, entries: Sequence[InputEntry]) -> PendingFrame:
     # input 帧归属段=发起请求的工具调用所在 AIMessage（request_id=该工具 tool_id）；
     # 条目顺序即 interrupt 顺序。
     raw: Any = snapshot.values.get("messages") or []
@@ -156,12 +156,12 @@ def input_frame(snapshot: StateView, entries: Sequence[InputEntry]) -> PendingFr
     return PendingFrame(segment, tuple((e.request_id, e.name) for e in entries))
 
 
-def has_pending_interrupt(snapshot: StateView) -> bool:
+def has_pending_interrupt(snapshot: NativeStateSnapshot) -> bool:
     # StateSnapshot.interrupts 是 typed tuple：非空即有待审批暂停。
     return bool(snapshot.interrupts)
 
 
-def pending_frame(snapshot: StateView, approval_tool_names: frozenset[str]) -> PendingFrame:
+def pending_frame(snapshot: NativeStateSnapshot, approval_tool_names: frozenset[str]) -> PendingFrame:
     # 触发 HITL 的 AIMessage 中命中审批工具名的子序列（与 langgraph HITL 同序）——全仓唯一实现。
     # LangGraph state values 为 Any 框架边界：messages 在此一次过滤为 typed AIMessage。
     raw: Any = snapshot.values.get("messages") or []
@@ -174,7 +174,7 @@ def pending_frame(snapshot: StateView, approval_tool_names: frozenset[str]) -> P
     return PendingFrame(last_ai.id or "", tools)
 
 
-def review_frame(snapshot: StateView, entries: Sequence[ReviewEntry]) -> PendingFrame:
+def review_frame(snapshot: NativeStateSnapshot, entries: Sequence[ReviewEntry]) -> PendingFrame:
     # 审核帧归属段=触发帧的 AIMessage（与审批帧同源）；条目顺序即 interrupt 顺序。
     raw: Any = snapshot.values.get("messages") or []
     last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
@@ -238,7 +238,7 @@ def approval_requests(interrupts: tuple[Interrupt, ...]) -> list[ApprovalRequest
 
 
 def awaiting_payloads(
-    snapshot: StateView,
+    snapshot: NativeStateSnapshot,
     approval_tool_names: frozenset[str],
     describe_tool: Callable[[str], str | None] = lambda _name: None,
 ) -> list[ToolAwaitingApprovalPayload]:
@@ -307,7 +307,7 @@ def awaiting_payloads(
 
 
 def approval_frame(
-    snapshot: StateView, approval_tool_names: frozenset[str]
+    snapshot: NativeStateSnapshot, approval_tool_names: frozenset[str]
 ) -> tuple[PendingFrame, list[ApprovalRequest]]:
     """审批帧唯一构造点：主帧优先；主图无对应 tool_call 时回退嵌套帧（子代理内暂停）。"""
     frame = pending_frame(snapshot, approval_tool_names)
@@ -323,7 +323,7 @@ def approval_frame(
     return frame, requests
 
 
-def _nested_frame(snapshot: StateView) -> PendingFrame:
+def _nested_frame(snapshot: NativeStateSnapshot) -> PendingFrame:
     # 合成 tool_id 必须跨快照重读稳定（resume 重建帧要与已发 awaiting 对齐）：由
     # interrupt.id（langgraph 稳定哈希）+ 序号派生；segment 归属触发委派的 task 调用。
     raw: Any = snapshot.values.get("messages") or []
@@ -349,7 +349,9 @@ def _decision_id(decision: ResumeDecision) -> str:
 
 
 def align_decisions(
-    decisions: Sequence[ResumeDecision], frame: PendingFrame
+    decisions: Sequence[ResumeDecision],
+    frame: PendingFrame,
+    requests: Sequence[ApprovalRequest] | None = None,
 ) -> list[ResumeDecision]:
     # 按 tool_id 重排到 pending 顺序（langgraph 按序匹配 decisions↔interrupt）；
     # 缺/多/重复/未知 tool_id 一律 fail-loud。
@@ -361,13 +363,27 @@ def align_decisions(
             f"resume decisions {sorted(by_id)} != pending tools {sorted(frame.tool_ids)}"
         )
     name_by_id = dict(frame.tools)
+    if requests is not None:
+        if len(requests) != len(frame.tools):
+            raise ValueError(
+                f"approval request count {len(requests)} != pending tools {len(frame.tools)}"
+            )
+        allowed_by_id: dict[str, Sequence[AllowedDecision]] | None = {
+            tool_id: request.allowed_decisions
+            for (tool_id, _), request in zip(frame.tools, requests, strict=True)
+        }
+    else:
+        allowed_by_id = None
     for decision in decisions:
-        is_ask_user = name_by_id[_decision_id(decision)] == ASK_USER_TOOL_NAME
+        tool_id = _decision_id(decision)
+        is_ask_user = name_by_id[tool_id] == ASK_USER_TOOL_NAME
+        if allowed_by_id is not None and decision.type not in allowed_by_id[tool_id]:
+            raise ValueError(f"decision {decision.type!r} not allowed for tool {tool_id!r}")
         # respond 是 ask_user 专属人工作答；普通审批工具只接 approve/edit/reject。双向越界即 fail-loud。
         if decision.type == "respond" and not is_ask_user:
             raise ValueError(f"respond decision not allowed for tool {decision.tool_id!r}")
         if decision.type != "respond" and is_ask_user:
-            raise ValueError(f"ask_user tool {_decision_id(decision)!r} accepts only respond")
+            raise ValueError(f"ask_user tool {tool_id!r} accepts only respond")
     return [by_id[tool_id] for tool_id in frame.tool_ids]
 
 

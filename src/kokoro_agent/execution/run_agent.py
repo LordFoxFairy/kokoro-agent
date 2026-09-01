@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 
 from langchain_core.callbacks import get_usage_metadata_callback
@@ -10,16 +10,18 @@ from langchain_core.messages import UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
-from kokoro_agent.contract import RunCompletedPayload, RunStartedPayload, TokenUsage
+from kokoro_agent.contract import RunCompletedPayload, RunFailedPayload, RunStartedPayload, TokenUsage
 from kokoro_agent.execution.approvals import awaiting_payloads
 from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
-from kokoro_agent.execution.protocols import InvokableAgent
+from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
+
+LOGGER = logging.getLogger(__name__)
 
 
 async def invoke_once(
     emitter: RunEmitter,
-    agent: InvokableAgent,
+    agent: AgentRunnable,
     thread_id: str,
     payload: object,
     *,
@@ -67,13 +69,11 @@ async def invoke_once(
                     if total_in or total_out
                     else None
                 )
-                await emitter.emit(
-                    RunCompletedPayload(status="completed", token_usage=token_usage)
-                )
+                await _emit_terminal(emitter, RunCompletedPayload(status="completed", token_usage=token_usage))
             return True
         except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
             if await claim_terminal():
-                await emitter.emit(run_failed_payload(error))
+                await _emit_terminal(emitter, run_failed_payload(error))
             return True
 
 
@@ -91,6 +91,19 @@ async def _record(
     return await record_usage(input_tokens, output_tokens)
 
 
+async def _emit_terminal(
+    emitter: RunEmitter, payload: RunCompletedPayload | RunFailedPayload
+) -> None:
+    try:
+        await emitter.emit(payload)
+    except Exception:  # noqa: BLE001 — 终态 outbox 失败已落 queued，下一拍心跳/启动可恢复
+        LOGGER.exception(
+            "terminal emit failed run_id=%s payload_kind=%s; queued outbox remains recoverable",
+            emitter.run_id,
+            type(payload).__name__,
+        )
+
+
 def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) -> RunnableConfig:
     # 失控熔断：无限工具循环在限额处炸成 GraphRecursionError → run.failed fail-loud。
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit}
@@ -102,4 +115,3 @@ def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) 
         if metadata is not None:
             config["metadata"] = metadata
     return config
-

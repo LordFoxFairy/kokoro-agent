@@ -1,6 +1,6 @@
 """MCP 连接期 egress 防线（连接构造处的动态防线，MCP-SECRET AGENT 半场）。
 
-连接前对目标 host 全量解析 A/AAAA，任一落在禁网段即拒（与 kokoro-hub
+连接前对目标 host 全量解析 A/AAAA，任一落在禁网段即拒（与 Capability
 `interfaces/http/mcp-url-guard.ts` 同段表，Python `ipaddress` 实现）；并把连接**锁定**到
 这次已校验的解析 IP（httpx transport 层重写 URL host→IP + `sni_hostname` 保留原主机名做
 TLS SNI 与证书校验），同时关闭 redirect。同一次解析既做校验又做连接，消除 DNS rebinding
@@ -94,7 +94,7 @@ def _forbidden_ipv6(addr: ipaddress.IPv6Address) -> bool:
 
 
 def is_forbidden_ip(text: str) -> bool:
-    """字面 IP → 是否落在禁网段。无法判定的地址形状 fail-closed 拒（与 hub 同策）。"""
+    """字面 IP → 是否落在禁网段。无法判定的地址形状 fail-closed 拒（与 Capability 同策）。"""
     addr = _parse_ip(text)
     if addr is None:
         return True
@@ -178,9 +178,9 @@ def egress_mode_from_env(env: Mapping[str, str]) -> str:
     return _OFF if env.get(_EGRESS_MODE_ENV, _STRICT).strip().lower() == _OFF else _STRICT
 
 
-# 进程级 egress 模式（连接层策略）：启动期由 make_mcp_registry 从**注入 env** 配置一次
-# （不读进程环境——env 单点纪律），build_connections 逐连接读取。缺省 strict：即便未配置
-# 也是安全侧。连接是进程内单一策略，非 per-request，故 module-level 单点足够。
+# 进程级 egress 模式（连接层策略）：worker/main.py 从已校验的 AppConfig 配置一次（不读
+# 进程环境），build_connections 逐连接读取。缺省 strict：即便未配置也是安全侧。连接是
+# 进程内单一策略，非 per-request，故 module-level 单点足够。
 _egress_mode = _STRICT
 
 

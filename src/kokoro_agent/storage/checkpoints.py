@@ -1,4 +1,8 @@
-"""LangGraph checkpointer 工厂：mongo（跨 pod 唯一真源）。"""
+"""LangGraph checkpointer 工厂：PostgreSQL（stage1 durable state 真源）。"""
+
+# LangGraph/psycopg expose the connection and row factory through runtime
+# protocols whose current stubs do not describe the installed versions.
+# pyright: reportCallIssue=false, reportArgumentType=false, reportIncompatibleMethodOverride=false
 
 from __future__ import annotations
 
@@ -6,25 +10,37 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.mongodb import MongoDBSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, ConfigDict
-from pymongo import MongoClient
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
+
+from kokoro_agent.storage.postgres import DEFAULT_PG_SCHEMA, ensure_schema
 
 
 class CheckpointSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    mongo_url: str
-    mongo_db: str
+    database_url: str
+    schema_name: str = DEFAULT_PG_SCHEMA
 
 
 @asynccontextmanager
 async def make_checkpointer(
     settings: CheckpointSettings,
 ) -> AsyncGenerator[BaseCheckpointSaver[str], None]:
-    # MongoDBSaver 用 sync MongoClient，其 async 方法经 run_in_executor 包同步调用不阻塞事件循环。
-    client: MongoClient[dict[str, object]] = MongoClient(settings.mongo_url)
+    conn = await AsyncConnection.connect(
+        settings.database_url,
+        autocommit=True,
+        row_factory=dict_row,
+    )
     try:
-        yield MongoDBSaver(client, db_name=settings.mongo_db)
+        await ensure_schema(conn, settings.schema_name)
+        # LangGraph's saver follows the connection search path; it does not
+        # accept a schema_name constructor argument in the current release.
+        await conn.execute(f'SET search_path TO "{settings.schema_name.replace(chr(34), chr(34) * 2)}"')
+        saver = AsyncPostgresSaver(conn)
+        await saver.setup()
+        yield saver
     finally:
-        client.close()
+        await conn.close()

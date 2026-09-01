@@ -1,4 +1,4 @@
-"""HITL interrupt_on 构造：审批工具集合每请求经 RuntimeConfig.permissions 注入。"""
+"""HITL ``interrupt_on`` 构造：审批集合来自 worker-local Agent policy。"""
 
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ def build_interrupt_on(
     *,
     subagent_create: str = "deny",
     pause_tools: frozenset[str] = frozenset({ASK_USER_TOOL_NAME}),
-) -> dict[str, InterruptOnConfig]:
+) -> dict[str, bool | InterruptOnConfig]:
     """pause_tools=类型包的 respond 语义暂停点（对话型={ask_user}，studio 类型=∅）；
     approval_tools 挂 approve/edit/reject；subagent_create=ask 时委派工具同样进审批门控。"""
-    interrupt_on: dict[str, InterruptOnConfig] = {
+    interrupt_on: dict[str, bool | InterruptOnConfig] = {
         tool: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS) for tool in pause_tools
     }
     interrupt_on.update(

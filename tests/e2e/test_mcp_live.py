@@ -4,7 +4,7 @@
 真实调用往返、不可达 fail-closed。无外部依赖，可进 CI。
 """
 
-# BaseTool.ainvoke 上游注解含裸 dict（langchain-core Runnable 泛型缺口）：仅豁免该成员访问。
+# BaseTool.ainvoke 上游注解含裸 dict（langchain-core Runnable 泛型缺口）：仅豁免该子代理访问。
 # pyright: reportUnknownMemberType=false
 
 from __future__ import annotations

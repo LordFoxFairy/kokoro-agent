@@ -2,7 +2,7 @@
 
 企业/私有云不改本仓源码即可插入自己的沙箱：pip 装自己的包 + 两个 env。
 工厂契约 sync（编排层 to_thread）；自由参数 yaml 原样透传（工厂自校验，本仓不猜形状）。
-返回的 backend 若带 `sandbox_id` 属性即接入 run 级 ledger 绑定（与 docker/e2b 同构）。
+返回的 backend 若带 `sandbox_id` 属性即接入 run 级 ledger 记录（与 docker/e2b 同构）。
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class CustomBackendContext(BaseModel):
     workspace: str
     # local 根（KOKORO_AGENT_LOCAL_SHELL_ROOT 下的 run 子目录）；未配置则 None。
     workspace_root: str | None
-    # ledger 既往绑定（HITL resume 现场）；工厂据此重连自己的沙箱而非新建。
+    # ledger 既往记录（HITL resume 现场）；工厂据此重连自己的沙箱而非新建。
     prior_sandbox_id: str | None
     config: dict[str, object]
 

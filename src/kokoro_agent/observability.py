@@ -7,6 +7,8 @@ from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from kokoro_agent.contract import RunRequest
+from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.features.catalog import get_feature
 
 
 class ObservabilitySettings(BaseModel):
@@ -30,13 +32,16 @@ def trace_config(settings: ObservabilitySettings, request: RunRequest) -> Runnab
     """
     if not settings.configured:
         return None
+    scope = RunScope.of(request)
+    feature = get_feature(request.feature_key)
+    model_name = feature.agents[0].model.name if feature.agents[0].model is not None else "default"
     return {
         "callbacks": [CallbackHandler()],
         "metadata": {
-            "langfuse_session_id": request.context.session_id,
-            "langfuse_tags": [request.runtime.model.name],
+            "langfuse_session_id": request.session_id,
+            "langfuse_tags": [model_name],
             "kokoro_run_id": request.run_id,
-            "kokoro_thread_id": request.thread_id,
-            "kokoro_namespace": request.context.namespace,
+            "kokoro_thread_id": request.session_id,
+            "kokoro_namespace": scope.namespace,
         },
     }

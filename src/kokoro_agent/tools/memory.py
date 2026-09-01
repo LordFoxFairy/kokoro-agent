@@ -39,9 +39,8 @@ def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
         return f"memory saved under key {key!r}"
 
     async def search_memory(query: str) -> str:
-        # 向量语义检索需 Atlas Vector Search（index_config + embeddings）；plain mongo 上
-        # 传 query= 会触发 $vectorSearch 崩溃。改命名空间列举 + 大小写不敏感子串过滤——
-        # 任意后端可用，local==prod。真语义检索留待未来 embeddings 档（model 库 spec 邻域）。
+        # 当前使用 PostgreSQL store 的命名空间列举 + 大小写不敏感子串过滤，
+        # local==prod。真语义检索留待未来 embeddings 档（model 库 spec 邻域）。
         items = await get_store().asearch(prefix, limit=_LIST_LIMIT)
         needle = query.strip().lower()
         matched = [

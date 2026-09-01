@@ -10,7 +10,7 @@ NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
 
 def _int_from_bson_number(value: object) -> object:
-    # BSON 数字模型:JS 写者(hub TS/mongosh)的整数落库为 double;整值 float 视为 int,其余交 strict 报错。
+    # BSON 数字模型：JS fixture 写者的整数可能落库为 double；整值 float 视为 int，其余交 strict 报错。
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return value

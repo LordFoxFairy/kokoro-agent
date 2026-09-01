@@ -67,7 +67,7 @@ JOURNAL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         SEARCH_MEMORY_TOOL_NAME,
         TODO_TOOL_NAME,
         SUBAGENT_TOOL_NAME,
-        # handoff（swarm 移交，见 agents/assembly/swarm.py）：Command 形态纯状态覆盖，无文本可短路，
+        # handoff（swarm 移交，见 kokoro_agent/swarm.py）：Command 形态纯状态覆盖，无文本可短路，
         # 重放归 langgraph checkpoint（active_agent LastValue 幂等）——入豁免表不双写 journal。
         "handoff",
     }
@@ -80,9 +80,9 @@ def resolve_tools(
     """runtime.tools → 需显式挂载的 Kokoro 工具（deepagents 内置工具由框架自带）。"""
     unknown = sorted(set(names) - KNOWN_TOOL_NAMES)
     if unknown:
-        raise ValueError(f"unknown tools in RuntimeConfig.tools: {unknown}")
+        raise ValueError(f"unknown tools in Feature tool declarations: {unknown}")
     if len(set(names)) != len(names):
-        raise ValueError("RuntimeConfig.tools contains duplicate names")
+        raise ValueError("Feature tool declarations contain duplicate names")
     # core=类型包的基础工具面政策（对话型含 ask_user；无 chat 面的 studio 类型传空）。
     tools = list(core)
     tools.extend(

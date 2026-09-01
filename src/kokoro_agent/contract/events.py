@@ -172,7 +172,8 @@ class DeliveryCreatedPayload(StrictModel):
     title: NonEmptyStr
     mime: NonEmptyStr
     size: int
-    # 成果冻结键：deliveries/<namespace>/<content_hash> 内容寻址,永不漂移；由 deliver 工具归档时计算,emitter 在 tool.returned 后追发本事件。
+    # 内容摘要由 deliver 读取 workspace 字节时计算；Storage 完成 Artifact 发布后，
+    # emitter 在 tool.returned 后追发本事件。
     content_hash: NonEmptyStr
     note: str | None = None
 

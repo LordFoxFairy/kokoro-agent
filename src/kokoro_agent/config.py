@@ -18,7 +18,6 @@ from typing import Annotated
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 
 from kokoro_agent.config_file import load_config_file
-from kokoro_agent.content_source import AssetSettings, LocalAssets, load_assets_config
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
@@ -53,14 +52,13 @@ class WebToolSettings(BaseModel):
 class AppConfig(BaseModel):
     """扁平进程配置：每叶子经 `validation_alias` 从 env/yaml 底座解析一次；
     域分组经下方 `@property` 装配子 Settings 供消费方（消费 API 不变）。
-    model/tools/skills/permissions 属每请求 wire，不在此。"""
+    模型、工具、Skill 和权限属于 worker-local Agent/Feature 声明与进程配置，不在 public
+    LaunchRunRequest 中，也不由每次请求重写。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore", frozen=True)
 
     # --- model 域 ---
     disable_streaming: bool = Field(default=False, validation_alias="KOKORO_DISABLE_STREAMING")
-    local_fake: bool = Field(default=False, validation_alias="KOKORO_LOCAL_FAKE_MODEL")
-    local_fake_script: str = Field(default="default", validation_alias="KOKORO_LOCAL_FAKE_SCRIPT")
     openai_api_key: OptSecret = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_base_url: OptStr = Field(default=None, validation_alias="OPENAI_BASE_URL")
     openai_reasoning: bool = Field(default=False, validation_alias="KOKORO_OPENAI_REASONING")
@@ -70,12 +68,16 @@ class AppConfig(BaseModel):
     litellm_base_url: OptStr = Field(default=None, validation_alias="KOKORO_LITELLM_BASE_URL")
     litellm_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_LITELLM_API_KEY")
 
-    # --- stream / mongo 域（mongo 为 checkpoint+ledger 共用真后端）---
+    # --- stream / storage 域（PG 为 checkpoint+ledger+memory+chat 共用真后端）---
     redis_url: str = Field(
         default="redis://127.0.0.1:6379/0", validation_alias="KOKORO_REDIS_URL"
     )
-    mongo_url: str = Field(default="mongodb://127.0.0.1:27017", validation_alias="KOKORO_MONGO_URL")
-    mongo_db: str = Field(default="kokoro", validation_alias="KOKORO_MONGO_DB")
+    database_url: str = Field(
+        default="postgresql://localhost/postgres", validation_alias="KOKORO_AGENT_DATABASE_URL"
+    )
+    database_schema: str = Field(
+        default="kokoro_agent", validation_alias="KOKORO_AGENT_DATABASE_SCHEMA"
+    )
 
     # --- observability 域 ---
     langfuse_public_key: OptSecret = Field(default=None, validation_alias="LANGFUSE_PUBLIC_KEY")
@@ -116,10 +118,9 @@ class AppConfig(BaseModel):
 
     # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
     mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
-    # MCP 凭据句柄解析出口（hub runtime resolve）与连接期 egress 防线（mcp/egress.py）。
-    # 声明于此供启动期配置快照可见（log_config_summary，secret 掩码）；功能消费在 mcp 层——
-    # make_mcp_registry / build_connections 读同一注入 env（写区不含 worker/main，暂不经此穿透）。
-    hub_base_url: OptStr = Field(default=None, validation_alias="KOKORO_HUB_BASE_URL")
+    # Capability public endpoint 与内部调用凭据；具体 owner client 由部署在 worker 启动时注入。
+    # 标准 CLI 不据此直读 Capability 私库。
+    capability_base_url: OptStr = Field(default=None, validation_alias="KOKORO_CAPABILITY_BASE_URL")
     internal_secret_agent: OptSecret = Field(
         default=None, validation_alias="KOKORO_INTERNAL_SECRET_AGENT"
     )
@@ -133,20 +134,9 @@ class AppConfig(BaseModel):
     search_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_API_KEY")
     search_url: OptStr = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_URL")
 
-    # --- assets 域（skills/prompts 从哪来）：local 目录或 s3，配置引用名称、资产统一入库。---
-    assets_config: OptStr = Field(default=None, validation_alias="KOKORO_ASSETS_CONFIG")
-    skills_dir: OptStr = Field(default=None, validation_alias="KOKORO_SKILLS_DIR")
-    personas_dir: OptStr = Field(default=None, validation_alias="KOKORO_PERSONAS_DIR")
-    assets_s3_access_key: OptSecret = Field(
-        default=None, validation_alias="KOKORO_ASSETS_S3_ACCESS_KEY"
-    )
-    assets_s3_secret_key: OptSecret = Field(
-        default=None, validation_alias="KOKORO_ASSETS_S3_SECRET_KEY"
-    )
-
     # --- subagents 域 ---
     custom_subagents_json: OptStr = Field(default=None, validation_alias="KOKORO_CUSTOM_SUBAGENTS")
-    # 内建子代理按名启用（env=CSV 串 / yaml=串列表；默认全关，未知名由 build_catalog fail-loud）。
+    # 内建子代理按名启用（env=CSV 串 / yaml=串列表；默认全关，未知名由 build_subagent_catalog fail-loud）。
     builtin_subagents_raw: str | list[str] | None = Field(
         default=None, validation_alias="KOKORO_BUILTIN_SUBAGENTS"
     )
@@ -191,8 +181,6 @@ class AppConfig(BaseModel):
     def model(self) -> ChatModelSettings:
         return ChatModelSettings(
             disable_streaming=self.disable_streaming,
-            local_fake=self.local_fake,
-            local_fake_script=self.local_fake_script,
             openai_api_key=self.openai_api_key,
             openai_base_url=self.openai_base_url,
             openai_reasoning=self.openai_reasoning,
@@ -215,13 +203,16 @@ class AppConfig(BaseModel):
 
     @property
     def checkpoint(self) -> CheckpointSettings:
-        return CheckpointSettings(mongo_url=self.mongo_url, mongo_db=self.mongo_db)
+        return CheckpointSettings(
+            database_url=self.database_url,
+            schema_name=self.database_schema,
+        )
 
     @property
     def ledger(self) -> LedgerSettings:
         return LedgerSettings(
-            mongo_url=self.mongo_url,
-            mongo_db=self.mongo_db,
+            database_url=self.database_url,
+            schema_name=self.database_schema,
             lease_ttl_ms=self.lease_ttl_s * 1000,
         )
 
@@ -256,20 +247,6 @@ class AppConfig(BaseModel):
             search_provider=self.search_provider,
             search_api_key=self.search_api_key,
             search_url=self.search_url,
-        )
-
-    @property
-    def assets(self) -> AssetSettings:
-        # 资产源 yaml（与 workspace 同心智）优先；缺省=env 目录局部档（零配置可用）。
-        return AssetSettings(
-            source=load_assets_config(self.assets_config)
-            or LocalAssets(
-                type="local",
-                skills_dir=self.skills_dir,
-                personas_dir=self.personas_dir,
-            ),
-            s3_access_key=self.assets_s3_access_key,
-            s3_secret_key=self.assets_s3_secret_key,
         )
 
     @property

@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 
 from langchain_core.messages import HumanMessage
@@ -15,7 +16,6 @@ from langgraph.types import Command
 
 from kokoro_agent.contract import (
     CONSUMER_GROUP,
-    Backend,
     ControlReceiptStatus,
     REQUESTS_STREAM,
     RUN_EVENTS_MAXLEN,
@@ -49,13 +49,22 @@ from kokoro_agent.execution.approvals import (
     resolution_payloads,
     resume_command_decisions,
 )
-from kokoro_agent.execution.events import RunEmitter, outbox_wire_event, run_failed_payload
+from kokoro_agent.execution.events import (
+    RunEmitter,
+    outbox_wire_event,
+    persist_outbox_chat_event,
+    run_failed_payload,
+)
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.agents.base import AssembledAgent
-from kokoro_agent.state import RunScope
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.features.definition import Feature
+from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
+from kokoro_agent.policy import Backend
+from kokoro_agent.chat.models import ChatEventRecord, ChatMessageDraft
+from kokoro_agent.chat.store import ChatStore
 
 LOGGER = logging.getLogger(__name__)
 
@@ -70,10 +79,23 @@ def _raw_hash(event: Mapping[str, object]) -> str:
         canonical = repr(event)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
-AgentBuilder = Callable[[RunRequest], Awaitable[AssembledAgent]]
+AgentBuilder = Callable[[RunRequest], Awaitable[AgentHandle]]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
 TraceFactory = Callable[[RunRequest], RunnableConfig | None]
 SourceResolver = Callable[[str], SubagentSource]
+BackendResolver = Callable[[RunRequest], Backend]
+FeatureResolver = Callable[[str], Feature]
+
+
+def _default_backend(_request: RunRequest) -> Backend:
+    """Fallback for embedders that do not expose sandbox teardown.
+
+    The worker still owns the actual backend selected by the Feature.  This
+    resolver is only used when no teardown hook was supplied, so keeping the
+    default explicit avoids an untyped lambda leaking into the supervisor.
+    """
+
+    return "state"
 
 
 class RunSupervisor:
@@ -87,6 +109,8 @@ class RunSupervisor:
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
         source_for: SourceResolver,
+        feature_for: FeatureResolver | None = None,
+        backend_for: BackendResolver | None = None,
         consumer: str,
         heartbeat_s: float = 30.0,
         max_concurrent: int = MAX_CONCURRENT_RUNS,
@@ -97,12 +121,15 @@ class RunSupervisor:
         outbox_republish_ms: int = 30_000,
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
         sandbox_teardown: Callable[[Backend, str | None], Awaitable[None]] | None = None,
+        chat_store: ChatStore | None = None,
     ) -> None:
         self._build = agent_builder
         self._store = store
         self._approval_tool_names = approval_tool_names
         self._trace = trace_factory
         self._source_for = source_for
+        self._feature_for = feature_for
+        self._backend_for: BackendResolver = backend_for or _default_backend
         self._consumer = consumer
         self._heartbeat_s = heartbeat_s
         self._recursion_limit = recursion_limit
@@ -111,6 +138,7 @@ class RunSupervisor:
         self._run_ttl_s = run_ttl_s
         self._outbox_republish_ms = outbox_republish_ms
         self._sandbox_teardown = sandbox_teardown
+        self._chat_store = chat_store
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
@@ -126,6 +154,20 @@ class RunSupervisor:
     @property
     def tasks(self) -> Mapping[str, asyncio.Task[None]]:
         return self._tasks
+
+    async def _control_request(self, run_id: str) -> RunRequest | None:
+        return await self._store.get_request(run_id)
+
+    def _control_session_matches(self, request: RunRequest, session_id: str) -> bool:
+        if request.session_id == session_id:
+            return True
+        LOGGER.warning(
+            "dropping foreign-session control run_id=%s control_session_id=%s request_session_id=%s",
+            request.run_id,
+            session_id,
+            request.session_id,
+        )
+        return False
 
     async def serve(self, bus: StreamProtocol) -> None:
         # critical outbox 补发：启动即扫 queued（落库但发布未确认）行，按 seq 序补发（幂等）。
@@ -173,7 +215,10 @@ class RunSupervisor:
 
     async def _consume_request(self, bus: StreamProtocol, request: RunRequest) -> None:
         # dispatch CAS（D5）：pending→claimed。输（已 claimed=重复投递 / expired=迟到帧）→丢弃不执行；
-        # 赢（或无 intent 兼容路径）→ durable 执行认领（try_claim）+ 启动。ACK 由 serve 后置于此之后。
+        # 赢 → durable 执行认领（try_claim）+ 启动。缺失 intent 与迟到/重复帧同样丢弃。
+        # ACK 由 serve 后置于此之后。
+        # 用户消息先于 dispatch claim durable：此处失败则不 CAS、不 ACK，重投可安全重试；写入幂等。
+        await self._persist_user_message(request)
         if not await self._store.claim_dispatch(request.run_id, self._consumer):
             metrics.record_dispatch_claim(won=False)
             LOGGER.debug("dropping late/duplicate dispatch run_id=%s", request.run_id)
@@ -191,6 +236,7 @@ class RunSupervisor:
             return
         for frame in frames:
             try:
+                await self._persist_outbox_chat(frame)
                 await bus.publish(
                     run_events_stream(frame.run_id),
                     outbox_wire_event(frame),
@@ -212,6 +258,12 @@ class RunSupervisor:
             # 入账信箱即完成（keep-first 幂等）：注入由 SteeringMiddleware 在下一模型轮消费；
             # 暂停 run 同样入账，resume 后首轮生效；终态后到达无消费者，安全无害。
             try:
+                request = await self._control_request(msg.run_id)
+                if request is None:
+                    LOGGER.warning("dropping steer for unknown run_id=%s", msg.run_id)
+                    return
+                if not self._control_session_matches(request, msg.session_id):
+                    return
                 await self._store.add_steer(msg.run_id, msg.message_id, msg.content)
             except Exception:  # noqa: BLE001 — 插话丢失可由用户重发；绝不为此把健康 run 判死
                 LOGGER.exception("steer persist failed run_id=%s", msg.run_id)
@@ -248,6 +300,8 @@ class RunSupervisor:
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
         for run_id in await self._store.list_paused():
             self._ensure_control_listener(bus, run_id)
+        # 存活期间同样补发 queued critical outbox；不是只有启动时才扫描。
+        await self._republish_outbox(bus)
         # R4 critical outbox 回执对账：推进 consumed/GC 已确认行，rejected NACK 终局，
         # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
         for run_id in await self._store.list_open_outbox_runs():
@@ -269,6 +323,7 @@ class RunSupervisor:
         # published 无回执超宽限期：复用固定 durable_seq/event_id 重发（session 去重幂等无害）。
         for frame in outcome.republish:
             try:
+                await self._persist_outbox_chat(frame)
                 await bus.publish(
                     run_events_stream(frame.run_id),
                     outbox_wire_event(frame),
@@ -322,20 +377,24 @@ class RunSupervisor:
 
     async def _start_run(self, bus: StreamProtocol, request: RunRequest) -> None:
         try:
-            assembled = await self._build(request)
+            built = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, request.run_id, error, code="assembly_failed")
             return
         scope = RunScope.of(request)
-        # 身份乘 State 轴：随初始 input 进图并落 checkpoint（resume 不重供，run/state.py 法则）。
         payload: dict[str, object] = {
-            # 稳定 id=message_id：TTL 重拾对已推进 checkpoint 重放原始 input 时，add_messages 按 id 去重。
-            "messages": [HumanMessage(content=request.input.content, id=request.input.message_id)],
-            "scope": scope.as_state(),
+            # Native message ID 只服务 LangGraph 重放去重，绝不复用 GA/外部 chat_message_id。
+            # run_id 内确定性派生让 TTL 重拾仍命中同一 native message。
+            "messages": [
+                HumanMessage(
+                    content=request.input.content,
+                    id=f"native-input:{request.run_id}",
+                )
+            ],
         }
         self._spawn_agent(
             bus,
-            assembled,
+            built,
             request.run_id,
             scope.scoped_thread_id,
             payload,
@@ -347,21 +406,23 @@ class RunSupervisor:
 
     async def _on_resume(self, bus: StreamProtocol, msg: RunResume) -> None:
         # 终态权威闸：cancel/自然完成后 stale resume 即使 checkpoint 仍有 interrupt 也不续跑。
-        if await self._store.is_terminal(msg.run_id):
-            LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
-            return
-        request = await self._store.get_request(msg.run_id)
+        request = await self._control_request(msg.run_id)
         if request is None:
             LOGGER.warning("dropping resume for unknown run_id=%s", msg.run_id)
             return
+        if not self._control_session_matches(request, msg.session_id):
+            return
+        if await self._store.is_terminal(msg.run_id):
+            LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
+            return
         try:
-            assembled = await self._build(request)
+            built = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, msg.run_id, error, code="assembly_failed")
             return
         scope = RunScope.of(request)
         config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
-        snapshot = await assembled.agent.aget_state(config)
+        snapshot = await built.runnable.aget_state(config)
         # 幂等护栏：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
         if not has_pending_interrupt(snapshot):
             LOGGER.warning("dropping resume without pending interrupt for run_id=%s", msg.run_id)
@@ -389,9 +450,9 @@ class RunSupervisor:
             ordered = align_input_decisions(msg.decisions, iframe)
             command = Command(resume=submit_resume_value(ordered))
         else:
-            frame, _requests = approval_frame(snapshot, names)
+            frame, requests = approval_frame(snapshot, names)
             # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。
-            ordered = align_decisions(msg.decisions, frame)
+            ordered = align_decisions(msg.decisions, frame, requests)
             emitter = await self._emitter(bus, msg.run_id)
             # reject/respond 不经 v3 projection → 据快照+decision 直发 tool.returned。
             for resolution in resolution_payloads(ordered, frame):
@@ -410,14 +471,16 @@ class RunSupervisor:
             LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
             return
         self._spawn_agent(
-            bus, assembled, msg.run_id, scope.scoped_thread_id, command, names,
+            bus, built, msg.run_id, scope.scoped_thread_id, command, names,
             trace=self._trace(request),
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
-        request = await self._store.get_request(msg.run_id)
+        request = await self._control_request(msg.run_id)
         if request is None:
             LOGGER.warning("dropping cancel for unknown run_id=%s", msg.run_id)
+            return
+        if not self._control_session_matches(request, msg.session_id):
             return
         # 原子认领终态：自然完成/重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
         if not await self._store.try_mark_terminal(msg.run_id):
@@ -436,7 +499,7 @@ class RunSupervisor:
     def _spawn_agent(
         self,
         bus: StreamProtocol,
-        assembled: AssembledAgent,
+        built: AgentHandle,
         run_id: str,
         thread_id: str,
         payload: object,
@@ -445,7 +508,7 @@ class RunSupervisor:
         trace: RunnableConfig | None,
     ) -> None:
         task = asyncio.create_task(
-            self._guarded(bus, assembled, run_id, thread_id, payload, approval_tool_names, trace)
+            self._guarded(bus, built, run_id, thread_id, payload, approval_tool_names, trace)
         )
         self._tasks[run_id] = task
 
@@ -468,7 +531,7 @@ class RunSupervisor:
     async def _guarded(
         self,
         bus: StreamProtocol,
-        assembled: AssembledAgent,
+        built: AgentHandle,
         run_id: str,
         thread_id: str,
         payload: object,
@@ -483,12 +546,12 @@ class RunSupervisor:
             emitter = await self._emitter(bus, run_id)
             terminal = await invoke_once(
                 emitter,
-                assembled.agent,
+                built.runnable,
                 thread_id,
                 payload,
                 approval_tool_names=approval_tool_names,
                 # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
-                describe_tool=assembled.describe_tool,
+                describe_tool=built.describe_tool,
                 source_for=self._source_for,
                 trace=trace,
                 recursion_limit=self._recursion_limit,
@@ -556,6 +619,14 @@ class RunSupervisor:
         self, bus: StreamProtocol, run_id: str, msg: RunResume | RunCancel, stream: str, cursor: str
     ) -> None:
         # 落 ledger inbox{decision_id,fingerprint,status:persisted}→ACK→apply（durable claim 后 ACK）。
+        request = await self._control_request(run_id)
+        if request is None:
+            LOGGER.warning("dropping control for unknown run_id=%s", run_id)
+            await bus.ack(stream, CONSUMER_GROUP, cursor)
+            return
+        if not self._control_session_matches(request, msg.session_id):
+            await bus.ack(stream, CONSUMER_GROUP, cursor)
+            return
         fingerprint = await self._control_fingerprint(run_id, msg)
         first = await self._store.record_control_inbox(
             run_id, msg.decision_id, fingerprint, msg.model_dump_json()
@@ -596,7 +667,7 @@ class RunSupervisor:
         await emitter.emit(RunControlReceiptPayload(decision_id=decision_id, control_status=status))
 
     async def _control_fingerprint(self, run_id: str, msg: RunResume | RunCancel) -> str | None:
-        # resume 绑定当前 interrupt 指纹（重启续办据此判 stale）；cancel 无 interrupt 依赖=None。
+        # resume 记录当前 interrupt 指纹（重启续办据此判 stale）；cancel 无 interrupt 依赖=None。
         if isinstance(msg, RunResume):
             return await self._interrupt_fingerprint(run_id)
         return None
@@ -607,10 +678,10 @@ class RunSupervisor:
         if request is None:
             return None
         try:
-            assembled = await self._build(request)
+            built = await self._build(request)
             scope = RunScope.of(request)
             config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
-            snapshot = await assembled.agent.aget_state(config)
+            snapshot = await built.runnable.aget_state(config)
         except Exception:  # noqa: BLE001 — 指纹是 stale 判定辅助，取不到降级 None（续办侧按不匹配处理）
             LOGGER.exception("interrupt fingerprint build failed run_id=%s", run_id)
             return None
@@ -634,6 +705,11 @@ class RunSupervisor:
                 await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
                 metrics.record_control_inbox("superseded")
                 continue
+            request = await self._control_request(entry.run_id)
+            if request is None or not self._control_session_matches(request, msg.session_id):
+                await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                metrics.record_control_inbox("superseded")
+                continue
             if await self._store.is_terminal(entry.run_id):
                 await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
                 metrics.record_control_inbox("superseded")
@@ -653,13 +729,13 @@ class RunSupervisor:
         if request is None:
             return
         sandbox_id = await self._store.get_sandbox_id(run_id)
-        await self._sandbox_teardown(request.runtime.backend, sandbox_id)
+        await self._sandbox_teardown(self._backend_for(request), sandbox_id)
 
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
         # 终态统一漏斗：三路（自然完成/失败/取消）都经此——沙箱随终态回收。
         await self._teardown_sandbox(run_id)
         if self._events_ttl_s > 0:
-            # 事件流非权威（mongo session_events 才是回放真源）：终态后限期存活。
+            # raw run event stream 只是 Session relay 传输面，终态后限期存活。
             await bus.expire(run_events_stream(run_id), self._events_ttl_s)
         # 终态清理：删 control 流后取消监听任务（可能是当前任务，故删流先于 cancel）。
         with contextlib.suppress(Exception):
@@ -674,15 +750,68 @@ class RunSupervisor:
             # 审核工具集用于抑制投影侧 raw returned：无 request（如迟到 cancel）按空集处理，
             # 此时不再有投影流量，抑制与否无副作用。
             request = await self._store.get_request(run_id)
-            review: frozenset[str] = (
-                frozenset() if request is None
-                else frozenset(request.runtime.permissions.review_tools)
-            )
-            # store 作 critical outbox 端口：run.started/receipt/completed/failed 经其分配
+            review: frozenset[str] = frozenset()
+            if request is not None and self._feature_for is not None:
+                feature = self._feature_for(request.feature_key)
+                review = frozenset(
+                    tool
+                    for agent in feature.agents
+                    for tool in agent.permissions.review_tools
+                )
+            # store 作 critical durable 事实端口：run.started/receipt/completed/failed 经其分配
             # durable_seq/event_id 并落 queued 行；live 帧仍直发。
-            emitter = await RunEmitter.attach(bus, run_id, review, self._store)
+            emitter = await RunEmitter.attach(
+                bus,
+                run_id,
+                review,
+                self._store,
+                namespace=(
+                    RunScope.of(request).namespace
+                    if request is not None and self._chat_store is not None
+                    else None
+                ),
+                session_id=(
+                    request.session_id
+                    if request is not None and self._chat_store is not None
+                    else None
+                ),
+                chat_store=self._chat_store if request is not None else None,
+            )
             self._emitters[run_id] = emitter
         return emitter
+
+    async def _persist_outbox_chat(
+        self, frame: OutboxFrame
+    ) -> ChatEventRecord | None:
+        if self._chat_store is None:
+            return None
+        request = await self._store.get_request(frame.run_id)
+        if request is None:
+            return None
+        return await persist_outbox_chat_event(
+            self._chat_store,
+            RunScope.of(request).namespace,
+            request.session_id,
+            frame,
+        )
+
+    async def _persist_user_message(self, request: RunRequest) -> None:
+        if self._chat_store is None:
+            return
+        now = int(time.time() * 1000)
+        await self._chat_store.save_message(
+            ChatMessageDraft(
+                chat_message_id=request.input.message_id,
+                namespace=RunScope.of(request).namespace,
+                session_id=request.session_id,
+                run_id=request.run_id,
+                role="user",
+                content=request.input.content,
+                status="completed",
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
     async def _fail_terminal(
         self, bus: StreamProtocol, run_id: str, error: Exception, *, code: RunErrorCode | None = None

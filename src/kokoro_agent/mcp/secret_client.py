@@ -1,10 +1,10 @@
-"""MCP 凭据句柄解析客户端：装配期经 kokoro-hub runtime 出口把 `handle:` 批换明文。
+"""MCP 凭据句柄解析客户端：装配期经 Capability public contract 把 `handle:` 批换明文。
 
-hub 出口 `POST /hub/runtime/mcp/secrets/resolve {namespace, handles}`
+Capability 出口 `POST /capability/runtime/mcp/secrets/resolve {namespace, handles}`
 → `{data:{secrets:{handle:plaintext}}}`；caller=agent 凭据（出站头
 `x-kokoro-service: agent` + `x-kokoro-internal-secret: <KOKORO_INTERNAL_SECRET_AGENT>`）。
 
-明文绝不落库/落日志：解析结果只驻内存进 headers（authorization 整值语义同 env:）。hub 侧
+明文绝不落库/落日志：解析结果只驻内存进 headers（authorization 整值语义同 env:）。Capability 侧
 「全有或全无」——任一句柄跨 namespace/不存在返 404；本层把任何非 2xx 与网络/形状异常统一
 视作该批失败（`SecretResolveError`），调用方据此把相关 server 占名不可用、不炸 run。
 """
@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 _SERVICE_CALLER_HEADER = "x-kokoro-service"
 _INTERNAL_SECRET_HEADER = "x-kokoro-internal-secret"
 _AGENT_CALLER = "agent"
-_RESOLVE_PATH = "/hub/runtime/mcp/secrets/resolve"
+_RESOLVE_PATH = "/capability/runtime/mcp/secrets/resolve"
 _TIMEOUT_S = 10.0
 
 
@@ -33,7 +33,7 @@ class SecretResolver(Protocol):
     async def resolve(self, namespace: str, handles: Sequence[str]) -> Mapping[str, str]: ...
 
 
-class HubSecretSettings(BaseModel):
+class CapabilitySecretSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     base_url: str
@@ -41,7 +41,7 @@ class HubSecretSettings(BaseModel):
 
 
 class _ResolveData(BaseModel):
-    # hub 可能追加字段（requestId 在信封顶层）：只读 secrets，其余忽略。
+    # Capability 可能追加字段（requestId 在信封顶层）：只读 secrets，其余忽略。
     model_config = ConfigDict(strict=True, extra="ignore")
 
     secrets: dict[str, str]
@@ -53,10 +53,10 @@ class _ResolveResponse(BaseModel):
     data: _ResolveData
 
 
-class HubSecretResolver:
-    """runtime caller 侧的 hub 凭据解析客户端。每次 resolve 一个短连接（每 run 至多一批）。"""
+class CapabilitySecretResolver:
+    """Capability runtime caller 侧的凭据解析客户端（每次 run 至多一批）。"""
 
-    def __init__(self, settings: HubSecretSettings) -> None:
+    def __init__(self, settings: CapabilitySecretSettings) -> None:
         self._base_url = settings.base_url.rstrip("/")
         self._secret = settings.service_secret
 
@@ -86,13 +86,21 @@ class HubSecretResolver:
         return dict(parsed.data.secrets)
 
 
-def hub_secret_resolver_from_env(env: Mapping[str, str]) -> HubSecretResolver | None:
-    """两项 env 齐备才装配（KOKORO_HUB_BASE_URL + KOKORO_INTERNAL_SECRET_AGENT）；
+def capability_secret_resolver_from_env(env: Mapping[str, str]) -> CapabilitySecretResolver | None:
+    """两项 env 齐备才装配（KOKORO_CAPABILITY_BASE_URL + KOKORO_INTERNAL_SECRET_AGENT）；
     缺任一 → None（`handle:` 引用无解析出口 → registry 侧占名不可用，不炸 run）。"""
-    base_url = env.get("KOKORO_HUB_BASE_URL")
+    base_url = env.get("KOKORO_CAPABILITY_BASE_URL")
     secret = env.get("KOKORO_INTERNAL_SECRET_AGENT")
     if not base_url or not secret:
         return None
-    return HubSecretResolver(
-        HubSecretSettings(base_url=base_url, service_secret=SecretStr(secret))
+    return CapabilitySecretResolver(
+        CapabilitySecretSettings(base_url=base_url, service_secret=SecretStr(secret))
     )
+
+
+__all__ = [
+    "CapabilitySecretResolver",
+    "CapabilitySecretSettings",
+    "SecretResolveError",
+    "capability_secret_resolver_from_env",
+]

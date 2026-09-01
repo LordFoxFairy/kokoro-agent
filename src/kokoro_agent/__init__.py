@@ -1,3 +1,3 @@
-"""Kokoro agent 运行时包。"""
+"""Kokoro GA 的 DeepAgents 集成包。"""
 
 __version__ = "2.0.0"

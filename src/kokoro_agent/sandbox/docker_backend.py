@@ -64,7 +64,7 @@ class DockerShellBackend(LocalShellBackend):
 
     @property
     def sandbox_id(self) -> str:
-        # 统一生命周期面（ADR-010）：编排层据此落 ledger 绑定，各档同一属性名。
+        # 统一生命周期面（ADR-010）：编排层据此落 ledger 记录，各档同一属性名。
         return self.container_id
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:

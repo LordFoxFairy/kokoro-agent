@@ -24,7 +24,7 @@ LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 _WORKDIR = "/home/user"
 
 
-# e2b SDK 的最小依赖面（依赖倒置）：backend 只认这些成员，测试注入 fake 无需真箱。
+# e2b SDK 的最小依赖面（依赖倒置）：backend 只认这些子代理，测试注入 fake 无需真箱。
 class CommandOutcome(Protocol):
     @property
     def stdout(self) -> str: ...
@@ -82,7 +82,7 @@ class E2BSandboxBackend(BaseSandbox):
 
     @property
     def sandbox_id(self) -> str:
-        # 统一生命周期面（ADR-010）：编排层据此落 ledger 绑定，各档同一属性名。
+        # 统一生命周期面（ADR-010）：编排层据此落 ledger 记录，各档同一属性名。
         return self._sandbox.sandbox_id
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:

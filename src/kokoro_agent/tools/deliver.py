@@ -1,22 +1,22 @@
-"""成果交付工具（deliver）：读工作区文件字节 → sha256 → 冻结进 deliveries/<ns>/<hash>。
-
-交付即冻结：读到哪份字节冻结哪份（构造上自洽，无需 quiesce）；同内容同 key 天然幂等，
-异内容异 key 物理上不可能覆盖。工具恒挂（schema 不随配置变，D9）：无 workspace / 无
-deliveries 时调用降级为 error 文本（模型自纠，不炸 run）。
-"""
+"""Publish a DeepAgents workspace file through Storage's Artifact contract."""
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import mimetypes
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Literal
 
+from deepagents.backends.protocol import BackendProtocol
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.skills.hub import PackageStore, SkillHubError
+from kokoro_agent.clients.storage import (
+    DeliveryClient,
+    DeliveryRequest,
+    StorageClientError,
+)
+from kokoro_agent.contract import ExecutionIdentity
 
 DELIVER_TOOL_NAME = "deliver"
 
@@ -24,13 +24,13 @@ DELIVER_TOOL_NAME = "deliver"
 class DeliverArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    path: str = Field(description="工作区内的成果文件路径（虚拟根绝对路径，如 /report.pdf）。")
+    path: str = Field(description="工作区内的成果文件绝对路径，如 /report.pdf。")
     title: str = Field(description="成果标题（展示用）。")
     note: str = Field(default="", description="交付说明（可选）。")
 
 
 class DeliverResult(BaseModel):
-    """deliver 工具结构化返回 = delivery.created 追发的解析契约（单一事实来源）。"""
+    """Tool result parsed by the product-event publisher."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -43,50 +43,82 @@ class DeliverResult(BaseModel):
     note: str
 
 
-def delivery_ref(namespace: str, content_hash: str) -> str:
-    """成果冻结键：content-hash keyed，与 workspace 归档（path-keyed 覆盖写）不同 keyspace。"""
-    return f"deliveries/{namespace}/{content_hash}"
-
-
 def make_deliver_tool(
-    workspace_dir: Path | None,
-    deliveries: PackageStore | None,
+    backend: BackendProtocol,
+    delivery: DeliveryClient,
+    *,
     namespace: str,
+    run_id: str,
+    identity: ExecutionIdentity,
 ) -> StructuredTool:
-    """per-run 闭包：工作区目录 / 冻结件存储 / namespace 在装配期捕获。"""
+    """Bind one run's workspace and Storage facade to the delivery tool."""
 
     async def deliver(path: str, title: str, note: str = "") -> str:
-        if workspace_dir is None:
-            return "error: 当前后端不支持交付（无工作区文件面）。"
-        if deliveries is None:
-            return "error: 未配置交付存储（storage yaml deliveries 节）。"
-        # 虚拟根绝对路径映射进工作区（同归档 _archive_file 的 lstrip("/") 约定）。
-        root = workspace_dir.resolve()
-        target = (workspace_dir / path.lstrip("/")).resolve()
-        if not target.is_relative_to(root):  # resolve 后仍在工作区内，否则拒（路径穿越/符号链接越界）。
-            return f"error: 路径 {path!r} 越出工作区，拒绝交付。"
-        if not target.is_file():
-            return f"error: 文件 {path!r} 不存在或不是常规文件。"
-        data = await asyncio.to_thread(target.read_bytes)
-        content_hash = hashlib.sha256(data).hexdigest()
-        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        normalized = _workspace_path(path)
+        if normalized is None:
+            return f"error: 路径 {path!r} 不是合法的工作区绝对路径。"
+
+        downloaded = await backend.adownload_files([normalized])
+        if len(downloaded) != 1:
+            return "error: 工作区未返回请求的文件。"
+        file = downloaded[0]
+        if file.error is not None or file.content is None:
+            return f"error: 文件 {path!r} 无法读取（{file.error or 'empty response'}）。"
+
+        content_hash = hashlib.sha256(file.content).hexdigest()
+        mime = mimetypes.guess_type(PurePosixPath(normalized).name)[0]
+        mime = mime or "application/octet-stream"
+        request_id = hashlib.sha256(
+            f"{run_id}\0{normalized}\0{content_hash}".encode()
+        ).hexdigest()
         try:
-            await deliveries.put(delivery_ref(namespace, content_hash), data)
-        except SkillHubError as exc:
-            return f"error: {exc}"
+            receipt = await delivery.publish(
+                DeliveryRequest(
+                    request_id=request_id,
+                    run_id=run_id,
+                    namespace=namespace,
+                    identity=identity,
+                    path=normalized,
+                    title=title,
+                    note=note,
+                    mime_type=mime,
+                    content_sha256=content_hash,
+                    content=file.content,
+                )
+            )
+        except StorageClientError as exc:
+            return f"error: 交付存储暂不可用（{exc}）。"
+
+        if (
+            receipt.content_sha256 != content_hash
+            or receipt.size_bytes != len(file.content)
+            or receipt.mime_type != mime
+        ):
+            return "error: Storage 交付回执与源文件不一致。"
+
         return DeliverResult(
             status="delivered",
-            path=path,
+            path=normalized,
             title=title,
             mime=mime,
-            size=len(data),
+            size=len(file.content),
             content_hash=content_hash,
             note=note,
         ).model_dump_json()
 
     return StructuredTool(
         name=DELIVER_TOOL_NAME,
-        description="把工作区里的一份成品交付给用户（交付即冻结：之后工作区怎么改都不影响已交付成果）。",
+        description="把工作区中的成品发布为用户可访问的冻结产物。",
         args_schema=DeliverArgs,
         coroutine=deliver,
     )
+
+
+def _workspace_path(path: str) -> str | None:
+    candidate = PurePosixPath(path)
+    if not path.startswith("/") or ".." in candidate.parts or path.startswith("/.skills/"):
+        return None
+    normalized = str(candidate)
+    if normalized == "/" or path.endswith("/"):
+        return None
+    return normalized

@@ -1,101 +1,125 @@
 # kokoro-agent
 
-Kokoro 三仓里的**执行层**：DeepAgents + LangChain worker。以 consumer-group 消费 run 请求流，
-跑 agent 循环，产出契约事件（`run.* / message.* / thinking.* / tool.* / todo.* / subagent.*`，
-共 14 kind），写入 per-run 事件流。**不面向浏览器**，只供 `kokoro-session` 消费。
+Kokoro 的 GA 执行底座：直接使用 DeepAgents 的 agent loop、state、checkpoint 和 interrupt；需要多个
+peer 接手会话时使用官方 `langgraph-swarm`。GA worker 从 Redis 接收 Root generated
+`LaunchRunRequest`，按 `feature_key` 取得 Feature，执行一个或多个 Agent，并将用户可见结果写入
+`chat_messages/chat_events`。
 
-> 全局架构与起栈见 [根 README](../README.md)；技术法律见根仓 `docs/kokoro-handbook/`；
-> 协议单源见根仓 `contract/`（本仓 `src/kokoro_agent/contract/` 是生成镜像，勿手改）。
-> 本仓正式文档入口见 [docs/README.md](docs/README.md)；历史本地草稿仍按 `.gitignore`
-> 留在未跟踪区，不作为权威依据。
+Root `contract/` 是 API/AIP 跨仓契约唯一来源；当前 Redis worker 使用严格 internal
+envelope adapter（Root `LaunchRunRequest` 的顶层 `message_id/content` 在 Redis 中位于
+`input`），generated consumer/transport 接入后替换映射层，不在本仓复制契约。GA 不面向浏览器，
+`kokoro-bff/modules/chat` 通过版本化 Chat contract 查询历史、订阅 replay 并投影 AG-UI/SSE；
+本仓只提供执行事实和恢复边界。
 
-## 目录（按执行链路组织）
+## 目标目录（按真实职责）
 
-```
+`kokoro-agent/` 是 Git 仓库和 Python distribution，`src/` 是 import isolation 边界，
+`kokoro_agent/` 才是 `import kokoro_agent` 对应的 Python package。三者属于打包结构，不是三层
+业务架构；保留标准 `src layout` 可以阻止测试误用仓库根目录中的未安装代码。
+
+```text
 src/kokoro_agent/
-├── contract/         ⚙ 生成物（DO NOT EDIT）：事件/控制/流名的唯一协议词汇
-├── config.py         AppConfig：环境变量唯一解析点，仅 worker/main.py 消费
-├── agents/           【成品层】封装好的对外 agent 定义（general 成品：人格+身份）
-├── orchestration/    【编排层】assemble=每请求主配方（RunRequest+RuntimeConfig→InvokableAgent，
-│                     只收领域设置不收 AppConfig）；context=模型可见面唯一拼装点
-│                     （人格+条件工具指引+skills）
-├── worker/           【调度域】main=env→deps→serve；supervisor=长驻调度（请求流消费、
-│                     per-run control 流、租约心跳/过期重拾、暂停 run 收养、SIGTERM drain）
-├── execution/        【运行域】build_agent（DeepAgents 装配收窄为 InvokableAgent 端口）、
-│                     run_agent（invoke/终态认领/recursion 熔断）、events（RunEmitter：index 单点
-│                     递增、wire 截断、review 抑制）、approvals（HITL/审核帧构造与 resume 对齐）
-├── run/state.py      RunScope（run 身份）+ KokoroAgentState（DeepAgentState 扩展）：身份乘
-│                     State 轴随 input 进图、落 checkpoint、resume 不重供；图节点不得改写
-├── model/            chat model 工厂（openai/anthropic/DeepSeek 包装抽 reasoning）+ LocalFake
-├── tools/            底层工具与治理：ask_user_question、memory（save/search，scope 装配注入）、
-│                     web_fetch（SSRF 防御）、web_search（协议+provider 注册表同文件）、
-│                     registry（名字治理）、permissions（interrupt_on 构造）、
-│                     middleware（工具授权 fail-closed / 委派执法 / 结果审核）
-├── skills/           SKILL.md lock 校验 + 全文渲染进 system prompt（backend 无关）
-├── subagents/        目录（内建=空，原则：只收带真实工具的真能力；预设走 namespace wire）
-├── mcp/              langchain-mcp-adapters 接入：白名单过滤 + mcp__{server}__{tool} 命名
-├── sandbox/          执行 backend 工厂（state / local_shell；e2b 待落地 fail-loud）
-├── streams/          StreamProtocol（cursor 不透明）+ redis（XADD maxlen、XREADGROUP/XACK、
-│                     XAUTOCLAIM 死信收养）
-├── storage/          RunStateStore（TTL 租约/暂停哨兵/终态原子认领/审核结果 keep-first，
-│                     mongo）+ checkpointer 工厂 + 记忆 store 工厂（随 checkpoint 对齐）
-└── observability.py  Langfuse trace config（三 env 齐备才开，缺任一静默关闭）
+├── agents/          完整、可复用的 DeepAgents Agent 声明
+├── features/        对外产品能力与 Agent 组装声明
+├── agent_factory.py 唯一内部组装入口，直接调用 DeepAgents
+├── swarm.py         official langgraph-swarm handoff 薄接线
+├── execution/       Run、control、HITL、事件投影与终态
+├── chat/            GA chat_messages/chat_events 与安全产品投影（供 BFF Chat 使用）
+├── worker/          Redis ingress、共享服务、claim、recovery、drain
+├── tools/           GA 固定工具、每次运行的工具集合与 middleware
+├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
+├── clients/         Capability/Storage 窄 client（Skill、MCP、Artifact 交付）
+├── sandbox/         Workbench 与 S3-compatible Workspace adapter
+├── storage/         RunLedger、LangGraph Store 与 checkpoint adapter
+├── mcp/             MCP 连接、工具与本地 fixture
+├── model/           模型选择与 provider adapter
+├── prompts/         静态提示词资产
+└── observability.py metrics、trace、private audit
 ```
+
+## 入口与边界
+
+```text
+Redis LaunchRunRequest
+  -> worker ingress
+  -> identity normalization + RunLedger claim
+  -> FeatureCatalog[feature_key]
+  -> create_deep_agent | official Swarm
+  -> native state/checkpoint + GA RunLedger/workbench
+  -> chat_messages/chat_events durable write
+  -> Root Chat query boundary -> kokoro-bff/modules/chat Chat API/AG-UI
+```
+
+- 外部请求携带 `ExecutionIdentity`，不携带 caller namespace、thread、Agent、Skill、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
+- DeepAgents 的 native state 与 official `SwarmState` 都由框架拥有；GA 不定义自己的 State 包装。
+- Agent 声明的 Skill 由 Capability public contract 解析；GA 仅把获准包体暴露为当前 Run 的只读 backend route，用户/项目/会话 Skill CRUD 仍属于 Capability。
+- `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的
+  browser-live stream，因为两者的 generated envelope 和 seq owner 不同。不创建
+  `conversation_messages`、持久 `run_events` 或独立 `event_outbox`。
+- 模型按 provider accepted invocation 次数计费；Billing 通过 `invocation_id` 幂等结算，非 token 计费。
+
+## 子仓文档
+
+- [GA 当前边界](docs/agent/current-boundary.md)
+- [API/AIP 契约摘录](docs/agent/api-contract.md)
+- [GA 技术方案](docs/agent/technical-plan.md)
 
 ## 运行
 
 ```bash
 uv sync
-# 本地假模型（凭据无关，离线可跑）：
+# Worker 使用已配置的真实 provider；模型凭据只通过环境变量或 secret 注入：
 KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
-  KOKORO_MONGO_URL=mongodb://127.0.0.1:27017 KOKORO_MONGO_DB=kokoro \
-  KOKORO_LOCAL_FAKE_MODEL=1 uv run kokoro-agent-worker
+  KOKORO_AGENT_DATABASE_URL=postgresql://localhost/postgres KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
+  ANTHROPIC_API_KEY=... uv run kokoro-agent-worker
 ```
 
-接真实模型：去掉 `KOKORO_LOCAL_FAKE_MODEL`，`.env` 配 provider 凭据（见 `.env.example`，
-含 reasoning 抽取/web 工具/Langfuse/熔断等全部开关的注释）。**模型档位、sandbox backend、
-skills/MCP/子代理预设、权限**全部由 kokoro-session 的 namespace profile 决定并经 wire 下发
-——agent 只消费 RuntimeConfig，不自造政策。
-GA 侧只认 opaque `namespace`；不要在 agent 契约里新增 `userId` / `ownerId` /
-`workspaceId` 作为隔离辅助字段，也不要拼 `user:<id>` 这类业务前缀。
+部署时：
 
-## 能力面（全部经 单测 → 跨栈 e2e → 真模型 验证）
+- Compose/Kubernetes 只注入 PostgreSQL、Redis、GA checkpoint/RunLedger、sandbox/workbench、模型和可选 public-client handle；不定义 Feature 或 Agent 组合。
+- Feature 目录在 worker 启动时加载；Agent 声明的 Skill 在构造时解析，并由 DeepAgents 原生 SkillsMiddleware 渐进读取。
+- `music` 与真实 provider/model 仍是本地骨架；provider 由 `model/factory.py` 统一适配，后续接入 Model public client/LiteLLM 时不改变 AgentFactory 或 DeepAgents 链路。
+- 没有 provider 凭证的离线循环只在测试中使用 `tests/support/local_fake.py`；它不属于正式包，也不提供 worker 运行时开关。
+- MCP 连接的 egress 策略在 worker 启动时从 `KOKORO_MCP_EGRESS_MODE` 解析一次（默认 strict）；连接层不再读取进程环境。
+- `ExecutionIdentity` 由 BFF Chat/IAM 提供，GA 自己派生 `RuntimeNamespace`；不在 wire 中传 `namespace`、用户 ID 或 workspace ID。
 
-- **HITL 双拦截**：工具前审批（approve/edit/reject）+ 工具后结果审核（approve/respond/reject，
-  keep-first 缓存防双跑）；`ask_user_question` 恒为 respond 暂停点。
-- **长期记忆**：`save_memory`/`search_memory`，store 前缀 =(namespace, "memories")，
-  隔离政策装配注入，工具体零租户概念。
-- **web 双件**：`web_fetch` 恒挂载（SSRF：DNS 解析后拒非公网/逐跳复检/15s/1MB/24k）；
-  `web_search` 配置即挂载（tavily/searxng/zhipu 注册表，无 provider 不挂空壳）。
-- **skills**：namespace/入口级挂载，lock（sha256）fail-closed，全文注入 prompt。
-- **子代理**：wire 预设（tools 按名解析实例、model 工厂化，未知名 fail-loud）；
-  委派三档 `subagent_create=deny|ask|allow`（deny 只放行声明集）。
-- **thinking**：openai 兼容端点带 `reasoning_content` 时 `KOKORO_OPENAI_REASONING=1`
-  切 DeepSeek 包装抽取，thinking.delta 全链上 wire。
-- **韧性**：TTL 租约重拾、PEL 死信收养、暂停 run control 监听收养（worker 崩溃后 HITL
-  不卡死）、`KOKORO_RECURSION_LIMIT` 失控熔断（默认 100）。
+## 能力与验证
+
+GA 的能力通过 `Feature -> Agent(s)` 组织：Music Agent 可单独作为 `music` Feature，也可被其他 Feature
+复用；只有确有 peer handoff 价值时才使用 official Swarm。未来可视化 Builder 只生成同一套 Feature/Agent
+声明，不引入第二套 runtime。
+
+开发期可检查当前受管能力面；输出只包含声明元数据，不包含 prompt、secret、namespace、thread
+或运行状态：
+
+```bash
+uv run kokoro-agent inspect
+uv run kokoro-agent inspect music_chat --json
+```
 
 ## 门禁与验证
 
 ```bash
-uv run ruff check . && uv run pyright && uv run pytest   # 本仓三件套
-python3 ../scripts/e2e-v21-gate.py        # 跨栈确定性门禁（LocalFake，30 项）
-python3 ../scripts/chaos-verify.py        # 崩溃混沌：worker 收养 + session 恢复（11 项）
-python3 ../scripts/trace-verify.py        # Langfuse HITL trace 连续性（7 项）
-python3 ../scripts/real-model-verify.py   # 真模型五场景（thinking/subagent/search/skills/execute）
+uv run ruff check .
+uv run pyright
+uv run pytest
+uv run pytest tests/unit tests/integration
+uv run kokoro-agent inspect --json
 ```
+
+跨仓联调由 Root 的 contract/goal2 门禁负责；本仓不依赖 Root 的旧验证脚本，也不把其它仓库的
+源码、数据库或测试实现复制进来。
 
 ## 关键不变量
 
-- wire 词汇 = `contract/` 生成物，一套 kind 从 agent 到像素同名同拼写；per-run 单调 `index`
-  由 `execution/events.py` 的 RunEmitter 单点递增（event_id 幂等链根基）；
+- wire 词汇 = Root `contract/` 生成物；GA ProductEvent 写入 `chat_events`，由 `chat_event_id + seq` 保证幂等与顺序；
   契约 optional 字段缺席=省略（exclude_none），null 永不上 wire。
 - 请求流 XREADGROUP 消费、parse 后即 XACK；崩溃恢复权在 RunStateStore TTL 租约，
   HITL 暂停置哨兵永不被重拾重跑，其 control 监听由存活 worker 心跳收养。
 - claim-before-emit：cancel/自然完成/异常三路共用同一原子认领键，恰好一个终态事件。
 - HITL 帧构造唯一在 `execution/approvals.py`：resume 按 tool_id fail-loud 对齐，
   `tool.awaiting_approval` 携带 `pending_tool_ids`（同帧凑齐才提交的契约依据）。
-- 第三方类型豁免锁死于 `tests/test_boundary_pragmas.py` allowlist（现仅 2 处），
+- 第三方类型豁免锁死于 `tests/contract/test_boundary_pragmas.py` allowlist，
   行内 `type: ignore` 全仓为零（同测执法）。
 - 异常 → `run.failed` 终态 fail-loud，worker 存活（单消息隔离，不崩调度循环）。
 

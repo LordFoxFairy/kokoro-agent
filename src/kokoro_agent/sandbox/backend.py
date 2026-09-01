@@ -1,4 +1,4 @@
-"""filesystem 权限 + 执行 backend 选择：filesystem/backend 每请求经 wire 决定，参数进程级注入。"""
+"""filesystem 权限与执行 backend 接线：选择来自 GA Agent/Feature 声明，参数由 worker 注入。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from kokoro_agent.contract import Backend, FilesystemPerm
+from kokoro_agent.policy import Backend, FilesystemPerm
 from kokoro_agent.sandbox.archive import (
     ArchivingLocalShellBackend,
     LocalWorkspace,
@@ -34,7 +34,7 @@ LOGGER = logging.getLogger("kokoro_agent.sandbox")
 
 
 class SandboxSettings(BaseModel):
-    """local_shell backend 的进程级参数；backend 选择属每请求维度，不归入。"""
+    """各 backend 的进程级参数；具体选择由受信 Agent/Feature 声明决定。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -106,7 +106,7 @@ def make_backend(
             max_output_bytes=settings.local_shell_max_output_bytes,
             inherit_env=settings.local_shell_inherit_env,
         )
-    # docker/e2b/custom 有 run 级生命周期（ledger 绑定），走 make_backend_for_run 的 async 编排。
+    # docker/e2b/custom 有 run 级生命周期（ledger 记录），走 make_backend_for_run 的 async 编排。
     raise ValueError(f"backend {kind} requires run-scoped assembly via make_backend_for_run")
 
 
@@ -119,8 +119,8 @@ def _workspace_root(settings: SandboxSettings, workspace: str | None) -> str | N
     return root
 
 
-class SandboxBinding(Protocol):
-    """run 级箱绑定存取（RunLedger 子集）：装配路径只依赖这两个方法。"""
+class RunSandboxStore(Protocol):
+    """run 级沙箱记录存取（RunLedger 子集）：装配路径只依赖这两个方法。"""
 
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None: ...
 
@@ -134,7 +134,7 @@ class SandboxContext:
     settings: SandboxSettings
     workspace: str
     run_id: str
-    # ledger 既往绑定（HITL resume 现场）：重连既往箱/容器而非新建。
+    # ledger 既往记录（HITL resume 现场）：重连既往箱/容器而非新建。
     prior_sandbox_id: str | None
 
 
@@ -216,7 +216,7 @@ async def make_backend_for_run(
     *,
     workspace: str,
     run_id: str,
-    binding: SandboxBinding,
+    sandbox_store: RunSandboxStore,
 ) -> BackendProtocol | None:
     """统一装配入口：注册表选连接器 + 生命周期单点收口——
     产物带非空 `sandbox_id` 即落 ledger（keep-first），resume 经 prior 重连而非新建。
@@ -224,7 +224,7 @@ async def make_backend_for_run(
     connector = _CONNECTORS.get(kind)
     if connector is None:
         raise NotImplementedError(f"backend {kind!r} has no registered connector")
-    prior = await binding.get_sandbox_id(run_id)
+    prior = await sandbox_store.get_sandbox_id(run_id)
     context = SandboxContext(
         settings=settings, workspace=workspace, run_id=run_id, prior_sandbox_id=prior
     )
@@ -232,7 +232,7 @@ async def make_backend_for_run(
     backend = await asyncio.to_thread(connector, context)
     bound = getattr(backend, "sandbox_id", None)
     if isinstance(bound, str) and bound and bound != prior:
-        await binding.put_sandbox_id(run_id, bound)
+        await sandbox_store.put_sandbox_id(run_id, bound)
     return backend
 
 

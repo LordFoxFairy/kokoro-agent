@@ -20,7 +20,7 @@ from kokoro_agent.contract import ExecutionIdentity, IdentityRef, RunInput, RunR
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.tools.toolbox import ProcessToolbox
-from kokoro_agent.worker.services import WorkerClients, WorkerServices
+from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from support.fakes import FakeRunRepository
 from support.local_fake import LocalFakeChatModel
 
@@ -51,7 +51,7 @@ def _factory(monkeypatch: pytest.MonkeyPatch) -> AgentFactory:
     config = AppConfig.from_env({})
     clients = WorkerClients()
     return AgentFactory(
-        WorkerServices(
+        WorkerDependencies(
             model=config.model,
             sandbox=config.sandbox,
             run_token_budget=config.run_token_budget,

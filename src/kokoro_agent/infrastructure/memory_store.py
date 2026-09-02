@@ -101,7 +101,7 @@ class PgMemoryStore(BaseStore):
         """Synchronous BaseStore compatibility for non-async LangGraph callers.
 
         The worker uses ``abatch``.  Keeping the sync entry point here satisfies the
-        framework contract without adding a second storage implementation; sync graph
+        framework contract without adding a second durable-state implementation; sync graph
         callers get the same PostgreSQL-backed operations.
         """
         return asyncio.run(self.abatch(ops))

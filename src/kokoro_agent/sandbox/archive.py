@@ -1,4 +1,4 @@
-"""GA workspace S3-compatible persistence; unrelated to Storage Artifacts/Skill bytes."""
+"""GA workspace archive; unrelated to Storage Artifacts/Skill bytes."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class S3Workspace(BaseModel):
 
 
 class WorkspaceFile(BaseModel):
-    """GA workspace persistence config; external Storage is a separate client."""
+    """GA workspace archive config; external Storage is a separate client."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 

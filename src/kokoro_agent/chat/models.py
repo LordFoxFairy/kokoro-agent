@@ -1,4 +1,4 @@
-"""Strict GA chat persistence shapes, separate from LangChain native state."""
+"""Strict GA chat fact shapes, separate from LangChain native state."""
 
 from __future__ import annotations
 

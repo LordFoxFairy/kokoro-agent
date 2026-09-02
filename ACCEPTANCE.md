@@ -111,7 +111,7 @@ Optional `x-kokoro-subject-kind` and `x-kokoro-actor-kind` values are `user`,
 - `GET /v1/sessions/{session_id}/events` returns the allowlisted durable chat
   events, `next_seq`, and `watermark`.
 
-Both routes derive the storage namespace from the trusted identity. A different
+Both routes derive the runtime namespace from the trusted identity. A different
 subject therefore sees an empty projection rather than another subject's data.
 
 Business success responses use `{data,meta:{request_id}}`; errors use

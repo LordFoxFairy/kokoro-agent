@@ -98,7 +98,7 @@ class AppConfig(BaseModel):
     local_shell_max_output_bytes: int = Field(
         default=100000, gt=0, validation_alias="KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES"
     )
-    # 存储形态 yaml（ADR-009）：与 session 读同一文件；缺省=local 默认档。
+    # 工作区形态 yaml（ADR-009）：与 session 读同一文件；缺省=local 默认档。
     workspace_config: OptStr = Field(default=None, validation_alias="KOKORO_WORKSPACE_CONFIG")
     workspace_s3_access_key: OptSecret = Field(
         default=None, validation_alias="KOKORO_WORKSPACE_S3_ACCESS_KEY"

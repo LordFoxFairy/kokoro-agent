@@ -40,9 +40,15 @@ class AgentConfig(Protocol):
 
     @property
     def ledger(self) -> LedgerSettings: ...
-    database_url: str
-    database_schema: str
-    internal_secret_agent: SecretStr | None
+
+    @property
+    def database_url(self) -> str: ...
+
+    @property
+    def database_schema(self) -> str: ...
+
+    @property
+    def internal_secret_agent(self) -> SecretStr | None: ...
 
 
 _JSON_OBJECT = TypeAdapter(dict[str, object])
@@ -69,7 +75,7 @@ def _identity(headers: Mapping[str, str]) -> ExecutionIdentity:
     if not tenant or not subject or not actor or not assertion:
         raise IngressError(401, "identity_required", "Trusted execution identity headers are required")
     def kind(name: str) -> IdentityKind:
-        value = headers.get(name, "user")
+        value = headers.get(name, "").strip() or "user"
         if value not in {"user", "project", "service"}:
             raise IngressError(400, "invalid_identity", f"{name} is invalid")
         if value == "user":

@@ -859,9 +859,9 @@ class PgLedger:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (run_id, token_total)
+                    INSERT INTO {} AS current_run (run_id, token_total)
                     VALUES (%s, %s)
-                    ON CONFLICT (run_id) DO UPDATE SET token_total = token_total + EXCLUDED.token_total
+                    ON CONFLICT (run_id) DO UPDATE SET token_total = current_run.token_total + EXCLUDED.token_total
                     RETURNING token_total
                     """.format(
                         qualified(self._schema, RUN_CLAIMS_TABLE),
@@ -878,11 +878,11 @@ class PgLedger:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (run_id, usage_input_total, usage_output_total)
+                    INSERT INTO {} AS current_run (run_id, usage_input_total, usage_output_total)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (run_id) DO UPDATE SET
-                        usage_input_total = usage_input_total + EXCLUDED.usage_input_total,
-                        usage_output_total = usage_output_total + EXCLUDED.usage_output_total
+                        usage_input_total = current_run.usage_input_total + EXCLUDED.usage_input_total,
+                        usage_output_total = current_run.usage_output_total + EXCLUDED.usage_output_total
                     RETURNING usage_input_total, usage_output_total
                     """.format(
                         qualified(self._schema, RUN_CLAIMS_TABLE),
@@ -926,13 +926,13 @@ class PgLedger:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (run_id, terminal, terminal_at, lease_expires_at)
+                    INSERT INTO {} AS current_run (run_id, terminal, terminal_at, lease_expires_at)
                     VALUES (%s, TRUE, %s, NULL)
                     ON CONFLICT (run_id) DO UPDATE SET
                         terminal = TRUE,
-                        terminal_at = COALESCE(terminal_at, EXCLUDED.terminal_at),
+                        terminal_at = COALESCE(current_run.terminal_at, EXCLUDED.terminal_at),
                         lease_expires_at = NULL
-                    WHERE terminal = FALSE
+                    WHERE current_run.terminal = FALSE
                     RETURNING run_id
                     """.format(
                         qualified(self._schema, RUN_CLAIMS_TABLE),
@@ -1078,9 +1078,9 @@ class PgLedger:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (run_id, sandbox_id)
+                    INSERT INTO {} AS current_run (run_id, sandbox_id)
                     VALUES (%s, %s)
-                    ON CONFLICT (run_id) DO UPDATE SET sandbox_id = COALESCE(sandbox_id, EXCLUDED.sandbox_id)
+                    ON CONFLICT (run_id) DO UPDATE SET sandbox_id = COALESCE(current_run.sandbox_id, EXCLUDED.sandbox_id)
                     """.format(
                         qualified(self._schema, RUN_CLAIMS_TABLE),
                     ),

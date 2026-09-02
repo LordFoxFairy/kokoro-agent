@@ -16,7 +16,21 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Release verification runs the same real service-backed gate as branch CI.
     services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kokoro_agent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kokoro_agent"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       redis:
         image: redis:7
         ports:
@@ -28,18 +42,46 @@ jobs:
           --health-retries 5
     env:
       KOKORO_REDIS_URL: redis://127.0.0.1:6379/0
+      KOKORO_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kokoro_agent
+      KOKORO_AGENT_DATABASE_SCHEMA: kokoro_agent_ci
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv sync --locked
+      - name: verify PostgreSQL and Redis fixtures
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+
+          import psycopg
+          from redis.asyncio import Redis
+
+          async def main() -> None:
+              async with await psycopg.AsyncConnection.connect(
+                  os.environ["KOKORO_AGENT_DATABASE_URL"]
+              ) as connection:
+                  async with connection.cursor() as cursor:
+                      await cursor.execute("SELECT 1")
+
+              redis = Redis.from_url(os.environ["KOKORO_REDIS_URL"])
+              try:
+                  assert await redis.ping()
+              finally:
+                  await redis.aclose()
+
+          asyncio.run(main())
+          PY
       - name: Ruff
         run: uv run ruff check src tests
       - name: Pyright
         run: uv run pyright
-      - name: Pytest
-        run: uv run pytest -q
+      - name: Pytest (complete service acceptance gate)
+        run: >-
+          uv run pytest -q -o addopts=''
+          tests/unit tests/contract tests/integration tests/e2e tests/acceptance
 
   publish:
     needs: verify

@@ -52,15 +52,17 @@ kokoro_agent = ["prompts/*.md"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
-addopts = "-m 'not integration and not e2e'"
+addopts = "-m 'not integration and not e2e and not acceptance'"
 markers = [
+  "contract: verifies the Agent-owned wire and architecture contracts",
   "integration: requires Redis, PostgreSQL, Docker, MinIO, or another local service",
   "e2e: exercises the complete worker/runtime path with external services",
+  "acceptance: exercises the Agent HTTP owner interface against real PostgreSQL and Redis fixtures",
 ]
 
 [tool.pyright]
-include = ["src", "tests/unit", "tests/contract", "tests/support"]
-exclude = ["tests/integration", "tests/e2e", "src/kokoro_agent/generated"]
+include = ["src", "tests"]
+exclude = ["src/kokoro_agent/generated"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 # langgraph 1.2 core 的 stream/pregel 子模块缺 pyright stub（py.typed 未覆盖）；仅关第三方 stub 提示，不削弱本仓代码检查。

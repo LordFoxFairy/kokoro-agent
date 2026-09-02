@@ -278,10 +278,10 @@ class PgChatStore:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (kind, namespace, session_id, seq)
+                    INSERT INTO {} AS current_sequence (kind, namespace, session_id, seq)
                     VALUES (%s, %s, %s, 1)
                     ON CONFLICT (kind, namespace, session_id)
-                    DO UPDATE SET seq = seq + 1
+                    DO UPDATE SET seq = current_sequence.seq + 1
                     RETURNING seq
                     """.format(qualified(self._schema, CHAT_SEQUENCES_COLLECTION)),
                     (kind, namespace, session_id),

@@ -134,9 +134,14 @@ uv run kokoro-agent inspect music_chat --json
 uv run ruff check .
 uv run pyright
 uv run pytest
-uv run pytest tests/unit tests/integration
+uv run pytest -o addopts='' tests/unit tests/contract tests/integration tests/e2e tests/acceptance
 uv run kokoro-agent inspect --json
 ```
+
+`uv run pytest` 是默认快速门禁，包含 unit 与 contract，排除需要真实服务的
+integration、e2e 和 HTTP acceptance。最后一条 pytest 命令是完整 Agent 服务门禁，必须在
+PostgreSQL + Redis fixture 可达时运行；缺少服务会由 fixture fail-loud，而不是静默得到假绿。
+HTTP owner 的接口、fixture 要求和验收证据见 [`ACCEPTANCE.md`](ACCEPTANCE.md)。
 
 跨仓联调由 Root 的 contract/goal2 门禁负责；本仓不依赖 Root 的旧验证脚本，也不把其它仓库的
 源码、数据库或测试实现复制进来。

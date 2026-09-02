@@ -32,17 +32,24 @@ _INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "le
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Derive coarse gates from directories and mixed-test gates from service fixtures."""
+    """Derive explicit contract/service gates from directories and fixtures."""
     integration = pytest.mark.integration
     e2e = pytest.mark.e2e
+    acceptance = pytest.mark.acceptance
+    contract = pytest.mark.contract
     for item in items:
         path = item.path.as_posix()
+        if "/tests/acceptance/" in path:
+            item.add_marker(acceptance)
+            continue
         if "/tests/e2e/" in path:
             item.add_marker(e2e)
             continue
         if "/tests/integration/" in path:
             item.add_marker(integration)
             continue
+        if "/tests/contract/" in path:
+            item.add_marker(contract)
         fixture_names = item.fixturenames if isinstance(item, pytest.Function) else ()
         if _INTEGRATION_FIXTURES.intersection(fixture_names):
             item.add_marker(integration)

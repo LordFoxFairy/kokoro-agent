@@ -1,6 +1,6 @@
 # repositories — Agent repository ports
 
-- `run_repository.py`：RunRepository port 与 transport-neutral 结果模型；Run claim、lease、control command、terminal、effect journal 的 PostgreSQL 实现位于 `infrastructure/postgres_run_repository.py`。
+- `run_repository.py`：RunRepository 的组合 port 与 transport-neutral 结果模型；按消费能力拆分的 `RunAdmissionPort`、`RunEventPort`、`RunControlPort`、`RunLifecyclePort`、`RunEffectPort` 位于 `run_ports.py`。Run claim、lease、control command、terminal、effect journal 的 PostgreSQL 实现位于 `infrastructure/postgres_run_repository.py`。
 - `chat_repository.py`：ChatRepository port；用户可见消息与事件的 PostgreSQL 实现位于 `infrastructure/postgres_chat_repository.py`。
 
 数据库 schema 和技术 adapter 不属于 repository port，统一位于 `infrastructure/`。

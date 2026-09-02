@@ -479,10 +479,10 @@ class RunSupervisor:
         request = await self._control_request(msg.run_id)
         if request is None:
             LOGGER.warning("dropping cancel for unknown run_id=%s", msg.run_id)
-            await self._store.mark_control_failed(msg.command_id, "run_not_found")
+            await self._store.mark_control_failed(msg.run_id, msg.command_id, "run_not_found")
             return
         if not self._control_session_matches(request, msg.session_id):
-            await self._store.mark_control_failed(msg.command_id, "run_scope_forbidden")
+            await self._store.mark_control_failed(msg.run_id, msg.command_id, "run_scope_forbidden")
             return
         # 原子认领终态：自然完成/重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
         if not await self._store.try_mark_terminal(msg.run_id):
@@ -597,9 +597,9 @@ class RunSupervisor:
                     await bus.ack(stream, CONSUMER_GROUP, item.cursor)
                     applied = await self._guarded_control_apply(bus, run_id, msg)
                     if applied:
-                        await self._store.mark_control_succeeded(msg.command_id)
+                        await self._store.mark_control_succeeded(msg.run_id, msg.command_id)
                     else:
-                        await self._store.mark_control_failed(msg.command_id, "control_apply_failed")
+                        await self._store.mark_control_failed(msg.run_id, msg.command_id, "control_apply_failed")
                     continue
                 # resume/cancel：durable inbox 先于 ACK（§8.3「control 在 inbox 前 ACK」翻绿）。
                 await self._consume_control_frame(bus, run_id, msg, stream, item.cursor)
@@ -631,11 +631,11 @@ class RunSupervisor:
         if request is None:
             LOGGER.warning("dropping control for unknown run_id=%s", run_id)
             await bus.ack(stream, CONSUMER_GROUP, cursor)
-            await self._store.mark_control_failed(msg.command_id, "run_not_found")
+            await self._store.mark_control_failed(msg.run_id, msg.command_id, "run_not_found")
             return
         if not self._control_session_matches(request, msg.session_id):
             await bus.ack(stream, CONSUMER_GROUP, cursor)
-            await self._store.mark_control_failed(msg.command_id, "run_scope_forbidden")
+            await self._store.mark_control_failed(msg.run_id, msg.command_id, "run_scope_forbidden")
             return
         fingerprint = await self._control_fingerprint(run_id, msg)
         first = await self._store.record_control_inbox(
@@ -662,18 +662,18 @@ class RunSupervisor:
             metrics.record_control_inbox("applied")
             await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
             if await self._guarded_control_apply(bus, run_id, msg):
-                await self._store.mark_control_succeeded(msg.command_id)
+                await self._store.mark_control_succeeded(run_id, msg.command_id)
             else:
-                await self._store.mark_control_failed(msg.command_id, "control_apply_failed")
+                await self._store.mark_control_failed(run_id, msg.command_id, "control_apply_failed")
             return
         # resume：apply（spawn）后 run 续跑、control 任务存活，可安全后置 applied 回执。
         if await self._guarded_control_apply(bus, run_id, msg):
             await self._store.mark_control_applied(run_id, msg.command_id)
-            await self._store.mark_control_succeeded(msg.command_id)
+            await self._store.mark_control_succeeded(run_id, msg.command_id)
             metrics.record_control_inbox("applied")
             await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
         else:
-            await self._store.mark_control_failed(msg.command_id, "control_apply_failed")
+            await self._store.mark_control_failed(run_id, msg.command_id, "control_apply_failed")
 
     async def _emit_control_receipt(
         self, bus: StreamProtocol, run_id: str, command_id: str, status: ControlReceiptStatus
@@ -719,25 +719,25 @@ class RunSupervisor:
             msg = parse_inbound(json.loads(entry.body))
             if not isinstance(msg, RunResume | RunCancel):
                 await self._store.mark_control_superseded(entry.run_id, entry.command_id)
-                await self._store.mark_control_failed(entry.command_id, "control_superseded")
+                await self._store.mark_control_failed(entry.run_id, entry.command_id, "control_superseded")
                 metrics.record_control_inbox("superseded")
                 continue
             request = await self._control_request(entry.run_id)
             if request is None or not self._control_session_matches(request, msg.session_id):
                 await self._store.mark_control_superseded(entry.run_id, entry.command_id)
-                await self._store.mark_control_failed(entry.command_id, "control_superseded")
+                await self._store.mark_control_failed(entry.run_id, entry.command_id, "control_superseded")
                 metrics.record_control_inbox("superseded")
                 continue
             if await self._store.is_terminal(entry.run_id):
                 await self._store.mark_control_superseded(entry.run_id, entry.command_id)
-                await self._store.mark_control_failed(entry.command_id, "control_superseded")
+                await self._store.mark_control_failed(entry.run_id, entry.command_id, "control_superseded")
                 metrics.record_control_inbox("superseded")
                 continue
             if isinstance(msg, RunResume):
                 current = await self._interrupt_fingerprint(entry.run_id)
                 if entry.fingerprint is None or current != entry.fingerprint:
                     await self._store.mark_control_superseded(entry.run_id, entry.command_id)
-                    await self._store.mark_control_failed(entry.command_id, "control_superseded")
+                    await self._store.mark_control_failed(entry.run_id, entry.command_id, "control_superseded")
                     metrics.record_control_inbox("superseded")
                     continue
             await self._apply_recorded_control(bus, entry.run_id, msg)

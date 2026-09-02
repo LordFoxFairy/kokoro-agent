@@ -149,7 +149,7 @@ class FakeLedger:
         self.manifests: dict[str, dict[str, object]] = {}
         # control inbox（R2）：run_id → [{command_id,fingerprint,status,body}]，keep-first。
         self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
-        self.control_receipts: dict[str, ControlReceipt] = {}
+        self.control_receipts: dict[tuple[str, str], ControlReceipt] = {}
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -358,7 +358,7 @@ class FakeLedger:
     async def admit_control(
         self, run_id: str, command_id: str, request_digest: str, body: str
     ) -> ControlAdmission:
-        existing = self.control_receipts.get(command_id)
+        existing = self.control_receipts.get((run_id, command_id))
         if existing is not None:
             if existing.run_id != run_id or existing.request_digest != request_digest:
                 raise ControlCommandConflict("command digest mismatch")
@@ -374,18 +374,18 @@ class FakeLedger:
             request_digest=request_digest,
             status="pending",
         )
-        self.control_receipts[command_id] = receipt
+        self.control_receipts[(run_id, command_id)] = receipt
         return ControlAdmission(receipt=receipt, replayed=False, publish_required=True)
 
-    async def mark_control_succeeded(self, command_id: str) -> None:
-        receipt = self.control_receipts.get(command_id)
+    async def mark_control_succeeded(self, run_id: str, command_id: str) -> None:
+        receipt = self.control_receipts.get((run_id, command_id))
         if receipt is not None and receipt.status == "pending":
-            self.control_receipts[command_id] = receipt.model_copy(update={"status": "succeeded"})
+            self.control_receipts[(run_id, command_id)] = receipt.model_copy(update={"status": "succeeded"})
 
-    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None:
-        receipt = self.control_receipts.get(command_id)
+    async def mark_control_failed(self, run_id: str, command_id: str, error_code: str | None = None) -> None:
+        receipt = self.control_receipts.get((run_id, command_id))
         if receipt is not None and receipt.status == "pending":
-            self.control_receipts[command_id] = receipt.model_copy(
+            self.control_receipts[(run_id, command_id)] = receipt.model_copy(
                 update={"status": "failed", "error_code": error_code}
             )
 

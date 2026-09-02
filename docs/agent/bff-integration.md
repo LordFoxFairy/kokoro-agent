@@ -50,7 +50,7 @@ loop，也不把 Redis stream 暴露给 BFF。
   transport body 要求 `kind`、`session_id`，steer 另需 `message_id`/`content`，resume 还需
   `decisions`。调用方必须发送标准 `Authorization: Bearer <secret>`、`X-Request-Id`（可选）和
   control 专用的 `Idempotency-Key`。Agent 先将 control receipt 持久化为 `pending`，再通过
-  run 隔离的 Redis control stream 交给 worker；按 `command_id`/request digest 去重并用 resume
+  run 隔离的 Redis control stream 交给 worker；按 `(run_id, command_id)`/request digest 去重并用 resume
   fingerprint 做恢复时的 stale 判定。receipt 状态为 `pending`、`succeeded`、`failed`，重复
   请求返回 `replayed: true`，digest 漂移返回 `409 command_digest_mismatch`。
 - 除 `/healthz` 外的请求始终要求配置可信的 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带

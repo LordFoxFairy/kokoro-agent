@@ -13,14 +13,17 @@ from kokoro_agent.storage.ledger import ControlAdmission, ControlCommandConflict
 
 class ReceiptLedger:
     def __init__(self) -> None:
-        self.requests = {"run-1": type("Request", (), {"session_id": "session-1"})()}
-        self.receipts: dict[str, ControlReceipt] = {}
+        self.requests = {
+            "run-1": type("Request", (), {"session_id": "session-1"})(),
+            "run-2": type("Request", (), {"session_id": "session-1"})(),
+        }
+        self.receipts: dict[tuple[str, str], ControlReceipt] = {}
 
     async def get_request(self, run_id: str):
         return self.requests.get(run_id)
 
     async def admit_control(self, run_id: str, command_id: str, request_digest: str, body: str):
-        existing = self.receipts.get(command_id)
+        existing = self.receipts.get((run_id, command_id))
         if existing is not None:
             if existing.request_digest != request_digest:
                 raise ControlCommandConflict("command digest mismatch")
@@ -35,16 +38,16 @@ class ReceiptLedger:
             request_digest=request_digest,
             status="pending",
         )
-        self.receipts[command_id] = receipt
+        self.receipts[(run_id, command_id)] = receipt
         return ControlAdmission(receipt=receipt, replayed=False, publish_required=True)
 
-    async def mark_control_succeeded(self, command_id: str) -> None:
-        receipt = self.receipts[command_id]
-        self.receipts[command_id] = receipt.model_copy(update={"status": "succeeded"})
+    async def mark_control_succeeded(self, run_id: str, command_id: str) -> None:
+        receipt = self.receipts[(run_id, command_id)]
+        self.receipts[(run_id, command_id)] = receipt.model_copy(update={"status": "succeeded"})
 
-    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None:
-        receipt = self.receipts[command_id]
-        self.receipts[command_id] = receipt.model_copy(
+    async def mark_control_failed(self, run_id: str, command_id: str, error_code: str | None = None) -> None:
+        receipt = self.receipts[(run_id, command_id)]
+        self.receipts[(run_id, command_id)] = receipt.model_copy(
             update={"status": "failed", "error_code": error_code}
         )
 
@@ -135,12 +138,28 @@ async def test_control_receipt_replay_returns_terminal_status_without_republishi
     body = {"kind": "run.cancel", "session_id": "session-1"}
 
     await ingress.control("run-1", body, command_id="cmd-1")
-    await ledger.mark_control_succeeded("cmd-1")
+    await ledger.mark_control_succeeded("run-1", "cmd-1")
     replay = await ingress.control("run-1", body, command_id="cmd-1")
 
     assert replay["status"] == "succeeded"
     assert replay["replayed"] is True
     assert len(bus.published) == 1
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_is_scoped_to_the_run() -> None:
+    ledger = ReceiptLedger()
+    bus = Bus()
+    ingress = _ingress(bus, ledger)
+    body = {"kind": "run.cancel", "session_id": "session-1"}
+
+    first = await ingress.control("run-1", body, command_id="shared-key")
+    second = await ingress.control("run-2", body, command_id="shared-key")
+
+    assert first["run_id"] == "run-1"
+    assert second["run_id"] == "run-2"
+    assert first["command_id"] == second["command_id"] == "shared-key"
+    assert len(bus.published) == 2
 
 
 @pytest.mark.asyncio

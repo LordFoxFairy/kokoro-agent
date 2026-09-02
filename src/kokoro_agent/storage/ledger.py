@@ -101,9 +101,11 @@ class RunLedger(Protocol):
         self, run_id: str, command_id: str, request_digest: str, body: str
     ) -> ControlAdmission: ...
 
-    async def mark_control_succeeded(self, command_id: str) -> None: ...
+    async def mark_control_succeeded(self, run_id: str, command_id: str) -> None: ...
 
-    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None: ...
+    async def mark_control_failed(
+        self, run_id: str, command_id: str, error_code: str | None = None
+    ) -> None: ...
 
     async def list_pending_control_inbox(self) -> list[ControlInboxRecord]: ...
 
@@ -412,16 +414,39 @@ class PgLedger:
                 await cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS {} (
-                        command_id text PRIMARY KEY,
                         run_id text NOT NULL,
+                        command_id text NOT NULL,
                         request_digest text NOT NULL,
                         status text NOT NULL,
                         error_code text,
                         created_at bigint NOT NULL,
-                        updated_at bigint NOT NULL
+                        updated_at bigint NOT NULL,
+                        PRIMARY KEY (run_id, command_id)
                     )
                     """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE))
                 )
+                await cur.execute(
+                    """
+                    SELECT kcu.column_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                     AND tc.table_schema = kcu.table_schema
+                     AND tc.table_name = kcu.table_name
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                      AND tc.table_schema = %s
+                      AND tc.table_name = %s
+                    ORDER BY kcu.ordinal_position
+                    """,
+                    (self._schema, CONTROL_RECEIPTS_TABLE),
+                )
+                primary_key_columns = [str(row["column_name"]) for row in await cur.fetchall()]
+                if primary_key_columns != ["run_id", "command_id"]:
+                    receipts = qualified(self._schema, CONTROL_RECEIPTS_TABLE)
+                    await cur.execute(
+                        f'ALTER TABLE {receipts} DROP CONSTRAINT IF EXISTS "{CONTROL_RECEIPTS_TABLE}_pkey"'
+                    )
+                    await cur.execute(f"ALTER TABLE {receipts} ADD PRIMARY KEY (run_id, command_id)")
                 await cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS {} (
@@ -541,7 +566,7 @@ class PgLedger:
                         command_id, run_id, request_digest, status, error_code,
                         created_at, updated_at
                     ) VALUES (%s, %s, %s, 'pending', NULL, %s, %s)
-                    ON CONFLICT (command_id) DO NOTHING
+                    ON CONFLICT (run_id, command_id) DO NOTHING
                     RETURNING command_id
                     """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE)),
                     (command_id, run_id, request_digest, now, now),
@@ -561,9 +586,9 @@ class PgLedger:
                     """
                     SELECT run_id, command_id, request_digest, status, error_code
                     FROM {}
-                    WHERE command_id = %s
+                    WHERE run_id = %s AND command_id = %s
                     """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE)),
-                    (command_id,),
+                    (run_id, command_id),
                 )
                 row = await cur.fetchone()
                 if row is None:
@@ -579,11 +604,13 @@ class PgLedger:
                     publish_required=receipt.status == "pending",
                 )
 
-    async def mark_control_succeeded(self, command_id: str) -> None:
-        await self._update_control_receipt(command_id, "succeeded")
+    async def mark_control_succeeded(self, run_id: str, command_id: str) -> None:
+        await self._update_control_receipt(run_id, command_id, "succeeded")
 
-    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None:
-        await self._update_control_receipt(command_id, "failed", error_code=error_code)
+    async def mark_control_failed(
+        self, run_id: str, command_id: str, error_code: str | None = None
+    ) -> None:
+        await self._update_control_receipt(run_id, command_id, "failed", error_code=error_code)
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         async with connect_pg(self._database_url) as conn:
@@ -1312,7 +1339,12 @@ class PgLedger:
                 )
 
     async def _update_control_receipt(
-        self, command_id: str, status: ControlReceiptStatus, *, error_code: str | None = None
+        self,
+        run_id: str,
+        command_id: str,
+        status: ControlReceiptStatus,
+        *,
+        error_code: str | None = None,
     ) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
@@ -1320,9 +1352,9 @@ class PgLedger:
                     """
                     UPDATE {}
                     SET status = %s, error_code = %s, updated_at = %s
-                    WHERE command_id = %s AND status = 'pending'
+                    WHERE run_id = %s AND command_id = %s AND status = 'pending'
                     """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE)),
-                    (status, error_code, self._clock(), command_id),
+                    (status, error_code, self._clock(), run_id, command_id),
                 )
 
     async def _fetch_outbox(self, where_sql: str) -> list[dict[str, Any]]:

@@ -238,7 +238,7 @@ class AgentIngress:
                     maxlen=RUN_CONTROL_MAXLEN,
                 )
             except Exception:
-                await self._ledger.mark_control_failed(command_id, "control_enqueue_failed")
+                await self._ledger.mark_control_failed(run_id, command_id, "control_enqueue_failed")
                 receipt = admission.receipt.model_copy(
                     update={"status": "failed", "error_code": "control_enqueue_failed"}
                 )

@@ -20,56 +20,74 @@
 - `kokoro-bff` 是 Web-facing 业务层：负责 Chat 会话/消息/标题/分享投影、鉴权、幂等、错误归一、SSE 连接和业务编排。
 - `kokoro-agent` 是执行层：负责 Agent loop、Run/control/HITL、恢复、执行安全事件和持久化执行事实。
 - `kokoro-bff` 不直接访问 Agent 的 Redis、PostgreSQL、checkpoint、RunLedger、`chat_messages` 或 `chat_events`。
-- Agent 由独立的 HTTP ingress 与 Redis worker 进程组成；HTTP ingress 先写 durable dispatch admission，再投递 worker。阶段 1 仍用 BFF 内置确定性 mock adapter 完成 Web→BFF→Agent 业务边界联调，真实 adapter 在 BFF 仓库显式接入。
+- Agent 由独立的 HTTP ingress 与 Redis worker 进程组成；HTTP ingress 先写 durable dispatch admission，再投递 worker。BFF 通过版本化 HTTP business ingress 调用 Agent，不接触 Agent 的 PG/Redis。
 - `session_id` 仍是 Chat 的稳定业务标识，但不意味着存在独立的 `kokoro-session` 仓库或服务。
 
-## 2. 阶段 1 适配策略
+## 2. 当前 Agent HTTP business ingress
 
-阶段 1 的 `kokoro-bff` 使用本仓内置的确定性 Agent business adapter。默认配置为：
+当前 v1 ingress 由本仓 `kokoro-agent-http` 提供，执行仍由独立的
+`kokoro-agent-worker` 完成：
+
+| 方法 | 路径 | 作用 | 成功 |
+|---|---|---|---|
+| `POST` | `/v1/runs` | launch：durable admission 后投递 Run | `202` |
+| `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
+| `GET` | `/v1/runs/{run_id}/events` | Run evidence，按 `after_seq` 分页 | `200` |
+| `GET` | `/v1/sessions/{session_id}/messages` | 安全 session history | `200` |
+| `GET` | `/v1/sessions/{session_id}/events` | 安全 session replay | `200` |
+
+另外提供未经内部认证保护的 `GET /healthz`，以及检查 Agent-owned PostgreSQL/Redis 的
+`GET /readyz`。HTTP ingress 不执行 Agent loop，也不把 Redis stream 暴露给 BFF。
+
+### 请求、认证与响应约束
+
+- `POST /v1/runs` 接受 Root `LaunchRunRequest` 的 JSON transport 映射：`request_id`、`run_id`、
+  `session_id`、`feature_key`、`execution_identity`、顶层 `message_id`/`content`，以及可选
+  `requested_model_label`/`trace`。
+- `POST /v1/runs/{run_id}/control` 接受 `run.cancel`、`run.resume`、`run.steer`；当前 strict
+  transport body 要求 `kind`、`session_id`、`decision_id`，steer 另需 `message_id`/`content`。
+  cancel/resume 通过 run 隔离的 Redis control stream 交给 worker 的 durable inbox，按
+  `decision_id` 去重并用 resume fingerprint 做恢复时的 stale 判定；steer 按 `message_id`
+  keep-first 入账。
+- 在配置 `KOKORO_INTERNAL_SECRET_AGENT` 时，除 health 外的请求必须带
+  `x-kokoro-service: kokoro-bff` 和 `x-kokoro-internal-secret`。history/replay 还必须带
+  `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
+  `x-kokoro-identity-assertion-ref`；可选 kind 头只允许 `user`、`project`、`service`。
+- 业务路由成功响应使用 `{data, meta:{request_id}}`，错误响应使用
+  `{error:{code,message}, meta:{request_id}}`。`x-kokoro-request-id` 用于响应 meta；未提供时
+  ingress 使用稳定默认值；`/healthz` 和 `/readyz` 保留轻量 health payload。错误不泄露
+  Python、Redis 或 SQL 细节。
+- launch 在 Agent-owned `run_dispatches` 中以不可变 `sha256` fence 先行受理；同一 `run_id`
+  和相同 body 的重试复用 receipt，body 漂移返回 `409 run_identity_conflict`。这保证了
+  BFF 可以安全重试 HTTP 请求而不重复投递不同的 Run。
+
+## 3. BFF 业务边界
+
+Agent ingress 只提供上表中的执行、证据、history 和 replay 入口；它不提供 BFF 的完整
+Session 业务 API。以下能力仍属于 BFF owner，并不因 Agent ingress 已上线而视为已实现：
+
+- session list/detail 业务查询；
+- session title 更新；
+- session share、公开 snapshot 和 delete；
+- 浏览器鉴权、SSE 连接生命周期及 AG-UI/ProductEvent 对外投影。
+
+这些边界由 BFF 自己的业务存储和 contract 实现；BFF 不得为实现它们而直读 Agent
+PostgreSQL/Redis，也不得把 Agent 的内部 envelope 透传给浏览器。
+
+BFF 的 adapter 只依赖显式版本化 HTTP endpoint，不依赖 Redis stream/key、consumer group、
+checkpoint 或 Python 类型。未配置 endpoint 时，BFF 应返回明确的
+`503 upstream_not_configured`，不得静默回退到旧 Session 服务。
+
+建议环境配置：
 
 ```text
-KOKORO_BFF_MODE=mock
-KOKORO_AGENT_ADAPTER=mock
+KOKORO_AGENT_HTTP_BASE_URL=<agent-http-base-url>
+KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 ```
-
-mock adapter 只返回版本化的受理、控制和终态 fixture：
-
-1. 不启动 Agent worker；
-2. 不读取 Agent Redis；
-3. 不访问 Agent PostgreSQL、checkpoint、RunLedger 或内部 Python 模块；
-4. 不复制 Redis envelope 或 Agent 内部 DTO；
-5. 只验证 BFF 的业务编排、鉴权、幂等、错误映射、SSE 和 Web 兼容路由。
-
-这样可以先把 Web、BFF、Agent 的 API 契约闭环跑通，后续只替换 adapter，不改变 BFF 的外部
-Chat v1 路由和业务语义。
-
-## 3. 未来真实 Agent 适配
-
-真实适配必须调用 Agent 本仓的独立版本化 HTTP business port，不能把 Redis worker 的内部
-envelope 直接暴露给 BFF。
-
-至少满足：
-
-- 定义独立契约版本，包含请求、响应、错误、幂等、超时和兼容/弃用规则；
-- 由 ingress/transport owner 完成身份校验以及业务请求到 Redis worker 的映射；
-- BFF 只通过 `AgentBusinessAdapter` 调用，不依赖 Redis stream/key、consumer group、checkpoint 或 Python 类型；
-- 旧版本在弃用窗口内保持可验证行为，BFF 显式选择版本，不通过探测或静默降级；
-- 真实适配上线前必须通过 BFF contract fixture 和 Agent consumer/worker 的兼容性门禁。
-
-建议环境选择面：
-
-```text
-KOKORO_AGENT_ADAPTER=mock
-KOKORO_AGENT_HTTP_BASE_URL=<future-agent-business-port>
-KOKORO_AGENT_HTTP_CONTRACT_VERSION=<future-http-version>
-```
-
-未配置真实 endpoint 时必须返回明确的 `503 upstream_not_configured`，
-不能连接任意 Redis，也不能静默回退到旧 Session 服务。
 
 ## 4. 存储边界：PostgreSQL + Redis
 
-阶段 1 只保留两个基础设施：
+当前 Agent ingress/worker 只保留两个基础设施：
 
 | 组件 | Owner | 用途 |
 |---|---|---|
@@ -91,15 +109,15 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=<future-http-version>
 - 将 Agent 执行结果投影成对外 Chat/ProductEvent。
 
 `kokoro-agent` 只拥有执行侧 `chat_messages`、`chat_events` 等安全事实和 Run 状态；BFF 通过
-版本化 business adapter 或未来的查询端口消费，不直接读表。Agent 不向浏览器发布事件，也不
-创建第二套 Chat API、SSE stream 或独立事件序列。
+版本化 Agent HTTP business ingress 消费 history/replay，不直接读表。Agent 不向浏览器发布
+事件，也不创建第二套 Chat API、SSE stream 或独立事件序列。
 
 ## 6. 跨仓允许的连接面
 
 | 连接面 | 用途 | 约束 |
 |---|---|---|
 | BFF Chat v1 HTTP | Web → BFF | 根仓契约生成、BFF 自己的鉴权/幂等/错误 envelope |
-| Agent business port | BFF → Agent 业务层 | 独立版本、adapter、兼容性测试；阶段 1 为 mock |
+| Agent business HTTP v1 | BFF → Agent 业务层 | 只走 HTTP ingress；不直连 Agent PG/Redis；兼容性由双方 contract 测试守住 |
 | Redis worker contract | transport owner → Agent | 只消费已定义 internal envelope；BFF 不直连 |
 | 环境变量/secret | 选择 adapter、endpoint、数据库和 Redis | 不把地址、凭据、key 写入源码或业务 payload |
 | 独立 CI | 各仓自证实现和兼容性 | 不跨仓 import 私有模块，不共享数据库来代替契约 |
@@ -108,10 +126,11 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=<future-http-version>
 每个子仓只闭环自己的代码、测试、Docker 和发布门禁；跨仓只交换版本化 contract fixture、
 兼容性结果和发布元数据。
 
-## 7. 阶段 1 验收
+## 7. 当前验收边界
 
-- [ ] Web 所有 Chat 请求只经 BFF `/v1/sessions/*`，没有独立 Session/Gateway 路径。
-- [ ] BFF Chat mock contract 覆盖 list/detail/message/SSE/control/title/delete/share。
-- [ ] BFF 默认 mock 不访问 Agent Redis 或 Agent PostgreSQL。
-- [ ] Agent 通过 PostgreSQL + Redis 完成执行事实、Run/control/HITL、outbox/recovery worker 门禁。
-- [ ] 三仓各自通过 lint、typecheck、unit/contract、build；Web→BFF→Agent mock smoke 通过。
+- [x] Agent HTTP ingress 支持 launch、control、Run events evidence、session history 和 session replay。
+- [x] BFF 到 Agent 只走版本化 HTTP；BFF 不读取 Agent PostgreSQL/Redis。
+- [x] 非 health 请求可由 `x-kokoro-service` + `x-kokoro-internal-secret` 认证；history/replay 使用受信 identity headers。
+- [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 durable inbox 去重和恢复。
+- [ ] BFF session list/detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现，不属于 Agent ingress。
+- [x] Agent PostgreSQL + Redis 执行事实、Run/control/HITL、outbox/recovery worker 门禁由本仓测试覆盖。

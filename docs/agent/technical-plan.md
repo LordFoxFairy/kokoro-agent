@@ -185,6 +185,17 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
 
 ## 9. 验收标准
 
+- Agent business HTTP v1 已提供 launch、control、Run events evidence、session history 和
+  session replay；BFF 只能通过该 HTTP ingress 调用，不读取 Agent PostgreSQL/Redis。
+- HTTP ingress 的非 health 请求在配置内部密钥时校验 `x-kokoro-service` +
+  `x-kokoro-internal-secret`；history/replay 额外校验受信 tenant/subject/actor/identity-assertion
+  headers，业务响应使用统一 `{data, meta}` / `{error, meta}` envelope（health endpoint 保留
+  轻量 status payload）。
+- launch 先持久化不可变 `sha256` fence；同一 `run_id` 重试复用 receipt，body 漂移返回
+  `409 run_identity_conflict`；cancel/resume 由 worker durable inbox 按 `decision_id` 去重，
+  steer 按 `message_id` keep-first 入账。
+- Agent ingress 不实现 BFF session list/detail、title、share、delete、public snapshot 或浏览器
+  SSE/AG-UI；这些仍是 BFF 自己的业务边界。
 - `music` 可单独作为 Feature，也能被组合 Feature 复用。
 - 多 Agent 只通过 Feature 声明和 official Swarm handoff，不存在自定义 router/state。
 - DeepAgents 是唯一 Agent loop；GA 没有第二个 runtime/compiler/graph 层。

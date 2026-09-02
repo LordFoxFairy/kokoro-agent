@@ -26,6 +26,10 @@ HTTP ingress 位于本仓 `src/kokoro_agent/http/`，只负责 transport/admissi
 | `GET` | `/v1/sessions/{session_id}/messages` | 安全 Chat history | `200` |
 | `GET` | `/v1/sessions/{session_id}/events` | 安全 Chat replay | `200` |
 
+上表是当前已实现的 Agent v1 business ingress；它不包含 BFF 的 session list/detail、title、share、
+delete 或 public snapshot。上述 BFF 业务能力不属于 Agent ingress，也不能通过直读 Agent
+PostgreSQL/Redis 来补齐。
+
 `POST /v1/runs` body 是 Root `LaunchRunRequest` 的 JSON transport 映射：
 `request_id`、`run_id`、`session_id`、`feature_key`、`execution_identity`、顶层
 `message_id`、`content`，以及可选 `requested_model_label`/`trace`。ingress 先在 Agent-owned
@@ -34,9 +38,10 @@ PostgreSQL `run_dispatches` 中写入不可变 `sha256` fence，再发布现有
 `409 run_identity_conflict`。
 
 `POST /v1/runs/{run_id}/control` body 使用 `kind`=`run.cancel`、`run.resume` 或 `run.steer`，
-携带 `session_id`、`decision_id`（steer 除外）和 Root 定义的 `decisions`/`message_id`/`content`。
-control 只写该 run 的隔离 Redis control stream，由 worker 的 durable inbox 和 session 校验继续
-完成幂等与授权边界。
+严格 transport body 要求 `session_id` 和 `decision_id`；steer 另需 Root 定义的 `message_id`/
+`content`，cancel/resume 还需 `decisions`（resume）。control 只写该 run 的隔离 Redis
+control stream，由 worker 的 durable inbox 和 session 校验继续完成幂等与授权边界；cancel/resume
+按 `decision_id` 去重，steer 按 `message_id` keep-first 入账。
 
 Chat history/replay 只返回 `chat_messages`/`chat_events` 的 allowlisted projection；请求通过
 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
@@ -44,7 +49,8 @@ Chat history/replay 只返回 `chat_messages`/`chat_events` 的 allowlisted proj
 不会参与身份或隔离计算。所有非 health 请求在配置内部密钥时要求
 `x-kokoro-service: kokoro-bff` 与 `x-kokoro-internal-secret`。
 
-响应统一为 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`；空 body、
+业务响应统一为 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`；
+health endpoint 保留轻量 status payload。空 body、
 非法 JSON、依赖不可用和 run scope 错误均使用稳定错误码，不返回内部 Python、Redis 或 SQL 细节。
 
 ## GA 入站

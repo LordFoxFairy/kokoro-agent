@@ -4,7 +4,7 @@ The worker remains the only component that executes a run.  This module owns
 the transport seam that durably admits a launch, publishes the existing worker
 envelope, and exposes only identity-scoped, safe chat projections to BFF.
 It deliberately has no business database access beyond the Agent-owned
-RunLedger and ChatStore ports.
+RunRepository and ChatStore ports.
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.scope import runtime_namespace
-from kokoro_agent.storage.ledger import (
+from kokoro_agent.persistence.repository import (
     ControlCommandConflict,
     DispatchConflict,
-    RunLedger,
+    RunRepository,
 )
 from kokoro_agent.streams.protocol import StreamProtocol
 
@@ -176,16 +176,16 @@ def _event_json(event: object) -> dict[str, Any]:
 class AgentIngress:
     """Business transport facade over the Agent-owned worker ports."""
 
-    def __init__(self, *, bus: StreamProtocol, ledger: RunLedger, chat_query: ChatQuery) -> None:
+    def __init__(self, *, bus: StreamProtocol, run_repository: RunRepository, chat_query: ChatQuery) -> None:
         self._bus = bus
-        self._ledger = ledger
+        self._run_repository = run_repository
         self._chat_query = chat_query
 
     async def launch(self, body: Mapping[str, object]) -> LaunchReceipt:
         request = _parse_launch(body)
         namespace = runtime_namespace(request.execution_identity)
         try:
-            admission = await self._ledger.enqueue_dispatch(
+            admission = await self._run_repository.enqueue_dispatch(
                 request, namespace, _canonical_fence(request)
             )
         except DispatchConflict as error:
@@ -219,13 +219,13 @@ class AgentIngress:
         if not command_id.strip():
             raise IngressError(400, "idempotency_key_required", "Control requests require Idempotency-Key")
         msg, request_digest = _parse_control(run_id, body, command_id=command_id)
-        request = await self._ledger.get_request(run_id)
+        request = await self._run_repository.get_request(run_id)
         if request is None:
             raise IngressError(404, "run_not_found", "Run was not found")
         if request.session_id != msg.session_id:
             raise IngressError(403, "run_scope_forbidden", "Run does not belong to this session")
         try:
-            admission = await self._ledger.admit_control(
+            admission = await self._run_repository.admit_control(
                 run_id, command_id, request_digest, msg.model_dump_json()
             )
         except ControlCommandConflict as error:
@@ -238,7 +238,7 @@ class AgentIngress:
                     maxlen=RUN_CONTROL_MAXLEN,
                 )
             except Exception:
-                await self._ledger.mark_control_failed(run_id, command_id, "control_enqueue_failed")
+                await self._run_repository.mark_control_failed(run_id, command_id, "control_enqueue_failed")
                 receipt = admission.receipt.model_copy(
                     update={"status": "failed", "error_code": "control_enqueue_failed"}
                 )
@@ -254,7 +254,7 @@ class AgentIngress:
     async def evidence(self, run_id: str, *, after_seq: int = 0, limit: int = 200) -> dict[str, object]:
         if after_seq < 0 or limit < 1 or limit > 1000:
             raise IngressError(400, "invalid_page", "after_seq must be >= 0 and limit must be 1..1000")
-        if await self._ledger.get_request(run_id) is None:
+        if await self._run_repository.get_request(run_id) is None:
             raise IngressError(404, "run_not_found", "Run was not found")
         items = await self._bus.read_all(run_events_stream(run_id))
         events = [_event_json(item.event) for item in items]

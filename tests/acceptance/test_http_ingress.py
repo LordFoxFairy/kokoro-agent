@@ -32,8 +32,8 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.http.server import create_http_server
-from kokoro_agent.storage.ledger import DEFAULT_LEASE_TTL_S, LedgerSettings, make_ledger
-from kokoro_agent.storage.postgres import connect_pg
+from kokoro_agent.persistence.repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings, make_run_repository
+from kokoro_agent.persistence.postgres import connect_pg
 from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream
 
@@ -48,7 +48,7 @@ _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 @dataclass(frozen=True)
 class _AcceptanceConfig:
     stream: StreamSettings
-    ledger: LedgerSettings
+    run_repository: RunRepositorySettings
     database_url: str
     database_schema: str
     internal_secret_agent: SecretStr | None
@@ -137,7 +137,7 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
     schema = f"kokoro_acceptance_{uuid.uuid4().hex}"
     config = _AcceptanceConfig(
         stream=StreamSettings(redis_url=_REDIS_URL),
-        ledger=LedgerSettings(
+        run_repository=RunRepositorySettings(
             database_url=_DATABASE_URL,
             schema_name=schema,
             lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
@@ -147,7 +147,7 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
         internal_secret_agent=SecretStr(_INTERNAL_SECRET),
     )
     try:
-        async with make_ledger(config.ledger):
+        async with make_run_repository(config.run_repository):
             pass
         async with make_chat_store(
             ChatStoreSettings(database_url=_DATABASE_URL, schema_name=schema)
@@ -182,8 +182,8 @@ async def http_client(
 
 
 async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> None:
-    async with make_ledger(state.config.ledger) as ledger:
-        assert await ledger.try_claim(request, "acceptance-test") is True
+    async with make_run_repository(state.config.run_repository) as run_repository:
+        assert await run_repository.try_claim(request, "acceptance-test") is True
 
 
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
@@ -288,8 +288,8 @@ async def test_launch_is_durable_and_idempotent_over_http(
 
     # Once the worker has claimed the durable intent, a retry must reuse the
     # receipt without publishing a second worker envelope.
-    async with make_ledger(acceptance_state.config.ledger) as ledger:
-        assert await ledger.claim_dispatch(run_id, "acceptance-worker") is True
+    async with make_run_repository(acceptance_state.config.run_repository) as run_repository:
+        assert await run_repository.claim_dispatch(run_id, "acceptance-worker") is True
 
     second = await http_client.post("/v1/runs", headers=_headers(), json=body)
     assert second.status_code == 202

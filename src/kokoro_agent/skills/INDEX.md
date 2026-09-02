@@ -17,6 +17,6 @@
 
 - Capability 拥有 Skill CRUD、可见性、用户/项目/session path 与名称解析。
 - Storage 拥有包体 bytes 和对象生命周期；MinIO、AWS S3、R2 等只替换 Storage adapter。
-- GA 不创建 `find_skills`、`load_skill`、mount ledger、物化/GC 或自定义 Skill prompt manifest。
+- GA 不创建 `find_skills`、`load_skill`、mount run_repository、物化/GC 或自定义 Skill prompt manifest。
 - `/.skills/` 是 `CompositeBackend` 的逻辑路由，不是 GA 向 sandbox 复制文件的物理目录。
 - Capability 不可用时声明 Skill 解析为空，基础 DeepAgents 对话循环继续。

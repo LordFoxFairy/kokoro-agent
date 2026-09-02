@@ -14,7 +14,7 @@ generated consumer/transport 接入后只替换这层映射，不改变 Feature/
 
 HTTP ingress 位于本仓 `src/kokoro_agent/http/`，只负责 transport/admission；执行仍由独立的
 `kokoro-agent-worker` 进程完成。BFF 只调用下面的版本化入口，不读 Redis、PostgreSQL、checkpoint
-或 RunLedger。
+或 RunRepository。
 
 | 方法 | 路径 | 作用 | 成功 |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Redis worker control envelope（当前内部 adapter）
   run.cancel { run_id, session_id, command_id, request_digest }
   run.steer { run_id, session_id, command_id, request_digest, message_id, content }
 
-`agent_run_id` 到 `session_id` 的映射由 GA RunLedger/transport adapter 完成；BFF Chat 不把
+`agent_run_id` 到 `session_id` 的映射由 GA RunRepository/transport adapter 完成；BFF Chat 不把
 Root RPC DTO 直接当 Redis JSON 发送。
 
 ForkConversation / CleanupThread

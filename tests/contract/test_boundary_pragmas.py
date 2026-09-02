@@ -66,13 +66,13 @@ ALLOWED: dict[str, frozenset[str]] = {
         {"reportUnknownArgumentType", "reportUnknownVariableType"}
     ),
     # psycopg dict-row adapters use qualified SQL built from validated schema identifiers.
-    "src/kokoro_agent/storage/postgres.py": frozenset(
+    "src/kokoro_agent/persistence/postgres.py": frozenset(
         {"reportCallIssue", "reportArgumentType", "reportReturnType"}
     ),
-    "src/kokoro_agent/storage/checkpoints.py": frozenset(
+    "src/kokoro_agent/persistence/checkpoints.py": frozenset(
         {"reportCallIssue", "reportArgumentType", "reportIncompatibleMethodOverride"}
     ),
-    "src/kokoro_agent/storage/ledger.py": frozenset(
+    "src/kokoro_agent/persistence/repository.py": frozenset(
         {
             "reportCallIssue",
             "reportArgumentType",
@@ -84,7 +84,11 @@ ALLOWED: dict[str, frozenset[str]] = {
             "reportUnusedClass",
         }
     ),
-    "src/kokoro_agent/storage/memory_store.py": frozenset(
+    # Schema statements use validated, dynamically qualified identifiers at the psycopg boundary.
+    "src/kokoro_agent/persistence/schema.py": frozenset(
+        {"reportCallIssue", "reportArgumentType"}
+    ),
+    "src/kokoro_agent/persistence/memory_store.py": frozenset(
         {
             "reportCallIssue",
             "reportArgumentType",

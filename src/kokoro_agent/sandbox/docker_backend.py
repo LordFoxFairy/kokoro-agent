@@ -2,7 +2,7 @@
 
 混合体设计：文件工具走 LocalShellBackend 虚拟根（session 直读/S3 归档/canvas 三档全兼容），
 只有任意 shell 在容器内跑——宿主仅暴露该 run 的 workspace 子目录（挂 /workspace，-w 定容）。
-容器 `sleep TTL` + `--rm` 自清；container_id 入 ledger，HITL resume 复用活容器，
+容器 `sleep TTL` + `--rm` 自清；container_id 入 run_repository，HITL resume 复用活容器，
 容器亡（TTL）新起——workspace 在宿主，文件永不因容器回收而丢。
 """
 
@@ -64,7 +64,7 @@ class DockerShellBackend(LocalShellBackend):
 
     @property
     def sandbox_id(self) -> str:
-        # 统一生命周期面（ADR-010）：编排层据此落 ledger 记录，各档同一属性名。
+        # 统一生命周期面（ADR-010）：编排层据此落 run_repository 记录，各档同一属性名。
         return self.container_id
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:

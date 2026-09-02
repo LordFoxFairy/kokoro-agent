@@ -9,10 +9,11 @@ GA 和外部服务混在一起。
 
 - 基于 DeepAgents 的 Agent 执行、native subagent、interrupt、checkpoint 接线。
 - `Feature` 装配、`AgentFactory` 和 official `langgraph-swarm` handoff。
-- RunLedger、租约、恢复、HITL、工具策略和 workbench。
+- RunRepository、租约、恢复、HITL、工具策略和 workbench。
 - Agent 声明 Skill 的解析接线，以及供 DeepAgents 原生 SkillsMiddleware 使用的只读 backend route。
 - 真实 provider 的模型适配与请求级模型选择；确定性 fake 只存在于 `tests/support`，不属于 GA 运行包。
 - 用户可见的 `chat_messages`、`chat_events` 持久化事实；Web-facing 查询、replay 与投影由 `kokoro-bff/modules/chat` 承接。
+- Agent 内部唯一的 `run_control_commands` 可靠性事实；它不属于 Chat 投影，也不对 BFF 开放数据库访问。
 - MCP 连接 egress 策略的 worker 启动初始化；连接层只消费进程级配置快照。
 - 从受信 `ExecutionIdentity.tenant_ref + subject` 派生的稳定内部 `RuntimeNamespace`；actor/assertion 不参与隔离键。
 
@@ -31,7 +32,7 @@ GA 和外部服务混在一起。
 ```text
 Root `LaunchRunRequest(feature_key, message_id, content, ExecutionIdentity)`
   -> Redis internal envelope `input={message_id,content}`
-  -> worker / RunLedger claim
+  -> worker / RunRepository claim
   -> FeatureCatalog
   -> AgentFactory
   -> create_deep_agent 或 official create_swarm
@@ -55,6 +56,10 @@ BFF browser stream            -> 独立 generated envelope 的 live transport
 
 GA 不创建 `conversation_messages`、`run_events` 或独立 `event_outbox`。代码里的
 `run_events_stream` 只是 Redis 临时传输流，不是持久表或历史 owner。
+
+Control 的两个状态机必须分开理解：HTTP admission receipt 只有 `pending/succeeded/failed`，用于
+幂等重试与发布结果；`run.control.receipt` 是 Agent event stream 上的执行进度信号，只有
+`persisted/applied`，用于 worker recovery 观察。它不是 `chat_messages`，也不应被 BFF 直接查表。
 
 ## 入站入口
 

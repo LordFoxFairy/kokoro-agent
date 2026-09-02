@@ -13,7 +13,7 @@ from langchain.agents.middleware.types import AgentState
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.runtime import Runtime
 
-from support.fakes import FakeBus, FakeLedger, request, usage_recorder
+from support.fakes import FakeBus, FakeRunRepository, request, usage_recorder
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.contract.streams import run_events_stream
@@ -24,11 +24,11 @@ from kokoro_agent.tools.permissions import build_interrupt_on
 
 
 async def test_before_model_injects_mailbox_in_order() -> None:
-    ledger = FakeLedger()
-    await ledger.try_claim(request("r-steer"))
-    await ledger.add_steer("r-steer", "m1", "改成国内市场")
-    await ledger.add_steer("r-steer", "m2", "语气正式一点")
-    middleware = SteeringMiddleware(store=ledger, run_id="r-steer")
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("r-steer"))
+    await run_repository.add_steer("r-steer", "m1", "改成国内市场")
+    await run_repository.add_steer("r-steer", "m2", "语气正式一点")
+    middleware = SteeringMiddleware(store=run_repository, run_id="r-steer")
     update = await middleware.abefore_model({"messages": []}, Runtime(context=None))
     assert update is not None
     messages = update["messages"]
@@ -38,9 +38,9 @@ async def test_before_model_injects_mailbox_in_order() -> None:
 
 
 async def test_before_model_empty_mailbox_is_noop() -> None:
-    ledger = FakeLedger()
-    await ledger.try_claim(request("r-steer"))
-    middleware = SteeringMiddleware(store=ledger, run_id="r-steer")
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("r-steer"))
+    middleware = SteeringMiddleware(store=run_repository, run_id="r-steer")
     assert await middleware.abefore_model({"messages": []}, Runtime(context=None)) is None
 
 
@@ -59,9 +59,9 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
             captured.append(list(messages))
             return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-    ledger = FakeLedger()
-    await ledger.try_claim(request("r-graph"))
-    await ledger.add_steer("r-graph", "steer-1", "重点只看国内市场")
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("r-graph"))
+    await run_repository.add_steer("r-graph", "steer-1", "重点只看国内市场")
     agent = create_test_deep_agent(
         model=Recorder.with_script([AIMessage(content="ok")]),
         tools=[],
@@ -70,7 +70,7 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
         checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
-        middleware=[SteeringMiddleware(store=ledger, run_id="r-graph")],
+        middleware=[SteeringMiddleware(store=run_repository, run_id="r-graph")],
     )
 
     async def claim() -> bool:
@@ -93,15 +93,15 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
     # peek+下一轮见证语义：run 在注入轮后即终态、无下一轮，信箱残留是设计内
     # （随 run TTL 清扫，绝不丢插话）。手动再走一轮 before_model 验证见证机制：
     # 插话已在消息史（=已随 checkpoint 落定）→ 本轮 ack 清箱、且不重复注入。
-    assert await ledger.peek_steers("r-graph") == [("steer-1", "重点只看国内市场")]
-    witness = SteeringMiddleware(store=ledger, run_id="r-graph")
+    assert await run_repository.peek_steers("r-graph") == [("steer-1", "重点只看国内市场")]
+    witness = SteeringMiddleware(store=run_repository, run_id="r-graph")
     # "已落定"的最小见证态：插话以稳定 id 存在于消息史（即已进 checkpoint）。
     landed_state: AgentState[Any] = {
         "messages": [HumanMessage(content="重点只看国内市场", id="steer-1")]
     }
     update = await witness.abefore_model(landed_state, Runtime(context=None))
     assert update is None  # 已落定：不重复注入
-    assert await ledger.peek_steers("r-graph") == []  # 见证后 ack 清箱
+    assert await run_repository.peek_steers("r-graph") == []  # 见证后 ack 清箱
     # 注入项经 before_model 节点出现在消息投影里：绝不冒充 assistant 正文上 wire。
     events = [item.event for item in await bus.read_all(run_events_stream("r-graph"))]
     texts: list[str] = []
@@ -115,9 +115,9 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
 
 async def test_steer_content_never_empty_fail_loud() -> None:
     # 契约 NonEmptyStr 在入口拦截；middleware 侧对空内容 fail-loud 兜底（绝不注入空消息）。
-    ledger = FakeLedger()
-    await ledger.try_claim(request("r-empty"))
-    ledger.steers["r-empty"] = [("mx", "")]
-    middleware = SteeringMiddleware(store=ledger, run_id="r-empty")
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("r-empty"))
+    run_repository.steers["r-empty"] = [("mx", "")]
+    middleware = SteeringMiddleware(store=run_repository, run_id="r-empty")
     with pytest.raises(ValueError, match="empty steer"):
         await middleware.abefore_model({"messages": []}, Runtime(context=None))

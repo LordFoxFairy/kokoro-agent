@@ -16,7 +16,7 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   tool_id→segment 归属；审核工具 raw returned 按名抑制）；`AgentEventPayload` 联合；
   投影→payload 映射函数族（`tool_returned_payload` 等）；`failure_code`/`run_failed_payload`
   （三层错误语义）；`clip_result`/`TOOL_RESULT_MAX_CHARS`（wire 4000 字截断护栏）。
-  R4：`CRITICAL_KINDS`/`TERMINAL_KINDS` + emitter 注入 outbox（RunLedger）——critical 帧经
+  R4：`CRITICAL_KINDS`/`TERMINAL_KINDS` + emitter 注入 outbox（RunRepository）——critical 帧经
   `stage_critical_frame` 分配 durable_seq/event_id、落 queued 行、发布后 published；live 序（index）
   不动、durable_seq 独立并行（浏览器面透明）；post-fence superseded 不发布、index 不前进。
   `outbox_wire_event(frame)`：queued 行→补发 wire 帧（复用固定身份，幂等不漂移）。

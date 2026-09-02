@@ -21,8 +21,8 @@ from kokoro_agent.config_file import load_config_file
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
-from kokoro_agent.storage.checkpoints import CheckpointSettings
-from kokoro_agent.storage.ledger import DEFAULT_LEASE_TTL_S, LedgerSettings
+from kokoro_agent.persistence.checkpoints import CheckpointSettings
+from kokoro_agent.persistence.repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings
 from kokoro_agent.streams.factory import StreamSettings
 
 
@@ -69,7 +69,7 @@ class AppConfig(BaseModel):
     litellm_base_url: OptStr = Field(default=None, validation_alias="KOKORO_LITELLM_BASE_URL")
     litellm_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_LITELLM_API_KEY")
 
-    # --- stream / storage 域（PG 为 checkpoint+ledger+memory+chat 共用真后端）---
+    # --- stream / persistence 域（PG 为 checkpoint+run_repository+memory+chat 共用真后端）---
     redis_url: str = Field(
         default="redis://127.0.0.1:6379/0", validation_alias="KOKORO_REDIS_URL"
     )
@@ -84,7 +84,7 @@ class AppConfig(BaseModel):
     langfuse_public_key: OptSecret = Field(default=None, validation_alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: OptSecret = Field(default=None, validation_alias="LANGFUSE_SECRET_KEY")
 
-    # --- ledger 域（lease_ttl_s → lease_ttl_ms×1000；gt=0 使 0 值构造期 fail-loud）---
+    # --- run_repository 域（lease_ttl_s → lease_ttl_ms×1000；gt=0 使 0 值构造期 fail-loud）---
     lease_ttl_s: int = Field(default=DEFAULT_LEASE_TTL_S, gt=0, validation_alias="KOKORO_LEASE_TTL_S")
 
     # --- sandbox 域 ---
@@ -211,8 +211,8 @@ class AppConfig(BaseModel):
         )
 
     @property
-    def ledger(self) -> LedgerSettings:
-        return LedgerSettings(
+    def run_repository(self) -> RunRepositorySettings:
+        return RunRepositorySettings(
             database_url=self.database_url,
             schema_name=self.database_schema,
             lease_ttl_ms=self.lease_ttl_s * 1000,

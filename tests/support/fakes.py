@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -22,11 +22,12 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.contract import REQUESTS_STREAM
-from kokoro_agent.storage.ledger import (
-    ControlInboxRecord,
+from kokoro_agent.persistence.repository import (
+    RunControlCommandRecord,
     ControlAdmission,
+    ControlAdmissionStatus,
     ControlCommandConflict,
-    ControlReceipt,
+    ControlAdmissionReceipt,
     DispatchAdmission,
     DispatchConflict,
     OutboxFrame,
@@ -75,7 +76,9 @@ class FakeBus:
         self.expired_streams: list[tuple[str, int]] = []
         self._inbound = tuple(inbound)
         # per-run control 流独立化：请求流投 _inbound，各 control 流投各自项。
-        self._control = {stream: tuple(items) for stream, items in (control or {}).items()}
+        self._control = {
+            stream: tuple(items) for stream, items in (control or {}).items()
+        }
 
     async def publish(
         self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
@@ -93,7 +96,11 @@ class FakeBus:
     async def subscribe(
         self, stream: str, *, group: str, consumer: str
     ) -> AsyncIterator[StreamItem]:
-        items = self._inbound if stream == REQUESTS_STREAM else self._control.get(stream, ())
+        items = (
+            self._inbound
+            if stream == REQUESTS_STREAM
+            else self._control.get(stream, ())
+        )
         for item in items:
             yield item
 
@@ -117,7 +124,7 @@ class FakeBus:
         return [event.kind for event in self.run_events(run_id)]
 
 
-class FakeLedger:
+class FakeRunRepository:
     """协议等价的内存 store：租约以 leases dict 表达，None=暂停哨兵。"""
 
     def __init__(self) -> None:
@@ -147,9 +154,9 @@ class FakeLedger:
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
         self.manifests: dict[str, dict[str, object]] = {}
-        # control inbox（R2）：run_id → [{command_id,fingerprint,status,body}]，keep-first。
-        self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
-        self.control_receipts: dict[tuple[str, str], ControlReceipt] = {}
+        # 单一 control command ledger（R2）：(run_id, command_id) → command state。
+        # HTTP admission 与 worker delivery 共用同一条记录，避免 fake 产生双真相。
+        self.control_commands: dict[tuple[str, str], dict[str, object]] = {}
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -159,7 +166,9 @@ class FakeLedger:
         del namespace
         existing = self.dispatch_fences.get(request.run_id)
         if existing is not None and existing != fence:
-            raise DispatchConflict(f"run id {request.run_id!r} was reused with a different fence")
+            raise DispatchConflict(
+                f"run id {request.run_id!r} was reused with a different fence"
+            )
         if existing is None:
             self.dispatch_fences[request.run_id] = fence
             self.dispatches[request.run_id] = "pending"
@@ -170,7 +179,9 @@ class FakeLedger:
             publish_required=self.dispatches.get(request.run_id) == "pending",
         )
 
-    async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
+    async def try_claim(
+        self, request: RunRequest, owner: str = "test-consumer"
+    ) -> bool:
         if request.run_id in self.requests:
             return False
         self.requests[request.run_id] = request
@@ -178,7 +189,9 @@ class FakeLedger:
         self.owners[request.run_id] = owner
         return True
 
-    async def claim_dispatch(self, run_id: str, consumer: str = "test-consumer") -> bool:
+    async def claim_dispatch(
+        self, run_id: str, consumer: str = "test-consumer"
+    ) -> bool:
         # Supervisor 单测默认把未显式布置的请求视为已注入 pending intent；需要验证
         # 缺失/重复/过期时，测试应明确预置对应状态。
         status = self.dispatches.get(run_id)
@@ -213,7 +226,14 @@ class FakeLedger:
         event_id = f"evt_fake_{run_id}_{seq}"
         rows = self.outbox.setdefault(run_id, [])
         if fence is not None and seq > fence:
-            rows.append({"durable_seq": seq, "event_id": event_id, "kind": kind, "status": "superseded"})
+            rows.append(
+                {
+                    "durable_seq": seq,
+                    "event_id": event_id,
+                    "kind": kind,
+                    "status": "superseded",
+                }
+            )
             return None
         rows.append(
             {
@@ -316,9 +336,15 @@ class FakeLedger:
             seq += 1
         if advanced > consumed:
             manifest["consumed_seq"] = advanced
-            self.outbox[run_id] = [r for r in rows if _as_int(r["durable_seq"]) > advanced]
+            self.outbox[run_id] = [
+                r for r in rows if _as_int(r["durable_seq"]) > advanced
+            ]
         fence = self.terminal_fence.get(run_id)
-        remaining = [r for r in self.outbox.get(run_id, []) if r["status"] in ("queued", "published")]
+        remaining = [
+            r
+            for r in self.outbox.get(run_id, [])
+            if r["status"] in ("queued", "published")
+        ]
         close_requested = False
         if fence is not None and advanced >= fence and not remaining:
             if not manifest.get("producer_close_requested"):
@@ -330,7 +356,7 @@ class FakeLedger:
             republish=republish,
         )
 
-    async def record_control_inbox(
+    async def record_control_delivery(
         self,
         run_id: str,
         command_id: str,
@@ -338,84 +364,125 @@ class FakeLedger:
         fingerprint: str | None,
         body: str,
     ) -> bool:
-        # 与 MongoLedger 同语义：run 文档须存在（try_claim 后），keep-first 去重。
+        # worker unit fixture 可直接投递 control；缺少 HTTP admission 时在同一 ledger 建立 persisted 行。
         if run_id not in self.requests:
             return False
-        box = self.control_inbox.setdefault(run_id, [])
-        if any(entry["command_id"] == command_id for entry in box):
+        key = (run_id, command_id)
+        existing = self.control_commands.get(key)
+        if existing is not None:
+            if (
+                request_digest is not None
+                and existing["request_digest"] != request_digest
+            ):
+                raise ControlCommandConflict("command digest mismatch")
             return False
-        box.append(
-            {
-                "command_id": command_id,
-                "request_digest": request_digest,
-                "fingerprint": fingerprint,
-                "status": "persisted",
-                "body": body,
-            }
-        )
+        self.control_commands[key] = {
+            "run_id": run_id,
+            "command_id": command_id,
+            "request_digest": request_digest,
+            "fingerprint": fingerprint,
+            "status": "persisted",
+            "body": body,
+            "error_code": None,
+        }
         return True
 
     async def admit_control(
         self, run_id: str, command_id: str, request_digest: str, body: str
     ) -> ControlAdmission:
-        existing = self.control_receipts.get((run_id, command_id))
+        key = (run_id, command_id)
+        existing = self.control_commands.get(key)
         if existing is not None:
-            if existing.run_id != run_id or existing.request_digest != request_digest:
+            if existing["request_digest"] != request_digest:
                 raise ControlCommandConflict("command digest mismatch")
-            return ControlAdmission(
-                receipt=existing,
-                replayed=True,
-                publish_required=existing.status == "pending",
+            status = str(existing["status"])
+            public_status = cast(
+                ControlAdmissionStatus,
+                {
+                    "admitted": "pending",
+                    "persisted": "pending",
+                    "applied": "succeeded",
+                    "succeeded": "succeeded",
+                    "failed": "failed",
+                    "superseded": "failed",
+                }[status],
             )
-        del body
-        receipt = ControlReceipt(
-            run_id=run_id,
-            command_id=command_id,
-            request_digest=request_digest,
-            status="pending",
+            return ControlAdmission(
+                receipt=ControlAdmissionReceipt(
+                    run_id=run_id,
+                    command_id=command_id,
+                    request_digest=request_digest,
+                    status=public_status,
+                    error_code=cast(str | None, existing["error_code"]),
+                ),
+                replayed=True,
+                publish_required=status in {"admitted", "persisted"},
+            )
+        self.control_commands[key] = {
+            "run_id": run_id,
+            "command_id": command_id,
+            "request_digest": request_digest,
+            "fingerprint": None,
+            "status": "admitted",
+            "body": body,
+            "error_code": None,
+        }
+        return ControlAdmission(
+            receipt=ControlAdmissionReceipt(
+                run_id=run_id,
+                command_id=command_id,
+                request_digest=request_digest,
+                status="pending",
+            ),
+            replayed=False,
+            publish_required=True,
         )
-        self.control_receipts[(run_id, command_id)] = receipt
-        return ControlAdmission(receipt=receipt, replayed=False, publish_required=True)
 
     async def mark_control_succeeded(self, run_id: str, command_id: str) -> None:
-        receipt = self.control_receipts.get((run_id, command_id))
-        if receipt is not None and receipt.status == "pending":
-            self.control_receipts[(run_id, command_id)] = receipt.model_copy(update={"status": "succeeded"})
+        command = self.control_commands.get((run_id, command_id))
+        if command is not None and command["status"] in {
+            "admitted",
+            "persisted",
+            "applied",
+        }:
+            command["status"] = "succeeded"
 
-    async def mark_control_failed(self, run_id: str, command_id: str, error_code: str | None = None) -> None:
-        receipt = self.control_receipts.get((run_id, command_id))
-        if receipt is not None and receipt.status == "pending":
-            self.control_receipts[(run_id, command_id)] = receipt.model_copy(
-                update={"status": "failed", "error_code": error_code}
-            )
+    async def mark_control_failed(
+        self, run_id: str, command_id: str, error_code: str | None = None
+    ) -> None:
+        command = self.control_commands.get((run_id, command_id))
+        if command is not None and command["status"] in {
+            "admitted",
+            "persisted",
+            "applied",
+        }:
+            command["status"] = "failed"
+            command["error_code"] = error_code
 
     async def mark_control_applied(self, run_id: str, command_id: str) -> None:
-        for entry in self.control_inbox.get(run_id, []):
-            if entry["command_id"] == command_id and entry["status"] == "persisted":
-                entry["status"] = "applied"
+        command = self.control_commands.get((run_id, command_id))
+        if command is not None and command["status"] == "persisted":
+            command["status"] = "applied"
 
     async def mark_control_superseded(self, run_id: str, command_id: str) -> None:
-        for entry in self.control_inbox.get(run_id, []):
-            if entry["command_id"] == command_id and entry["status"] == "persisted":
-                entry["status"] = "superseded"
+        command = self.control_commands.get((run_id, command_id))
+        if command is not None and command["status"] == "persisted":
+            command["status"] = "superseded"
 
-    async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
-        records: list[ControlInboxRecord] = []
-        for run_id, box in sorted(self.control_inbox.items()):
-            if run_id in self.terminals:
+    async def list_pending_control_delivery(self) -> list[RunControlCommandRecord]:
+        records: list[RunControlCommandRecord] = []
+        for (run_id, _command_id), entry in sorted(self.control_commands.items()):
+            if run_id in self.terminals or entry["status"] != "persisted":
                 continue
-            for entry in box:
-                if entry["status"] != "persisted":
-                    continue
-                records.append(
-                    ControlInboxRecord(
-                        run_id=run_id,
-                        command_id=str(entry["command_id"]),
-                        request_digest=entry["request_digest"],
-                        fingerprint=entry["fingerprint"],
-                        body=str(entry["body"]),
-                    )
+            records.append(
+                RunControlCommandRecord(
+                    run_id=run_id,
+                    command_id=str(entry["command_id"]),
+                    request_digest=cast(str | None, entry["request_digest"]),
+                    fingerprint=cast(str | None, entry["fingerprint"]),
+                    body=str(entry["body"]),
                 )
+            )
         return records
 
     async def renew(self, run_id: str, owner: str = "test-consumer") -> bool:
@@ -459,7 +526,9 @@ class FakeLedger:
         self.token_totals[run_id] = self.token_totals.get(run_id, 0) + count
         return self.token_totals[run_id]
 
-    async def add_usage(self, run_id: str, input_tokens: int, output_tokens: int) -> tuple[int, int]:
+    async def add_usage(
+        self, run_id: str, input_tokens: int, output_tokens: int
+    ) -> tuple[int, int]:
         cur_in, cur_out = self.usage_totals.get(run_id, (0, 0))
         self.usage_totals[run_id] = (cur_in + input_tokens, cur_out + output_tokens)
         return self.usage_totals[run_id]
@@ -482,8 +551,15 @@ class FakeLedger:
             self.token_totals.pop(run_id, None)
             self.usage_totals.pop(run_id, None)
             self.steers.pop(run_id, None)
-            self.tool_results = {k: v for k, v in self.tool_results.items() if k[0] != run_id}
-            self.tool_journal = {k: v for k, v in self.tool_journal.items() if k[0] != run_id}
+            self.tool_results = {
+                k: v for k, v in self.tool_results.items() if k[0] != run_id
+            }
+            self.tool_journal = {
+                k: v for k, v in self.tool_journal.items() if k[0] != run_id
+            }
+            self.control_commands = {
+                k: v for k, v in self.control_commands.items() if k[0] != run_id
+            }
         return len(stale)
 
     async def is_terminal(self, run_id: str) -> bool:
@@ -503,21 +579,32 @@ class FakeLedger:
         box = self.steers.get(run_id)
         if box is None:
             return
-        self.steers[run_id] = [(mid, c) for mid, c in box if mid not in set(message_ids)]
+        self.steers[run_id] = [
+            (mid, c) for mid, c in box if mid not in set(message_ids)
+        ]
 
     async def put_tool_result(
         self, run_id: str, tool_id: str, result: str, is_error: bool
     ) -> None:
         self.tool_results.setdefault((run_id, tool_id), (result, is_error))
 
-    async def get_tool_result(self, run_id: str, tool_id: str) -> tuple[str, bool] | None:
+    async def get_tool_result(
+        self, run_id: str, tool_id: str
+    ) -> tuple[str, bool] | None:
         return self.tool_results.get((run_id, tool_id))
 
-    async def journal_tool_started(self, run_id: str, tool_call_id: str, name: str) -> bool:
+    async def journal_tool_started(
+        self, run_id: str, tool_call_id: str, name: str
+    ) -> bool:
         key = (run_id, tool_call_id)
         if key in self.tool_journal:
             return False
-        self.tool_journal[key] = {"name": name, "status": "started", "result": None, "is_error": None}
+        self.tool_journal[key] = {
+            "name": name,
+            "status": "started",
+            "result": None,
+            "is_error": None,
+        }
         return True
 
     async def journal_tool_finished(
@@ -533,7 +620,9 @@ class FakeLedger:
     async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
         self.tool_journal.pop((run_id, tool_call_id), None)
 
-    async def get_tool_journal(self, run_id: str, tool_call_id: str) -> ToolJournalRecord | None:
+    async def get_tool_journal(
+        self, run_id: str, tool_call_id: str
+    ) -> ToolJournalRecord | None:
         entry = self.tool_journal.get((run_id, tool_call_id))
         if entry is None:
             return None
@@ -691,7 +780,9 @@ class FakeAgent:
 
 def text_model(text: str, *, msg_id: str = "seg") -> FakeModel:
     return FakeModel(
-        text_deltas=(text,), output_message=AIMessage(content=text, id=msg_id), message_id=msg_id
+        text_deltas=(text,),
+        output_message=AIMessage(content=text, id=msg_id),
+        message_id=msg_id,
     )
 
 
@@ -725,7 +816,9 @@ def request(
     )
 
 
-def usage_recorder() -> tuple[Callable[[int, int], Awaitable[tuple[int, int]]], dict[str, int]]:
+def usage_recorder() -> tuple[
+    Callable[[int, int], Awaitable[tuple[int, int]]], dict[str, int]
+]:
     """invoke_once 用量入账的测试替身：返回 (recorder, 累计观测)。"""
     seen = {"input": 0, "output": 0}
 

@@ -445,7 +445,7 @@ def test_native_summary_bypasses_agent_model_middleware_but_keeps_graph_context(
     Its framework-owned config carries the semantic marker
     ``metadata.lc_source=summarization``; LangGraph can enrich the remaining
     config shape.  The ambient graph config still retains the current
-    thread/run, which a GA model transport wrapper can bind to its RunLedger
+    thread/run, which a GA model transport wrapper can bind to its RunRepository
     slot.
     """
     _register_test_profile()

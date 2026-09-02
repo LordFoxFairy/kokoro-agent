@@ -19,10 +19,10 @@ DISPATCH_CLAIM = Counter(
     ["outcome"],
 )
 
-# R2 control inbox 相位：persisted=首次落库；applied=续办 apply；superseded=stale 不 apply。
-CONTROL_INBOX = Counter(
-    "kokoro_agent_control_inbox_total",
-    "control inbox transitions",
+# R2 control command 相位：persisted=首次落库；applied=续办 apply；superseded=stale 不 apply。
+CONTROL_DELIVERY = Counter(
+    "kokoro_agent_control_delivery_total",
+    "control command delivery transitions",
     ["state"],
 )
 
@@ -72,11 +72,11 @@ def record_dispatch_claim(*, won: bool) -> None:
         LOGGER.debug("metrics record_dispatch_claim failed", exc_info=True)
 
 
-def record_control_inbox(state: str) -> None:
+def record_control_delivery(state: str) -> None:
     try:
-        CONTROL_INBOX.labels(state=state).inc()
+        CONTROL_DELIVERY.labels(state=state).inc()
     except Exception:  # noqa: BLE001 — 指标采集绝不影响主链路
-        LOGGER.debug("metrics record_control_inbox failed", exc_info=True)
+        LOGGER.debug("metrics record_control_delivery failed", exc_info=True)
 
 
 def record_outbox(state: str, count: int = 1) -> None:

@@ -21,7 +21,7 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.tools.toolbox import ProcessToolbox
 from kokoro_agent.worker.services import WorkerClients, WorkerServices
-from support.fakes import FakeLedger
+from support.fakes import FakeRunRepository
 from support.local_fake import LocalFakeChatModel
 
 
@@ -58,7 +58,7 @@ def _factory(monkeypatch: pytest.MonkeyPatch) -> AgentFactory:
             subagent_catalog=build_subagent_catalog(None),
             toolbox=ProcessToolbox(configured=()),
             checkpointer=InMemorySaver(),
-            ledger=FakeLedger(),
+            run_repository=FakeRunRepository(),
             memory_store=InMemoryStore(),
             skill_client=clients.skill_client,
             skill_reader=clients.skill_reader,

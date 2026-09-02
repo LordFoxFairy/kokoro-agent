@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 
 from pydantic import JsonValue
 
-from support.fakes import FakeAgent, FakeBus, FakeLedger, request, text_run, usage_recorder
+from support.fakes import FakeAgent, FakeBus, FakeRunRepository, request, text_run, usage_recorder
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.contract import RUN_EVENTS_MAXLEN, RunRequest, SubagentSource, run_events_stream
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
@@ -49,7 +49,7 @@ def _source(_name: str) -> SubagentSource:
 #   本钉由 R0 的 strict xfail（红）收口为正式绿钉：注入 durable claim 崩溃，断言消息未 ACK。
 # ---------------------------------------------------------------------------
 async def test_request_not_acked_before_durable_claim_persists() -> None:
-    class _CrashBeforeClaimLedger(FakeLedger):
+    class _CrashBeforeClaimRepository(FakeRunRepository):
         async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
             # 注入：durable claim 于持久化前崩溃（claim 未落库）。
             raise RuntimeError("crash before durable claim persists")
@@ -58,7 +58,7 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
     bus = FakeBus(inbound=(good,))
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
-        store=_CrashBeforeClaimLedger(),
+        store=_CrashBeforeClaimRepository(),
         approval_tool_names=_no_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -96,7 +96,7 @@ class _FlakyTerminalBus(FakeBus):
 
 async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> None:
     bus = _FlakyTerminalBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     await store.try_claim(request("term-drop"))  # 建 run 文档：stage 落 outbox 行的前提
     emitter = await RunEmitter.attach(bus, "term-drop", frozenset(), store)
     await invoke_once(
@@ -140,7 +140,7 @@ class _FlakyFailureBus(FakeBus):
 
 async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> None:
     bus = _FlakyFailureBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     await store.try_claim(request("term-fail"))
     emitter = await RunEmitter.attach(bus, "term-fail", frozenset(), store)
     handled = await invoke_once(

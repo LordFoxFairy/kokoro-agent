@@ -18,7 +18,7 @@ def test_registry_exposes_kokoro_agent_metric_names() -> None:
     body = generate_latest().decode()
     for name in (
         "kokoro_agent_dispatch_claim_total",
-        "kokoro_agent_control_inbox_total",
+        "kokoro_agent_control_delivery_total",
         "kokoro_agent_outbox_total",
         "kokoro_agent_tool_unknown_outcome_total",
         "kokoro_agent_mcp_unavailable_total",
@@ -35,7 +35,9 @@ def test_dispatch_claim_counts_won_and_lost() -> None:
     metrics.record_dispatch_claim(won=True)
     metrics.record_dispatch_claim(won=False)
     assert _value("kokoro_agent_dispatch_claim_total", outcome="won") == before_won + 1
-    assert _value("kokoro_agent_dispatch_claim_total", outcome="lost") == before_lost + 1
+    assert (
+        _value("kokoro_agent_dispatch_claim_total", outcome="lost") == before_lost + 1
+    )
 
 
 def test_outbox_transitions_increment_by_state() -> None:

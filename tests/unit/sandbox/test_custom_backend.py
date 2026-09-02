@@ -18,7 +18,7 @@ from kokoro_agent.sandbox.custom_backend import (
     CustomBackendSettings,
     connect_custom_sandbox,
 )
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.persistence.repository import RunRepository
 
 SEEN_CONTEXTS: list[CustomBackendContext] = []
 
@@ -144,29 +144,29 @@ class TestLoading:
 
 class TestLifecycleBinding:
     @pytest.mark.asyncio
-    async def test_bound_backend_lands_in_ledger_and_resume_reuses(
-        self, ledger: RunLedger
+    async def test_bound_backend_lands_in_repository_and_resume_reuses(
+        self, run_repository: RunRepository
     ) -> None:
         settings = _dispatch_settings("kokoro_custom_probe:make_bound_backend")
         # 生产路径：run 先经 supervisor 认领（建 run 文档），沙箱绑定才落账（keep-first）。
-        await ledger.try_claim(request("run_c"), "owner")
+        await run_repository.try_claim(request("run_c"), "owner")
         first = await make_backend_for_run(
-            "custom", settings, workspace="ns:s1", run_id="run_c", sandbox_store=ledger
+            "custom", settings, workspace="ns:s1", run_id="run_c", sandbox_store=run_repository
         )
         assert getattr(first, "sandbox_id", None) == "custom_run_c"
-        assert await ledger.get_sandbox_id("run_c") == "custom_run_c"
+        assert await run_repository.get_sandbox_id("run_c") == "custom_run_c"
         # HITL resume：prior 经 context 透传，工厂重连同一沙箱。
         await make_backend_for_run(
-            "custom", settings, workspace="ns:s1", run_id="run_c", sandbox_store=ledger
+            "custom", settings, workspace="ns:s1", run_id="run_c", sandbox_store=run_repository
         )
         assert SEEN_CONTEXTS[1].prior_sandbox_id == "custom_run_c"
-        assert await ledger.get_sandbox_id("run_c") == "custom_run_c"
+        assert await run_repository.get_sandbox_id("run_c") == "custom_run_c"
 
     @pytest.mark.asyncio
-    async def test_unbound_backend_skips_ledger(self, ledger: RunLedger) -> None:
+    async def test_unbound_backend_skips_repository(self, run_repository: RunRepository) -> None:
         settings = _dispatch_settings("kokoro_custom_probe:make_ok_backend")
-        await ledger.try_claim(request("run_u"), "owner")
+        await run_repository.try_claim(request("run_u"), "owner")
         await make_backend_for_run(
-            "custom", settings, workspace="ns:s1", run_id="run_u", sandbox_store=ledger
+            "custom", settings, workspace="ns:s1", run_id="run_u", sandbox_store=run_repository
         )
-        assert await ledger.get_sandbox_id("run_u") is None
+        assert await run_repository.get_sandbox_id("run_u") is None

@@ -28,7 +28,7 @@ _YAML_TO_ENV: dict[str, str] = {
     "stream.redis_url": "KOKORO_REDIS_URL",
     "storage.database_url": "KOKORO_AGENT_DATABASE_URL",
     "storage.database_schema": "KOKORO_AGENT_DATABASE_SCHEMA",
-    "ledger.lease_ttl_s": "KOKORO_LEASE_TTL_S",
+    "run_repository.lease_ttl_s": "KOKORO_LEASE_TTL_S",
     "sandbox.local_shell.root": "KOKORO_AGENT_LOCAL_SHELL_ROOT",
     "sandbox.local_shell.inherit_env": "KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV",
     "sandbox.local_shell.timeout": "KOKORO_AGENT_LOCAL_SHELL_TIMEOUT",

@@ -10,13 +10,13 @@
 ```text
 Root LaunchRunRequest
   -> worker 从 Redis 接收并校验
-  -> RunLedger claim
+  -> RunRepository claim
   -> FeatureCatalog.get(feature_key)
   -> AgentFactory.build(request)
   -> create_deep_agent(...)                         # 单 Agent
      或 create_deep_agent(...) + create_swarm(...)  # peer handoff
   -> native state/checkpoint
-  -> RunLedger、chat_messages、chat_events、workbench
+  -> RunRepository、chat_messages、chat_events、workbench
   -> Root Chat query boundary -> kokoro-bff/modules/chat 查询/replay/AG-UI
 ```
 
@@ -99,7 +99,7 @@ src/kokoro_agent/
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── storage/         RunLedger、LangGraph Store 与 checkpoint adapter
+├── persistence/         RunRepository、LangGraph Store 与 checkpoint adapter
 ├── mcp/             MCP 配置、连接与 egress
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产
@@ -168,7 +168,7 @@ LangChain native message/checkpoint ID 与 GA `chat_messages`/`chat_events` ID �
 2. 建立 `agents/` 和 `features/`，先实现 `music`、`chat` 两个单 Agent Feature。
 3. 建立 `agent_factory.py`，让单 Agent 直接走 `create_deep_agent`。
 4. 只有出现真实 peer handoff 需求时才接入 `swarm.py` 和官方 Swarm integration test。
-5. 将 RunLedger、聊天事实、Capability/Storage public clients 接入 Factory/worker；不把 owner
+5. 将 RunRepository、聊天事实、Capability/Storage public clients 接入 Factory/worker；不把 owner
    数据库或 bucket 读写写进 Agent。
 6. 最后再开放可视化 Builder：Builder 只生成 Feature/Agent 声明，复用同一 Factory，不进入
    Session 或 Run 输入。
@@ -203,7 +203,7 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
 - DeepAgents 是唯一 Agent loop；GA 没有第二个 runtime/compiler/graph 层。
 - Feature/Agent API 没有 `deps`、namespace、thread、binding 或版本字段。
 - Capability、Storage、Studio 等可选旁路短暂不可用时，未声明其操作的 GA 核心仍可运行；Redis、
-  RunLedger 与 checkpoint 是当前 worker 执行入口的必要基础设施，不伪装成可选依赖。
+  RunRepository 与 checkpoint 是当前 worker 执行入口的必要基础设施，不伪装成可选依赖。
 - Model public client 尚未接入时，生产 worker 仍只接受已配置的真实 provider；确定性 fake 仅存在于
   `tests/support`。生产接线必须在 GA 侧重新校验 `requested_model_label` 的可用性，再交给
   `ChatModelSettings`，不能只依赖 Chat admission。

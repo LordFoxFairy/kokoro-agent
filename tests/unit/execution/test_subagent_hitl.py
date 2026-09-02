@@ -115,14 +115,14 @@ async def test_general_purpose_delegation_runs_inside_guards(
 ) -> None:
     # 内生 GP 旁路收口回归钉：唯一的 TerminalGuard 只挂在我们覆盖的 general-purpose spec 上，
     # 账本已终态 → 委派进 GP 的首个模型轮必被熔断（RunSupersededError 出自 GP 子图内）。
-    from support.fakes import FakeLedger
+    from support.fakes import FakeRunRepository
     from kokoro_agent.agents.subagents import general_purpose_subagent
     from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 
     run_id = f"rgp-{uuid4().hex}"
-    ledger = FakeLedger()
-    assert await ledger.try_mark_terminal(run_id)
-    guard = TerminalGuardMiddleware(store=ledger, run_id=run_id)
+    run_repository = FakeRunRepository()
+    assert await run_repository.try_mark_terminal(run_id)
+    guard = TerminalGuardMiddleware(store=run_repository, run_id=run_id)
     main_model = LocalFakeChatModel.with_script([
         AIMessage(content="", tool_calls=[{
             "name": "task", "args": {"description": "do", "subagent_type": "general-purpose"},
@@ -170,13 +170,13 @@ async def test_subagent_review_pauses_with_cached_result(
     stream: RedisStream, checkpointer: BaseCheckpointSaver[str]
 ) -> None:
     # 审核政策同样不可被委派旁路：子代理内 review 工具执行后暂停，结果进卡（keep-first 缓存）。
-    from support.fakes import FakeLedger
+    from support.fakes import FakeRunRepository
     from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
     _EXECUTED["n"] = 0
     saver = checkpointer
     run_id = f"rrev-{uuid4().hex}"
-    store = FakeLedger()
+    store = FakeRunRepository()
     gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
     review = ToolResultReviewMiddleware(frozenset({"gated"}), store, run_id)
     main_model = LocalFakeChatModel.with_script([

@@ -21,9 +21,9 @@ from kokoro_agent.policy import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
-from kokoro_agent.storage.checkpoints import make_checkpointer
-from kokoro_agent.storage.memory_store import make_memory_store
-from kokoro_agent.storage.ledger import make_ledger
+from kokoro_agent.persistence.checkpoints import make_checkpointer
+from kokoro_agent.persistence.memory_store import make_memory_store
+from kokoro_agent.persistence.repository import make_run_repository
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
@@ -83,7 +83,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
     # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
-        make_ledger(config.ledger) as store,
+        make_run_repository(config.run_repository) as store,
         make_memory_store(config.checkpoint) as memory_store,
         make_chat_store(
             ChatStoreSettings(
@@ -99,7 +99,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             subagent_catalog=subagent_catalog,
             toolbox=toolbox_from_config(config),
             checkpointer=saver,
-            ledger=store,
+            run_repository=store,
             memory_store=memory_store,
             skill_client=owner_clients.skill_client,
             skill_reader=owner_clients.skill_reader,

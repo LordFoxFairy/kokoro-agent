@@ -12,7 +12,7 @@ from pydantic import JsonValue, TypeAdapter
 from support.fakes import (
     FakeAgent,
     FakeBus,
-    FakeLedger,
+    FakeRunRepository,
     FakeRunStream,
     FakeState,
     find_event,
@@ -64,11 +64,11 @@ def _source(_name: str) -> SubagentSource:
 
 def _supervisor(
     agent: FakeAgent,
-    store: FakeLedger | None = None,
+    store: FakeRunRepository | None = None,
     heartbeat_s: float = 30.0,
     chat_store: FakeChatStore | None = None,
-) -> tuple[RunSupervisor, FakeLedger]:
-    state_store = store if store is not None else FakeLedger()
+) -> tuple[RunSupervisor, FakeRunRepository]:
+    state_store = store if store is not None else FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=state_store,
@@ -173,12 +173,12 @@ async def test_chat_message_failure_happens_before_dispatch_claim_and_ack() -> N
     item = StreamItem(cursor="1", event=request("chat-fail").model_dump())
     bus = FakeBus(inbound=(item,))
     agent = FakeAgent(run=text_run("unreachable"))
-    supervisor, ledger = _supervisor(agent, chat_store=_FailingChatStore())
+    supervisor, run_repository = _supervisor(agent, chat_store=_FailingChatStore())
 
     await supervisor.serve(bus)
 
     assert bus.acked == []
-    assert "chat-fail" not in ledger.requests
+    assert "chat-fail" not in run_repository.requests
     assert agent.seen_payloads == []
 
 
@@ -476,7 +476,7 @@ async def test_builder_failure_emits_run_failed_once() -> None:
         raise ValueError("bad model")
 
     bus = FakeBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=boom,
         store=store,
@@ -568,7 +568,7 @@ async def test_task_handle_popped_by_identity_not_run_id() -> None:
 
 # ⑦ serve：consumer-group 消费 + parse 后 ack（坏帧也 ack）+ 单消息失败隔离。
 async def test_serve_acks_and_isolates_failures() -> None:
-    class _BoomStore(FakeLedger):
+    class _BoomStore(FakeRunRepository):
         async def is_terminal(self, run_id: str) -> bool:
             raise RuntimeError("store boom")
 
@@ -666,7 +666,7 @@ class _FailingOutboxBus(FakeBus):
 
 
 async def test_heartbeat_republishes_queued_outbox_and_dedupes_after_success() -> None:
-    store = FakeLedger()
+    store = FakeRunRepository()
     await store.try_claim(request("queued-outbox"))
     await store.stage_critical_frame(
         "queued-outbox",
@@ -688,7 +688,7 @@ async def test_heartbeat_republishes_queued_outbox_and_dedupes_after_success() -
 
 
 async def test_heartbeat_keeps_queued_outbox_recoverable_on_publish_failure() -> None:
-    store = FakeLedger()
+    store = FakeRunRepository()
     await store.try_claim(request("queued-fail"))
     await store.stage_critical_frame(
         "queued-fail",
@@ -708,7 +708,7 @@ async def test_heartbeat_keeps_queued_outbox_recoverable_on_publish_failure() ->
 
 # ⑨ 跨 supervisor（模拟另一 pod / 重启）：共享 store + 总线续接，index 不回卷。
 async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
-    store = FakeLedger()
+    store = FakeRunRepository()
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
     sup_a, _ = _supervisor(agent, store=store)
@@ -840,7 +840,7 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
 
 # ⑫ 复审 #1 竞态：多 worker 收养后 resume/cancel 分投两处——终态后绝不 spawn。
 async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
-    class _CancelInWindowStore(FakeLedger):
+    class _CancelInWindowStore(FakeRunRepository):
         async def adopt(self, run_id: str, owner: str = "test-consumer") -> None:
             await super().adopt(run_id, owner)
             # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/adopt 之后）完成终态。
@@ -886,7 +886,7 @@ async def test_initial_payload_carries_stable_message_id() -> None:
 async def test_retention_expires_events_stream_on_terminal() -> None:
     agent = FakeAgent(run=text_run("x"))
     bus = FakeBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=store,
@@ -904,7 +904,7 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
 async def test_retention_heartbeat_purges_terminal_runs() -> None:
     agent = FakeAgent(run=text_run("x"))
     bus = FakeBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=store,
@@ -924,7 +924,7 @@ async def test_retention_heartbeat_purges_terminal_runs() -> None:
 async def test_retention_off_by_default_no_side_effects() -> None:
     agent = FakeAgent(run=text_run("x"))
     bus = FakeBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     sup, _ = _supervisor(agent, store)
     await sup.dispatch(bus, request("rr3"))
     await _drain(sup)
@@ -936,7 +936,7 @@ async def test_retention_off_by_default_no_side_effects() -> None:
 # --- 审计修复回归钉（2026-07-05 链路审计） ---
 
 
-class _ExplodingMailboxLedger(FakeLedger):
+class _ExplodingMailboxRepository(FakeRunRepository):
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
         raise RuntimeError("mailbox down")
 
@@ -945,7 +945,7 @@ async def test_steer_persist_failure_does_not_kill_healthy_run() -> None:
     # steer 只是插话信箱：入账失败可由用户重发，绝不判死健康 run（审计缺口①）。
     agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
-    sup, store = _supervisor(agent, store=_ExplodingMailboxLedger())
+    sup, store = _supervisor(agent, store=_ExplodingMailboxRepository())
     await sup.dispatch(
         bus,
         RunSteer(
@@ -970,7 +970,7 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
 
     agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
-    store = FakeLedger()
+    store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
         store=store,
@@ -1014,7 +1014,7 @@ async def test_fencing_yields_local_task_when_ownership_lost() -> None:
 
 async def test_dispatch_win_executes_and_acks_after_claim() -> None:
     # pending intent → CAS 赢 → 执行到终态 → ACK（ACK 后置于 durable claim 之后）。
-    store = FakeLedger()
+    store = FakeRunRepository()
     store.dispatches["r-go"] = "pending"
     store.dispatch_deadlines["r-go"] = 10**15
     frame = StreamItem(cursor="1", event=dict(request("r-go").model_dump()))
@@ -1031,7 +1031,7 @@ async def test_redelivered_dispatch_after_claim_is_discarded_not_double_executed
     None
 ):
     # §8.3「claim 后 ACK 前崩溃」：重投同帧 CAS 输（已 claimed）→ ACK 丢弃，不二次执行。
-    store = FakeLedger()
+    store = FakeRunRepository()
     store.dispatches["r-dup"] = "pending"
     store.dispatch_deadlines["r-dup"] = 10**15
     frame = StreamItem(cursor="1", event=dict(request("r-dup").model_dump()))
@@ -1048,7 +1048,7 @@ async def test_redelivered_dispatch_after_claim_is_discarded_not_double_executed
 
 async def test_expired_dispatch_frame_never_executes() -> None:
     # session reconciler 已转 expired：迟到帧永不执行，仅 ACK 丢弃。
-    store = FakeLedger()
+    store = FakeRunRepository()
     store.dispatches["r-exp"] = "expired"
     frame = StreamItem(cursor="1", event=dict(request("r-exp").model_dump()))
     bus = FakeBus(inbound=(frame,))
@@ -1061,7 +1061,7 @@ async def test_expired_dispatch_frame_never_executes() -> None:
 
 async def test_crash_before_durable_claim_leaves_frame_unacked() -> None:
     # §8.3「request 读出后 claim 前崩溃」：durable claim 未落地 → 不 ACK，留 PEL 重投。
-    class _CrashClaim(FakeLedger):
+    class _CrashClaim(FakeRunRepository):
         async def try_claim(
             self, request: RunRequest, owner: str = "test-consumer"
         ) -> bool:
@@ -1081,7 +1081,7 @@ async def test_crash_before_durable_claim_leaves_frame_unacked() -> None:
 
 async def test_malformed_frame_quarantined_to_dlq_and_acked() -> None:
     # 不可解析帧：DLQ 记录后 ACK（坏帧无 identity 不重投）。
-    store = FakeLedger()
+    store = FakeRunRepository()
     malformed = StreamItem(cursor="1", event={"kind": "run.request", "run_id": ""})
     bus = FakeBus(inbound=(malformed,))
     sup, _ = _supervisor(FakeAgent(), store=store)
@@ -1094,7 +1094,7 @@ async def test_malformed_frame_quarantined_to_dlq_and_acked() -> None:
 
 async def test_serve_republishes_queued_outbox() -> None:
     # R4 critical outbox：stage 落库但发布未确认（崩在 publish 前）→ 启动 scanner 补发（幂等）。
-    store = FakeLedger()
+    store = FakeRunRepository()
     store.outbox["r-orphan"] = [
         {
             "durable_seq": 1,
@@ -1123,7 +1123,7 @@ async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatibl
     None
 ):
     # session NACK（rejected 回执）：心跳对账 → 同步 fence + 原子认领终态（停止执行与分配）。
-    store = FakeLedger()
+    store = FakeRunRepository()
     await store.try_claim(request("r-nack"))
     store.outbox["r-nack"] = [
         {
@@ -1149,7 +1149,7 @@ async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatibl
 
 async def test_heartbeat_republishes_stale_published_outbox() -> None:
     # published 后回执一直不来、超宽限期（events 流被修剪/丢失）→ 心跳重发（复用固定身份）。
-    store = FakeLedger()
+    store = FakeRunRepository()
     await store.try_claim(request("r-stale"))
     store.outbox["r-stale"] = [
         {

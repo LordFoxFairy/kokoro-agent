@@ -47,7 +47,7 @@ from kokoro_agent.chat.projection import project_chat_fact
 from kokoro_agent.chat.models import ChatEventRecord
 from kokoro_agent.chat.store import ChatStore
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.storage.ledger import OutboxFrame, RunLedger
+from kokoro_agent.persistence.repository import OutboxFrame, RunRepository
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
@@ -123,7 +123,7 @@ class RunEmitter:
         next_index: int = 0,
         tool_segments: dict[str, str] | None = None,
         review_tool_names: frozenset[str] = frozenset(),
-        outbox: RunLedger | None = None,
+        outbox: RunRepository | None = None,
         namespace: str | None = None,
         session_id: str | None = None,
         chat_store: ChatStore | None = None,
@@ -161,7 +161,7 @@ class RunEmitter:
         bus: StreamProtocol,
         run_id: str,
         review_tool_names: frozenset[str] = frozenset(),
-        outbox: RunLedger | None = None,
+        outbox: RunRepository | None = None,
         namespace: str | None = None,
         session_id: str | None = None,
         chat_store: ChatStore | None = None,

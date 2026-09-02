@@ -31,7 +31,7 @@ src/kokoro_agent/
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client（Skill、MCP、Artifact 交付）
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── storage/         RunLedger、LangGraph Store 与 checkpoint adapter
+├── persistence/         RunRepository、LangGraph Store 与 checkpoint adapter
 ├── mcp/             MCP 连接、工具与本地 fixture
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产
@@ -43,10 +43,10 @@ src/kokoro_agent/
 ```text
 Redis LaunchRunRequest
   -> worker ingress
-  -> identity normalization + RunLedger claim
+  -> identity normalization + RunRepository claim
   -> FeatureCatalog[feature_key]
   -> create_deep_agent | official Swarm
-  -> native state/checkpoint + GA RunLedger/workbench
+  -> native state/checkpoint + GA RunRepository/workbench
   -> chat_messages/chat_events durable write
   -> Root Chat query boundary -> kokoro-bff/modules/chat Chat API/AG-UI
 ```
@@ -106,7 +106,7 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 - `GET /v1/sessions/{session_id}/events`：安全 session replay。
 
 BFF 只通过这些版本化 HTTP 入口访问 Agent，不读取 Agent PostgreSQL/Redis、checkpoint、
-RunLedger 或内部 Python 类型。除 `/healthz` 外的请求始终要求配置可信的
+RunRepository 或内部 Python 类型。除 `/healthz` 外的请求始终要求配置可信的
 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带标准 `Authorization: Bearer <secret>`；未配置 secret
 时请求返回 `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
 control 还必须带 `Idempotency-Key`；history/replay 还要带
@@ -123,7 +123,7 @@ Agent ingress 不提供 BFF 的 session detail、title、share、delete、public
 
 部署时：
 
-- Compose/Kubernetes 只注入 PostgreSQL、Redis、GA checkpoint/RunLedger、sandbox/workbench、模型和可选 public-client handle；不定义 Feature 或 Agent 组合。
+- Compose/Kubernetes 只注入 PostgreSQL、Redis、GA checkpoint/RunRepository、sandbox/workbench、模型和可选 public-client handle；不定义 Feature 或 Agent 组合。
 - Feature 目录在 worker 启动时加载；Agent 声明的 Skill 在构造时解析，并由 DeepAgents 原生 SkillsMiddleware 渐进读取。
 - `music` 与真实 provider/model 仍是本地骨架；provider 由 `model/factory.py` 统一适配。LiteLLM
   仅是显式开启时使用的外置路由，不是 Agent 或 Model 的必需进程。

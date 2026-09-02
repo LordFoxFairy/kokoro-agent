@@ -17,7 +17,7 @@ from kokoro_agent.tools.middleware import (
     ToolPolicyMiddleware,
     ToolResultReviewMiddleware,
 )
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.persistence.repository import RunRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ class GuardChains:
 
 
 def build_guard_chains(
-    ledger: RunLedger,
+    run_repository: RunRepository,
     run_token_budget: int,
     request: RunRequest,
     permissions: Permissions,
@@ -56,22 +56,22 @@ def build_guard_chains(
         # 再送人工复核=人审人答死循环，装配期即拒绝。
         raise ValueError("ask_user cannot be a result-review tool")
     guards: list[AgentMiddleware] = [
-        TerminalGuardMiddleware(store=ledger, run_id=request.run_id)
+        TerminalGuardMiddleware(store=run_repository, run_id=request.run_id)
     ]
     if run_token_budget > 0:
         guards.append(
             TokenBudgetMiddleware(
                 budget=run_token_budget,
-                store=ledger,
+                store=run_repository,
                 run_id=request.run_id,
             )
         )
     review = (
-        ToolResultReviewMiddleware(review_tools, ledger, request.run_id)
+        ToolResultReviewMiddleware(review_tools, run_repository, request.run_id)
         if review_tools
         else None
     )
-    journal = ToolEffectJournalMiddleware(store=ledger, run_id=request.run_id)
+    journal = ToolEffectJournalMiddleware(store=run_repository, run_id=request.run_id)
     # 子代理链：守卫 →（审核）→ journal（最内层）。子代理内工具同经 backend 执行，同守门。
     subagent_guards: tuple[AgentMiddleware, ...] = tuple(guards)
     if review is not None:
@@ -80,7 +80,7 @@ def build_guard_chains(
     return GuardChains(
         subagent=subagent_guards,
         guards=tuple(guards),
-        steering=SteeringMiddleware(store=ledger, run_id=request.run_id),
+        steering=SteeringMiddleware(store=run_repository, run_id=request.run_id),
         review=review,
         journal=journal,
     )

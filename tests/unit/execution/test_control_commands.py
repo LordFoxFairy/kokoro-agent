@@ -1,4 +1,4 @@
-"""R2 control inbox 与 receipt 闭环（agent 侧）：
+"""R2 control command 与 receipt 闭环（agent 侧）：
 
 - inbox keep-first：重复 command_id 不双放。
 - 两时点回执：persisted（落 inbox）与 applied（apply 后）各发一次 run.control.receipt。
@@ -20,7 +20,7 @@ from pydantic import JsonValue
 from support.fakes import (
     FakeAgent,
     FakeBus,
-    FakeLedger,
+    FakeRunRepository,
     FakeRunStream,
     FakeState,
     find_event,
@@ -90,7 +90,7 @@ def _source(_name: str) -> SubagentSource:
     return "runtime-custom"
 
 
-def _supervisor(agent: FakeAgent, store: FakeLedger) -> RunSupervisor:
+def _supervisor(agent: FakeAgent, store: FakeRunRepository) -> RunSupervisor:
     return RunSupervisor(
         agent_builder=_builder(agent),
         store=store,
@@ -138,7 +138,10 @@ def _resume_body(run_id: str) -> str:
     [
         (
             "run.resume",
-            {"command_id": "dec_r", "decisions": [{"type": "approve", "tool_id": _TID}]},
+            {
+                "command_id": "dec_r",
+                "decisions": [{"type": "approve", "tool_id": _TID}],
+            },
         ),
         ("run.cancel", {"command_id": "dec_c"}),
         (
@@ -151,10 +154,10 @@ async def test_foreign_session_control_frames_are_dropped_before_apply(
     kind: str, body: dict[str, JsonValue]
 ) -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    ledger = FakeLedger()
-    await ledger.try_claim(request("fx", session_id="local-session"))
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("fx", session_id="local-session"))
     bus = FakeBus()
-    sup = _supervisor(agent, ledger)
+    sup = _supervisor(agent, run_repository)
     await sup.dispatch(
         bus,
         _inbound(
@@ -167,16 +170,16 @@ async def test_foreign_session_control_frames_are_dropped_before_apply(
         ),
     )
     assert agent.seen_payloads == []
-    assert ledger.control_inbox == {}
-    assert ledger.steers == {}
+    assert run_repository.control_commands == {}
+    assert run_repository.steers == {}
     assert bus.published == []
 
 
 async def test_restart_scanner_supersedes_foreign_session_resume() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    ledger = FakeLedger()
-    await ledger.try_claim(request("fs", session_id="local-session"))
-    await ledger.record_control_inbox(
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("fs", session_id="local-session"))
+    await run_repository.record_control_delivery(
         "fs",
         "dec_1",
         None,
@@ -193,23 +196,32 @@ async def test_restart_scanner_supersedes_foreign_session_resume() -> None:
     )
 
     bus = FakeBus()
-    sup = _supervisor(agent, ledger)
+    sup = _supervisor(agent, run_repository)
     await sup.serve(bus)
     await _drain(sup)
 
     assert agent.seen_payloads == []
-    assert ledger.control_inbox["fs"][0]["status"] == "superseded"
+    assert run_repository.control_commands[("fs", "dec_1")]["status"] == "superseded"
     assert find_events(bus.run_events("fs"), RunControlReceipt) == []
 
 
-async def test_control_inbox_keep_first_dedup() -> None:
-    ledger = FakeLedger()
-    await ledger.try_claim(request("rd"))
-    assert await ledger.record_control_inbox("rd", "dec_1", None, "fp", "{}") is True
+async def test_control_commands_keep_first_dedup() -> None:
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("rd"))
+    assert (
+        await run_repository.record_control_delivery("rd", "dec_1", None, "fp", "{}")
+        is True
+    )
     # 重复 command_id（重发/重投）：命中既有条目 → False（丢弃不重放）。
-    assert await ledger.record_control_inbox("rd", "dec_1", None, "fp", "{}") is False
+    assert (
+        await run_repository.record_control_delivery("rd", "dec_1", None, "fp", "{}")
+        is False
+    )
     # 不同 command_id 各自入账。
-    assert await ledger.record_control_inbox("rd", "dec_2", None, None, "{}") is True
+    assert (
+        await run_repository.record_control_delivery("rd", "dec_2", None, None, "{}")
+        is True
+    )
 
 
 async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
@@ -230,8 +242,8 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
             )
         }
     )
-    ledger = FakeLedger()
-    sup = _supervisor(agent, ledger)
+    run_repository = FakeRunRepository()
+    sup = _supervisor(agent, run_repository)
     await sup.dispatch(bus, request("cc"))
     for _ in range(200):
         if run_control_stream("cc") in bus.deleted:
@@ -242,7 +254,7 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
     receipts = find_events(bus.run_events("cc"), RunControlReceipt)
     assert [r.payload.control_status for r in receipts] == ["persisted", "applied"]
     assert all(r.payload.command_id == "dec_1" for r in receipts)
-    assert ledger.control_inbox["cc"][0]["status"] == "applied"
+    assert run_repository.control_commands[("cc", "dec_1")]["status"] == "succeeded"
     completed = find_event(bus.run_events("cc"), RunCompleted)
     assert completed.payload.status == "cancelled"
     assert run_control_stream("cc") in bus.deleted
@@ -251,20 +263,20 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
 async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
     # 崩溃前：inbox persisted 已落，fingerprint=当时 interrupt 指纹，apply 未跑。serve() 启动续办。
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    ledger = FakeLedger()
-    await ledger.try_claim(request("rf"))
-    await ledger.record_control_inbox(
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("rf"))
+    await run_repository.record_control_delivery(
         "rf", "dec_1", None, _fingerprint_of(_PENDING_STATE), _resume_body("rf")
     )
 
     bus = FakeBus()  # 空请求流：serve 跑完 startup 续办即收束
-    sup = _supervisor(agent, ledger)
+    sup = _supervisor(agent, run_repository)
     await sup.serve(bus)
     await _drain(sup)
 
     # 指纹匹配 → 续 apply：agent 收到 resume Command。
     assert len(agent.seen_payloads) >= 1
-    assert ledger.control_inbox["rf"][0]["status"] == "applied"
+    assert run_repository.control_commands[("rf", "dec_1")]["status"] == "succeeded"
     # restart 续办只补 applied（persisted 已在崩溃前发过，不重发）。
     receipts = find_events(bus.run_events("rf"), RunControlReceipt)
     assert [r.payload.control_status for r in receipts] == ["applied"]
@@ -273,44 +285,46 @@ async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
 async def test_restart_scanner_supersedes_on_fingerprint_mismatch() -> None:
     # 崩溃前记录的 fingerprint 与当前 interrupt 不符（interrupt 已变/run 已推进）。
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    ledger = FakeLedger()
-    await ledger.try_claim(request("rm"))
-    await ledger.record_control_inbox(
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("rm"))
+    await run_repository.record_control_delivery(
         "rm", "dec_1", None, "stale-fingerprint-mismatch", _resume_body("rm")
     )
 
     bus = FakeBus()
-    sup = _supervisor(agent, ledger)
+    sup = _supervisor(agent, run_repository)
     await sup.serve(bus)
     await _drain(sup)
 
     # 不匹配 → 不 apply，标 superseded；无 apply、无 applied 回执。
     assert agent.seen_payloads == []
-    assert ledger.control_inbox["rm"][0]["status"] == "superseded"
+    assert run_repository.control_commands[("rm", "dec_1")]["status"] == "superseded"
     assert find_events(bus.run_events("rm"), RunControlReceipt) == []
 
 
 async def test_terminal_run_control_excluded_from_reapply() -> None:
     # 已终态的 run：其 persisted control 条目不入续办扫描（随 run purge 清理），绝不重放 apply。
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    ledger = FakeLedger()
-    await ledger.try_claim(request("rt"))
-    await ledger.record_control_inbox(
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("rt"))
+    await run_repository.record_control_delivery(
         "rt",
         "dec_1",
         None,
         None,
-        _inbound({"kind": "run.cancel", "command_id": "dec_1", "run_id": "rt"}).model_dump_json(),
+        _inbound(
+            {"kind": "run.cancel", "command_id": "dec_1", "run_id": "rt"}
+        ).model_dump_json(),
     )
-    await ledger.try_mark_terminal("rt")
+    await run_repository.try_mark_terminal("rt")
 
     # 终态 run 不进 pending 列表。
-    assert await ledger.list_pending_control_inbox() == []
+    assert await run_repository.list_pending_control_delivery() == []
 
     bus = FakeBus()
-    sup = _supervisor(agent, ledger)
+    sup = _supervisor(agent, run_repository)
     await sup.serve(bus)
 
     # 未重放 apply；条目留 persisted 待 purge_terminal 清理。
     assert agent.seen_payloads == []
-    assert ledger.control_inbox["rt"][0]["status"] == "persisted"
+    assert run_repository.control_commands[("rt", "dec_1")]["status"] == "persisted"

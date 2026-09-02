@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
-from kokoro_agent.storage.postgres import DEFAULT_PG_SCHEMA, ensure_schema
+from kokoro_agent.persistence.postgres import DEFAULT_PG_SCHEMA, ensure_schema
 
 
 class CheckpointSettings(BaseModel):

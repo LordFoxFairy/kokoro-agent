@@ -106,7 +106,7 @@ def make_backend(
             max_output_bytes=settings.local_shell_max_output_bytes,
             inherit_env=settings.local_shell_inherit_env,
         )
-    # docker/e2b/custom 有 run 级生命周期（ledger 记录），走 make_backend_for_run 的 async 编排。
+    # docker/e2b/custom 有 run 级生命周期（run_repository 记录），走 make_backend_for_run 的 async 编排。
     raise ValueError(f"backend {kind} requires run-scoped assembly via make_backend_for_run")
 
 
@@ -120,7 +120,7 @@ def _workspace_root(settings: SandboxSettings, workspace: str | None) -> str | N
 
 
 class RunSandboxStore(Protocol):
-    """run 级沙箱记录存取（RunLedger 子集）：装配路径只依赖这两个方法。"""
+    """run 级沙箱记录存取（RunRepository 子集）：装配路径只依赖这两个方法。"""
 
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None: ...
 
@@ -134,7 +134,7 @@ class SandboxContext:
     settings: SandboxSettings
     workspace: str
     run_id: str
-    # ledger 既往记录（HITL resume 现场）：重连既往箱/容器而非新建。
+    # run_repository 既往记录（HITL resume 现场）：重连既往箱/容器而非新建。
     prior_sandbox_id: str | None
 
 
@@ -219,7 +219,7 @@ async def make_backend_for_run(
     sandbox_store: RunSandboxStore,
 ) -> BackendProtocol | None:
     """统一装配入口：注册表选连接器 + 生命周期单点收口——
-    产物带非空 `sandbox_id` 即落 ledger（keep-first），resume 经 prior 重连而非新建。
+    产物带非空 `sandbox_id` 即落 run_repository（keep-first），resume 经 prior 重连而非新建。
     """
     connector = _CONNECTORS.get(kind)
     if connector is None:

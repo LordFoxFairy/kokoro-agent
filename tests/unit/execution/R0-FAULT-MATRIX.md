@@ -4,7 +4,7 @@ Wave 2 R0：为总设计稿 §2.3 已证实缺陷写「先红后绿」注入钉�
 钉以 `pytest.mark.xfail(strict=True)` 标注：当前 assertion 必然失败→xfail（套件保持绿）；
 缺陷修复后转 XPASS，strict fail-loud，提醒回来收口本钉并去标。
 
-测试文件：`tests/unit/execution/test_r0_fault_matrix.py`（用 `tests/support/fakes.py` 内 FakeBus/FakeLedger，纯进程内，不需真后端）。
+测试文件：`tests/unit/execution/test_r0_fault_matrix.py`（用 `tests/support/fakes.py` 内 FakeBus/FakeRunRepository，纯进程内，不需真后端）。
 
 | 钉 | 归属 | 注入点 | 缺陷（当前语义） | 断言（期望/修复后语义） |
 | --- | --- | --- | --- | --- |

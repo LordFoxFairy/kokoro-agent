@@ -17,7 +17,7 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.clients.skills import NoSkillsClient, SkillClient, SkillReader
 from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.persistence.repository import RunRepository
 from kokoro_agent.agents.subagent_catalog import SubagentCatalog
 from kokoro_agent.tools.toolbox import ProcessToolbox
 
@@ -46,7 +46,7 @@ class WorkerServices:
     subagent_catalog: SubagentCatalog
     toolbox: ProcessToolbox
     checkpointer: BaseCheckpointSaver[str]
-    ledger: RunLedger
+    run_repository: RunRepository
     memory_store: BaseStore
     # Skill public contract 的名称解析面与内容读取面分开；本地 fixture 可由同一对象实现二者。
     skill_client: SkillClient

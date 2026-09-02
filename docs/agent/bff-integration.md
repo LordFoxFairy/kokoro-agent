@@ -19,7 +19,7 @@
 
 - `kokoro-bff` 是 Web-facing 业务层：负责 Chat 会话/消息/标题/分享投影、鉴权、幂等、错误归一、SSE 连接和业务编排。
 - `kokoro-agent` 是执行层：负责 Agent loop、Run/control/HITL、恢复、执行安全事件和持久化执行事实。
-- `kokoro-bff` 不直接访问 Agent 的 Redis、PostgreSQL、checkpoint、RunLedger、`chat_messages` 或 `chat_events`。
+- `kokoro-bff` 不直接访问 Agent 的 Redis、PostgreSQL、checkpoint、RunRepository、`chat_messages` 或 `chat_events`。
 - Agent 由独立的 HTTP ingress 与 Redis worker 进程组成；HTTP ingress 先写 durable dispatch admission，再投递 worker。BFF 通过版本化 HTTP business ingress 调用 Agent，不接触 Agent 的 PG/Redis。
 - `session_id` 仍是 Chat 的稳定业务标识，但不意味着存在独立的 `kokoro-session` 仓库或服务。
 

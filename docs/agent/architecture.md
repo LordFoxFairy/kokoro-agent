@@ -54,7 +54,7 @@ Agent business HTTP ingress / Root transport
   -> 一个 Agent: create_deep_agent(...)
      多个 peer: create_deep_agent(...) + langgraph_swarm.create_swarm(...)
   -> native DeepAgents/LangGraph state + checkpoint
-  -> GA RunLedger / chat facts / workbench
+  -> GA RunRepository / chat facts / workbench
   -> Root Chat query boundary -> BFF Chat 查询、replay、AG-UI/SSE
 ```
 
@@ -109,7 +109,7 @@ DeepAgent 的只读 Skill backend route，不改变 Feature 或 Agent 定义。F
 
 ## 4. Factory 如何避免 `if` 地狱
 
-`AgentFactory` 在 worker 启动时创建一次，持有模型、checkpointer、RunLedger、workbench 和
+`AgentFactory` 在 worker 启动时创建一次，持有模型、checkpointer、RunRepository、workbench 和
 clients 等共享服务。它们是 worker 内部字段，不出现在 Feature/Agent API，也不命名为 `deps`；`tools/`、`agents/` 等叶子模块只接收自身所需窄参数，不接收整个 `WorkerServices`。
 
 ```python
@@ -141,7 +141,7 @@ router 或编译器抽象。部署可通过 `worker.main.serve(config, WorkerCli
 - 单 Agent 和 DeepAgents native subagent 使用 DeepAgents 自己的 state/checkpoint。
 - Swarm 使用官方 `SwarmState`，`active_agent` 只属于 Swarm checkpoint。
 - GA 不继承或包装 DeepAgents 原生 state，也不定义自有 state、prompt-swap middleware 或 router。
-- RunScope、租约、计费与外部 owner receipt 写入 GA RunLedger 或 invocation context，不塞进 native state。
+- RunScope、租约、计费与外部 owner receipt 写入 GA RunRepository 或 invocation context，不塞进 native state。
 - 同一 Session 的下一次普通调用在前一 Run terminal 后继续同一 native checkpoint；fork 才创建
   新 Session、thread 和 state。Session 不保存 Agent 绑定或版本字段。
 
@@ -165,7 +165,7 @@ src/kokoro_agent/
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── storage/         RunLedger、LangGraph Store 与 checkpoint adapter
+├── persistence/         RunRepository、LangGraph Store 与 checkpoint adapter
 ├── mcp/             MCP 配置、连接与 egress
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产

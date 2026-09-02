@@ -18,7 +18,7 @@ from kokoro_agent.sandbox.docker_backend import (
     DockerShellBackend,
     connect_docker_sandbox,
 )
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.persistence.repository import RunRepository
 
 _CREDS_RAW = minio_creds()
 _ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
@@ -127,22 +127,22 @@ class TestDockerSandbox:
 
     @pytest.mark.asyncio
     async def test_run_scoped_binding_and_reuse(
-        self, tmp_path: Path, ledger: RunLedger
+        self, tmp_path: Path, run_repository: RunRepository
     ) -> None:
         run_id = f"run_{uuid.uuid4().hex[:6]}"
         settings = _dispatch_settings().model_copy(
             update={"local_shell_root": str(tmp_path)}
         )
         # 生产路径：run 先被认领（建 run 文档），容器绑定才落账。
-        await ledger.try_claim(request(run_id), "owner")
+        await run_repository.try_claim(request(run_id), "owner")
         first = await make_backend_for_run(
-            "docker", settings, workspace="ns:s1", run_id=run_id, sandbox_store=ledger
+            "docker", settings, workspace="ns:s1", run_id=run_id, sandbox_store=run_repository
         )
         assert isinstance(first, DockerShellBackend)
         _SPAWNED.append(first.container_id)
-        assert await ledger.get_sandbox_id(run_id) == first.container_id
+        assert await run_repository.get_sandbox_id(run_id) == first.container_id
         second = await make_backend_for_run(
-            "docker", settings, workspace="ns:s1", run_id=run_id, sandbox_store=ledger
+            "docker", settings, workspace="ns:s1", run_id=run_id, sandbox_store=run_repository
         )
         assert isinstance(second, DockerShellBackend)
         assert second.container_id == first.container_id

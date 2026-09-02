@@ -70,13 +70,13 @@ async def build_deep_agent(
     scope = RunScope.of(request)
     policy = agent.permissions
     # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
-    # docker/e2b 档带 run 级生命周期：resume 经 ledger 重连既往箱/容器。
+    # docker/e2b 档带 run 级生命周期：resume 经 run_repository 重连既往箱/容器。
     backend = await make_backend_for_run(
         agent.backend,
         services.sandbox,
         workspace=workspace_key(scope.namespace, scope.session_id),
         run_id=request.run_id,
-        sandbox_store=services.ledger,
+        sandbox_store=services.run_repository,
     )
     resolved_skills = await resolve_declared_skills(
         agent, services.skill_client, request
@@ -95,7 +95,7 @@ async def build_deep_agent(
     if additional_tools:
         toolset = toolset.with_tools(additional_tools)
     chains = build_guard_chains(
-        services.ledger,
+        services.run_repository,
         services.run_token_budget,
         request,
         policy,

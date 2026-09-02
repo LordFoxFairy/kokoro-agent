@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from kokoro_agent.config import AppConfig
-from support.fakes import FakeLedger
+from support.fakes import FakeRunRepository
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.policy import ModelConfig
@@ -29,12 +29,12 @@ from kokoro_agent.worker.main import toolbox_from_config
 
 
 def test_defaults_from_empty_env() -> None:
-    # 存储收敛后唯一真后端：stream=redis、checkpoint/ledger=postgres（无 backend 选择枚举）。
+    # 存储收敛后唯一真后端：stream=redis、checkpoint/run_repository=postgres（无 backend 选择枚举）。
     config = AppConfig.from_env({})
     assert config.stream.redis_url == "redis://127.0.0.1:6379/0"
     assert config.database_url == "postgresql://localhost/postgres"
     assert config.database_schema == "kokoro_agent"
-    assert config.ledger.lease_ttl_ms == 90_000
+    assert config.run_repository.lease_ttl_ms == 90_000
     assert config.lease_heartbeat_s == 30.0
     assert config.custom_subagents_json is None
 
@@ -53,7 +53,7 @@ def test_env_overrides() -> None:
     assert config.stream.redis_url == "redis://example:6379/1"
     assert config.database_url == "postgresql://example/postgres"
     assert config.database_schema == "kokoro_test"
-    assert config.ledger.lease_ttl_ms == 10_000
+    assert config.run_repository.lease_ttl_ms == 10_000
     assert config.lease_heartbeat_s == 2.5
     # "[]" 非空字符串照实透传，目录构建时解析。
     assert config.custom_subagents_json == "[]"
@@ -390,7 +390,7 @@ def test_builtin_subagents_env_parse() -> None:
 
 def test_general_purpose_override_carries_guards_and_inherits() -> None:
     # 同名覆盖内生 GP：middleware 挂守卫；不带 tools/model 键 = 继承主 agent（GP 语义）。
-    guard = TerminalGuardMiddleware(store=FakeLedger(), run_id="r1")
+    guard = TerminalGuardMiddleware(store=FakeRunRepository(), run_id="r1")
     spec = general_purpose_subagent([guard])
     assert spec["name"] == "general-purpose"
     assert spec["description"] and spec["system_prompt"]
@@ -400,7 +400,7 @@ def test_general_purpose_override_carries_guards_and_inherits() -> None:
 
 def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
-    guard = TerminalGuardMiddleware(store=FakeLedger(), run_id="r1")
+    guard = TerminalGuardMiddleware(store=FakeRunRepository(), run_id="r1")
     catalog = build_subagent_catalog(None, frozenset({"web-researcher"}))
     tools = toolbox_from_config(
         AppConfig.from_env(

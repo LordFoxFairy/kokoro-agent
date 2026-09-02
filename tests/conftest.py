@@ -13,22 +13,22 @@ import pytest
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.storage.checkpoints import CheckpointSettings, make_checkpointer
-from kokoro_agent.storage.ledger import (
+from kokoro_agent.persistence.checkpoints import CheckpointSettings, make_checkpointer
+from kokoro_agent.persistence.repository import (
     DEFAULT_LEASE_TTL_S,
-    LedgerSettings,
-    RunLedger,
-    make_ledger,
+    RunRepositorySettings,
+    RunRepository,
+    make_run_repository,
 )
-from kokoro_agent.storage.memory_store import make_memory_store
-from kokoro_agent.storage.postgres import connect_pg
+from kokoro_agent.persistence.memory_store import make_memory_store
+from kokoro_agent.persistence.postgres import connect_pg
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 from kokoro_agent.streams.redis import RedisStream
 
 REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
 DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "postgresql://127.0.0.1/postgres")
 
-_INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "ledger"})
+_INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "run_repository"})
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -108,13 +108,13 @@ async def memory_store() -> AsyncGenerator[BaseStore, None]:
 
 
 @pytest.fixture
-async def ledger() -> AsyncGenerator[RunLedger, None]:
-    """真 PostgreSQL ledger；唯一 schema 隔离。"""
+async def run_repository() -> AsyncGenerator[RunRepository, None]:
+    """真 PostgreSQL run_repository；唯一 schema 隔离。"""
     await require_postgres()
-    settings = LedgerSettings(
+    settings = RunRepositorySettings(
         database_url=DATABASE_URL,
         schema_name=_unique_schema(),
         lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
     )
-    async with make_ledger(settings) as run_ledger:
-        yield run_ledger
+    async with make_run_repository(settings) as run_repository:
+        yield run_repository

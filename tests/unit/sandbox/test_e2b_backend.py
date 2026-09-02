@@ -13,7 +13,7 @@ from pydantic import SecretStr
 from support.fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.e2b_backend import E2BSandboxBackend, E2BSettings, connect_e2b_sandbox
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.persistence.repository import RunRepository
 
 
 def _e2b_settings(api_key: str | None = "e2b-key") -> E2BSettings:
@@ -127,17 +127,17 @@ class TestLifecycle:
         assert backend.id == "sbx_created_0"
 
     @pytest.mark.asyncio
-    async def test_run_scoped_binding_new_sandbox_and_reuse(self, ledger: RunLedger) -> None:
+    async def test_run_scoped_binding_new_sandbox_and_reuse(self, run_repository: RunRepository) -> None:
         # 生产路径：run 先被认领（建 run 文档），箱绑定才落账。
-        await ledger.try_claim(request("run_1"), "owner")
+        await run_repository.try_claim(request("run_1"), "owner")
         first = await make_backend_for_run(
-            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", sandbox_store=ledger
+            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", sandbox_store=run_repository
         )
         assert isinstance(first, E2BSandboxBackend)
-        assert await ledger.get_sandbox_id("run_1") == first.id
+        assert await run_repository.get_sandbox_id("run_1") == first.id
         # HITL resume：重建 backend 走重连，箱不重建、绑定不被覆盖（keep-first）。
         second = await make_backend_for_run(
-            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", sandbox_store=ledger
+            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", sandbox_store=run_repository
         )
         assert isinstance(second, E2BSandboxBackend)
         assert second.id == first.id

@@ -49,7 +49,7 @@ class RunRequest(StrictModel):
     kind: Literal["run.request"]
     # Root RPC carries a request id; Redis fixtures may omit it while the
     # transport adapter is being generated.  run_id remains the execution
-    # idempotency key in RunLedger.
+    # idempotency key in RunRepository.
     request_id: NonEmptyStr | None = None
     run_id: NonEmptyStr
     session_id: NonEmptyStr

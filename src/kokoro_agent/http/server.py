@@ -23,7 +23,7 @@ from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest, ChatSessionList
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.contract.control import IdentityKind
 from kokoro_agent.http.ingress import AgentIngress, IngressError
-from kokoro_agent.storage.ledger import LedgerSettings, make_ledger
+from kokoro_agent.persistence.repository import RunRepositorySettings, make_run_repository
 from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 
@@ -40,7 +40,7 @@ class AgentConfig(Protocol):
     def stream(self) -> StreamSettings: ...
 
     @property
-    def ledger(self) -> LedgerSettings: ...
+    def run_repository(self) -> RunRepositorySettings: ...
 
     @property
     def database_url(self) -> str: ...
@@ -173,7 +173,7 @@ async def dispatch_request(
     bus = make_stream(config.stream)
     try:
         async with (
-            make_ledger(config.ledger) as ledger,
+            make_run_repository(config.run_repository) as run_repository,
             make_chat_store(
                 ChatStoreSettings(
                     database_url=config.database_url,
@@ -184,7 +184,7 @@ async def dispatch_request(
             if method == "GET" and path == "/readyz":
                 await bus.read_all(REQUESTS_STREAM)
                 return 200, {"status": "ready", "service": "kokoro-agent"}
-            ingress = AgentIngress(bus=bus, ledger=ledger, chat_query=ChatQuery(chat_store))
+            ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_query=ChatQuery(chat_store))
             if method == "GET" and path == "/v1/sessions":
                 result = await ingress.list_sessions(_session_list_page(headers, query))
                 return 200, _envelope(result.model_dump(mode="json"), request_id)

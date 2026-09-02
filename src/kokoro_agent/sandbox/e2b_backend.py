@@ -82,7 +82,7 @@ class E2BSandboxBackend(BaseSandbox):
 
     @property
     def sandbox_id(self) -> str:
-        # 统一生命周期面（ADR-010）：编排层据此落 ledger 记录，各档同一属性名。
+        # 统一生命周期面（ADR-010）：编排层据此落 run_repository 记录，各档同一属性名。
         return self._sandbox.sandbox_id
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:

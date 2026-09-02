@@ -47,7 +47,7 @@ def build_connections(
             conn["timeout"] = float(server.timeout_s)
         if server.headers is not None:
             # 凭据来自部署配置的 ${ENV} 展开 / Capability 句柄批解（mcp/config.py、mcp/local_registry.py）；
-            # wire/ledger 全程无凭据。
+            # wire/run_repository 全程无凭据。
             conn["headers"] = dict(server.headers)
         if client_factory is not None:
             # strict：注入锁定解析 IP + 禁 redirect 的 httpx client，连接期动态防 SSRF/rebinding。

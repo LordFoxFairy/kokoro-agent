@@ -19,7 +19,7 @@ from langgraph.runtime import Runtime
 
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
-from kokoro_agent.storage.ledger import RunLedger
+from kokoro_agent.persistence.repository import RunRepository
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ class TerminalGuardMiddleware(AgentMiddleware):
     """跨 worker cancel 的执行侧闸：每个模型轮前查终态，命中即熔断（invoke 的
     claim_terminal 已被 cancel 方拿走 → 异常路径不再发任何事件）。"""
 
-    def __init__(self, *, store: RunLedger, run_id: str) -> None:
+    def __init__(self, *, store: RunRepository, run_id: str) -> None:
         super().__init__()
         self._store = store
         self._run_id = run_id
@@ -123,7 +123,7 @@ class TokenBudgetExceeded(RuntimeError):
 class TokenBudgetMiddleware(AgentMiddleware):
     """token 预算熔断：每次模型调用后累计 usage（store 背书，跨 HITL 段不清零），超限即炸。"""
 
-    def __init__(self, *, budget: int, store: RunLedger, run_id: str) -> None:
+    def __init__(self, *, budget: int, store: RunRepository, run_id: str) -> None:
         super().__init__()
         self._budget = budget
         self._store = store
@@ -149,11 +149,11 @@ class TokenBudgetMiddleware(AgentMiddleware):
 class ToolResultReviewMiddleware(AgentMiddleware):
     """工具后结果审核：执行完暂停，结果经人裁决（采纳/替换/废弃）后才回流模型。
 
-    resume 后 langgraph 从节点头重跑：首跑结果 keep-first 落进 RunLedger，
+    resume 后 langgraph 从节点头重跑：首跑结果 keep-first 落进 RunRepository，
     重入命中缓存即跳过工具执行——审核暂停绝不导致工具双跑。
     """
 
-    def __init__(self, review: frozenset[str], store: RunLedger, run_id: str) -> None:
+    def __init__(self, review: frozenset[str], store: RunRepository, run_id: str) -> None:
         super().__init__()
         self._review = review
         self._store = store
@@ -234,7 +234,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
     def __init__(
         self,
         *,
-        store: RunLedger,
+        store: RunRepository,
         run_id: str,
         exempt: frozenset[str] = JOURNAL_EXEMPT_TOOLS,
     ) -> None:
@@ -273,7 +273,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         return result
 
     def _replay(self, recorded: object, *, tool_id: str, name: str) -> ToolMessage:
-        # recorded: ToolJournalRecord（storage 层导出）——按状态短路。
+        # recorded: ToolJournalRecord（persistence 层导出）——按状态短路。
         status = getattr(recorded, "status", "started")
         if status == "started":
             metrics.record_tool_unknown_outcome()
@@ -301,7 +301,7 @@ class SteeringMiddleware(AgentMiddleware):
     """运行中插话：模型轮前排空信箱，按到达序注入 HumanMessage——协作式转向，
     不打断进行中的工具；稳定 id=message_id 保 checkpoint 重放幂等。只挂主链。"""
 
-    def __init__(self, *, store: RunLedger, run_id: str) -> None:
+    def __init__(self, *, store: RunRepository, run_id: str) -> None:
         super().__init__()
         self._store = store
         self._run_id = run_id
@@ -330,4 +330,3 @@ class SteeringMiddleware(AgentMiddleware):
                 HumanMessage(content=content, id=message_id) for message_id, content in fresh
             ]
         }
-

@@ -11,19 +11,19 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 ## 公开 API
 
 - `main.py`：`main()` 标准进程入口；`serve(config, clients)` 是部署装配入口。`AppConfig.from_env`
-  单点读 env → 创建 GA 自有 Redis stream + PostgreSQL checkpointer/ledger/memory/chat → 注入可选 public clients →
+  单点读 env → 创建 GA 自有 Redis stream + PostgreSQL checkpointer/run_repository/memory/chat → 注入可选 public clients →
   `AgentFactory` → `RunSupervisor.serve`。标准 CLI 的 owner clients 为空能力，不直读外部私库。
   SIGTERM 优雅停机：停消费新请求，`drain` 限时等活跃 run 收尾，超时交 TTL 租约重拾。
 - `services.py`：`WorkerClients` 是部署期可选 owner-client 集；`WorkerServices` 集中保存 worker
-  warm 时创建一次的模型、checkpoint、ledger、store、sandbox 和窄 clients。两者都不是 caller
+  warm 时创建一次的模型、checkpoint、run_repository、store、sandbox 和窄 clients。两者都不是 caller
   input、Service Locator 或 Feature 配方。`WorkerClients.delivery` 是可选 Storage Artifact
   facade；缺席时只不装配 deliver tool。
-- `supervisor.py`：`RunSupervisor`（注入式装配；RunLedger 持有去重/租约/原 request/终态认领
+- `supervisor.py`：`RunSupervisor`（注入式装配；RunRepository 持有去重/租约/原 request/终态认领
   四类真相）。
   - `serve(bus)`：consumer group 消费 REQUESTS_STREAM；RunRequest 走 CAS claim→durable claim
     后 ACK（R1）；用户消息 durable 写入先于 dispatch claim；启动即跑
     `_republish_outbox`（R4 critical outbox queued 行按 seq 序幂等补发）与
-    `_reapply_pending_control`（R2 control inbox 续办）。per-message 隔离，单条失败收口 run.failed。
+    `_reapply_pending_control`（R2 control command 续办）。per-message 隔离，单条失败收口 run.failed。
   - `dispatch(bus, msg)`：RunRequest→认领起跑 / RunResume→帧对齐续跑 / RunSteer→信箱入账
     （keep-first；注入由 SteeringMiddleware 下一模型轮消费）/ RunCancel→原子认领终态补发 cancelled。
   - `heartbeat_once`：活跃 run 续租；续租失败即 fencing（让渡本地执行，终态权归新属主）；
@@ -35,7 +35,7 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 
 ## 关键协作者
 
-- 下游依赖：`execution/`（invoke_once/RunEmitter/approvals 全套）、`storage/ledger`（RunLedger）、
+- 下游依赖：`execution/`（invoke_once/RunEmitter/approvals 全套）、`persistence/repository`（RunRepository）、
   `streams/`（StreamProtocol）、`features/` + `agent_factory.py`（Feature 装配）、`skills/`、`sandbox/`、
   `mcp/config`、`contract`。
 - 上游：kokoro-bff 内部 Chat 模块经 Redis Streams 投递 RunRequest（REQUESTS_STREAM）与

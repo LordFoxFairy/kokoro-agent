@@ -45,7 +45,9 @@ runtime。
 ## 2. 唯一运行链路
 
 ```text
-Redis LaunchRunRequest
+Agent business HTTP ingress / Root transport
+  -> durable dispatch admission
+  -> Redis LaunchRunRequest
   -> worker 解析并认领 Run
   -> FeatureCatalog.get(feature_key)
   -> AgentFactory.build(request)

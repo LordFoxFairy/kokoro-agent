@@ -10,6 +10,43 @@ Root `contract/`（Proto、manifest、生成器）是唯一 wire authority。本
 adapter 映射（Root 的 `message_id/content` 是顶层字段，Redis envelope 暂用 `input` 对象）。
 generated consumer/transport 接入后只替换这层映射，不改变 Feature/Agent API。
 
+## Agent business HTTP ingress（v1）
+
+HTTP ingress 位于本仓 `src/kokoro_agent/http/`，只负责 transport/admission；执行仍由独立的
+`kokoro-agent-worker` 进程完成。BFF 只调用下面的版本化入口，不读 Redis、PostgreSQL、checkpoint
+或 RunLedger。
+
+| 方法 | 路径 | 作用 | 成功 |
+|---|---|---|---|
+| `GET` | `/healthz` | 进程存活 | `200` |
+| `GET` | `/readyz` | PostgreSQL + Redis 可用 | `200` |
+| `POST` | `/v1/runs` | durable admission 后投递一个 Run | `202` |
+| `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
+| `GET` | `/v1/runs/{run_id}/events` | Agent 内部证据回放，按 `after_seq` 分页 | `200` |
+| `GET` | `/v1/sessions/{session_id}/messages` | 安全 Chat history | `200` |
+| `GET` | `/v1/sessions/{session_id}/events` | 安全 Chat replay | `200` |
+
+`POST /v1/runs` body 是 Root `LaunchRunRequest` 的 JSON transport 映射：
+`request_id`、`run_id`、`session_id`、`feature_key`、`execution_identity`、顶层
+`message_id`、`content`，以及可选 `requested_model_label`/`trace`。ingress 先在 Agent-owned
+PostgreSQL `run_dispatches` 中写入不可变 `sha256` fence，再发布现有
+`REQUESTS_STREAM`；超时重试同一 `run_id` 和 body 会复用 receipt，body 漂移返回
+`409 run_identity_conflict`。
+
+`POST /v1/runs/{run_id}/control` body 使用 `kind`=`run.cancel`、`run.resume` 或 `run.steer`，
+携带 `session_id`、`decision_id`（steer 除外）和 Root 定义的 `decisions`/`message_id`/`content`。
+control 只写该 run 的隔离 Redis control stream，由 worker 的 durable inbox 和 session 校验继续
+完成幂等与授权边界。
+
+Chat history/replay 只返回 `chat_messages`/`chat_events` 的 allowlisted projection；请求通过
+`x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
+`x-kokoro-identity-assertion-ref` 提供受信服务上下文。浏览器的 `X-Domain` 不属于该接口，也
+不会参与身份或隔离计算。所有非 health 请求在配置内部密钥时要求
+`x-kokoro-service: kokoro-bff` 与 `x-kokoro-internal-secret`。
+
+响应统一为 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`；空 body、
+非法 JSON、依赖不可用和 run scope 错误均使用稳定错误码，不返回内部 Python、Redis 或 SQL 细节。
+
 ## GA 入站
 
 ```text

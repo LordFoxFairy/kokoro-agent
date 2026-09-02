@@ -33,6 +33,8 @@ TOOL_JOURNAL_TABLE = "kokoro_agent_tool_journal"
 
 __all__ = [
     "ControlInboxRecord",
+    "DispatchAdmission",
+    "DispatchConflict",
     "DEFAULT_LEASE_TTL_S",
     "LedgerSettings",
     "OutboxFrame",
@@ -46,6 +48,10 @@ __all__ = [
 
 
 class RunLedger(Protocol):
+    async def enqueue_dispatch(
+        self, request: RunRequest, namespace: str, fence: str
+    ) -> DispatchAdmission: ...
+
     async def try_claim(self, request: RunRequest, owner: str) -> bool: ...
 
     async def claim_dispatch(self, run_id: str, consumer: str) -> bool: ...
@@ -128,6 +134,19 @@ class RunLedger(Protocol):
     async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None: ...
 
     async def get_sandbox_id(self, run_id: str) -> str | None: ...
+
+
+class DispatchConflict(RuntimeError):
+    """A run id was reused with a different immutable launch envelope."""
+
+
+class DispatchAdmission(BaseModel):
+    """Durable admission result used by the HTTP ingress before Redis publish."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    replayed: bool
+    publish_required: bool
 
 
 class ControlInboxRecord(BaseModel):
@@ -348,6 +367,72 @@ class PgLedger:
                         PRIMARY KEY (run_id, tool_call_id)
                     )
                     """.format(qualified(self._schema, TOOL_JOURNAL_TABLE))
+                )
+
+    async def enqueue_dispatch(
+        self, request: RunRequest, namespace: str, fence: str
+    ) -> DispatchAdmission:
+        """Create or replay the durable dispatch intent before Redis publication.
+
+        The dispatch row is the admission fence for the worker's claim CAS. A
+        repeated request with the same run id and canonical fence is safe to
+        republish (for example after a response timeout). A different fence is
+        an immutable-identity conflict and is never silently merged.
+        """
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (
+                        run_id, session_id, namespace, fence, status, deadline_at,
+                        claimed_by, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, 'pending', %s, NULL, %s, %s)
+                    ON CONFLICT (run_id) DO NOTHING
+                    RETURNING run_id
+                    """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                    (
+                        request.run_id,
+                        request.session_id,
+                        namespace,
+                        fence,
+                        now + self._ttl_ms,
+                        now,
+                        now,
+                    ),
+                )
+                if await cur.fetchone() is not None:
+                    return DispatchAdmission(replayed=False, publish_required=True)
+                await cur.execute(
+                    """
+                    SELECT fence, status, deadline_at
+                    FROM {}
+                    WHERE run_id = %s
+                    """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                    (request.run_id,),
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    raise RuntimeError(f"dispatch row disappeared for {request.run_id!r}")
+                if str(row["fence"]) != fence:
+                    raise DispatchConflict(
+                        f"run id {request.run_id!r} was reused with a different launch envelope"
+                    )
+                status = str(row["status"])
+                deadline = int(row["deadline_at"])
+                if status == "pending" and deadline <= now:
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET deadline_at = %s, updated_at = %s
+                        WHERE run_id = %s AND status = 'pending'
+                        """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                        (now + self._ttl_ms, now, request.run_id),
+                    )
+                    return DispatchAdmission(replayed=True, publish_required=True)
+                return DispatchAdmission(
+                    replayed=True,
+                    publish_required=status == "pending",
                 )
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:

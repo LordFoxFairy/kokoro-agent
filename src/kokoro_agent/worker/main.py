@@ -30,6 +30,7 @@ from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
+from kokoro_agent.http.server import create_http_server
 
 LOGGER = logging.getLogger(__name__)
 
@@ -145,6 +146,24 @@ def main() -> None:
     # 启动期配置快照（secret 掩码）：一眼看清本进程实际生效的配置，便于排障。
     log_config_summary(config, LOGGER)
     asyncio.run(serve(config))
+
+
+def http_main() -> None:
+    """Start only the Agent business HTTP ingress."""
+    logging.basicConfig(level=logging.INFO)
+    load_dotenv()
+    config = AppConfig.from_env(os.environ)
+    host = os.environ.get("KOKORO_AGENT_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    port = int(os.environ.get("KOKORO_AGENT_HTTP_PORT", "4401"))
+    log_config_summary(config, logging.getLogger(__name__))
+    server = create_http_server(config, host, port)
+    logging.getLogger(__name__).info("kokoro-agent HTTP ingress listening on %s:%d", host, port)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

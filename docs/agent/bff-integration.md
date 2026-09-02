@@ -11,7 +11,8 @@
 浏览器
   -> kokoro Web /api/session/*
   -> kokoro-bff/modules/chat /v1/sessions/*
-  -> Agent business adapter（阶段 1 为 mock）
+  -> Agent business adapter
+  -> kokoro-agent HTTP ingress
   -> kokoro-agent Redis worker
   -> PostgreSQL durable facts + Redis transport
 ```
@@ -19,7 +20,7 @@
 - `kokoro-bff` 是 Web-facing 业务层：负责 Chat 会话/消息/标题/分享投影、鉴权、幂等、错误归一、SSE 连接和业务编排。
 - `kokoro-agent` 是执行层：负责 Agent loop、Run/control/HITL、恢复、执行安全事件和持久化执行事实。
 - `kokoro-bff` 不直接访问 Agent 的 Redis、PostgreSQL、checkpoint、RunLedger、`chat_messages` 或 `chat_events`。
-- 当前 Agent 是 Redis worker，不是浏览器 HTTP 服务；阶段 1 用 BFF 内置确定性 mock adapter 完成 Web→BFF→Agent 业务边界联调。
+- Agent 由独立的 HTTP ingress 与 Redis worker 进程组成；HTTP ingress 先写 durable dispatch admission，再投递 worker。阶段 1 仍用 BFF 内置确定性 mock adapter 完成 Web→BFF→Agent 业务边界联调，真实 adapter 在 BFF 仓库显式接入。
 - `session_id` 仍是 Chat 的稳定业务标识，但不意味着存在独立的 `kokoro-session` 仓库或服务。
 
 ## 2. 阶段 1 适配策略
@@ -44,8 +45,8 @@ Chat v1 路由和业务语义。
 
 ## 3. 未来真实 Agent 适配
 
-真实适配必须是独立版本化的 Agent business port。它可以由独立 HTTP ingress 或明确的
-transport owner 提供，但不能把当前 Redis worker 的内部 envelope 直接暴露给 BFF。
+真实适配必须调用 Agent 本仓的独立版本化 HTTP business port，不能把 Redis worker 的内部
+envelope 直接暴露给 BFF。
 
 至少满足：
 
@@ -63,7 +64,7 @@ KOKORO_AGENT_HTTP_BASE_URL=<future-agent-business-port>
 KOKORO_AGENT_HTTP_CONTRACT_VERSION=<future-http-version>
 ```
 
-当前阶段只启用 `mock`；未配置真实 endpoint 时必须返回明确的 `503 upstream_not_configured`，
+未配置真实 endpoint 时必须返回明确的 `503 upstream_not_configured`，
 不能连接任意 Redis，也不能静默回退到旧 Session 服务。
 
 ## 4. 存储边界：PostgreSQL + Redis

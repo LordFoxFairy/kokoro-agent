@@ -26,6 +26,7 @@ src/kokoro_agent/
 ├── execution/       Run、control、HITL、事件投影与终态
 ├── chat/            GA chat_messages/chat_events 与安全产品投影（供 BFF Chat 使用）
 ├── worker/          Redis ingress、共享服务、claim、recovery、drain
+├── http/             BFF business ingress；durable admission、control、safe replay
 ├── tools/           GA 固定工具、每次运行的工具集合与 middleware
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client（Skill、MCP、Artifact 交付）
@@ -73,6 +74,20 @@ KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
   KOKORO_AGENT_DATABASE_URL=postgresql://localhost/postgres KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   ANTHROPIC_API_KEY=... uv run kokoro-agent-worker
 ```
+
+BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己的 PostgreSQL/Redis：
+
+```bash
+KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
+  KOKORO_AGENT_DATABASE_URL=postgresql://localhost/postgres KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
+  KOKORO_INTERNAL_SECRET_AGENT=... KOKORO_AGENT_HTTP_PORT=4401 \
+  uv run kokoro-agent-http
+```
+
+HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。它先写 durable dispatch admission，
+再发布给 `kokoro-agent-worker`；BFF 通过 `/v1/sessions/*` 读取安全的 Chat projection，通过
+`/v1/runs/*` 读取运行回执和控制结果。生产环境应分别配置健康检查和滚动停机，不把 HTTP ingress
+和 worker 合并成一个容器进程。
 
 部署时：
 

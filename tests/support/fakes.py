@@ -24,6 +24,8 @@ from kokoro_agent.contract import (
 from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.storage.ledger import (
     ControlInboxRecord,
+    DispatchAdmission,
+    DispatchConflict,
     OutboxFrame,
     ReceiptReconcile,
     StagedFrame,
@@ -132,6 +134,7 @@ class FakeLedger:
         self.clock_ms = 0
         # dispatch CAS 记录（run_id → status）：默认无记录=放行；测试可预置 pending/claimed/expired。
         self.dispatches: dict[str, str] = {}
+        self.dispatch_fences: dict[str, str] = {}
         self.dispatch_deadlines: dict[str, int] = {}
         self.dlq: list[tuple[str, str, str]] = []
         # R4 critical outbox：per-run durable_seq 计数、local fence、outbox 行；回执/清单由测试 seed。
@@ -145,6 +148,23 @@ class FakeLedger:
         self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
+
+    async def enqueue_dispatch(
+        self, request: RunRequest, namespace: str, fence: str
+    ) -> DispatchAdmission:
+        del namespace
+        existing = self.dispatch_fences.get(request.run_id)
+        if existing is not None and existing != fence:
+            raise DispatchConflict(f"run id {request.run_id!r} was reused with a different fence")
+        if existing is None:
+            self.dispatch_fences[request.run_id] = fence
+            self.dispatches[request.run_id] = "pending"
+            self.dispatch_deadlines[request.run_id] = self.clock_ms + 90_000
+            return DispatchAdmission(replayed=False, publish_required=True)
+        return DispatchAdmission(
+            replayed=True,
+            publish_required=self.dispatches.get(request.run_id) == "pending",
+        )
 
     async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
         if request.run_id in self.requests:

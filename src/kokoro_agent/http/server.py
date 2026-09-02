@@ -117,15 +117,14 @@ async def dispatch_request(
     Redis/PG are still used only through Agent-owned ports.
     """
     request_id = _request_id(headers)
+    if method == "GET" and path == "/healthz":
+        return 200, {"status": "ok", "service": "kokoro-agent"}
     secret = config.internal_secret_agent
     if secret is not None:
         if headers.get("x-kokoro-service") != "kokoro-bff":
             return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
         if headers.get("x-kokoro-internal-secret") != secret.get_secret_value():
             return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
-    if method == "GET" and path == "/healthz":
-        return 200, {"status": "ok", "service": "kokoro-agent"}
-
     bus = make_stream(config.stream)
     try:
         async with (

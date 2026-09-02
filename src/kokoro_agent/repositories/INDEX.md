@@ -1,6 +1,6 @@
 # repositories — Agent 运行事实仓库
 
-- `run_repository.py`：Run claim、lease、control command、terminal、effect journal 等 Agent 运行事实。
+- `run_repository.py`：RunRepository port 与 transport-neutral 结果模型；Run claim、lease、control command、terminal、effect journal 的 PostgreSQL 实现位于 `infrastructure/postgres_run_repository.py`。
 - `schema.py`：唯一 canonical schema。运行时只创建新库结构，不检查、改写或兼容旧表。
 `infrastructure/` 负责 PostgreSQL 连接、DeepAgents Store 与官方 checkpoint adapter。
 产物交付只通过 `clients.storage.DeliveryClient`，Artifact owner 不属于 GA。

@@ -194,8 +194,8 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
   轻量 status payload）。
 - launch 先持久化不可变 `sha256` fence；同一 `run_id` 重试复用 receipt，body 漂移返回
   `409 run_identity_conflict`；control ingress 使用 `Idempotency-Key` 作为稳定 `command_id`，
-  在 PostgreSQL receipt 中按 `(run_id, command_id)`/digest 去重，返回 `pending`/`succeeded`/`failed` 与
-  `replayed`，worker durable inbox 继续按 command_id keep-first 入账。
+  在 PostgreSQL `run_control_commands` 中按 `(run_id, command_id)`/digest 去重，返回 `pending`/`succeeded`/`failed` 与
+  `replayed`，worker 继续消费同一 command row，按 command_id keep-first 入账。
 - Agent ingress 不实现 BFF session detail、title、share、delete、public snapshot 或浏览器
   SSE/AG-UI；这些仍是 BFF 自己的业务边界。
 - `music` 可单独作为 Feature，也能被组合 Feature 复用。

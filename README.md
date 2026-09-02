@@ -113,7 +113,7 @@ control 还必须带 `Idempotency-Key`；history/replay 还要带
 受信的 tenant/subject/actor/identity-assertion headers。响应统一为
 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`（health endpoint
 保留轻量 status payload）；launch 以不可变 `sha256` fence 对同一 `run_id` 幂等，body 漂移
-返回 `409 run_identity_conflict`，control 由 PostgreSQL receipt 按 `command_id`/request digest
+返回 `409 run_identity_conflict`，control 由 PostgreSQL command ledger 按 `command_id`/request digest
 去重并返回 `pending`/`succeeded`/`failed` 与 `replayed`，worker 使用 resume fingerprint
 去重/恢复。
 

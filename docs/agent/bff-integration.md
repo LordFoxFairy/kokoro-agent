@@ -49,9 +49,10 @@ loop，也不把 Redis stream 暴露给 BFF。
 - `POST /v1/runs/{run_id}/control` 接受 `run.cancel`、`run.resume`、`run.steer`；当前 strict
   transport body 要求 `kind`、`session_id`，steer 另需 `message_id`/`content`，resume 还需
   `decisions`。调用方必须发送标准 `Authorization: Bearer <secret>`、`X-Request-Id`（可选）和
-  control 专用的 `Idempotency-Key`。Agent 先将 control receipt 持久化为 `pending`，再通过
-  run 隔离的 Redis control stream 交给 worker；按 `(run_id, command_id)`/request digest 去重并用 resume
-  fingerprint 做恢复时的 stale 判定。receipt 状态为 `pending`、`succeeded`、`failed`，重复
+  control 专用的 `Idempotency-Key`。Agent 先在 `run_control_commands` 记录 `admitted` 状态，再通过
+  run 隔离的 Redis control stream 交给 worker；同一行推进 delivery 状态，并按 `(run_id, command_id)` /
+  request digest 去重、用 resume fingerprint 做恢复时的 stale 判定。HTTP receipt 只是这条记录的
+  transport projection，状态为 `pending`、`succeeded`、`failed`，重复
   请求返回 `replayed: true`，digest 漂移返回 `409 command_digest_mismatch`。
 - 除 `/healthz` 外的请求始终要求配置可信的 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带
   `Authorization: Bearer <KOKORO_INTERNAL_SECRET_AGENT>`。未配置 secret 时返回
@@ -138,6 +139,6 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 - [x] BFF 到 Agent 只走版本化 HTTP；BFF 不读取 Agent PostgreSQL/Redis。
 - [x] 除 `/healthz` 外的请求始终由标准 `Authorization: Bearer` 认证；未配置
   secret 时 fail-closed 返回 `503 service_auth_not_configured`，history/replay 使用受信 identity headers。
-- [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 durable inbox 去重和恢复。
+- [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 Agent command ledger 去重和恢复。
 - [x] BFF session list 通过 Agent durable identity-scoped ingress 投影；detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现。
 - [x] Agent PostgreSQL + Redis 执行事实、Run/control/HITL、outbox/recovery worker 门禁由本仓测试覆盖。

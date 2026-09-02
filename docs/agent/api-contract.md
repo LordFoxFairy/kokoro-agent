@@ -46,10 +46,11 @@ PostgreSQL `run_dispatches` 中写入不可变 `sha256` fence，再发布现有
 `POST /v1/runs/{run_id}/control` body 使用 `kind`=`run.cancel`、`run.resume` 或 `run.steer`，
 严格 transport body 要求 `session_id`；steer 另需 Root 定义的 `message_id`/`content`，resume
 还需非空 `decisions`。请求必须通过 `Idempotency-Key` 提供稳定 `command_id`。Agent 先在
-Agent-owned PostgreSQL control receipt 中按 `(run_id, command_id)` 原子落 `pending`，并保存 canonical
+Agent-owned PostgreSQL `run_control_commands` 中按 `(run_id, command_id)` 原子落 `admitted`，并保存 canonical
 request digest，再发布到该 run 的隔离 Redis control stream。相同 run/command/digest 的重试安全重放；
 同一个幂等 key 用在不同 run 上属于不同命令，不会互相污染；digest 漂移返回 `409 command_digest_mismatch`。
-receipt 状态为 `pending`、`succeeded` 或 `failed`；worker 完成或失败时更新同一 receipt。
+HTTP receipt 状态为 `pending`、`succeeded` 或 `failed`；它只是 `run_control_commands` 同一条记录的
+transport projection，worker 不维护第二张 receipt 表。
 
 Session list、Chat history/replay 只返回 Agent-owned allowlisted projection；请求通过
 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、

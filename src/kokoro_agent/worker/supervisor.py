@@ -646,7 +646,7 @@ class RunSupervisor:
                             msg.run_id, msg.command_id, "control_apply_failed"
                         )
                     continue
-                # resume/cancel：durable inbox 先于 ACK（§8.3「control 在 inbox 前 ACK」翻绿）。
+                # resume/cancel：durable command row 先于 ACK（§8.3「control 在 durable row 前 ACK」翻绿）。
                 await self._consume_control_frame(bus, run_id, msg, stream, item.cursor)
         except Exception:
             # 终态清理删流先于 cancel（监听可能是当前任务）：删流后阻塞读抛 NOGROUP 属干净收束；

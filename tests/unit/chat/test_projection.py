@@ -82,7 +82,9 @@ def test_tool_activity_never_persists_args() -> None:
     assert json.loads(projection.event.payload_json) == {
         "activity": "tool",
         "name": "send_email",
+        "segment_id": "segment",
         "status": "started",
+        "tool_id": "tool-1",
     }
     assert "secret" not in projection.event.payload_json
 

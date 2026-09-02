@@ -22,7 +22,7 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.contract import REQUESTS_STREAM
-from kokoro_agent.persistence.repository import (
+from kokoro_agent.repositories.run_repository import (
     RunControlCommandRecord,
     ControlAdmission,
     ControlAdmissionStatus,

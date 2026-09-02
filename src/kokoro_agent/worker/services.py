@@ -17,7 +17,7 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.clients.skills import NoSkillsClient, SkillClient, SkillReader
 from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.persistence.repository import RunRepository
+from kokoro_agent.repositories.run_repository import RunRepository
 from kokoro_agent.agents.subagent_catalog import SubagentCatalog
 from kokoro_agent.tools.toolbox import ProcessToolbox
 

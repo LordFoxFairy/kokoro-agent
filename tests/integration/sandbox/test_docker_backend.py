@@ -18,7 +18,7 @@ from kokoro_agent.sandbox.docker_backend import (
     DockerShellBackend,
     connect_docker_sandbox,
 )
-from kokoro_agent.persistence.repository import RunRepository
+from kokoro_agent.repositories.run_repository import RunRepository
 
 _CREDS_RAW = minio_creds()
 _ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")

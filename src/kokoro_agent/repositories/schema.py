@@ -15,7 +15,7 @@ from typing import Any
 
 import psycopg
 
-from kokoro_agent.persistence.postgres import ensure_schema, qualified
+from kokoro_agent.infrastructure.postgres import ensure_schema, qualified
 
 DEFAULT_LEASE_TTL_S = 90
 

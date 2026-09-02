@@ -61,7 +61,8 @@ def test_agent_core_does_not_import_worker() -> None:
         "skills/",
         "mcp/",
         "sandbox/",
-        "persistence/",
+        "repositories/",
+        "infrastructure/",
         "model/",
         "streams/",
     )
@@ -176,7 +177,6 @@ def test_worker_entrypoint_does_not_boot_owner_database_fixtures() -> None:
         "kokoro_agent.mcp.local_registry",
         "kokoro_agent.skills.local_reader",
         "kokoro_agent.skills.reader",
-        "kokoro_agent.persistence.package_store",
     }
     assert not (imports & forbidden)
 
@@ -193,7 +193,6 @@ def test_delivery_tool_uses_only_storage_public_client() -> None:
     imports = _imports(_SRC / "tools" / "deliver.py")
     forbidden = {
         "kokoro_agent.skills.local_reader",
-        "kokoro_agent.persistence.package_store",
         "kokoro_agent.sandbox.archive",
     }
     assert not (imports & forbidden)

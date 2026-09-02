@@ -21,9 +21,9 @@ from kokoro_agent.policy import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
-from kokoro_agent.persistence.checkpoints import make_checkpointer
-from kokoro_agent.persistence.memory_store import make_memory_store
-from kokoro_agent.persistence.repository import make_run_repository
+from kokoro_agent.infrastructure.checkpoints import make_checkpointer
+from kokoro_agent.infrastructure.memory_store import make_memory_store
+from kokoro_agent.repositories.run_repository import make_run_repository
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env

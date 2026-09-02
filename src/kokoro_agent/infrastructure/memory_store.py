@@ -26,8 +26,8 @@ from langgraph.store.base import (
     SearchItem,
     SearchOp,
 )
-from kokoro_agent.persistence.checkpoints import CheckpointSettings
-from kokoro_agent.persistence.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
+from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
+from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
 
 MEMORY_COLLECTION = "kokoro_agent_memory"
 

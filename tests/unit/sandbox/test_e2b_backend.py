@@ -13,7 +13,7 @@ from pydantic import SecretStr
 from support.fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.e2b_backend import E2BSandboxBackend, E2BSettings, connect_e2b_sandbox
-from kokoro_agent.persistence.repository import RunRepository
+from kokoro_agent.repositories.run_repository import RunRepository
 
 
 def _e2b_settings(api_key: str | None = "e2b-key") -> E2BSettings:

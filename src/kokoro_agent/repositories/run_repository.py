@@ -16,8 +16,8 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.contract import RunRequest
-from kokoro_agent.persistence.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
-from kokoro_agent.persistence.schema import (
+from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
+from kokoro_agent.repositories.schema import (
     RUN_CLAIMS_TABLE,
     RUN_DISPATCHES_TABLE,
     RUN_DLQ_TABLE,

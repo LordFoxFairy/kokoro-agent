@@ -47,7 +47,7 @@ from kokoro_agent.chat.projection import project_chat_fact
 from kokoro_agent.chat.models import ChatEventRecord
 from kokoro_agent.chat.store import ChatStore
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.persistence.repository import OutboxFrame, RunRepository
+from kokoro_agent.repositories.run_repository import OutboxFrame, RunRepository
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 

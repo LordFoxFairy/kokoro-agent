@@ -21,7 +21,7 @@ from kokoro_agent.chat.models import (
     ChatSessionRecord,
     chat_event_id,
 )
-from kokoro_agent.persistence.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
+from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
 
 CHAT_MESSAGES_COLLECTION = "kokoro_agent_chat_messages"
 CHAT_EVENTS_COLLECTION = "kokoro_agent_chat_events"

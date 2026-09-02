@@ -1,6 +1,6 @@
 """The Agent schema is canonical and contains no runtime legacy migration."""
 
-from kokoro_agent.persistence.schema import (
+from kokoro_agent.repositories.schema import (
     RUN_CONTROL_COMMANDS_TABLE,
     schema_statements,
 )

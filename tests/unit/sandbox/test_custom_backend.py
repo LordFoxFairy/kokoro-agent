@@ -18,7 +18,7 @@ from kokoro_agent.sandbox.custom_backend import (
     CustomBackendSettings,
     connect_custom_sandbox,
 )
-from kokoro_agent.persistence.repository import RunRepository
+from kokoro_agent.repositories.run_repository import RunRepository
 
 SEEN_CONTEXTS: list[CustomBackendContext] = []
 

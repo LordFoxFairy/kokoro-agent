@@ -165,7 +165,7 @@ src/kokoro_agent/
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── persistence/         RunRepository、LangGraph Store 与 checkpoint adapter
+├── repositories/         RunRepository、schema；infrastructure/ 保存 PG、LangGraph Store 与 checkpoint adapter
 ├── mcp/             MCP 配置、连接与 egress
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产

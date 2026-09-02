@@ -8,7 +8,7 @@ import pytest
 
 from kokoro_agent.chat.query import ChatQuery
 from kokoro_agent.http.ingress import AgentIngress, IngressError
-from kokoro_agent.persistence.repository import (
+from kokoro_agent.repositories.run_repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
     ControlAdmissionStatus,

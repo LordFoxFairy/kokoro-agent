@@ -59,7 +59,7 @@ from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.features.definition import Feature
-from kokoro_agent.persistence.repository import OutboxFrame, RunRepository
+from kokoro_agent.repositories.run_repository import OutboxFrame, RunRepository
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.policy import Backend

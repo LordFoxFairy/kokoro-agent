@@ -43,7 +43,7 @@ from kokoro_agent.contract import (
     run_events_stream,
 )
 from kokoro_agent.execution.scope import runtime_namespace
-from kokoro_agent.persistence.repository import (
+from kokoro_agent.repositories.run_repository import (
     ControlCommandConflict,
     DispatchConflict,
     RunRepository,

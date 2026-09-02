@@ -17,7 +17,7 @@ from kokoro_agent.tools.middleware import (
     ToolPolicyMiddleware,
     ToolResultReviewMiddleware,
 )
-from kokoro_agent.persistence.repository import RunRepository
+from kokoro_agent.repositories.run_repository import RunRepository
 
 
 @dataclass(frozen=True, slots=True)

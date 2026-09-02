@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 
-from kokoro_agent.persistence.memory_store import PgMemoryStore
+from kokoro_agent.infrastructure.memory_store import PgMemoryStore
 
 
 def test_memory_store_implements_sync_and_async_langgraph_contract() -> None:

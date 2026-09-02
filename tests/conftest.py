@@ -13,15 +13,15 @@ import pytest
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.persistence.checkpoints import CheckpointSettings, make_checkpointer
-from kokoro_agent.persistence.repository import (
+from kokoro_agent.infrastructure.checkpoints import CheckpointSettings, make_checkpointer
+from kokoro_agent.repositories.run_repository import (
     DEFAULT_LEASE_TTL_S,
     RunRepositorySettings,
     RunRepository,
     make_run_repository,
 )
-from kokoro_agent.persistence.memory_store import make_memory_store
-from kokoro_agent.persistence.postgres import connect_pg
+from kokoro_agent.infrastructure.memory_store import make_memory_store
+from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 from kokoro_agent.streams.redis import RedisStream
 

@@ -44,6 +44,7 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.storage.ledger import (
+    ControlCommandConflict,
     DispatchConflict,
     RunLedger,
 )
@@ -79,7 +80,6 @@ class ControlBody(BaseModel):
 
     kind: str
     session_id: str
-    decision_id: str
     decisions: list[dict[str, Any]] | None = None
     message_id: str | None = None
     content: str | None = None
@@ -119,16 +119,26 @@ def _parse_launch(body: Mapping[str, object]) -> RunRequest:
         raise IngressError(400, "invalid_launch_request", "Launch request does not match the v1 contract") from error
 
 
-def _parse_control(run_id: str, body: Mapping[str, object]) -> InboundMessage:
+def _canonical_control_digest(run_id: str, control: ControlBody) -> str:
+    payload = {"run_id": run_id, **control.model_dump(mode="json", exclude_none=True)}
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _parse_control(
+    run_id: str, body: Mapping[str, object], *, command_id: str
+) -> tuple[InboundMessage, str]:
     try:
         control = ControlBody.model_validate(dict(body))
+        request_digest = _canonical_control_digest(run_id, control)
         if control.kind == "run.cancel":
             return RunCancel(
                 kind="run.cancel",
                 run_id=run_id,
                 session_id=control.session_id,
-                decision_id=control.decision_id,
-            )
+                command_id=command_id,
+                request_digest=request_digest,
+            ), request_digest
         if control.kind == "run.steer":
             if control.message_id is None or control.content is None:
                 raise ValueError("steer requires message_id and content")
@@ -136,17 +146,20 @@ def _parse_control(run_id: str, body: Mapping[str, object]) -> InboundMessage:
                 kind="run.steer",
                 run_id=run_id,
                 session_id=control.session_id,
+                command_id=command_id,
+                request_digest=request_digest,
                 message_id=control.message_id,
                 content=control.content,
-            )
+            ), request_digest
         if control.kind == "run.resume" and control.decisions:
             return RunResume(
                 kind="run.resume",
                 run_id=run_id,
                 session_id=control.session_id,
-                decision_id=control.decision_id,
+                command_id=command_id,
+                request_digest=request_digest,
                 decisions=_RESUME_DECISIONS.validate_python(control.decisions),
-            )
+            ), request_digest
         raise ValueError("control kind or required fields are invalid")
     except (ValidationError, TypeError, ValueError) as error:
         raise IngressError(400, "invalid_run_control", "Control request does not match the v1 contract") from error
@@ -199,19 +212,44 @@ class AgentIngress:
             replayed=admission.replayed,
         )
 
-    async def control(self, run_id: str, body: Mapping[str, object]) -> dict[str, object]:
-        msg = _parse_control(run_id, body)
+    async def control(
+        self, run_id: str, body: Mapping[str, object], *, command_id: str
+    ) -> dict[str, object]:
+        command_id = command_id.strip()
+        if not command_id.strip():
+            raise IngressError(400, "idempotency_key_required", "Control requests require Idempotency-Key")
+        msg, request_digest = _parse_control(run_id, body, command_id=command_id)
         request = await self._ledger.get_request(run_id)
         if request is None:
             raise IngressError(404, "run_not_found", "Run was not found")
         if request.session_id != msg.session_id:
             raise IngressError(403, "run_scope_forbidden", "Run does not belong to this session")
-        await self._bus.publish(
-            run_control_stream(run_id),
-            msg.model_dump(mode="json", exclude_none=True),
-            maxlen=RUN_CONTROL_MAXLEN,
-        )
-        return {"run_id": run_id, "decision_id": getattr(msg, "decision_id", None), "accepted": True}
+        try:
+            admission = await self._ledger.admit_control(
+                run_id, command_id, request_digest, msg.model_dump_json()
+            )
+        except ControlCommandConflict as error:
+            raise IngressError(409, "command_digest_mismatch", str(error)) from error
+        if admission.publish_required:
+            try:
+                await self._bus.publish(
+                    run_control_stream(run_id),
+                    msg.model_dump(mode="json", exclude_none=True),
+                    maxlen=RUN_CONTROL_MAXLEN,
+                )
+            except Exception:
+                await self._ledger.mark_control_failed(command_id, "control_enqueue_failed")
+                receipt = admission.receipt.model_copy(
+                    update={"status": "failed", "error_code": "control_enqueue_failed"}
+                )
+                return {
+                    **receipt.model_dump(mode="json", exclude_none=True),
+                    "replayed": admission.replayed,
+                }
+        return {
+            **admission.receipt.model_dump(mode="json", exclude_none=True),
+            "replayed": admission.replayed,
+        }
 
     async def evidence(self, run_id: str, *, after_seq: int = 0, limit: int = 200) -> dict[str, object]:
         if after_seq < 0 or limit < 1 or limit > 1000:

@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+from uuid import uuid4
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol
@@ -55,8 +56,12 @@ _JSON_OBJECT = TypeAdapter(dict[str, object])
 
 
 def _request_id(headers: Mapping[str, str]) -> str:
-    value = headers.get("x-kokoro-request-id", "").strip()
-    return value or "agent-ingress-request"
+    value = headers.get("x-request-id", "").strip()
+    return value or f"req_agent_{uuid4().hex}"
+
+
+def _idempotency_key(headers: Mapping[str, str]) -> str:
+    return headers.get("idempotency-key", "").strip()
 
 
 def _envelope(data: object, request_id: str) -> dict[str, object]:
@@ -143,20 +148,28 @@ async def dispatch_request(
     an asyncio event loop owned by another process and make shutdown reliable.
     Redis/PG are still used only through Agent-owned ports.
     """
+    headers = {name.lower(): value for name, value in headers.items()}
     request_id = _request_id(headers)
     if method == "GET" and path == "/healthz":
         return 200, {"status": "ok", "service": "kokoro-agent"}
     secret = config.internal_secret_agent
-    if secret is None or not secret.get_secret_value().strip():
+    secret_value = "" if secret is None else secret.get_secret_value().strip()
+    if not secret_value:
         return 503, _error(
             "service_auth_not_configured",
             "Agent ingress service authentication is not configured",
             request_id,
         )
-    if headers.get("x-kokoro-service") != "kokoro-bff":
-        return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
-    if headers.get("x-kokoro-internal-secret") != secret.get_secret_value():
-        return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
+    authorization = headers.get("authorization", "").strip()
+    scheme, separator, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not separator or token.strip() != secret_value:
+        return 401, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
+    if method == "POST" and _RUN_CONTROL.fullmatch(path) is not None and not _idempotency_key(headers):
+        return 400, _error(
+            "idempotency_key_required",
+            "Control requests require Idempotency-Key",
+            request_id,
+        )
     bus = make_stream(config.stream)
     try:
         async with (
@@ -183,8 +196,12 @@ async def dispatch_request(
                 )
             match = _RUN_CONTROL.fullmatch(path)
             if method == "POST" and match is not None:
+                command_id = _idempotency_key(headers)
+                control = await ingress.control(
+                    match.group(1), body or {}, command_id=command_id
+                )
                 return 202, _envelope(
-                    await ingress.control(match.group(1), body or {}), request_id
+                    control, request_id
                 )
             match = _RUN_EVENTS.fullmatch(path)
             if method == "GET" and match is not None:
@@ -252,9 +269,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         headers = {
             name: self.headers.get(name, "") or ""
             for name in (
-                "x-kokoro-request-id",
-                "x-kokoro-service",
-                "x-kokoro-internal-secret",
+                "x-request-id",
+                "authorization",
+                "idempotency-key",
                 "x-kokoro-tenant-ref",
                 "x-kokoro-subject-ref",
                 "x-kokoro-actor-ref",

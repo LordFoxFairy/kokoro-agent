@@ -187,14 +187,15 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
 
 - Agent business HTTP v1 已提供 launch、control、Run events evidence、session history 和
   session replay；BFF 只能通过该 HTTP ingress 调用，不读取 Agent PostgreSQL/Redis。
-- HTTP ingress 的非 `/healthz` 请求始终要求已配置的内部密钥，并校验 `x-kokoro-service` +
-  `x-kokoro-internal-secret`；未配置密钥返回 `503 service_auth_not_configured`，认证缺失或错误
-  返回 `403 service_auth_failed`。history/replay 额外校验受信 tenant/subject/actor/identity-assertion
+- HTTP ingress 的非 `/healthz` 请求始终要求已配置的内部密钥，并校验标准
+  `Authorization: Bearer <KOKORO_INTERNAL_SECRET_AGENT>`；未配置密钥返回
+  `503 service_auth_not_configured`，认证缺失或错误返回 `401 service_auth_failed`。history/replay 额外校验受信 tenant/subject/actor/identity-assertion
   headers，业务响应使用统一 `{data, meta}` / `{error, meta}` envelope（health endpoint 保留
   轻量 status payload）。
 - launch 先持久化不可变 `sha256` fence；同一 `run_id` 重试复用 receipt，body 漂移返回
-  `409 run_identity_conflict`；cancel/resume 由 worker durable inbox 按 `decision_id` 去重，
-  steer 按 `message_id` keep-first 入账。
+  `409 run_identity_conflict`；control ingress 使用 `Idempotency-Key` 作为稳定 `command_id`，
+  在 PostgreSQL receipt 中按 command/digest 去重，返回 `pending`/`succeeded`/`failed` 与
+  `replayed`，worker durable inbox 继续按 command_id keep-first 入账。
 - Agent ingress 不实现 BFF session detail、title、share、delete、public snapshot 或浏览器
   SSE/AG-UI；这些仍是 BFF 自己的业务边界。
 - `music` 可单独作为 Feature，也能被组合 Feature 复用。

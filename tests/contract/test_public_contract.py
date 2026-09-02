@@ -219,7 +219,7 @@ def _control(kind: str, **extra: JsonValue) -> dict[str, JsonValue]:
         "kind": kind,
         "run_id": "r1",
         "session_id": "s1",
-        "decision_id": "dec_wire",
+        "command_id": "dec_wire",
         **extra,
     }
 

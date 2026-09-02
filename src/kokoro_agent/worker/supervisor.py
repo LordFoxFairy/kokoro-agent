@@ -479,8 +479,10 @@ class RunSupervisor:
         request = await self._control_request(msg.run_id)
         if request is None:
             LOGGER.warning("dropping cancel for unknown run_id=%s", msg.run_id)
+            await self._store.mark_control_failed(msg.command_id, "run_not_found")
             return
         if not self._control_session_matches(request, msg.session_id):
+            await self._store.mark_control_failed(msg.command_id, "run_scope_forbidden")
             return
         # 原子认领终态：自然完成/重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
         if not await self._store.try_mark_terminal(msg.run_id):
@@ -591,9 +593,13 @@ class RunSupervisor:
                     await bus.ack(stream, CONSUMER_GROUP, item.cursor)
                     continue
                 if isinstance(msg, RunSteer):
-                    # steer 无 decision_id（message_id 幂等）：既有语义，先 ACK 再入信箱，不走 inbox。
+                    # steer 由 command_id 幂等：先 ACK 再入账，不走 resume/cancel inbox。
                     await bus.ack(stream, CONSUMER_GROUP, item.cursor)
-                    await self._guarded_control_apply(bus, run_id, msg)
+                    applied = await self._guarded_control_apply(bus, run_id, msg)
+                    if applied:
+                        await self._store.mark_control_succeeded(msg.command_id)
+                    else:
+                        await self._store.mark_control_failed(msg.command_id, "control_apply_failed")
                     continue
                 # resume/cancel：durable inbox 先于 ACK（§8.3「control 在 inbox 前 ACK」翻绿）。
                 await self._consume_control_frame(bus, run_id, msg, stream, item.cursor)
@@ -607,38 +613,42 @@ class RunSupervisor:
 
     async def _guarded_control_apply(
         self, bus: StreamProtocol, run_id: str, msg: InboundMessage
-    ) -> None:
+    ) -> bool:
         # 单控制帧容错：隔离故障收口为 run.failed，保 control 循环（既有 dispatch 语义）。
         try:
             await self.dispatch(bus, msg)
+            return True
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("control dispatch failed: run_id=%s", run_id)
             await self._fail_terminal(bus, run_id, error)
+            return False
 
     async def _consume_control_frame(
         self, bus: StreamProtocol, run_id: str, msg: RunResume | RunCancel, stream: str, cursor: str
     ) -> None:
-        # 落 ledger inbox{decision_id,fingerprint,status:persisted}→ACK→apply（durable claim 后 ACK）。
+        # 落 ledger inbox{command_id,fingerprint,status:persisted}→ACK→apply（durable claim 后 ACK）。
         request = await self._control_request(run_id)
         if request is None:
             LOGGER.warning("dropping control for unknown run_id=%s", run_id)
             await bus.ack(stream, CONSUMER_GROUP, cursor)
+            await self._store.mark_control_failed(msg.command_id, "run_not_found")
             return
         if not self._control_session_matches(request, msg.session_id):
             await bus.ack(stream, CONSUMER_GROUP, cursor)
+            await self._store.mark_control_failed(msg.command_id, "run_scope_forbidden")
             return
         fingerprint = await self._control_fingerprint(run_id, msg)
         first = await self._store.record_control_inbox(
-            run_id, msg.decision_id, fingerprint, msg.model_dump_json()
+            run_id, msg.command_id, msg.request_digest, fingerprint, msg.model_dump_json()
         )
         await bus.ack(stream, CONSUMER_GROUP, cursor)
         if not first:
-            # 重复 decision_id（重发/重投）→ inbox 命中 → ACK 丢弃不重放（不双放）。
-            LOGGER.debug("dropping duplicate control decision_id=%s run_id=%s", msg.decision_id, run_id)
+            # 重复 command_id（重发/重投）→ inbox 命中 → ACK 丢弃不重放（不双放）。
+            LOGGER.debug("dropping duplicate control command_id=%s run_id=%s", msg.command_id, run_id)
             return
         # persisted 时点回执。
         metrics.record_control_inbox("persisted")
-        await self._emit_control_receipt(bus, run_id, msg.decision_id, "persisted")
+        await self._emit_control_receipt(bus, run_id, msg.command_id, "persisted")
         await self._apply_recorded_control(bus, run_id, msg)
 
     async def _apply_recorded_control(
@@ -648,23 +658,29 @@ class RunSupervisor:
         if isinstance(msg, RunCancel):
             # cancel：apply 即终态，applied 回执须先于 run.completed——session relayRun 遇终态即
             # 收束，其后帧不再消费；且 _on_cancel 的 teardown 会 cancel 本 control 任务，后置回执会被吞。
-            await self._store.mark_control_applied(run_id, msg.decision_id)
+            await self._store.mark_control_applied(run_id, msg.command_id)
             metrics.record_control_inbox("applied")
-            await self._emit_control_receipt(bus, run_id, msg.decision_id, "applied")
-            await self._guarded_control_apply(bus, run_id, msg)
+            await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
+            if await self._guarded_control_apply(bus, run_id, msg):
+                await self._store.mark_control_succeeded(msg.command_id)
+            else:
+                await self._store.mark_control_failed(msg.command_id, "control_apply_failed")
             return
         # resume：apply（spawn）后 run 续跑、control 任务存活，可安全后置 applied 回执。
-        await self._guarded_control_apply(bus, run_id, msg)
-        await self._store.mark_control_applied(run_id, msg.decision_id)
-        metrics.record_control_inbox("applied")
-        await self._emit_control_receipt(bus, run_id, msg.decision_id, "applied")
+        if await self._guarded_control_apply(bus, run_id, msg):
+            await self._store.mark_control_applied(run_id, msg.command_id)
+            await self._store.mark_control_succeeded(msg.command_id)
+            metrics.record_control_inbox("applied")
+            await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
+        else:
+            await self._store.mark_control_failed(msg.command_id, "control_apply_failed")
 
     async def _emit_control_receipt(
-        self, bus: StreamProtocol, run_id: str, decision_id: str, status: ControlReceiptStatus
+        self, bus: StreamProtocol, run_id: str, command_id: str, status: ControlReceiptStatus
     ) -> None:
         # 内部 raw kind（走既有 run events 流）：session 消费进 receipt 存储，永不投影浏览器。
         emitter = await self._emitter(bus, run_id)
-        await emitter.emit(RunControlReceiptPayload(decision_id=decision_id, control_status=status))
+        await emitter.emit(RunControlReceiptPayload(command_id=command_id, control_status=status))
 
     async def _control_fingerprint(self, run_id: str, msg: RunResume | RunCancel) -> str | None:
         # resume 记录当前 interrupt 指纹（重启续办据此判 stale）；cancel 无 interrupt 依赖=None。
@@ -702,22 +718,26 @@ class RunSupervisor:
         for entry in entries:
             msg = parse_inbound(json.loads(entry.body))
             if not isinstance(msg, RunResume | RunCancel):
-                await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                await self._store.mark_control_superseded(entry.run_id, entry.command_id)
+                await self._store.mark_control_failed(entry.command_id, "control_superseded")
                 metrics.record_control_inbox("superseded")
                 continue
             request = await self._control_request(entry.run_id)
             if request is None or not self._control_session_matches(request, msg.session_id):
-                await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                await self._store.mark_control_superseded(entry.run_id, entry.command_id)
+                await self._store.mark_control_failed(entry.command_id, "control_superseded")
                 metrics.record_control_inbox("superseded")
                 continue
             if await self._store.is_terminal(entry.run_id):
-                await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                await self._store.mark_control_superseded(entry.run_id, entry.command_id)
+                await self._store.mark_control_failed(entry.command_id, "control_superseded")
                 metrics.record_control_inbox("superseded")
                 continue
             if isinstance(msg, RunResume):
                 current = await self._interrupt_fingerprint(entry.run_id)
                 if entry.fingerprint is None or current != entry.fingerprint:
-                    await self._store.mark_control_superseded(entry.run_id, entry.decision_id)
+                    await self._store.mark_control_superseded(entry.run_id, entry.command_id)
+                    await self._store.mark_control_failed(entry.command_id, "control_superseded")
                     metrics.record_control_inbox("superseded")
                     continue
             await self._apply_recorded_control(bus, entry.run_id, msg)

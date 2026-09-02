@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,12 +27,17 @@ RUN_OUTBOX_TABLE = "kokoro_agent_run_outbox"
 RUN_RECEIPTS_TABLE = "kokoro_agent_run_receipts"
 RUN_RECEIPT_MANIFESTS_TABLE = "kokoro_agent_run_receipt_manifests"
 CONTROL_INBOX_TABLE = "kokoro_agent_control_inbox"
+CONTROL_RECEIPTS_TABLE = "kokoro_agent_control_receipts"
 RUN_STEERS_TABLE = "kokoro_agent_run_steers"
 TOOL_RESULTS_TABLE = "kokoro_agent_tool_results"
 TOOL_JOURNAL_TABLE = "kokoro_agent_tool_journal"
 
 __all__ = [
     "ControlInboxRecord",
+    "ControlAdmission",
+    "ControlCommandConflict",
+    "ControlReceipt",
+    "ControlReceiptStatus",
     "DispatchAdmission",
     "DispatchConflict",
     "DEFAULT_LEASE_TTL_S",
@@ -80,12 +85,25 @@ class RunLedger(Protocol):
     ) -> ReceiptReconcile: ...
 
     async def record_control_inbox(
-        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+        self,
+        run_id: str,
+        command_id: str,
+        request_digest: str | None,
+        fingerprint: str | None,
+        body: str,
     ) -> bool: ...
 
-    async def mark_control_applied(self, run_id: str, decision_id: str) -> None: ...
+    async def mark_control_applied(self, run_id: str, command_id: str) -> None: ...
 
-    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None: ...
+    async def mark_control_superseded(self, run_id: str, command_id: str) -> None: ...
+
+    async def admit_control(
+        self, run_id: str, command_id: str, request_digest: str, body: str
+    ) -> ControlAdmission: ...
+
+    async def mark_control_succeeded(self, command_id: str) -> None: ...
+
+    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None: ...
 
     async def list_pending_control_inbox(self) -> list[ControlInboxRecord]: ...
 
@@ -140,6 +158,10 @@ class DispatchConflict(RuntimeError):
     """A run id was reused with a different immutable launch envelope."""
 
 
+class ControlCommandConflict(RuntimeError):
+    """A command id was reused with a different immutable request digest."""
+
+
 class DispatchAdmission(BaseModel):
     """Durable admission result used by the HTTP ingress before Redis publish."""
 
@@ -149,11 +171,33 @@ class DispatchAdmission(BaseModel):
     publish_required: bool
 
 
+ControlReceiptStatus = Literal["pending", "succeeded", "failed"]
+
+
+class ControlReceipt(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    run_id: str
+    command_id: str
+    request_digest: str
+    status: ControlReceiptStatus
+    error_code: str | None = None
+
+
+class ControlAdmission(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    receipt: ControlReceipt
+    replayed: bool
+    publish_required: bool
+
+
 class ControlInboxRecord(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     run_id: str
-    decision_id: str
+    command_id: str
+    request_digest: str | None = None
     fingerprint: str | None = None
     body: str
 
@@ -323,15 +367,60 @@ class PgLedger:
                     """
                     CREATE TABLE IF NOT EXISTS {} (
                         run_id text NOT NULL,
-                        decision_id text NOT NULL,
+                        command_id text NOT NULL,
+                        request_digest text,
                         fingerprint text,
                         status text NOT NULL,
                         body text NOT NULL,
                         created_at bigint NOT NULL,
                         updated_at bigint NOT NULL,
-                        PRIMARY KEY (run_id, decision_id)
+                        PRIMARY KEY (run_id, command_id)
                     )
                     """.format(qualified(self._schema, CONTROL_INBOX_TABLE))
+                )
+                # The pre-receipt schema keyed this table by decision_id.  Migrate
+                # those rows out of the active queue before removing that alias:
+                # old JSON envelopes are no longer valid v1 control commands, so
+                # retain them as superseded audit rows rather than replaying them.
+                await cur.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s AND column_name = 'decision_id'
+                    """,
+                    (self._schema, CONTROL_INBOX_TABLE),
+                )
+                if await cur.fetchone() is not None:
+                    inbox = qualified(self._schema, CONTROL_INBOX_TABLE)
+                    await cur.execute(f"ALTER TABLE {inbox} ADD COLUMN IF NOT EXISTS command_id text")
+                    await cur.execute(f"ALTER TABLE {inbox} ADD COLUMN IF NOT EXISTS request_digest text")
+                    await cur.execute(
+                        f"UPDATE {inbox} SET command_id = 'legacy:' || md5(run_id || ':' || decision_id) "
+                        "WHERE command_id IS NULL"
+                    )
+                    await cur.execute(
+                        f"UPDATE {inbox} SET status = 'superseded', updated_at = %s "
+                        "WHERE command_id LIKE 'legacy:%' AND status = 'persisted'",
+                        (self._clock(),),
+                    )
+                    await cur.execute(
+                        f'ALTER TABLE {inbox} DROP CONSTRAINT IF EXISTS "{CONTROL_INBOX_TABLE}_pkey"'
+                    )
+                    await cur.execute(f"ALTER TABLE {inbox} DROP COLUMN decision_id")
+                    await cur.execute(f"ALTER TABLE {inbox} ALTER COLUMN command_id SET NOT NULL")
+                    await cur.execute(f"ALTER TABLE {inbox} ADD PRIMARY KEY (run_id, command_id)")
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        command_id text PRIMARY KEY,
+                        run_id text NOT NULL,
+                        request_digest text NOT NULL,
+                        status text NOT NULL,
+                        error_code text,
+                        created_at bigint NOT NULL,
+                        updated_at bigint NOT NULL
+                    )
+                    """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE))
                 )
                 await cur.execute(
                     """
@@ -434,6 +523,67 @@ class PgLedger:
                     replayed=True,
                     publish_required=status == "pending",
                 )
+
+    async def admit_control(
+        self, run_id: str, command_id: str, request_digest: str, body: str
+    ) -> ControlAdmission:
+        """Persist one control command before publishing it to Redis.
+
+        ``command_id`` is the durable identity.  A retry may only replay the
+        original command when its canonical request digest is unchanged.
+        """
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO {} (
+                        command_id, run_id, request_digest, status, error_code,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, 'pending', NULL, %s, %s)
+                    ON CONFLICT (command_id) DO NOTHING
+                    RETURNING command_id
+                    """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE)),
+                    (command_id, run_id, request_digest, now, now),
+                )
+                if await cur.fetchone() is not None:
+                    return ControlAdmission(
+                        receipt=ControlReceipt(
+                            run_id=run_id,
+                            command_id=command_id,
+                            request_digest=request_digest,
+                            status="pending",
+                        ),
+                        replayed=False,
+                        publish_required=True,
+                    )
+                await cur.execute(
+                    """
+                    SELECT run_id, command_id, request_digest, status, error_code
+                    FROM {}
+                    WHERE command_id = %s
+                    """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE)),
+                    (command_id,),
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    raise RuntimeError(f"control receipt disappeared for {command_id!r}")
+                if str(row["run_id"]) != run_id or str(row["request_digest"]) != request_digest:
+                    raise ControlCommandConflict(
+                        f"command id {command_id!r} was reused with a different request digest"
+                    )
+                receipt = ControlReceipt(**dict(row))
+                return ControlAdmission(
+                    receipt=receipt,
+                    replayed=True,
+                    publish_required=receipt.status == "pending",
+                )
+
+    async def mark_control_succeeded(self, command_id: str) -> None:
+        await self._update_control_receipt(command_id, "succeeded")
+
+    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None:
+        await self._update_control_receipt(command_id, "failed", error_code=error_code)
 
     async def try_claim(self, request: RunRequest, owner: str) -> bool:
         async with connect_pg(self._database_url) as conn:
@@ -726,7 +876,12 @@ class PgLedger:
                     )
 
     async def record_control_inbox(
-        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+        self,
+        run_id: str,
+        command_id: str,
+        request_digest: str | None,
+        fingerprint: str | None,
+        body: str,
     ) -> bool:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
@@ -743,31 +898,39 @@ class PgLedger:
                     return False
                 await cur.execute(
                     """
-                    INSERT INTO {} (run_id, decision_id, fingerprint, status, body, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'persisted', %s, %s, %s)
-                    ON CONFLICT (run_id, decision_id) DO NOTHING
-                    RETURNING decision_id
+                    INSERT INTO {} (run_id, command_id, request_digest, fingerprint, status, body, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, 'persisted', %s, %s, %s)
+                    ON CONFLICT (run_id, command_id) DO NOTHING
+                    RETURNING command_id
                     """.format(qualified(self._schema, CONTROL_INBOX_TABLE)),
-                    (run_id, decision_id, fingerprint, body, self._clock(), self._clock()),
+                    (
+                        run_id,
+                        command_id,
+                        request_digest,
+                        fingerprint,
+                        body,
+                        self._clock(),
+                        self._clock(),
+                    ),
                 )
                 return await cur.fetchone() is not None
 
-    async def mark_control_applied(self, run_id: str, decision_id: str) -> None:
-        await self._update_control_status(run_id, decision_id, "applied")
+    async def mark_control_applied(self, run_id: str, command_id: str) -> None:
+        await self._update_control_status(run_id, command_id, "applied")
 
-    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None:
-        await self._update_control_status(run_id, decision_id, "superseded")
+    async def mark_control_superseded(self, run_id: str, command_id: str) -> None:
+        await self._update_control_status(run_id, command_id, "superseded")
 
     async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT i.run_id, i.decision_id, i.fingerprint, i.body
+                    SELECT i.run_id, i.command_id, i.request_digest, i.fingerprint, i.body
                     FROM {} i
                     JOIN {} r ON r.run_id = i.run_id
                     WHERE i.status = 'persisted' AND r.terminal = FALSE
-                    ORDER BY i.run_id ASC, i.decision_id ASC
+                    ORDER BY i.run_id ASC, i.command_id ASC
                     """.format(
                         qualified(self._schema, CONTROL_INBOX_TABLE),
                         qualified(self._schema, RUN_CLAIMS_TABLE),
@@ -1136,16 +1299,30 @@ class PgLedger:
                 )
                 return [dict(row) for row in await cur.fetchall()]
 
-    async def _update_control_status(self, run_id: str, decision_id: str, status: str) -> None:
+    async def _update_control_status(self, run_id: str, command_id: str, status: str) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     UPDATE {}
                     SET status = %s, updated_at = %s
-                    WHERE run_id = %s AND decision_id = %s AND status = 'persisted'
+                    WHERE run_id = %s AND command_id = %s AND status = 'persisted'
                     """.format(qualified(self._schema, CONTROL_INBOX_TABLE)),
-                    (status, self._clock(), run_id, decision_id),
+                    (status, self._clock(), run_id, command_id),
+                )
+
+    async def _update_control_receipt(
+        self, command_id: str, status: ControlReceiptStatus, *, error_code: str | None = None
+    ) -> None:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = %s, error_code = %s, updated_at = %s
+                    WHERE command_id = %s AND status = 'pending'
+                    """.format(qualified(self._schema, CONTROL_RECEIPTS_TABLE)),
+                    (status, error_code, self._clock(), command_id),
                 )
 
     async def _fetch_outbox(self, where_sql: str) -> list[dict[str, Any]]:
@@ -1170,6 +1347,7 @@ class PgLedger:
             RUN_RECEIPTS_TABLE,
             RUN_RECEIPT_MANIFESTS_TABLE,
             CONTROL_INBOX_TABLE,
+            CONTROL_RECEIPTS_TABLE,
             RUN_STEERS_TABLE,
             TOOL_RESULTS_TABLE,
             TOOL_JOURNAL_TABLE,

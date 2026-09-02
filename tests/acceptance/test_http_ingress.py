@@ -66,13 +66,12 @@ def _json_object(value: object) -> dict[str, JsonValue]:
 
 def _headers(subject: str = "subject") -> dict[str, str]:
     return {
-        "x-kokoro-service": "kokoro-bff",
-        "x-kokoro-internal-secret": _INTERNAL_SECRET,
+        "Authorization": f"Bearer {_INTERNAL_SECRET}",
         "x-kokoro-tenant-ref": "tenant",
         "x-kokoro-subject-ref": subject,
         "x-kokoro-actor-ref": "actor",
         "x-kokoro-identity-assertion-ref": "assertion",
-        "x-kokoro-request-id": f"request-{uuid.uuid4().hex}",
+        "x-request-id": f"request-{uuid.uuid4().hex}",
     }
 
 
@@ -307,7 +306,7 @@ async def test_auth_and_invalid_launch_fail_with_stable_http_errors(
     http_client: httpx.AsyncClient,
 ) -> None:
     denied = await http_client.post("/v1/runs", json=_launch_body("denied"))
-    assert denied.status_code == 403
+    assert denied.status_code == 401
     denied_error = _nested(_json_object(denied.json()), "error")
     assert denied_error["code"] == "service_auth_failed"
 
@@ -329,18 +328,42 @@ async def test_control_and_evidence_use_real_redis_and_postgres_state(
 
     control = await http_client.post(
         f"/v1/runs/{run_id}/control",
-        headers=_headers(),
-        json={"kind": "run.cancel", "session_id": "session-1", "decision_id": "decision-1"},
+        headers={**_headers(), "Idempotency-Key": "command-1"},
+        json={"kind": "run.cancel", "session_id": "session-1"},
     )
     assert control.status_code == 202
     control_data = _nested(_json_object(control.json()), "data")
-    assert control_data["accepted"] is True
-    assert control_data["decision_id"] == "decision-1"
+    assert control_data["status"] == "pending"
+    assert control_data["command_id"] == "command-1"
+    assert control_data["replayed"] is False
+
+    replay = await http_client.post(
+        f"/v1/runs/{run_id}/control",
+        headers={**_headers(), "Idempotency-Key": "command-1"},
+        json={"kind": "run.cancel", "session_id": "session-1"},
+    )
+    assert replay.status_code == 202
+    replay_data = _nested(_json_object(replay.json()), "data")
+    assert replay_data["status"] == "pending"
+    assert replay_data["replayed"] is True
+
+    conflict = await http_client.post(
+        f"/v1/runs/{run_id}/control",
+        headers={**_headers(), "Idempotency-Key": "command-1"},
+        json={
+            "kind": "run.steer",
+            "session_id": "session-1",
+            "message_id": "message-2",
+            "content": "different command",
+        },
+    )
+    assert conflict.status_code == 409
+    assert _nested(_json_object(conflict.json()), "error")["code"] == "command_digest_mismatch"
 
     control_frames = await _read_matching(
         acceptance_state, run_control_stream(run_id), run_id
     )
-    assert len(control_frames) == 1
+    assert len(control_frames) == 2
     assert control_frames[0]["kind"] == "run.cancel"
 
     evidence = await http_client.get(

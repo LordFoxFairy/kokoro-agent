@@ -87,13 +87,21 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
     ingress = AgentIngress(bus=bus, ledger=ledger, chat_query=ChatQuery(FakeChatStore()))
 
     with pytest.raises(IngressError) as error:
-        await ingress.control("run-1", {"kind": "run.cancel", "session_id": "other", "decision_id": "d-1"})
+        await ingress.control(
+            "run-1",
+            {"kind": "run.cancel", "session_id": "other"},
+            command_id="cmd-1",
+        )
     assert error.value.status == 403
 
     accepted = await ingress.control(
-        "run-1", {"kind": "run.cancel", "session_id": "session-1", "decision_id": "d-1"}
+        "run-1",
+        {"kind": "run.cancel", "session_id": "session-1"},
+        command_id="cmd-1",
     )
-    assert accepted["accepted"] is True
+    assert accepted["status"] == "pending"
+    assert accepted["command_id"] == "cmd-1"
+    assert accepted["replayed"] is False
     assert bus.published[-1][0] == "kokoro:run:run-1:control"
 
 

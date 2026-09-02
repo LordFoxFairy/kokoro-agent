@@ -107,14 +107,15 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 
 BFF 只通过这些版本化 HTTP 入口访问 Agent，不读取 Agent PostgreSQL/Redis、checkpoint、
 RunLedger 或内部 Python 类型。除 `/healthz` 外的请求始终要求配置可信的
-`KOKORO_INTERNAL_SECRET_AGENT`，并必须带 `x-kokoro-service: kokoro-bff` 和
-`x-kokoro-internal-secret`；未配置 secret 时请求返回 `503 service_auth_not_configured`，认证
-缺失或错误时返回 `403 service_auth_failed`。history/replay 还要带
+`KOKORO_INTERNAL_SECRET_AGENT`，并必须带标准 `Authorization: Bearer <secret>`；未配置 secret
+时请求返回 `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
+control 还必须带 `Idempotency-Key`；history/replay 还要带
 受信的 tenant/subject/actor/identity-assertion headers。响应统一为
 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`（health endpoint
 保留轻量 status payload）；launch 以不可变 `sha256` fence 对同一 `run_id` 幂等，body 漂移
-返回 `409 run_identity_conflict`，cancel/resume 由 worker durable inbox 按 `decision_id` 和
-resume fingerprint 去重/恢复，steer 按 `message_id` keep-first 入账。
+返回 `409 run_identity_conflict`，control 由 PostgreSQL receipt 按 `command_id`/request digest
+去重并返回 `pending`/`succeeded`/`failed` 与 `replayed`，worker 使用 resume fingerprint
+去重/恢复。
 
 Agent ingress 不提供 BFF 的 session detail、title、share、delete、public snapshot 或
 浏览器 SSE/AG-UI；这些仍是 BFF 自己的业务边界，不应通过直读 Agent PG/Redis 实现。生产环境

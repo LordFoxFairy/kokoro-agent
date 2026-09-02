@@ -100,7 +100,8 @@ class RunResume(StrictModel):
     kind: Literal["run.resume"]
     run_id: NonEmptyStr
     session_id: NonEmptyStr
-    decision_id: NonEmptyStr
+    command_id: NonEmptyStr
+    request_digest: NonEmptyStr | None = None
     decisions: Annotated[list[ResumeDecision], Field(min_length=1)]
 
 
@@ -108,13 +109,16 @@ class RunCancel(StrictModel):
     kind: Literal["run.cancel"]
     run_id: NonEmptyStr
     session_id: NonEmptyStr
-    decision_id: NonEmptyStr
+    command_id: NonEmptyStr
+    request_digest: NonEmptyStr | None = None
 
 
 class RunSteer(StrictModel):
     kind: Literal["run.steer"]
     run_id: NonEmptyStr
     session_id: NonEmptyStr
+    command_id: NonEmptyStr
+    request_digest: NonEmptyStr | None = None
     message_id: NonEmptyStr
     content: NonEmptyStr
 

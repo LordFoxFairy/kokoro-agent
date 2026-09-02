@@ -1,6 +1,6 @@
 """R2 control inbox 与 receipt 闭环（agent 侧）：
 
-- inbox keep-first：重复 decision_id 不双放。
+- inbox keep-first：重复 command_id 不双放。
 - 两时点回执：persisted（落 inbox）与 applied（apply 后）各发一次 run.control.receipt。
 - 重启续办 scanner：persisted 未 applied 的 command——fingerprint 匹配当前 interrupt 才续 apply，
   不匹配/已终态=stale→superseded 不 apply（经 public serve() 启动路径驱动）。
@@ -126,7 +126,7 @@ def _resume_body(run_id: str) -> str:
     return _inbound(
         {
             "kind": "run.resume",
-            "decision_id": "dec_1",
+            "command_id": "dec_1",
             "run_id": run_id,
             "decisions": [{"type": "approve", "tool_id": _TID}],
         }
@@ -138,12 +138,12 @@ def _resume_body(run_id: str) -> str:
     [
         (
             "run.resume",
-            {"decision_id": "dec_r", "decisions": [{"type": "approve", "tool_id": _TID}]},
+            {"command_id": "dec_r", "decisions": [{"type": "approve", "tool_id": _TID}]},
         ),
-        ("run.cancel", {"decision_id": "dec_c"}),
+        ("run.cancel", {"command_id": "dec_c"}),
         (
             "run.steer",
-            {"message_id": "m_foreign", "content": "keep out"},
+            {"command_id": "dec_s", "message_id": "m_foreign", "content": "keep out"},
         ),
     ],
 )
@@ -179,11 +179,12 @@ async def test_restart_scanner_supersedes_foreign_session_resume() -> None:
     await ledger.record_control_inbox(
         "fs",
         "dec_1",
+        None,
         _fingerprint_of(_PENDING_STATE),
         _inbound(
             {
                 "kind": "run.resume",
-                "decision_id": "dec_1",
+                "command_id": "dec_1",
                 "run_id": "fs",
                 "session_id": "foreign-session",
                 "decisions": [{"type": "approve", "tool_id": _TID}],
@@ -204,11 +205,11 @@ async def test_restart_scanner_supersedes_foreign_session_resume() -> None:
 async def test_control_inbox_keep_first_dedup() -> None:
     ledger = FakeLedger()
     await ledger.try_claim(request("rd"))
-    assert await ledger.record_control_inbox("rd", "dec_1", "fp", "{}") is True
-    # 重复 decision_id（重发/重投）：命中既有条目 → False（丢弃不重放）。
-    assert await ledger.record_control_inbox("rd", "dec_1", "fp", "{}") is False
-    # 不同 decision_id 各自入账。
-    assert await ledger.record_control_inbox("rd", "dec_2", None, "{}") is True
+    assert await ledger.record_control_inbox("rd", "dec_1", None, "fp", "{}") is True
+    # 重复 command_id（重发/重投）：命中既有条目 → False（丢弃不重放）。
+    assert await ledger.record_control_inbox("rd", "dec_1", None, "fp", "{}") is False
+    # 不同 command_id 各自入账。
+    assert await ledger.record_control_inbox("rd", "dec_2", None, None, "{}") is True
 
 
 async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
@@ -221,7 +222,7 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
                     cursor="1",
                     event={
                         "kind": "run.cancel",
-                        "decision_id": "dec_1",
+                        "command_id": "dec_1",
                         "run_id": "cc",
                         "session_id": "s1",
                     },
@@ -240,7 +241,7 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
     # 两时点回执按序上 run events 流（applied 先于 run.completed：cancel apply 即终态）。
     receipts = find_events(bus.run_events("cc"), RunControlReceipt)
     assert [r.payload.control_status for r in receipts] == ["persisted", "applied"]
-    assert all(r.payload.decision_id == "dec_1" for r in receipts)
+    assert all(r.payload.command_id == "dec_1" for r in receipts)
     assert ledger.control_inbox["cc"][0]["status"] == "applied"
     completed = find_event(bus.run_events("cc"), RunCompleted)
     assert completed.payload.status == "cancelled"
@@ -253,7 +254,7 @@ async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
     ledger = FakeLedger()
     await ledger.try_claim(request("rf"))
     await ledger.record_control_inbox(
-        "rf", "dec_1", _fingerprint_of(_PENDING_STATE), _resume_body("rf")
+        "rf", "dec_1", None, _fingerprint_of(_PENDING_STATE), _resume_body("rf")
     )
 
     bus = FakeBus()  # 空请求流：serve 跑完 startup 续办即收束
@@ -275,7 +276,7 @@ async def test_restart_scanner_supersedes_on_fingerprint_mismatch() -> None:
     ledger = FakeLedger()
     await ledger.try_claim(request("rm"))
     await ledger.record_control_inbox(
-        "rm", "dec_1", "stale-fingerprint-mismatch", _resume_body("rm")
+        "rm", "dec_1", None, "stale-fingerprint-mismatch", _resume_body("rm")
     )
 
     bus = FakeBus()
@@ -298,9 +299,8 @@ async def test_terminal_run_control_excluded_from_reapply() -> None:
         "rt",
         "dec_1",
         None,
-        _inbound(
-            {"kind": "run.cancel", "decision_id": "dec_1", "run_id": "rt"}
-        ).model_dump_json(),
+        None,
+        _inbound({"kind": "run.cancel", "command_id": "dec_1", "run_id": "rt"}).model_dump_json(),
     )
     await ledger.try_mark_terminal("rt")
 

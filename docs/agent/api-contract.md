@@ -44,18 +44,20 @@ PostgreSQL `run_dispatches` 中写入不可变 `sha256` fence，再发布现有
 `409 run_identity_conflict`。
 
 `POST /v1/runs/{run_id}/control` body 使用 `kind`=`run.cancel`、`run.resume` 或 `run.steer`，
-严格 transport body 要求 `session_id` 和 `decision_id`；steer 另需 Root 定义的 `message_id`/
-`content`，cancel/resume 还需 `decisions`（resume）。control 只写该 run 的隔离 Redis
-control stream，由 worker 的 durable inbox 和 session 校验继续完成幂等与授权边界；cancel/resume
-按 `decision_id` 去重，steer 按 `message_id` keep-first 入账。
+严格 transport body 要求 `session_id`；steer 另需 Root 定义的 `message_id`/`content`，resume
+还需非空 `decisions`。请求必须通过 `Idempotency-Key` 提供稳定 `command_id`。Agent 先在
+Agent-owned PostgreSQL control receipt 中按 `command_id` 原子落 `pending`，并保存 canonical
+request digest，再发布到该 run 的隔离 Redis control stream。相同 command/digest 的重试安全重放
+并返回 `replayed: true`；同一 command 搭配不同 digest 返回 `409 command_digest_mismatch`。
+receipt 状态为 `pending`、`succeeded` 或 `failed`；worker 完成或失败时更新同一 receipt。
 
 Session list、Chat history/replay 只返回 Agent-owned allowlisted projection；请求通过
 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
 `x-kokoro-identity-assertion-ref` 提供受信服务上下文。浏览器的 `X-Domain` 不属于该接口，也
 不会参与身份或隔离计算。除 `/healthz` 外的所有请求始终要求配置可信的
-`KOKORO_INTERNAL_SECRET_AGENT`，并要求 `x-kokoro-service: kokoro-bff` 与
-`x-kokoro-internal-secret`；未配置 secret 时返回 `503 service_auth_not_configured`，认证缺失
-或错误时返回 `403 service_auth_failed`。
+`KOKORO_INTERNAL_SECRET_AGENT`，并要求标准 `Authorization: Bearer <secret>`；未配置 secret
+时返回 `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
+`X-Request-Id` 用于响应 meta；control 额外要求 `Idempotency-Key`。
 
 业务响应统一为 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`；
 health endpoint 保留轻量 status payload。空 body、
@@ -88,9 +90,9 @@ Root `kokoro.agent.v1.ApplyControlRequest`
   decisions[] / optional message_id + content
 
 Redis worker control envelope（当前内部 adapter）
-  run.resume { run_id, session_id, decision_id, decisions[] }
-  run.cancel { run_id, session_id, decision_id }
-  run.steer { run_id, session_id, message_id, content }
+  run.resume { run_id, session_id, command_id, request_digest, decisions[] }
+  run.cancel { run_id, session_id, command_id, request_digest }
+  run.steer { run_id, session_id, command_id, request_digest, message_id, content }
 
 `agent_run_id` 到 `session_id` 的映射由 GA RunLedger/transport adapter 完成；BFF Chat 不把
 Root RPC DTO 直接当 Redis JSON 发送。

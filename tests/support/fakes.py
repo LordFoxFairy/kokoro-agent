@@ -24,6 +24,9 @@ from kokoro_agent.contract import (
 from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.storage.ledger import (
     ControlInboxRecord,
+    ControlAdmission,
+    ControlCommandConflict,
+    ControlReceipt,
     DispatchAdmission,
     DispatchConflict,
     OutboxFrame,
@@ -144,8 +147,9 @@ class FakeLedger:
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
         self.receipts: dict[str, list[dict[str, object]]] = {}
         self.manifests: dict[str, dict[str, object]] = {}
-        # control inbox（R2）：run_id → [{decision_id,fingerprint,status,body}]，keep-first。
+        # control inbox（R2）：run_id → [{command_id,fingerprint,status,body}]，keep-first。
         self.control_inbox: dict[str, list[dict[str, str | None]]] = {}
+        self.control_receipts: dict[str, ControlReceipt] = {}
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
 
@@ -327,27 +331,72 @@ class FakeLedger:
         )
 
     async def record_control_inbox(
-        self, run_id: str, decision_id: str, fingerprint: str | None, body: str
+        self,
+        run_id: str,
+        command_id: str,
+        request_digest: str | None,
+        fingerprint: str | None,
+        body: str,
     ) -> bool:
         # 与 MongoLedger 同语义：run 文档须存在（try_claim 后），keep-first 去重。
         if run_id not in self.requests:
             return False
         box = self.control_inbox.setdefault(run_id, [])
-        if any(entry["decision_id"] == decision_id for entry in box):
+        if any(entry["command_id"] == command_id for entry in box):
             return False
         box.append(
-            {"decision_id": decision_id, "fingerprint": fingerprint, "status": "persisted", "body": body}
+            {
+                "command_id": command_id,
+                "request_digest": request_digest,
+                "fingerprint": fingerprint,
+                "status": "persisted",
+                "body": body,
+            }
         )
         return True
 
-    async def mark_control_applied(self, run_id: str, decision_id: str) -> None:
+    async def admit_control(
+        self, run_id: str, command_id: str, request_digest: str, body: str
+    ) -> ControlAdmission:
+        existing = self.control_receipts.get(command_id)
+        if existing is not None:
+            if existing.run_id != run_id or existing.request_digest != request_digest:
+                raise ControlCommandConflict("command digest mismatch")
+            return ControlAdmission(
+                receipt=existing,
+                replayed=True,
+                publish_required=existing.status == "pending",
+            )
+        del body
+        receipt = ControlReceipt(
+            run_id=run_id,
+            command_id=command_id,
+            request_digest=request_digest,
+            status="pending",
+        )
+        self.control_receipts[command_id] = receipt
+        return ControlAdmission(receipt=receipt, replayed=False, publish_required=True)
+
+    async def mark_control_succeeded(self, command_id: str) -> None:
+        receipt = self.control_receipts.get(command_id)
+        if receipt is not None and receipt.status == "pending":
+            self.control_receipts[command_id] = receipt.model_copy(update={"status": "succeeded"})
+
+    async def mark_control_failed(self, command_id: str, error_code: str | None = None) -> None:
+        receipt = self.control_receipts.get(command_id)
+        if receipt is not None and receipt.status == "pending":
+            self.control_receipts[command_id] = receipt.model_copy(
+                update={"status": "failed", "error_code": error_code}
+            )
+
+    async def mark_control_applied(self, run_id: str, command_id: str) -> None:
         for entry in self.control_inbox.get(run_id, []):
-            if entry["decision_id"] == decision_id and entry["status"] == "persisted":
+            if entry["command_id"] == command_id and entry["status"] == "persisted":
                 entry["status"] = "applied"
 
-    async def mark_control_superseded(self, run_id: str, decision_id: str) -> None:
+    async def mark_control_superseded(self, run_id: str, command_id: str) -> None:
         for entry in self.control_inbox.get(run_id, []):
-            if entry["decision_id"] == decision_id and entry["status"] == "persisted":
+            if entry["command_id"] == command_id and entry["status"] == "persisted":
                 entry["status"] = "superseded"
 
     async def list_pending_control_inbox(self) -> list[ControlInboxRecord]:
@@ -361,7 +410,8 @@ class FakeLedger:
                 records.append(
                     ControlInboxRecord(
                         run_id=run_id,
-                        decision_id=str(entry["decision_id"]),
+                        command_id=str(entry["command_id"]),
+                        request_digest=entry["request_digest"],
                         fingerprint=entry["fingerprint"],
                         body=str(entry["body"]),
                     )

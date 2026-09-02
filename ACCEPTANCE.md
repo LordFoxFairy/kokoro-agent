@@ -40,8 +40,8 @@ Every other route requires these headers when
 `KOKORO_INTERNAL_SECRET_AGENT` is configured:
 
 ```text
-x-kokoro-service: kokoro-bff
-x-kokoro-internal-secret: <configured secret>
+Authorization: Bearer <configured secret>
+X-Request-Id: <request id>
 ```
 
 `GET /readyz` checks the Agent-owned PostgreSQL and Redis dependencies and
@@ -81,10 +81,12 @@ launch is idempotent; reusing `run_id` with a different immutable body returns
 ### Run control and evidence
 
 `POST /v1/runs/{run_id}/control` accepts `run.cancel`, `run.resume`, or
-`run.steer` bodies. The body always includes `kind`, `session_id`, and
-`decision_id`; `run.resume` also includes non-empty `decisions`, while
-`run.steer` includes `message_id` and `content`. A valid control request returns
-`202` and is published to the run-isolated Redis control stream.
+`run.steer` bodies. The body always includes `kind` and `session_id`; `run.resume`
+also includes non-empty `decisions`, while `run.steer` includes `message_id` and
+`content`. Every control request includes `Idempotency-Key`, which is the stable
+`command_id`; the Agent persists a PostgreSQL receipt before publishing. The
+receipt returns `pending`, `succeeded`, or `failed` plus `replayed`; reusing a
+command with a different request digest returns `409 command_digest_mismatch`.
 
 `GET /v1/runs/{run_id}/events?after_seq=0&limit=200` returns a `200` business
 envelope containing the filtered event list, `next_seq`, and `terminal`. An

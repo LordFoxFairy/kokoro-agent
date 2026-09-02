@@ -47,19 +47,21 @@ loop，也不把 Redis stream 暴露给 BFF。
   `session_id`、`feature_key`、`execution_identity`、顶层 `message_id`/`content`，以及可选
   `requested_model_label`/`trace`。
 - `POST /v1/runs/{run_id}/control` 接受 `run.cancel`、`run.resume`、`run.steer`；当前 strict
-  transport body 要求 `kind`、`session_id`、`decision_id`，steer 另需 `message_id`/`content`。
-  cancel/resume 通过 run 隔离的 Redis control stream 交给 worker 的 durable inbox，按
-  `decision_id` 去重并用 resume fingerprint 做恢复时的 stale 判定；steer 按 `message_id`
-  keep-first 入账。
+  transport body 要求 `kind`、`session_id`，steer 另需 `message_id`/`content`，resume 还需
+  `decisions`。调用方必须发送标准 `Authorization: Bearer <secret>`、`X-Request-Id`（可选）和
+  control 专用的 `Idempotency-Key`。Agent 先将 control receipt 持久化为 `pending`，再通过
+  run 隔离的 Redis control stream 交给 worker；按 `command_id`/request digest 去重并用 resume
+  fingerprint 做恢复时的 stale 判定。receipt 状态为 `pending`、`succeeded`、`failed`，重复
+  请求返回 `replayed: true`，digest 漂移返回 `409 command_digest_mismatch`。
 - 除 `/healthz` 外的请求始终要求配置可信的 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带
-  `x-kokoro-service: kokoro-bff` 和 `x-kokoro-internal-secret`。未配置 secret 时返回
-  `503 service_auth_not_configured`，认证缺失或错误时返回 `403 service_auth_failed`。
+  `Authorization: Bearer <KOKORO_INTERNAL_SECRET_AGENT>`。未配置 secret 时返回
+  `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
   session list/history/replay 还必须带
   `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
   `x-kokoro-identity-assertion-ref`；可选 kind 头只允许 `user`、`project`、`service`。
 - 业务路由成功响应使用 `{data, meta:{request_id}}`，错误响应使用
-  `{error:{code,message}, meta:{request_id}}`。`x-kokoro-request-id` 用于响应 meta；未提供时
-  ingress 使用稳定默认值；`/healthz` 和 `/readyz` 保留轻量 health payload。错误不泄露
+  `{error:{code,message}, meta:{request_id}}`。`X-Request-Id` 用于响应 meta；未提供时
+  ingress 生成新的 request id；`/healthz` 和 `/readyz` 保留轻量 health payload。错误不泄露
   Python、Redis 或 SQL 细节。
 - launch 在 Agent-owned `run_dispatches` 中以不可变 `sha256` fence 先行受理；同一 `run_id`
   和相同 body 的重试复用 receipt，body 漂移返回 `409 run_identity_conflict`。这保证了
@@ -134,7 +136,7 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 
 - [x] Agent HTTP ingress 支持 launch、control、Run events evidence、session history 和 session replay。
 - [x] BFF 到 Agent 只走版本化 HTTP；BFF 不读取 Agent PostgreSQL/Redis。
-- [x] 除 `/healthz` 外的请求始终由 `x-kokoro-service` + `x-kokoro-internal-secret` 认证；未配置
+- [x] 除 `/healthz` 外的请求始终由标准 `Authorization: Bearer` 认证；未配置
   secret 时 fail-closed 返回 `503 service_auth_not_configured`，history/replay 使用受信 identity headers。
 - [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 durable inbox 去重和恢复。
 - [x] BFF session list 通过 Agent durable identity-scoped ingress 投影；detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现。

@@ -179,7 +179,7 @@ class DeliveryCreatedPayload(StrictModel):
 
 
 class RunControlReceiptPayload(StrictModel):
-    decision_id: NonEmptyStr
+    command_id: NonEmptyStr
     control_status: ControlReceiptStatus
 
 

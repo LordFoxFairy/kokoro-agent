@@ -52,10 +52,10 @@ music_chat Feature  -> general Agent + music Agent + declared handoff
 ### AgentFactory
 
 `AgentFactory` 是 GA 内部唯一构造器，worker 启动时持有共享服务，并按 Feature 声明选择构造
-路径。共享服务作为 Factory 实例字段存在，不通过 Feature/Agent API 传递，不命名为 `deps`。
+路径。运行依赖作为 Factory 实例字段存在，不通过 Feature/Agent API 传递，不使用含义过宽的 `services` 或 `deps` 命名。
 
 ```python
-factory = AgentFactory(services)
+factory = AgentFactory(dependencies)
 built = await factory.build(request)  # AgentHandle；实际执行对象是 built.runnable
 ```
 
@@ -110,8 +110,8 @@ src/kokoro_agent/
 `deepagents.py` 包装模块、自有 state。`worker` 是 Redis 进程入口；`agent_factory.py` 不是
 网络服务入口。
 
-构造辅助职责固定归位：`worker/services.py` 保存 worker 启动时创建的共享资源与部署注入的可选 owner clients；`tools/` 负责
-工具解析与 guard chain，但只接收所需窄参数，不反向依赖 `WorkerServices`；`prompts/` 只保存静态 prompt 资产；`agents/subagents.py` 负责 DeepAgents
+构造辅助职责固定归位：`worker/dependencies.py` 保存 worker 启动时创建的共享资源与部署注入的可选 owner clients；`tools/` 负责
+工具解析与 guard chain，但只接收所需窄参数，不反向依赖 `WorkerDependencies`；`prompts/` 只保存静态 prompt 资产；`agents/subagents.py` 负责 DeepAgents
 native subagent。`agent_factory.py` 保留构造顺序及唯一的 `create_deep_agent` 调用。
 
 依赖方向：

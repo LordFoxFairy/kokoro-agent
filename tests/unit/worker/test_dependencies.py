@@ -1,7 +1,7 @@
 """Worker owner-client composition remains optional and outside Run input."""
 
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef
-from kokoro_agent.worker.services import WorkerClients
+from kokoro_agent.worker.dependencies import WorkerClients
 
 
 async def test_default_worker_clients_leave_agent_core_available() -> None:

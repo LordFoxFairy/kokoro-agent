@@ -16,7 +16,7 @@ from kokoro_agent.contract import REQUESTS_STREAM
 from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agent_factory import AgentFactory
-from kokoro_agent.worker.services import WorkerClients, WorkerServices
+from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from kokoro_agent.policy import Backend
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
@@ -92,7 +92,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             )
         ) as chat_store,
     ):
-        services = WorkerServices(
+        dependencies = WorkerDependencies(
             model=config.model,
             sandbox=config.sandbox,
             run_token_budget=config.run_token_budget,
@@ -109,7 +109,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             mcp_client=owner_clients.mcp,
             delivery=owner_clients.delivery,
         )
-        agent_factory = AgentFactory(services)
+        agent_factory = AgentFactory(dependencies)
         supervisor = RunSupervisor(
             agent_builder=agent_factory.build,
             store=store,

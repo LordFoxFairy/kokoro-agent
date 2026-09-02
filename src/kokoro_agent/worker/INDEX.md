@@ -14,7 +14,7 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
   单点读 env → 创建 GA 自有 Redis stream + PostgreSQL checkpointer/run_repository/memory/chat → 注入可选 public clients →
   `AgentFactory` → `RunSupervisor.serve`。标准 CLI 的 owner clients 为空能力，不直读外部私库。
   SIGTERM 优雅停机：停消费新请求，`drain` 限时等活跃 run 收尾，超时交 TTL 租约重拾。
-- `services.py`：`WorkerClients` 是部署期可选 owner-client 集；`WorkerServices` 集中保存 worker
+- `dependencies.py`：`WorkerClients` 是部署期可选 owner-client 集；`WorkerDependencies` 集中保存 worker
   warm 时创建一次的模型、checkpoint、run_repository、store、sandbox 和窄 clients。两者都不是 caller
   input、Service Locator 或 Feature 配方。`WorkerClients.delivery` 是可选 Storage Artifact
   facade；缺席时只不装配 deliver tool。

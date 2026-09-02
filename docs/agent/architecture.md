@@ -110,10 +110,10 @@ DeepAgent 的只读 Skill backend route，不改变 Feature 或 Agent 定义。F
 ## 4. Factory 如何避免 `if` 地狱
 
 `AgentFactory` 在 worker 启动时创建一次，持有模型、checkpointer、RunRepository、workbench 和
-clients 等共享服务。它们是 worker 内部字段，不出现在 Feature/Agent API，也不命名为 `deps`；`tools/`、`agents/` 等叶子模块只接收自身所需窄参数，不接收整个 `WorkerServices`。
+clients 等运行依赖。它们是 worker 内部字段，不出现在 Feature/Agent API，也不使用含义过宽的 `services` 或 `deps` 命名；`tools/`、`agents/` 等叶子模块只接收自身所需窄参数，不接收整个 `WorkerDependencies`。
 
 ```python
-factory = AgentFactory(services)
+factory = AgentFactory(dependencies)
 built = await factory.build(request)  # AgentHandle：官方 runnable + 交付说明索引
 runnable = built.runnable
 ```
@@ -125,7 +125,7 @@ Factory 只有两条明确构造路径：
    `langgraph_swarm.create_swarm`。
 
 `agent_factory.py` 同时拥有构造顺序与唯一的 `create_deep_agent(...)` 调用，不再设置第二个
-`factory/` 目录。参数准备按其真实 owner 放置：worker 共享资源在 `worker/services.py`，工具集合
+`factory/` 目录。参数准备按其真实 owner 放置：worker 运行依赖在 `worker/dependencies.py`，工具集合
 和 guard chain 在 `tools/`，静态 prompt 资产在 `prompts/`，DeepAgents native subagent 的声明与装配在
 `agents/subagents.py`。这些模块不产生 `Graph`/`State`，不保存 Session，也不接收 caller 依赖。
 

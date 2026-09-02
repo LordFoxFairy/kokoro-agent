@@ -43,7 +43,9 @@ Root `LaunchRunRequest(feature_key, message_id, content, ExecutionIdentity)`
 调用方不提交 namespace、thread、Agent、Skill、MCP、工具或 graph 配方；Root contract 允许的模型
 标签/trace 只作为旁路元数据。`RuntimeNamespace` 只在 GA 内部派生；Factory 把可信
 `ExecutionIdentity` 和该 namespace 传给外部 Capability client 做本次解析，二者不进入 Agent/Feature
-声明。共享服务由 worker 启动时持有在 `AgentFactory` 实例中，不通过请求参数传播，也不称为 `deps`。
+声明。运行依赖由 worker 启动时组装为 `WorkerDependencies`，持有在 `AgentFactory` 实例中；不通过请求参数传播，
+也不伪装成业务 `Service`。数据访问通过 `repositories/` 的 repository port，技术实现通过
+`infrastructure/` adapter 提供。
 
 LangChain checkpoint/native state 与 GA 聊天事实严格分开：
 

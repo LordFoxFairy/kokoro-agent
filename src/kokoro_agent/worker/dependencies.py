@@ -1,4 +1,4 @@
-"""Factory 的 leaf 上下文：worker 共享服务。
+"""Factory 的 leaf 上下文：worker 运行依赖。
 
 它不依赖具体 Feature，也不读取请求之外的 transport；只由 AgentFactory 内部使用。
 """
@@ -33,8 +33,8 @@ class WorkerClients:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkerServices:
-    """worker 启动时构建一次、由 AgentFactory 持有的共享服务。
+class WorkerDependencies:
+    """worker 启动时构建一次、由 AgentFactory 持有的运行依赖。
 
     该对象只存在于 Factory/worker 内部；它不是 Run input，也不会由 caller 构造或
     通过 Feature/Agent API 传递。

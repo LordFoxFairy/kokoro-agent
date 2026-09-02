@@ -27,7 +27,7 @@ from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset
 from kokoro_agent.agents.definition import Agent
-from kokoro_agent.worker.services import WorkerServices
+from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.contract import RunRequest
 from kokoro_agent.contract.storage import workspace_key
 from kokoro_agent.policy import Backend, ModelConfig
@@ -61,7 +61,7 @@ class AgentHandle:
 
 async def build_deep_agent(
     agent: Agent,
-    services: WorkerServices,
+    dependencies: WorkerDependencies,
     request: RunRequest,
     *,
     additional_tools: Sequence[BaseTool] = (),
@@ -73,36 +73,36 @@ async def build_deep_agent(
     # docker/e2b 档带 run 级生命周期：resume 经 run_repository 重连既往箱/容器。
     backend = await make_backend_for_run(
         agent.backend,
-        services.sandbox,
+        dependencies.sandbox,
         workspace=workspace_key(scope.namespace, scope.session_id),
         run_id=request.run_id,
-        sandbox_store=services.run_repository,
+        sandbox_store=dependencies.run_repository,
     )
     resolved_skills = await resolve_declared_skills(
-        agent, services.skill_client, request
+        agent, dependencies.skill_client, request
     )
-    skill_backend = CapabilitySkillBackend(resolved_skills, services.skill_reader)
+    skill_backend = CapabilitySkillBackend(resolved_skills, dependencies.skill_reader)
     native_backend = _with_native_skills(backend, skill_backend)
     toolset = await build_toolset(
         request,
         agent=agent,
-        toolbox=services.toolbox,
-        mcp_servers=services.mcp_servers,
-        mcp_client=services.mcp_client,
+        toolbox=dependencies.toolbox,
+        mcp_servers=dependencies.mcp_servers,
+        mcp_client=dependencies.mcp_client,
         backend=native_backend,
-        delivery=services.delivery,
+        delivery=dependencies.delivery,
     )
     if additional_tools:
         toolset = toolset.with_tools(additional_tools)
     chains = build_guard_chains(
-        services.run_repository,
-        services.run_token_budget,
+        dependencies.run_repository,
+        dependencies.run_token_budget,
         request,
         policy,
     )
     subagent_bundle = build_subagent_bundle(
         toolset,
-        services.subagent_catalog,
+        dependencies.subagent_catalog,
         chains.subagent,
         declared_subagents=agent.subagents,
     )
@@ -120,7 +120,7 @@ async def build_deep_agent(
     # upstream DeepAgents/LangGraph runnable; GA does not wrap its loop/state.
     candidate: object = create_deep_agent(
         model=make_chat_model(
-            services.model,
+            dependencies.model,
             select_model_label(
                 request.requested_model_label,
                 agent.model or ModelConfig(provider="anthropic", name="claude"),
@@ -130,7 +130,7 @@ async def build_deep_agent(
         system_prompt=agent.prompt,
         skills=[SKILLS_ROOT],
         subagents=subagent_bundle.subagents,
-        checkpointer=services.checkpointer,
+        checkpointer=dependencies.checkpointer,
         permissions=build_filesystem_permissions(policy.filesystem),
         interrupt_on=build_interrupt_on(
             frozenset(policy.approval_tools),
@@ -140,7 +140,7 @@ async def build_deep_agent(
         middleware=main_chain,
         backend=native_backend,
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
-        store=services.memory_store,
+        store=dependencies.memory_store,
         name=name,
     )
     return AgentHandle(
@@ -188,12 +188,12 @@ def _with_native_skills(
 
 
 class AgentFactory:
-    """worker-local 构造器；共享服务存于实例，不以 ``deps`` 出现在运行 API。"""
+    """worker-local 构造器；运行依赖存于实例，不暴露给运行 API。"""
 
     def __init__(
-        self, services: WorkerServices, catalog: FeatureCatalog = FEATURE_CATALOG
+        self, dependencies: WorkerDependencies, catalog: FeatureCatalog = FEATURE_CATALOG
     ) -> None:
-        self._services = services
+        self._dependencies = dependencies
         self._catalog = catalog
 
     def feature(self, key: str) -> Feature:
@@ -214,7 +214,7 @@ class AgentFactory:
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
         if len(feature.agents) == 1:
-            return await build_deep_agent(feature.agents[0], self._services, request)
+            return await build_deep_agent(feature.agents[0], self._dependencies, request)
         if not feature.handoffs:
             raise ValueError(
                 f"feature {feature.key!r} has multiple agents but no handoffs"
@@ -228,7 +228,7 @@ class AgentFactory:
             built_agents.append(
                 await build_deep_agent(
                     agent,
-                    self._services,
+                    self._dependencies,
                     request,
                     additional_tools=handoffs,
                     name=agent.key,
@@ -237,8 +237,8 @@ class AgentFactory:
         native = create_swarm(
             [built.runnable for built in built_agents],
             entry_agent=feature.entry_agent,
-            checkpointer=self._services.checkpointer,
-            store=self._services.memory_store,
+            checkpointer=self._dependencies.checkpointer,
+            store=self._dependencies.memory_store,
         )
         descriptions: dict[str, str] = {}
         for built in built_agents:

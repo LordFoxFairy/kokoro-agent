@@ -629,24 +629,12 @@ class RunSupervisor:
                 stream, group=CONSUMER_GROUP, consumer=self._consumer
             ):
                 msg = parse_inbound(item.event)
-                # control 流按 run 隔离：只认本 run 的 resume/cancel，异帧 ACK 丢弃（无 inbox）。
+                # control 流按 run 隔离：只认本 run 的控制命令，异帧 ACK 丢弃。
                 if msg is None or msg.run_id != run_id or isinstance(msg, RunRequest):
                     await bus.ack(stream, CONSUMER_GROUP, item.cursor)
                     continue
-                if isinstance(msg, RunSteer):
-                    # steer 由 command_id 幂等：先 ACK 再入账，不走 resume/cancel inbox。
-                    await bus.ack(stream, CONSUMER_GROUP, item.cursor)
-                    applied = await self._guarded_control_apply(bus, run_id, msg)
-                    if applied:
-                        await self._store.mark_control_succeeded(
-                            msg.run_id, msg.command_id
-                        )
-                    else:
-                        await self._store.mark_control_failed(
-                            msg.run_id, msg.command_id, "control_apply_failed"
-                        )
-                    continue
-                # resume/cancel：durable command row 先于 ACK（§8.3「control 在 durable row 前 ACK」翻绿）。
+                # 所有 control kind 都先落同一 command ledger，再 ACK 和 apply；steer
+                # 若绕过 ledger，重投会重复写入并失去统一 receipt 语义。
                 await self._consume_control_frame(bus, run_id, msg, stream, item.cursor)
         except Exception:
             # 终态清理删流先于 cancel（监听可能是当前任务）：删流后阻塞读抛 NOGROUP 属干净收束；
@@ -674,11 +662,12 @@ class RunSupervisor:
         self,
         bus: StreamProtocol,
         run_id: str,
-        msg: RunResume | RunCancel,
+        msg: RunResume | RunCancel | RunSteer,
         stream: str,
         cursor: str,
     ) -> None:
-        # 落 run_repository inbox{command_id,fingerprint,status:persisted}→ACK→apply（durable claim 后 ACK）。
+        # 落 run_repository command{command_id,fingerprint,status:persisted}→ACK→apply。
+        # 这条路径覆盖 resume/cancel/steer，保证 command ledger 是唯一幂等边界。
         request = await self._control_request(run_id)
         if request is None:
             LOGGER.warning("dropping control for unknown run_id=%s", run_id)
@@ -703,7 +692,7 @@ class RunSupervisor:
         )
         await bus.ack(stream, CONSUMER_GROUP, cursor)
         if not first:
-            # 重复 command_id（重发/重投）→ inbox 命中 → ACK 丢弃不重放（不双放）。
+            # 重复 command_id（重发/重投）→ ledger 命中 → ACK 丢弃不重放（不双放）。
             LOGGER.debug(
                 "dropping duplicate control command_id=%s run_id=%s",
                 msg.command_id,
@@ -716,7 +705,7 @@ class RunSupervisor:
         await self._apply_recorded_control(bus, run_id, msg)
 
     async def _apply_recorded_control(
-        self, bus: StreamProtocol, run_id: str, msg: RunResume | RunCancel
+        self, bus: StreamProtocol, run_id: str, msg: RunResume | RunCancel | RunSteer
     ) -> None:
         # persisted 已发；此处 apply + applied 时点回执。restart 续办亦经此路（不重发 persisted）。
         if isinstance(msg, RunCancel):
@@ -732,7 +721,7 @@ class RunSupervisor:
                     run_id, msg.command_id, "control_apply_failed"
                 )
             return
-        # resume：apply（spawn）后 run 续跑、control 任务存活，可安全后置 applied 回执。
+        # resume/steer：apply 后再写 applied，随后把 HTTP receipt 收口为 succeeded。
         if await self._guarded_control_apply(bus, run_id, msg):
             await self._store.mark_control_applied(run_id, msg.command_id)
             await self._store.mark_control_succeeded(run_id, msg.command_id)
@@ -758,9 +747,9 @@ class RunSupervisor:
         )
 
     async def _control_fingerprint(
-        self, run_id: str, msg: RunResume | RunCancel
+        self, run_id: str, msg: RunResume | RunCancel | RunSteer
     ) -> str | None:
-        # resume 记录当前 interrupt 指纹（重启续办据此判 stale）；cancel 无 interrupt 依赖=None。
+        # resume 记录当前 interrupt 指纹（重启续办据此判 stale）；cancel/steer 无 interrupt 依赖。
         if isinstance(msg, RunResume):
             return await self._interrupt_fingerprint(run_id)
         return None
@@ -796,7 +785,7 @@ class RunSupervisor:
             return
         for entry in entries:
             msg = parse_inbound(json.loads(entry.body))
-            if not isinstance(msg, RunResume | RunCancel):
+            if not isinstance(msg, RunResume | RunCancel | RunSteer):
                 await self._store.mark_control_superseded(
                     entry.run_id, entry.command_id
                 )

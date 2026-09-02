@@ -1,7 +1,7 @@
 """R2 control command 与 receipt 闭环（agent 侧）：
 
-- inbox keep-first：重复 command_id 不双放。
-- 两时点回执：persisted（落 inbox）与 applied（apply 后）各发一次 run.control.receipt。
+- command ledger keep-first：重复 command_id 不双放。
+- 两时点回执：persisted（落 command ledger）与 applied（apply 后）各发一次 run.control.receipt。
 - 重启续办 scanner：persisted 未 applied 的 command——fingerprint 匹配当前 interrupt 才续 apply，
   不匹配/已终态=stale→superseded 不 apply（经 public serve() 启动路径驱动）。
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -35,6 +36,7 @@ from kokoro_agent.contract import (
     RunControlReceipt,
     RunRequest,
     SubagentSource,
+    RunSteer,
     inbound_adapter,
     run_control_stream,
 )
@@ -260,8 +262,41 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
     assert run_control_stream("cc") in bus.deleted
 
 
+async def test_steer_via_control_loop_uses_the_same_ledger_and_is_idempotent() -> None:
+    run_repository = FakeRunRepository()
+    await run_repository.try_claim(request("cs"))
+    bus = FakeBus()
+    sup = _supervisor(FakeAgent(run=text_run("x")), run_repository)
+    steer = _inbound(
+        {
+            "kind": "run.steer",
+            "command_id": "steer-1",
+            "run_id": "cs",
+            "session_id": "s1",
+            "message_id": "message-1",
+            "content": "continue with the API contract",
+        }
+    )
+    assert isinstance(steer, RunSteer)
+
+    consumer = cast(Any, sup)._consume_control_frame
+    await consumer(bus, "cs", steer, run_control_stream("cs"), "1")
+    await consumer(bus, "cs", steer, run_control_stream("cs"), "2")
+
+    assert run_repository.control_commands[("cs", "steer-1")]["status"] == "succeeded"
+    assert run_repository.steers["cs"] == [
+        ("message-1", "continue with the API contract")
+    ]
+    receipts = find_events(bus.run_events("cs"), RunControlReceipt)
+    assert [receipt.payload.control_status for receipt in receipts] == [
+        "persisted",
+        "applied",
+    ]
+    assert bus.acked == ["1", "2"]
+
+
 async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
-    # 崩溃前：inbox persisted 已落，fingerprint=当时 interrupt 指纹，apply 未跑。serve() 启动续办。
+    # 崩溃前：command ledger persisted 已落，fingerprint=当时 interrupt 指纹，apply 未跑。serve() 启动续办。
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     run_repository = FakeRunRepository()
     await run_repository.try_claim(request("rf"))

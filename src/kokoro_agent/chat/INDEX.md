@@ -2,7 +2,7 @@
 
 GA-owned Chat execution facts. This package is independent of DeepAgents/LangGraph native
 state and never reads checkpoint tables. The Web-facing Chat API is owned by
-`kokoro-bff/modules/chat`.
+the Chat module inside `kokoro-bff`.
 
 - `models.py`: strict user-visible `chat_messages` / `chat_events` record shapes and GA ID derivation.
 - `projection.py`: allowlisted projection from execution payloads; raw thinking, tool arguments,

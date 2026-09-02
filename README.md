@@ -8,7 +8,7 @@ peer 接手会话时使用官方 `langgraph-swarm`。GA worker 从 Redis 接收 
 Root `contract/` 是 API/AIP 跨仓契约唯一来源；当前 Redis worker 使用严格 internal
 envelope adapter（Root `LaunchRunRequest` 的顶层 `message_id/content` 在 Redis 中位于
 `input`），generated consumer/transport 接入后替换映射层，不在本仓复制契约。GA 不面向浏览器，
-`kokoro-bff/modules/chat` 通过版本化 Chat contract 查询历史、订阅 replay 并投影 AG-UI/SSE；
+`kokoro-bff` 内部 Chat 业务模块通过版本化 Chat contract 查询历史、订阅 replay 并投影 AG-UI/SSE；
 本仓只提供执行事实和恢复边界。
 
 ## 目标目录（按真实职责）
@@ -48,7 +48,7 @@ Redis LaunchRunRequest
   -> create_deep_agent | official Swarm
   -> native state/checkpoint + GA RunRepository/workbench
   -> chat_messages/chat_events durable write
-  -> Root Chat query boundary -> kokoro-bff/modules/chat Chat API/AG-UI
+  -> Root Chat query boundary -> kokoro-bff Chat API/AG-UI
 ```
 
 - 外部请求携带 `ExecutionIdentity`，不携带 caller namespace、thread、Agent、Skill、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。

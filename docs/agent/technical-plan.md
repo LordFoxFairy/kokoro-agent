@@ -17,7 +17,7 @@ Root LaunchRunRequest
      或 create_deep_agent(...) + create_swarm(...)  # peer handoff
   -> native state/checkpoint
   -> RunRepository、chat_messages、chat_events、workbench
-  -> Root Chat query boundary -> kokoro-bff/modules/chat 查询/replay/AG-UI
+  -> Root Chat query boundary -> kokoro-bff Chat module 查询/replay/AG-UI
 ```
 
 请求表达“进入哪个产品 Feature”和“这次输入什么”；可选模型标签只交给模型选择边界，不表达如何组装 Agent。Feature 是可信的

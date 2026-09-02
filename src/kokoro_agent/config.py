@@ -22,7 +22,7 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
-from kokoro_agent.repositories.run_repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings
+from kokoro_agent.infrastructure.postgres_run_repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings
 from kokoro_agent.streams.factory import StreamSettings
 
 

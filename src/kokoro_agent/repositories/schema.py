@@ -17,8 +17,6 @@ import psycopg
 
 from kokoro_agent.infrastructure.postgres import ensure_schema, qualified
 
-DEFAULT_LEASE_TTL_S = 90
-
 RUN_CLAIMS_TABLE = "kokoro_agent_runs"
 RUN_DISPATCHES_TABLE = "kokoro_agent_run_dispatches"
 RUN_DLQ_TABLE = "kokoro_agent_run_dlq"
@@ -171,7 +169,6 @@ async def ensure_run_repository_schema(
 
 
 __all__ = [
-    "DEFAULT_LEASE_TTL_S",
     "RUN_CLAIMS_TABLE",
     "RUN_DISPATCHES_TABLE",
     "RUN_DLQ_TABLE",

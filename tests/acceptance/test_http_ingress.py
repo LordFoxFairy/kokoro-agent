@@ -32,7 +32,7 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.http.server import create_http_server
-from kokoro_agent.repositories.run_repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings, make_run_repository
+from kokoro_agent.infrastructure.postgres_run_repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings, make_run_repository
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream

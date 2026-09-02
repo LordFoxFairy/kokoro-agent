@@ -23,7 +23,7 @@ from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest, ChatSessionList
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.contract.control import IdentityKind
 from kokoro_agent.http.ingress import AgentIngress, IngressError
-from kokoro_agent.repositories.run_repository import RunRepositorySettings, make_run_repository
+from kokoro_agent.infrastructure.postgres_run_repository import RunRepositorySettings, make_run_repository
 from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 

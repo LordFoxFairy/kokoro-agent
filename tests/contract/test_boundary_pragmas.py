@@ -72,7 +72,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "src/kokoro_agent/infrastructure/checkpoints.py": frozenset(
         {"reportCallIssue", "reportArgumentType", "reportIncompatibleMethodOverride"}
     ),
-    "src/kokoro_agent/repositories/run_repository.py": frozenset(
+    "src/kokoro_agent/infrastructure/postgres_run_repository.py": frozenset(
         {
             "reportCallIssue",
             "reportArgumentType",

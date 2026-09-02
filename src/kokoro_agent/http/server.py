@@ -179,12 +179,12 @@ async def dispatch_request(
                     database_url=config.database_url,
                     schema_name=config.database_schema,
                 )
-            ) as chat_store,
+            ) as chat_repository,
         ):
             if method == "GET" and path == "/readyz":
                 await bus.read_all(REQUESTS_STREAM)
                 return 200, {"status": "ready", "service": "kokoro-agent"}
-            ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(chat_store))
+            ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(chat_repository))
             if method == "GET" and path == "/v1/sessions":
                 result = await ingress.list_sessions(_session_list_page(headers, query))
                 return 200, _envelope(result.model_dump(mode="json"), request_id)

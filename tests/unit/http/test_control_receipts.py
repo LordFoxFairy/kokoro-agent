@@ -94,7 +94,7 @@ class Bus:
         self.published.append({"stream": stream, "event": event, "maxlen": maxlen})
 
 
-class ChatStore:
+class ChatRepository:
     pass
 
 
@@ -102,7 +102,7 @@ def _ingress(bus: Bus, run_repository: ReceiptRepository) -> AgentIngress:
     return AgentIngress(
         bus=cast(Any, bus),
         run_repository=cast(Any, run_repository),
-        chat_service=ChatService(cast(Any, ChatStore())),
+        chat_service=ChatService(cast(Any, ChatRepository())),
     )
 
 

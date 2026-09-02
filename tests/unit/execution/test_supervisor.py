@@ -166,14 +166,14 @@ async def test_request_consumer_persists_user_message_and_safe_chat_events() -> 
 
 
 async def test_chat_message_failure_happens_before_dispatch_claim_and_ack() -> None:
-    class _FailingChatStore(FakeChatRepository):
+    class _FailingChatRepository(FakeChatRepository):
         async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
             raise RuntimeError("chat unavailable")
 
     item = StreamItem(cursor="1", event=request("chat-fail").model_dump())
     bus = FakeBus(inbound=(item,))
     agent = FakeAgent(run=text_run("unreachable"))
-    supervisor, run_repository = _supervisor(agent, chat_repository=_FailingChatStore())
+    supervisor, run_repository = _supervisor(agent, chat_repository=_FailingChatRepository())
 
     await supervisor.serve(bus)
 

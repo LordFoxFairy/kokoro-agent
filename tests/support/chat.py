@@ -1,4 +1,4 @@
-"""In-process ChatStore used by hermetic worker and emitter tests."""
+"""In-process ChatRepository used by hermetic worker and emitter tests."""
 
 from __future__ import annotations
 

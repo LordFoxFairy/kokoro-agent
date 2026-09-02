@@ -46,8 +46,10 @@ control stream，由 worker 的 durable inbox 和 session 校验继续完成幂�
 Chat history/replay 只返回 `chat_messages`/`chat_events` 的 allowlisted projection；请求通过
 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
 `x-kokoro-identity-assertion-ref` 提供受信服务上下文。浏览器的 `X-Domain` 不属于该接口，也
-不会参与身份或隔离计算。所有非 health 请求在配置内部密钥时要求
-`x-kokoro-service: kokoro-bff` 与 `x-kokoro-internal-secret`。
+不会参与身份或隔离计算。除 `/healthz` 外的所有请求始终要求配置可信的
+`KOKORO_INTERNAL_SECRET_AGENT`，并要求 `x-kokoro-service: kokoro-bff` 与
+`x-kokoro-internal-secret`；未配置 secret 时返回 `503 service_auth_not_configured`，认证缺失
+或错误时返回 `403 service_auth_failed`。
 
 业务响应统一为 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`；
 health endpoint 保留轻量 status payload。空 body、

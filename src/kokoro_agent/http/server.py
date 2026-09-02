@@ -126,11 +126,16 @@ async def dispatch_request(
     if method == "GET" and path == "/healthz":
         return 200, {"status": "ok", "service": "kokoro-agent"}
     secret = config.internal_secret_agent
-    if secret is not None:
-        if headers.get("x-kokoro-service") != "kokoro-bff":
-            return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
-        if headers.get("x-kokoro-internal-secret") != secret.get_secret_value():
-            return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
+    if secret is None or not secret.get_secret_value().strip():
+        return 503, _error(
+            "service_auth_not_configured",
+            "Agent ingress service authentication is not configured",
+            request_id,
+        )
+    if headers.get("x-kokoro-service") != "kokoro-bff":
+        return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
+    if headers.get("x-kokoro-internal-secret") != secret.get_secret_value():
+        return 403, _error("service_auth_failed", "Agent ingress authentication failed", request_id)
     bus = make_stream(config.stream)
     try:
         async with (

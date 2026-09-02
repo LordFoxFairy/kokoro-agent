@@ -187,8 +187,9 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
 
 - Agent business HTTP v1 已提供 launch、control、Run events evidence、session history 和
   session replay；BFF 只能通过该 HTTP ingress 调用，不读取 Agent PostgreSQL/Redis。
-- HTTP ingress 的非 health 请求在配置内部密钥时校验 `x-kokoro-service` +
-  `x-kokoro-internal-secret`；history/replay 额外校验受信 tenant/subject/actor/identity-assertion
+- HTTP ingress 的非 `/healthz` 请求始终要求已配置的内部密钥，并校验 `x-kokoro-service` +
+  `x-kokoro-internal-secret`；未配置密钥返回 `503 service_auth_not_configured`，认证缺失或错误
+  返回 `403 service_auth_failed`。history/replay 额外校验受信 tenant/subject/actor/identity-assertion
   headers，业务响应使用统一 `{data, meta}` / `{error, meta}` envelope（health endpoint 保留
   轻量 status payload）。
 - launch 先持久化不可变 `sha256` fence；同一 `run_id` 重试复用 receipt，body 漂移返回

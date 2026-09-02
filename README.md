@@ -105,8 +105,10 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 - `GET /v1/sessions/{session_id}/events`：安全 session replay。
 
 BFF 只通过这些版本化 HTTP 入口访问 Agent，不读取 Agent PostgreSQL/Redis、checkpoint、
-RunLedger 或内部 Python 类型。配置 `KOKORO_INTERNAL_SECRET_AGENT` 时，除 health 外的请求
-必须带 `x-kokoro-service: kokoro-bff` 和 `x-kokoro-internal-secret`；history/replay 还要带
+RunLedger 或内部 Python 类型。除 `/healthz` 外的请求始终要求配置可信的
+`KOKORO_INTERNAL_SECRET_AGENT`，并必须带 `x-kokoro-service: kokoro-bff` 和
+`x-kokoro-internal-secret`；未配置 secret 时请求返回 `503 service_auth_not_configured`，认证
+缺失或错误时返回 `403 service_auth_failed`。history/replay 还要带
 受信的 tenant/subject/actor/identity-assertion headers。响应统一为
 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`（health endpoint
 保留轻量 status payload）；launch 以不可变 `sha256` fence 对同一 `run_id` 幂等，body 漂移

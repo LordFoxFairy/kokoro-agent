@@ -122,7 +122,7 @@ async def test_general_purpose_delegation_runs_inside_guards(
     run_id = f"rgp-{uuid4().hex}"
     run_repository = FakeRunRepository()
     assert await run_repository.try_mark_terminal(run_id)
-    guard = TerminalGuardMiddleware(store=run_repository, run_id=run_id)
+    guard = TerminalGuardMiddleware(run_repository=run_repository, run_id=run_id)
     main_model = LocalFakeChatModel.with_script([
         AIMessage(content="", tool_calls=[{
             "name": "task", "args": {"description": "do", "subagent_type": "general-purpose"},

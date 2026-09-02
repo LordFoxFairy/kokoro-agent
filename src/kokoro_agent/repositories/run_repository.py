@@ -1,6 +1,6 @@
 """Agent execution repository port and transport-neutral result records.
 
-Concrete PostgreSQL persistence lives in ``infrastructure/postgres_run_repository.py``.
+The concrete PostgreSQL adapter lives in ``infrastructure/postgres_run_repository.py``.
 This module intentionally contains no database driver, SQL, or connection factory.
 """
 

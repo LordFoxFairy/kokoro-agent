@@ -145,7 +145,7 @@ def _model_response(total_tokens: int) -> ModelResponse:
 
 async def test_token_budget_allows_then_trips() -> None:
     store = FakeRunRepository()
-    middleware = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
+    middleware = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="r1")
 
     async def handler(_request: object) -> ModelResponse:
         return _model_response(60)
@@ -159,21 +159,21 @@ async def test_token_budget_allows_then_trips() -> None:
 async def test_token_budget_survives_middleware_rebuild() -> None:
     # resume 重建 middleware：计数在 store，不清零。
     store = FakeRunRepository()
-    first = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
+    first = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="r1")
 
     async def handler(_request: object) -> ModelResponse:
         return _model_response(60)
 
     await first.awrap_model_call(_model_request(), handler)
-    rebuilt = TokenBudgetMiddleware(budget=100, store=store, run_id="r1")
+    rebuilt = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="r1")
     with pytest.raises(TokenBudgetExceeded):
         await rebuilt.awrap_model_call(_model_request(), handler)
 
 
 async def test_token_budget_isolated_per_run() -> None:
     store = FakeRunRepository()
-    a = TokenBudgetMiddleware(budget=100, store=store, run_id="ra")
-    b = TokenBudgetMiddleware(budget=100, store=store, run_id="rb")
+    a = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="ra")
+    b = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="rb")
 
     async def handler(_request: object) -> ModelResponse:
         return _model_response(90)

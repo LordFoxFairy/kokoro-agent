@@ -440,10 +440,10 @@ class PostgresChatRepository:
 async def make_chat_repository(
     settings: PostgresChatRepositorySettings,
 ) -> AsyncGenerator[PostgresChatRepository, None]:
-    store = PostgresChatRepository(settings.database_url, settings.schema_name)
-    await store.setup()
+    repository = PostgresChatRepository(settings.database_url, settings.schema_name)
+    await repository.setup()
     try:
-        yield store
+        yield repository
     finally:
         pass
 

@@ -28,7 +28,7 @@ async def test_before_model_injects_mailbox_in_order() -> None:
     await run_repository.try_claim(request("r-steer"))
     await run_repository.add_steer("r-steer", "m1", "改成国内市场")
     await run_repository.add_steer("r-steer", "m2", "语气正式一点")
-    middleware = SteeringMiddleware(store=run_repository, run_id="r-steer")
+    middleware = SteeringMiddleware(run_repository=run_repository, run_id="r-steer")
     update = await middleware.abefore_model({"messages": []}, Runtime(context=None))
     assert update is not None
     messages = update["messages"]
@@ -40,7 +40,7 @@ async def test_before_model_injects_mailbox_in_order() -> None:
 async def test_before_model_empty_mailbox_is_noop() -> None:
     run_repository = FakeRunRepository()
     await run_repository.try_claim(request("r-steer"))
-    middleware = SteeringMiddleware(store=run_repository, run_id="r-steer")
+    middleware = SteeringMiddleware(run_repository=run_repository, run_id="r-steer")
     assert await middleware.abefore_model({"messages": []}, Runtime(context=None)) is None
 
 
@@ -70,7 +70,7 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
         checkpointer=checkpointer,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),
-        middleware=[SteeringMiddleware(store=run_repository, run_id="r-graph")],
+        middleware=[SteeringMiddleware(run_repository=run_repository, run_id="r-graph")],
     )
 
     async def claim() -> bool:
@@ -94,7 +94,7 @@ async def test_steer_reaches_model_in_real_graph(checkpointer: BaseCheckpointSav
     # （随 run TTL 清扫，绝不丢插话）。手动再走一轮 before_model 验证见证机制：
     # 插话已在消息史（=已随 checkpoint 落定）→ 本轮 ack 清箱、且不重复注入。
     assert await run_repository.peek_steers("r-graph") == [("steer-1", "重点只看国内市场")]
-    witness = SteeringMiddleware(store=run_repository, run_id="r-graph")
+    witness = SteeringMiddleware(run_repository=run_repository, run_id="r-graph")
     # "已落定"的最小见证态：插话以稳定 id 存在于消息史（即已进 checkpoint）。
     landed_state: AgentState[Any] = {
         "messages": [HumanMessage(content="重点只看国内市场", id="steer-1")]
@@ -118,6 +118,6 @@ async def test_steer_content_never_empty_fail_loud() -> None:
     run_repository = FakeRunRepository()
     await run_repository.try_claim(request("r-empty"))
     run_repository.steers["r-empty"] = [("mx", "")]
-    middleware = SteeringMiddleware(store=run_repository, run_id="r-empty")
+    middleware = SteeringMiddleware(run_repository=run_repository, run_id="r-empty")
     with pytest.raises(ValueError, match="empty steer"):
         await middleware.abefore_model({"messages": []}, Runtime(context=None))

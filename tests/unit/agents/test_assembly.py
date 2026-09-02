@@ -390,7 +390,7 @@ def test_builtin_subagents_env_parse() -> None:
 
 def test_general_purpose_override_carries_guards_and_inherits() -> None:
     # 同名覆盖内生 GP：middleware 挂守卫；不带 tools/model 键 = 继承主 agent（GP 语义）。
-    guard = TerminalGuardMiddleware(store=FakeRunRepository(), run_id="r1")
+    guard = TerminalGuardMiddleware(run_repository=FakeRunRepository(), run_id="r1")
     spec = general_purpose_subagent([guard])
     assert spec["name"] == "general-purpose"
     assert spec["description"] and spec["system_prompt"]
@@ -400,7 +400,7 @@ def test_general_purpose_override_carries_guards_and_inherits() -> None:
 
 def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
-    guard = TerminalGuardMiddleware(store=FakeRunRepository(), run_id="r1")
+    guard = TerminalGuardMiddleware(run_repository=FakeRunRepository(), run_id="r1")
     catalog = build_subagent_catalog(None, frozenset({"web-researcher"}))
     tools = toolbox_from_config(
         AppConfig.from_env(

@@ -2,7 +2,7 @@
 
 The interface is transport- and database-neutral. PostgreSQL SQL lives in
 ``infrastructure.postgres_chat_repository``; chat projections and services
-consume this port instead of a concrete persistence adapter.
+consume this port instead of a concrete database adapter.
 """
 
 from __future__ import annotations

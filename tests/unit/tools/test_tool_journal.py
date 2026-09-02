@@ -53,7 +53,7 @@ def _request(name: str = "write_file", tool_id: str = "c1") -> ToolCallRequest:
 
 
 def _mw(store: FakeRunRepository) -> ToolEffectJournalMiddleware:
-    return ToolEffectJournalMiddleware(store=store, run_id="rn")
+    return ToolEffectJournalMiddleware(run_repository=store, run_id="rn")
 
 
 async def test_exempt_read_tool_never_journaled() -> None:

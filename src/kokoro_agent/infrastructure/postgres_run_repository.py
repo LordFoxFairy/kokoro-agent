@@ -1106,12 +1106,12 @@ class PostgresRunRepository:
 async def make_run_repository(
     settings: RunRepositorySettings,
 ) -> AsyncGenerator[RunRepository, None]:
-    store = PostgresRunRepository(
+    repository = PostgresRunRepository(
         settings.database_url, settings.lease_ttl_ms, settings.schema_name
     )
-    await store.setup()
+    await repository.setup()
     try:
-        yield store
+        yield repository
     finally:
         pass
 

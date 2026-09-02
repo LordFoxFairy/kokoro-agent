@@ -1,4 +1,4 @@
-"""Canonical PostgreSQL schema for Agent-owned execution persistence.
+"""Canonical PostgreSQL schema for Agent-owned durable execution state.
 
 The Agent database is created from this schema only.  Schema evolution belongs
 in an explicit migration before a new application version is deployed; the

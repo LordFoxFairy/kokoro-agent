@@ -69,7 +69,7 @@ class AppConfig(BaseModel):
     litellm_base_url: OptStr = Field(default=None, validation_alias="KOKORO_LITELLM_BASE_URL")
     litellm_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_LITELLM_API_KEY")
 
-    # --- stream / persistence 域（PG 为 checkpoint+run_repository+memory+chat 共用真后端）---
+    # --- stream / durable-state 域（PG 为 checkpoint+run_repository+memory+chat 共用真后端）---
     redis_url: str = Field(
         default="redis://127.0.0.1:6379/0", validation_alias="KOKORO_REDIS_URL"
     )

@@ -6,7 +6,7 @@ import pytest
 from pydantic import JsonValue
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatProjection
-from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest
+from kokoro_agent.services.chat_service import ChatService, ChatQueryRequest
 from kokoro_agent.contract import (
     ExecutionIdentity,
     IdentityRef,
@@ -15,7 +15,7 @@ from kokoro_agent.contract import (
 )
 from kokoro_agent.http.ingress import AgentIngress, IngressError
 from kokoro_agent.execution.scope import runtime_namespace
-from support.chat import FakeChatStore
+from support.chat import FakeChatRepository
 from support.fakes import FakeBus, FakeRunRepository
 
 
@@ -44,7 +44,7 @@ def launch_body(run_id: str = "run-1") -> dict[str, object]:
 async def test_launch_durably_admits_before_publishing_worker_envelope() -> None:
     bus = FakeBus()
     run_repository = FakeRunRepository()
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_query=ChatQuery(FakeChatStore()))
+    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(FakeChatRepository()))
 
     receipt = await ingress.launch(launch_body())
 
@@ -60,7 +60,7 @@ async def test_launch_durably_admits_before_publishing_worker_envelope() -> None
 async def test_launch_rejects_run_id_reuse_with_different_immutable_envelope() -> None:
     bus = FakeBus()
     run_repository = FakeRunRepository()
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_query=ChatQuery(FakeChatStore()))
+    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(FakeChatRepository()))
     await ingress.launch(launch_body())
 
     changed = launch_body()
@@ -84,7 +84,7 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
         input=RunInput(message_id="message-run-1", content="hello"),
     )
     run_repository.requests[request.run_id] = request
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_query=ChatQuery(FakeChatStore()))
+    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(FakeChatRepository()))
 
     with pytest.raises(IngressError) as error:
         await ingress.control(
@@ -135,7 +135,7 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
             ("kokoro:run:run-1:events", completed, 100),
         ]
     )
-    chat = FakeChatStore()
+    chat = FakeChatRepository()
     namespace = runtime_namespace(identity())
     await chat.append(
         ChatProjection(
@@ -150,7 +150,7 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
             )
         )
     )
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_query=ChatQuery(chat))
+    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(chat))
 
     evidence = await ingress.evidence("run-1", after_seq=0, limit=1)
     assert evidence["next_seq"] == 1

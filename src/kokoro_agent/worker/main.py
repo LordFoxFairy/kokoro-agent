@@ -29,7 +29,7 @@ from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
-from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
+from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepositorySettings, make_chat_repository
 from kokoro_agent.http.server import create_http_server
 
 LOGGER = logging.getLogger(__name__)
@@ -83,14 +83,14 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
     # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
         make_checkpointer(config.checkpoint) as saver,
-        make_run_repository(config.run_repository) as store,
+        make_run_repository(config.run_repository) as run_repository,
         make_memory_store(config.checkpoint) as memory_store,
-        make_chat_store(
-            ChatStoreSettings(
+        make_chat_repository(
+            PostgresChatRepositorySettings(
                 database_url=config.database_url,
                 schema_name=config.database_schema,
             )
-        ) as chat_store,
+        ) as chat_repository,
     ):
         dependencies = WorkerDependencies(
             model=config.model,
@@ -99,7 +99,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             subagent_catalog=subagent_catalog,
             toolbox=toolbox_from_config(config),
             checkpointer=saver,
-            run_repository=store,
+            run_repository=run_repository,
             memory_store=memory_store,
             skill_client=owner_clients.skill_client,
             skill_reader=owner_clients.skill_reader,
@@ -112,7 +112,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         agent_factory = AgentFactory(dependencies)
         supervisor = RunSupervisor(
             agent_builder=agent_factory.build,
-            store=store,
+            run_repository=run_repository,
             approval_tool_names=agent_factory.approval_names,
             backend_for=agent_factory.backend_for,
             trace_factory=lambda request: trace_config(config.observability, request),
@@ -125,7 +125,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             run_ttl_s=config.retention_run_ttl_s,
             outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
-            chat_store=chat_store,
+            chat_repository=chat_repository,
         )
         LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
         serve_task = asyncio.create_task(supervisor.serve(bus))

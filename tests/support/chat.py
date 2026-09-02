@@ -10,10 +10,10 @@ from kokoro_agent.chat.models import (
     ChatProjection,
     chat_event_id,
 )
-from kokoro_agent.chat.store import ChatIdentityConflict
+from kokoro_agent.repositories.chat_repository import ChatIdentityConflict
 
 
-class FakeChatStore:
+class FakeChatRepository:
     def __init__(self, order: list[str] | None = None) -> None:
         self.order = order
         self.records: list[ChatEventRecord] = []
@@ -147,4 +147,4 @@ class FakeChatStore:
         )
 
 
-__all__ = ["FakeChatStore"]
+__all__ = ["FakeChatRepository"]

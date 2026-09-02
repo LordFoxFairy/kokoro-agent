@@ -4,12 +4,13 @@ GA-owned Chat execution facts. This package is independent of DeepAgents/LangGra
 state and never reads checkpoint tables. The Web-facing Chat API is owned by
 `kokoro-bff/modules/chat`.
 
-- `models.py`: strict `chat_messages` / `chat_events` persistence shapes and GA ID derivation.
+- `models.py`: strict user-visible `chat_messages` / `chat_events` record shapes and GA ID derivation.
 - `projection.py`: allowlisted projection from execution payloads; raw thinking, tool arguments,
   tool results, subagent content and internal errors are dropped.
-- `store.py`: PostgreSQL append/replay adapter. `(run_id, source_index)` is idempotent, while
+- Repository adapter: `../infrastructure/postgres_chat_repository.py`; the `chat/` package does not own SQL.
+- `(run_id, source_index)` is idempotent, while
   `(namespace, session_id, seq)` is the isolated ordered replay cursor.
-- `query.py`: identity-scoped history/replay facade. It derives `RuntimeNamespace` from trusted
+- Application service: `../services/chat_service.py` provides identity-scoped history/replay. It derives `RuntimeNamespace` from trusted
   `ExecutionIdentity`; caller input and query output never contain namespace.
 
 Every chat row includes GA's derived namespace; session ID alone is never an authorization or

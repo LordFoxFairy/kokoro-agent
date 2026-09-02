@@ -19,7 +19,7 @@ from support.fakes import (
     request,
     text_run,
 )
-from support.chat import FakeChatStore
+from support.chat import FakeChatRepository
 from kokoro_agent.chat.models import ChatMessageDraft, ChatMessageRecord
 from kokoro_agent.contract import (
     InboundMessage,
@@ -66,18 +66,18 @@ def _supervisor(
     agent: FakeAgent,
     store: FakeRunRepository | None = None,
     heartbeat_s: float = 30.0,
-    chat_store: FakeChatStore | None = None,
+    chat_repository: FakeChatRepository | None = None,
 ) -> tuple[RunSupervisor, FakeRunRepository]:
     state_store = store if store is not None else FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
-        store=state_store,
+        run_repository=state_store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
         consumer="test-consumer",
         heartbeat_s=heartbeat_s,
-        chat_store=chat_store,
+        chat_repository=chat_repository,
     )
     return sup, state_store
 
@@ -144,20 +144,20 @@ async def test_request_dispatches_initial_invoke() -> None:
 
 
 async def test_request_consumer_persists_user_message_and_safe_chat_events() -> None:
-    chat_store = FakeChatStore()
+    chat_repository = FakeChatRepository()
     item = StreamItem(cursor="1", event=request("chat-1").model_dump())
     bus = FakeBus(inbound=(item,))
     supervisor, _store = _supervisor(
-        FakeAgent(run=text_run("answer")), chat_store=chat_store
+        FakeAgent(run=text_run("answer")), chat_repository=chat_repository
     )
 
     await supervisor.serve(bus)
     await _drain(supervisor)
 
-    history = await chat_store.history(_CHAT_NS, "s1")
+    history = await chat_repository.history(_CHAT_NS, "s1")
     assert history[0].role == "user"
     assert history[0].chat_message_id == "chat-1-m"
-    assert [event.event_type for event in await chat_store.replay(_CHAT_NS, "s1")] == [
+    assert [event.event_type for event in await chat_repository.replay(_CHAT_NS, "s1")] == [
         "run.started",
         "assistant.delta",
         "assistant.completed",
@@ -166,14 +166,14 @@ async def test_request_consumer_persists_user_message_and_safe_chat_events() -> 
 
 
 async def test_chat_message_failure_happens_before_dispatch_claim_and_ack() -> None:
-    class _FailingChatStore(FakeChatStore):
+    class _FailingChatStore(FakeChatRepository):
         async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
             raise RuntimeError("chat unavailable")
 
     item = StreamItem(cursor="1", event=request("chat-fail").model_dump())
     bus = FakeBus(inbound=(item,))
     agent = FakeAgent(run=text_run("unreachable"))
-    supervisor, run_repository = _supervisor(agent, chat_store=_FailingChatStore())
+    supervisor, run_repository = _supervisor(agent, chat_repository=_FailingChatStore())
 
     await supervisor.serve(bus)
 
@@ -479,7 +479,7 @@ async def test_builder_failure_emits_run_failed_once() -> None:
     store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=boom,
-        store=store,
+        run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -591,7 +591,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
     store.requests["rx"] = request("rx")
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
-        store=store,
+        run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -889,7 +889,7 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
     store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
-        store=store,
+        run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -907,7 +907,7 @@ async def test_retention_heartbeat_purges_terminal_runs() -> None:
     store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
-        store=store,
+        run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -973,7 +973,7 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
     store = FakeRunRepository()
     sup = RunSupervisor(
         agent_builder=_builder(agent),
-        store=store,
+        run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,

@@ -4,7 +4,7 @@ The worker remains the only component that executes a run.  This module owns
 the transport seam that durably admits a launch, publishes the existing worker
 envelope, and exposes only identity-scoped, safe chat projections to BFF.
 It deliberately has no business database access beyond the Agent-owned
-RunRepository and ChatStore ports.
+RunRepository and ChatRepository ports.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from kokoro_agent.chat.query import (
+from kokoro_agent.services.chat_service import (
     ChatHistoryPage,
-    ChatQuery,
+    ChatService,
     ChatQueryRequest,
     ChatReplayPage,
     ChatSessionListPage,
@@ -176,10 +176,10 @@ def _event_json(event: object) -> dict[str, Any]:
 class AgentIngress:
     """Business transport facade over the Agent-owned worker ports."""
 
-    def __init__(self, *, bus: StreamProtocol, run_repository: RunRepository, chat_query: ChatQuery) -> None:
+    def __init__(self, *, bus: StreamProtocol, run_repository: RunRepository, chat_service: ChatService) -> None:
         self._bus = bus
         self._run_repository = run_repository
-        self._chat_query = chat_query
+        self._chat_service = chat_service
 
     async def launch(self, body: Mapping[str, object]) -> LaunchReceipt:
         request = _parse_launch(body)
@@ -193,7 +193,7 @@ class AgentIngress:
         trace = request.trace or {}
         project_ref_value = trace.get("project_ref")
         project_ref = project_ref_value if isinstance(project_ref_value, str) else None
-        await self._chat_query.ensure_session(
+        await self._chat_service.ensure_session(
             request.execution_identity,
             request.session_id,
             project_ref=project_ref,
@@ -268,17 +268,17 @@ class AgentIngress:
     ) -> ChatHistoryPage:
         if session_id is not None:
             identity = identity.model_copy(update={"session_id": session_id})
-        return await self._chat_query.history(identity)
+        return await self._chat_service.history(identity)
 
     async def replay(
         self, identity: ChatQueryRequest, *, session_id: str | None = None
     ) -> ChatReplayPage:
         if session_id is not None:
             identity = identity.model_copy(update={"session_id": session_id})
-        return await self._chat_query.replay(identity)
+        return await self._chat_service.replay(identity)
 
     async def list_sessions(self, request: ChatSessionListRequest) -> ChatSessionListPage:
-        return await self._chat_query.list_sessions(request)
+        return await self._chat_service.list_sessions(request)
 
 
 __all__ = ["AgentIngress", "IngressError", "LaunchReceipt"]

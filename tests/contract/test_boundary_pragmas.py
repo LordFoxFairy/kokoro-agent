@@ -85,7 +85,7 @@ ALLOWED: dict[str, frozenset[str]] = {
         }
     ),
     # Schema statements use validated, dynamically qualified identifiers at the psycopg boundary.
-    "src/kokoro_agent/repositories/schema.py": frozenset(
+    "src/kokoro_agent/infrastructure/schema.py": frozenset(
         {"reportCallIssue", "reportArgumentType"}
     ),
     "src/kokoro_agent/infrastructure/memory_store.py": frozenset(
@@ -102,7 +102,7 @@ ALLOWED: dict[str, frozenset[str]] = {
             "reportUnnecessaryIsInstance",
         }
     ),
-    "src/kokoro_agent/chat/store.py": frozenset(
+    "src/kokoro_agent/infrastructure/postgres_chat_repository.py": frozenset(
         {
             "reportCallIssue",
             "reportArgumentType",

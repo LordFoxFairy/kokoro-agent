@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from pydantic import JsonValue
-from support.chat import FakeChatStore
+from support.chat import FakeChatRepository
 from support.fakes import FakeBus
 
 from kokoro_agent.contract import live_stream
@@ -28,13 +28,13 @@ class _OrderedBus(FakeBus):
 async def test_chat_fact_is_durable_before_raw_agent_event() -> None:
     order: list[str] = []
     bus = _OrderedBus(order)
-    store = FakeChatStore(order)
+    store = FakeChatRepository(order)
     emitter = await RunEmitter.attach(
         bus,
         "run-1",
         namespace="ns",
         session_id="session-1",
-        chat_store=store,
+        chat_repository=store,
     )
     payload = message_delta_payload("hello", segment_id="native-segment")
     assert payload is not None

@@ -64,7 +64,7 @@ from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.policy import Backend
 from kokoro_agent.chat.models import ChatEventRecord, ChatMessageDraft
-from kokoro_agent.chat.store import ChatStore
+from kokoro_agent.repositories.chat_repository import ChatRepository
 
 LOGGER = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class RunSupervisor:
         self,
         *,
         agent_builder: AgentBuilder,
-        store: RunRepository,
+        run_repository: RunRepository,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
         source_for: SourceResolver,
@@ -123,10 +123,10 @@ class RunSupervisor:
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
         sandbox_teardown: Callable[[Backend, str | None], Awaitable[None]]
         | None = None,
-        chat_store: ChatStore | None = None,
+        chat_repository: ChatRepository | None = None,
     ) -> None:
         self._build = agent_builder
-        self._store = store
+        self._run_repository = run_repository
         self._approval_tool_names = approval_tool_names
         self._trace = trace_factory
         self._source_for = source_for
@@ -140,7 +140,7 @@ class RunSupervisor:
         self._run_ttl_s = run_ttl_s
         self._outbox_republish_ms = outbox_republish_ms
         self._sandbox_teardown = sandbox_teardown
-        self._chat_store = chat_store
+        self._chat_repository = chat_repository
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
@@ -158,7 +158,7 @@ class RunSupervisor:
         return self._tasks
 
     async def _control_request(self, run_id: str) -> RunRequest | None:
-        return await self._store.get_request(run_id)
+        return await self._run_repository.get_request(run_id)
 
     def _control_session_matches(self, request: RunRequest, session_id: str) -> bool:
         if request.session_id == session_id:
@@ -185,7 +185,7 @@ class RunSupervisor:
                 if msg is None:
                     # 不可解析帧：DLQ 记录后 ACK（坏帧无 identity 不重投，不冒泡杀循环）。
                     with contextlib.suppress(Exception):
-                        await self._store.quarantine_dispatch(
+                        await self._run_repository.quarantine_dispatch(
                             _raw_hash(item.event),
                             source=REQUESTS_STREAM,
                             reason="unparseable",
@@ -225,7 +225,7 @@ class RunSupervisor:
         # ACK 由 serve 后置于此之后。
         # 用户消息先于 dispatch claim durable：此处失败则不 CAS、不 ACK，重投可安全重试；写入幂等。
         await self._persist_user_message(request)
-        if not await self._store.claim_dispatch(request.run_id, self._consumer):
+        if not await self._run_repository.claim_dispatch(request.run_id, self._consumer):
             metrics.record_dispatch_claim(won=False)
             LOGGER.debug("dropping late/duplicate dispatch run_id=%s", request.run_id)
             return
@@ -236,7 +236,7 @@ class RunSupervisor:
         # 崩溃/瞬时故障后 queued 的 critical 行：按 seq 序补发到事件流（复用固定 event_id/durable_seq，
         # session 按 [run_id,durable_seq] unique 去重）。补发成功后置 published。
         try:
-            frames = await self._store.list_unpublished_outbox()
+            frames = await self._run_repository.list_unpublished_outbox()
         except Exception:  # noqa: BLE001 — 补发扫描降级不阻断 serve 启动
             LOGGER.exception("critical outbox scan failed")
             return
@@ -248,7 +248,7 @@ class RunSupervisor:
                     outbox_wire_event(frame),
                     maxlen=RUN_EVENTS_MAXLEN,
                 )
-                await self._store.mark_critical_published(
+                await self._run_repository.mark_critical_published(
                     frame.run_id, frame.durable_seq
                 )
                 metrics.record_outbox("republished")
@@ -274,7 +274,7 @@ class RunSupervisor:
                     return
                 if not self._control_session_matches(request, msg.session_id):
                     return
-                await self._store.add_steer(msg.run_id, msg.message_id, msg.content)
+                await self._run_repository.add_steer(msg.run_id, msg.message_id, msg.content)
             except Exception:  # noqa: BLE001 — 插话丢失可由用户重发；绝不为此把健康 run 判死
                 LOGGER.exception("steer persist failed run_id=%s", msg.run_id)
         else:
@@ -292,7 +292,7 @@ class RunSupervisor:
     async def heartbeat_once(self, bus: StreamProtocol) -> None:
         """一轮租约维护：为活跃 run 续租，再把他处过期的 run 重拾续跑。"""
         for run_id in tuple(self._tasks):
-            if await self._store.renew(run_id, self._consumer):
+            if await self._run_repository.renew(run_id, self._consumer):
                 continue
             # fencing（审计缺口：裂脑双跑）：所有权已被他处夺走——让渡本地执行，
             # 不发终态（终态权归新属主）；双跑窗收窄到一个心跳周期。
@@ -302,7 +302,7 @@ class RunSupervisor:
                     "fencing: lost lease ownership, yielding run_id=%s", run_id
                 )
                 task.cancel()
-        for request in await self._store.reclaim_expired(self._consumer):
+        for request in await self._run_repository.reclaim_expired(self._consumer):
             if request.run_id in self._tasks:
                 # 自己仍在跑（仅心跳迟到被自己拾回）：不双起。
                 continue
@@ -310,16 +310,16 @@ class RunSupervisor:
             await self._start_run(bus, request)
         # control 监听收养：暂停 run 的认领 worker 崩溃后，其 resume/cancel 无人处理会永久卡死；
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
-        for run_id in await self._store.list_paused():
+        for run_id in await self._run_repository.list_paused():
             self._ensure_control_listener(bus, run_id)
         # 存活期间同样补发 queued critical outbox；不是只有启动时才扫描。
         await self._republish_outbox(bus)
         # R4 critical outbox 回执对账：推进 consumed/GC 已确认行，rejected NACK 终局，
         # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
-        for run_id in await self._store.list_open_outbox_runs():
+        for run_id in await self._run_repository.list_open_outbox_runs():
             await self._reconcile_run_receipts(bus, run_id)
         if self._run_ttl_s > 0:
-            purged = await self._store.purge_terminal(self._run_ttl_s * 1000)
+            purged = await self._run_repository.purge_terminal(self._run_ttl_s * 1000)
             if purged:
                 LOGGER.info("retention purged %d terminal runs", purged)
         # OBS-1：本 worker 活跃 run 与租约持有面（活跃 run + 收养的 control 监听）每心跳刷新。
@@ -330,7 +330,7 @@ class RunSupervisor:
 
     async def _reconcile_run_receipts(self, bus: StreamProtocol, run_id: str) -> None:
         try:
-            outcome = await self._store.reconcile_receipts(
+            outcome = await self._run_repository.reconcile_receipts(
                 run_id, self._outbox_republish_ms
             )
         except Exception:  # noqa: BLE001 — 单 run 对账降级不杀心跳，下一拍重试
@@ -373,7 +373,7 @@ class RunSupervisor:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        if await self._store.try_mark_terminal(run_id):
+        if await self._run_repository.try_mark_terminal(run_id):
             LOGGER.error(
                 "run terminated contract_incompatible: session NACK at seq=%s run_id=%s",
                 rejected_seq,
@@ -392,7 +392,7 @@ class RunSupervisor:
 
     async def _on_request(self, bus: StreamProtocol, request: RunRequest) -> None:
         # 原子认领 + TTL 租约：多 pod 消费同一请求时仅首个认领者起 run。
-        if not await self._store.try_claim(request, self._consumer):
+        if not await self._run_repository.try_claim(request, self._consumer):
             LOGGER.debug("skipping already-claimed run_id=%s", request.run_id)
             return
         await self._start_run(bus, request)
@@ -436,7 +436,7 @@ class RunSupervisor:
             return
         if not self._control_session_matches(request, msg.session_id):
             return
-        if await self._store.is_terminal(msg.run_id):
+        if await self._run_repository.is_terminal(msg.run_id):
             LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
             return
         try:
@@ -462,7 +462,7 @@ class RunSupervisor:
             ordered = align_review_decisions(msg.decisions, rframe)
             results: dict[str, tuple[str, bool]] = {}
             for tool_id in rframe.tool_ids:
-                cached = await self._store.get_tool_result(msg.run_id, tool_id)
+                cached = await self._run_repository.get_tool_result(msg.run_id, tool_id)
                 if cached is not None:
                     results[tool_id] = cached
             emitter = await self._emitter(bus, msg.run_id)
@@ -492,10 +492,10 @@ class RunSupervisor:
                 resume={"decisions": resume_command_decisions(ordered, frame)}
             )
         # 离开 HITL 暂停哨兵：所有权交接给收养 worker（fencing 属主随之更新），恢复活跃租约。
-        await self._store.adopt(msg.run_id, self._consumer)
+        await self._run_repository.adopt(msg.run_id, self._consumer)
         # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
         # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
-        if await self._store.is_terminal(msg.run_id):
+        if await self._run_repository.is_terminal(msg.run_id):
             LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
             return
         self._spawn_agent(
@@ -512,17 +512,17 @@ class RunSupervisor:
         request = await self._control_request(msg.run_id)
         if request is None:
             LOGGER.warning("dropping cancel for unknown run_id=%s", msg.run_id)
-            await self._store.mark_control_failed(
+            await self._run_repository.mark_control_failed(
                 msg.run_id, msg.command_id, "run_not_found"
             )
             return
         if not self._control_session_matches(request, msg.session_id):
-            await self._store.mark_control_failed(
+            await self._run_repository.mark_control_failed(
                 msg.run_id, msg.command_id, "run_scope_forbidden"
             )
             return
         # 原子认领终态：自然完成/重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
-        if not await self._store.try_mark_terminal(msg.run_id):
+        if not await self._run_repository.try_mark_terminal(msg.run_id):
             return
         task = self._tasks.get(msg.run_id)
         if task is not None and not task.done():
@@ -564,7 +564,7 @@ class RunSupervisor:
         # spawn 与他处 cancel 的微竞态最后一闸：进入执行前终态即静默收手。
         # 闸门是尽力而为的额外防线（终态权威在 claim_terminal）：store 故障降级放行，不引爆任务。
         try:
-            return not await self._store.is_terminal(run_id)
+            return not await self._run_repository.is_terminal(run_id)
         except Exception:  # noqa: BLE001 — 防线降级：主正确性不依赖此闸
             LOGGER.exception("terminal entry gate degraded for run_id=%s", run_id)
             return True
@@ -597,16 +597,16 @@ class RunSupervisor:
                 trace=trace,
                 recursion_limit=self._recursion_limit,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
-                claim_terminal=lambda: self._store.try_mark_terminal(run_id),
+                claim_terminal=lambda: self._run_repository.try_mark_terminal(run_id),
                 # 用量跨段累计真源：run.completed 报累计而非末段。
-                record_usage=lambda i, o: self._store.add_usage(run_id, i, o),
+                record_usage=lambda i, o: self._run_repository.add_usage(run_id, i, o),
             )
         if terminal:
             self._emitters.pop(run_id, None)
             await self._teardown_control(bus, run_id)
         else:
             # interrupt 暂停：租约置哨兵，HITL 等人期间不被过期重拾重跑；control 监听存活等 resume。
-            await self._store.pause(run_id)
+            await self._run_repository.pause(run_id)
 
     def _ensure_control_listener(self, bus: StreamProtocol, run_id: str) -> None:
         existing = self._control.get(run_id)
@@ -639,7 +639,7 @@ class RunSupervisor:
         except Exception:
             # 终态清理删流先于 cancel（监听可能是当前任务）：删流后阻塞读抛 NOGROUP 属干净收束；
             # 非终态的订阅异常才是真故障，fail-loud。
-            if await self._store.is_terminal(run_id):
+            if await self._run_repository.is_terminal(run_id):
                 LOGGER.debug(
                     "control listener closed after terminal teardown: run_id=%s", run_id
                 )
@@ -672,18 +672,18 @@ class RunSupervisor:
         if request is None:
             LOGGER.warning("dropping control for unknown run_id=%s", run_id)
             await bus.ack(stream, CONSUMER_GROUP, cursor)
-            await self._store.mark_control_failed(
+            await self._run_repository.mark_control_failed(
                 msg.run_id, msg.command_id, "run_not_found"
             )
             return
         if not self._control_session_matches(request, msg.session_id):
             await bus.ack(stream, CONSUMER_GROUP, cursor)
-            await self._store.mark_control_failed(
+            await self._run_repository.mark_control_failed(
                 msg.run_id, msg.command_id, "run_scope_forbidden"
             )
             return
         fingerprint = await self._control_fingerprint(run_id, msg)
-        first = await self._store.record_control_delivery(
+        first = await self._run_repository.record_control_delivery(
             run_id,
             msg.command_id,
             msg.request_digest,
@@ -711,24 +711,24 @@ class RunSupervisor:
         if isinstance(msg, RunCancel):
             # cancel：apply 即终态，applied 回执须先于 run.completed——session relayRun 遇终态即
             # 收束，其后帧不再消费；且 _on_cancel 的 teardown 会 cancel 本 control 任务，后置回执会被吞。
-            await self._store.mark_control_applied(run_id, msg.command_id)
+            await self._run_repository.mark_control_applied(run_id, msg.command_id)
             metrics.record_control_delivery("applied")
             await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
             if await self._guarded_control_apply(bus, run_id, msg):
-                await self._store.mark_control_succeeded(run_id, msg.command_id)
+                await self._run_repository.mark_control_succeeded(run_id, msg.command_id)
             else:
-                await self._store.mark_control_failed(
+                await self._run_repository.mark_control_failed(
                     run_id, msg.command_id, "control_apply_failed"
                 )
             return
         # resume/steer：apply 后再写 applied，随后把 HTTP receipt 收口为 succeeded。
         if await self._guarded_control_apply(bus, run_id, msg):
-            await self._store.mark_control_applied(run_id, msg.command_id)
-            await self._store.mark_control_succeeded(run_id, msg.command_id)
+            await self._run_repository.mark_control_applied(run_id, msg.command_id)
+            await self._run_repository.mark_control_succeeded(run_id, msg.command_id)
             metrics.record_control_delivery("applied")
             await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
         else:
-            await self._store.mark_control_failed(
+            await self._run_repository.mark_control_failed(
                 run_id, msg.command_id, "control_apply_failed"
             )
 
@@ -756,7 +756,7 @@ class RunSupervisor:
 
     async def _interrupt_fingerprint(self, run_id: str) -> str | None:
         # 当前 interrupt 指纹：稳定 interrupt.id 集合的 sha256；无 interrupt/取不到=None。
-        request = await self._store.get_request(run_id)
+        request = await self._run_repository.get_request(run_id)
         if request is None:
             return None
         try:
@@ -779,17 +779,17 @@ class RunSupervisor:
         # 重启续办：persisted 未 applied 的 control command——fingerprint 匹配当前 interrupt 才 apply，
         # 不匹配/已终态=stale→superseded 不 apply（§8.3「persisted 后 apply 前崩溃」翻绿）。
         try:
-            entries = await self._store.list_pending_control_delivery()
+            entries = await self._run_repository.list_pending_control_delivery()
         except Exception:  # noqa: BLE001 — 续办扫描降级不阻断 serve 启动
             LOGGER.exception("control command scan failed")
             return
         for entry in entries:
             msg = parse_inbound(json.loads(entry.body))
             if not isinstance(msg, RunResume | RunCancel | RunSteer):
-                await self._store.mark_control_superseded(
+                await self._run_repository.mark_control_superseded(
                     entry.run_id, entry.command_id
                 )
-                await self._store.mark_control_failed(
+                await self._run_repository.mark_control_failed(
                     entry.run_id, entry.command_id, "control_superseded"
                 )
                 metrics.record_control_delivery("superseded")
@@ -798,19 +798,19 @@ class RunSupervisor:
             if request is None or not self._control_session_matches(
                 request, msg.session_id
             ):
-                await self._store.mark_control_superseded(
+                await self._run_repository.mark_control_superseded(
                     entry.run_id, entry.command_id
                 )
-                await self._store.mark_control_failed(
+                await self._run_repository.mark_control_failed(
                     entry.run_id, entry.command_id, "control_superseded"
                 )
                 metrics.record_control_delivery("superseded")
                 continue
-            if await self._store.is_terminal(entry.run_id):
-                await self._store.mark_control_superseded(
+            if await self._run_repository.is_terminal(entry.run_id):
+                await self._run_repository.mark_control_superseded(
                     entry.run_id, entry.command_id
                 )
-                await self._store.mark_control_failed(
+                await self._run_repository.mark_control_failed(
                     entry.run_id, entry.command_id, "control_superseded"
                 )
                 metrics.record_control_delivery("superseded")
@@ -818,10 +818,10 @@ class RunSupervisor:
             if isinstance(msg, RunResume):
                 current = await self._interrupt_fingerprint(entry.run_id)
                 if entry.fingerprint is None or current != entry.fingerprint:
-                    await self._store.mark_control_superseded(
+                    await self._run_repository.mark_control_superseded(
                         entry.run_id, entry.command_id
                     )
-                    await self._store.mark_control_failed(
+                    await self._run_repository.mark_control_failed(
                         entry.run_id, entry.command_id, "control_superseded"
                     )
                     metrics.record_control_delivery("superseded")
@@ -831,10 +831,10 @@ class RunSupervisor:
     async def _teardown_sandbox(self, run_id: str) -> None:
         if self._sandbox_teardown is None:
             return
-        request = await self._store.get_request(run_id)
+        request = await self._run_repository.get_request(run_id)
         if request is None:
             return
-        sandbox_id = await self._store.get_sandbox_id(run_id)
+        sandbox_id = await self._run_repository.get_sandbox_id(run_id)
         await self._sandbox_teardown(self._backend_for(request), sandbox_id)
 
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
@@ -855,7 +855,7 @@ class RunSupervisor:
         if emitter is None:
             # 审核工具集用于抑制投影侧 raw returned：无 request（如迟到 cancel）按空集处理，
             # 此时不再有投影流量，抑制与否无副作用。
-            request = await self._store.get_request(run_id)
+            request = await self._run_repository.get_request(run_id)
             review: frozenset[str] = frozenset()
             if request is not None and self._feature_for is not None:
                 feature = self._feature_for(request.feature_key)
@@ -870,40 +870,40 @@ class RunSupervisor:
                 bus,
                 run_id,
                 review,
-                self._store,
+                self._run_repository,
                 namespace=(
                     RunScope.of(request).namespace
-                    if request is not None and self._chat_store is not None
+                    if request is not None and self._chat_repository is not None
                     else None
                 ),
                 session_id=(
                     request.session_id
-                    if request is not None and self._chat_store is not None
+                    if request is not None and self._chat_repository is not None
                     else None
                 ),
-                chat_store=self._chat_store if request is not None else None,
+                chat_repository=self._chat_repository if request is not None else None,
             )
             self._emitters[run_id] = emitter
         return emitter
 
     async def _persist_outbox_chat(self, frame: OutboxFrame) -> ChatEventRecord | None:
-        if self._chat_store is None:
+        if self._chat_repository is None:
             return None
-        request = await self._store.get_request(frame.run_id)
+        request = await self._run_repository.get_request(frame.run_id)
         if request is None:
             return None
         return await persist_outbox_chat_event(
-            self._chat_store,
+            self._chat_repository,
             RunScope.of(request).namespace,
             request.session_id,
             frame,
         )
 
     async def _persist_user_message(self, request: RunRequest) -> None:
-        if self._chat_store is None:
+        if self._chat_repository is None:
             return
         now = int(time.time() * 1000)
-        await self._chat_store.save_message(
+        await self._chat_repository.save_message(
             ChatMessageDraft(
                 chat_message_id=request.input.message_id,
                 namespace=RunScope.of(request).namespace,
@@ -926,7 +926,7 @@ class RunSupervisor:
         code: RunErrorCode | None = None,
     ) -> None:
         # 认领成功才发 run.failed，与并发 cancel/自然完成互斥为单一终态。
-        if await self._store.try_mark_terminal(run_id):
+        if await self._run_repository.try_mark_terminal(run_id):
             emitter = await self._emitter(bus, run_id)
             await emitter.emit(run_failed_payload(error, code=code))
             self._emitters.pop(run_id, None)

@@ -1,4 +1,4 @@
-"""Identity-scoped query facade for GA-owned user-visible chat facts."""
+"""Application service for identity-scoped chat queries."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kokoro_agent.chat.models import ChatEventType, ChatMessageStatus, ChatRole, ChatSessionRecord
-from kokoro_agent.chat.store import ChatStore
+from kokoro_agent.repositories.chat_repository import ChatRepository
 from kokoro_agent.contract import ExecutionIdentity
 from kokoro_agent.execution.scope import runtime_namespace
 
@@ -86,11 +86,11 @@ class _SessionCursor(_StrictModel):
     session_id: str = Field(min_length=1)
 
 
-class ChatQuery:
-    """Derive GA namespace from trusted identity; callers never submit it."""
+class ChatService:
+    """Apply identity scoping and map repository records to API views."""
 
-    def __init__(self, store: ChatStore) -> None:
-        self._store = store
+    def __init__(self, repository: ChatRepository) -> None:
+        self._repository = repository
 
     async def ensure_session(
         self,
@@ -101,7 +101,7 @@ class ChatQuery:
         title: str,
         updated_at: int,
     ) -> ChatSessionRecord:
-        return await self._store.ensure_session(
+        return await self._repository.ensure_session(
             runtime_namespace(identity),
             session_id,
             project_ref=project_ref,
@@ -111,7 +111,7 @@ class ChatQuery:
 
     async def list_sessions(self, request: ChatSessionListRequest) -> ChatSessionListPage:
         after = _decode_cursor(request.cursor) if request.cursor else None
-        records = await self._store.list_sessions(
+        records = await self._repository.list_sessions(
             runtime_namespace(request.execution_identity),
             project_ref=request.project_ref,
             after=after,
@@ -128,7 +128,7 @@ class ChatQuery:
 
     async def history(self, request: ChatQueryRequest) -> ChatHistoryPage:
         namespace = runtime_namespace(request.execution_identity)
-        records = await self._store.history(
+        records = await self._repository.history(
             namespace,
             request.session_id,
             after_seq=request.after_seq,
@@ -145,7 +145,7 @@ class ChatQuery:
 
     async def replay(self, request: ChatQueryRequest) -> ChatReplayPage:
         namespace = runtime_namespace(request.execution_identity)
-        records = await self._store.replay(
+        records = await self._repository.replay(
             namespace,
             request.session_id,
             after_seq=request.after_seq,
@@ -158,7 +158,7 @@ class ChatQuery:
         return ChatReplayPage(
             events=events,
             next_seq=events[-1].seq if events else request.after_seq,
-            watermark=await self._store.watermark(namespace, request.session_id),
+            watermark=await self._repository.watermark(namespace, request.session_id),
         )
 
 
@@ -167,7 +167,7 @@ __all__ = [
     "ChatHistoryPage",
     "ChatMessageView",
     "ChatQueryRequest",
-    "ChatQuery",
+    "ChatService",
     "ChatReplayPage",
     "ChatSessionListPage",
     "ChatSessionListRequest",

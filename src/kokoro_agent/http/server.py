@@ -19,12 +19,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import SecretStr, TypeAdapter
 
-from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest, ChatSessionListRequest
+from kokoro_agent.services.chat_service import ChatService, ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.contract.control import IdentityKind
 from kokoro_agent.http.ingress import AgentIngress, IngressError
 from kokoro_agent.infrastructure.postgres_run_repository import RunRepositorySettings, make_run_repository
-from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
+from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepositorySettings, make_chat_repository
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 
 LOGGER = logging.getLogger(__name__)
@@ -174,8 +174,8 @@ async def dispatch_request(
     try:
         async with (
             make_run_repository(config.run_repository) as run_repository,
-            make_chat_store(
-                ChatStoreSettings(
+            make_chat_repository(
+                PostgresChatRepositorySettings(
                     database_url=config.database_url,
                     schema_name=config.database_schema,
                 )
@@ -184,7 +184,7 @@ async def dispatch_request(
             if method == "GET" and path == "/readyz":
                 await bus.read_all(REQUESTS_STREAM)
                 return 200, {"status": "ready", "service": "kokoro-agent"}
-            ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_query=ChatQuery(chat_store))
+            ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(chat_store))
             if method == "GET" and path == "/v1/sessions":
                 result = await ingress.list_sessions(_session_list_page(headers, query))
                 return 200, _envelope(result.model_dump(mode="json"), request_id)

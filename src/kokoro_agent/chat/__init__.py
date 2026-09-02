@@ -10,14 +10,6 @@ from kokoro_agent.chat.models import (
     chat_event_id,
 )
 from kokoro_agent.chat.projection import project_chat_fact
-from kokoro_agent.chat.query import (
-    ChatEventView,
-    ChatHistoryPage,
-    ChatMessageView,
-    ChatQueryRequest,
-    ChatQuery,
-    ChatReplayPage,
-)
 
 __all__ = [
     "ChatEventDraft",
@@ -25,12 +17,6 @@ __all__ = [
     "ChatMessageDraft",
     "ChatMessageRecord",
     "ChatProjection",
-    "ChatEventView",
-    "ChatHistoryPage",
-    "ChatMessageView",
-    "ChatQueryRequest",
-    "ChatQuery",
-    "ChatReplayPage",
     "assistant_message_id",
     "chat_event_id",
     "project_chat_fact",

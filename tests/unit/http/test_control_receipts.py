@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from kokoro_agent.chat.query import ChatQuery
+from kokoro_agent.services.chat_service import ChatService
 from kokoro_agent.http.ingress import AgentIngress, IngressError
 from kokoro_agent.repositories.run_repository import (
     ControlAdmission,
@@ -102,7 +102,7 @@ def _ingress(bus: Bus, run_repository: ReceiptRepository) -> AgentIngress:
     return AgentIngress(
         bus=cast(Any, bus),
         run_repository=cast(Any, run_repository),
-        chat_query=ChatQuery(cast(Any, ChatStore())),
+        chat_service=ChatService(cast(Any, ChatStore())),
     )
 
 

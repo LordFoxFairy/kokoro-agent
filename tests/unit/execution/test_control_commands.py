@@ -95,7 +95,7 @@ def _source(_name: str) -> SubagentSource:
 def _supervisor(agent: FakeAgent, store: FakeRunRepository) -> RunSupervisor:
     return RunSupervisor(
         agent_builder=_builder(agent),
-        store=store,
+        run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,

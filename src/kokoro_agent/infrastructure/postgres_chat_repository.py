@@ -1,4 +1,4 @@
-"""PostgreSQL persistence for GA-owned chat messages and replay events."""
+"""PostgreSQL adapter for the Agent chat repository."""
 
 # psycopg's dict-row and dynamic SQL APIs are runtime-typed in the installed
 # version; contract tests cover this adapter boundary.
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +21,7 @@ from kokoro_agent.chat.models import (
     chat_event_id,
 )
 from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
+from kokoro_agent.repositories.chat_repository import ChatIdentityConflict
 
 CHAT_MESSAGES_COLLECTION = "kokoro_agent_chat_messages"
 CHAT_EVENTS_COLLECTION = "kokoro_agent_chat_events"
@@ -29,55 +29,14 @@ CHAT_SEQUENCES_COLLECTION = "kokoro_agent_chat_sequences"
 CHAT_SESSIONS_COLLECTION = "kokoro_agent_chat_sessions"
 
 
-class ChatStoreSettings(BaseModel):
+class PostgresChatRepositorySettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     database_url: str
     schema_name: str = DEFAULT_PG_SCHEMA
 
 
-class ChatIdentityConflict(RuntimeError):
-    """A stable chat identity was reused for different immutable content."""
-
-
-class ChatStore(Protocol):
-    async def ensure_session(
-        self,
-        namespace: str,
-        session_id: str,
-        *,
-        project_ref: str | None,
-        title: str,
-        updated_at: int,
-    ) -> ChatSessionRecord: ...
-
-    async def list_sessions(
-        self,
-        namespace: str,
-        *,
-        project_ref: str | None = None,
-        after: tuple[int, str] | None = None,
-        limit: int = 101,
-    ) -> tuple[ChatSessionRecord, ...]: ...
-
-    async def append(self, projection: ChatProjection) -> ChatEventRecord: ...
-
-    async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord: ...
-
-    async def replay(
-        self, namespace: str, session_id: str, *, after_seq: int = 0, limit: int = 500
-    ) -> tuple[ChatEventRecord, ...]: ...
-
-    async def history(
-        self, namespace: str, session_id: str, *, after_seq: int = 0, limit: int = 200
-    ) -> tuple[ChatMessageRecord, ...]: ...
-
-    async def next_source_index(self, namespace: str, run_id: str) -> int: ...
-
-    async def watermark(self, namespace: str, session_id: str) -> int: ...
-
-
-class PgChatStore:
+class PostgresChatRepository:
     """Append-only events plus idempotent final-message projection."""
 
     def __init__(self, database_url: str, schema: str = DEFAULT_PG_SCHEMA) -> None:
@@ -478,10 +437,10 @@ class PgChatStore:
 
 
 @asynccontextmanager
-async def make_chat_store(
-    settings: ChatStoreSettings,
-) -> AsyncGenerator[PgChatStore, None]:
-    store = PgChatStore(settings.database_url, settings.schema_name)
+async def make_chat_repository(
+    settings: PostgresChatRepositorySettings,
+) -> AsyncGenerator[PostgresChatRepository, None]:
+    store = PostgresChatRepository(settings.database_url, settings.schema_name)
     await store.setup()
     try:
         yield store
@@ -536,9 +495,7 @@ __all__ = [
     "CHAT_MESSAGES_COLLECTION",
     "CHAT_SEQUENCES_COLLECTION",
     "CHAT_SESSIONS_COLLECTION",
-    "ChatStore",
-    "ChatIdentityConflict",
-    "ChatStoreSettings",
-    "PgChatStore",
-    "make_chat_store",
+    "PostgresChatRepository",
+    "PostgresChatRepositorySettings",
+    "make_chat_repository",
 ]

@@ -58,7 +58,7 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
     bus = FakeBus(inbound=(good,))
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
-        store=_CrashBeforeClaimRepository(),
+        run_repository=_CrashBeforeClaimRepository(),
         approval_tool_names=_no_names,
         trace_factory=_no_trace,
         source_for=_source,

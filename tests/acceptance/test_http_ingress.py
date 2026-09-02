@@ -16,7 +16,7 @@ from pydantic import JsonValue, SecretStr, TypeAdapter
 from psycopg import sql
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
-from kokoro_agent.chat.store import ChatStoreSettings, make_chat_store
+from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepositorySettings, make_chat_repository
 from kokoro_agent.contract import (
     ExecutionIdentity,
     IdentityRef,
@@ -149,8 +149,8 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
     try:
         async with make_run_repository(config.run_repository):
             pass
-        async with make_chat_store(
-            ChatStoreSettings(database_url=_DATABASE_URL, schema_name=schema)
+        async with make_chat_repository(
+            PostgresChatRepositorySettings(database_url=_DATABASE_URL, schema_name=schema)
         ):
             pass
         yield _AcceptanceState(config=config, redis_url=_REDIS_URL)
@@ -188,8 +188,8 @@ async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> Non
 
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
     namespace = runtime_namespace(request.execution_identity)
-    async with make_chat_store(
-        ChatStoreSettings(database_url=state.config.database_url, schema_name=state.config.database_schema)
+    async with make_chat_repository(
+        PostgresChatRepositorySettings(database_url=state.config.database_url, schema_name=state.config.database_schema)
     ) as chat:
         await chat.append(
             ChatProjection(

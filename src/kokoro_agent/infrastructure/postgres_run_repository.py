@@ -36,7 +36,7 @@ from kokoro_agent.repositories.run_repository import (
     StagedFrame,
     ToolJournalRecord,
 )
-from kokoro_agent.repositories.schema import (
+from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
     RUN_CONTROL_COMMANDS_TABLE,
     RUN_DISPATCHES_TABLE,

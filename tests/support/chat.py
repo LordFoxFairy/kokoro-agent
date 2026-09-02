@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kokoro_agent.chat.models import ChatSessionRecord
 from kokoro_agent.chat.models import (
     ChatEventRecord,
     ChatMessageDraft,
@@ -17,6 +18,60 @@ class FakeChatStore:
         self.order = order
         self.records: list[ChatEventRecord] = []
         self.messages: dict[str, ChatMessageRecord] = {}
+        self.sessions: dict[tuple[str, str], ChatSessionRecord] = {}
+
+    async def ensure_session(
+        self,
+        namespace: str,
+        session_id: str,
+        *,
+        project_ref: str | None,
+        title: str,
+        updated_at: int,
+    ) -> ChatSessionRecord:
+        key = (namespace, session_id)
+        existing = self.sessions.get(key)
+        if existing is not None:
+            if existing.project_ref != project_ref:
+                raise ChatIdentityConflict("fake chat session identity drift")
+            if updated_at <= existing.updated_at:
+                return existing
+            updated = existing.model_copy(update={"updated_at": updated_at})
+            self.sessions[key] = updated
+            return updated
+        record = ChatSessionRecord(
+            session_id=session_id,
+            project_ref=project_ref,
+            title=title.strip()[:80],
+            created_at=updated_at,
+            updated_at=updated_at,
+        )
+        self.sessions[key] = record
+        return record
+
+    async def list_sessions(
+        self,
+        namespace: str,
+        *,
+        project_ref: str | None = None,
+        after: tuple[int, str] | None = None,
+        limit: int = 101,
+    ) -> tuple[ChatSessionRecord, ...]:
+        records = [
+            record
+            for (record_namespace, _), record in self.sessions.items()
+            if record_namespace == namespace
+            and (project_ref is None or record.project_ref == project_ref)
+        ]
+        records.sort(key=lambda record: (-record.updated_at, record.session_id))
+        if after is not None:
+            records = [
+                record
+                for record in records
+                if record.updated_at < after[0]
+                or (record.updated_at == after[0] and record.session_id > after[1])
+            ]
+        return tuple(records[:limit])
 
     async def append(self, projection: ChatProjection) -> ChatEventRecord:
         if self.order is not None:

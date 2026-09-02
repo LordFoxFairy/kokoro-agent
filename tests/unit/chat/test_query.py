@@ -1,7 +1,7 @@
 """GA chat query derives isolation from ExecutionIdentity."""
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
-from kokoro_agent.chat.query import ChatQueryRequest, ChatQuery
+from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef
 from kokoro_agent.execution.scope import runtime_namespace
 from support.chat import FakeChatStore
@@ -70,3 +70,32 @@ async def test_history_and_replay_are_identity_scoped_without_caller_namespace()
     assert other_replay.watermark == 0
     assert "namespace" not in owner_history.messages[0].model_dump()
     assert "namespace" not in owner_replay.events[0].model_dump()
+
+
+async def test_session_list_is_cursor_paged_and_identity_scoped() -> None:
+    store = FakeChatStore()
+    owner = _identity("owner")
+    other = _identity("other")
+    query = ChatQuery(store)
+    await query.ensure_session(owner, "session-a", project_ref="project", title="A", updated_at=30)
+    await query.ensure_session(owner, "session-b", project_ref="project", title="B", updated_at=20)
+    await query.ensure_session(owner, "session-c", project_ref="other-project", title="C", updated_at=10)
+
+    first = await query.list_sessions(
+        ChatSessionListRequest(execution_identity=owner, project_ref="project", limit=1)
+    )
+    second = await query.list_sessions(
+        ChatSessionListRequest(
+            execution_identity=owner,
+            project_ref="project",
+            cursor=first.next_cursor,
+            limit=1,
+        )
+    )
+    isolated = await query.list_sessions(ChatSessionListRequest(execution_identity=other))
+
+    assert [session.session_id for session in first.sessions] == ["session-a"]
+    assert first.next_cursor is not None
+    assert [session.session_id for session in second.sessions] == ["session-b"]
+    assert second.next_cursor is None
+    assert isolated.sessions == ()

@@ -195,7 +195,7 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
 - launch 先持久化不可变 `sha256` fence；同一 `run_id` 重试复用 receipt，body 漂移返回
   `409 run_identity_conflict`；cancel/resume 由 worker durable inbox 按 `decision_id` 去重，
   steer 按 `message_id` keep-first 入账。
-- Agent ingress 不实现 BFF session list/detail、title、share、delete、public snapshot 或浏览器
+- Agent ingress 不实现 BFF session detail、title、share、delete、public snapshot 或浏览器
   SSE/AG-UI；这些仍是 BFF 自己的业务边界。
 - `music` 可单独作为 Feature，也能被组合 Feature 复用。
 - 多 Agent 只通过 Feature 声明和 official Swarm handoff，不存在自定义 router/state。

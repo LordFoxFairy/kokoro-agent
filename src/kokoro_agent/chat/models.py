@@ -42,6 +42,16 @@ class ChatMessageRecord(ChatMessageDraft):
     seq: Annotated[int, Field(ge=1)]
 
 
+class ChatSessionRecord(_StrictModel):
+    """Durable identity-scoped session metadata used by the Chat list query."""
+
+    session_id: NonEmptyStr
+    project_ref: NonEmptyStr | None = None
+    title: NonEmptyStr
+    created_at: int
+    updated_at: int
+
+
 class ChatEventDraft(_StrictModel):
     namespace: NonEmptyStr
     session_id: NonEmptyStr
@@ -81,6 +91,7 @@ __all__ = [
     "ChatEventType",
     "ChatMessageDraft",
     "ChatMessageRecord",
+    "ChatSessionRecord",
     "ChatProjection",
     "assistant_message_id",
     "chat_event_id",

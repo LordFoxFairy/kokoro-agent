@@ -101,6 +101,7 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 - `POST /v1/runs`：launch，先写 durable dispatch admission，再投递给 `kokoro-agent-worker`；
 - `POST /v1/runs/{run_id}/control`：cancel/resume/steer；
 - `GET /v1/runs/{run_id}/events`：Run evidence；
+- `GET /v1/sessions`：按 trusted identity 查询持久化 session list，支持 `project_ref`、`limit`、`cursor`；
 - `GET /v1/sessions/{session_id}/messages`：安全 session history；
 - `GET /v1/sessions/{session_id}/events`：安全 session replay。
 
@@ -115,7 +116,7 @@ RunLedger 或内部 Python 类型。除 `/healthz` 外的请求始终要求配�
 返回 `409 run_identity_conflict`，cancel/resume 由 worker durable inbox 按 `decision_id` 和
 resume fingerprint 去重/恢复，steer 按 `message_id` keep-first 入账。
 
-Agent ingress 不提供 BFF 的 session list/detail、title、share、delete、public snapshot 或
+Agent ingress 不提供 BFF 的 session detail、title、share、delete、public snapshot 或
 浏览器 SSE/AG-UI；这些仍是 BFF 自己的业务边界，不应通过直读 Agent PG/Redis 实现。生产环境
 应分别配置健康检查和滚动停机，不把 HTTP ingress 和 worker 合并成一个容器进程。
 

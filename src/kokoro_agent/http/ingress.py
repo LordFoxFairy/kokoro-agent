@@ -11,13 +11,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from kokoro_agent.chat.query import ChatHistoryPage, ChatQuery, ChatQueryRequest, ChatReplayPage
+from kokoro_agent.chat.query import (
+    ChatHistoryPage,
+    ChatQuery,
+    ChatQueryRequest,
+    ChatReplayPage,
+    ChatSessionListPage,
+    ChatSessionListRequest,
+)
 from kokoro_agent.contract import (
     REQUESTS_MAXLEN,
     REQUESTS_STREAM,
@@ -169,6 +177,16 @@ class AgentIngress:
             )
         except DispatchConflict as error:
             raise IngressError(409, "run_identity_conflict", str(error)) from error
+        trace = request.trace or {}
+        project_ref_value = trace.get("project_ref")
+        project_ref = project_ref_value if isinstance(project_ref_value, str) else None
+        await self._chat_query.ensure_session(
+            request.execution_identity,
+            request.session_id,
+            project_ref=project_ref,
+            title=request.input.content.strip() or "Kokoro chat",
+            updated_at=time.time_ns() // 1_000_000,
+        )
         if admission.publish_required:
             await self._bus.publish(
                 REQUESTS_STREAM,
@@ -220,6 +238,9 @@ class AgentIngress:
         if session_id is not None:
             identity = identity.model_copy(update={"session_id": session_id})
         return await self._chat_query.replay(identity)
+
+    async def list_sessions(self, request: ChatSessionListRequest) -> ChatSessionListPage:
+        return await self._chat_query.list_sessions(request)
 
 
 __all__ = ["AgentIngress", "IngressError", "LaunchReceipt"]

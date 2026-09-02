@@ -18,6 +18,7 @@ from kokoro_agent.chat.models import (
     ChatMessageDraft,
     ChatMessageRecord,
     ChatProjection,
+    ChatSessionRecord,
     chat_event_id,
 )
 from kokoro_agent.storage.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
@@ -25,6 +26,7 @@ from kokoro_agent.storage.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_
 CHAT_MESSAGES_COLLECTION = "kokoro_agent_chat_messages"
 CHAT_EVENTS_COLLECTION = "kokoro_agent_chat_events"
 CHAT_SEQUENCES_COLLECTION = "kokoro_agent_chat_sequences"
+CHAT_SESSIONS_COLLECTION = "kokoro_agent_chat_sessions"
 
 
 class ChatStoreSettings(BaseModel):
@@ -39,6 +41,25 @@ class ChatIdentityConflict(RuntimeError):
 
 
 class ChatStore(Protocol):
+    async def ensure_session(
+        self,
+        namespace: str,
+        session_id: str,
+        *,
+        project_ref: str | None,
+        title: str,
+        updated_at: int,
+    ) -> ChatSessionRecord: ...
+
+    async def list_sessions(
+        self,
+        namespace: str,
+        *,
+        project_ref: str | None = None,
+        after: tuple[int, str] | None = None,
+        limit: int = 101,
+    ) -> tuple[ChatSessionRecord, ...]: ...
+
     async def append(self, projection: ChatProjection) -> ChatEventRecord: ...
 
     async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord: ...
@@ -114,6 +135,138 @@ class PgChatStore:
                     )
                     """.format(qualified(self._schema, CHAT_SEQUENCES_COLLECTION))
                 )
+                await cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        namespace text NOT NULL,
+                        session_id text NOT NULL,
+                        project_ref text,
+                        title text NOT NULL,
+                        created_at bigint NOT NULL,
+                        updated_at bigint NOT NULL,
+                        PRIMARY KEY (namespace, session_id)
+                    )
+                    """.format(qualified(self._schema, CHAT_SESSIONS_COLLECTION))
+                )
+
+    async def ensure_session(
+        self,
+        namespace: str,
+        session_id: str,
+        *,
+        project_ref: str | None,
+        title: str,
+        updated_at: int,
+    ) -> ChatSessionRecord:
+        if not namespace.strip() or not session_id.strip() or not title.strip():
+            raise ValueError("namespace, session_id, and title are required")
+        if project_ref is not None and not project_ref.strip():
+            raise ValueError("project_ref must be non-empty when provided")
+        if updated_at < 0:
+            raise ValueError("updated_at must be non-negative")
+
+        table = qualified(self._schema, CHAT_SESSIONS_COLLECTION)
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT session_id, project_ref, title, created_at, updated_at
+                    FROM {table}
+                    WHERE namespace = %s AND session_id = %s
+                    """,
+                    (namespace, session_id),
+                )
+                row = await cur.fetchone()
+                if row is not None:
+                    existing = dict(row)
+                    if existing["project_ref"] != project_ref:
+                        raise ChatIdentityConflict(
+                            f"chat session identity drift for {session_id!r}"
+                        )
+                    await cur.execute(
+                        f"""
+                        UPDATE {table}
+                        SET updated_at = GREATEST(updated_at, %s)
+                        WHERE namespace = %s AND session_id = %s
+                        RETURNING session_id, project_ref, title, created_at, updated_at
+                        """,
+                        (updated_at, namespace, session_id),
+                    )
+                    updated = await cur.fetchone()
+                    if updated is None:
+                        raise RuntimeError("chat session update returned no row")
+                    return ChatSessionRecord(**dict(updated))
+
+                await cur.execute(
+                    f"""
+                    INSERT INTO {table}
+                        (namespace, session_id, project_ref, title, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (namespace, session_id) DO NOTHING
+                    RETURNING session_id, project_ref, title, created_at, updated_at
+                    """,
+                    (namespace, session_id, project_ref, title.strip()[:80], updated_at, updated_at),
+                )
+                inserted = await cur.fetchone()
+                if inserted is not None:
+                    return ChatSessionRecord(**dict(inserted))
+
+                await cur.execute(
+                    f"""
+                    SELECT session_id, project_ref, title, created_at, updated_at
+                    FROM {table}
+                    WHERE namespace = %s AND session_id = %s
+                    """,
+                    (namespace, session_id),
+                )
+                raced = await cur.fetchone()
+        if raced is None:
+            raise RuntimeError("chat session insert raced and row is missing")
+        raced_record = ChatSessionRecord(**dict(raced))
+        if raced_record.project_ref != project_ref:
+            raise ChatIdentityConflict(f"chat session identity drift for {session_id!r}")
+        return raced_record
+
+    async def list_sessions(
+        self,
+        namespace: str,
+        *,
+        project_ref: str | None = None,
+        after: tuple[int, str] | None = None,
+        limit: int = 101,
+    ) -> tuple[ChatSessionRecord, ...]:
+        if not namespace.strip():
+            raise ValueError("namespace is required")
+        if project_ref is not None and not project_ref.strip():
+            raise ValueError("project_ref must be non-empty when provided")
+        if limit <= 0 or limit > 1001:
+            raise ValueError("limit must be between 1 and 1001")
+        if after is not None and (after[0] < 0 or not after[1].strip()):
+            raise ValueError("after cursor is invalid")
+
+        clauses = ["namespace = %s"]
+        params: list[object] = [namespace]
+        if project_ref is not None:
+            clauses.append("project_ref = %s")
+            params.append(project_ref)
+        if after is not None:
+            clauses.append("(updated_at < %s OR (updated_at = %s AND session_id > %s))")
+            params.extend([after[0], after[0], after[1]])
+        params.append(limit)
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    SELECT session_id, project_ref, title, created_at, updated_at
+                    FROM {qualified(self._schema, CHAT_SESSIONS_COLLECTION)}
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY updated_at DESC, session_id ASC
+                    LIMIT %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+        return tuple(ChatSessionRecord(**dict(row)) for row in rows)
 
     async def append(self, projection: ChatProjection) -> ChatEventRecord:
         draft = projection.event
@@ -382,6 +535,7 @@ __all__ = [
     "CHAT_EVENTS_COLLECTION",
     "CHAT_MESSAGES_COLLECTION",
     "CHAT_SEQUENCES_COLLECTION",
+    "CHAT_SESSIONS_COLLECTION",
     "ChatStore",
     "ChatIdentityConflict",
     "ChatStoreSettings",

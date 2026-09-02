@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import SecretStr, TypeAdapter
 
-from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest
+from kokoro_agent.chat.query import ChatQuery, ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.contract.control import IdentityKind
 from kokoro_agent.http.ingress import AgentIngress, IngressError
@@ -108,6 +108,27 @@ def _page(headers: Mapping[str, str], query: Mapping[str, list[str]], session_id
     )
 
 
+def _session_list_page(
+    headers: Mapping[str, str], query: Mapping[str, list[str]]
+) -> ChatSessionListRequest:
+    def integer(name: str, default: int) -> int:
+        raw = query.get(name, [str(default)])[0]
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as error:
+            raise IngressError(400, "invalid_page", f"{name} must be an integer") from error
+
+    project_ref = query.get("project_ref", [None])[0]
+    if project_ref == "":
+        project_ref = None
+    return ChatSessionListRequest(
+        execution_identity=_identity(headers),
+        project_ref=project_ref,
+        cursor=query.get("cursor", [None])[0],
+        limit=integer("limit", 50),
+    )
+
+
 async def dispatch_request(
     config: AgentConfig,
     method: str,
@@ -151,6 +172,9 @@ async def dispatch_request(
                 await bus.read_all(REQUESTS_STREAM)
                 return 200, {"status": "ready", "service": "kokoro-agent"}
             ingress = AgentIngress(bus=bus, ledger=ledger, chat_query=ChatQuery(chat_store))
+            if method == "GET" and path == "/v1/sessions":
+                result = await ingress.list_sessions(_session_list_page(headers, query))
+                return 200, _envelope(result.model_dump(mode="json"), request_id)
             if method == "POST" and path == "/v1/runs":
                 receipt = await ingress.launch(body or {})
                 return 202, _envelope(

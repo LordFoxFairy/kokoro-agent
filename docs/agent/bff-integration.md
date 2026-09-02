@@ -33,6 +33,7 @@
 | `POST` | `/v1/runs` | launch：durable admission 后投递 Run | `202` |
 | `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
 | `GET` | `/v1/runs/{run_id}/events` | Run evidence，按 `after_seq` 分页 | `200` |
+| `GET` | `/v1/sessions` | identity-scoped durable session list | `200` |
 | `GET` | `/v1/sessions/{session_id}/messages` | 安全 session history | `200` |
 | `GET` | `/v1/sessions/{session_id}/events` | 安全 session replay | `200` |
 
@@ -53,7 +54,7 @@ loop，也不把 Redis stream 暴露给 BFF。
 - 除 `/healthz` 外的请求始终要求配置可信的 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带
   `x-kokoro-service: kokoro-bff` 和 `x-kokoro-internal-secret`。未配置 secret 时返回
   `503 service_auth_not_configured`，认证缺失或错误时返回 `403 service_auth_failed`。
-  history/replay 还必须带
+  session list/history/replay 还必须带
   `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
   `x-kokoro-identity-assertion-ref`；可选 kind 头只允许 `user`、`project`、`service`。
 - 业务路由成功响应使用 `{data, meta:{request_id}}`，错误响应使用
@@ -69,7 +70,7 @@ loop，也不把 Redis stream 暴露给 BFF。
 Agent ingress 只提供上表中的执行、证据、history 和 replay 入口；它不提供 BFF 的完整
 Session 业务 API。以下能力仍属于 BFF owner，并不因 Agent ingress 已上线而视为已实现：
 
-- session list/detail 业务查询；
+- session detail 业务查询；session list 只消费 Agent 的 durable list projection；
 - session title 更新；
 - session share、公开 snapshot 和 delete；
 - 浏览器鉴权、SSE 连接生命周期及 AG-UI/ProductEvent 对外投影。
@@ -106,13 +107,13 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 
 `kokoro-bff/modules/chat` 是 Web-facing Chat owner：
 
-- `/v1/sessions`、消息提交、标题、删除、分享和公开 snapshot；
+- 消息提交、标题、删除、分享和公开 snapshot；
 - 鉴权、namespace/project scope、请求幂等和错误 envelope；
 - `Last-Event-ID` replay、SSE keep-alive 和浏览器连接生命周期；
 - 将 Agent 执行结果投影成对外 Chat/ProductEvent。
 
-`kokoro-agent` 只拥有执行侧 `chat_messages`、`chat_events` 等安全事实和 Run 状态；BFF 通过
-版本化 Agent HTTP business ingress 消费 history/replay，不直接读表。Agent 不向浏览器发布
+`kokoro-agent` 只拥有执行侧 session metadata、`chat_messages`、`chat_events` 等安全事实和 Run 状态；BFF 通过
+版本化 Agent HTTP business ingress 消费 session list/history/replay，不直接读表。Agent 不向浏览器发布
 事件，也不创建第二套 Chat API、SSE stream 或独立事件序列。
 
 ## 6. 跨仓允许的连接面
@@ -136,5 +137,5 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 - [x] 除 `/healthz` 外的请求始终由 `x-kokoro-service` + `x-kokoro-internal-secret` 认证；未配置
   secret 时 fail-closed 返回 `503 service_auth_not_configured`，history/replay 使用受信 identity headers。
 - [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 durable inbox 去重和恢复。
-- [ ] BFF session list/detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现，不属于 Agent ingress。
+- [x] BFF session list 通过 Agent durable identity-scoped ingress 投影；detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现。
 - [x] Agent PostgreSQL + Redis 执行事实、Run/control/HITL、outbox/recovery worker 门禁由本仓测试覆盖。

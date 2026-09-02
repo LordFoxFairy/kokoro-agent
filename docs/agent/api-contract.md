@@ -23,12 +23,18 @@ HTTP ingress 位于本仓 `src/kokoro_agent/http/`，只负责 transport/admissi
 | `POST` | `/v1/runs` | durable admission 后投递一个 Run | `202` |
 | `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
 | `GET` | `/v1/runs/{run_id}/events` | Agent 内部证据回放，按 `after_seq` 分页 | `200` |
+| `GET` | `/v1/sessions` | 按 trusted identity 查询持久化会话摘要 | `200` |
 | `GET` | `/v1/sessions/{session_id}/messages` | 安全 Chat history | `200` |
 | `GET` | `/v1/sessions/{session_id}/events` | 安全 Chat replay | `200` |
 
-上表是当前已实现的 Agent v1 business ingress；它不包含 BFF 的 session list/detail、title、share、
-delete 或 public snapshot。上述 BFF 业务能力不属于 Agent ingress，也不能通过直读 Agent
-PostgreSQL/Redis 来补齐。
+上表是当前已实现的 Agent v1 business ingress；它提供执行侧的持久化 session list，但不包含
+BFF 的 session detail、title、share、delete 或 public snapshot。上述 BFF 业务能力不属于 Agent
+ingress，也不能通过直读 Agent PostgreSQL/Redis 来补齐。
+
+`GET /v1/sessions` 支持可选 `project_ref`、`limit`（1..100）和不透明 `cursor`。返回
+`data.sessions[]`，每项包含 `session_id`、`project_ref`、`title`、`created_at`、`updated_at`；
+`next_cursor` 只在仍有下一页时出现。列表由 Agent-owned PostgreSQL 的 session metadata
+事实表提供，按 `updated_at DESC, session_id ASC` 排序，并从 trusted identity 派生 namespace。
 
 `POST /v1/runs` body 是 Root `LaunchRunRequest` 的 JSON transport 映射：
 `request_id`、`run_id`、`session_id`、`feature_key`、`execution_identity`、顶层
@@ -43,7 +49,7 @@ PostgreSQL `run_dispatches` 中写入不可变 `sha256` fence，再发布现有
 control stream，由 worker 的 durable inbox 和 session 校验继续完成幂等与授权边界；cancel/resume
 按 `decision_id` 去重，steer 按 `message_id` keep-first 入账。
 
-Chat history/replay 只返回 `chat_messages`/`chat_events` 的 allowlisted projection；请求通过
+Session list、Chat history/replay 只返回 Agent-owned allowlisted projection；请求通过
 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
 `x-kokoro-identity-assertion-ref` 提供受信服务上下文。浏览器的 `X-Domain` 不属于该接口，也
 不会参与身份或隔离计算。除 `/healthz` 外的所有请求始终要求配置可信的

@@ -119,8 +119,8 @@ native subagent。`agent_factory.py` 保留构造顺序及唯一的 `create_deep
 
 ```text
 worker -> features -> agent_factory -> DeepAgents / official Swarm
-execution -> storage + narrow public clients
-skills/sandbox -> storage + narrow public clients
+execution -> infrastructure + narrow public clients
+skills/sandbox -> infrastructure + narrow public clients
 clients -> Root/owner generated contracts
 ```
 

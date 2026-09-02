@@ -12,9 +12,9 @@ from kokoro_agent.config_file import load_config_file
 FULL_TREE = """\
 stream:
   redis_url: redis://127.0.0.1:6379/5
-storage:
-  database_url: postgresql://127.0.0.1/postgres
-  database_schema: kokoro_tree
+database:
+  url: postgresql://127.0.0.1/postgres
+  schema: kokoro_tree
 mcp:
   egress_mode: "off"
 run_repository:

@@ -14,6 +14,7 @@ def test_repository_and_service_boundaries_are_explicit() -> None:
     assert (root / "repositories" / "run_repository.py").is_file()
     assert (root / "repositories" / "chat_repository.py").is_file()
     assert (root / "services" / "chat_service.py").is_file()
+    assert (root / "services" / "chat_dto.py").is_file()
     assert (root / "infrastructure" / "postgres_run_repository.py").is_file()
     assert (root / "infrastructure" / "postgres_chat_repository.py").is_file()
     assert (root / "infrastructure" / "schema.py").is_file()
@@ -33,3 +34,11 @@ def test_ports_do_not_import_database_or_transport_adapters() -> None:
     service = (root / "services" / "chat_service.py").read_text(encoding="utf-8")
     assert "infrastructure" not in service
     assert "http.server" not in service
+
+
+def test_chat_service_only_contains_application_orchestration() -> None:
+    root = _root() / "src" / "kokoro_agent" / "services"
+    source = (root / "chat_service.py").read_text(encoding="utf-8")
+    assert "from pydantic import" not in source
+    assert "class ChatQueryRequest" not in source
+    assert "class ChatService" in source

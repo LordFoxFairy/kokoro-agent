@@ -19,7 +19,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import SecretStr, TypeAdapter
 
-from kokoro_agent.services.chat_service import ChatService, ChatQueryRequest, ChatSessionListRequest
+from kokoro_agent.services.chat_dto import ChatQueryRequest, ChatSessionListRequest
+from kokoro_agent.services.chat_service import ChatService
 from kokoro_agent.contract import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.contract.control import IdentityKind
 from kokoro_agent.http.ingress import AgentIngress, IngressError

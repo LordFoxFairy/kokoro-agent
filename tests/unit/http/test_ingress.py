@@ -6,7 +6,8 @@ import pytest
 from pydantic import JsonValue
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatProjection
-from kokoro_agent.services.chat_service import ChatService, ChatQueryRequest
+from kokoro_agent.services.chat_dto import ChatQueryRequest
+from kokoro_agent.services.chat_service import ChatService
 from kokoro_agent.contract import (
     ExecutionIdentity,
     IdentityRef,

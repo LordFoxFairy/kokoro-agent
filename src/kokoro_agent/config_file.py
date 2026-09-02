@@ -23,6 +23,8 @@ _YAML_TO_ENV: dict[str, str] = {
     "model.openai_base_url": "OPENAI_BASE_URL",
     "model.openai_reasoning": "KOKORO_OPENAI_REASONING",
     "model.anthropic_base_url": "ANTHROPIC_BASE_URL",
+    "model.litellm_enabled": "KOKORO_LITELLM_ENABLED",
+    "model.litellm_base_url": "KOKORO_LITELLM_BASE_URL",
     "stream.redis_url": "KOKORO_REDIS_URL",
     "storage.database_url": "KOKORO_AGENT_DATABASE_URL",
     "storage.database_schema": "KOKORO_AGENT_DATABASE_SCHEMA",

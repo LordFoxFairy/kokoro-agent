@@ -81,8 +81,20 @@ BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己
 KOKORO_REDIS_URL=redis://127.0.0.1:6379/10 \
   KOKORO_AGENT_DATABASE_URL=postgresql://localhost/postgres KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   KOKORO_INTERNAL_SECRET_AGENT=... KOKORO_AGENT_HTTP_PORT=4401 \
-  uv run kokoro-agent-http
+uv run kokoro-agent-http
 ```
+
+Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本地 profile 只启动 Web、BFF
+和它们的 PostgreSQL/Redis；此时 BFF readiness 仍可通过，Chat/调度执行路由返回稳定的
+`agent_not_configured`。启用完整执行 profile 时必须同时运行 `kokoro-agent-http`（BFF 的
+durable ingress）和 `kokoro-agent-worker`（实际执行 loop）；只运行 HTTP 进程只能完成 admission，
+不会执行任务。
+
+LiteLLM 同样是可选的外置 OpenAI-compatible gateway。Agent 不包含 LiteLLM Python 包，也不
+启动 LiteLLM 进程；只有在 `KOKORO_LITELLM_ENABLED=1` 且同时配置
+`KOKORO_LITELLM_BASE_URL`、`KOKORO_LITELLM_API_KEY` 时，Model 的 `litellm` transport 才会
+被 Agent 使用。没有 LiteLLM 时可使用直接的 OpenAI-compatible 或 Anthropic provider；Model
+目录服务也不会因为 LiteLLM 未部署而启动失败。
 
 HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 业务入口是：
 
@@ -109,7 +121,8 @@ Agent ingress 不提供 BFF 的 session list/detail、title、share、delete、p
 
 - Compose/Kubernetes 只注入 PostgreSQL、Redis、GA checkpoint/RunLedger、sandbox/workbench、模型和可选 public-client handle；不定义 Feature 或 Agent 组合。
 - Feature 目录在 worker 启动时加载；Agent 声明的 Skill 在构造时解析，并由 DeepAgents 原生 SkillsMiddleware 渐进读取。
-- `music` 与真实 provider/model 仍是本地骨架；provider 由 `model/factory.py` 统一适配，后续接入 Model public client/LiteLLM 时不改变 AgentFactory 或 DeepAgents 链路。
+- `music` 与真实 provider/model 仍是本地骨架；provider 由 `model/factory.py` 统一适配。LiteLLM
+  仅是显式开启时使用的外置路由，不是 Agent 或 Model 的必需进程。
 - 没有 provider 凭证的离线循环只在测试中使用 `tests/support/local_fake.py`；它不属于正式包，也不提供 worker 运行时开关。
 - MCP 连接的 egress 策略在 worker 启动时从 `KOKORO_MCP_EGRESS_MODE` 解析一次（默认 strict）；连接层不再读取进程环境。
 - `ExecutionIdentity` 由 BFF Chat/IAM 提供，GA 自己派生 `RuntimeNamespace`；不在 wire 中传 `namespace`、用户 ID 或 workspace ID。

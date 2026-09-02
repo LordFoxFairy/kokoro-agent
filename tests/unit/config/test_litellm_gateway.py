@@ -142,6 +142,7 @@ def _base_url(server: _GatewayServer) -> str:
 def _config(base_url: str) -> AppConfig:
     return AppConfig.from_env(
         {
+            "KOKORO_LITELLM_ENABLED": "1",
             "KOKORO_LITELLM_BASE_URL": base_url,
             "KOKORO_LITELLM_API_KEY": GATEWAY_KEY,
         }
@@ -183,7 +184,7 @@ def test_litellm_thinking_maps_reasoning_effort() -> None:
 
 
 def test_litellm_requires_base_url_fail_loud() -> None:
-    config = AppConfig.from_env({"KOKORO_LITELLM_API_KEY": GATEWAY_KEY})
+    config = AppConfig.from_env({"KOKORO_LITELLM_ENABLED": "1", "KOKORO_LITELLM_API_KEY": GATEWAY_KEY})
     with pytest.raises(ValueError, match="KOKORO_LITELLM_BASE_URL"):
         make_chat_model(
             config.model, ModelConfig(provider="litellm", name="gateway-alias")
@@ -192,12 +193,23 @@ def test_litellm_requires_base_url_fail_loud() -> None:
 
 def test_litellm_requires_api_key_fail_loud() -> None:
     config = AppConfig.from_env(
-        {"KOKORO_LITELLM_BASE_URL": "https://gateway.example.com/v1"}
+        {"KOKORO_LITELLM_ENABLED": "1", "KOKORO_LITELLM_BASE_URL": "https://gateway.example.com/v1"}
     )
     with pytest.raises(ValueError, match="KOKORO_LITELLM_API_KEY"):
         make_chat_model(
             config.model, ModelConfig(provider="litellm", name="gateway-alias")
         )
+
+
+def test_litellm_is_disabled_by_default() -> None:
+    config = AppConfig.from_env(
+        {
+            "KOKORO_LITELLM_BASE_URL": "https://gateway.example.com/v1",
+            "KOKORO_LITELLM_API_KEY": GATEWAY_KEY,
+        }
+    )
+    with pytest.raises(ValueError, match="KOKORO_LITELLM_ENABLED"):
+        make_chat_model(config.model, ModelConfig(provider="litellm", name="gateway-alias"))
 
 
 def test_litellm_invoke_hits_gateway_with_key(gateway: _GatewayServer) -> None:

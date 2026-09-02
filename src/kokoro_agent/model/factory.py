@@ -26,6 +26,7 @@ class ChatModelSettings(BaseModel):
     anthropic_api_key: SecretStr | None
     anthropic_base_url: str | None
     # litellm 网关档：agent 只持网关地址与网关 key（单点凭据），绝不存任何底层 provider 凭据。
+    litellm_enabled: bool
     litellm_base_url: str | None
     litellm_api_key: SecretStr | None
 
@@ -132,6 +133,8 @@ def _build_anthropic_model(settings: ChatModelSettings, model: ModelConfig) -> B
 
 
 def _build_litellm_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+    if not settings.litellm_enabled:
+        raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_ENABLED=1")
     # litellm 网关档 = OpenAI 兼容客户端指向网关。model.name 是网关侧 model_name（路由别名），
     # 非底层真实 model id；凭据只有网关地址 + 网关 key，底层 provider key 由网关自己持有。
     # 缺网关地址或网关 key 即"未配网关"，fail-loud——绝不让 ChatOpenAI 回落 OPENAI_API_KEY 环境变量

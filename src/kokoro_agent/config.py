@@ -65,6 +65,7 @@ class AppConfig(BaseModel):
     anthropic_api_key: OptSecret = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     anthropic_base_url: OptStr = Field(default=None, validation_alias="ANTHROPIC_BASE_URL")
     # litellm 网关档：agent 只持网关地址与网关 key（不存任何底层 provider 凭据）。
+    litellm_enabled: bool = Field(default=False, validation_alias="KOKORO_LITELLM_ENABLED")
     litellm_base_url: OptStr = Field(default=None, validation_alias="KOKORO_LITELLM_BASE_URL")
     litellm_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_LITELLM_API_KEY")
 
@@ -186,6 +187,7 @@ class AppConfig(BaseModel):
             openai_reasoning=self.openai_reasoning,
             anthropic_api_key=self.anthropic_api_key,
             anthropic_base_url=self.anthropic_base_url,
+            litellm_enabled=self.litellm_enabled,
             litellm_base_url=self.litellm_base_url,
             litellm_api_key=self.litellm_api_key,
         )

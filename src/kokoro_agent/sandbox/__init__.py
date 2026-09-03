@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kokoro_agent.sandbox.archive import load_workspace_config
+from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.sandbox.backend import (
     SandboxSettings,
     build_filesystem_permissions,
@@ -20,6 +21,7 @@ __all__ = [
     "SandboxSettings",
     "build_filesystem_permissions",
     "load_workspace_config",
+    "workspace_key",
     "make_backend",
     "make_backend_for_run",
     "teardown_backend_for_run",

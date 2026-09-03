@@ -14,7 +14,7 @@ from kokoro_agent.clients.storage import (
     DeliveryRequest,
     StorageClientError,
 )
-from kokoro_agent.contract import ExecutionIdentity, IdentityRef
+from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
 from kokoro_agent.tools.deliver import DeliverResult, make_deliver_tool
 
 _NS = "local:s1"

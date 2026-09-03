@@ -8,7 +8,7 @@ from pydantic import JsonValue
 from kokoro_agent.chat.models import ChatEventDraft, ChatProjection
 from kokoro_agent.services.chat_dto import ChatQueryRequest
 from kokoro_agent.services.chat_service import ChatService
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     ExecutionIdentity,
     IdentityRef,
     RunInput,

@@ -31,7 +31,7 @@ from support.fakes import (
     text_run,
     usage_recorder,
 )
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
     MessageCompleted,
     RunCompleted,
@@ -53,7 +53,7 @@ from support.deepagents import create_test_deep_agent
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.contract.streams import run_events_stream
+from kokoro_agent.protocol.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
 

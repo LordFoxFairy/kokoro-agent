@@ -16,7 +16,7 @@ from langgraph.stream import CustomTransformer
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from kokoro_agent.contract import ToolReturnedPayload, agent_event_adapter, run_events_stream
+from kokoro_agent.protocol import ToolReturnedPayload, agent_event_adapter, run_events_stream
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.protocols import AgentRunnable

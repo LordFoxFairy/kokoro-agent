@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from kokoro_agent.contract import RunRequest
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.repositories.run_records import (
     ControlAdmission,
     DispatchAdmission,

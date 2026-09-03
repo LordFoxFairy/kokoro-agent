@@ -29,18 +29,18 @@ def _rel(path: Path) -> str:
     return str(path.relative_to(_SRC))
 
 
-def test_contract_has_zero_inward_dependencies() -> None:
+def test_protocol_has_zero_inward_dependencies() -> None:
     for path in _py_files():
-        if not _rel(path).startswith("contract"):
+        if not _rel(path).startswith("protocol"):
             continue
         offenders = {
             module
             for module in _imports(path)
             if module.startswith("kokoro_agent")
-            and not module.startswith("kokoro_agent.contract")
+            and not module.startswith("kokoro_agent.protocol")
         }
         assert not offenders, (
-            f"{_rel(path)} imports non-contract internals: {sorted(offenders)}"
+            f"{_rel(path)} imports non-protocol internals: {sorted(offenders)}"
         )
 
 
@@ -199,10 +199,10 @@ def test_delivery_tool_uses_only_storage_public_client() -> None:
     assert "PackageStore" not in (_SRC / "tools" / "deliver.py").read_text()
 
 
-def test_no_stream_name_literals_outside_contract() -> None:
-    # 边界法典 §7：流名前缀字面量只许活在生成物里。
+def test_no_stream_name_literals_outside_protocol() -> None:
+    # 边界法典 §7：流名前缀字面量只许活在 Agent-owned protocol 里。
     for path in _py_files():
-        if _rel(path).startswith("contract"):
+        if _rel(path).startswith("protocol"):
             continue
         assert "kokoro:" not in path.read_text(encoding="utf-8"), (
             f"{_rel(path)} hardcodes a stream name literal"
@@ -243,3 +243,14 @@ def test_no_function_level_imports() -> None:
                 assert not isinstance(inner, (ast.Import, ast.ImportFrom)), (
                     f"{_rel(path)}:{node.name} contains a deferred import"
                 )
+
+
+def test_retired_root_contract_mirrors_are_absent() -> None:
+    """Agent wire is local; old shared storage schemas and generators stay retired."""
+    assert not (_SRC / "contract").exists()
+    assert not (_SRC / "protocol" / "storage.py").exists()
+    for path in _py_files():
+        source = path.read_text(encoding="utf-8")
+        assert "contract/spec/" not in source
+        assert "contract/generate.py" not in source
+        assert "Source Root commit:" not in source

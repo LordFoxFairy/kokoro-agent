@@ -16,7 +16,7 @@ from support.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.streams.redis import RedisStream
 from support.fakes import usage_recorder
-from kokoro_agent.contract.streams import run_events_stream
+from kokoro_agent.protocol.streams import run_events_stream
 from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
 
 

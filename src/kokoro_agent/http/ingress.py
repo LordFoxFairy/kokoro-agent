@@ -26,7 +26,7 @@ from kokoro_agent.services.chat_dto import (
     ChatSessionListRequest,
 )
 from kokoro_agent.services.chat_service import ChatService
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     REQUESTS_MAXLEN,
     REQUESTS_STREAM,
     RUN_CONTROL_MAXLEN,

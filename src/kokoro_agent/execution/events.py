@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
     DeliveryCreatedPayload,
     MessageCompletedPayload,

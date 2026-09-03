@@ -47,9 +47,8 @@ class RunRequest(StrictModel):
     """Worker launch intent; Feature supplies every Agent/runtime decision."""
 
     kind: Literal["run.request"]
-    # Root RPC carries a request id; Redis fixtures may omit it while the
-    # transport adapter is being generated.  run_id remains the execution
-    # idempotency key in RunRepository.
+    # HTTP ingress supplies request_id. Direct worker callers may omit it;
+    # run_id remains the execution idempotency key in RunRepository.
     request_id: NonEmptyStr | None = None
     run_id: NonEmptyStr
     session_id: NonEmptyStr

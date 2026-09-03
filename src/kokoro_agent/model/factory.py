@@ -42,7 +42,7 @@ def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChat
 
 
 def select_model_label(label: str | None, fallback: ModelConfig) -> ModelConfig:
-    """Translate the narrow Root model label into a worker model setting.
+    """Translate the narrow Agent API model label into a worker model setting.
 
     The launch contract intentionally carries only ``provider:name`` rather
     than a provider configuration.  Credentials and endpoint selection stay

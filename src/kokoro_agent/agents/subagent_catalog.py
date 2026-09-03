@@ -9,7 +9,7 @@ from typing import Annotated, Final
 from deepagents.middleware.subagents import SubAgent
 from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
 
-from kokoro_agent.contract import SubagentSource
+from kokoro_agent.protocol import SubagentSource
 
 from kokoro_agent.prompts import load_prompt
 

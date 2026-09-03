@@ -28,8 +28,8 @@ from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
-from kokoro_agent.contract import RunRequest
-from kokoro_agent.contract.storage import workspace_key
+from kokoro_agent.protocol import RunRequest
+from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.policy import Backend, ModelConfig
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable

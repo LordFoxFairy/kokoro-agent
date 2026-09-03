@@ -21,7 +21,7 @@ from support.fakes import (
 )
 from support.chat import FakeChatRepository
 from kokoro_agent.chat.models import ChatMessageDraft, ChatMessageRecord
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     InboundMessage,
     REQUESTS_STREAM,
     RunCompleted,

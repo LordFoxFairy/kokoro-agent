@@ -1,5 +1,4 @@
-# GENERATED — DO NOT EDIT. Source: contract/spec/events.yaml
-# Regenerate: python3 contract/generate.py
+# Agent-owned event protocol. Keep changes within this repository.
 from __future__ import annotations
 
 from typing import Annotated, Literal, Union

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 from kokoro_agent.mcp.config import McpServerConfig, McpServerEntry
 
 

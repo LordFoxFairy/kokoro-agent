@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Interrupt
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     AllowedDecision,
     RejectDecision,
     ResumeDecision,

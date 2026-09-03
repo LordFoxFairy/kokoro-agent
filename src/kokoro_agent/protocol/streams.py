@@ -1,5 +1,4 @@
-# GENERATED — DO NOT EDIT. Source: contract/spec/streams.yaml
-# Regenerate: python3 contract/generate.py
+# Agent-owned Redis protocol. Keep changes within this repository.
 from __future__ import annotations
 
 REQUESTS_STREAM = "kokoro:runs:requests"

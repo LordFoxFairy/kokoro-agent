@@ -6,7 +6,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel, ConfigDict, SecretStr
 
-from kokoro_agent.contract import RunRequest
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.features.catalog import get_feature
 

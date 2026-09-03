@@ -45,7 +45,7 @@ runtime。
 ## 2. 唯一运行链路
 
 ```text
-Agent business HTTP ingress / Root transport
+Agent business HTTP ingress / Agent-owned transport
   -> durable dispatch admission
   -> Redis LaunchRunRequest
   -> worker 解析并认领 Run
@@ -55,10 +55,10 @@ Agent business HTTP ingress / Root transport
      多个 peer: create_deep_agent(...) + langgraph_swarm.create_swarm(...)
   -> native DeepAgents/LangGraph state + checkpoint
   -> GA RunRepository / chat facts / workbench
-  -> Root Chat query boundary -> BFF Chat 查询、replay、AG-UI/SSE
+  -> Agent Chat HTTP query boundary -> BFF Chat 查询、replay、AG-UI/SSE
 ```
 
-请求只选择可信的 `feature_key` 和本次输入；Root contract 允许的模型标签/trace 仍是旁路元数据，
+请求只选择可信的 `feature_key` 和本次输入；本仓 API 允许的模型标签/trace 仍是旁路元数据，
 不参与 Agent 组装。请求不携带 Agent、member、Skill、MCP、graph、namespace 或 worker 依赖。
 Feature 的组合在代码/受管目录中声明，worker warm 时注册；运行中不临时改图。
 

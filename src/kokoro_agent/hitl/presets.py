@@ -7,7 +7,7 @@ interrupt_on 机制承载（声明面不变），review 与任意执行点原语
 
 from __future__ import annotations
 
-from kokoro_agent.contract import AllowedDecision
+from kokoro_agent.protocol import AllowedDecision
 
 # kind=approval：放行 / 改参放行 / 拒绝（工具边界调用前审批）。
 APPROVAL_DECISIONS: tuple[AllowedDecision, ...] = ("approve", "edit", "reject")

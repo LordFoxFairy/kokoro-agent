@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.contract import RunRequest
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
 from kokoro_agent.repositories.run_repository import (
     ControlAdmission,

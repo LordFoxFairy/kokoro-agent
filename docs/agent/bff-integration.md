@@ -2,15 +2,14 @@
 
 状态：当前集成约束，2026-09-01。
 
-本文是 `kokoro-bff` 与 `kokoro-agent` 的边界说明，不是新的 wire schema，也不替代根仓
-`contract/` 的 API/AIP 定义。所有跨仓字段、版本和兼容规则必须以已发布的版本化契约为准。
+本文是 `kokoro-bff` 与 `kokoro-agent` 的边界说明。Agent ingress 的字段、版本和错误语义由本仓 [API 契约](api-contract.md) 定义；BFF 的公开 Chat/AG-UI 契约由 BFF 仓库自己维护。
 
 ## 1. 三仓职责
 
 ```text
 浏览器
   -> kokoro Web /api/session/*
-  -> kokoro-bff/modules/chat /v1/sessions/*
+  -> kokoro-bff Chat application /v1/sessions/*
   -> Agent business adapter
   -> kokoro-agent HTTP ingress
   -> kokoro-agent Redis worker
@@ -43,7 +42,7 @@ loop，也不把 Redis stream 暴露给 BFF。
 
 ### 请求、认证与响应约束
 
-- `POST /v1/runs` 接受 Root `LaunchRunRequest` 的 JSON transport 映射：`request_id`、`run_id`、
+- `POST /v1/runs` 接受 Agent v1 `LaunchRunRequest` 的 JSON transport 映射：`request_id`、`run_id`、
   `session_id`、`feature_key`、`execution_identity`、顶层 `message_id`/`content`，以及可选
   `requested_model_label`/`trace`。
 - `POST /v1/runs/{run_id}/control` 接受 `run.cancel`、`run.resume`、`run.steer`；当前 strict
@@ -108,7 +107,7 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 
 ## 5. Chat / SSE 边界
 
-`kokoro-bff/modules/chat` 是 Web-facing Chat owner：
+`kokoro-bff Chat application` 是 Web-facing Chat owner：
 
 - 消息提交、标题、删除、分享和公开 snapshot；
 - 鉴权、namespace/project scope、请求幂等和错误 envelope；

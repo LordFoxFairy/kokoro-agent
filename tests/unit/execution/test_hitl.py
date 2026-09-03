@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Interrupt
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from kokoro_agent.contract import ResumeDecision
+from kokoro_agent.protocol import ResumeDecision
 from kokoro_agent.execution.approvals import (
     PendingFrame,
     align_decisions,

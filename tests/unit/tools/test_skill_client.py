@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import pytest
 
 from kokoro_agent.agents.definition import Agent
-from kokoro_agent.contract import ExecutionIdentity, IdentityRef, RunInput, RunRequest
+from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
 from kokoro_agent.agent_factory import resolve_declared_skills
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClientError
 from kokoro_agent.execution.scope import runtime_namespace

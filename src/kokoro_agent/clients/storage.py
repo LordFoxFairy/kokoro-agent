@@ -6,7 +6,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 
 
 class StorageClientError(RuntimeError):

@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Command
 
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     CONSUMER_GROUP,
     ControlReceiptStatus,
     REQUESTS_STREAM,

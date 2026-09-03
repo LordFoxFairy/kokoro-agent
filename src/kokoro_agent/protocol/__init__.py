@@ -1,8 +1,7 @@
-# GENERATED — DO NOT EDIT. Source: contract/spec/*.yaml
-# Regenerate: python3 contract/generate.py
+# Agent-owned protocol exports. Keep changes within this repository.
 from __future__ import annotations
 
-from kokoro_agent.contract.events import (
+from kokoro_agent.protocol.events import (
     AgentEvent,
     agent_event_adapter,
     TodoStatus,
@@ -56,7 +55,7 @@ from kokoro_agent.contract.events import (
     RunCompletedPayload,
     RunFailedPayload,
 )
-from kokoro_agent.contract.control import (
+from kokoro_agent.protocol.control import (
     InboundMessage,
     inbound_adapter,
     ResumeDecision,
@@ -73,7 +72,7 @@ from kokoro_agent.contract.control import (
     RunCancel,
     RunSteer,
 )
-from kokoro_agent.contract.streams import (
+from kokoro_agent.protocol.streams import (
     REQUESTS_STREAM,
     CONSUMER_GROUP,
     REQUESTS_MAXLEN,

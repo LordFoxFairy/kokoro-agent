@@ -16,7 +16,7 @@ from langgraph.runtime import Runtime
 from support.fakes import FakeBus, FakeRunRepository, request, usage_recorder
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
-from kokoro_agent.contract.streams import run_events_stream
+from kokoro_agent.protocol.streams import run_events_stream
 from kokoro_agent.execution.run_agent import invoke_once
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.tools.middleware import SteeringMiddleware

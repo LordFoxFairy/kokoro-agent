@@ -1,15 +1,13 @@
 # kokoro-agent
 
 Kokoro 的 GA 执行底座：直接使用 DeepAgents 的 agent loop、state、checkpoint 和 interrupt；需要多个
-peer 接手会话时使用官方 `langgraph-swarm`。GA worker 从 Redis 接收 Root generated
-`LaunchRunRequest`，按 `feature_key` 取得 Feature，执行一个或多个 Agent，并将用户可见结果写入
-`chat_messages/chat_events`。
+peer 接手会话时使用官方 `langgraph-swarm`。Agent HTTP ingress 接收本仓 v1 Run 请求，worker 从 Redis
+接收本仓 `protocol/control.py` 定义的严格内部命令，按 `feature_key` 取得 Feature，执行一个或多个 Agent，
+并将用户可见结果写入 `chat_messages/chat_events`。
 
-Root `contract/` 是 API/AIP 跨仓契约唯一来源；当前 Redis worker 使用严格 internal
-envelope adapter（Root `LaunchRunRequest` 的顶层 `message_id/content` 在 Redis 中位于
-`input`），generated consumer/transport 接入后替换映射层，不在本仓复制契约。GA 不面向浏览器，
-`kokoro-bff` 内部 Chat 业务模块通过版本化 Chat contract 查询历史、订阅 replay 并投影 AG-UI/SSE；
-本仓只提供执行事实和恢复边界。
+本仓自己维护 [Agent v1 API](docs/agent/api-contract.md)、`src/kokoro_agent/protocol/` 和 contract tests。
+Root 不生成或发布 Agent 协议。BFF 只通过版本化 HTTP 查询历史、提交 control 和 replay，再由 BFF 自己投影
+AG-UI/SSE；本仓只提供执行事实和恢复边界，不复制 BFF、Capability 或 Storage 的数据库模型。
 
 ## 目标目录（按真实职责）
 
@@ -23,6 +21,7 @@ src/kokoro_agent/
 ├── features/        对外产品能力与 Agent 组装声明
 ├── agent_factory.py 唯一内部组装入口，直接调用 DeepAgents
 ├── swarm.py         official langgraph-swarm handoff 薄接线
+├── protocol/        Agent-owned command/event/Redis wire；不包含其他 owner 的模型
 ├── execution/       Run、control、HITL、事件投影与终态
 ├── chat/            GA chat_messages/chat_events 与安全产品投影（供 BFF Chat 使用）
 ├── worker/          Redis ingress、共享服务、claim、recovery、drain
@@ -48,7 +47,7 @@ Redis LaunchRunRequest
   -> create_deep_agent | official Swarm
   -> native state/checkpoint + GA RunRepository/workbench
   -> chat_messages/chat_events durable write
-  -> Root Chat query boundary -> kokoro-bff Chat API/AG-UI
+  -> Agent Chat HTTP query boundary -> kokoro-bff Chat API/AG-UI
 ```
 
 - 外部请求携带 `ExecutionIdentity`，不携带 caller namespace、thread、Agent、Skill、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
@@ -160,12 +159,11 @@ integration、e2e 和 HTTP acceptance。最后一条 pytest 命令是完整 Agen
 PostgreSQL + Redis fixture 可达时运行；缺少服务会由 fixture fail-loud，而不是静默得到假绿。
 HTTP owner 的接口、fixture 要求和验收证据见 [`ACCEPTANCE.md`](ACCEPTANCE.md)。
 
-跨仓联调由 Root 的 contract/goal2 门禁负责；本仓不依赖 Root 的旧验证脚本，也不把其它仓库的
-源码、数据库或测试实现复制进来。
+跨仓联调由 Root 的 loopback E2E 编排验证；本仓的 API、protocol、类型、测试与构建在本仓闭环，不依赖 Root 的生成器，也不复制其它仓库的源码、数据库或测试实现。
 
 ## 关键不变量
 
-- wire 词汇 = Root `contract/` 生成物；GA ProductEvent 写入 `chat_events`，由 `chat_event_id + seq` 保证幂等与顺序；
+- wire 词汇由本仓 `protocol/` 与 Agent v1 API 文档定义；GA ProductEvent 写入 `chat_events`，由 `chat_event_id + seq` 保证幂等与顺序；
   契约 optional 字段缺席=省略（exclude_none），null 永不上 wire。
 - 请求流 XREADGROUP 消费、parse 后即 XACK；崩溃恢复权在 RunStateStore TTL 租约，
   HITL 暂停置哨兵永不被重拾重跑，其 control 监听由存活 worker 心跳收养。

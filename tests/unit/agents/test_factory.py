@@ -16,7 +16,7 @@ import kokoro_agent.agent_factory as agent_factory_module
 from kokoro_agent.agent_factory import AgentFactory
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.config import AppConfig
-from kokoro_agent.contract import ExecutionIdentity, IdentityRef, RunInput, RunRequest
+from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.tools.toolbox import ProcessToolbox

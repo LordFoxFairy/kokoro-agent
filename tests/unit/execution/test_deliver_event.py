@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from support.fakes import FakeAgent, FakeBus, FakeRunStream, FakeToolCall, usage_recorder
 
-from kokoro_agent.contract import DeliveryCreated, SubagentSource
+from kokoro_agent.protocol import DeliveryCreated, SubagentSource
 from kokoro_agent.execution.events import RunEmitter, delivery_created_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.tools.deliver import DeliverResult

@@ -16,4 +16,4 @@ the Chat module inside `kokoro-bff`.
 Every chat row includes GA's derived namespace; session ID alone is never an authorization or
 isolation key. GA does not write this internal safe projection into BFF Chat's browser-live stream: that stream
 has a different generated envelope and sequence owner. BFF Chat queries/replays these facts through
-the Root Chat contract once its GA query client is connected; native state is never chat history.
+the Agent-owned Chat HTTP contract once its GA query client is connected; native state is never chat history.

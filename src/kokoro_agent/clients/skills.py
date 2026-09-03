@@ -7,7 +7,7 @@ from typing import Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 

@@ -1,176 +1,118 @@
-# kokoro-agent API/AIP 契约摘录
+# kokoro-agent v1 API 契约
 
-状态：当前 API/AIP 消费契约，2026-08-31。
+状态：Agent-owned 当前契约，2026-09-02。
 
-跨仓同步规则见根仓 [51-跨子仓 API/AIP 契约与技术方案同步](../../../docs/kokoro-handbook/technical/51-cross-repository-contract-sync.md)。
+本仓维护 Agent ingress、执行控制、内部 Redis command/event protocol、查询/replay 和对应 contract tests。
+Root 不保存或生成 Agent wire。BFF 的公开 Chat、AG-UI 与浏览器生命周期由 BFF 自己维护；Capability、Storage、
+IAM、Model 的业务 API 由各自 owner 维护，Agent 只通过窄 client port 消费。
 
-Root `contract/`（Proto、manifest、生成器）是唯一 wire authority。本页只说明 GA consumer 需要实现的边界，不能作为独立 schema
-来源，也不能在 `kokoro-agent` 内修改字段编号或复制 Root DTO。当前 worker 仍从 Redis 接收
-内部 launch envelope，使用严格 Python adapter；它与 Root RPC 语义一致，但字段形状由 transport
-adapter 映射（Root 的 `message_id/content` 是顶层字段，Redis envelope 暂用 `input` 对象）。
-generated consumer/transport 接入后只替换这层映射，不改变 Feature/Agent API。
+## 1. 代码与契约归属
 
-## Agent business HTTP ingress（v1）
+| 内容 | 本仓位置 | 职责 |
+|---|---|---|
+| HTTP ingress | `src/kokoro_agent/http/` | v1 请求校验、可信上下文、admission、响应与错误映射 |
+| 执行 command/event | `src/kokoro_agent/protocol/` | Agent-owned 严格 Pydantic wire；不包含其他 owner 的数据库模型 |
+| Application | `src/kokoro_agent/services/`、`execution/` | 用例、Run/control/HITL 和安全产品投影 |
+| Repository port/records | `src/kokoro_agent/repositories/` | Agent 自己的运行持久化边界 |
+| 数据库/Redis 实现 | `src/kokoro_agent/infrastructure/`、`streams/` | PostgreSQL、checkpoint 与 Redis 技术实现 |
+| Workspace naming | `src/kokoro_agent/sandbox/workspace.py` | Agent 本地/S3 工作区 key；不是 Storage 服务契约 |
 
-HTTP ingress 位于本仓 `src/kokoro_agent/http/`，只负责 transport/admission；执行仍由独立的
-`kokoro-agent-worker` 进程完成。BFF 只调用下面的版本化入口，不读 Redis、PostgreSQL、checkpoint
-或 RunRepository。
+旧 `contract/storage.py` 中的 BSON、Skill/MCP document、collection 与跨仓 receipt 镜像已退出运行包。
+本仓也不保留未接线的 Root-generated gRPC consumer。
+
+## 2. HTTP ingress
+
+HTTP ingress 只负责 transport/admission；Agent 执行由独立的 `kokoro-agent-worker` 进程完成。
+BFF 只调用版本化入口，不读 Agent PostgreSQL、Redis、checkpoint 或 RunRepository。
 
 | 方法 | 路径 | 作用 | 成功 |
 |---|---|---|---|
 | `GET` | `/healthz` | 进程存活 | `200` |
 | `GET` | `/readyz` | PostgreSQL + Redis 可用 | `200` |
-| `POST` | `/v1/runs` | durable admission 后投递一个 Run | `202` |
+| `POST` | `/v1/runs` | durable admission 后投递 Run | `202` |
 | `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
-| `GET` | `/v1/runs/{run_id}/events` | Agent 内部证据回放，按 `after_seq` 分页 | `200` |
-| `GET` | `/v1/sessions` | 按 trusted identity 查询持久化会话摘要 | `200` |
+| `GET` | `/v1/runs/{run_id}/events` | 内部执行证据，按 `after_seq` 分页 | `200` |
+| `GET` | `/v1/sessions` | identity-scoped 会话摘要 | `200` |
 | `GET` | `/v1/sessions/{session_id}/messages` | 安全 Chat history | `200` |
 | `GET` | `/v1/sessions/{session_id}/events` | 安全 Chat replay | `200` |
 
-上表是当前已实现的 Agent v1 business ingress；它提供执行侧的持久化 session list，但不包含
-BFF 的 session detail、title、share、delete 或 public snapshot。上述 BFF 业务能力不属于 Agent
-ingress，也不能通过直读 Agent PostgreSQL/Redis 来补齐。
+Session detail、title、share、delete 和 public snapshot 属于 BFF，不通过直接访问 Agent 数据库补齐。
 
-`GET /v1/sessions` 支持可选 `project_ref`、`limit`（1..100）和不透明 `cursor`。返回
-`data.sessions[]`，每项包含 `session_id`、`project_ref`、`title`、`created_at`、`updated_at`；
-`next_cursor` 只在仍有下一页时出现。列表由 Agent-owned PostgreSQL 的 session metadata
-事实表提供，按 `updated_at DESC, session_id ASC` 排序，并从 trusted identity 派生 namespace。
+`GET /v1/sessions` 支持 `project_ref`、`limit`（1..100）和不透明 `cursor`。返回 `data.sessions[]`，包含
+`session_id`、`project_ref`、`title`、`created_at`、`updated_at`；有下一页时返回 `next_cursor`。排序为
+`updated_at DESC, session_id ASC`，namespace 从可信身份派生。
 
-`POST /v1/runs` body 是 Root `LaunchRunRequest` 的 JSON transport 映射：
-`request_id`、`run_id`、`session_id`、`feature_key`、`execution_identity`、顶层
-`message_id`、`content`，以及可选 `requested_model_label`/`trace`。ingress 先在 Agent-owned
-PostgreSQL `run_dispatches` 中写入不可变 `sha256` fence，再发布现有
-`REQUESTS_STREAM`；超时重试同一 `run_id` 和 body 会复用 receipt，body 漂移返回
-`409 run_identity_conflict`。
+### Run admission
 
-`POST /v1/runs/{run_id}/control` body 使用 `kind`=`run.cancel`、`run.resume` 或 `run.steer`，
-严格 transport body 要求 `session_id`；steer 另需 Root 定义的 `message_id`/`content`，resume
-还需非空 `decisions`。请求必须通过 `Idempotency-Key` 提供稳定 `command_id`。Agent 先在
-Agent-owned PostgreSQL `run_control_commands` 中按 `(run_id, command_id)` 原子落 `admitted`，并保存 canonical
-request digest，再发布到该 run 的隔离 Redis control stream。相同 run/command/digest 的重试安全重放；
-同一个幂等 key 用在不同 run 上属于不同命令，不会互相污染；digest 漂移返回 `409 command_digest_mismatch`。
-HTTP receipt 状态为 `pending`、`succeeded` 或 `failed`；它只是 `run_control_commands` 同一条记录的
-transport projection，worker 不维护第二张 receipt 表。
+`POST /v1/runs` 接受 `request_id`、`run_id`、`session_id`、`feature_key`、`execution_identity`、顶层
+`message_id`、`content`，以及可选的 `requested_model_label`、`trace`。HTTP ingress 将其校验后映射为
+本仓内部 `RunRequest`，其中消息放在 `input` 对象。两种 transport shape 不形成两个业务 owner。
 
-Session list、Chat history/replay 只返回 Agent-owned allowlisted projection；请求通过
-`x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
-`x-kokoro-identity-assertion-ref` 提供受信服务上下文。浏览器的 `X-Domain` 不属于该接口，也
-不会参与身份或隔离计算。除 `/healthz` 外的所有请求始终要求配置可信的
-`KOKORO_INTERNAL_SECRET_AGENT`，并要求标准 `Authorization: Bearer <secret>`；未配置 secret
-时返回 `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
-`X-Request-Id` 用于响应 meta；control 额外要求 `Idempotency-Key`。
+Agent 在自己的 `run_dispatches` 中保存不可变 request digest，随后发布 `REQUESTS_STREAM`。
+同一 `run_id` 和 body 重试复用 receipt；body 漂移返回 `409 run_identity_conflict`。
 
-业务响应统一为 `{data, meta:{request_id}}` 或 `{error:{code,message}, meta:{request_id}}`；
-health endpoint 保留轻量 status payload。空 body、
-非法 JSON、依赖不可用和 run scope 错误均使用稳定错误码，不返回内部 Python、Redis 或 SQL 细节。
+### Control
 
-## GA 入站
+`POST /v1/runs/{run_id}/control` 使用 `kind`=`run.cancel`、`run.resume` 或 `run.steer`，要求 `session_id`。
+steer 还需 `message_id`、`content`；resume 还需非空 `decisions`。请求通过 `Idempotency-Key` 提供稳定 `command_id`。
+
+Agent 在 `run_control_commands` 按 `(run_id, command_id)` 保存 admission 和 canonical request digest，再发布到
+该 run 的 Redis control stream。相同 key/digest 重放原 receipt；digest 漂移返回 `409 command_digest_mismatch`。
+HTTP receipt 状态为 `pending`、`succeeded`、`failed`，是同一条控制记录的投影，不维护第二张 receipt 表。
+
+## 3. 认证、上下文与响应
+
+除 `/healthz` 外，入口要求 `KOKORO_INTERNAL_SECRET_AGENT` 和标准 `Authorization: Bearer <secret>`。
+未配置 secret 返回 `503 service_auth_not_configured`；认证缺失或错误返回 `401 service_auth_failed`。
+
+Session query/replay 通过 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
+`x-kokoro-identity-assertion-ref` 接收可信服务上下文。浏览器 `X-Domain` 不参与身份或隔离计算。
+`X-Request-Id` 用于响应 metadata，control 额外要求 `Idempotency-Key`。
+
+成功使用 `{data, meta:{request_id}}`，错误使用 `{error:{code,message}, meta:{request_id}}`。
+health endpoint 使用轻量 status payload。响应不泄露 Python 堆栈、SQL、Redis 或 provider secret。
+
+## 4. 内部协议与执行边界
 
 ```text
-Root `kokoro.agent.v1.LaunchRunRequest`
-  request_id (必填)
-  run_id
-  session_id
-  feature_key
-  execution_identity { tenant_ref, actor, subject, identity_assertion_ref }
-  message_id
-  content
-  requested_model_label?
-  trace_json
-
-Redis worker adapter（当前内部 envelope）
-  kind: run.request
-  request_id? (本地旧 fixture 可省略)
-  run_id / session_id / feature_key / execution_identity
-  input { message_id, content }
-  requested_model_label?
-  trace?
-
-Root `kokoro.agent.v1.ApplyControlRequest`
-  request_id / agent_run_id / command / control_kind
-  decisions[] / optional message_id + content
-
-Redis worker control envelope（当前内部 adapter）
-  run.resume { run_id, session_id, command_id, request_digest, decisions[] }
-  run.cancel { run_id, session_id, command_id, request_digest }
-  run.steer { run_id, session_id, command_id, request_digest, message_id, content }
-
-`agent_run_id` 到 `session_id` 的映射由 GA RunRepository/transport adapter 完成；BFF Chat 不把
-Root RPC DTO 直接当 Redis JSON 发送。
-
-ForkConversation / CleanupThread
-  opaque session/run references only; no history, checkpoint, graph, Agent, Skill or namespace selector
+Agent v1 HTTP request
+  -> strict ingress validation
+  -> Agent-owned protocol/control.py
+  -> Redis worker -> RunRepository claim
+  -> FeatureCatalog -> AgentFactory -> DeepAgents/official Swarm
+  -> native checkpoint + Agent chat facts
+  -> Agent Chat HTTP query/replay -> BFF-owned AG-UI projection
 ```
 
-GA ingress 从稳定的 `ExecutionIdentity.tenant_ref + subject` 派生内部 `RuntimeNamespace`；actor/assertion 不参与隔离键；caller 不传 namespace、thread、Agent、Skill、MCP、Tool、provider 或
-Feature 配方。`feature_key` 只用于索引 worker-local `Feature`，不是用户可写的 Agent selector。
-`requested_model_label` 只进入模型选择边界；当前 worker 将其翻译为 provider/name，并由 GA
-`model/factory.py` 结合进程级 `ChatModelSettings` 构造 provider。Model public client 接入生产后，
-GA 必须在此边界再次校验可用性。凭据和 endpoint 仍由 worker `ChatModelSettings` 提供。
+`ExecutionIdentity.tenant_ref + subject` 派生内部 `RuntimeNamespace`；actor/assertion 不参与隔离 key。
+caller 不提交 namespace、thread、Agent、Skill、MCP、Tool、provider 或 Feature 配方。
+`feature_key` 只索引 worker-local Feature，不是用户可写的 Agent selector。
 
-## GA 出站
+## 5. 安全 Chat 事件
 
-GA 只产生两类跨仓可见结果：
-
-1. `LaunchRunResponse` / control receipt：表示受理、终态或控制结果；
-2. 安全 `ProductEvent` 投影事实：以 GA 内部归一化记录写入 `chat_events`，由 BFF Chat 查询/replay 并投影到 AG-UI/SSE。
-
-`chat_events.event_type` 是 GA 为查询/replay 使用的内部安全归一化类型，与 Root public
-`ProductEvent` 的 kind 不要求同名。当前归一化集合为：
+Agent 的 `chat_events` 保存安全归一化类型：
 
 ```text
 run.started | assistant.delta | assistant.completed | activity
 interaction | delivery | run.completed | run.failed
 ```
 
-BFF Chat 在 Root Chat 边界将这些记录映射为对外 ProductEvent；GA 不绕过该边界直接写浏览器事件流。
+BFF 通过本仓 HTTP replay 按 `seq` 读取，再按 BFF 自己的 AG-UI contract 投影。
+raw thinking、tool args/results、subagent text、sandbox path、object key、prompt、secret 和 LangChain native state
+不进入安全 Chat projection。内部执行证据与浏览器产品事件不是同一个数据面。
 
-安全事件只允许 `run_phase`、`assistant_delta/final`、`activity`、`approval_request`、`plan_snapshot`、`artifact_ready`、
-`studio_job_linked`、`terminal`。raw thinking、tool args/results、subagent text、sandbox path、object key、prompt、secret 和
-LangChain native state 永不出现在 Root public event。
+LangChain checkpoint 与 Agent 的 `chat_messages`、`chat_events` 分开。Agent 不读取或改造框架 checkpoint 表，
+不创建 `conversation_messages`、`run_events` 或独立 `event_outbox`。事件以 `chat_event_id + seq` 保持幂等和顺序。
 
-## 存储与 ID
-
-```text
-GA: chat_messages.chat_message_id, chat_events.chat_event_id, chat_events.seq
-Framework: Message.id, thread_id, checkpoint_id, tool_call_id
-```
-
-两组 ID 不互换。GA 不读取或改造 LangChain checkpoint 表，不创建 `conversation_messages`、`run_events` 或独立 `event_outbox`。
-`chat_events` 先 durable 写入，BFF Chat 通过 Root Chat query boundary 按 `seq`
-replay。GA 的安全投影不直写 BFF browser-live stream；该 stream 的 generated
-envelope 和 seq 由 BFF Chat 边界维护。
-
-## 生成与验证
+## 6. 本仓变更与验证
 
 ```text
-Root contract/proto + manifest
-  -> generated GA consumer types
-  -> kokoro-agent contract adapter
-  -> GA contract tests
+本仓 API/protocol + 状态机
+  -> Application/Repository/HTTP 实现
+  -> contract/unit/integration/acceptance tests
+  -> 本仓 API 与技术文档
+  -> BFF 消费者在自己的仓库更新 client 和 contract tests
 ```
 
-契约变更必须在根仓完成并重新生成本仓 consumer；本仓 CI 只验证生成物 provenance、严格字段校验、ProductEvent 脱敏和事件幂等。
-
-## 本仓同步规则
-
-本文件是 GA 对 Root API/AIP 的**消费视图**，不是另一份契约。每次跨仓契约变更，按下面顺序在同一交付批次内更新：
-
-```text
-Root contract/proto + manifest
-  -> 生成 GA consumer types
-  -> GA adapter、运行时和 contract tests
-  -> 本文件（API/AIP 摘录）
-  -> technical-plan.md（实现链路/验收门）
-```
-
-更新责任保持清晰：
-
-| 内容 | 权威位置 | `kokoro-agent` 的更新内容 |
-|---|---|---|
-| wire 字段、编号、oneof、兼容规则 | Root `contract/` | 重新生成 consumer；本文件只同步语义摘录 |
-| GA 如何接收、执行、恢复和落库 | GA 技术方案 36/42 | 更新 `technical-plan.md` 与实现/测试 |
-| GA 与 BFF Chat/Capability/Storage 的 owner 边界 | Root 方案与各 owner public contract | 更新本文件边界说明和 `current-boundary.md` |
-
-因此，子仓会更新自己的 API/AIP 摘录和技术方案，但不会在子仓新增平行 Proto、OpenAPI、字段编号或 DTO；Root
-契约生成物缺失、来源不明或与文档语义漂移时，CI 直接失败。
+本仓运行 `uv run ruff check .`、`uv run pyright`、`uv run pytest`；真实 PostgreSQL/Redis acceptance 另按
+`ACCEPTANCE.md` 运行。Root 的 topology/E2E 只编排和验证，不替代本仓 contract，也不生成源代码。

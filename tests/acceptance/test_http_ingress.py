@@ -17,7 +17,7 @@ from psycopg import sql
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
 from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepositorySettings, make_chat_repository
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     ExecutionIdentity,
     IdentityRef,
     RunCompleted,

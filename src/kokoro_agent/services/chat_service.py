@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from kokoro_agent.chat.models import ChatSessionRecord
 from kokoro_agent.repositories.chat_repository import ChatRepository
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.services.chat_dto import (
     ChatEventView,

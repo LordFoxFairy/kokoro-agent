@@ -15,7 +15,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kokoro_agent.chat.models import ChatEventType, ChatMessageStatus, ChatRole
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 
 
 class _StrictModel(BaseModel):

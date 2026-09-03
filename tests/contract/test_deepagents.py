@@ -207,7 +207,7 @@ def test_langgraph_human_control_requires_interrupt_then_command_resume() -> Non
     This is intentionally a framework-level contract rather than a Kokoro
     controller.  ``Command(resume=...)`` is valid once the graph has durably
     paused.  It is not a general-purpose, concurrent ``steer`` or state-update
-    channel for an in-flight ``invoke``; the target Root contract therefore
+    channel for an in-flight ``invoke``; the Agent command protocol therefore
     exposes HITL responses and cancellation, not a fabricated mid-model-turn
     message injection API.
     """

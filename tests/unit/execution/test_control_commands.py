@@ -30,7 +30,7 @@ from support.fakes import (
     text_run,
 )
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     InboundMessage,
     RunCompleted,
     RunControlReceipt,

@@ -12,7 +12,7 @@ from kokoro_agent.chat.models import (
     ChatProjection,
     assistant_message_id,
 )
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     DeliveryCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,

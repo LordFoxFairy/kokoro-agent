@@ -6,7 +6,7 @@ import logging
 
 from pydantic import JsonValue, ValidationError
 
-from kokoro_agent.contract import InboundMessage, inbound_adapter
+from kokoro_agent.protocol import InboundMessage, inbound_adapter
 
 LOGGER = logging.getLogger(__name__)
 

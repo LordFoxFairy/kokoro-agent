@@ -12,7 +12,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import Interrupt
 from pydantic import JsonValue
 
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     AgentEvent,
     ExecutionIdentity,
     IdentityRef,
@@ -21,7 +21,7 @@ from kokoro_agent.contract import (
     agent_event_adapter,
     run_events_stream,
 )
-from kokoro_agent.contract import REQUESTS_STREAM
+from kokoro_agent.protocol import REQUESTS_STREAM
 from kokoro_agent.repositories.run_repository import (
     RunControlCommandRecord,
     ControlAdmission,

@@ -10,7 +10,7 @@ from langchain_core.messages import UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
-from kokoro_agent.contract import RunCompletedPayload, RunFailedPayload, RunStartedPayload, TokenUsage
+from kokoro_agent.protocol import RunCompletedPayload, RunFailedPayload, RunStartedPayload, TokenUsage
 from kokoro_agent.execution.approvals import awaiting_payloads
 from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable

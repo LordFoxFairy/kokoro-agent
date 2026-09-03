@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.clients.mcp import McpClient
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 from kokoro_agent.mcp.config import (
     McpConfigError,
     McpServerConfig,

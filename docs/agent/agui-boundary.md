@@ -4,8 +4,7 @@
 
 `kokoro-agent` 不直接依赖浏览器 UI SDK，也不把 AG-UI 事件重复落入 Agent 数据库。Agent 的职责是运行 DeepAgents、保存自己的执行事实，并通过严格的 Agent Chat query/replay HTTP 契约提供安全产品投影。
 
-AG-UI 的公共事件名和运行时 schema 由 Root 的 `contract/agui-v1.json` 和 `@ag-ui/core` 提供；本仓只消费 Root/Agent 自己的内部
-Chat/Run contract，不复制一份 AG-UI Python 类型。这样 `@ag-ui/core` 只在 Web/BFF 的浏览器边界
+AG-UI 的公共事件名和运行时 schema 由 `@ag-ui/core` 提供，产品映射由 BFF 本仓 API 文档定义；Agent 只维护自己的内部 Chat/Run contract，不复制一份 AG-UI Python 类型。这样 `@ag-ui/core` 只在 Web/BFF 的浏览器边界
 出现，Agent 的生产依赖保持最小、可选启动，并且不会把 Web transport 反向耦合进执行层。
 
 `kokoro-bff` 是浏览器入口和业务层，负责：

@@ -6,7 +6,7 @@ import json
 
 from kokoro_agent.chat.models import assistant_message_id
 from kokoro_agent.chat.projection import project_chat_fact
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunFailedPayload,

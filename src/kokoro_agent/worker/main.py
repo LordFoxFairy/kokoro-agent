@@ -12,7 +12,7 @@ import socket
 from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig, log_config_summary
-from kokoro_agent.contract import REQUESTS_STREAM
+from kokoro_agent.protocol import REQUESTS_STREAM
 from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agent_factory import AgentFactory

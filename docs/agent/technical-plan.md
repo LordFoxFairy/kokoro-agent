@@ -8,7 +8,7 @@
 ## 1. 目标链路
 
 ```text
-Root LaunchRunRequest
+Agent v1 Run request
   -> worker 从 Redis 接收并校验
   -> RunRepository claim
   -> FeatureCatalog.get(feature_key)
@@ -17,7 +17,7 @@ Root LaunchRunRequest
      或 create_deep_agent(...) + create_swarm(...)  # peer handoff
   -> native state/checkpoint
   -> RunRepository、chat_messages、chat_events、workbench
-  -> Root Chat query boundary -> kokoro-bff Chat module 查询/replay/AG-UI
+  -> Agent Chat HTTP query boundary -> kokoro-bff Chat module 查询/replay/AG-UI
 ```
 
 请求表达“进入哪个产品 Feature”和“这次输入什么”；可选模型标签只交给模型选择边界，不表达如何组装 Agent。Feature 是可信的
@@ -121,7 +121,7 @@ native subagent。`agent_factory.py` 保留构造顺序及唯一的 `create_deep
 worker -> features -> agent_factory -> DeepAgents / official Swarm
 execution -> infrastructure + narrow public clients
 skills/sandbox -> infrastructure + narrow public clients
-clients -> Root/owner generated contracts
+clients -> owner public APIs through local typed ports
 ```
 
 ## 5. 状态、Session 与身份
@@ -159,13 +159,13 @@ LangChain native message/checkpoint ID 与 GA `chat_messages`/`chat_events` ID �
 - GA 将用户可见历史写入 `chat_messages`，将安全 replay 事件写入
   `chat_events`。
 - LangChain raw event、native state、prompt、secret、sandbox path 和外部响应不会进入产品事件。
-- BFF Chat 通过 Root Chat query boundary 使用 `chat_events.seq` replay；GA 不把自己的
+- BFF Chat 通过 Agent Chat HTTP query boundary 使用 `chat_events.seq` replay；GA 不把自己的
   internal safe envelope 直写现有 BFF browser stream。
 - 计费按 provider accepted invocation 次数结算；token 只用于上下文和限额，不是计费单位。
 
 ## 8. 实施顺序
 
-1. Root contract 生成 `feature_key`/`ExecutionIdentity` consumer，GA 只消费生成物。
+1. Agent 本仓 API 定义 `feature_key`/`ExecutionIdentity`，BFF 通过版本化 HTTP client 消费。
 2. 建立 `agents/` 和 `features/`，先实现 `music`、`chat` 两个单 Agent Feature。
 3. 建立 `agent_factory.py`，让单 Agent 直接走 `create_deep_agent`。
 4. 只有出现真实 peer handoff 需求时才接入 `swarm.py` 和官方 Swarm integration test。
@@ -178,8 +178,8 @@ LangChain native message/checkpoint ID 与 GA `chat_messages`/`chat_events` ID �
 Builder 展示。该命令只输出 Agent/Feature 的工具、Skill、MCP、backend 与 handoff 元数据；不输出
 prompt 正文、credential、namespace、thread、checkpoint 或任何 Run 状态。
 
-跨仓接线前有一个明确的契约闸：Root `LaunchRunRequest` 使用顶层
-`message_id/content`，Root `ApplyControlRequest` 使用 `agent_run_id/control_kind`；当前
+跨仓接线前有一个明确的契约闸：Agent v1 `LaunchRunRequest` 使用顶层
+`message_id/content`，Agent v1 `ApplyControlRequest` 使用 `agent_run_id/control_kind`；当前
 Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generated consumers 接入
 时必须在 transport 边界完成一次映射，并同时清理 Root 中仍未被 Feature-first 方案使用的
 `requested_agent_key`/`manifest_digest` 语义；GA 不为它们创建 Agent 版本或绑定对象。

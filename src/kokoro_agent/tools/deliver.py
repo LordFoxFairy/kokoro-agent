@@ -16,7 +16,7 @@ from kokoro_agent.clients.storage import (
     DeliveryRequest,
     StorageClientError,
 )
-from kokoro_agent.contract import ExecutionIdentity
+from kokoro_agent.protocol import ExecutionIdentity
 
 DELIVER_TOOL_NAME = "deliver"
 

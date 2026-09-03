@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import JsonValue, ValidationError
 
-from kokoro_agent.contract import (
+from kokoro_agent.protocol import (
     BLOCK_MS,
     CONSUMER_GROUP,
     LIVE_MAXLEN,

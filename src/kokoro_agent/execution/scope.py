@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from kokoro_agent.contract import ExecutionIdentity, RunRequest
+from kokoro_agent.protocol import ExecutionIdentity, RunRequest
 
 
 def runtime_namespace(identity: ExecutionIdentity) -> str:

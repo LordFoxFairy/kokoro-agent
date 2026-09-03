@@ -15,7 +15,7 @@ from support.fakes import usage_recorder
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.contract.streams import run_events_stream
+from kokoro_agent.protocol.streams import run_events_stream
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.tools.permissions import build_interrupt_on

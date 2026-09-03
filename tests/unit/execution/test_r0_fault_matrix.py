@@ -15,7 +15,7 @@ from pydantic import JsonValue
 
 from support.fakes import FakeAgent, FakeBus, FakeRunRepository, request, text_run, usage_recorder
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.contract import RUN_EVENTS_MAXLEN, RunRequest, SubagentSource, run_events_stream
+from kokoro_agent.protocol import RUN_EVENTS_MAXLEN, RunRequest, SubagentSource, run_events_stream
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.streams.protocol import StreamItem

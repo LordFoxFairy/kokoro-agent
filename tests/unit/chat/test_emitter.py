@@ -8,7 +8,7 @@ from pydantic import JsonValue
 from support.chat import FakeChatRepository
 from support.fakes import FakeBus
 
-from kokoro_agent.contract import live_stream
+from kokoro_agent.protocol import live_stream
 from kokoro_agent.execution.events import RunEmitter, message_delta_payload
 from kokoro_agent.streams.protocol import StreamItem
 

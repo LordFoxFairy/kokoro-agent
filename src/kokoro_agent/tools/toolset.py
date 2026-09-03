@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from deepagents.backends.protocol import BackendProtocol
 from langchain_core.tools import BaseTool, StructuredTool
 
-from kokoro_agent.contract import RunRequest
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.mcp.config import McpServerEntry, McpServerUnavailable, select_servers

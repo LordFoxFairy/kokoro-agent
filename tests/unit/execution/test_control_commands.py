@@ -42,7 +42,7 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
-from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.domain.run.repository import LeaseFence
 
 _GATED = "danger"
 _TID = "call-A"

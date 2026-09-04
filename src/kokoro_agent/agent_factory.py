@@ -38,13 +38,13 @@ from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_
 from kokoro_agent.skills.backend import CapabilitySkillBackend, SKILLS_ROOT
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
 from kokoro_agent.features.definition import Feature
 from kokoro_agent.swarm import create_swarm
 from langgraph_swarm import create_handoff_tool
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
-from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.domain.run.repository import LeaseFence
 
 LOGGER = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ async def build_deep_agent(
 
 
 async def resolve_declared_skills(
-    agent: Agent, skill_client: SkillClient, request: RunRequest
+    agent: Agent, skill_client: SkillClient | None, request: RunRequest
 ) -> tuple[ResolvedSkill, ...]:
     """Resolve declared Skill selectors at the GA boundary.
 
@@ -163,7 +163,7 @@ async def resolve_declared_skills(
     skills are
     transient assembly data and never become Agent or Session state.
     """
-    if not agent.skills:
+    if not agent.skills or skill_client is None:
         return ()
     scope = RunScope.of(request)
     try:

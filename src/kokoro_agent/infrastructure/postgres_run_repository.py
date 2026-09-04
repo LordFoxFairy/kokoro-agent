@@ -1,7 +1,7 @@
 """PostgreSQL adapter for the Agent execution repository.
 
 The repository port and transport-neutral records stay in
-``kokoro_agent.repositories.run_repository``; this module owns SQL, connection
+``kokoro_agent.domain.run.repository``; this module owns SQL, connection
 lifecycle, and PostgreSQL-specific configuration.
 """
 
@@ -28,7 +28,7 @@ from kokoro_agent.infrastructure.postgres import (
     qualified,
     utc_to_epoch_millis,
 )
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
     ControlAdmissionStatus,

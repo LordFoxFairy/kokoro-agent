@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from kokoro_agent.chat.models import ChatSessionRecord
-from kokoro_agent.repositories.chat_repository import ChatRepository
+from kokoro_agent.domain.chat.models import ChatSessionRecord
+from kokoro_agent.domain.chat.repositories import ChatRepository
 from kokoro_agent.protocol import ExecutionIdentity
-from kokoro_agent.execution.scope import runtime_namespace
-from kokoro_agent.services.chat_dto import (
+from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.application.chat.dto import (
     ChatEventView,
     ChatHistoryPage,
     ChatMessageView,

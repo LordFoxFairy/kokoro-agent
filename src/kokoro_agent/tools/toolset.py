@@ -9,7 +9,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.agents.definition import Agent
-from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.mcp.config import McpServerEntry, McpServerUnavailable, select_servers
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.clients.mcp import McpClientError

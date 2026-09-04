@@ -1,6 +1,6 @@
 """GA-owned user-visible chat facts."""
 
-from kokoro_agent.chat.models import (
+from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
     ChatEventRecord,
     ChatMessageDraft,
@@ -9,7 +9,7 @@ from kokoro_agent.chat.models import (
     assistant_message_id,
     chat_event_id,
 )
-from kokoro_agent.chat.projection import project_chat_fact
+from kokoro_agent.domain.chat.projection import project_chat_fact
 
 __all__ = [
     "ChatEventDraft",

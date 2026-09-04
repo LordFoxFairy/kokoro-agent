@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from kokoro_agent.chat.models import (
+from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
     ChatMessageDraft,
     ChatProjection,

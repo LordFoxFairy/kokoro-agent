@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from kokoro_agent.chat.models import assistant_message_id
-from kokoro_agent.chat.projection import project_chat_fact
+from kokoro_agent.domain.chat.models import assistant_message_id
+from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.protocol import (
     MessageCompletedPayload,
     MessageDeltaPayload,

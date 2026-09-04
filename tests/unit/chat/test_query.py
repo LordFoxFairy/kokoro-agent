@@ -1,10 +1,10 @@
 """GA chat query derives isolation from ExecutionIdentity."""
 
-from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
-from kokoro_agent.services.chat_dto import ChatQueryRequest, ChatSessionListRequest
-from kokoro_agent.services.chat_service import ChatService
+from kokoro_agent.domain.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
+from kokoro_agent.application.chat.dto import ChatQueryRequest, ChatSessionListRequest
+from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
-from kokoro_agent.execution.scope import runtime_namespace
+from kokoro_agent.domain.run.scope import runtime_namespace
 from support.chat import FakeChatRepository
 
 

@@ -6,7 +6,6 @@
 
 from kokoro_agent.clients.mcp import McpClient, McpClientError
 from kokoro_agent.clients.skills import (
-    NoSkillsClient,
     ResolvedSkill,
     SkillClient,
     SkillClientError,
@@ -22,7 +21,6 @@ from kokoro_agent.clients.storage import (
 __all__ = [
     "McpClient",
     "McpClientError",
-    "NoSkillsClient",
     "DeliveryClient",
     "DeliveryReceipt",
     "DeliveryRequest",

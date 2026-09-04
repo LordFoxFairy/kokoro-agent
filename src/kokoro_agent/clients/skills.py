@@ -55,27 +55,7 @@ class SkillReader(Protocol):
     ) -> Mapping[str, str]: ...
 
 
-class NoSkillsClient:
-    """Deployment without Capability Skills; the base Agent remains runnable."""
-
-    async def resolve(
-        self,
-        selectors: Sequence[str],
-        identity: ExecutionIdentity,
-        namespace: str,
-    ) -> tuple[ResolvedSkill, ...]:
-        del selectors, identity, namespace
-        return ()
-
-    async def load_package(
-        self, scope: str, name: str, content_hash: str
-    ) -> Mapping[str, str]:
-        del scope, name, content_hash
-        raise SkillClientError("Capability Skill client is not configured")
-
-
 __all__ = [
-    "NoSkillsClient",
     "ResolvedSkill",
     "SkillClient",
     "SkillClientError",

@@ -11,7 +11,7 @@ from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 from support.fakes import FakeRunRepository, request
-from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.tools.middleware import (
     RunSupersededError,
     ToolEffectJournalMiddleware,

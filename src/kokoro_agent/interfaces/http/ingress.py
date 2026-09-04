@@ -18,14 +18,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from kokoro_agent.services.chat_dto import (
+from kokoro_agent.application.chat.dto import (
     ChatHistoryPage,
     ChatQueryRequest,
     ChatReplayPage,
     ChatSessionListPage,
     ChatSessionListRequest,
 )
-from kokoro_agent.services.chat_service import ChatService
+from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.protocol import (
     REQUESTS_MAXLEN,
     REQUESTS_STREAM,
@@ -42,8 +42,8 @@ from kokoro_agent.protocol import (
     run_control_stream,
     run_events_stream,
 )
-from kokoro_agent.execution.scope import runtime_namespace
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.domain.run.repository import (
     ControlCommandConflict,
     DispatchConflict,
     RunRepository,

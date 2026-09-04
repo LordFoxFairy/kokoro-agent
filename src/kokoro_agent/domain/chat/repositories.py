@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from kokoro_agent.chat.models import (
+from kokoro_agent.domain.chat.models import (
     ChatEventRecord,
     ChatMessageDraft,
     ChatMessageRecord,
     ChatProjection,
     ChatSessionRecord,
 )
-from kokoro_agent.repositories.run_records import LeaseFence
+from kokoro_agent.domain.run.models import LeaseFence
 
 
 class ChatIdentityConflict(RuntimeError):

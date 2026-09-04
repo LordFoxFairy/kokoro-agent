@@ -5,17 +5,17 @@ from __future__ import annotations
 import pytest
 from pydantic import JsonValue
 
-from kokoro_agent.chat.models import ChatEventDraft, ChatProjection
-from kokoro_agent.services.chat_dto import ChatQueryRequest
-from kokoro_agent.services.chat_service import ChatService
+from kokoro_agent.domain.chat.models import ChatEventDraft, ChatProjection
+from kokoro_agent.application.chat.dto import ChatQueryRequest
+from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.protocol import (
     ExecutionIdentity,
     IdentityRef,
     RunInput,
     RunRequest,
 )
-from kokoro_agent.http.ingress import AgentIngress, IngressError
-from kokoro_agent.execution.scope import runtime_namespace
+from kokoro_agent.interfaces.http.ingress import AgentIngress, IngressError
+from kokoro_agent.domain.run.scope import runtime_namespace
 from support.chat import FakeChatRepository
 from support.fakes import FakeBus, FakeRunRepository
 

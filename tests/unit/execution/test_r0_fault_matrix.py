@@ -35,8 +35,8 @@ from kokoro_agent.execution.events import (
     outbox_wire_event,
 )
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.execution.scope import RunScope
-from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
 

@@ -6,7 +6,7 @@ import pytest
 from pydantic import SecretStr
 
 from kokoro_agent.config import AppConfig
-from kokoro_agent.http.server import dispatch_request
+from kokoro_agent.interfaces.http.server import dispatch_request
 
 
 @pytest.mark.asyncio

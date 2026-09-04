@@ -22,8 +22,8 @@ from kokoro_agent.protocol import (
     run_events_stream,
 )
 from kokoro_agent.protocol import REQUESTS_STREAM
-from kokoro_agent.execution.scope import runtime_namespace
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.domain.run.repository import (
     RunControlCommandRecord,
     ControlAdmission,
     ControlAdmissionStatus,

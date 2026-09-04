@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from kokoro_agent.repositories.run_ports import (
+from kokoro_agent.domain.run.repositories import (
     RunAdmissionPort,
     RunControlPort,
     RunEffectPort,
@@ -16,7 +16,7 @@ from kokoro_agent.repositories.run_ports import (
     RunLifecyclePort,
     RunSandboxCleanupPort,
 )
-from kokoro_agent.repositories.run_records import (
+from kokoro_agent.domain.run.models import (
     ControlAdmission,
     ControlAdmissionReceipt,
     ControlAdmissionStatus,

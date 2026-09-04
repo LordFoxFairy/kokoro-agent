@@ -13,7 +13,7 @@ from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
 from support.local_fake import LocalFakeChatModel
-from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.streams.redis import RedisStream
 from support.fakes import usage_recorder
 from kokoro_agent.protocol.streams import run_events_stream

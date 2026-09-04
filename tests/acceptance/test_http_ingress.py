@@ -16,7 +16,7 @@ from pydantic import JsonValue, SecretStr, TypeAdapter
 from psycopg import sql
 from support.fakes import FakeBus
 
-from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
+from kokoro_agent.domain.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
 from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepository,
     PostgresChatRepositorySettings,
@@ -35,9 +35,9 @@ from kokoro_agent.protocol import (
     run_control_stream,
     run_events_stream,
 )
-from kokoro_agent.execution.scope import runtime_namespace
+from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.execution.events import RunEmitter, message_delta_payload
-from kokoro_agent.http.server import create_http_server
+from kokoro_agent.interfaces.http.server import create_http_server
 from kokoro_agent.infrastructure.postgres_run_repository import (
     DEFAULT_LEASE_TTL_S,
     PostgresRunRepository,

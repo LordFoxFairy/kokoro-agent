@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.repositories.run_records import (
+from kokoro_agent.domain.run.models import (
     ControlAdmission,
     DispatchAdmission,
     LeaseFence,

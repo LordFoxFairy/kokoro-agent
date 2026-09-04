@@ -20,7 +20,7 @@ from support.fakes import (
     text_run,
 )
 from support.chat import FakeChatRepository
-from kokoro_agent.chat.models import ChatMessageDraft, ChatMessageRecord
+from kokoro_agent.domain.chat.models import ChatMessageDraft, ChatMessageRecord
 from kokoro_agent.protocol import (
     InboundMessage,
     REQUESTS_STREAM,
@@ -33,11 +33,11 @@ from kokoro_agent.protocol import (
     run_control_stream,
 )
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
-from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.domain.run.scope import RunScope
 
 _GATED = "danger"
 _TID = "call-A"

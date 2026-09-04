@@ -14,10 +14,10 @@ from langgraph.store.base import BaseStore
 from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.model.factory import ChatModelSettings
-from kokoro_agent.clients.skills import NoSkillsClient, SkillClient, SkillReader
+from kokoro_agent.clients.skills import SkillClient, SkillReader
 from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.sandbox import SandboxSettings
-from kokoro_agent.repositories.run_repository import RunRepository
+from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.agents.subagent_catalog import SubagentCatalog
 from kokoro_agent.tools.toolbox import ProcessToolbox
 
@@ -26,8 +26,8 @@ from kokoro_agent.tools.toolbox import ProcessToolbox
 class WorkerClients:
     """Optional owner clients selected once by the deployment entrypoint."""
 
-    skill_client: SkillClient = field(default_factory=NoSkillsClient)
-    skill_reader: SkillReader = field(default_factory=NoSkillsClient)
+    skill_client: SkillClient | None = None
+    skill_reader: SkillReader | None = None
     mcp: McpClient | None = None
     delivery: DeliveryClient | None = None
 
@@ -49,8 +49,8 @@ class WorkerDependencies:
     run_repository: RunRepository
     memory_store: BaseStore
     # Skill public contract 的名称解析面与内容读取面分开；本地 fixture 可由同一对象实现二者。
-    skill_client: SkillClient
-    skill_reader: SkillReader
+    skill_client: SkillClient | None
+    skill_reader: SkillReader | None
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
     mcp_servers: Mapping[str, McpServerConfig] = field(
         default_factory=dict[str, McpServerConfig]

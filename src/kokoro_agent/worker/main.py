@@ -17,7 +17,7 @@ from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agent_factory import AgentFactory
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
-from kokoro_agent.repositories.run_repository import SandboxBackendKind
+from kokoro_agent.domain.run.repository import SandboxBackendKind
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
@@ -35,7 +35,7 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepositorySettings,
     make_chat_repository,
 )
-from kokoro_agent.http.server import create_http_server
+from kokoro_agent.interfaces.http.server import create_http_server
 
 LOGGER = logging.getLogger(__name__)
 

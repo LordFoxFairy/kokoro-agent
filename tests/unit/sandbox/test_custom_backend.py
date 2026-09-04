@@ -12,14 +12,14 @@ import pytest
 from deepagents.backends.state import StateBackend
 
 from support.fakes import FakeRunRepository, request
-from kokoro_agent.repositories.run_records import LeaseFence, SandboxBackendKind
+from kokoro_agent.domain.run.models import LeaseFence, SandboxBackendKind
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.custom_backend import (
     CustomBackendContext,
     CustomBackendSettings,
     connect_custom_sandbox,
 )
-from kokoro_agent.repositories.run_repository import RunRepository
+from kokoro_agent.domain.run.repository import RunRepository
 
 SEEN_CONTEXTS: list[CustomBackendContext] = []
 DESTROYED_SANDBOXES: list[str] = []

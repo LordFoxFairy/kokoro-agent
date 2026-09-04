@@ -1,7 +1,7 @@
 """Runtime namespace follows stable tenancy/subject ownership."""
 
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
-from kokoro_agent.execution.scope import runtime_namespace
+from kokoro_agent.domain.run.scope import runtime_namespace
 
 
 def _identity(

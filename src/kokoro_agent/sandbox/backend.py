@@ -37,7 +37,7 @@ from kokoro_agent.sandbox.e2b_backend import (
     connect_e2b_sandbox,
     kill_e2b_sandbox,
 )
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.repository import (
     LeaseFence,
     SandboxBackendKind,
     SandboxCleanupIntent,

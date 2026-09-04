@@ -17,7 +17,7 @@ from kokoro_agent.sandbox.e2b_backend import (
     E2BSettings,
     connect_e2b_sandbox,
 )
-from kokoro_agent.repositories.run_repository import RunRepository
+from kokoro_agent.domain.run.repository import RunRepository
 
 
 def _e2b_settings(api_key: str | None = "e2b-key") -> E2BSettings:

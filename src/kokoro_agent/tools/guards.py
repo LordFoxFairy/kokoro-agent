@@ -17,7 +17,7 @@ from kokoro_agent.tools.middleware import (
     ToolPolicyMiddleware,
     ToolResultReviewMiddleware,
 )
-from kokoro_agent.repositories.run_repository import LeaseFence, RunRepository
+from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,7 +23,7 @@ from langgraph.runtime import Runtime
 
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
-from kokoro_agent.repositories.run_repository import LeaseFence, RunRepository
+from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)

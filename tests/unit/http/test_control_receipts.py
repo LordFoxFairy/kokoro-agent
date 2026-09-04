@@ -6,11 +6,11 @@ from typing import Any, cast
 
 import pytest
 
-from kokoro_agent.services.chat_service import ChatService
-from kokoro_agent.execution.scope import runtime_namespace
-from kokoro_agent.http.ingress import AgentIngress, IngressError
+from kokoro_agent.application.chat.service import ChatService
+from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.interfaces.http.ingress import AgentIngress, IngressError
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
     ControlAdmissionStatus,

@@ -44,11 +44,11 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
-from kokoro_agent.chat.projection import project_chat_fact
-from kokoro_agent.chat.models import ChatEventRecord
-from kokoro_agent.repositories.chat_repository import ChatFenceMode, ChatRepository
+from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.domain.chat.models import ChatEventRecord
+from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.repository import (
     LeaseFence,
     OutboxFrame,
     RunRepository,

@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from kokoro_agent.config import AppConfig
 from support.fakes import FakeRunRepository
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
-from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.policy import ModelConfig
 

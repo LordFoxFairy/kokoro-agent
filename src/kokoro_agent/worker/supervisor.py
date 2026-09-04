@@ -58,9 +58,9 @@ from kokoro_agent.execution.events import (
 )
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.definition import Feature
-from kokoro_agent.repositories.run_repository import (
+from kokoro_agent.domain.run.repository import (
     LeaseFence,
     OutboxFrame,
     RunRepository,
@@ -69,8 +69,8 @@ from kokoro_agent.repositories.run_repository import (
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.policy import Backend
-from kokoro_agent.chat.models import ChatEventRecord, ChatMessageDraft
-from kokoro_agent.repositories.chat_repository import ChatRepository
+from kokoro_agent.domain.chat.models import ChatEventRecord, ChatMessageDraft
+from kokoro_agent.domain.chat.repositories import ChatRepository
 
 LOGGER = logging.getLogger(__name__)
 

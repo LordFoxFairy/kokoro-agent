@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from kokoro_agent.chat.models import (
+from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
     ChatEventRecord,
     ChatMessageDraft,
@@ -35,11 +35,11 @@ from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
     verify_agent_schema,
 )
-from kokoro_agent.repositories.chat_repository import (
+from kokoro_agent.domain.chat.repositories import (
     ChatFenceMode,
     ChatIdentityConflict,
 )
-from kokoro_agent.repositories.run_records import LeaseFence
+from kokoro_agent.domain.run.models import LeaseFence
 class PostgresChatRepositorySettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 

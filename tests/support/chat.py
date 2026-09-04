@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from kokoro_agent.chat.models import ChatSessionRecord
-from kokoro_agent.chat.models import (
+from kokoro_agent.domain.chat.models import ChatSessionRecord
+from kokoro_agent.domain.chat.models import (
     ChatEventRecord,
     ChatMessageDraft,
     ChatMessageRecord,
     ChatProjection,
     chat_event_id,
 )
-from kokoro_agent.repositories.chat_repository import (
+from kokoro_agent.domain.chat.repositories import (
     ChatFenceMode,
     ChatIdentityConflict,
 )
-from kokoro_agent.repositories.run_records import LeaseFence
+from kokoro_agent.domain.run.models import LeaseFence
 
 
 class FakeChatRepository:

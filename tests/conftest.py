@@ -21,7 +21,7 @@ from kokoro_agent.infrastructure.postgres_run_repository import (
     RunRepositorySettings,
     make_run_repository,
 )
-from kokoro_agent.repositories.run_repository import RunRepository
+from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.infrastructure.memory_store import make_memory_store
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import apply_agent_schema

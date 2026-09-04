@@ -38,7 +38,7 @@ class CapabilitySkillBackend(BackendProtocol):
     """
 
     def __init__(
-        self, initial: Sequence[ResolvedSkill], reader: SkillReader
+        self, initial: Sequence[ResolvedSkill], reader: SkillReader | None
     ) -> None:
         self._skills = {skill.name: skill for skill in initial}
         self._reader = reader
@@ -46,7 +46,7 @@ class CapabilitySkillBackend(BackendProtocol):
 
     async def _package(self, name: str) -> Mapping[str, str] | None:
         skill = self._skills.get(name)
-        if skill is None:
+        if skill is None or self._reader is None:
             return None
         cached = self._packages.get(name)
         if cached is not None:

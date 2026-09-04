@@ -233,7 +233,10 @@ async def dispatch_request(
             if method == "POST" and match is not None:
                 command_id = _idempotency_key(headers)
                 control = await ingress.control(
-                    match.group(1), body or {}, command_id=command_id
+                    match.group(1),
+                    body or {},
+                    command_id=command_id,
+                    execution_identity=_identity(headers),
                 )
                 return 202, _envelope(control, request_id)
             match = _RUN_EVENTS.fullmatch(path)
@@ -241,6 +244,7 @@ async def dispatch_request(
                 return 200, _envelope(
                     await ingress.evidence(
                         match.group(1),
+                        execution_identity=_identity(headers),
                         after_seq=int(query.get("after_seq", ["0"])[0]),
                         limit=int(query.get("limit", ["200"])[0]),
                     ),

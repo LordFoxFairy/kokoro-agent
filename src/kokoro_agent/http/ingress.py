@@ -237,7 +237,12 @@ class AgentIngress:
         )
 
     async def control(
-        self, run_id: str, body: Mapping[str, object], *, command_id: str
+        self,
+        run_id: str,
+        body: Mapping[str, object],
+        *,
+        command_id: str,
+        execution_identity: ExecutionIdentity,
     ) -> dict[str, object]:
         command_id = command_id.strip()
         if not command_id.strip():
@@ -247,7 +252,9 @@ class AgentIngress:
                 "Control requests require Idempotency-Key",
             )
         msg, request_digest = _parse_control(run_id, body, command_id=command_id)
-        request = await self._run_repository.get_request(run_id)
+        request = await self._run_repository.get_request_scoped(
+            run_id, runtime_namespace(execution_identity)
+        )
         if request is None:
             raise IngressError(404, "run_not_found", "Run was not found")
         if request.session_id != msg.session_id:
@@ -284,13 +291,23 @@ class AgentIngress:
         }
 
     async def evidence(
-        self, run_id: str, *, after_seq: int = 0, limit: int = 200
+        self,
+        run_id: str,
+        *,
+        execution_identity: ExecutionIdentity,
+        after_seq: int = 0,
+        limit: int = 200,
     ) -> dict[str, object]:
         if after_seq < 0 or limit < 1 or limit > 1000:
             raise IngressError(
                 400, "invalid_page", "after_seq must be >= 0 and limit must be 1..1000"
             )
-        if await self._run_repository.get_request(run_id) is None:
+        if (
+            await self._run_repository.get_request_scoped(
+                run_id, runtime_namespace(execution_identity)
+            )
+            is None
+        ):
             raise IngressError(404, "run_not_found", "Run was not found")
         items = await self._bus.read_all(run_events_stream(run_id))
         events = [_event_json(item.event) for item in items]

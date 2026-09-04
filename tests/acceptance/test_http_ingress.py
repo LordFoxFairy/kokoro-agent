@@ -199,6 +199,11 @@ async def http_client(
 
 async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> None:
     async with make_run_repository(state.config.run_repository) as run_repository:
+        await run_repository.enqueue_dispatch(
+            request,
+            runtime_namespace(request.execution_identity),
+            f"acceptance:{request.run_id}",
+        )
         assert await run_repository.try_claim(request, "acceptance-test") is True
 
 
@@ -404,6 +409,26 @@ async def test_control_and_evidence_use_real_redis_and_postgres_state(
     assert _json_object(events[0])["kind"] == "run.completed"
     assert evidence_data["next_seq"] == 1
     assert evidence_data["terminal"] is True
+
+    hidden_evidence = await http_client.get(
+        f"/v1/runs/{run_id}/events?after_seq=0&limit=10",
+        headers=_headers("other-subject"),
+    )
+    assert hidden_evidence.status_code == 404
+    assert (
+        _nested(_json_object(hidden_evidence.json()), "error")["code"]
+        == "run_not_found"
+    )
+
+    hidden_control = await http_client.post(
+        f"/v1/runs/{run_id}/control",
+        headers={**_headers("other-subject"), "Idempotency-Key": "command-hidden"},
+        json={"kind": "run.cancel", "session_id": "session-1"},
+    )
+    assert hidden_control.status_code == 404
+    assert (
+        _nested(_json_object(hidden_control.json()), "error")["code"] == "run_not_found"
+    )
 
 
 @pytest.mark.asyncio

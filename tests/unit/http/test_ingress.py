@@ -125,6 +125,7 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
             "run-1",
             {"kind": "run.cancel", "session_id": "other"},
             command_id="cmd-1",
+            execution_identity=identity(),
         )
     assert error.value.status == 403
 
@@ -132,11 +133,22 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
         "run-1",
         {"kind": "run.cancel", "session_id": "session-1"},
         command_id="cmd-1",
+        execution_identity=identity(),
     )
     assert accepted["status"] == "pending"
     assert accepted["command_id"] == "cmd-1"
     assert accepted["replayed"] is False
     assert bus.published[-1][0] == "kokoro:run:run-1:control"
+
+    with pytest.raises(IngressError) as denied:
+        await ingress.control(
+            "run-1",
+            {"kind": "run.cancel", "session_id": "session-1"},
+            command_id="cmd-cross-scope",
+            execution_identity=identity("other-subject"),
+        )
+    assert denied.value.status == 404
+    assert denied.value.code == "run_not_found"
 
 
 @pytest.mark.asyncio
@@ -194,7 +206,9 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
         bus=bus, run_repository=run_repository, chat_service=ChatService(chat)
     )
 
-    evidence = await ingress.evidence("run-1", after_seq=0, limit=1)
+    evidence = await ingress.evidence(
+        "run-1", execution_identity=identity(), after_seq=0, limit=1
+    )
     assert evidence["next_seq"] == 1
     assert evidence["terminal"] is True
     page = await ingress.replay(
@@ -202,3 +216,29 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
     )
     assert page.watermark == 1
     assert len(page.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_evidence_hides_run_from_a_different_identity_scope() -> None:
+    run_repository = FakeRunRepository()
+    request = RunRequest(
+        kind="run.request",
+        request_id="request-run-1",
+        run_id="run-1",
+        session_id="session-1",
+        feature_key="chat",
+        execution_identity=identity(),
+        input=RunInput(message_id="message-run-1", content="hello"),
+    )
+    run_repository.requests[request.run_id] = request
+    ingress = AgentIngress(
+        bus=FakeBus(),
+        run_repository=run_repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+
+    with pytest.raises(IngressError) as error:
+        await ingress.evidence("run-1", execution_identity=identity("other-subject"))
+
+    assert error.value.status == 404
+    assert error.value.code == "run_not_found"

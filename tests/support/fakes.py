@@ -22,6 +22,7 @@ from kokoro_agent.protocol import (
     run_events_stream,
 )
 from kokoro_agent.protocol import REQUESTS_STREAM
+from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.repositories.run_repository import (
     RunControlCommandRecord,
     ControlAdmission,
@@ -145,6 +146,7 @@ class FakeRunRepository:
         # dispatch CAS 记录（run_id → status）：默认无记录=放行；测试可预置 pending/claimed/expired。
         self.dispatches: dict[str, str] = {}
         self.dispatch_fences: dict[str, str] = {}
+        self.dispatch_namespaces: dict[str, str] = {}
         self.dispatch_deadlines: dict[str, int] = {}
         self.dlq: list[tuple[str, str, str]] = []
         # R4 critical outbox：per-run durable_seq 计数、local fence、outbox 行；回执/清单由测试 seed。
@@ -163,7 +165,6 @@ class FakeRunRepository:
     async def enqueue_dispatch(
         self, request: RunRequest, namespace: str, fence: str
     ) -> DispatchAdmission:
-        del namespace
         existing = self.dispatch_fences.get(request.run_id)
         if existing is not None and existing != fence:
             raise DispatchConflict(
@@ -171,6 +172,7 @@ class FakeRunRepository:
             )
         if existing is None:
             self.dispatch_fences[request.run_id] = fence
+            self.dispatch_namespaces[request.run_id] = namespace
             self.dispatches[request.run_id] = "pending"
             self.dispatch_deadlines[request.run_id] = self.clock_ms + 90_000
             return DispatchAdmission(replayed=False, publish_required=True)
@@ -521,6 +523,16 @@ class FakeRunRepository:
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         return self.requests.get(run_id)
+
+    async def get_request_scoped(
+        self, run_id: str, namespace: str
+    ) -> RunRequest | None:
+        request = self.requests.get(run_id)
+        if request is None:
+            return None
+        if runtime_namespace(request.execution_identity) != namespace:
+            return None
+        return request
 
     async def add_tokens(self, run_id: str, count: int) -> int:
         self.token_totals[run_id] = self.token_totals.get(run_id, 0) + count

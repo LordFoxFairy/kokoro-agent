@@ -7,13 +7,24 @@ from typing import Any, cast
 import pytest
 
 from kokoro_agent.services.chat_service import ChatService
+from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.http.ingress import AgentIngress, IngressError
+from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
 from kokoro_agent.repositories.run_repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
     ControlAdmissionStatus,
     ControlCommandConflict,
 )
+
+
+def _identity() -> ExecutionIdentity:
+    return ExecutionIdentity(
+        tenant_ref="tenant",
+        actor=IdentityRef(kind="user", opaque_ref="actor"),
+        subject=IdentityRef(kind="user", opaque_ref="subject"),
+        identity_assertion_ref="assertion",
+    )
 
 
 class ReceiptRepository:
@@ -25,6 +36,11 @@ class ReceiptRepository:
         self.commands: dict[tuple[str, str], dict[str, object]] = {}
 
     async def get_request(self, run_id: str):
+        return self.requests.get(run_id)
+
+    async def get_request_scoped(self, run_id: str, namespace: str):
+        if namespace != runtime_namespace(_identity()):
+            return None
         return self.requests.get(run_id)
 
     async def admit_control(
@@ -113,8 +129,12 @@ async def test_control_reuses_pending_command_receipt_for_safe_republish() -> No
     ingress = _ingress(bus, run_repository)
     body = {"kind": "run.cancel", "session_id": "session-1"}
 
-    first = await ingress.control("run-1", body, command_id="cmd-1")
-    second = await ingress.control("run-1", body, command_id="cmd-1")
+    first = await ingress.control(
+        "run-1", body, command_id="cmd-1", execution_identity=_identity()
+    )
+    second = await ingress.control(
+        "run-1", body, command_id="cmd-1", execution_identity=_identity()
+    )
 
     assert first["status"] == "pending"
     assert first["replayed"] is False
@@ -134,6 +154,7 @@ async def test_control_rejects_old_decision_id_alias() -> None:
             "run-1",
             {"kind": "run.cancel", "session_id": "session-1", "decision_id": "old"},
             command_id="cmd-1",
+            execution_identity=_identity(),
         )
 
     assert error.value.status == 400
@@ -147,7 +168,10 @@ async def test_control_rejects_same_command_id_with_different_request_digest() -
     ingress = _ingress(bus, run_repository)
 
     await ingress.control(
-        "run-1", {"kind": "run.cancel", "session_id": "session-1"}, command_id="cmd-1"
+        "run-1",
+        {"kind": "run.cancel", "session_id": "session-1"},
+        command_id="cmd-1",
+        execution_identity=_identity(),
     )
     with pytest.raises(IngressError) as error:
         await ingress.control(
@@ -159,6 +183,7 @@ async def test_control_rejects_same_command_id_with_different_request_digest() -
                 "content": "x",
             },
             command_id="cmd-1",
+            execution_identity=_identity(),
         )
 
     assert error.value.status == 409
@@ -175,9 +200,13 @@ async def test_control_receipt_replay_returns_terminal_status_without_republishi
     ingress = _ingress(bus, run_repository)
     body = {"kind": "run.cancel", "session_id": "session-1"}
 
-    await ingress.control("run-1", body, command_id="cmd-1")
+    await ingress.control(
+        "run-1", body, command_id="cmd-1", execution_identity=_identity()
+    )
     await run_repository.mark_control_succeeded("run-1", "cmd-1")
-    replay = await ingress.control("run-1", body, command_id="cmd-1")
+    replay = await ingress.control(
+        "run-1", body, command_id="cmd-1", execution_identity=_identity()
+    )
 
     assert replay["status"] == "succeeded"
     assert replay["replayed"] is True
@@ -191,8 +220,12 @@ async def test_same_idempotency_key_is_scoped_to_the_run() -> None:
     ingress = _ingress(bus, run_repository)
     body = {"kind": "run.cancel", "session_id": "session-1"}
 
-    first = await ingress.control("run-1", body, command_id="shared-key")
-    second = await ingress.control("run-2", body, command_id="shared-key")
+    first = await ingress.control(
+        "run-1", body, command_id="shared-key", execution_identity=_identity()
+    )
+    second = await ingress.control(
+        "run-2", body, command_id="shared-key", execution_identity=_identity()
+    )
 
     assert first["run_id"] == "run-1"
     assert second["run_id"] == "run-2"
@@ -206,7 +239,10 @@ async def test_control_publish_failure_persists_failed_receipt() -> None:
     ingress = _ingress(Bus(fail=True), run_repository)
 
     failed = await ingress.control(
-        "run-1", {"kind": "run.cancel", "session_id": "session-1"}, command_id="cmd-1"
+        "run-1",
+        {"kind": "run.cancel", "session_id": "session-1"},
+        command_id="cmd-1",
+        execution_identity=_identity(),
     )
 
     assert failed["run_id"] == "run-1"

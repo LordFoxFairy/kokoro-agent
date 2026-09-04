@@ -21,7 +21,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
+from kokoro_agent.infrastructure.postgres import (
+    DEFAULT_PG_SCHEMA,
+    connect_pg,
+    qualified,
+)
 from kokoro_agent.repositories.run_repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
@@ -58,7 +62,6 @@ __all__ = [
     "RunRepositorySettings",
     "make_run_repository",
 ]
-
 
 
 def _receipt_status(command_status: str) -> ControlAdmissionStatus:
@@ -719,6 +722,30 @@ class PostgresRunRepository:
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         row = await self._get_claim_row(run_id)
+        if row is None or row["request_json"] is None:
+            return None
+        return RunRequest.model_validate_json(row["request_json"])
+
+    async def get_request_scoped(
+        self, run_id: str, namespace: str
+    ) -> RunRequest | None:
+        """Read an ingress-visible run only inside its durable identity scope."""
+
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT claim.request_json
+                    FROM {} AS claim
+                    INNER JOIN {} AS dispatch ON dispatch.run_id = claim.run_id
+                    WHERE claim.run_id = %s AND dispatch.namespace = %s
+                    """.format(
+                        qualified(self._schema, RUN_CLAIMS_TABLE),
+                        qualified(self._schema, RUN_DISPATCHES_TABLE),
+                    ),
+                    (run_id, namespace),
+                )
+                row = await cur.fetchone()
         if row is None or row["request_json"] is None:
             return None
         return RunRequest.model_validate_json(row["request_json"])

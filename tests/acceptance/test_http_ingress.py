@@ -227,6 +227,7 @@ async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> Non
 
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
     namespace = runtime_namespace(request.execution_identity)
+    chat_message_id = f"message-{request.run_id}"
     async with make_chat_repository(
         PostgresChatRepositorySettings(
             database_url=state.config.database_url,
@@ -241,12 +242,13 @@ async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
                     session_id=request.session_id,
                     run_id=request.run_id,
                     source_index=0,
+                    chat_message_id=chat_message_id,
                     event_type="run.started",
                     payload_json='{"status":"running"}',
                     created_at=wire_epoch_millis_to_utc(1),
                 ),
                 message=ChatMessageDraft(
-                    chat_message_id=f"message-{request.run_id}",
+                    chat_message_id=chat_message_id,
                     tenant_id=request.execution_identity.tenant_ref,
                     namespace=namespace,
                     session_id=request.session_id,

@@ -13,6 +13,7 @@ from kokoro_agent.domain.run.repository import (
 )
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
+    OutboxFilter,
     PostgresRunRepositoryContext,
 )
 from kokoro_agent.infrastructure.schema import (
@@ -180,7 +181,7 @@ class PostgresRunEvents:
                 )
 
     async def list_unpublished_outbox(self) -> list[OutboxFrame]:
-        rows = await self._context.fetch_outbox("status = 'queued'")
+        rows = await self._context.fetch_outbox(OutboxFilter.QUEUED)
         return [_outbox_row_to_frame(row) for row in rows]
 
     async def list_open_outbox_runs(self) -> list[str]:

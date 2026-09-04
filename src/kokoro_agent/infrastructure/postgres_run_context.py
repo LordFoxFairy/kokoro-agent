@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any
 
 from kokoro_agent.domain.run.repository import (
@@ -34,6 +35,12 @@ from kokoro_agent.infrastructure.schema import (
     verify_agent_schema,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+
+
+class OutboxFilter(Enum):
+    """Supported semantic filters for the shared outbox read primitive."""
+
+    QUEUED = "queued"
 
 
 class PostgresRunRepositoryContext:
@@ -264,7 +271,9 @@ class PostgresRunRepositoryContext:
                     (status, error_code, self.clock(), run_id, command_id),
                 )
 
-    async def fetch_outbox(self, where_sql: str) -> list[dict[str, Any]]:
+    async def fetch_outbox(self, outbox_filter: OutboxFilter) -> list[dict[str, Any]]:
+        if outbox_filter is not OutboxFilter.QUEUED:
+            raise ValueError(f"unsupported outbox filter: {outbox_filter!r}")
         async with connect_pg(self.database_url) as conn:
             async with conn.cursor() as cur:
                 await execute_sql(
@@ -275,9 +284,10 @@ class PostgresRunRepositoryContext:
                            payload_json,
                            (extract(epoch FROM published_at) * 1000)::bigint AS published_at
                     FROM {}
-                    WHERE {}
+                    WHERE status = %s
                     ORDER BY run_id ASC, durable_seq ASC
-                    """.format(qualified(self.schema, RUN_OUTBOX_TABLE), where_sql),
+                    """.format(qualified(self.schema, RUN_OUTBOX_TABLE)),
+                    (outbox_filter.value,),
                 )
                 return [dict(row) for row in await fetch_all(cur)]
 

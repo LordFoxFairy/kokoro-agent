@@ -26,6 +26,7 @@ from kokoro_agent.infrastructure.postgres import (
     DEFAULT_PG_SCHEMA,
     connect_pg,
     qualified,
+    utc_to_epoch_millis,
 )
 from kokoro_agent.repositories.run_repository import (
     ControlAdmission,
@@ -59,7 +60,7 @@ from kokoro_agent.infrastructure.schema import (
     SANDBOX_CLEANUP_INTENTS_TABLE,
     TOOL_JOURNAL_TABLE,
     TOOL_RESULTS_TABLE,
-    ensure_run_repository_schema,
+    verify_agent_schema,
 )
 
 DEFAULT_LEASE_TTL_S = 90
@@ -122,7 +123,7 @@ def _sandbox_cleanup_from_row(row: dict[str, Any]) -> SandboxCleanupIntent:
         sandbox_id=str(row["sandbox_id"]),
         teardown_ref=str(row["teardown_ref"]),
         attempt_count=int(row["attempt_count"]),
-        next_attempt_at=int(row["next_attempt_at"]),
+        next_attempt_at=utc_to_epoch_millis(row["next_attempt_at"]) or 0,
     )
 
 
@@ -149,7 +150,7 @@ class PostgresRunRepository:
 
     async def setup(self) -> None:
         async with connect_pg(self._database_url) as conn:
-            await ensure_run_repository_schema(conn, self._schema)
+            await verify_agent_schema(conn, self._schema)
 
     async def enqueue_dispatch(
         self, request: RunRequest, namespace: str, fence: str
@@ -167,14 +168,16 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     INSERT INTO {} (
-                        run_id, session_id, namespace, request_json, fence, status,
+                        run_id, tenant_id, session_id, namespace, request_json, fence, status,
                         claimed_by, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, 'pending', NULL, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'pending', NULL,
+                              to_timestamp(%s / 1000.0), to_timestamp(%s / 1000.0))
                     ON CONFLICT (run_id) DO NOTHING
                     RETURNING run_id
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
                     (
                         request.run_id,
+                        request.execution_identity.tenant_ref,
                         request.session_id,
                         namespace,
                         request.model_dump_json(),
@@ -224,7 +227,8 @@ class PostgresRunRepository:
                     INSERT INTO {} (
                         run_id, command_id, request_digest, status, body,
                         error_code, created_at, updated_at
-                    ) VALUES (%s, %s, %s, 'admitted', %s, NULL, %s, %s)
+                    ) VALUES (%s, %s, %s, 'admitted', %s, NULL,
+                              to_timestamp(%s / 1000.0), to_timestamp(%s / 1000.0))
                     ON CONFLICT (run_id, command_id) DO NOTHING
                     RETURNING command_id
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
@@ -293,13 +297,15 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     INSERT INTO {} (
-                        run_id, request_json, owner, lease_generation, lease_expires_at
-                    ) VALUES (%s, %s, %s, 1, %s)
+                        run_id, tenant_id, request_json, owner, lease_generation,
+                        lease_expires_at
+                    ) VALUES (%s, %s, %s, %s, 1, to_timestamp(%s / 1000.0))
                     ON CONFLICT (run_id) DO NOTHING
                     RETURNING lease_generation
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (
                         request.run_id,
+                        request.execution_identity.tenant_ref,
                         request.model_dump_json(),
                         owner,
                         self._clock() + self._ttl_ms,
@@ -321,7 +327,8 @@ class PostgresRunRepository:
                         await cur.execute(
                             """
                             UPDATE {}
-                            SET status = 'claimed', claimed_by = %s, updated_at = %s
+                            SET status = 'claimed', claimed_by = %s,
+                                updated_at = to_timestamp(%s / 1000.0)
                             WHERE run_id = %s AND status = 'pending' AND request_json = %s
                             RETURNING run_id
                             """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
@@ -337,14 +344,16 @@ class PostgresRunRepository:
                         await cur.execute(
                             """
                             INSERT INTO {} (
-                                run_id, request_json, owner, lease_generation,
+                                run_id, tenant_id, request_json, owner, lease_generation,
                                 lease_expires_at
-                            ) VALUES (%s, %s, %s, 1, %s)
+                            ) VALUES (%s, %s, %s, %s, 1,
+                                      to_timestamp(%s / 1000.0))
                             ON CONFLICT (run_id) DO NOTHING
                             RETURNING lease_generation
                             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                             (
                                 request.run_id,
+                                request.execution_identity.tenant_ref,
                                 request.model_dump_json(),
                                 consumer,
                                 now + self._ttl_ms,
@@ -403,8 +412,8 @@ class PostgresRunRepository:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (raw_hash, source, reason, at)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO {} (raw_hash, source, reason, occurred_at)
+                    VALUES (%s, %s, %s, to_timestamp(%s / 1000.0))
                     ON CONFLICT (raw_hash) DO NOTHING
                     """.format(qualified(self._schema, RUN_DLQ_TABLE)),
                     (raw_hash, source, reason, self._clock()),
@@ -459,8 +468,9 @@ class PostgresRunRepository:
                             """
                             INSERT INTO {} (
                                 run_id, durable_seq, event_id, kind, status, index_value,
-                                timestamp, payload_json, published_at
-                            ) VALUES (%s, %s, %s, %s, 'superseded', NULL, %s, %s, NULL)
+                                occurred_at, payload_json, published_at
+                            ) VALUES (%s, %s, %s, %s, 'superseded', NULL,
+                                      to_timestamp(%s / 1000.0), %s, NULL)
                             """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                             (
                                 run_id,
@@ -487,8 +497,9 @@ class PostgresRunRepository:
                         """
                         INSERT INTO {} (
                             run_id, durable_seq, event_id, kind, status, index_value,
-                            timestamp, payload_json, published_at
-                        ) VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s, NULL)
+                            occurred_at, payload_json, published_at
+                        ) VALUES (%s, %s, %s, %s, 'queued', %s,
+                                  to_timestamp(%s / 1000.0), %s, NULL)
                         """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                         (run_id, seq, event_id, kind, index, timestamp, payload_json),
                     )
@@ -540,7 +551,8 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET status = 'published', published_at = %s
+                    SET status = 'published',
+                        published_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s AND durable_seq = %s AND status = 'queued'
                     """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                     (self._clock(), run_id, durable_seq),
@@ -573,8 +585,10 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        SELECT durable_seq, event_id, kind, status, index_value, timestamp,
-                               payload_json, published_at
+                        SELECT durable_seq, event_id, kind, status, index_value,
+                               (extract(epoch FROM occurred_at) * 1000)::bigint AS timestamp,
+                               payload_json,
+                               (extract(epoch FROM published_at) * 1000)::bigint AS published_at
                         FROM {}
                         WHERE run_id = %s AND status IN ('queued', 'published')
                         ORDER BY durable_seq ASC
@@ -632,7 +646,7 @@ class PostgresRunRepository:
                         await cur.execute(
                             """
                             UPDATE {}
-                            SET published_at = %s
+                            SET published_at = to_timestamp(%s / 1000.0)
                             WHERE run_id = %s AND durable_seq = %s
                             """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                             (now, run_id, frame.durable_seq),
@@ -677,7 +691,8 @@ class PostgresRunRepository:
                             INSERT INTO {} (
                                 run_id, persisted_seq, projected_seq, consumed_seq,
                                 producer_close_requested, producer_closed, updated_at
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ) VALUES (%s, %s, %s, %s, %s, %s,
+                                      to_timestamp(%s / 1000.0))
                             ON CONFLICT (run_id) DO UPDATE SET
                                 consumed_seq = EXCLUDED.consumed_seq,
                                 updated_at = EXCLUDED.updated_at
@@ -726,7 +741,8 @@ class PostgresRunRepository:
                         await cur.execute(
                             """
                             UPDATE {}
-                            SET producer_close_requested = TRUE, updated_at = %s
+                            SET producer_close_requested = TRUE,
+                                updated_at = to_timestamp(%s / 1000.0)
                             WHERE run_id = %s AND producer_close_requested = FALSE
                             """.format(
                                 qualified(self._schema, RUN_RECEIPT_MANIFESTS_TABLE)
@@ -782,7 +798,8 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET status = 'persisted', fingerprint = %s, updated_at = %s
+                        SET status = 'persisted', fingerprint = %s,
+                            updated_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s AND command_id = %s AND status = 'admitted'
                     RETURNING command_id
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
@@ -826,12 +843,12 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET lease_expires_at = %s
+                    SET lease_expires_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s
                       AND owner = %s
                       AND lease_generation = %s
                       AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at > %s
+                      AND lease_expires_at > to_timestamp(%s / 1000.0)
                       AND terminal = FALSE
                     RETURNING run_id
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
@@ -853,7 +870,7 @@ class PostgresRunRepository:
                     UPDATE {}
                     SET owner = %s,
                         lease_generation = lease_generation + 1,
-                        lease_expires_at = %s
+                        lease_expires_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s
                       AND terminal = FALSE
                       AND lease_expires_at IS NULL
@@ -878,7 +895,7 @@ class PostgresRunRepository:
                       AND owner = %s
                       AND lease_generation = %s
                       AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at > %s
+                      AND lease_expires_at > to_timestamp(%s / 1000.0)
                       AND terminal = FALSE
                     RETURNING run_id
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
@@ -895,8 +912,8 @@ class PostgresRunRepository:
                     UPDATE {}
                     SET owner = %s,
                         lease_generation = lease_generation + 1,
-                        lease_expires_at = %s
-                    WHERE terminal = FALSE AND lease_expires_at IS NOT NULL AND lease_expires_at <= %s
+                        lease_expires_at = to_timestamp(%s / 1000.0)
+                    WHERE terminal = FALSE AND lease_expires_at IS NOT NULL AND lease_expires_at <= to_timestamp(%s / 1000.0)
                     RETURNING request_json, lease_generation
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (owner, now + self._ttl_ms, now),
@@ -926,7 +943,7 @@ class PostgresRunRepository:
                       AND owner = %s
                       AND lease_generation = %s
                       AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at > %s
+                      AND lease_expires_at > to_timestamp(%s / 1000.0)
                       AND terminal = FALSE
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (run_id, lease.owner, lease.generation, now),
@@ -1017,7 +1034,7 @@ class PostgresRunRepository:
                       AND owner = %s
                       AND lease_generation = %s
                       AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at > %s
+                      AND lease_expires_at > to_timestamp(%s / 1000.0)
                       AND terminal = FALSE
                     RETURNING token_total
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
@@ -1050,7 +1067,7 @@ class PostgresRunRepository:
                           AND lease_generation = %s
                           AND (
                             terminal = TRUE
-                            OR (lease_expires_at IS NOT NULL AND lease_expires_at > %s)
+                            OR (lease_expires_at IS NOT NULL AND lease_expires_at > to_timestamp(%s / 1000.0))
                           )
                         FOR UPDATE
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
@@ -1085,7 +1102,7 @@ class PostgresRunRepository:
                         """
                         INSERT INTO {} (
                             run_id, lease_generation, input_tokens, output_tokens, created_at
-                        ) VALUES (%s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, to_timestamp(%s / 1000.0))
                         """.format(qualified(self._schema, RUN_USAGE_SEGMENTS_TABLE)),
                         (
                             run_id,
@@ -1126,7 +1143,7 @@ class PostgresRunRepository:
                         FROM {} AS claim
                         WHERE claim.terminal = TRUE
                           AND claim.terminal_at IS NOT NULL
-                          AND claim.terminal_at <= %s
+                          AND claim.terminal_at <= to_timestamp(%s / 1000.0)
                           AND NOT EXISTS (
                               SELECT 1
                               FROM {} AS cleanup
@@ -1161,13 +1178,13 @@ class PostgresRunRepository:
                         """
                         UPDATE {}
                         SET terminal = TRUE,
-                            terminal_at = COALESCE(terminal_at, %s),
+                            terminal_at = COALESCE(terminal_at, to_timestamp(%s / 1000.0)),
                             lease_expires_at = NULL
                         WHERE run_id = %s
                           AND owner = %s
                           AND lease_generation = %s
                           AND lease_expires_at IS NOT NULL
-                          AND lease_expires_at > %s
+                          AND lease_expires_at > to_timestamp(%s / 1000.0)
                           AND terminal = FALSE
                         RETURNING run_id, sandbox_id, sandbox_generation,
                                   sandbox_backend_kind, sandbox_teardown_ref
@@ -1197,7 +1214,7 @@ class PostgresRunRepository:
                         SET owner = %s,
                             lease_generation = lease_generation + 1,
                             terminal = TRUE,
-                            terminal_at = COALESCE(terminal_at, %s),
+                            terminal_at = COALESCE(terminal_at, to_timestamp(%s / 1000.0)),
                             lease_expires_at = NULL
                         WHERE run_id = %s AND terminal = FALSE
                         RETURNING run_id, lease_generation, sandbox_id,
@@ -1242,7 +1259,7 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     INSERT INTO {} (run_id, message_id, content, created_at)
-                    VALUES (%s, %s, %s, %s)
+                    VALUES (%s, %s, %s, to_timestamp(%s / 1000.0))
                     ON CONFLICT (run_id, message_id) DO NOTHING
                     """.format(qualified(self._schema, RUN_STEERS_TABLE)),
                     (run_id, message_id, content, self._clock()),
@@ -1562,7 +1579,7 @@ class PostgresRunRepository:
                             SELECT cleanup_id
                             FROM {}
                             WHERE status IN ('pending', 'processing')
-                              AND next_attempt_at <= %s
+                              AND next_attempt_at <= to_timestamp(%s / 1000.0)
                               AND (%s::text IS NULL OR run_id = %s)
                             ORDER BY next_attempt_at ASC, created_at ASC, cleanup_id ASC
                             FOR UPDATE SKIP LOCKED
@@ -1572,8 +1589,8 @@ class PostgresRunRepository:
                         SET status = 'processing',
                             cleanup_owner = %s,
                             attempt_count = cleanup.attempt_count + 1,
-                            next_attempt_at = %s,
-                            updated_at = %s
+                            next_attempt_at = to_timestamp(%s / 1000.0),
+                            updated_at = to_timestamp(%s / 1000.0)
                         FROM due
                         WHERE cleanup.cleanup_id = due.cleanup_id
                         RETURNING cleanup.cleanup_id, cleanup.run_id,
@@ -1596,8 +1613,8 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET status = 'completed', cleanup_owner = NULL,
-                        last_error = NULL, updated_at = %s
+                        SET status = 'completed', cleanup_owner = NULL,
+                        last_error = NULL, updated_at = to_timestamp(%s / 1000.0)
                     WHERE cleanup_id = %s AND status <> 'completed'
                     RETURNING cleanup_id
                     """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
@@ -1617,7 +1634,8 @@ class PostgresRunRepository:
                     """
                     UPDATE {}
                     SET status = 'pending', cleanup_owner = NULL,
-                        next_attempt_at = %s, last_error = %s, updated_at = %s
+                        next_attempt_at = to_timestamp(%s / 1000.0),
+                        last_error = %s, updated_at = to_timestamp(%s / 1000.0)
                     WHERE cleanup_id = %s AND status <> 'completed'
                     RETURNING cleanup_id
                     """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
@@ -1645,7 +1663,9 @@ class PostgresRunRepository:
                 cleanup_id, run_id, lease_generation, backend_kind, sandbox_id,
                 teardown_ref, status, cleanup_owner, attempt_count,
                 next_attempt_at, last_error, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, 'pending', NULL, 0, %s, NULL, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'pending', NULL, 0,
+                      to_timestamp(%s / 1000.0), NULL,
+                      to_timestamp(%s / 1000.0), to_timestamp(%s / 1000.0))
             ON CONFLICT DO NOTHING
             """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
             (
@@ -1720,7 +1740,7 @@ class PostgresRunRepository:
               AND owner = %s
               AND lease_generation = %s
               AND lease_expires_at IS NOT NULL
-              AND lease_expires_at > %s
+              AND lease_expires_at > to_timestamp(%s / 1000.0)
               AND terminal = FALSE
             FOR UPDATE
             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
@@ -1787,7 +1807,7 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET status = %s, updated_at = %s
+                    SET status = %s, updated_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s AND command_id = %s AND status = 'persisted'
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
                     (status, self._clock(), run_id, command_id),
@@ -1806,7 +1826,8 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET status = %s, error_code = %s, updated_at = %s
+                    SET status = %s, error_code = %s,
+                        updated_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s AND command_id = %s
                       AND status IN ('admitted', 'persisted', 'applied')
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
@@ -1819,7 +1840,9 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     SELECT run_id, durable_seq, event_id, kind, status, index_value,
-                           timestamp, payload_json, published_at
+                           (extract(epoch FROM occurred_at) * 1000)::bigint AS timestamp,
+                           payload_json,
+                           (extract(epoch FROM published_at) * 1000)::bigint AS published_at
                     FROM {}
                     WHERE {}
                     ORDER BY run_id ASC, durable_seq ASC

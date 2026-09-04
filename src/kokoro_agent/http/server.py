@@ -111,7 +111,10 @@ def _identity(headers: Mapping[str, str]) -> ExecutionIdentity:
 
 
 def _page(
-    headers: Mapping[str, str], query: Mapping[str, list[str]], session_id: str
+    headers: Mapping[str, str],
+    query: Mapping[str, list[str]],
+    session_id: str,
+    execution_identity: ExecutionIdentity | None = None,
 ) -> ChatQueryRequest:
     def integer(name: str, default: int) -> int:
         raw = query.get(name, [str(default)])[0]
@@ -123,7 +126,7 @@ def _page(
             ) from error
 
     return ChatQueryRequest(
-        execution_identity=_identity(headers),
+        execution_identity=execution_identity or _identity(headers),
         session_id=session_id,
         after_seq=integer("after_seq", 0),
         limit=integer("limit", 200),
@@ -131,7 +134,9 @@ def _page(
 
 
 def _session_list_page(
-    headers: Mapping[str, str], query: Mapping[str, list[str]]
+    headers: Mapping[str, str],
+    query: Mapping[str, list[str]],
+    execution_identity: ExecutionIdentity | None = None,
 ) -> ChatSessionListRequest:
     def integer(name: str, default: int) -> int:
         raw = query.get(name, [str(default)])[0]
@@ -146,7 +151,7 @@ def _session_list_page(
     if project_ref == "":
         project_ref = None
     return ChatSessionListRequest(
-        execution_identity=_identity(headers),
+        execution_identity=execution_identity or _identity(headers),
         project_ref=project_ref,
         cursor=query.get("cursor", [None])[0],
         limit=integer("limit", 50),
@@ -195,6 +200,10 @@ async def dispatch_request(
             "Control requests require Idempotency-Key",
             request_id,
         )
+    try:
+        execution_identity = _identity(headers) if path.startswith("/v1/") else None
+    except IngressError as error:
+        return error.status, _error(error.code, error.message, request_id)
     bus = make_stream(config.stream)
     try:
         async with (
@@ -215,11 +224,13 @@ async def dispatch_request(
                 chat_service=ChatService(chat_repository),
             )
             if method == "GET" and path == "/v1/sessions":
-                result = await ingress.list_sessions(_session_list_page(headers, query))
+                result = await ingress.list_sessions(
+                    _session_list_page(headers, query, execution_identity)
+                )
                 return 200, _envelope(result.model_dump(mode="json"), request_id)
             if method == "POST" and path == "/v1/runs":
                 receipt = await ingress.launch(
-                    body or {}, execution_identity=_identity(headers)
+                    body or {}, execution_identity=execution_identity or _identity(headers)
                 )
                 return 202, _envelope(
                     {
@@ -236,7 +247,7 @@ async def dispatch_request(
                     match.group(1),
                     body or {},
                     command_id=command_id,
-                    execution_identity=_identity(headers),
+                    execution_identity=execution_identity or _identity(headers),
                 )
                 return 202, _envelope(control, request_id)
             match = _RUN_EVENTS.fullmatch(path)
@@ -244,7 +255,7 @@ async def dispatch_request(
                 return 200, _envelope(
                     await ingress.evidence(
                         match.group(1),
-                        execution_identity=_identity(headers),
+                        execution_identity=execution_identity or _identity(headers),
                         after_seq=int(query.get("after_seq", ["0"])[0]),
                         limit=int(query.get("limit", ["200"])[0]),
                     ),
@@ -252,11 +263,15 @@ async def dispatch_request(
                 )
             match = _SESSION_MESSAGES.fullmatch(path)
             if method == "GET" and match is not None:
-                result = await ingress.history(_page(headers, query, match.group(1)))
+                result = await ingress.history(
+                    _page(headers, query, match.group(1), execution_identity)
+                )
                 return 200, _envelope(result.model_dump(mode="json"), request_id)
             match = _SESSION_EVENTS.fullmatch(path)
             if method == "GET" and match is not None:
-                result = await ingress.replay(_page(headers, query, match.group(1)))
+                result = await ingress.replay(
+                    _page(headers, query, match.group(1), execution_identity)
+                )
                 return 200, _envelope(result.model_dump(mode="json"), request_id)
             return 404, _error(
                 "route_not_found", "Agent route was not found", request_id

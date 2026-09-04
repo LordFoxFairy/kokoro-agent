@@ -88,7 +88,7 @@ class AppConfig(BaseModel):
 
     # --- stream / durable-state 域（PG 为 checkpoint+run_repository+memory+chat 共用真后端）---
     redis_url: str = Field(
-        default="redis://127.0.0.1:6379/0", validation_alias="KOKORO_REDIS_URL"
+        default="redis://127.0.0.1:6379/9", validation_alias="KOKORO_REDIS_URL"
     )
     database_url: str = Field(
         default="postgresql://localhost/postgres",

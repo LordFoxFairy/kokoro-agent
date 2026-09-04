@@ -8,8 +8,10 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 import pytest
+from psycopg import sql
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
@@ -22,10 +24,11 @@ from kokoro_agent.infrastructure.postgres_run_repository import (
 from kokoro_agent.repositories.run_repository import RunRepository
 from kokoro_agent.infrastructure.memory_store import make_memory_store
 from kokoro_agent.infrastructure.postgres import connect_pg
+from kokoro_agent.infrastructure.schema import apply_agent_schema
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 from kokoro_agent.streams.redis import RedisStream
 
-REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
+REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/9")
 DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "postgresql://127.0.0.1/postgres")
 
 _INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "run_repository"})
@@ -57,6 +60,23 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 def _unique_schema() -> str:
     return f"kokoro_test_{uuid.uuid4().hex}"
+
+
+@asynccontextmanager
+async def _installed_schema() -> AsyncGenerator[str, None]:
+    schema = _unique_schema()
+    async with connect_pg(DATABASE_URL) as connection:
+        await apply_agent_schema(connection, schema, require_blank=True)
+    try:
+        yield schema
+    finally:
+        async with connect_pg(DATABASE_URL) as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(schema)
+                    )
+                )
 
 
 async def require_postgres() -> None:
@@ -93,28 +113,31 @@ async def stream() -> AsyncGenerator[RedisStream, None]:
 async def checkpointer() -> AsyncGenerator[BaseCheckpointSaver[str], None]:
     """真 PostgreSQL checkpointer；唯一 schema 隔离。"""
     await require_postgres()
-    settings = CheckpointSettings(database_url=DATABASE_URL, schema_name=_unique_schema())
-    async with make_checkpointer(settings) as saver:
-        yield saver
+    async with _installed_schema() as schema:
+        settings = CheckpointSettings(database_url=DATABASE_URL, schema_name=schema)
+        async with make_checkpointer(settings) as saver:
+            yield saver
 
 
 @pytest.fixture
 async def memory_store() -> AsyncGenerator[BaseStore, None]:
     """真 PostgreSQL 长期记忆 store；唯一 schema 隔离。"""
     await require_postgres()
-    settings = CheckpointSettings(database_url=DATABASE_URL, schema_name=_unique_schema())
-    async with make_memory_store(settings) as store:
-        yield store
+    async with _installed_schema() as schema:
+        settings = CheckpointSettings(database_url=DATABASE_URL, schema_name=schema)
+        async with make_memory_store(settings) as store:
+            yield store
 
 
 @pytest.fixture
 async def run_repository() -> AsyncGenerator[RunRepository, None]:
     """真 PostgreSQL run_repository；唯一 schema 隔离。"""
     await require_postgres()
-    settings = RunRepositorySettings(
-        database_url=DATABASE_URL,
-        schema_name=_unique_schema(),
-        lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
-    )
-    async with make_run_repository(settings) as run_repository:
-        yield run_repository
+    async with _installed_schema() as schema:
+        settings = RunRepositorySettings(
+            database_url=DATABASE_URL,
+            schema_name=schema,
+            lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
+        )
+        async with make_run_repository(settings) as run_repository:
+            yield run_repository

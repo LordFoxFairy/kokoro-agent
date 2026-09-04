@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 import logging
 import os
 import signal
@@ -24,6 +24,8 @@ from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.infrastructure.checkpoints import make_checkpointer
 from kokoro_agent.infrastructure.memory_store import make_memory_store
 from kokoro_agent.infrastructure.postgres_run_repository import make_run_repository
+from kokoro_agent.infrastructure.postgres import connect_pg
+from kokoro_agent.infrastructure.schema import apply_agent_schema
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
@@ -36,6 +38,18 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
 from kokoro_agent.http.server import create_http_server
 
 LOGGER = logging.getLogger(__name__)
+
+
+async def apply_database_schema(environment: Mapping[str, str]) -> None:
+    """Install the checked-in Agent schema into one empty configured namespace."""
+
+    config = AppConfig.from_env(environment)
+    async with connect_pg(config.database_url) as connection:
+        await apply_agent_schema(
+            connection,
+            config.database_schema,
+            require_blank=True,
+        )
 
 
 def toolbox_from_config(config: AppConfig) -> ProcessToolbox:
@@ -163,6 +177,16 @@ def main() -> None:
     # 启动期配置快照（secret 掩码）：一眼看清本进程实际生效的配置，便于排障。
     log_config_summary(config, LOGGER)
     asyncio.run(serve(config))
+
+
+def db_apply_schema_main() -> int:
+    """Install the current schema as an explicit operator command."""
+
+    logging.basicConfig(level=logging.INFO)
+    load_dotenv()
+    asyncio.run(apply_database_schema(os.environ))
+    print("installed canonical Agent schema")
+    return 0
 
 
 def http_main() -> None:

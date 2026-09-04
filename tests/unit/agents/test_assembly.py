@@ -32,7 +32,7 @@ from kokoro_agent.worker.main import toolbox_from_config
 def test_defaults_from_empty_env() -> None:
     # 存储收敛后唯一真后端：stream=redis、checkpoint/run_repository=postgres（无 backend 选择枚举）。
     config = AppConfig.from_env({})
-    assert config.stream.redis_url == "redis://127.0.0.1:6379/0"
+    assert config.stream.redis_url == "redis://127.0.0.1:6379/9"
     assert config.database_url == "postgresql://localhost/postgres"
     assert config.database_schema == "kokoro_agent"
     assert config.run_repository.lease_ttl_ms == 90_000
@@ -170,7 +170,7 @@ def test_sandbox_e2b_requires_run_scoped_assembly() -> None:
 def test_make_stream_backends() -> None:
     # 存储收敛：传输唯一真后端是 redis（无 backend 选择字段）。
     assert isinstance(
-        make_stream(StreamSettings(redis_url="redis://127.0.0.1:6379/0")),
+        make_stream(StreamSettings(redis_url="redis://127.0.0.1:6379/9")),
         RedisStream,
     )
 

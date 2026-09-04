@@ -205,8 +205,8 @@ async def test_general_purpose_delegation_runs_inside_guards(
     assert len(failed) == 1
     payload = failed[0]["payload"]
     assert isinstance(payload, dict)
-    # 异常跨子图边界被 LangGraph 重建（类型折叠为 RuntimeError），message 保留守卫原文。
-    assert "terminated elsewhere" in str(payload["message"])
+    # 异常跨子图边界被 LangGraph 重建（类型折叠为 RuntimeError），message 保留代际 fence 原文。
+    assert "lease generation was superseded" in str(payload["message"])
 
 
 async def test_subagent_review_pauses_with_cached_result(

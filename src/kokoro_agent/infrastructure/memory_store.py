@@ -27,9 +27,8 @@ from langgraph.store.base import (
     SearchOp,
 )
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
-from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
-
-MEMORY_COLLECTION = "kokoro_agent_memory"
+from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
+from kokoro_agent.infrastructure.schema import MEMORY_TABLE, verify_agent_schema
 
 
 class PgMemoryStore(BaseStore):
@@ -39,20 +38,7 @@ class PgMemoryStore(BaseStore):
 
     async def setup(self) -> None:
         async with connect_pg(self._database_url) as conn:
-            await ensure_schema(conn, self._schema)
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS {} (
-                        namespace text[] NOT NULL,
-                        key text NOT NULL,
-                        value_json text NOT NULL,
-                        created_at bigint NOT NULL,
-                        updated_at bigint NOT NULL,
-                        PRIMARY KEY (namespace, key)
-                    )
-                    """.format(qualified(self._schema, MEMORY_COLLECTION))
-                )
+            await verify_agent_schema(conn, self._schema)
 
     async def abatch(self, ops: Iterable[Op]) -> list[Result]:
         results: list[Result] = []
@@ -111,7 +97,7 @@ class PgMemoryStore(BaseStore):
             async with conn.cursor() as cur:
                 await cur.execute(
                     "DELETE FROM {} WHERE namespace = %s AND key = %s".format(
-                        qualified(self._schema, MEMORY_COLLECTION)
+                        qualified(self._schema, MEMORY_TABLE)
                     ),
                     (list(namespace), key),
                 )
@@ -123,7 +109,7 @@ class PgMemoryStore(BaseStore):
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT namespace, key, value_json, created_at, updated_at FROM {} WHERE namespace = %s AND key = %s".format(
-                        qualified(self._schema, MEMORY_COLLECTION)
+                        qualified(self._schema, MEMORY_TABLE)
                     ),
                     (list(namespace), key),
                 )
@@ -134,8 +120,8 @@ class PgMemoryStore(BaseStore):
             namespace=tuple(row["namespace"]),
             key=row["key"],
             value=json.loads(row["value_json"]),
-            created_at=_ms_to_dt(int(row["created_at"])),
-            updated_at=_ms_to_dt(int(row["updated_at"])),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     async def alist_namespaces(
@@ -173,10 +159,11 @@ class PgMemoryStore(BaseStore):
                 await cur.execute(
                     """
                     INSERT INTO {} (namespace, key, value_json, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, to_timestamp(%s / 1000.0),
+                            to_timestamp(%s / 1000.0))
                     ON CONFLICT (namespace, key)
                     DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = EXCLUDED.updated_at
-                    """.format(qualified(self._schema, MEMORY_COLLECTION)),
+                    """.format(qualified(self._schema, MEMORY_TABLE)),
                     (list(namespace), key, payload, now, now),
                 )
 
@@ -209,8 +196,8 @@ class PgMemoryStore(BaseStore):
                 namespace=tuple(row["namespace"]),
                 key=row["key"],
                 value=json.loads(row["value_json"]),
-                created_at=_ms_to_dt(int(row["created_at"])),
-                updated_at=_ms_to_dt(int(row["updated_at"])),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
                 score=None,
             )
             for row in matched
@@ -221,7 +208,7 @@ class PgMemoryStore(BaseStore):
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT namespace, key, value_json, created_at, updated_at FROM {}".format(
-                        qualified(self._schema, MEMORY_COLLECTION)
+                        qualified(self._schema, MEMORY_TABLE)
                     )
                 )
                 return list(await cur.fetchall())
@@ -256,7 +243,3 @@ def _matches_namespace(
 
 def _now_ms() -> int:
     return int(datetime.now(tz=UTC).timestamp() * 1000)
-
-
-def _ms_to_dt(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)

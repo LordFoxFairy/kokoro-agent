@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 kokoro-agent = "kokoro_agent.cli:main"
+kokoro-agent-db-apply-schema = "kokoro_agent.cli:db_apply_schema_main"
 kokoro-agent-worker = "kokoro_agent.worker.main:main"
 kokoro-agent-http = "kokoro_agent.worker.main:http_main"
 
@@ -48,6 +49,12 @@ build-backend = "setuptools.build_meta"
 # 随包分发的非 .py 资源（提示词正文），否则 wheel 会漏掉。
 [tool.setuptools.package-data]
 kokoro_agent = ["prompts/*.md"]
+
+# The source checkout remains the single editable DDL authority.  Wheels and
+# sdists carry that same file as an operator asset rather than copying it into
+# the Python package as a second hand-editable source.
+[tool.setuptools.data-files]
+"share/kokoro-agent" = ["database/schema.sql"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -18,9 +18,6 @@ from support.fakes import FakeBus
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
 from kokoro_agent.infrastructure.postgres_chat_repository import (
-    CHAT_EVENTS_COLLECTION,
-    CHAT_MESSAGES_COLLECTION,
-    CHAT_SEQUENCES_COLLECTION,
     PostgresChatRepository,
     PostgresChatRepositorySettings,
     make_chat_repository,
@@ -49,8 +46,12 @@ from kokoro_agent.infrastructure.postgres_run_repository import (
 )
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import (
+    CHAT_EVENTS_TABLE,
+    CHAT_MESSAGES_TABLE,
+    CHAT_SEQUENCES_TABLE,
     RUN_RECEIPT_MANIFESTS_TABLE,
     RUN_RECEIPTS_TABLE,
+    apply_agent_schema,
 )
 from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream
@@ -58,7 +59,7 @@ from kokoro_agent.streams.redis import RedisStream
 _DATABASE_URL = os.environ.get(
     "KOKORO_AGENT_DATABASE_URL", "postgresql://127.0.0.1/postgres"
 )
-_REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/0")
+_REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/9")
 _INTERNAL_SECRET = "acceptance-internal-secret"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
@@ -168,6 +169,8 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
         internal_secret_agent=SecretStr(_INTERNAL_SECRET),
     )
     try:
+        async with connect_pg(_DATABASE_URL) as connection:
+            await apply_agent_schema(connection, schema, require_blank=True)
         async with make_run_repository(config.run_repository):
             pass
         async with make_chat_repository(
@@ -634,7 +637,7 @@ async def test_chat_projection_and_sequences_commit_atomically(
                     """
                 ).format(
                     sql.Identifier(schema),
-                    sql.Identifier(CHAT_MESSAGES_COLLECTION),
+                    sql.Identifier(CHAT_MESSAGES_TABLE),
                     sql.Identifier(schema),
                 )
             )
@@ -645,9 +648,9 @@ async def test_chat_projection_and_sequences_commit_atomically(
     async with connect_pg(acceptance_state.config.database_url) as connection:
         async with connection.cursor() as cursor:
             for table in (
-                CHAT_EVENTS_COLLECTION,
-                CHAT_MESSAGES_COLLECTION,
-                CHAT_SEQUENCES_COLLECTION,
+                CHAT_EVENTS_TABLE,
+                CHAT_MESSAGES_TABLE,
+                CHAT_SEQUENCES_TABLE,
             ):
                 await cursor.execute(
                     sql.SQL("SELECT count(*) AS row_count FROM {}.{}").format(
@@ -659,7 +662,7 @@ async def test_chat_projection_and_sequences_commit_atomically(
                 assert int(row["row_count"]) == 0
             await cursor.execute(
                 sql.SQL("DROP TRIGGER reject_atomic_chat_message ON {}.{}").format(
-                    sql.Identifier(schema), sql.Identifier(CHAT_MESSAGES_COLLECTION)
+                    sql.Identifier(schema), sql.Identifier(CHAT_MESSAGES_TABLE)
                 )
             )
             await cursor.execute(
@@ -710,7 +713,7 @@ async def test_chat_sequence_commit_order_cannot_overtake_lower_sequence(
                     "VALUES ('event', %s, %s, 0)"
                 ).format(
                     sql.Identifier(schema),
-                    sql.Identifier(CHAT_SEQUENCES_COLLECTION),
+                    sql.Identifier(CHAT_SEQUENCES_TABLE),
                 ),
                 (namespace, session_id),
             )
@@ -738,7 +741,7 @@ async def test_chat_sequence_commit_order_cannot_overtake_lower_sequence(
                     """
                 ).format(
                     sql.Identifier(schema),
-                    sql.Identifier(CHAT_EVENTS_COLLECTION),
+                    sql.Identifier(CHAT_EVENTS_TABLE),
                     sql.Identifier(schema),
                 )
             )
@@ -762,7 +765,7 @@ async def test_chat_sequence_commit_order_cannot_overtake_lower_sequence(
         async with connection.cursor() as cursor:
             await cursor.execute(
                 sql.SQL("DROP TRIGGER delay_first_chat_event ON {}.{}").format(
-                    sql.Identifier(schema), sql.Identifier(CHAT_EVENTS_COLLECTION)
+                    sql.Identifier(schema), sql.Identifier(CHAT_EVENTS_TABLE)
                 )
             )
             await cursor.execute(
@@ -973,7 +976,8 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
                     """
                 INSERT INTO {} (
                     run_id, durable_seq, event_id, status, reason, created_at
-                ) VALUES (%s, %s, %s, 'persisted', NULL, %s)
+                ) VALUES (%s, %s, %s, 'persisted', NULL,
+                          to_timestamp(%s / 1000.0))
                 """
                 ).format(
                     sql.Identifier(
@@ -994,7 +998,8 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
                 INSERT INTO {} (
                     run_id, persisted_seq, projected_seq, consumed_seq,
                     producer_close_requested, producer_closed, updated_at
-                ) VALUES (%s, %s, %s, 0, FALSE, FALSE, %s)
+                ) VALUES (%s, %s, %s, 0, FALSE, FALSE,
+                          to_timestamp(%s / 1000.0))
                 """
                 ).format(
                     sql.Identifier(

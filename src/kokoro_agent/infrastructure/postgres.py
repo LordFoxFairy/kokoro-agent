@@ -9,12 +9,27 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 
 DEFAULT_PG_SCHEMA = "kokoro_agent"
+
+
+def epoch_millis_to_utc(value: int) -> datetime:
+    """Convert the transport's epoch-millisecond boundary value to UTC SQL time."""
+
+    return datetime.fromtimestamp(value / 1000, tz=UTC)
+
+
+def utc_to_epoch_millis(value: datetime | None) -> int | None:
+    """Convert a PostgreSQL UTC-aware instant to the transport boundary value."""
+
+    if value is None:
+        return None
+    return int(value.astimezone(UTC).timestamp() * 1000)
 
 
 @asynccontextmanager

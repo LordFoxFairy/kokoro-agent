@@ -25,22 +25,21 @@ from kokoro_agent.chat.models import (
 from kokoro_agent.infrastructure.postgres import (
     DEFAULT_PG_SCHEMA,
     connect_pg,
-    ensure_schema,
     qualified,
+)
+from kokoro_agent.infrastructure.schema import (
+    CHAT_EVENTS_TABLE,
+    CHAT_MESSAGES_TABLE,
+    CHAT_SEQUENCES_TABLE,
+    CHAT_SESSIONS_TABLE,
+    RUN_CLAIMS_TABLE,
+    verify_agent_schema,
 )
 from kokoro_agent.repositories.chat_repository import (
     ChatFenceMode,
     ChatIdentityConflict,
 )
 from kokoro_agent.repositories.run_records import LeaseFence
-from kokoro_agent.infrastructure.schema import RUN_CLAIMS_TABLE
-
-CHAT_MESSAGES_COLLECTION = "kokoro_agent_chat_messages"
-CHAT_EVENTS_COLLECTION = "kokoro_agent_chat_events"
-CHAT_SEQUENCES_COLLECTION = "kokoro_agent_chat_sequences"
-CHAT_SESSIONS_COLLECTION = "kokoro_agent_chat_sessions"
-
-
 class PostgresChatRepositorySettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -63,68 +62,7 @@ class PostgresChatRepository:
 
     async def setup(self) -> None:
         async with connect_pg(self._database_url) as conn:
-            await ensure_schema(conn, self._schema)
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS {} (
-                        chat_event_id text NOT NULL,
-                        namespace text NOT NULL,
-                        session_id text NOT NULL,
-                        run_id text NOT NULL,
-                        source_index bigint NOT NULL,
-                        chat_message_id text,
-                        event_type text NOT NULL,
-                        payload_json text NOT NULL,
-                        created_at bigint NOT NULL,
-                        seq bigint NOT NULL,
-                        PRIMARY KEY (namespace, run_id, source_index),
-                        UNIQUE (chat_event_id),
-                        UNIQUE (namespace, session_id, seq)
-                    )
-                    """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION))
-                )
-                await cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS {} (
-                        chat_message_id text PRIMARY KEY,
-                        namespace text NOT NULL,
-                        session_id text NOT NULL,
-                        run_id text NOT NULL,
-                        role text NOT NULL,
-                        content text NOT NULL,
-                        status text NOT NULL,
-                        created_at bigint NOT NULL,
-                        updated_at bigint NOT NULL,
-                        seq bigint NOT NULL,
-                        UNIQUE (namespace, session_id, seq)
-                    )
-                    """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION))
-                )
-                await cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS {} (
-                        kind text NOT NULL,
-                        namespace text NOT NULL,
-                        session_id text NOT NULL,
-                        seq bigint NOT NULL,
-                        PRIMARY KEY (kind, namespace, session_id)
-                    )
-                    """.format(qualified(self._schema, CHAT_SEQUENCES_COLLECTION))
-                )
-                await cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS {} (
-                        namespace text NOT NULL,
-                        session_id text NOT NULL,
-                        project_ref text,
-                        title text NOT NULL,
-                        created_at bigint NOT NULL,
-                        updated_at bigint NOT NULL,
-                        PRIMARY KEY (namespace, session_id)
-                    )
-                    """.format(qualified(self._schema, CHAT_SESSIONS_COLLECTION))
-                )
+            await verify_agent_schema(conn, self._schema)
 
     async def ensure_session(
         self,
@@ -142,12 +80,14 @@ class PostgresChatRepository:
         if updated_at < 0:
             raise ValueError("updated_at must be non-negative")
 
-        table = qualified(self._schema, CHAT_SESSIONS_COLLECTION)
+        table = qualified(self._schema, CHAT_SESSIONS_TABLE)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""
-                    SELECT session_id, project_ref, title, created_at, updated_at
+                    SELECT session_id, project_ref, title,
+                           (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                           (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
                     FROM {table}
                     WHERE namespace = %s AND session_id = %s
                     """,
@@ -163,9 +103,11 @@ class PostgresChatRepository:
                     await cur.execute(
                         f"""
                         UPDATE {table}
-                        SET updated_at = GREATEST(updated_at, %s)
+                        SET updated_at = GREATEST(updated_at, to_timestamp(%s / 1000.0))
                         WHERE namespace = %s AND session_id = %s
-                        RETURNING session_id, project_ref, title, created_at, updated_at
+                        RETURNING session_id, project_ref, title,
+                                  (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                                  (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
                         """,
                         (updated_at, namespace, session_id),
                     )
@@ -178,9 +120,12 @@ class PostgresChatRepository:
                     f"""
                     INSERT INTO {table}
                         (namespace, session_id, project_ref, title, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, to_timestamp(%s / 1000.0),
+                            to_timestamp(%s / 1000.0))
                     ON CONFLICT (namespace, session_id) DO NOTHING
-                    RETURNING session_id, project_ref, title, created_at, updated_at
+                    RETURNING session_id, project_ref, title,
+                              (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                              (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
                     """,
                     (
                         namespace,
@@ -197,7 +142,9 @@ class PostgresChatRepository:
 
                 await cur.execute(
                     f"""
-                    SELECT session_id, project_ref, title, created_at, updated_at
+                    SELECT session_id, project_ref, title,
+                           (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                           (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
                     FROM {table}
                     WHERE namespace = %s AND session_id = %s
                     """,
@@ -236,15 +183,20 @@ class PostgresChatRepository:
             clauses.append("project_ref = %s")
             params.append(project_ref)
         if after is not None:
-            clauses.append("(updated_at < %s OR (updated_at = %s AND session_id > %s))")
+            clauses.append(
+                "(updated_at < to_timestamp(%s / 1000.0) OR "
+                "(updated_at = to_timestamp(%s / 1000.0) AND session_id > %s))"
+            )
             params.extend([after[0], after[0], after[1]])
         params.append(limit)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""
-                    SELECT session_id, project_ref, title, created_at, updated_at
-                    FROM {qualified(self._schema, CHAT_SESSIONS_COLLECTION)}
+                    SELECT session_id, project_ref, title,
+                           (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                           (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
+                    FROM {qualified(self._schema, CHAT_SESSIONS_TABLE)}
                     WHERE {" AND ".join(clauses)}
                     ORDER BY updated_at DESC, session_id ASC
                     LIMIT %s
@@ -274,7 +226,7 @@ class PostgresChatRepository:
         active_predicate = (
             """
               AND lease_expires_at IS NOT NULL
-              AND lease_expires_at > %s
+              AND lease_expires_at > to_timestamp(%s / 1000.0)
               AND terminal = FALSE
             """
             if mode == "active"
@@ -325,12 +277,14 @@ class PostgresChatRepository:
                 await cur.execute(
                     """
                     SELECT chat_event_id, namespace, session_id, run_id, source_index,
-                           chat_message_id, event_type, payload_json, created_at, seq
+                           chat_message_id, event_type, payload_json,
+                           (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                           seq
                     FROM {}
                     WHERE namespace = %s AND session_id = %s AND seq > %s
                     ORDER BY seq ASC
                     LIMIT %s
-                    """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+                    """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                     (namespace, session_id, after_seq, limit),
                 )
                 rows = await cur.fetchall()
@@ -345,12 +299,15 @@ class PostgresChatRepository:
                 await cur.execute(
                     """
                     SELECT chat_message_id, namespace, session_id, run_id, role,
-                           content, status, created_at, updated_at, seq
+                           content, status,
+                           (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                           (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at,
+                           seq
                     FROM {}
                     WHERE namespace = %s AND session_id = %s AND seq > %s
                     ORDER BY seq ASC
                     LIMIT %s
-                    """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
+                    """.format(qualified(self._schema, CHAT_MESSAGES_TABLE)),
                     (namespace, session_id, after_seq, limit),
                 )
                 rows = await cur.fetchall()
@@ -364,7 +321,7 @@ class PostgresChatRepository:
                     SELECT max(source_index) AS source_index
                     FROM {}
                     WHERE namespace = %s AND run_id = %s
-                    """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+                    """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                     (namespace, run_id),
                 )
                 row = await cur.fetchone()
@@ -379,7 +336,7 @@ class PostgresChatRepository:
                     SELECT max(seq) AS seq
                     FROM {}
                     WHERE namespace = %s AND session_id = %s
-                    """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+                    """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                     (namespace, session_id),
                 )
                 row = await cur.fetchone()
@@ -414,8 +371,9 @@ class PostgresChatRepository:
                 INSERT INTO {} (
                     namespace, session_id, run_id, source_index, chat_message_id,
                     event_type, payload_json, created_at, seq, chat_event_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s,
+                          to_timestamp(%s / 1000.0), %s, %s)
+                """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                 (
                     record.namespace,
                     record.session_id,
@@ -450,8 +408,9 @@ class PostgresChatRepository:
             INSERT INTO {} (
                 chat_message_id, namespace, session_id, run_id, role,
                 content, status, created_at, updated_at, seq
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s,
+                      to_timestamp(%s / 1000.0), to_timestamp(%s / 1000.0), %s)
+            """.format(qualified(self._schema, CHAT_MESSAGES_TABLE)),
             (
                 record.chat_message_id,
                 record.namespace,
@@ -470,7 +429,7 @@ class PostgresChatRepository:
     async def _next_seq(
         self, cur: Any, kind: str, namespace: str, session_id: str
     ) -> int:
-        table = qualified(self._schema, CHAT_SEQUENCES_COLLECTION)
+        table = qualified(self._schema, CHAT_SEQUENCES_TABLE)
         await cur.execute(
             f"""
             INSERT INTO {table} (kind, namespace, session_id, seq)
@@ -508,10 +467,11 @@ class PostgresChatRepository:
         await cur.execute(
             """
             SELECT chat_event_id, namespace, session_id, run_id, source_index,
-                   chat_message_id, event_type, payload_json, created_at, seq
+                   chat_message_id, event_type, payload_json,
+                   (extract(epoch FROM created_at) * 1000)::bigint AS created_at, seq
             FROM {}
             WHERE namespace = %s AND run_id = %s AND source_index = %s
-            """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+            """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
             (namespace, run_id, source_index),
         )
         row = await cur.fetchone()
@@ -523,10 +483,12 @@ class PostgresChatRepository:
         await cur.execute(
             """
             SELECT chat_message_id, namespace, session_id, run_id, role,
-                   content, status, created_at, updated_at, seq
+                   content, status,
+                   (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                   (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at, seq
             FROM {}
             WHERE chat_message_id = %s
-            """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
+            """.format(qualified(self._schema, CHAT_MESSAGES_TABLE)),
             (chat_message_id,),
         )
         row = await cur.fetchone()
@@ -599,10 +561,10 @@ def _assert_message_identity(
 
 
 __all__ = [
-    "CHAT_EVENTS_COLLECTION",
-    "CHAT_MESSAGES_COLLECTION",
-    "CHAT_SEQUENCES_COLLECTION",
-    "CHAT_SESSIONS_COLLECTION",
+    "CHAT_EVENTS_TABLE",
+    "CHAT_MESSAGES_TABLE",
+    "CHAT_SEQUENCES_TABLE",
+    "CHAT_SESSIONS_TABLE",
     "PostgresChatRepository",
     "PostgresChatRepositorySettings",
     "make_chat_repository",

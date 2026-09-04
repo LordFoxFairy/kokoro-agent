@@ -15,7 +15,8 @@ from pydantic import BaseModel, ConfigDict
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
-from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, ensure_schema
+from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA
+from kokoro_agent.infrastructure.schema import verify_agent_schema
 
 
 class CheckpointSettings(BaseModel):
@@ -35,12 +36,11 @@ async def make_checkpointer(
         row_factory=dict_row,
     )
     try:
-        await ensure_schema(conn, settings.schema_name)
+        await verify_agent_schema(conn, settings.schema_name)
         # LangGraph's saver follows the connection search path; it does not
         # accept a schema_name constructor argument in the current release.
         await conn.execute(f'SET search_path TO "{settings.schema_name.replace(chr(34), chr(34) * 2)}"')
         saver = AsyncPostgresSaver(conn)
-        await saver.setup()
         yield saver
     finally:
         await conn.close()

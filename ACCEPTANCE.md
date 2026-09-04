@@ -12,7 +12,7 @@ or unreachable services are test failures, not skipped tests.
 
 ```bash
 export KOKORO_AGENT_DATABASE_URL=postgresql://127.0.0.1/postgres
-export KOKORO_REDIS_URL=redis://127.0.0.1:6379/0
+export KOKORO_REDIS_URL=redis://127.0.0.1:6379/9
 export KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent_acceptance
 export KOKORO_INTERNAL_SECRET_AGENT=acceptance-internal-secret
 ```

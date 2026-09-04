@@ -11,7 +11,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict
 
-from support.fakes import usage_recorder
+from support.fakes import request, usage_recorder
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.run_agent import invoke_once
@@ -33,23 +33,49 @@ def _gated() -> str:
 
 
 def _build(saver: BaseCheckpointSaver[str]):
-    gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
-    main_model = LocalFakeChatModel.with_script([
-        AIMessage(content="", tool_calls=[{
-            "name": "task", "args": {"description": "do", "subagent_type": "helper"},
-            "id": "t1", "type": "tool_call"}]),
-        AIMessage(content="main done"),
-    ])
-    sub_model = LocalFakeChatModel.with_script([
-        AIMessage(content="", tool_calls=[{"name": "gated", "args": {}, "id": "g1", "type": "tool_call"}]),
-        AIMessage(content="sub done"),
-    ])
+    gate_tool = StructuredTool(
+        name="gated", description="d", args_schema=_NoArgs, func=_gated
+    )
+    main_model = LocalFakeChatModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {"description": "do", "subagent_type": "helper"},
+                        "id": "t1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="main done"),
+        ]
+    )
+    sub_model = LocalFakeChatModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "gated", "args": {}, "id": "g1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(content="sub done"),
+        ]
+    )
     return create_test_deep_agent(
         model=main_model,
         tools=[gate_tool],
         system_prompt="x",
-        subagents=[{"name": "helper", "description": "h", "system_prompt": "s",
-                    "model": sub_model, "tools": [gate_tool]}],
+        subagents=[
+            {
+                "name": "helper",
+                "description": "h",
+                "system_prompt": "s",
+                "model": sub_model,
+                "tools": [gate_tool],
+            }
+        ],
         checkpointer=saver,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset({"gated"})),
@@ -121,14 +147,29 @@ async def test_general_purpose_delegation_runs_inside_guards(
 
     run_id = f"rgp-{uuid4().hex}"
     run_repository = FakeRunRepository()
-    assert await run_repository.try_mark_terminal(run_id)
+    lease = await run_repository.try_claim(request(run_id))
+    assert lease is not None
+    assert await run_repository.try_mark_terminal(run_id, lease)
     guard = TerminalGuardMiddleware(run_repository=run_repository, run_id=run_id)
-    main_model = LocalFakeChatModel.with_script([
-        AIMessage(content="", tool_calls=[{
-            "name": "task", "args": {"description": "do", "subagent_type": "general-purpose"},
-            "id": "t1", "type": "tool_call"}]),
-        AIMessage(content="main done"),
-    ])
+    main_model = LocalFakeChatModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {
+                            "description": "do",
+                            "subagent_type": "general-purpose",
+                        },
+                        "id": "t1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="main done"),
+        ]
+    )
     agent = create_test_deep_agent(
         model=main_model,
         tools=[],
@@ -177,24 +218,51 @@ async def test_subagent_review_pauses_with_cached_result(
     saver = checkpointer
     run_id = f"rrev-{uuid4().hex}"
     store = FakeRunRepository()
-    gate_tool = StructuredTool(name="gated", description="d", args_schema=_NoArgs, func=_gated)
+    gate_tool = StructuredTool(
+        name="gated", description="d", args_schema=_NoArgs, func=_gated
+    )
     review = ToolResultReviewMiddleware(frozenset({"gated"}), store, run_id)
-    main_model = LocalFakeChatModel.with_script([
-        AIMessage(content="", tool_calls=[{
-            "name": "task", "args": {"description": "do", "subagent_type": "helper"},
-            "id": "t1", "type": "tool_call"}]),
-        AIMessage(content="main done"),
-    ])
-    sub_model = LocalFakeChatModel.with_script([
-        AIMessage(content="", tool_calls=[{"name": "gated", "args": {}, "id": "g1", "type": "tool_call"}]),
-        AIMessage(content="sub done"),
-    ])
+    main_model = LocalFakeChatModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {"description": "do", "subagent_type": "helper"},
+                        "id": "t1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="main done"),
+        ]
+    )
+    sub_model = LocalFakeChatModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "gated", "args": {}, "id": "g1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(content="sub done"),
+        ]
+    )
     agent = create_test_deep_agent(
         model=main_model,
         tools=[gate_tool],
         system_prompt="x",
-        subagents=[{"name": "helper", "description": "h", "system_prompt": "s",
-                    "model": sub_model, "tools": [gate_tool], "middleware": [review]}],
+        subagents=[
+            {
+                "name": "helper",
+                "description": "h",
+                "system_prompt": "s",
+                "model": sub_model,
+                "tools": [gate_tool],
+                "middleware": [review],
+            }
+        ],
         checkpointer=saver,
         permissions=[],
         interrupt_on=build_interrupt_on(frozenset()),

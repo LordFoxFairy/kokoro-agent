@@ -33,6 +33,7 @@ from kokoro_agent.protocol import (
     run_control_stream,
 )
 from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.repositories.run_repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -545,8 +546,8 @@ async def test_control_stream_delivers_cancel() -> None:
     assert run_control_stream("cx") in bus.deleted
 
 
-# ⑥ 任务句柄按身份弹出：旧任务完成回调不误删新任务句柄。
-async def test_task_handle_popped_by_identity_not_run_id() -> None:
+# ⑥ HITL 暂停任务收束后，resume 建立独立的新 generation 与 task 句柄。
+async def test_resume_replaces_completed_pause_with_new_task_handle() -> None:
     gate1 = asyncio.Event()
     gate2 = asyncio.Event()
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE, gates=[gate1, gate2])
@@ -554,6 +555,10 @@ async def test_task_handle_popped_by_identity_not_run_id() -> None:
     sup, _store = _supervisor(agent)
     await sup.dispatch(bus, request("race"))
     await asyncio.sleep(0)  # task1 阻塞在 gate1
+
+    gate1.set()
+    await _drain(sup)
+    assert "race" not in sup.tasks
 
     resume = _inbound(
         {
@@ -563,13 +568,10 @@ async def test_task_handle_popped_by_identity_not_run_id() -> None:
             "decisions": [{"type": "approve", "tool_id": _TID}],
         }
     )
-    await sup.dispatch(bus, resume)  # task2 覆盖同 run_id 句柄，阻塞在 gate2
+    await sup.dispatch(bus, resume)
     await asyncio.sleep(0)
     task2 = sup.tasks.get("race")
     assert task2 is not None
-
-    gate1.set()  # 旧任务完成 → 其回调按身份比对，不得弹掉 task2
-    await asyncio.sleep(0.01)
     assert sup.tasks.get("race") is task2
 
     gate2.set()
@@ -600,7 +602,9 @@ async def test_serve_acks_and_isolates_failures() -> None:
     _seed_pending_dispatch(store, request("sv1"))
     # The control frame must refer to a durable run so the failure path reaches
     # the terminal-state guard (rather than being discarded as an unknown run).
-    store.requests["rx"] = request("rx")
+    rx_lease = await store.try_claim(request("rx"))
+    assert rx_lease is not None
+    assert await store.pause("rx", rx_lease) is True
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
         run_repository=store,
@@ -626,6 +630,153 @@ def test_parse_inbound_malformed_returns_none() -> None:
 
 
 # ⑧ 心跳：活跃 run 续租；过期 run 重拾再执行；自己在跑的不双起。
+async def test_lease_generation_fences_stale_worker_with_reused_owner_name() -> None:
+    store = FakeRunRepository()
+    run = request("lease-generation")
+
+    first = await store.try_claim(run, "same-worker-name")
+    assert first is not None
+    store.expired = [run]
+    reclaimed = await store.reclaim_expired("same-worker-name")
+    second = reclaimed[0].lease
+
+    assert second.generation > first.generation
+    assert await store.renew(run.run_id, first) is False
+    assert await store.try_mark_terminal(run.run_id, first) is False
+    assert await store.renew(run.run_id, second) is True
+    assert await store.try_mark_terminal(run.run_id, second) is True
+
+
+async def test_paused_lease_cannot_be_revived_by_delayed_heartbeat() -> None:
+    store = FakeRunRepository()
+    run = request("pause-renew-race")
+    lease = await store.try_claim(run, "worker-a")
+    assert lease is not None
+
+    assert await store.pause(run.run_id, lease) is True
+    assert await store.renew(run.run_id, lease) is False
+    assert run.run_id in await store.list_paused()
+
+
+async def test_delayed_heartbeat_does_not_cancel_resumed_generation() -> None:
+    class _DelayedRenewRepository(FakeRunRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.renew_started = asyncio.Event()
+            self.finish_renew = asyncio.Event()
+
+        async def renew(self, run_id: str, lease: LeaseFence) -> bool:
+            del run_id, lease
+            self.renew_started.set()
+            await self.finish_renew.wait()
+            return False
+
+    first_gate = asyncio.Event()
+    resumed_gate = asyncio.Event()
+    store = _DelayedRenewRepository()
+    agent = FakeAgent(
+        run=_interrupt_run(),
+        state=_PENDING_STATE,
+        gates=[first_gate, resumed_gate],
+    )
+    bus = FakeBus()
+    sup, _ = _supervisor(agent, store=store)
+
+    await sup.dispatch(bus, request("heartbeat-resume-race"))
+    await asyncio.sleep(0)
+    first_task = sup.tasks["heartbeat-resume-race"]
+    heartbeat = asyncio.create_task(sup.heartbeat_once(bus))
+    await store.renew_started.wait()
+
+    first_gate.set()
+    await first_task
+    await sup.dispatch(
+        bus,
+        _inbound(
+            {
+                "kind": "run.resume",
+                "command_id": "resume-after-heartbeat",
+                "run_id": "heartbeat-resume-race",
+                "decisions": [{"type": "approve", "tool_id": _TID}],
+            }
+        ),
+    )
+    await asyncio.sleep(0)
+    resumed_task = sup.tasks["heartbeat-resume-race"]
+
+    store.finish_renew.set()
+    await heartbeat
+
+    assert resumed_task.cancelled() is False
+    assert resumed_task.done() is False
+    resumed_gate.set()
+    await resumed_task
+
+
+async def test_stale_completion_does_not_teardown_new_generation_resources() -> None:
+    gate = asyncio.Event()
+    run = request("stale-completion")
+    store = FakeRunRepository()
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(run=text_run("done"), gates=[gate]), store=store)
+    await sup.dispatch(bus, run)
+    await asyncio.sleep(0)
+
+    store.expired = [run]
+    reclaimed = await store.reclaim_expired("worker-b")
+    assert reclaimed[0].lease.generation == 2
+    gate.set()
+    await _drain(sup)
+
+    assert await store.is_terminal(run.run_id) is False
+    assert run_control_stream(run.run_id) not in bus.deleted
+
+
+async def test_non_owner_cancel_fences_active_generation() -> None:
+    store = FakeRunRepository()
+    run = request("remote-cancel")
+    active = await store.try_claim(run, "worker-a")
+    assert active is not None
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.dispatch(
+        bus,
+        _inbound(
+            {
+                "kind": "run.cancel",
+                "command_id": "cancel-remote",
+                "run_id": run.run_id,
+            }
+        ),
+    )
+
+    assert await store.is_terminal(run.run_id) is True
+    assert await store.renew(run.run_id, active) is False
+    completed = find_event(bus.run_events(run.run_id), RunCompleted)
+    assert completed.payload.status == "cancelled"
+
+
+async def test_terminal_claim_remains_latched_when_usage_persistence_fails() -> None:
+    class _UsageFailureRepository(FakeRunRepository):
+        async def add_usage(
+            self, run_id: str, input_tokens: int, output_tokens: int
+        ) -> tuple[int, int]:
+            del run_id, input_tokens, output_tokens
+            raise RuntimeError("usage persistence unavailable")
+
+    store = _UsageFailureRepository()
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(run=text_run("done")), store=store)
+
+    await sup.dispatch(bus, request("terminal-usage-failure"))
+    await _drain(sup)
+
+    assert await store.is_terminal("terminal-usage-failure") is True
+    assert bus.kinds("terminal-usage-failure")[-1] == "run.failed"
+    assert run_control_stream("terminal-usage-failure") in bus.deleted
+
+
 async def test_heartbeat_renews_and_reclaims() -> None:
     agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
@@ -841,9 +992,12 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
 
     closing = _ClosingBus()
     sup, store = _supervisor(agent)
-    await store.try_claim(request("gone"))
-    await store.pause("gone")
-    await store.try_mark_terminal("gone")  # 他处已终态
+    lease = await store.try_claim(request("gone"))
+    assert lease is not None
+    assert await store.pause("gone", lease) is True
+    adopted = await store.adopt("gone", "remote-worker")
+    assert adopted is not None
+    assert await store.try_mark_terminal("gone", adopted) is True  # 他处已终态
     await sup.heartbeat_once(closing)  # 收养入口＝心跳（公开面）
     for _ in range(200):
         if not sup.control_listeners:
@@ -855,10 +1009,13 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
 # ⑫ 复审 #1 竞态：多 worker 收养后 resume/cancel 分投两处——终态后绝不 spawn。
 async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
     class _CancelInWindowStore(FakeRunRepository):
-        async def adopt(self, run_id: str, owner: str = "test-consumer") -> None:
-            await super().adopt(run_id, owner)
+        async def adopt(
+            self, run_id: str, owner: str = "test-consumer"
+        ) -> LeaseFence | None:
+            lease = await super().adopt(run_id, owner)
             # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/adopt 之后）完成终态。
             self.terminals.add(run_id)
+            return lease
 
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
@@ -1066,7 +1223,7 @@ async def test_stream_dispatch_claim_is_the_only_durable_execution_claim() -> No
     class _NoSecondClaimRepository(FakeRunRepository):
         async def try_claim(
             self, request: RunRequest, owner: str = "test-consumer"
-        ) -> bool:
+        ) -> LeaseFence | None:
             raise AssertionError(
                 "stream dispatch must not use a second claim transaction"
             )
@@ -1154,7 +1311,7 @@ async def test_crash_before_durable_claim_leaves_frame_unacked() -> None:
     class _CrashClaim(FakeRunRepository):
         async def claim_dispatch(
             self, request: RunRequest, consumer: str = "test-consumer"
-        ) -> bool:
+        ) -> LeaseFence | None:
             del request, consumer
             raise RuntimeError("crash before durable claim")
 
@@ -1215,7 +1372,11 @@ async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatibl
 ):
     # session NACK（rejected 回执）：心跳对账 → 同步 fence + 原子认领终态（停止执行与分配）。
     store = FakeRunRepository()
-    await store.try_claim(request("r-nack"))
+    gate = asyncio.Event()
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(run=text_run("blocked"), gates=[gate]), store=store)
+    await sup.dispatch(bus, request("r-nack"))
+    await asyncio.sleep(0)
     store.outbox["r-nack"] = [
         {
             "durable_seq": 1,
@@ -1230,12 +1391,39 @@ async def test_heartbeat_reconciles_receipt_nack_terminates_contract_incompatibl
     store.receipts["r-nack"] = [
         {"durable_seq": 1, "event_id": "e1", "status": "rejected"}
     ]
-    bus = FakeBus()
-    sup, _ = _supervisor(FakeAgent(), store=store)
     await sup.heartbeat_once(bus)
     # 终态认领 + fence 同步到 rejected_seq（其后 critical 帧一律 superseded）。
     assert await store.is_terminal("r-nack") is True
     assert store.terminal_fence["r-nack"] == 1
+
+
+async def test_heartbeat_nack_terminates_orphaned_paused_run() -> None:
+    store = FakeRunRepository()
+    run = request("r-paused-nack")
+    lease = await store.try_claim(run, "dead-worker")
+    assert lease is not None
+    assert await store.pause(run.run_id, lease) is True
+    store.outbox[run.run_id] = [
+        {
+            "durable_seq": 1,
+            "event_id": "e-paused",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 0,
+            "payload_json": "{}",
+            "status": "published",
+        }
+    ]
+    store.receipts[run.run_id] = [
+        {"durable_seq": 1, "event_id": "e-paused", "status": "rejected"}
+    ]
+    bus = FakeBus()
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.heartbeat_once(bus)
+
+    assert await store.is_terminal(run.run_id) is True
+    assert run.run_id not in await store.list_paused()
 
 
 async def test_heartbeat_republishes_stale_published_outbox() -> None:

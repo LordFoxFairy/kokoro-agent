@@ -60,7 +60,11 @@ from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.features.definition import Feature
-from kokoro_agent.repositories.run_repository import OutboxFrame, RunRepository
+from kokoro_agent.repositories.run_repository import (
+    LeaseFence,
+    OutboxFrame,
+    RunRepository,
+)
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.policy import Backend
@@ -144,10 +148,14 @@ class RunSupervisor:
         self._chat_repository = chat_repository
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        # 与具体 task 句柄绑定，不能从可能已被 cancel/NACK/reclaim 更新的全局 lease map 回读。
+        self._task_leases: dict[str, LeaseFence] = {}
         # per-run control 监听任务：认领 run 后订阅其独立 control 流，终态时收束。
         self._control: dict[str, asyncio.Task[None]] = {}
         # per-run 发射器缓存：index 连续性跨 request/resume/cancel 共享；miss 时 attach 续接。
         self._emitters: dict[str, RunEmitter] = {}
+        # 每次 claim/adopt/reclaim 都产生单调 generation；同一 owner 名复用也不能让旧任务续写。
+        self._leases: dict[str, LeaseFence] = {}
 
     @property
     def control_listeners(self) -> Mapping[str, asyncio.Task[None]]:
@@ -237,11 +245,13 @@ class RunSupervisor:
             )
             return
         await self._persist_user_message(canonical)
-        if not await self._run_repository.claim_dispatch(canonical, self._consumer):
+        lease = await self._run_repository.claim_dispatch(canonical, self._consumer)
+        if lease is None:
             metrics.record_dispatch_claim(won=False)
             LOGGER.debug("dropping late/duplicate dispatch run_id=%s", request.run_id)
             return
         metrics.record_dispatch_claim(won=True)
+        self._leases[canonical.run_id] = lease
         await self._start_run(bus, canonical)
 
     async def _republish_outbox(self, bus: StreamProtocol) -> None:
@@ -324,21 +334,37 @@ class RunSupervisor:
     async def heartbeat_once(self, bus: StreamProtocol) -> None:
         """一轮租约维护：为活跃 run 续租，再把他处过期的 run 重拾续跑。"""
         for run_id in tuple(self._tasks):
-            if await self._run_repository.renew(run_id, self._consumer):
+            task = self._tasks.get(run_id)
+            lease = self._task_leases.get(run_id)
+            if task is None or lease is None:
+                continue
+            if await self._run_repository.renew(run_id, lease):
+                continue
+            # renew 跨 await；期间旧任务可能暂停，resume 已覆盖为新 task/generation。
+            # 仅 fence 当时观测到的同一个任务与同一个 lease，绝不取消后来者。
+            if (
+                self._tasks.get(run_id) is not task
+                or self._task_leases.get(run_id) != lease
+            ):
                 continue
             # fencing（审计缺口：裂脑双跑）：所有权已被他处夺走——让渡本地执行，
             # 不发终态（终态权归新属主）；双跑窗收窄到一个心跳周期。
-            task = self._tasks.get(run_id)
-            if task is not None and not task.done():
+            if not task.done():
                 LOGGER.warning(
                     "fencing: lost lease ownership, yielding run_id=%s", run_id
                 )
                 task.cancel()
-        for request in await self._run_repository.reclaim_expired(self._consumer):
-            if request.run_id in self._tasks:
-                # 自己仍在跑（仅心跳迟到被自己拾回）：不双起。
-                continue
+            self._release_local_ownership(run_id, lease)
+        for reclaimed in await self._run_repository.reclaim_expired(self._consumer):
+            request = reclaimed.request
+            task = self._tasks.get(request.run_id)
+            if task is not None and not task.done():
+                # owner 名相同也不能把新 generation 借给旧执行；先取消，再从 checkpoint 恢复。
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             LOGGER.warning("reclaiming expired run_id=%s", request.run_id)
+            self._leases[request.run_id] = reclaimed.lease
             await self._start_run(bus, request)
         # control 监听收养：暂停 run 的认领 worker 崩溃后，其 resume/cancel 无人处理会永久卡死；
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
@@ -396,24 +422,54 @@ class RunSupervisor:
                 "receipt_state_lost: manifest missing before close, run_id=%s", run_id
             )
 
+    async def _claim_terminal(self, run_id: str, lease: LeaseFence) -> bool:
+        return await self._run_repository.try_mark_terminal(run_id, lease)
+
+    def _release_local_ownership(self, run_id: str, lease: LeaseFence) -> None:
+        """Drop only process-local state for one stale generation; never touch shared resources."""
+
+        if self._leases.get(run_id) != lease:
+            return
+        self._leases.pop(run_id, None)
+        self._emitters.pop(run_id, None)
+        control = self._control.pop(run_id, None)
+        if control is not None and not control.done():
+            control.cancel()
+
+    async def _control_lease(self, run_id: str) -> LeaseFence | None:
+        lease = self._leases.get(run_id)
+        if lease is not None and await self._run_repository.is_lease_current(
+            run_id, lease
+        ):
+            return lease
+        adopted = await self._run_repository.adopt(run_id, self._consumer)
+        if adopted is not None:
+            self._leases[run_id] = adopted
+        return adopted
+
     async def _terminate_contract_incompatible(
         self, bus: StreamProtocol, run_id: str, rejected_seq: int
     ) -> None:
         # session NACK（quarantine）：停止执行——cancel 在跑任务；分配已被 local fence（=rejected_seq）
         # 冻结，其后 critical 帧一律 superseded 不上 wire。原子认领终态后收束（与自然完成/cancel 互斥）。
+        terminal_lease = await self._run_repository.fence_and_mark_terminal(
+            run_id, self._consumer
+        )
+        if terminal_lease is None:
+            return
+        self._leases[run_id] = terminal_lease
         task = self._tasks.get(run_id)
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        if await self._run_repository.try_mark_terminal(run_id):
-            LOGGER.error(
-                "run terminated contract_incompatible: session NACK at seq=%s run_id=%s",
-                rejected_seq,
-                run_id,
-            )
-            self._emitters.pop(run_id, None)
-            await self._teardown_control(bus, run_id)
+        LOGGER.error(
+            "run terminated contract_incompatible: session NACK at seq=%s run_id=%s",
+            rejected_seq,
+            run_id,
+        )
+        self._emitters.pop(run_id, None)
+        await self._teardown_control(bus, run_id)
 
     async def _heartbeat_loop(self, bus: StreamProtocol) -> None:
         while True:
@@ -425,9 +481,11 @@ class RunSupervisor:
 
     async def _on_request(self, bus: StreamProtocol, request: RunRequest) -> None:
         # 原子认领 + TTL 租约：多 pod 消费同一请求时仅首个认领者起 run。
-        if not await self._run_repository.try_claim(request, self._consumer):
+        lease = await self._run_repository.try_claim(request, self._consumer)
+        if lease is None:
             LOGGER.debug("skipping already-claimed run_id=%s", request.run_id)
             return
+        self._leases[request.run_id] = lease
         await self._start_run(bus, request)
 
     async def _start_run(self, bus: StreamProtocol, request: RunRequest) -> None:
@@ -472,6 +530,13 @@ class RunSupervisor:
         if await self._run_repository.is_terminal(msg.run_id):
             LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
             return
+        lease = await self._run_repository.adopt(msg.run_id, self._consumer)
+        if lease is None:
+            LOGGER.warning(
+                "dropping resume without paused lease ownership run_id=%s", msg.run_id
+            )
+            return
+        self._leases[msg.run_id] = lease
         try:
             built = await self._build(request)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
@@ -485,6 +550,9 @@ class RunSupervisor:
             LOGGER.warning(
                 "dropping resume without pending interrupt for run_id=%s", msg.run_id
             )
+            # adopt 已把暂停哨兵切回活跃租约；重复/过期 resume 不启动任务时必须恢复暂停态，
+            # 否则该 Run 会成为既无执行任务、又不会被 paused scanner 接管的孤儿。
+            await self._run_repository.pause(msg.run_id, lease)
             return
         names = self._approval_tool_names(request)
         entries = review_entries(snapshot.interrupts)
@@ -524,8 +592,6 @@ class RunSupervisor:
             command = Command(
                 resume={"decisions": resume_command_decisions(ordered, frame)}
             )
-        # 离开 HITL 暂停哨兵：所有权交接给收养 worker（fencing 属主随之更新），恢复活跃租约。
-        await self._run_repository.adopt(msg.run_id, self._consumer)
         # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
         # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
         if await self._run_repository.is_terminal(msg.run_id):
@@ -554,9 +620,14 @@ class RunSupervisor:
                 msg.run_id, msg.command_id, "run_scope_forbidden"
             )
             return
-        # 原子认领终态：自然完成/重复 cancel 已认领则失败者直接返回，仅胜者补发 cancelled。
-        if not await self._run_repository.try_mark_terminal(msg.run_id):
+        # cancel 是受信 control command：无论哪一个 consumer 收到，都原子提升 generation、
+        # fence 当前执行者并认领唯一终态；不能依赖本进程恰好持有 active lease。
+        terminal_lease = await self._run_repository.fence_and_mark_terminal(
+            msg.run_id, self._consumer
+        )
+        if terminal_lease is None:
             return
+        self._leases[msg.run_id] = terminal_lease
         task = self._tasks.get(msg.run_id)
         if task is not None and not task.done():
             # 运行中：被 cancel 的 invoke task 不自发终态，统一由此分支补发 cancelled。
@@ -579,28 +650,39 @@ class RunSupervisor:
         *,
         trace: RunnableConfig | None,
     ) -> None:
+        lease = self._leases.get(run_id)
+        if lease is None:
+            raise RuntimeError(f"cannot spawn run {run_id!r} without a lease fence")
         task = asyncio.create_task(
             self._guarded(
-                bus, built, run_id, thread_id, payload, approval_tool_names, trace
+                bus,
+                built,
+                run_id,
+                thread_id,
+                payload,
+                approval_tool_names,
+                trace,
+                lease,
             )
         )
         self._tasks[run_id] = task
+        self._task_leases[run_id] = lease
 
         def _pop(_done: asyncio.Task[None]) -> None:
             # 按任务身份弹出：resume 已覆盖同 run_id 的新任务句柄时，旧回调不误删新句柄。
             if self._tasks.get(run_id) is task:
                 del self._tasks[run_id]
+                self._task_leases.pop(run_id, None)
 
         task.add_done_callback(_pop)
 
-    async def _guarded_entry_gate(self, run_id: str) -> bool:
-        # spawn 与他处 cancel 的微竞态最后一闸：进入执行前终态即静默收手。
-        # 闸门是尽力而为的额外防线（终态权威在 claim_terminal）：store 故障降级放行，不引爆任务。
+    async def _guarded_entry_gate(self, run_id: str, lease: LeaseFence) -> bool:
+        # spawn 与接管/取消竞态的最后一闸：只有当前 generation 才能进入执行。
         try:
-            return not await self._run_repository.is_terminal(run_id)
-        except Exception:  # noqa: BLE001 — 防线降级：主正确性不依赖此闸
-            LOGGER.exception("terminal entry gate degraded for run_id=%s", run_id)
-            return True
+            return await self._run_repository.is_lease_current(run_id, lease)
+        except Exception:  # noqa: BLE001 — 所有权无法证明时 fail closed
+            LOGGER.exception("lease entry gate failed closed for run_id=%s", run_id)
+            return False
 
     async def _guarded(
         self,
@@ -611,13 +693,24 @@ class RunSupervisor:
         payload: object,
         approval_tool_names: frozenset[str],
         trace: RunnableConfig | None,
+        lease: LeaseFence,
     ) -> None:
         # Semaphore 仅限活跃 invoke：暂停态不持有，resume 重新竞争额度。
         async with self._sem:
-            if not await self._guarded_entry_gate(run_id):
+            if not await self._guarded_entry_gate(run_id, lease):
                 LOGGER.warning("skipping execution for terminal run_id=%s", run_id)
                 return
             emitter = await self._emitter(bus, run_id)
+            terminal_claimed = False
+
+            async def claim_terminal() -> bool:
+                nonlocal terminal_claimed
+                # 一旦本 generation 已认领终态，后续异常收口必须保持成功状态；
+                # 不能让第二次 CAS 的 False 覆盖第一次成功，导致漏发终态和漏清理。
+                if not terminal_claimed:
+                    terminal_claimed = await self._claim_terminal(run_id, lease)
+                return terminal_claimed
+
             terminal = await invoke_once(
                 emitter,
                 built.runnable,
@@ -630,16 +723,22 @@ class RunSupervisor:
                 trace=trace,
                 recursion_limit=self._recursion_limit,
                 # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
-                claim_terminal=lambda: self._run_repository.try_mark_terminal(run_id),
+                claim_terminal=claim_terminal,
                 # 用量跨段累计真源：run.completed 报累计而非末段。
                 record_usage=lambda i, o: self._run_repository.add_usage(run_id, i, o),
             )
         if terminal:
-            self._emitters.pop(run_id, None)
-            await self._teardown_control(bus, run_id)
+            if terminal_claimed:
+                self._emitters.pop(run_id, None)
+                await self._teardown_control(bus, run_id)
+            else:
+                # invoke 已结束但终态 CAS 输给更新 generation：只释放本地句柄，
+                # 绝不删除新 owner 的 control stream 或销毁其 sandbox。
+                self._release_local_ownership(run_id, lease)
         else:
             # interrupt 暂停：租约置哨兵，HITL 等人期间不被过期重拾重跑；control 监听存活等 resume。
-            await self._run_repository.pause(run_id)
+            if not await self._run_repository.pause(run_id, lease):
+                self._release_local_ownership(run_id, lease)
 
     def _ensure_control_listener(self, bus: StreamProtocol, run_id: str) -> None:
         existing = self._control.get(run_id)
@@ -884,6 +983,7 @@ class RunSupervisor:
         task = self._control.pop(run_id, None)
         if task is not None and not task.done():
             task.cancel()
+        self._leases.pop(run_id, None)
 
     async def _emitter(self, bus: StreamProtocol, run_id: str) -> RunEmitter:
         emitter = self._emitters.get(run_id)
@@ -961,7 +1061,12 @@ class RunSupervisor:
         code: RunErrorCode | None = None,
     ) -> None:
         # 认领成功才发 run.failed，与并发 cancel/自然完成互斥为单一终态。
-        if await self._run_repository.try_mark_terminal(run_id):
+        # resume/control 的失败可能发生在本 worker 尚未缓存租约之前；仅允许收养暂停态，
+        # 绝不抢夺仍活跃的其他 generation。无法证明所有权时保持 fail closed，交给持有者/重拾恢复。
+        lease = await self._control_lease(run_id)
+        if lease is None:
+            return
+        if await self._claim_terminal(run_id, lease):
             emitter = await self._emitter(bus, run_id)
             await emitter.emit(run_failed_payload(error, code=code))
             self._emitters.pop(run_id, None)

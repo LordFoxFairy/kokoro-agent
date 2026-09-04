@@ -33,6 +33,8 @@ from kokoro_agent.repositories.run_repository import (
     ControlCommandConflict,
     DispatchAdmission,
     DispatchConflict,
+    LeaseFence,
+    LeasedRun,
     OutboxFrame,
     ReceiptReconcile,
     RunControlCommandRecord,
@@ -87,6 +89,10 @@ class _OutboxEntry(BaseModel):
     timestamp: int | None = None
     payload_json: str | None = None
     published_at: int | None = None
+
+
+class _DispatchLeaseConflict(Exception):
+    """Abort the dispatch transaction when its lease row cannot be created."""
 
 
 class RunRepositorySettings(BaseModel):
@@ -250,15 +256,16 @@ class PostgresRunRepository:
             run_id, command_id, "failed", error_code=error_code
         )
 
-    async def try_claim(self, request: RunRequest, owner: str) -> bool:
+    async def try_claim(self, request: RunRequest, owner: str) -> LeaseFence | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} (run_id, request_json, owner, lease_expires_at)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO {} (
+                        run_id, request_json, owner, lease_generation, lease_expires_at
+                    ) VALUES (%s, %s, %s, 1, %s)
                     ON CONFLICT (run_id) DO NOTHING
-                    RETURNING run_id
+                    RETURNING lease_generation
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (
                         request.run_id,
@@ -267,44 +274,62 @@ class PostgresRunRepository:
                         self._clock() + self._ttl_ms,
                     ),
                 )
-                return await cur.fetchone() is not None
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
 
-    async def claim_dispatch(self, request: RunRequest, consumer: str) -> bool:
+    async def claim_dispatch(
+        self, request: RunRequest, consumer: str
+    ) -> LeaseFence | None:
         now = self._clock()
-        async with connect_pg(self._database_url) as conn:
-            async with conn.transaction():
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        UPDATE {}
-                        SET status = 'claimed', claimed_by = %s, updated_at = %s
-                        WHERE run_id = %s AND status = 'pending' AND request_json = %s
-                        RETURNING run_id
-                        """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
-                        (
-                            consumer,
-                            now,
-                            request.run_id,
-                            request.model_dump_json(),
-                        ),
-                    )
-                    if await cur.fetchone() is None:
-                        return False
-                    await cur.execute(
-                        """
-                        INSERT INTO {} (run_id, request_json, owner, lease_expires_at)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (run_id) DO NOTHING
-                        RETURNING run_id
-                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-                        (
-                            request.run_id,
-                            request.model_dump_json(),
-                            consumer,
-                            now + self._ttl_ms,
-                        ),
-                    )
-                    return await cur.fetchone() is not None
+        try:
+            async with connect_pg(self._database_url) as conn:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            UPDATE {}
+                            SET status = 'claimed', claimed_by = %s, updated_at = %s
+                            WHERE run_id = %s AND status = 'pending' AND request_json = %s
+                            RETURNING run_id
+                            """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                            (
+                                consumer,
+                                now,
+                                request.run_id,
+                                request.model_dump_json(),
+                            ),
+                        )
+                        if await cur.fetchone() is None:
+                            return None
+                        await cur.execute(
+                            """
+                            INSERT INTO {} (
+                                run_id, request_json, owner, lease_generation,
+                                lease_expires_at
+                            ) VALUES (%s, %s, %s, 1, %s)
+                            ON CONFLICT (run_id) DO NOTHING
+                            RETURNING lease_generation
+                            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                            (
+                                request.run_id,
+                                request.model_dump_json(),
+                                consumer,
+                                now + self._ttl_ms,
+                            ),
+                        )
+                        row = await cur.fetchone()
+                        if row is None:
+                            # Returning here would commit the preceding pending→claimed
+                            # update. Raising through the transaction context rolls it back.
+                            raise _DispatchLeaseConflict
+                        return LeaseFence(
+                            owner=consumer,
+                            generation=int(row["lease_generation"]),
+                        )
+        except _DispatchLeaseConflict:
+            return None
 
     async def get_pending_dispatch(self, run_id: str) -> RunRequest | None:
         async with connect_pg(self._database_url) as conn:
@@ -707,63 +732,119 @@ class PostgresRunRepository:
                 rows = await cur.fetchall()
         return [RunControlCommandRecord(**dict(row)) for row in rows]
 
-    async def renew(self, run_id: str, owner: str) -> bool:
-        async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE {}
-                    SET lease_expires_at = %s
-                    WHERE run_id = %s AND owner = %s AND terminal = FALSE
-                    RETURNING run_id
-                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-                    (self._clock() + self._ttl_ms, run_id, owner),
-                )
-                return await cur.fetchone() is not None
-
-    async def adopt(self, run_id: str, owner: str) -> None:
-        async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE {}
-                    SET owner = %s, lease_expires_at = %s
-                    WHERE run_id = %s AND terminal = FALSE
-                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-                    (owner, self._clock() + self._ttl_ms, run_id),
-                )
-
-    async def pause(self, run_id: str) -> None:
-        async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE {}
-                    SET lease_expires_at = NULL
-                    WHERE run_id = %s AND terminal = FALSE
-                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-                    (run_id,),
-                )
-
-    async def reclaim_expired(self, owner: str) -> list[RunRequest]:
+    async def renew(self, run_id: str, lease: LeaseFence) -> bool:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     UPDATE {}
-                    SET owner = %s, lease_expires_at = %s
+                    SET lease_expires_at = %s
+                    WHERE run_id = %s
+                      AND owner = %s
+                      AND lease_generation = %s
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at > %s
+                      AND terminal = FALSE
+                    RETURNING run_id
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (
+                        now + self._ttl_ms,
+                        run_id,
+                        lease.owner,
+                        lease.generation,
+                        now,
+                    ),
+                )
+                return await cur.fetchone() is not None
+
+    async def adopt(self, run_id: str, owner: str) -> LeaseFence | None:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET owner = %s,
+                        lease_generation = lease_generation + 1,
+                        lease_expires_at = %s
+                    WHERE run_id = %s
+                      AND terminal = FALSE
+                      AND lease_expires_at IS NULL
+                    RETURNING lease_generation
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (owner, self._clock() + self._ttl_ms, run_id),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
+
+    async def pause(self, run_id: str, lease: LeaseFence) -> bool:
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET lease_expires_at = NULL
+                    WHERE run_id = %s
+                      AND owner = %s
+                      AND lease_generation = %s
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at > %s
+                      AND terminal = FALSE
+                    RETURNING run_id
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (run_id, lease.owner, lease.generation, now),
+                )
+                return await cur.fetchone() is not None
+
+    async def reclaim_expired(self, owner: str) -> list[LeasedRun]:
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET owner = %s,
+                        lease_generation = lease_generation + 1,
+                        lease_expires_at = %s
                     WHERE terminal = FALSE AND lease_expires_at IS NOT NULL AND lease_expires_at <= %s
-                    RETURNING request_json
+                    RETURNING request_json, lease_generation
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (owner, now + self._ttl_ms, now),
                 )
                 rows = await cur.fetchall()
         return [
-            RunRequest.model_validate_json(row["request_json"])
+            LeasedRun(
+                request=RunRequest.model_validate_json(row["request_json"]),
+                lease=LeaseFence(
+                    owner=owner,
+                    generation=int(row["lease_generation"]),
+                ),
+            )
             for row in rows
             if row["request_json"] is not None
         ]
+
+    async def is_lease_current(self, run_id: str, lease: LeaseFence) -> bool:
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 1
+                    FROM {}
+                    WHERE run_id = %s
+                      AND owner = %s
+                      AND lease_generation = %s
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at > %s
+                      AND terminal = FALSE
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (run_id, lease.owner, lease.generation, now),
+                )
+                return await cur.fetchone() is not None
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         row = await self._get_claim_row(run_id)
@@ -877,26 +958,55 @@ class PostgresRunRepository:
                     )
         return len(run_ids)
 
-    async def try_mark_terminal(self, run_id: str) -> bool:
+    async def try_mark_terminal(self, run_id: str, lease: LeaseFence) -> bool:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} AS current_run (run_id, terminal, terminal_at, lease_expires_at)
-                    VALUES (%s, TRUE, %s, NULL)
-                    ON CONFLICT (run_id) DO UPDATE SET
-                        terminal = TRUE,
-                        terminal_at = COALESCE(current_run.terminal_at, EXCLUDED.terminal_at),
+                    UPDATE {}
+                    SET terminal = TRUE,
+                        terminal_at = COALESCE(terminal_at, %s),
                         lease_expires_at = NULL
-                    WHERE current_run.terminal = FALSE
+                    WHERE run_id = %s
+                      AND owner = %s
+                      AND lease_generation = %s
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at > %s
+                      AND terminal = FALSE
                     RETURNING run_id
                     """.format(
                         qualified(self._schema, RUN_CLAIMS_TABLE),
                     ),
-                    (run_id, now),
+                    (now, run_id, lease.owner, lease.generation, now),
                 )
                 return await cur.fetchone() is not None
+
+    async def fence_and_mark_terminal(
+        self, run_id: str, owner: str
+    ) -> LeaseFence | None:
+        """Atomically supersede any active/paused owner and claim the sole terminal write."""
+
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET owner = %s,
+                        lease_generation = lease_generation + 1,
+                        terminal = TRUE,
+                        terminal_at = COALESCE(terminal_at, %s),
+                        lease_expires_at = NULL
+                    WHERE run_id = %s AND terminal = FALSE
+                    RETURNING lease_generation
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (owner, now, run_id),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
 
     async def is_terminal(self, run_id: str) -> bool:
         row = await self._get_claim_row(run_id)
@@ -1080,7 +1190,8 @@ class PostgresRunRepository:
     async def _select_claim_row(self, cur: Any, run_id: str) -> dict[str, Any] | None:
         await cur.execute(
             """
-            SELECT run_id, request_json, owner, lease_expires_at, terminal, terminal_at,
+            SELECT run_id, request_json, owner, lease_generation, lease_expires_at,
+                   terminal, terminal_at,
                    durable_counter, terminal_fence_seq, token_total, usage_input_total,
                    usage_output_total, sandbox_id
             FROM {}

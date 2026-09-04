@@ -299,7 +299,9 @@ async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
     # 崩溃前：command ledger persisted 已落，fingerprint=当时 interrupt 指纹，apply 未跑。serve() 启动续办。
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     run_repository = FakeRunRepository()
-    await run_repository.try_claim(request("rf"))
+    lease = await run_repository.try_claim(request("rf"))
+    assert lease is not None
+    assert await run_repository.pause("rf", lease) is True
     await run_repository.record_control_delivery(
         "rf", "dec_1", None, _fingerprint_of(_PENDING_STATE), _resume_body("rf")
     )

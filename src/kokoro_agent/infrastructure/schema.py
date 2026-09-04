@@ -38,6 +38,7 @@ def schema_statements(schema: str) -> tuple[str, ...]:
             run_id text PRIMARY KEY,
             request_json text,
             owner text,
+            lease_generation bigint NOT NULL DEFAULT 0,
             lease_expires_at bigint,
             terminal boolean NOT NULL DEFAULT FALSE,
             terminal_at bigint,

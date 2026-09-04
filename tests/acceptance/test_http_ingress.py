@@ -37,6 +37,7 @@ from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.http.server import create_http_server
 from kokoro_agent.infrastructure.postgres_run_repository import (
     DEFAULT_LEASE_TTL_S,
+    PostgresRunRepository,
     RunRepositorySettings,
     make_run_repository,
 )
@@ -204,7 +205,9 @@ async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> Non
             runtime_namespace(request.execution_identity),
             f"acceptance:{request.run_id}",
         )
-        assert await run_repository.claim_dispatch(request, "acceptance-test") is True
+        assert (
+            await run_repository.claim_dispatch(request, "acceptance-test") is not None
+        )
 
 
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
@@ -319,7 +322,7 @@ async def test_launch_is_durable_and_idempotent_over_http(
     ) as run_repository:
         assert (
             await run_repository.claim_dispatch(_request(run_id), "acceptance-worker")
-            is True
+            is not None
         )
 
     second = await http_client.post("/v1/runs", headers=_headers(), json=body)
@@ -351,10 +354,67 @@ async def test_pending_dispatch_is_replayable_from_postgres_without_redis_frame(
         pending = await run_repository.list_pending_dispatches()
         assert request in pending
 
-        assert await run_repository.claim_dispatch(request, "acceptance-worker") is True
+        assert (
+            await run_repository.claim_dispatch(request, "acceptance-worker")
+            is not None
+        )
         assert await run_repository.get_request(run_id) == request
-        assert await run_repository.claim_dispatch(request, "other-worker") is False
+        assert await run_repository.claim_dispatch(request, "other-worker") is None
         assert request not in await run_repository.list_pending_dispatches()
+
+
+@pytest.mark.asyncio
+async def test_postgres_lease_generation_fences_stale_same_owner_worker(
+    acceptance_state: _AcceptanceState,
+) -> None:
+    """A restarted process may reuse its worker name; generation must still fence it."""
+
+    clock_ms = [1_000]
+    repository = PostgresRunRepository(
+        acceptance_state.config.database_url,
+        ttl_ms=10,
+        schema=acceptance_state.config.database_schema,
+        clock=lambda: clock_ms[0],
+    )
+    await repository.setup()
+    current_request = _request(f"lease-generation-{uuid.uuid4().hex}")
+
+    first = await repository.try_claim(current_request, "same-worker-name")
+    assert first is not None
+    clock_ms[0] += 11
+    assert await repository.renew(current_request.run_id, first) is False
+    reclaimed = await repository.reclaim_expired("same-worker-name")
+    assert len(reclaimed) == 1
+    second = reclaimed[0].lease
+
+    assert second.generation == first.generation + 1
+    assert await repository.renew(current_request.run_id, first) is False
+    assert await repository.try_mark_terminal(current_request.run_id, first) is False
+    assert await repository.renew(current_request.run_id, second) is True
+    assert await repository.try_mark_terminal(current_request.run_id, second) is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_claim_conflict_keeps_durable_intent_pending(
+    acceptance_state: _AcceptanceState,
+) -> None:
+    """The dispatch CAS and lease insert are one all-or-nothing transaction."""
+
+    current_request = _request(f"dispatch-conflict-{uuid.uuid4().hex}")
+    namespace = runtime_namespace(current_request.execution_identity)
+    async with make_run_repository(
+        acceptance_state.config.run_repository
+    ) as repository:
+        await repository.enqueue_dispatch(
+            current_request,
+            namespace,
+            f"acceptance:{current_request.run_id}",
+        )
+        existing = await repository.try_claim(current_request, "existing-worker")
+        assert existing is not None
+
+        assert await repository.claim_dispatch(current_request, "late-worker") is None
+        assert current_request in await repository.list_pending_dispatches()
 
 
 @pytest.mark.asyncio

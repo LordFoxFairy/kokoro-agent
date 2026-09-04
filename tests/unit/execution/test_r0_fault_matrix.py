@@ -31,6 +31,7 @@ from kokoro_agent.protocol import (
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.execution.scope import RunScope
+from kokoro_agent.repositories.run_repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -65,7 +66,7 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
     class _CrashBeforeClaimRepository(FakeRunRepository):
         async def claim_dispatch(
             self, request: RunRequest, consumer: str = "test-consumer"
-        ) -> bool:
+        ) -> LeaseFence | None:
             del request, consumer
             # 注入：durable claim 事务提交前崩溃（dispatch 与 lease 均未落库）。
             raise RuntimeError("crash before durable claim persists")

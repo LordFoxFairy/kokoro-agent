@@ -6,6 +6,24 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from kokoro_agent.protocol import RunRequest
+
+
+class LeaseFence(BaseModel):
+    """Monotonic execution ownership token; both fields must match every fenced write."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    owner: str = Field(min_length=1)
+    generation: int = Field(ge=1)
+
+
+class LeasedRun(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    request: RunRequest
+    lease: LeaseFence
+
 
 class DispatchAdmission(BaseModel):
     """Durable admission result used by HTTP ingress before Redis publish."""
@@ -90,6 +108,8 @@ __all__ = [
     "ControlAdmissionReceipt",
     "ControlAdmissionStatus",
     "DispatchAdmission",
+    "LeaseFence",
+    "LeasedRun",
     "OutboxFrame",
     "ReceiptReconcile",
     "RunControlCommandRecord",

@@ -31,6 +31,8 @@ from kokoro_agent.repositories.run_repository import (
     ControlAdmissionReceipt,
     DispatchAdmission,
     DispatchConflict,
+    LeaseFence,
+    LeasedRun,
     OutboxFrame,
     ReceiptReconcile,
     StagedFrame,
@@ -133,6 +135,7 @@ class FakeRunRepository:
         self.terminals: set[str] = set()
         self.leases: dict[str, int | None] = {}
         self.owners: dict[str, str] = {}
+        self.generations: dict[str, int] = {}
         self.renewed: list[str] = []
         self.paused_runs: list[str] = []
         self.expired: list[RunRequest] = []
@@ -162,6 +165,9 @@ class FakeRunRepository:
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
 
+    def _active_expiry(self) -> int:
+        return self.clock_ms + 90_000
+
     async def enqueue_dispatch(
         self, request: RunRequest, namespace: str, fence: str
     ) -> DispatchAdmission:
@@ -183,35 +189,37 @@ class FakeRunRepository:
 
     async def try_claim(
         self, request: RunRequest, owner: str = "test-consumer"
-    ) -> bool:
+    ) -> LeaseFence | None:
         if request.run_id in self.requests:
-            return False
+            return None
         self.requests[request.run_id] = request
-        self.leases[request.run_id] = 1
+        self.leases[request.run_id] = self._active_expiry()
         self.owners[request.run_id] = owner
-        return True
+        self.generations[request.run_id] = 1
+        return LeaseFence(owner=owner, generation=1)
 
     async def claim_dispatch(
         self, request: RunRequest, consumer: str = "test-consumer"
-    ) -> bool:
+    ) -> LeaseFence | None:
         # Supervisor 单测默认把未显式布置的请求视为已注入 pending intent；需要验证
         # 缺失/重复时，测试应明确预置对应状态。
         run_id = request.run_id
         status = self.dispatches.get(run_id)
         if status is None:
-            return False
+            return None
         canonical = self.dispatch_requests.get(run_id)
         if canonical is not None and canonical != request:
-            return False
+            return None
         if status == "pending":
             self.dispatches[run_id] = "claimed"
             if run_id in self.requests:
-                return False
+                return None
             self.requests[run_id] = request
-            self.leases[run_id] = 1
+            self.leases[run_id] = self._active_expiry()
             self.owners[run_id] = consumer
-            return True
-        return False
+            self.generations[run_id] = 1
+            return LeaseFence(owner=consumer, generation=1)
+        return None
 
     async def get_pending_dispatch(self, run_id: str) -> RunRequest | None:
         if self.dispatches.get(run_id) != "pending":
@@ -508,32 +516,69 @@ class FakeRunRepository:
             )
         return records
 
-    async def renew(self, run_id: str, owner: str = "test-consumer") -> bool:
+    async def renew(self, run_id: str, lease: LeaseFence) -> bool:
         self.renewed.append(run_id)
-        if run_id in self.terminals:
+        if not await self.is_lease_current(run_id, lease):
             return False
-        if self.owners.get(run_id, owner) != owner:
-            return False
-        self.leases[run_id] = 1
-        self.owners.setdefault(run_id, owner)
+        self.leases[run_id] = self._active_expiry()
         return True
 
-    async def adopt(self, run_id: str, owner: str = "test-consumer") -> None:
-        if run_id not in self.terminals:
-            self.leases[run_id] = 1
-            self.owners[run_id] = owner
+    async def adopt(
+        self, run_id: str, owner: str = "test-consumer"
+    ) -> LeaseFence | None:
+        if run_id in self.terminals or self.leases.get(run_id) is not None:
+            return None
+        generation = self.generations.get(run_id, 0) + 1
+        self.leases[run_id] = self._active_expiry()
+        self.owners[run_id] = owner
+        self.generations[run_id] = generation
+        return LeaseFence(owner=owner, generation=generation)
 
-    async def pause(self, run_id: str) -> None:
+    async def pause(self, run_id: str, lease: LeaseFence | None = None) -> bool:
         self.paused_runs.append(run_id)
-        if run_id not in self.terminals:
-            self.leases[run_id] = None
+        active = lease or self.current_lease(run_id)
+        if (
+            run_id in self.terminals
+            or active is None
+            or not await self.is_lease_current(run_id, active)
+        ):
+            return False
+        self.leases[run_id] = None
+        return True
 
-    async def reclaim_expired(self, owner: str = "test-consumer") -> list[RunRequest]:
+    async def reclaim_expired(self, owner: str = "test-consumer") -> list[LeasedRun]:
         out = self.expired
         self.expired = []
+        leased: list[LeasedRun] = []
         for req in out:
+            generation = self.generations.get(req.run_id, 0) + 1
             self.owners[req.run_id] = owner
-        return out
+            self.generations[req.run_id] = generation
+            self.leases[req.run_id] = self._active_expiry()
+            leased.append(
+                LeasedRun(
+                    request=req,
+                    lease=LeaseFence(owner=owner, generation=generation),
+                )
+            )
+        return leased
+
+    def current_lease(self, run_id: str) -> LeaseFence | None:
+        owner = self.owners.get(run_id)
+        generation = self.generations.get(run_id)
+        if owner is None or generation is None:
+            return None
+        return LeaseFence(owner=owner, generation=generation)
+
+    async def is_lease_current(self, run_id: str, lease: LeaseFence) -> bool:
+        expires_at = self.leases.get(run_id)
+        return (
+            run_id not in self.terminals
+            and self.owners.get(run_id) == lease.owner
+            and self.generations.get(run_id) == lease.generation
+            and expires_at is not None
+            and expires_at > self.clock_ms
+        )
 
     async def list_paused(self) -> list[str]:
         return sorted(
@@ -566,12 +611,32 @@ class FakeRunRepository:
         self.usage_totals[run_id] = (cur_in + input_tokens, cur_out + output_tokens)
         return self.usage_totals[run_id]
 
-    async def try_mark_terminal(self, run_id: str) -> bool:
-        if run_id in self.terminals:
+    async def try_mark_terminal(
+        self, run_id: str, lease: LeaseFence | None = None
+    ) -> bool:
+        active = lease or self.current_lease(run_id)
+        if (
+            run_id in self.terminals
+            or active is None
+            or not await self.is_lease_current(run_id, active)
+        ):
             return False
         self.terminals.add(run_id)
         self.terminal_at[run_id] = self.clock_ms
         return True
+
+    async def fence_and_mark_terminal(
+        self, run_id: str, owner: str = "test-consumer"
+    ) -> LeaseFence | None:
+        if run_id not in self.requests or run_id in self.terminals:
+            return None
+        generation = self.generations.get(run_id, 0) + 1
+        self.owners[run_id] = owner
+        self.generations[run_id] = generation
+        self.leases[run_id] = None
+        self.terminals.add(run_id)
+        self.terminal_at[run_id] = self.clock_ms
+        return LeaseFence(owner=owner, generation=generation)
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self.clock_ms - max_age_ms
@@ -581,6 +646,8 @@ class FakeRunRepository:
             self.terminal_at.pop(run_id, None)
             self.requests.pop(run_id, None)
             self.leases.pop(run_id, None)
+            self.owners.pop(run_id, None)
+            self.generations.pop(run_id, None)
             self.token_totals.pop(run_id, None)
             self.usage_totals.pop(run_id, None)
             self.steers.pop(run_id, None)

@@ -16,7 +16,10 @@ from pydantic import JsonValue, SecretStr, TypeAdapter
 from psycopg import sql
 
 from kokoro_agent.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
-from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepositorySettings, make_chat_repository
+from kokoro_agent.infrastructure.postgres_chat_repository import (
+    PostgresChatRepositorySettings,
+    make_chat_repository,
+)
 from kokoro_agent.protocol import (
     ExecutionIdentity,
     IdentityRef,
@@ -32,7 +35,11 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.execution.scope import runtime_namespace
 from kokoro_agent.http.server import create_http_server
-from kokoro_agent.infrastructure.postgres_run_repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings, make_run_repository
+from kokoro_agent.infrastructure.postgres_run_repository import (
+    DEFAULT_LEASE_TTL_S,
+    RunRepositorySettings,
+    make_run_repository,
+)
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream
@@ -91,7 +98,6 @@ def _launch_body(run_id: str) -> dict[str, JsonValue]:
             "run_id": run_id,
             "session_id": "session-1",
             "feature_key": "chat",
-            "execution_identity": _identity().model_dump(mode="json"),
             "message_id": f"message-{run_id}",
             "content": "hello from acceptance",
         }
@@ -116,13 +122,17 @@ async def _require_postgres(database_url: str) -> None:
             async with connection.cursor() as cursor:
                 await cursor.execute("SELECT 1")
     except Exception as error:  # noqa: BLE001 - fixture preflight must fail loudly
-        raise RuntimeError(f"PostgreSQL required but unreachable at {database_url}") from error
+        raise RuntimeError(
+            f"PostgreSQL required but unreachable at {database_url}"
+        ) from error
 
 
 async def _require_redis(redis_url: str) -> None:
     port = RedisStream(redis_url, block_ms=100)
     try:
-        await asyncio.wait_for(port.read_all(f"kokoro-acceptance-probe:{uuid.uuid4().hex}"), 2.0)
+        await asyncio.wait_for(
+            port.read_all(f"kokoro-acceptance-probe:{uuid.uuid4().hex}"), 2.0
+        )
     except Exception as error:  # noqa: BLE001 - fixture preflight must fail loudly
         raise RuntimeError(f"Redis required but unreachable at {redis_url}") from error
     finally:
@@ -150,7 +160,9 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
         async with make_run_repository(config.run_repository):
             pass
         async with make_chat_repository(
-            PostgresChatRepositorySettings(database_url=_DATABASE_URL, schema_name=schema)
+            PostgresChatRepositorySettings(
+                database_url=_DATABASE_URL, schema_name=schema
+            )
         ):
             pass
         yield _AcceptanceState(config=config, redis_url=_REDIS_URL)
@@ -158,7 +170,9 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
         async with connect_pg(_DATABASE_URL) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(
-                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(schema)
+                    )
                 )
 
 
@@ -167,7 +181,9 @@ async def http_client(
     acceptance_state: _AcceptanceState,
 ) -> AsyncIterator[httpx.AsyncClient]:
     server = create_http_server(acceptance_state.config, "127.0.0.1", 0)
-    thread = threading.Thread(target=server.serve_forever, name="agent-http-acceptance", daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, name="agent-http-acceptance", daemon=True
+    )
     thread.start()
     port = int(server.server_address[1])
     try:
@@ -189,7 +205,10 @@ async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> Non
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
     namespace = runtime_namespace(request.execution_identity)
     async with make_chat_repository(
-        PostgresChatRepositorySettings(database_url=state.config.database_url, schema_name=state.config.database_schema)
+        PostgresChatRepositorySettings(
+            database_url=state.config.database_url,
+            schema_name=state.config.database_schema,
+        )
     ) as chat:
         await chat.append(
             ChatProjection(
@@ -252,7 +271,9 @@ async def _read_matching(
         items = await port.read_all(stream)
     finally:
         await port.aclose()
-    return [_json_object(item.event) for item in items if item.event.get("run_id") == run_id]
+    return [
+        _json_object(item.event) for item in items if item.event.get("run_id") == run_id
+    ]
 
 
 def _nested(payload: Mapping[str, JsonValue], key: str) -> dict[str, JsonValue]:
@@ -288,7 +309,9 @@ async def test_launch_is_durable_and_idempotent_over_http(
 
     # Once the worker has claimed the durable intent, a retry must reuse the
     # receipt without publishing a second worker envelope.
-    async with make_run_repository(acceptance_state.config.run_repository) as run_repository:
+    async with make_run_repository(
+        acceptance_state.config.run_repository
+    ) as run_repository:
         assert await run_repository.claim_dispatch(run_id, "acceptance-worker") is True
 
     second = await http_client.post("/v1/runs", headers=_headers(), json=body)
@@ -358,7 +381,10 @@ async def test_control_and_evidence_use_real_redis_and_postgres_state(
         },
     )
     assert conflict.status_code == 409
-    assert _nested(_json_object(conflict.json()), "error")["code"] == "command_digest_mismatch"
+    assert (
+        _nested(_json_object(conflict.json()), "error")["code"]
+        == "command_digest_mismatch"
+    )
 
     control_frames = await _read_matching(
         acceptance_state, run_control_stream(run_id), run_id

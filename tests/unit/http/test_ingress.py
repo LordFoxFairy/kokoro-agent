@@ -35,7 +35,6 @@ def launch_body(run_id: str = "run-1") -> dict[str, object]:
         "run_id": run_id,
         "session_id": "session-1",
         "feature_key": "chat",
-        "execution_identity": identity().model_dump(mode="json"),
         "message_id": f"message-{run_id}",
         "content": "hello",
     }
@@ -45,15 +44,22 @@ def launch_body(run_id: str = "run-1") -> dict[str, object]:
 async def test_launch_durably_admits_before_publishing_worker_envelope() -> None:
     bus = FakeBus()
     run_repository = FakeRunRepository()
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(FakeChatRepository()))
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=run_repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
 
-    receipt = await ingress.launch(launch_body())
+    receipt = await ingress.launch(launch_body(), execution_identity=identity())
 
     assert receipt.run_id == "run-1"
     assert receipt.replayed is False
     assert bus.published[0][0] == "kokoro:runs:requests"
     assert bus.published[0][1]["kind"] == "run.request"
-    assert bus.published[0][1]["input"] == {"message_id": "message-run-1", "content": "hello"}
+    assert bus.published[0][1]["input"] == {
+        "message_id": "message-run-1",
+        "content": "hello",
+    }
     assert run_repository.dispatches["run-1"] == "pending"
 
 
@@ -61,18 +67,41 @@ async def test_launch_durably_admits_before_publishing_worker_envelope() -> None
 async def test_launch_rejects_run_id_reuse_with_different_immutable_envelope() -> None:
     bus = FakeBus()
     run_repository = FakeRunRepository()
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(FakeChatRepository()))
-    await ingress.launch(launch_body())
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=run_repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    await ingress.launch(launch_body(), execution_identity=identity())
 
     changed = launch_body()
     changed["content"] = "changed"
     with pytest.raises(IngressError, match="different fence") as error:
-        await ingress.launch(changed)
+        await ingress.launch(changed, execution_identity=identity())
     assert error.value.status == 409
 
 
 @pytest.mark.asyncio
-async def test_control_requires_the_run_session_and_publishes_to_isolated_stream() -> None:
+async def test_launch_rejects_caller_supplied_execution_identity() -> None:
+    ingress = AgentIngress(
+        bus=FakeBus(),
+        run_repository=FakeRunRepository(),
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    body["execution_identity"] = identity("spoofed-subject").model_dump(mode="json")
+
+    with pytest.raises(IngressError) as error:
+        await ingress.launch(body, execution_identity=identity("trusted-subject"))
+
+    assert error.value.status == 400
+    assert error.value.code == "invalid_launch_request"
+
+
+@pytest.mark.asyncio
+async def test_control_requires_the_run_session_and_publishes_to_isolated_stream() -> (
+    None
+):
     bus = FakeBus()
     run_repository = FakeRunRepository()
     request = RunRequest(
@@ -85,7 +114,11 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
         input=RunInput(message_id="message-run-1", content="hello"),
     )
     run_repository.requests[request.run_id] = request
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(FakeChatRepository()))
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=run_repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
 
     with pytest.raises(IngressError) as error:
         await ingress.control(
@@ -107,7 +140,9 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
 
 
 @pytest.mark.asyncio
-async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped() -> None:
+async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped() -> (
+    None
+):
     bus = FakeBus()
     run_repository = FakeRunRepository()
     request = RunRequest(
@@ -121,7 +156,11 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
     )
     run_repository.requests[request.run_id] = request
     started: dict[str, JsonValue] = {
-        "kind": "run.started", "run_id": "run-1", "index": 0, "timestamp": 1, "payload": {}
+        "kind": "run.started",
+        "run_id": "run-1",
+        "index": 0,
+        "timestamp": 1,
+        "payload": {},
     }
     completed: dict[str, JsonValue] = {
         "kind": "run.completed",
@@ -151,7 +190,9 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
             )
         )
     )
-    ingress = AgentIngress(bus=bus, run_repository=run_repository, chat_service=ChatService(chat))
+    ingress = AgentIngress(
+        bus=bus, run_repository=run_repository, chat_service=ChatService(chat)
+    )
 
     evidence = await ingress.evidence("run-1", after_seq=0, limit=1)
     assert evidence["next_seq"] == 1

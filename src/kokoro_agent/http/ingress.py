@@ -68,7 +68,6 @@ class LaunchBody(BaseModel):
     run_id: str
     session_id: str
     feature_key: str
-    execution_identity: ExecutionIdentity
     message_id: str
     content: str
     requested_model_label: str | None = None
@@ -97,11 +96,15 @@ class LaunchReceipt:
 
 def _canonical_fence(request: RunRequest) -> str:
     payload = request.model_dump(mode="json", exclude_none=True)
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _parse_launch(body: Mapping[str, object]) -> RunRequest:
+def _parse_launch(
+    body: Mapping[str, object], *, execution_identity: ExecutionIdentity
+) -> RunRequest:
     try:
         launch = LaunchBody.model_validate(dict(body))
         return RunRequest(
@@ -110,18 +113,24 @@ def _parse_launch(body: Mapping[str, object]) -> RunRequest:
             run_id=launch.run_id,
             session_id=launch.session_id,
             feature_key=launch.feature_key,
-            execution_identity=launch.execution_identity,
+            execution_identity=execution_identity,
             input=RunInput(message_id=launch.message_id, content=launch.content),
             requested_model_label=launch.requested_model_label,
             trace=launch.trace,
         )
     except (ValidationError, TypeError, ValueError) as error:
-        raise IngressError(400, "invalid_launch_request", "Launch request does not match the v1 contract") from error
+        raise IngressError(
+            400,
+            "invalid_launch_request",
+            "Launch request does not match the v1 contract",
+        ) from error
 
 
 def _canonical_control_digest(run_id: str, control: ControlBody) -> str:
     payload = {"run_id": run_id, **control.model_dump(mode="json", exclude_none=True)}
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
@@ -162,27 +171,42 @@ def _parse_control(
             ), request_digest
         raise ValueError("control kind or required fields are invalid")
     except (ValidationError, TypeError, ValueError) as error:
-        raise IngressError(400, "invalid_run_control", "Control request does not match the v1 contract") from error
+        raise IngressError(
+            400, "invalid_run_control", "Control request does not match the v1 contract"
+        ) from error
 
 
 def _event_json(event: object) -> dict[str, Any]:
     try:
         parsed = agent_event_adapter.validate_python(event)
     except ValidationError as error:
-        raise IngressError(502, "agent_event_invalid", "Agent produced an invalid event") from error
+        raise IngressError(
+            502, "agent_event_invalid", "Agent produced an invalid event"
+        ) from error
     return parsed.model_dump(mode="json", exclude_none=True)
 
 
 class AgentIngress:
     """Business transport facade over the Agent-owned worker ports."""
 
-    def __init__(self, *, bus: StreamProtocol, run_repository: RunRepository, chat_service: ChatService) -> None:
+    def __init__(
+        self,
+        *,
+        bus: StreamProtocol,
+        run_repository: RunRepository,
+        chat_service: ChatService,
+    ) -> None:
         self._bus = bus
         self._run_repository = run_repository
         self._chat_service = chat_service
 
-    async def launch(self, body: Mapping[str, object]) -> LaunchReceipt:
-        request = _parse_launch(body)
+    async def launch(
+        self,
+        body: Mapping[str, object],
+        *,
+        execution_identity: ExecutionIdentity,
+    ) -> LaunchReceipt:
+        request = _parse_launch(body, execution_identity=execution_identity)
         namespace = runtime_namespace(request.execution_identity)
         try:
             admission = await self._run_repository.enqueue_dispatch(
@@ -217,13 +241,19 @@ class AgentIngress:
     ) -> dict[str, object]:
         command_id = command_id.strip()
         if not command_id.strip():
-            raise IngressError(400, "idempotency_key_required", "Control requests require Idempotency-Key")
+            raise IngressError(
+                400,
+                "idempotency_key_required",
+                "Control requests require Idempotency-Key",
+            )
         msg, request_digest = _parse_control(run_id, body, command_id=command_id)
         request = await self._run_repository.get_request(run_id)
         if request is None:
             raise IngressError(404, "run_not_found", "Run was not found")
         if request.session_id != msg.session_id:
-            raise IngressError(403, "run_scope_forbidden", "Run does not belong to this session")
+            raise IngressError(
+                403, "run_scope_forbidden", "Run does not belong to this session"
+            )
         try:
             admission = await self._run_repository.admit_control(
                 run_id, command_id, request_digest, msg.model_dump_json()
@@ -238,7 +268,9 @@ class AgentIngress:
                     maxlen=RUN_CONTROL_MAXLEN,
                 )
             except Exception:
-                await self._run_repository.mark_control_failed(run_id, command_id, "control_enqueue_failed")
+                await self._run_repository.mark_control_failed(
+                    run_id, command_id, "control_enqueue_failed"
+                )
                 receipt = admission.receipt.model_copy(
                     update={"status": "failed", "error_code": "control_enqueue_failed"}
                 )
@@ -251,17 +283,28 @@ class AgentIngress:
             "replayed": admission.replayed,
         }
 
-    async def evidence(self, run_id: str, *, after_seq: int = 0, limit: int = 200) -> dict[str, object]:
+    async def evidence(
+        self, run_id: str, *, after_seq: int = 0, limit: int = 200
+    ) -> dict[str, object]:
         if after_seq < 0 or limit < 1 or limit > 1000:
-            raise IngressError(400, "invalid_page", "after_seq must be >= 0 and limit must be 1..1000")
+            raise IngressError(
+                400, "invalid_page", "after_seq must be >= 0 and limit must be 1..1000"
+            )
         if await self._run_repository.get_request(run_id) is None:
             raise IngressError(404, "run_not_found", "Run was not found")
         items = await self._bus.read_all(run_events_stream(run_id))
         events = [_event_json(item.event) for item in items]
         events = [event for event in events if int(event["index"]) > after_seq][:limit]
         next_seq = int(events[-1]["index"]) if events else after_seq
-        terminal = any(event["kind"] in {"run.completed", "run.failed"} for event in events)
-        return {"run_id": run_id, "events": events, "next_seq": next_seq, "terminal": terminal}
+        terminal = any(
+            event["kind"] in {"run.completed", "run.failed"} for event in events
+        )
+        return {
+            "run_id": run_id,
+            "events": events,
+            "next_seq": next_seq,
+            "terminal": terminal,
+        }
 
     async def history(
         self, identity: ChatQueryRequest, *, session_id: str | None = None
@@ -277,7 +320,9 @@ class AgentIngress:
             identity = identity.model_copy(update={"session_id": session_id})
         return await self._chat_service.replay(identity)
 
-    async def list_sessions(self, request: ChatSessionListRequest) -> ChatSessionListPage:
+    async def list_sessions(
+        self, request: ChatSessionListRequest
+    ) -> ChatSessionListPage:
         return await self._chat_service.list_sessions(request)
 
 

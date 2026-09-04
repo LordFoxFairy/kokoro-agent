@@ -33,14 +33,18 @@ async def test_non_health_requests_reject_missing_service_auth_configuration(
 
 @pytest.mark.asyncio
 async def test_healthz_remains_available_without_service_auth_configuration() -> None:
-    status, payload = await dispatch_request(AppConfig(), "GET", "/healthz", {}, {}, None)
+    status, payload = await dispatch_request(
+        AppConfig(), "GET", "/healthz", {}, {}, None
+    )
 
     assert status == 200
     assert payload == {"status": "ok", "service": "kokoro-agent"}
 
 
 @pytest.mark.asyncio
-async def test_standard_authorization_is_case_insensitive_and_request_id_is_preserved() -> None:
+async def test_standard_authorization_is_case_insensitive_and_request_id_is_preserved() -> (
+    None
+):
     config = AppConfig(internal_secret_agent=SecretStr("secret"))
 
     status, payload = await dispatch_request(
@@ -73,4 +77,31 @@ async def test_control_requires_idempotency_key_after_standard_auth() -> None:
     assert payload["error"] == {
         "code": "idempotency_key_required",
         "message": "Control requests require Idempotency-Key",
+    }
+
+
+@pytest.mark.asyncio
+async def test_launch_requires_trusted_identity_before_opening_dependencies() -> None:
+    config = AppConfig(internal_secret_agent=SecretStr("secret"))
+
+    status, payload = await dispatch_request(
+        config,
+        "POST",
+        "/v1/runs",
+        {},
+        {"Authorization": "Bearer secret", "X-Request-Id": "request-1"},
+        {
+            "request_id": "request-1",
+            "run_id": "run-1",
+            "session_id": "session-1",
+            "feature_key": "chat",
+            "message_id": "message-1",
+            "content": "hello",
+        },
+    )
+
+    assert status == 401
+    assert payload["error"] == {
+        "code": "identity_required",
+        "message": "Trusted execution identity headers are required",
     }

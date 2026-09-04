@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
+from datetime import UTC, datetime
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -237,6 +237,11 @@ class SupervisorExecutionMixin(SupervisorContext):
                 review,
                 self._run_repository,
                 lease,
+                tenant_id=(
+                    request.execution_identity.tenant_ref
+                    if request is not None and self._chat_repository is not None
+                    else None
+                ),
                 namespace=(
                     RunScope.of(request).namespace
                     if request is not None and self._chat_repository is not None
@@ -260,6 +265,7 @@ class SupervisorExecutionMixin(SupervisorContext):
             return None
         return await persist_outbox_chat_event(
             self._chat_repository,
+            request.execution_identity.tenant_ref,
             RunScope.of(request).namespace,
             request.session_id,
             frame,
@@ -268,10 +274,11 @@ class SupervisorExecutionMixin(SupervisorContext):
     async def _persist_user_message(self, request: RunRequest) -> None:
         if self._chat_repository is None:
             return
-        now = int(time.time() * 1000)
+        now = datetime.now(tz=UTC)
         await self._chat_repository.save_message(
             ChatMessageDraft(
                 chat_message_id=request.input.message_id,
+                tenant_id=request.execution_identity.tenant_ref,
                 namespace=RunScope.of(request).namespace,
                 session_id=request.session_id,
                 run_id=request.run_id,

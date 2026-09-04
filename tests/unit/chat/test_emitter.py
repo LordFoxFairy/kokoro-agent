@@ -32,6 +32,7 @@ async def test_chat_fact_is_durable_before_raw_agent_event() -> None:
     emitter = await RunEmitter.attach(
         bus,
         "run-1",
+        tenant_id="tenant",
         namespace="ns",
         session_id="session-1",
         chat_repository=store,

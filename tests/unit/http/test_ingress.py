@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import JsonValue
 
+from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import ChatEventDraft, ChatProjection
 from kokoro_agent.application.chat.dto import ChatQueryRequest
 from kokoro_agent.application.chat.service import ChatService
@@ -192,13 +193,14 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
     await chat.append(
         ChatProjection(
             event=ChatEventDraft(
+                tenant_id=identity().tenant_ref,
                 namespace=namespace,
                 session_id="session-1",
                 run_id="run-1",
                 source_index=0,
                 event_type="run.started",
                 payload_json='{"status":"running"}',
-                created_at=1,
+                created_at=wire_epoch_millis_to_utc(1),
             )
         )
     )

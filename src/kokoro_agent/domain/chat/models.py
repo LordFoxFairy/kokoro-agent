@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from datetime import datetime
+from typing import Annotated, Literal, Self
 from uuid import NAMESPACE_URL, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from kokoro_agent.domain.chat.time import normalize_utc_datetime
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+UtcDateTime = Annotated[datetime, AfterValidator(normalize_utc_datetime)]
 ChatRole = Literal["user", "assistant"]
 ChatMessageStatus = Literal["completed", "failed"]
 ChatEventType = Literal[
@@ -28,14 +32,15 @@ class _StrictModel(BaseModel):
 
 class ChatMessageDraft(_StrictModel):
     chat_message_id: NonEmptyStr
+    tenant_id: NonEmptyStr
     namespace: NonEmptyStr
     session_id: NonEmptyStr
     run_id: NonEmptyStr
     role: ChatRole
     content: str
     status: ChatMessageStatus
-    created_at: int
-    updated_at: int
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
 
 
 class ChatMessageRecord(ChatMessageDraft):
@@ -45,14 +50,17 @@ class ChatMessageRecord(ChatMessageDraft):
 class ChatSessionRecord(_StrictModel):
     """Durable identity-scoped session metadata used by the Chat list query."""
 
+    tenant_id: NonEmptyStr
+    namespace: NonEmptyStr
     session_id: NonEmptyStr
     project_ref: NonEmptyStr | None = None
     title: NonEmptyStr
-    created_at: int
-    updated_at: int
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
 
 
 class ChatEventDraft(_StrictModel):
+    tenant_id: NonEmptyStr
     namespace: NonEmptyStr
     session_id: NonEmptyStr
     run_id: NonEmptyStr
@@ -60,7 +68,7 @@ class ChatEventDraft(_StrictModel):
     chat_message_id: NonEmptyStr | None = None
     event_type: ChatEventType
     payload_json: str
-    created_at: int
+    created_at: UtcDateTime
 
 
 class ChatEventRecord(ChatEventDraft):
@@ -71,6 +79,19 @@ class ChatEventRecord(ChatEventDraft):
 class ChatProjection(_StrictModel):
     event: ChatEventDraft
     message: ChatMessageDraft | None = None
+
+    @model_validator(mode="after")
+    def validate_lineage(self) -> Self:
+        message = self.message
+        if message is not None and (
+            message.tenant_id != self.event.tenant_id
+            or message.namespace != self.event.namespace
+            or message.session_id != self.event.session_id
+            or message.run_id != self.event.run_id
+            or self.event.chat_message_id != message.chat_message_id
+        ):
+            raise ValueError("chat projection event and message scope must match")
+        return self
 
 
 def assistant_message_id(namespace: str, run_id: str, native_segment_id: str) -> str:
@@ -93,6 +114,8 @@ __all__ = [
     "ChatMessageRecord",
     "ChatSessionRecord",
     "ChatProjection",
+    "UtcDateTime",
     "assistant_message_id",
     "chat_event_id",
+    "normalize_utc_datetime",
 ]

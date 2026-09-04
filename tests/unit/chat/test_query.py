@@ -1,5 +1,6 @@
 """GA chat query derives isolation from ExecutionIdentity."""
 
+from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
 from kokoro_agent.application.chat.dto import ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.application.chat.service import ChatService
@@ -25,26 +26,28 @@ async def test_history_and_replay_are_identity_scoped_without_caller_namespace()
     await store.save_message(
         ChatMessageDraft(
             chat_message_id="message-1",
+            tenant_id=owner.tenant_ref,
             namespace=namespace,
             session_id="same-session",
             run_id="run-1",
             role="user",
             content="private",
             status="completed",
-            created_at=1,
-            updated_at=1,
+            created_at=wire_epoch_millis_to_utc(1),
+            updated_at=wire_epoch_millis_to_utc(1),
         )
     )
     await store.append(
         ChatProjection(
             event=ChatEventDraft(
+                tenant_id=owner.tenant_ref,
                 namespace=namespace,
                 session_id="same-session",
                 run_id="run-1",
                 source_index=0,
                 event_type="run.started",
                 payload_json='{"status":"running"}',
-                created_at=1,
+                created_at=wire_epoch_millis_to_utc(1),
             )
         )
     )

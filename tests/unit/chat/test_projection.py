@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import assistant_message_id
 from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.protocol import (
@@ -26,11 +27,12 @@ def test_assistant_message_id_is_stable_and_not_native_segment_id() -> None:
 
 def test_message_delta_projects_to_safe_chat_event() -> None:
     projection = project_chat_fact(
+        tenant_id="tenant",
         namespace="ns",
         session_id="session-1",
         run_id="run-1",
         source_index=1,
-        timestamp=10,
+        created_at=wire_epoch_millis_to_utc(10),
         payload=MessageDeltaPayload(segment_id="native-segment", delta="hello"),
     )
 
@@ -45,11 +47,12 @@ def test_message_delta_projects_to_safe_chat_event() -> None:
 
 def test_message_completed_projects_final_chat_message() -> None:
     projection = project_chat_fact(
+        tenant_id="tenant",
         namespace="ns",
         session_id="session-1",
         run_id="run-1",
         source_index=1,
-        timestamp=10,
+        created_at=wire_epoch_millis_to_utc(10),
         payload=MessageCompletedPayload(
             segment_id="native-segment", content="final answer"
         ),
@@ -65,11 +68,12 @@ def test_message_completed_projects_final_chat_message() -> None:
 
 def test_tool_activity_never_persists_args() -> None:
     projection = project_chat_fact(
+        tenant_id="tenant",
         namespace="ns",
         session_id="session-1",
         run_id="run-1",
         source_index=1,
-        timestamp=10,
+        created_at=wire_epoch_millis_to_utc(10),
         payload=ToolInvokedPayload(
             segment_id="segment",
             tool_id="tool-1",
@@ -92,22 +96,24 @@ def test_tool_activity_never_persists_args() -> None:
 def test_private_execution_payloads_are_not_chat_facts() -> None:
     assert (
         project_chat_fact(
+            tenant_id="tenant",
             namespace="ns",
             session_id="session-1",
             run_id="run-1",
             source_index=1,
-            timestamp=10,
+            created_at=wire_epoch_millis_to_utc(10),
             payload=ThinkingDeltaPayload(segment_id="segment", delta="private thought"),
         )
         is None
     )
     assert (
         project_chat_fact(
+            tenant_id="tenant",
             namespace="ns",
             session_id="session-1",
             run_id="run-1",
             source_index=1,
-            timestamp=10,
+            created_at=wire_epoch_millis_to_utc(10),
             payload=ToolOutputDeltaPayload(
                 segment_id="segment",
                 tool_id="tool-1",
@@ -121,11 +127,12 @@ def test_private_execution_payloads_are_not_chat_facts() -> None:
 
 def test_run_failure_exposes_stable_code_not_internal_error_text() -> None:
     projection = project_chat_fact(
+        tenant_id="tenant",
         namespace="ns",
         session_id="session-1",
         run_id="run-1",
         source_index=1,
-        timestamp=10,
+        created_at=wire_epoch_millis_to_utc(10),
         payload=RunFailedPayload(
             code="internal_error",
             error_kind="SecretProviderError",

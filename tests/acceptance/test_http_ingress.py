@@ -16,6 +16,7 @@ from pydantic import JsonValue, SecretStr, TypeAdapter
 from psycopg import sql
 from support.fakes import FakeBus
 
+from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
 from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepository,
@@ -234,24 +235,26 @@ async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
         await chat.append(
             ChatProjection(
                 event=ChatEventDraft(
+                    tenant_id=request.execution_identity.tenant_ref,
                     namespace=namespace,
                     session_id=request.session_id,
                     run_id=request.run_id,
                     source_index=0,
                     event_type="run.started",
                     payload_json='{"status":"running"}',
-                    created_at=1,
+                    created_at=wire_epoch_millis_to_utc(1),
                 ),
                 message=ChatMessageDraft(
                     chat_message_id=f"message-{request.run_id}",
+                    tenant_id=request.execution_identity.tenant_ref,
                     namespace=namespace,
                     session_id=request.session_id,
                     run_id=request.run_id,
                     role="user",
                     content=request.input.content,
                     status="completed",
-                    created_at=1,
-                    updated_at=1,
+                    created_at=wire_epoch_millis_to_utc(1),
+                    updated_at=wire_epoch_millis_to_utc(1),
                 ),
             )
         )
@@ -472,13 +475,14 @@ async def test_postgres_execution_effects_require_current_lease_generation(
     )
     projection = ChatProjection(
         event=ChatEventDraft(
+            tenant_id=current_request.execution_identity.tenant_ref,
             namespace=runtime_namespace(current_request.execution_identity),
             session_id=current_request.session_id,
             run_id=current_request.run_id,
             source_index=0,
             event_type="run.started",
             payload_json="{}",
-            created_at=clock_ms[0],
+            created_at=wire_epoch_millis_to_utc(clock_ms[0]),
         )
     )
     chat_repository = PostgresChatRepository(
@@ -557,13 +561,14 @@ async def test_chat_fence_distinguishes_active_work_from_current_generation(
     clock_ms[0] += 11
     projection = ChatProjection(
         event=ChatEventDraft(
+            tenant_id=current_request.execution_identity.tenant_ref,
             namespace=runtime_namespace(current_request.execution_identity),
             session_id=current_request.session_id,
             run_id=current_request.run_id,
             source_index=0,
             event_type="run.failed",
             payload_json="{}",
-            created_at=clock_ms[0],
+            created_at=wire_epoch_millis_to_utc(clock_ms[0]),
         )
     )
 
@@ -592,6 +597,7 @@ async def test_chat_projection_and_sequences_commit_atomically(
     message_id = f"message-{uuid.uuid4().hex}"
     projection = ChatProjection(
         event=ChatEventDraft(
+            tenant_id="tenant",
             namespace=namespace,
             session_id=session_id,
             run_id=run_id,
@@ -599,18 +605,19 @@ async def test_chat_projection_and_sequences_commit_atomically(
             chat_message_id=message_id,
             event_type="assistant.completed",
             payload_json='{"content":"atomic"}',
-            created_at=30_000,
+            created_at=wire_epoch_millis_to_utc(30_000),
         ),
         message=ChatMessageDraft(
             chat_message_id=message_id,
+            tenant_id="tenant",
             namespace=namespace,
             session_id=session_id,
             run_id=run_id,
             role="assistant",
             content="atomic",
             status="completed",
-            created_at=30_000,
-            updated_at=30_000,
+            created_at=wire_epoch_millis_to_utc(30_000),
+            updated_at=wire_epoch_millis_to_utc(30_000),
         ),
     )
 
@@ -673,7 +680,7 @@ async def test_chat_projection_and_sequences_commit_atomically(
 
     committed = await repository.append(projection)
     assert committed.seq == 1
-    history = await repository.history(namespace, session_id)
+    history = await repository.history("tenant", namespace, session_id)
     assert len(history) == 1
     assert history[0].seq == 1
 
@@ -695,13 +702,14 @@ async def test_chat_sequence_commit_order_cannot_overtake_lower_sequence(
     def projection(source_index: int) -> ChatProjection:
         return ChatProjection(
             event=ChatEventDraft(
+                tenant_id="tenant",
                 namespace=namespace,
                 session_id=session_id,
                 run_id=run_id,
                 source_index=source_index,
                 event_type="assistant.delta",
                 payload_json=f'{{"index":{source_index}}}',
-                created_at=31_000 + source_index,
+                created_at=wire_epoch_millis_to_utc(31_000 + source_index),
             )
         )
 
@@ -709,13 +717,13 @@ async def test_chat_sequence_commit_order_cannot_overtake_lower_sequence(
         async with connection.cursor() as cursor:
             await cursor.execute(
                 sql.SQL(
-                    "INSERT INTO {}.{} (kind, namespace, session_id, seq) "
-                    "VALUES ('event', %s, %s, 0)"
+                    "INSERT INTO {}.{} (kind, tenant_id, namespace, session_id, seq) "
+                    "VALUES ('event', %s, %s, %s, 0)"
                 ).format(
                     sql.Identifier(schema),
                     sql.Identifier(CHAT_SEQUENCES_TABLE),
                 ),
-                (namespace, session_id),
+                ("tenant", namespace, session_id),
             )
             await cursor.execute(
                 sql.SQL(
@@ -757,7 +765,7 @@ async def test_chat_sequence_commit_order_cannot_overtake_lower_sequence(
     second = asyncio.create_task(append(1))
     await asyncio.gather(first, second)
 
-    replay = await repository.replay(namespace, session_id)
+    replay = await repository.replay("tenant", namespace, session_id)
     assert completion_order == [0, 1]
     assert [(event.source_index, event.seq) for event in replay] == [(0, 1), (1, 2)]
 

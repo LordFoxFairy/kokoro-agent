@@ -44,6 +44,7 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
+from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
@@ -134,6 +135,7 @@ class RunEmitter:
         namespace: str | None = None,
         session_id: str | None = None,
         chat_repository: ChatRepository | None = None,
+        tenant_id: str | None = None,
     ) -> None:
         self._bus = bus
         self._run_id = run_id
@@ -150,10 +152,18 @@ class RunEmitter:
         if outbox is not None and lease is None:
             raise ValueError("a durable RunEmitter requires an execution lease fence")
         self._lease = lease
-        if len({namespace is None, session_id is None, chat_repository is None}) != 1:
+        if len(
+            {
+                tenant_id is None,
+                namespace is None,
+                session_id is None,
+                chat_repository is None,
+            }
+        ) != 1:
             raise ValueError(
-                "namespace, session_id and chat_repository must be configured together"
+                "tenant_id, namespace, session_id and chat_repository must be configured together"
             )
+        self._tenant_id = tenant_id
         self._namespace = namespace
         self._session_id = session_id
         self._chat_repository = chat_repository
@@ -182,6 +192,7 @@ class RunEmitter:
         namespace: str | None = None,
         session_id: str | None = None,
         chat_repository: ChatRepository | None = None,
+        tenant_id: str | None = None,
     ) -> RunEmitter:
         # 续段（resume/重启/租约重拾）从既有最大 index 之后继续：event_id 幂等链不碰撞。
         # 同时从历史 awaiting 事件重建 tool_id→segment 归属（漂移正发生在 resume 重建之后）。
@@ -194,10 +205,11 @@ class RunEmitter:
             if isinstance(event.payload, ToolAwaitingApprovalPayload):
                 tool_segments[event.payload.tool_id] = event.payload.segment_id
         if chat_repository is not None and outbox is None:
-            if namespace is None:
-                raise ValueError("namespace is required with chat_repository")
+            if tenant_id is None or namespace is None:
+                raise ValueError("tenant_id and namespace are required with chat_repository")
             next_index = max(
-                next_index, await chat_repository.next_source_index(namespace, run_id)
+                next_index,
+                await chat_repository.next_source_index(tenant_id, namespace, run_id),
             )
         if outbox is not None:
             next_index = await outbox.next_event_index(run_id)
@@ -212,6 +224,7 @@ class RunEmitter:
             namespace,
             session_id,
             chat_repository,
+            tenant_id,
         )
 
     def _with_owner_segment(self, payload: AgentEventPayload) -> AgentEventPayload:
@@ -325,16 +338,18 @@ class RunEmitter:
     ) -> bool:
         if (
             self._chat_repository is None
+            or self._tenant_id is None
             or self._session_id is None
             or self._namespace is None
         ):
             return True
         projection = project_chat_fact(
+            tenant_id=self._tenant_id,
             namespace=self._namespace,
             session_id=self._session_id,
             run_id=self._run_id,
             source_index=index,
-            timestamp=timestamp,
+            created_at=wire_epoch_millis_to_utc(timestamp),
             payload=payload,
         )
         if projection is None:
@@ -378,17 +393,22 @@ def outbox_wire_event(frame: OutboxFrame) -> dict[str, JsonValue]:
 
 
 async def persist_outbox_chat_event(
-    store: ChatRepository, namespace: str, session_id: str, frame: OutboxFrame
+    store: ChatRepository,
+    tenant_id: str,
+    namespace: str,
+    session_id: str,
+    frame: OutboxFrame,
 ) -> ChatEventRecord | None:
     """Idempotently restore the durable chat fact before an outbox Redis replay."""
 
     event = agent_event_adapter.validate_python(outbox_wire_event(frame))
     projection = project_chat_fact(
+        tenant_id=tenant_id,
         namespace=namespace,
         session_id=session_id,
         run_id=frame.run_id,
         source_index=frame.index,
-        timestamp=frame.timestamp,
+        created_at=wire_epoch_millis_to_utc(frame.timestamp),
         payload=event.payload,
     )
     return None if projection is None else await store.append(projection)

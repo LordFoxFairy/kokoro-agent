@@ -222,19 +222,22 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_tool_journal (
 );
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_chat_session (
+  tenant_id    TEXT NOT NULL,
   namespace    TEXT NOT NULL,
   session_id   TEXT NOT NULL,
   project_ref  TEXT,
   title        TEXT NOT NULL,
   created_at   TIMESTAMPTZ(3) NOT NULL,
   updated_at   TIMESTAMPTZ(3) NOT NULL,
-  CONSTRAINT pk_kokoro_agent_chat_session PRIMARY KEY (namespace, session_id)
+  CONSTRAINT pk_kokoro_agent_chat_session PRIMARY KEY (tenant_id, namespace, session_id),
+  CONSTRAINT ck_kokoro_agent_chat_session_tenant_id CHECK (btrim(tenant_id) <> '')
 );
 CREATE INDEX IF NOT EXISTS ix_kokoro_agent_chat_session_page
-  ON kokoro_agent_chat_session (namespace, updated_at DESC, session_id ASC);
+  ON kokoro_agent_chat_session (tenant_id, namespace, updated_at DESC, session_id ASC);
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_chat_event (
   chat_event_id   TEXT NOT NULL,
+  tenant_id       TEXT NOT NULL,
   namespace       TEXT NOT NULL,
   session_id      TEXT NOT NULL,
   run_id          TEXT NOT NULL,
@@ -244,13 +247,15 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_chat_event (
   payload_json    TEXT NOT NULL,
   created_at      TIMESTAMPTZ(3) NOT NULL,
   seq             BIGINT NOT NULL,
-  CONSTRAINT pk_kokoro_agent_chat_event PRIMARY KEY (namespace, run_id, source_index),
-  CONSTRAINT uq_kokoro_agent_chat_event_id UNIQUE (chat_event_id),
-  CONSTRAINT uq_kokoro_agent_chat_event_session_seq UNIQUE (namespace, session_id, seq)
+  CONSTRAINT pk_kokoro_agent_chat_event PRIMARY KEY (tenant_id, namespace, run_id, source_index),
+  CONSTRAINT uq_kokoro_agent_chat_event_id UNIQUE (tenant_id, chat_event_id),
+  CONSTRAINT uq_kokoro_agent_chat_event_session_seq UNIQUE (tenant_id, namespace, session_id, seq),
+  CONSTRAINT ck_kokoro_agent_chat_event_tenant_id CHECK (btrim(tenant_id) <> '')
 );
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_chat_message (
-  chat_message_id  TEXT PRIMARY KEY,
+  tenant_id        TEXT NOT NULL,
+  chat_message_id  TEXT NOT NULL,
   namespace        TEXT NOT NULL,
   session_id       TEXT NOT NULL,
   run_id           TEXT NOT NULL,
@@ -260,7 +265,9 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_chat_message (
   created_at       TIMESTAMPTZ(3) NOT NULL,
   updated_at       TIMESTAMPTZ(3) NOT NULL,
   seq              BIGINT NOT NULL,
-  CONSTRAINT uq_kokoro_agent_chat_message_session_seq UNIQUE (namespace, session_id, seq),
+  CONSTRAINT pk_kokoro_agent_chat_message PRIMARY KEY (tenant_id, chat_message_id),
+  CONSTRAINT uq_kokoro_agent_chat_message_session_seq UNIQUE (tenant_id, namespace, session_id, seq),
+  CONSTRAINT ck_kokoro_agent_chat_message_tenant_id CHECK (btrim(tenant_id) <> ''),
   CONSTRAINT ck_kokoro_agent_chat_message_role CHECK (role IN ('user', 'assistant', 'system', 'tool')),
   CONSTRAINT ck_kokoro_agent_chat_message_status CHECK (
     status IN ('pending', 'streaming', 'completed', 'failed', 'cancelled')
@@ -269,10 +276,12 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_chat_message (
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_chat_sequence (
   kind        TEXT NOT NULL,
+  tenant_id   TEXT NOT NULL,
   namespace   TEXT NOT NULL,
   session_id  TEXT NOT NULL,
   seq         BIGINT NOT NULL,
-  CONSTRAINT pk_kokoro_agent_chat_sequence PRIMARY KEY (kind, namespace, session_id),
+  CONSTRAINT pk_kokoro_agent_chat_sequence PRIMARY KEY (kind, tenant_id, namespace, session_id),
+  CONSTRAINT ck_kokoro_agent_chat_sequence_tenant_id CHECK (btrim(tenant_id) <> ''),
   CONSTRAINT ck_kokoro_agent_chat_sequence_kind CHECK (kind IN ('event', 'message')),
   CONSTRAINT ck_kokoro_agent_chat_sequence_value CHECK (seq >= 0)
 );

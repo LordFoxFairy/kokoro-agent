@@ -141,6 +141,7 @@ async def test_stale_generation_emitter_drops_live_and_durable_events() -> None:
         namespace=RunScope.of(run).namespace,
         session_id=run.session_id,
         chat_repository=chat,
+        tenant_id=run.execution_identity.tenant_ref,
     )
     store.expired = [run]
     current = (await store.reclaim_expired("same-worker"))[0].lease
@@ -152,7 +153,14 @@ async def test_stale_generation_emitter_drops_live_and_durable_events() -> None:
 
     assert bus.run_events(run.run_id) == []
     assert await store.list_unpublished_outbox() == []
-    assert await chat.replay(RunScope.of(run).namespace, run.session_id) == ()
+    assert (
+        await chat.replay(
+            run.execution_identity.tenant_ref,
+            RunScope.of(run).namespace,
+            run.session_id,
+        )
+        == ()
+    )
 
 
 async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> None:

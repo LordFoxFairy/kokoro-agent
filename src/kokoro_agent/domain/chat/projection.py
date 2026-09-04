@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue
@@ -111,11 +112,12 @@ ProjectablePayload = (
 
 def project_chat_fact(
     *,
+    tenant_id: str,
     namespace: str,
     session_id: str,
     run_id: str,
     source_index: int,
-    timestamp: int,
+    created_at: datetime,
     payload: ProjectablePayload,
 ) -> ChatProjection | None:
     """Project only allowlisted product semantics; unknown/private payloads disappear."""
@@ -137,14 +139,15 @@ def project_chat_fact(
         safe_payload = _AssistantCompleted(content=payload.content)
         message = ChatMessageDraft(
             chat_message_id=chat_message_id,
+            tenant_id=tenant_id,
             namespace=namespace,
             session_id=session_id,
             run_id=run_id,
             role="assistant",
             content=payload.content,
             status="completed",
-            created_at=timestamp,
-            updated_at=timestamp,
+            created_at=created_at,
+            updated_at=created_at,
         )
     elif isinstance(payload, ToolInvokedPayload):
         event_type = "activity"
@@ -230,6 +233,7 @@ def project_chat_fact(
         return None
     return ChatProjection(
         event=ChatEventDraft(
+            tenant_id=tenant_id,
             namespace=namespace,
             session_id=session_id,
             run_id=run_id,
@@ -237,7 +241,7 @@ def project_chat_fact(
             chat_message_id=chat_message_id,
             event_type=event_type,
             payload_json=safe_payload.model_dump_json(exclude_none=True),
-            created_at=timestamp,
+            created_at=created_at,
         ),
         message=message,
     )

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from kokoro_agent.domain.chat.models import ChatSessionRecord
+from datetime import datetime
+
 from kokoro_agent.domain.chat.models import (
     ChatEventRecord,
     ChatMessageDraft,
     ChatMessageRecord,
     ChatProjection,
+    ChatSessionRecord,
     chat_event_id,
 )
 from kokoro_agent.domain.chat.repositories import (
@@ -21,19 +23,20 @@ class FakeChatRepository:
     def __init__(self, order: list[str] | None = None) -> None:
         self.order = order
         self.records: list[ChatEventRecord] = []
-        self.messages: dict[str, ChatMessageRecord] = {}
-        self.sessions: dict[tuple[str, str], ChatSessionRecord] = {}
+        self.messages: dict[tuple[str, str], ChatMessageRecord] = {}
+        self.sessions: dict[tuple[str, str, str], ChatSessionRecord] = {}
 
     async def ensure_session(
         self,
+        tenant_id: str,
         namespace: str,
         session_id: str,
         *,
         project_ref: str | None,
         title: str,
-        updated_at: int,
+        updated_at: datetime,
     ) -> ChatSessionRecord:
-        key = (namespace, session_id)
+        key = (tenant_id, namespace, session_id)
         existing = self.sessions.get(key)
         if existing is not None:
             if existing.project_ref != project_ref:
@@ -44,6 +47,8 @@ class FakeChatRepository:
             self.sessions[key] = updated
             return updated
         record = ChatSessionRecord(
+            tenant_id=tenant_id,
+            namespace=namespace,
             session_id=session_id,
             project_ref=project_ref,
             title=title.strip()[:80],
@@ -55,19 +60,21 @@ class FakeChatRepository:
 
     async def list_sessions(
         self,
+        tenant_id: str,
         namespace: str,
         *,
         project_ref: str | None = None,
-        after: tuple[int, str] | None = None,
+        after: tuple[datetime, str] | None = None,
         limit: int = 101,
     ) -> tuple[ChatSessionRecord, ...]:
         records = [
             record
-            for (record_namespace, _), record in self.sessions.items()
-            if record_namespace == namespace
+            for (record_tenant, record_namespace, _), record in self.sessions.items()
+            if record_tenant == tenant_id
+            and record_namespace == namespace
             and (project_ref is None or record.project_ref == project_ref)
         ]
-        records.sort(key=lambda record: (-record.updated_at, record.session_id))
+        records.sort(key=lambda record: (-record.updated_at.timestamp(), record.session_id))
         if after is not None:
             records = [
                 record
@@ -82,16 +89,32 @@ class FakeChatRepository:
             self.order.append("chat")
         for existing in self.records:
             if (
-                existing.run_id == projection.event.run_id
+                existing.tenant_id == projection.event.tenant_id
+                and existing.namespace == projection.event.namespace
+                and existing.run_id == projection.event.run_id
                 and existing.source_index == projection.event.source_index
             ):
                 if (
                     existing.event_type != projection.event.event_type
                     or existing.payload_json != projection.event.payload_json
                     or existing.session_id != projection.event.session_id
+                    or existing.created_at != projection.event.created_at
                 ):
                     raise ChatIdentityConflict("fake chat event identity drift")
                 return existing
+        seq = (
+            max(
+                (
+                    event.seq
+                    for event in self.records
+                    if event.tenant_id == projection.event.tenant_id
+                    and event.namespace == projection.event.namespace
+                    and event.session_id == projection.event.session_id
+                ),
+                default=0,
+            )
+            + 1
+        )
         record = ChatEventRecord(
             **projection.event.model_dump(),
             chat_event_id=chat_event_id(
@@ -99,7 +122,7 @@ class FakeChatRepository:
                 projection.event.run_id,
                 projection.event.source_index,
             ),
-            seq=len(self.records) + 1,
+            seq=seq,
         )
         self.records.append(record)
         if projection.message is not None:
@@ -117,10 +140,12 @@ class FakeChatRepository:
         return await self.append(projection)
 
     async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
-        existing = self.messages.get(message.chat_message_id)
+        key = (message.tenant_id, message.chat_message_id)
+        existing = self.messages.get(key)
         if existing is not None:
             if (
-                existing.session_id != message.session_id
+                existing.namespace != message.namespace
+                or existing.session_id != message.session_id
                 or existing.run_id != message.run_id
                 or existing.role != message.role
                 or existing.content != message.content
@@ -128,46 +153,85 @@ class FakeChatRepository:
             ):
                 raise ChatIdentityConflict("fake chat message identity drift")
             return existing
-        record = ChatMessageRecord(**message.model_dump(), seq=len(self.messages) + 1)
-        self.messages[record.chat_message_id] = record
+        seq = (
+            max(
+                (
+                    item.seq
+                    for item in self.messages.values()
+                    if item.tenant_id == message.tenant_id
+                    and item.namespace == message.namespace
+                    and item.session_id == message.session_id
+                ),
+                default=0,
+            )
+            + 1
+        )
+        record = ChatMessageRecord(**message.model_dump(), seq=seq)
+        self.messages[key] = record
         return record
 
     async def replay(
-        self, namespace: str, session_id: str, *, after_seq: int = 0, limit: int = 500
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        *,
+        after_seq: int = 0,
+        limit: int = 500,
     ) -> tuple[ChatEventRecord, ...]:
-        return tuple(
-            event
-            for event in self.records
-            if event.namespace == namespace
-            and event.session_id == session_id
-            and event.seq > after_seq
-        )[:limit]
+        events = sorted(
+            (
+                event
+                for event in self.records
+                if event.tenant_id == tenant_id
+                and event.namespace == namespace
+                and event.session_id == session_id
+                and event.seq > after_seq
+            ),
+            key=lambda event: event.seq,
+        )
+        return tuple(events[:limit])
 
     async def history(
-        self, namespace: str, session_id: str, *, after_seq: int = 0, limit: int = 200
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        *,
+        after_seq: int = 0,
+        limit: int = 200,
     ) -> tuple[ChatMessageRecord, ...]:
-        return tuple(
-            message
-            for message in self.messages.values()
-            if message.namespace == namespace
-            and message.session_id == session_id
-            and message.seq > after_seq
-        )[:limit]
+        messages = sorted(
+            (
+                message
+                for message in self.messages.values()
+                if message.tenant_id == tenant_id
+                and message.namespace == namespace
+                and message.session_id == session_id
+                and message.seq > after_seq
+            ),
+            key=lambda message: message.seq,
+        )
+        return tuple(messages[:limit])
 
-    async def next_source_index(self, namespace: str, run_id: str) -> int:
+    async def next_source_index(self, tenant_id: str, namespace: str, run_id: str) -> int:
         indices = [
             event.source_index
             for event in self.records
-            if event.namespace == namespace and event.run_id == run_id
+            if event.tenant_id == tenant_id
+            and event.namespace == namespace
+            and event.run_id == run_id
         ]
         return max(indices, default=-1) + 1
 
-    async def watermark(self, namespace: str, session_id: str) -> int:
+    async def watermark(self, tenant_id: str, namespace: str, session_id: str) -> int:
         return max(
             (
                 event.seq
                 for event in self.records
-                if event.namespace == namespace and event.session_id == session_id
+                if event.tenant_id == tenant_id
+                and event.namespace == namespace
+                and event.session_id == session_id
             ),
             default=0,
         )

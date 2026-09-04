@@ -42,6 +42,7 @@ from kokoro_agent.domain.run.scope import RunScope
 _GATED = "danger"
 _TID = "call-A"
 _CHAT_NS = RunScope.of(request("scope")).namespace
+_CHAT_TENANT = request("scope").execution_identity.tenant_ref
 
 
 def _builder(
@@ -163,11 +164,12 @@ async def test_request_consumer_persists_user_message_and_safe_chat_events() -> 
     await supervisor.serve(bus)
     await _drain(supervisor)
 
-    history = await chat_repository.history(_CHAT_NS, "s1")
+    history = await chat_repository.history(_CHAT_TENANT, _CHAT_NS, "s1")
     assert history[0].role == "user"
     assert history[0].chat_message_id == "chat-1-m"
     assert [
-        event.event_type for event in await chat_repository.replay(_CHAT_NS, "s1")
+        event.event_type
+        for event in await chat_repository.replay(_CHAT_TENANT, _CHAT_NS, "s1")
     ] == [
         "run.started",
         "assistant.delta",

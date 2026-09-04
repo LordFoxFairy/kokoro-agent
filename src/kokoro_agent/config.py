@@ -91,7 +91,7 @@ class AppConfig(BaseModel):
         default="redis://127.0.0.1:56380/9", validation_alias="KOKORO_REDIS_URL"
     )
     database_url: str = Field(
-        default="postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro",
+        default="postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent",
         validation_alias="KOKORO_AGENT_DATABASE_URL",
     )
     database_schema: str = Field(

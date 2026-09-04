@@ -222,8 +222,16 @@ def test_no_stream_name_literals_outside_protocol() -> None:
     for path in _py_files():
         if _rel(path).startswith("protocol"):
             continue
-        assert "kokoro:" not in path.read_text(encoding="utf-8"), (
-            f"{_rel(path)} hardcodes a stream name literal"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        stream_names = sorted(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("kokoro:")
+        )
+        assert not stream_names, (
+            f"{_rel(path)} hardcodes stream name literal(s): {stream_names}"
         )
 
 

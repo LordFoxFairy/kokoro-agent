@@ -31,7 +31,7 @@ from kokoro_agent.streams.redis import RedisStream
 REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:56380/9")
 DATABASE_URL = os.environ.get(
     "KOKORO_AGENT_DATABASE_URL",
-    "postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro",
+    "postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent",
 )
 
 _INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "run_repository"})

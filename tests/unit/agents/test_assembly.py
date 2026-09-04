@@ -35,7 +35,7 @@ def test_defaults_from_empty_env() -> None:
     assert config.stream.redis_url == "redis://127.0.0.1:56380/9"
     assert (
         config.database_url
-        == "postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro"
+        == "postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent"
     )
     assert config.database_schema == "kokoro_agent"
     assert config.run_repository.lease_ttl_ms == 90_000

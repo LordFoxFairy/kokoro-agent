@@ -71,7 +71,7 @@ Redis LaunchRunRequest
 uv sync
 # Worker 使用已配置的真实 provider；模型凭据只通过环境变量或 secret 注入：
 KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
-  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro \
+  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   ANTHROPIC_API_KEY=... uv run kokoro-agent-worker
 ```
@@ -80,7 +80,7 @@ BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己
 
 ```bash
 KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
-  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro \
+  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   KOKORO_INTERNAL_SECRET_AGENT=... KOKORO_AGENT_HTTP_PORT=4401 \
 uv run kokoro-agent-http

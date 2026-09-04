@@ -11,7 +11,7 @@ The acceptance gate requires reachable PostgreSQL and Redis instances. Missing
 or unreachable services are test failures, not skipped tests.
 
 ```bash
-export KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro
+export KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent
 export KOKORO_REDIS_URL=redis://127.0.0.1:56380/9
 export KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent_acceptance
 export KOKORO_INTERNAL_SECRET_AGENT=acceptance-internal-secret

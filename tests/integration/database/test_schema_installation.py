@@ -15,7 +15,7 @@ from kokoro_agent.infrastructure.schema import AGENT_TABLES, verify_agent_schema
 
 DATABASE_URL = os.environ.get(
     "KOKORO_AGENT_DATABASE_URL",
-    "postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro",
+    "postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent",
 )
 
 

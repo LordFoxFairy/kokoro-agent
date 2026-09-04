@@ -6,7 +6,7 @@
 
 ```bash
 uv sync --frozen
-export KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro
+export KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent
 export KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent
 export KOKORO_REDIS_URL=redis://127.0.0.1:56380/9
 

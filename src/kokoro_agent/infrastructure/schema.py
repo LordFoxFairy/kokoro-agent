@@ -54,9 +54,9 @@ def schema_statements(schema: str) -> tuple[str, ...]:
             run_id text PRIMARY KEY,
             session_id text NOT NULL,
             namespace text NOT NULL,
+            request_json text NOT NULL,
             fence text NOT NULL,
-            status text NOT NULL,
-            deadline_at bigint NOT NULL,
+            status text NOT NULL CHECK (status IN ('pending', 'claimed')),
             claimed_by text,
             created_at bigint NOT NULL,
             updated_at bigint NOT NULL

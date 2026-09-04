@@ -17,6 +17,7 @@ from langgraph.types import Command
 from kokoro_agent.protocol import (
     CONSUMER_GROUP,
     ControlReceiptStatus,
+    REQUESTS_MAXLEN,
     REQUESTS_STREAM,
     RUN_EVENTS_MAXLEN,
     InboundMessage,
@@ -172,6 +173,9 @@ class RunSupervisor:
         return False
 
     async def serve(self, bus: StreamProtocol) -> None:
+        # PostgreSQL dispatch admission 是唯一 durable 真相；Redis 仅承载可重放通知。启动先修复
+        # ingress 在落库后、XADD 前崩溃，或请求流被 maxlen 修剪造成的 pending 缺帧。
+        await self._republish_pending_dispatches(bus)
         # critical outbox 补发：启动即扫 queued（落库但发布未确认）行，按 seq 序补发（幂等）。
         await self._republish_outbox(bus)
         # control command 续办（R2）：persisted 未 applied 的 resume/cancel——fingerprint 匹配才续 apply。
@@ -220,17 +224,25 @@ class RunSupervisor:
                 await heartbeat
 
     async def _consume_request(self, bus: StreamProtocol, request: RunRequest) -> None:
-        # dispatch CAS（D5）：pending→claimed。输（已 claimed=重复投递 / expired=迟到帧）→丢弃不执行；
-        # 赢 → durable 执行认领（try_claim）+ 启动。缺失 intent 与迟到/重复帧同样丢弃。
+        # dispatch CAS（D5）：同一 PostgreSQL 事务完成 pending→claimed 与 durable lease 创建。
+        # 输（已 claimed/缺失 intent）即丢弃；赢才启动，消除两次 claim 之间的崩溃丢 Run 窗口。
         # ACK 由 serve 后置于此之后。
-        # 用户消息先于 dispatch claim durable：此处失败则不 CAS、不 ACK，重投可安全重试；写入幂等。
-        await self._persist_user_message(request)
-        if not await self._run_repository.claim_dispatch(request.run_id, self._consumer):
+        # Redis 帧只是 run_id 通知，完整 envelope 必须回读 PostgreSQL，防止陈旧/伪造帧替换
+        # identity、session 或 input。用户消息先于原子 claim：失败则不 CAS、不 ACK，可安全重试。
+        canonical = await self._run_repository.get_pending_dispatch(request.run_id)
+        if canonical is None:
+            metrics.record_dispatch_claim(won=False)
+            LOGGER.debug(
+                "dropping dispatch without pending intent run_id=%s", request.run_id
+            )
+            return
+        await self._persist_user_message(canonical)
+        if not await self._run_repository.claim_dispatch(canonical, self._consumer):
             metrics.record_dispatch_claim(won=False)
             LOGGER.debug("dropping late/duplicate dispatch run_id=%s", request.run_id)
             return
         metrics.record_dispatch_claim(won=True)
-        await self._on_request(bus, request)
+        await self._start_run(bus, canonical)
 
     async def _republish_outbox(self, bus: StreamProtocol) -> None:
         # 崩溃/瞬时故障后 queued 的 critical 行：按 seq 序补发到事件流（复用固定 event_id/durable_seq，
@@ -259,6 +271,24 @@ class RunSupervisor:
                     frame.durable_seq,
                 )
 
+    async def _republish_pending_dispatches(self, bus: StreamProtocol) -> None:
+        try:
+            requests = await self._run_repository.list_pending_dispatches()
+        except Exception:  # noqa: BLE001 — durable scanner 下一心跳重试，不杀 Worker
+            LOGGER.exception("pending dispatch scan failed")
+            return
+        for request in requests:
+            try:
+                await bus.publish(
+                    REQUESTS_STREAM,
+                    request.model_dump(mode="json", exclude_none=True),
+                    maxlen=REQUESTS_MAXLEN,
+                )
+            except Exception:  # noqa: BLE001 — 行仍是 pending，下一拍重建通知
+                LOGGER.exception(
+                    "pending dispatch republish failed run_id=%s", request.run_id
+                )
+
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):
             await self._on_request(bus, msg)
@@ -274,7 +304,9 @@ class RunSupervisor:
                     return
                 if not self._control_session_matches(request, msg.session_id):
                     return
-                await self._run_repository.add_steer(msg.run_id, msg.message_id, msg.content)
+                await self._run_repository.add_steer(
+                    msg.run_id, msg.message_id, msg.content
+                )
             except Exception:  # noqa: BLE001 — 插话丢失可由用户重发；绝不为此把健康 run 判死
                 LOGGER.exception("steer persist failed run_id=%s", msg.run_id)
         else:
@@ -313,6 +345,7 @@ class RunSupervisor:
         for run_id in await self._run_repository.list_paused():
             self._ensure_control_listener(bus, run_id)
         # 存活期间同样补发 queued critical outbox；不是只有启动时才扫描。
+        await self._republish_pending_dispatches(bus)
         await self._republish_outbox(bus)
         # R4 critical outbox 回执对账：推进 consumed/GC 已确认行，rejected NACK 终局，
         # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
@@ -715,7 +748,9 @@ class RunSupervisor:
             metrics.record_control_delivery("applied")
             await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
             if await self._guarded_control_apply(bus, run_id, msg):
-                await self._run_repository.mark_control_succeeded(run_id, msg.command_id)
+                await self._run_repository.mark_control_succeeded(
+                    run_id, msg.command_id
+                )
             else:
                 await self._run_repository.mark_control_failed(
                     run_id, msg.command_id, "control_apply_failed"

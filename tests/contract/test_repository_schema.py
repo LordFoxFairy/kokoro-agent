@@ -24,3 +24,11 @@ def test_schema_does_not_contain_legacy_rewrite_logic() -> None:
     assert "information_schema" not in sql
     assert "decision_id" not in sql
     assert "ALTER TABLE" not in sql
+
+
+def test_dispatch_admission_persists_replayable_request_without_silent_expiry() -> None:
+    sql = "\n".join(schema_statements("kokoro_agent_test"))
+
+    assert "request_json text NOT NULL" in sql
+    assert "deadline_at" not in sql
+    assert "status text NOT NULL CHECK (status IN ('pending', 'claimed'))" in sql

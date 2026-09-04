@@ -13,11 +13,24 @@ from collections.abc import Awaitable, Callable, Mapping
 
 from pydantic import JsonValue
 
-from support.fakes import FakeAgent, FakeBus, FakeRunRepository, request, text_run, usage_recorder
+from support.fakes import (
+    FakeAgent,
+    FakeBus,
+    FakeRunRepository,
+    request,
+    text_run,
+    usage_recorder,
+)
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.protocol import RUN_EVENTS_MAXLEN, RunRequest, SubagentSource, run_events_stream
+from kokoro_agent.protocol import (
+    RUN_EVENTS_MAXLEN,
+    RunRequest,
+    SubagentSource,
+    run_events_stream,
+)
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
 
@@ -43,22 +56,32 @@ def _source(_name: str) -> SubagentSource:
 
 # ---------------------------------------------------------------------------
 # 钉 1（归属 R1，已收口·绿钉）：request 必须在 durable claim 落地后才 ACK。
-#   R1 实现：`serve` 对 RunRequest 走 CAS claim→try_claim(durable)→ACK 后置序
-#   （worker/supervisor.py `_consume_request`）；claim 持久化前崩溃 → 不 ACK，留 PEL 重投。
+#   R1 实现：`serve` 对 RunRequest 走 PostgreSQL 单事务 dispatch+lease claim→ACK 后置序
+#   （worker/supervisor.py `_consume_request`）；claim 事务失败 → 不 ACK，留 PEL 重投。
 #   纲领 §2.3「request/control 在 durable claim/inbox 前 ACK」、§8.3「request 读出后 claim 前…ACK 前」。
 #   本钉由 R0 的 strict xfail（红）收口为正式绿钉：注入 durable claim 崩溃，断言消息未 ACK。
 # ---------------------------------------------------------------------------
 async def test_request_not_acked_before_durable_claim_persists() -> None:
     class _CrashBeforeClaimRepository(FakeRunRepository):
-        async def try_claim(self, request: RunRequest, owner: str = "test-consumer") -> bool:
-            # 注入：durable claim 于持久化前崩溃（claim 未落库）。
+        async def claim_dispatch(
+            self, request: RunRequest, consumer: str = "test-consumer"
+        ) -> bool:
+            del request, consumer
+            # 注入：durable claim 事务提交前崩溃（dispatch 与 lease 均未落库）。
             raise RuntimeError("crash before durable claim persists")
 
-    good = StreamItem(cursor="req-1", event=dict(request("req-crash").model_dump()))
+    pending = request("req-crash")
+    good = StreamItem(cursor="req-1", event=dict(pending.model_dump()))
     bus = FakeBus(inbound=(good,))
+    store = _CrashBeforeClaimRepository()
+    await store.enqueue_dispatch(
+        pending,
+        RunScope.of(pending).namespace,
+        "sha256:req-crash",
+    )
     sup = RunSupervisor(
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
-        run_repository=_CrashBeforeClaimRepository(),
+        run_repository=store,
         approval_tool_names=_no_names,
         trace_factory=_no_trace,
         source_for=_source,
@@ -110,16 +133,24 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
         record_usage=usage_recorder()[0],
     )
     # 首次 publish 失败被顶层 except 吞掉 → run.completed 未上 wire，但 outbox 行留 queued。
-    on_wire = [e for e in bus.run_events("term-drop") if e.kind in {"run.completed", "run.failed"}]
+    on_wire = [
+        e
+        for e in bus.run_events("term-drop")
+        if e.kind in {"run.completed", "run.failed"}
+    ]
     assert on_wire == []
-    queued = [f for f in await store.list_unpublished_outbox() if f.kind == "run.completed"]
+    queued = [
+        f for f in await store.list_unpublished_outbox() if f.kind == "run.completed"
+    ]
     assert len(queued) == 1
     seq, event_id = queued[0].durable_seq, queued[0].event_id
 
     # scanner 补发（FlakyBus 只失败一次）：终态帧落 wire，复用固定 durable_seq/event_id（不漂移）。
     for frame in await store.list_unpublished_outbox():
         await bus.publish(
-            run_events_stream(frame.run_id), outbox_wire_event(frame), maxlen=RUN_EVENTS_MAXLEN
+            run_events_stream(frame.run_id),
+            outbox_wire_event(frame),
+            maxlen=RUN_EVENTS_MAXLEN,
         )
         await store.mark_critical_published(frame.run_id, frame.durable_seq)
     republished = [e for e in bus.run_events("term-drop") if e.kind == "run.completed"]
@@ -155,5 +186,7 @@ async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> N
     )
     assert handled is True
     assert [e.kind for e in bus.run_events("term-fail")] == ["run.started"]
-    queued = [f for f in await store.list_unpublished_outbox() if f.kind == "run.failed"]
+    queued = [
+        f for f in await store.list_unpublished_outbox() if f.kind == "run.failed"
+    ]
     assert len(queued) == 1

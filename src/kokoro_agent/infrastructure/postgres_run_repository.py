@@ -130,9 +130,9 @@ class PostgresRunRepository:
                 await cur.execute(
                     """
                     INSERT INTO {} (
-                        run_id, session_id, namespace, fence, status, deadline_at,
+                        run_id, session_id, namespace, request_json, fence, status,
                         claimed_by, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, 'pending', %s, NULL, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, 'pending', NULL, %s, %s)
                     ON CONFLICT (run_id) DO NOTHING
                     RETURNING run_id
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
@@ -140,8 +140,8 @@ class PostgresRunRepository:
                         request.run_id,
                         request.session_id,
                         namespace,
+                        request.model_dump_json(),
                         fence,
-                        now + self._ttl_ms,
                         now,
                         now,
                     ),
@@ -150,7 +150,7 @@ class PostgresRunRepository:
                     return DispatchAdmission(replayed=False, publish_required=True)
                 await cur.execute(
                     """
-                    SELECT fence, status, deadline_at
+                    SELECT fence, status
                     FROM {}
                     WHERE run_id = %s
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
@@ -166,17 +166,6 @@ class PostgresRunRepository:
                         f"run id {request.run_id!r} was reused with a different launch envelope"
                     )
                 status = str(row["status"])
-                deadline = int(row["deadline_at"])
-                if status == "pending" and deadline <= now:
-                    await cur.execute(
-                        """
-                        UPDATE {}
-                        SET deadline_at = %s, updated_at = %s
-                        WHERE run_id = %s AND status = 'pending'
-                        """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
-                        (now + self._ttl_ms, now, request.run_id),
-                    )
-                    return DispatchAdmission(replayed=True, publish_required=True)
                 return DispatchAdmission(
                     replayed=True,
                     publish_required=status == "pending",
@@ -280,20 +269,76 @@ class PostgresRunRepository:
                 )
                 return await cur.fetchone() is not None
 
-    async def claim_dispatch(self, run_id: str, consumer: str) -> bool:
+    async def claim_dispatch(self, request: RunRequest, consumer: str) -> bool:
         now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET status = 'claimed', claimed_by = %s, updated_at = %s
+                        WHERE run_id = %s AND status = 'pending' AND request_json = %s
+                        RETURNING run_id
+                        """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                        (
+                            consumer,
+                            now,
+                            request.run_id,
+                            request.model_dump_json(),
+                        ),
+                    )
+                    if await cur.fetchone() is None:
+                        return False
+                    await cur.execute(
+                        """
+                        INSERT INTO {} (run_id, request_json, owner, lease_expires_at)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (run_id) DO NOTHING
+                        RETURNING run_id
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (
+                            request.run_id,
+                            request.model_dump_json(),
+                            consumer,
+                            now + self._ttl_ms,
+                        ),
+                    )
+                    return await cur.fetchone() is not None
+
+    async def get_pending_dispatch(self, run_id: str) -> RunRequest | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    UPDATE {}
-                    SET status = 'claimed', claimed_by = %s, updated_at = %s
-                    WHERE run_id = %s AND status = 'pending' AND deadline_at > %s
-                    RETURNING run_id
+                    SELECT request_json
+                    FROM {}
+                    WHERE run_id = %s AND status = 'pending'
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
-                    (consumer, now, run_id, now),
+                    (run_id,),
                 )
-                return await cur.fetchone() is not None
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return RunRequest.model_validate_json(row["request_json"])
+
+    async def list_pending_dispatches(self, limit: int = 100) -> list[RunRequest]:
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT request_json
+                    FROM {}
+                    WHERE status = 'pending'
+                    ORDER BY created_at ASC, run_id ASC
+                    LIMIT %s
+                    """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
+                    (limit,),
+                )
+                rows = await cur.fetchall()
+        return [RunRequest.model_validate_json(row["request_json"]) for row in rows]
 
     async def quarantine_dispatch(
         self, raw_hash: str, source: str, reason: str
@@ -1051,7 +1096,7 @@ class PostgresRunRepository:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    SELECT run_id, session_id, namespace, fence, status, deadline_at,
+                    SELECT run_id, session_id, namespace, request_json, fence, status,
                            claimed_by, created_at, updated_at
                     FROM {}
                     WHERE run_id = %s

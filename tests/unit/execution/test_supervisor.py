@@ -82,6 +82,11 @@ def _supervisor(
     return sup, state_store
 
 
+def _seed_pending_dispatch(store: FakeRunRepository, pending: RunRequest) -> None:
+    store.dispatches[pending.run_id] = "pending"
+    store.dispatch_requests[pending.run_id] = pending
+
+
 async def _drain(sup: RunSupervisor) -> None:
     for task in tuple(sup.tasks.values()):
         await task
@@ -147,9 +152,10 @@ async def test_request_consumer_persists_user_message_and_safe_chat_events() -> 
     chat_repository = FakeChatRepository()
     item = StreamItem(cursor="1", event=request("chat-1").model_dump())
     bus = FakeBus(inbound=(item,))
-    supervisor, _store = _supervisor(
+    supervisor, store = _supervisor(
         FakeAgent(run=text_run("answer")), chat_repository=chat_repository
     )
+    _seed_pending_dispatch(store, request("chat-1"))
 
     await supervisor.serve(bus)
     await _drain(supervisor)
@@ -157,7 +163,9 @@ async def test_request_consumer_persists_user_message_and_safe_chat_events() -> 
     history = await chat_repository.history(_CHAT_NS, "s1")
     assert history[0].role == "user"
     assert history[0].chat_message_id == "chat-1-m"
-    assert [event.event_type for event in await chat_repository.replay(_CHAT_NS, "s1")] == [
+    assert [
+        event.event_type for event in await chat_repository.replay(_CHAT_NS, "s1")
+    ] == [
         "run.started",
         "assistant.delta",
         "assistant.completed",
@@ -173,7 +181,10 @@ async def test_chat_message_failure_happens_before_dispatch_claim_and_ack() -> N
     item = StreamItem(cursor="1", event=request("chat-fail").model_dump())
     bus = FakeBus(inbound=(item,))
     agent = FakeAgent(run=text_run("unreachable"))
-    supervisor, run_repository = _supervisor(agent, chat_repository=_FailingChatRepository())
+    supervisor, run_repository = _supervisor(
+        agent, chat_repository=_FailingChatRepository()
+    )
+    _seed_pending_dispatch(run_repository, request("chat-fail"))
 
     await supervisor.serve(bus)
 
@@ -335,11 +346,11 @@ async def test_steer_lands_in_mailbox_without_interrupting() -> None:
 
     steer = _inbound(
         {
-                "kind": "run.steer",
-                "run_id": "rs1",
-                "session_id": "s1",
-                "command_id": "cmd-steer-1",
-                "message_id": "m9",
+            "kind": "run.steer",
+            "run_id": "rs1",
+            "session_id": "s1",
+            "command_id": "cmd-steer-1",
+            "message_id": "m9",
             "content": "改方向",
         }
     )
@@ -363,11 +374,11 @@ async def test_steer_after_terminal_dropped() -> None:
         bus,
         _inbound(
             {
-                    "kind": "run.steer",
-                    "run_id": "rs2",
-                    "session_id": "s1",
-                    "command_id": "cmd-steer-2",
-                    "message_id": "m1",
+                "kind": "run.steer",
+                "run_id": "rs2",
+                "session_id": "s1",
+                "command_id": "cmd-steer-2",
+                "message_id": "m1",
                 "content": "太迟了",
             }
         ),
@@ -586,6 +597,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
     )
     bus = FakeBus(inbound=(good, malformed, resume_boom))
     store = _BoomStore()
+    _seed_pending_dispatch(store, request("sv1"))
     # The control frame must refer to a durable run so the failure path reaches
     # the terminal-state guard (rather than being discarded as an unknown run).
     store.requests["rx"] = request("rx")
@@ -703,7 +715,9 @@ async def test_heartbeat_keeps_queued_outbox_recoverable_on_publish_failure() ->
 
     await sup.heartbeat_once(bus)
     assert bus.run_events("queued-fail") == []
-    assert [frame.kind for frame in await store.list_unpublished_outbox()] == ["run.started"]
+    assert [frame.kind for frame in await store.list_unpublished_outbox()] == [
+        "run.started"
+    ]
 
 
 # ⑨ 跨 supervisor（模拟另一 pod / 重启）：共享 store + 总线续接，index 不回卷。
@@ -949,11 +963,11 @@ async def test_steer_persist_failure_does_not_kill_healthy_run() -> None:
     await sup.dispatch(
         bus,
         RunSteer(
-                kind="run.steer",
-                run_id="r-any",
-                session_id="s1",
-                command_id="cmd-steer-3",
-                message_id="m1",
+            kind="run.steer",
+            run_id="r-any",
+            session_id="s1",
+            command_id="cmd-steer-3",
+            message_id="m1",
             content="嘿",
         ),
     )
@@ -1012,12 +1026,33 @@ async def test_fencing_yields_local_task_when_ownership_lost() -> None:
 # --- Wave2 R1：serve dispatch CAS 序（claim→ACK 后置）+ 迟到/重复帧丢弃 + DLQ + outbox ---
 
 
+async def test_serve_republishes_durable_pending_dispatch() -> None:
+    # HTTP 在 PostgreSQL 落 admission 后即使进程崩溃、Redis 帧被修剪，Worker 启动 scanner 也会
+    # 从 durable request_json 重建同一请求帧；Redis 只承担可重放通知，不承担唯一真相。
+    store = FakeRunRepository()
+    pending = request("r-orphan-dispatch")
+    await store.enqueue_dispatch(
+        pending,
+        RunScope.of(pending).namespace,
+        "sha256:orphan-dispatch",
+    )
+    bus = FakeBus(inbound=())
+    sup, _ = _supervisor(FakeAgent(), store=store)
+
+    await sup.serve(bus)
+
+    published = [
+        event for stream, event, _maxlen in bus.published if stream == REQUESTS_STREAM
+    ]
+    assert published == [pending.model_dump(mode="json", exclude_none=True)]
+
+
 async def test_dispatch_win_executes_and_acks_after_claim() -> None:
     # pending intent → CAS 赢 → 执行到终态 → ACK（ACK 后置于 durable claim 之后）。
     store = FakeRunRepository()
-    store.dispatches["r-go"] = "pending"
-    store.dispatch_deadlines["r-go"] = 10**15
-    frame = StreamItem(cursor="1", event=dict(request("r-go").model_dump()))
+    pending = request("r-go")
+    _seed_pending_dispatch(store, pending)
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
     bus = FakeBus(inbound=(frame,))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(bus)
@@ -1027,14 +1062,69 @@ async def test_dispatch_win_executes_and_acks_after_claim() -> None:
     assert store.dispatches["r-go"] == "claimed"
 
 
+async def test_stream_dispatch_claim_is_the_only_durable_execution_claim() -> None:
+    class _NoSecondClaimRepository(FakeRunRepository):
+        async def try_claim(
+            self, request: RunRequest, owner: str = "test-consumer"
+        ) -> bool:
+            raise AssertionError(
+                "stream dispatch must not use a second claim transaction"
+            )
+
+    store = _NoSecondClaimRepository()
+    pending = request("r-atomic")
+    _seed_pending_dispatch(store, pending)
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
+    bus = FakeBus(inbound=(frame,))
+    sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
+
+    await sup.serve(bus)
+    await _drain(sup)
+
+    assert bus.acked == ["1"]
+    assert bus.kinds("r-atomic")[-1] == "run.completed"
+
+
+async def test_stream_notification_cannot_replace_durable_dispatch_request() -> None:
+    store = FakeRunRepository()
+    canonical = request("r-canonical")
+    await store.enqueue_dispatch(
+        canonical,
+        RunScope.of(canonical).namespace,
+        "sha256:canonical",
+    )
+    forged = canonical.model_dump(mode="json")
+    forged["input"] = {
+        "message_id": canonical.input.message_id,
+        "content": "forged redis content",
+    }
+    bus = FakeBus(inbound=(StreamItem(cursor="1", event=forged),))
+    agent = FakeAgent(run=text_run("done"))
+    sup, _ = _supervisor(agent, store=store)
+
+    await sup.serve(bus)
+    await _drain(sup)
+
+    assert agent.seen_payloads == [
+        {
+            "messages": [
+                HumanMessage(
+                    content=canonical.input.content,
+                    id="native-input:r-canonical",
+                )
+            ]
+        }
+    ]
+
+
 async def test_redelivered_dispatch_after_claim_is_discarded_not_double_executed() -> (
     None
 ):
     # §8.3「claim 后 ACK 前崩溃」：重投同帧 CAS 输（已 claimed）→ ACK 丢弃，不二次执行。
     store = FakeRunRepository()
-    store.dispatches["r-dup"] = "pending"
-    store.dispatch_deadlines["r-dup"] = 10**15
-    frame = StreamItem(cursor="1", event=dict(request("r-dup").model_dump()))
+    pending = request("r-dup")
+    _seed_pending_dispatch(store, pending)
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(FakeBus(inbound=(frame,)))
     await _drain(sup)
@@ -1062,15 +1152,16 @@ async def test_expired_dispatch_frame_never_executes() -> None:
 async def test_crash_before_durable_claim_leaves_frame_unacked() -> None:
     # §8.3「request 读出后 claim 前崩溃」：durable claim 未落地 → 不 ACK，留 PEL 重投。
     class _CrashClaim(FakeRunRepository):
-        async def try_claim(
-            self, request: RunRequest, owner: str = "test-consumer"
+        async def claim_dispatch(
+            self, request: RunRequest, consumer: str = "test-consumer"
         ) -> bool:
+            del request, consumer
             raise RuntimeError("crash before durable claim")
 
     store = _CrashClaim()
-    store.dispatches["r-crash"] = "pending"
-    store.dispatch_deadlines["r-crash"] = 10**15
-    frame = StreamItem(cursor="1", event=dict(request("r-crash").model_dump()))
+    pending = request("r-crash")
+    _seed_pending_dispatch(store, pending)
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
     bus = FakeBus(inbound=(frame,))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(bus)  # 不冒泡杀循环

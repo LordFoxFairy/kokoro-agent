@@ -204,7 +204,7 @@ async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> Non
             runtime_namespace(request.execution_identity),
             f"acceptance:{request.run_id}",
         )
-        assert await run_repository.try_claim(request, "acceptance-test") is True
+        assert await run_repository.claim_dispatch(request, "acceptance-test") is True
 
 
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
@@ -317,7 +317,10 @@ async def test_launch_is_durable_and_idempotent_over_http(
     async with make_run_repository(
         acceptance_state.config.run_repository
     ) as run_repository:
-        assert await run_repository.claim_dispatch(run_id, "acceptance-worker") is True
+        assert (
+            await run_repository.claim_dispatch(_request(run_id), "acceptance-worker")
+            is True
+        )
 
     second = await http_client.post("/v1/runs", headers=_headers(), json=body)
     assert second.status_code == 202
@@ -327,6 +330,31 @@ async def test_launch_is_durable_and_idempotent_over_http(
     published = await _read_matching(acceptance_state, REQUESTS_STREAM, run_id)
     assert len(published) == 1
     assert published[0]["kind"] == "run.request"
+
+
+@pytest.mark.asyncio
+async def test_pending_dispatch_is_replayable_from_postgres_without_redis_frame(
+    acceptance_state: _AcceptanceState,
+) -> None:
+    run_id = f"orphan-dispatch-{uuid.uuid4().hex}"
+    request = _request(run_id)
+
+    async with make_run_repository(
+        acceptance_state.config.run_repository
+    ) as run_repository:
+        await run_repository.enqueue_dispatch(
+            request,
+            runtime_namespace(request.execution_identity),
+            f"acceptance:{run_id}",
+        )
+
+        pending = await run_repository.list_pending_dispatches()
+        assert request in pending
+
+        assert await run_repository.claim_dispatch(request, "acceptance-worker") is True
+        assert await run_repository.get_request(run_id) == request
+        assert await run_repository.claim_dispatch(request, "other-worker") is False
+        assert request not in await run_repository.list_pending_dispatches()
 
 
 @pytest.mark.asyncio

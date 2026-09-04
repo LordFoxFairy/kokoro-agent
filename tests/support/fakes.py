@@ -143,11 +143,11 @@ class FakeRunRepository:
         self.sandbox_ids: dict[str, str] = {}
         self.terminal_at: dict[str, int] = {}
         self.clock_ms = 0
-        # dispatch CAS 记录（run_id → status）：默认无记录=放行；测试可预置 pending/claimed/expired。
+        # dispatch CAS 记录（run_id → status）：默认无记录=放行；测试可预置 pending/claimed。
         self.dispatches: dict[str, str] = {}
         self.dispatch_fences: dict[str, str] = {}
         self.dispatch_namespaces: dict[str, str] = {}
-        self.dispatch_deadlines: dict[str, int] = {}
+        self.dispatch_requests: dict[str, RunRequest] = {}
         self.dlq: list[tuple[str, str, str]] = []
         # R4 critical outbox：per-run durable_seq 计数、local fence、outbox 行；回执/清单由测试 seed。
         self.durable_counter: dict[str, int] = {}
@@ -173,8 +173,8 @@ class FakeRunRepository:
         if existing is None:
             self.dispatch_fences[request.run_id] = fence
             self.dispatch_namespaces[request.run_id] = namespace
+            self.dispatch_requests[request.run_id] = request
             self.dispatches[request.run_id] = "pending"
-            self.dispatch_deadlines[request.run_id] = self.clock_ms + 90_000
             return DispatchAdmission(replayed=False, publish_required=True)
         return DispatchAdmission(
             replayed=True,
@@ -192,18 +192,39 @@ class FakeRunRepository:
         return True
 
     async def claim_dispatch(
-        self, run_id: str, consumer: str = "test-consumer"
+        self, request: RunRequest, consumer: str = "test-consumer"
     ) -> bool:
         # Supervisor 单测默认把未显式布置的请求视为已注入 pending intent；需要验证
-        # 缺失/重复/过期时，测试应明确预置对应状态。
+        # 缺失/重复时，测试应明确预置对应状态。
+        run_id = request.run_id
         status = self.dispatches.get(run_id)
         if status is None:
-            return True
-        deadline = self.dispatch_deadlines.get(run_id)
-        if status == "pending" and (deadline is None or deadline > self.clock_ms):
+            return False
+        canonical = self.dispatch_requests.get(run_id)
+        if canonical is not None and canonical != request:
+            return False
+        if status == "pending":
             self.dispatches[run_id] = "claimed"
+            if run_id in self.requests:
+                return False
+            self.requests[run_id] = request
+            self.leases[run_id] = 1
+            self.owners[run_id] = consumer
             return True
         return False
+
+    async def get_pending_dispatch(self, run_id: str) -> RunRequest | None:
+        if self.dispatches.get(run_id) != "pending":
+            return None
+        return self.dispatch_requests.get(run_id)
+
+    async def list_pending_dispatches(self, limit: int = 100) -> list[RunRequest]:
+        pending = [
+            request
+            for run_id, request in sorted(self.dispatch_requests.items())
+            if self.dispatches.get(run_id) == "pending"
+        ]
+        return pending[:limit]
 
     async def quarantine_dispatch(
         self, raw_hash: str, source: str, reason: str

@@ -29,6 +29,25 @@ def test_repository_and_service_boundaries_are_explicit() -> None:
     assert not (root / "chat" / "query.py").exists()
 
 
+def test_postgres_run_adapter_is_split_by_repository_capability() -> None:
+    """A single 2k-line adapter hides ownership and makes review unsafe."""
+
+    root = _root() / "src" / "kokoro_agent" / "infrastructure"
+    modules = (
+        "postgres_run_repository.py",
+        "postgres_run_admission.py",
+        "postgres_run_dispatch.py",
+        "postgres_run_events.py",
+        "postgres_run_leases.py",
+        "postgres_run_effects.py",
+        "postgres_run_sandbox.py",
+    )
+    for name in modules:
+        path = root / name
+        assert path.is_file(), f"missing capability adapter: {name}"
+        assert len(path.read_text(encoding="utf-8").splitlines()) <= 800
+
+
 def test_ports_do_not_import_database_or_transport_adapters() -> None:
     root = _root() / "src" / "kokoro_agent"
     for name in ("repository.py", "repositories.py"):
@@ -40,9 +59,7 @@ def test_ports_do_not_import_database_or_transport_adapters() -> None:
         encoding="utf-8"
     )
     assert "psycopg" not in chat_repository
-    service = (root / "application" / "chat" / "service.py").read_text(
-        encoding="utf-8"
-    )
+    service = (root / "application" / "chat" / "service.py").read_text(encoding="utf-8")
     assert "infrastructure" not in service
     assert "http.server" not in service
 

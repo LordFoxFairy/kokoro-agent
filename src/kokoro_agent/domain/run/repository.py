@@ -1,6 +1,7 @@
 """Agent execution repository ports and transport-neutral result records.
 
-The concrete PostgreSQL adapter lives in ``infrastructure/postgres_run_repository.py``.
+The public PostgreSQL façade lives in ``infrastructure/postgres_run_repository.py``;
+its capability-specific implementation is split across neighboring adapters.
 This module contains no database driver, SQL, or connection factory.
 """
 

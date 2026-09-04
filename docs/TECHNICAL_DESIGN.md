@@ -16,8 +16,9 @@ worker bootstrap ---------+
 DeepAgents 或 provider SDK。`application` 决定用例、授权入口、事务和幂等；`infrastructure` 实现 SQL、
 锁、外部 client、checkpoint 和 stream；`interfaces` 只做解析、映射和错误转换。
 
-当前历史目录 `execution`、`services`、`repositories`、`http` 仍承载已验证实现；新代码按上述层落地，
-每次切片完成真实迁移后删除旧入口，禁止同义 alias 并行。
+worker 长驻调度由 `supervisor.py` façade、`supervisor_control.py`、`supervisor_execution.py`、
+`supervisor_recovery.py` 和显式 `supervisor_context.py` 协作契约组成；PostgreSQL RunRepository 也按
+admission、dispatch、events、leases、effects、sandbox capability 拆分。旧入口不保留同义 alias。
 
 ## 2. Run 生命周期
 

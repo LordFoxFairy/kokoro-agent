@@ -48,6 +48,28 @@ def test_postgres_run_adapter_is_split_by_repository_capability() -> None:
         assert len(path.read_text(encoding="utf-8").splitlines()) <= 800
 
 
+def test_supervisor_is_split_by_operational_capability() -> None:
+    root = _root() / "src" / "kokoro_agent" / "worker"
+    modules = (
+        "supervisor.py",
+        "supervisor_context.py",
+        "supervisor_control.py",
+        "supervisor_execution.py",
+        "supervisor_recovery.py",
+    )
+    for name in modules:
+        path = root / name
+        assert path.is_file(), f"missing supervisor boundary: {name}"
+        assert len(path.read_text(encoding="utf-8").splitlines()) <= 800
+
+    façade = (root / "supervisor.py").read_text(encoding="utf-8")
+    assert "class RunSupervisor" in façade
+    assert "supervisor_control" in façade
+    assert "supervisor_execution" in façade
+    assert "supervisor_recovery" in façade
+    assert "psycopg" not in façade
+
+
 def test_ports_do_not_import_database_or_transport_adapters() -> None:
     root = _root() / "src" / "kokoro_agent"
     for name in ("repository.py", "repositories.py"):

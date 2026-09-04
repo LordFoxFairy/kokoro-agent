@@ -18,8 +18,12 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
   warm 时创建一次的模型、checkpoint、run_repository、store、sandbox 和窄 clients。两者都不是 caller
   input、Service Locator 或 Feature 配方。`WorkerClients.delivery` 是可选 Storage Artifact
   facade；缺席时只不装配 deliver tool。
-- `supervisor.py`：`RunSupervisor`（注入式装配；RunRepository 持有去重/租约/原 request/终态认领
+- `supervisor.py`：`RunSupervisor` 公开生命周期 façade（注入式装配；RunRepository 持有去重/租约/原 request/终态认领
   四类真相）。
+- `supervisor_control.py`：请求路由、resume/cancel/steer、control ledger 和 listener 生命周期。
+- `supervisor_execution.py`：Agent 构建、受 fencing 保护的执行 task、emitter 和终态收口。
+- `supervisor_recovery.py`：heartbeat、dispatch/outbox/control republish、receipt reconcile 和 sandbox retry。
+- `supervisor_context.py`：mixins 共享的显式状态/协作契约；不承载运行时逻辑。
   - `serve(bus)`：consumer group 消费 REQUESTS_STREAM；RunRequest 走 CAS claim→durable claim
     后 ACK（R1）；用户消息 durable 写入先于 dispatch claim；启动即跑
     `_republish_outbox`（R4 critical outbox queued 行按 seq 序幂等补发）与

@@ -29,10 +29,10 @@ src/kokoro_agent/
 ├── execution/       Run、control、HITL、事件投影与终态
 ├── worker/          Redis ingress、共享服务、claim、recovery、drain
 ├── tools/           GA 固定工具、每次运行的工具集合与 middleware
-├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
+├── skills/          Capability Skill 只读 backend adapter
 ├── clients/         Capability/Storage 窄 client（Skill、MCP、Artifact 交付）
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── mcp/             MCP 连接、工具与本地 fixture
+├── mcp/             MCP 连接、工具与部署配置适配
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产
 └── observability.py metrics、trace、private audit

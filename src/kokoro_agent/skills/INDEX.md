@@ -8,10 +8,10 @@
 ## 公开 API
 
 - `backend.py`：`CapabilitySkillBackend` 与 `SKILLS_ROOT`；按获准引用懒读包体，拒绝所有写入。
-- `package.py`：本地 fixture 包的 frontmatter 校验。
-- `local_reader.py`：历史本地 fixture reader；生产 worker 不使用其 CRUD/seed 写面。
-- `__init__.py`：只公开导出 DeepAgents runtime 所需的 backend/root；fixture helper
-  不是包级 public API。
+- `__init__.py`：只公开导出 DeepAgents runtime 所需的 backend/root；测试 fixture
+  不属于包级 public API。
+
+Skill 包 frontmatter 的本地样本校验位于 `tests/support/skill_package.py`，不进入生产发行包。
 
 ## 边界与约束
 

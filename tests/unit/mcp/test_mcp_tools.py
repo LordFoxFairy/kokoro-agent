@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict
+from pydantic import ValidationError
 
 import kokoro_agent.mcp.tools as tools_mod
 from kokoro_agent.mcp.config import (
@@ -156,6 +157,13 @@ def test_connection_carries_headers_and_timeout() -> None:
     assert conns["gh"].get("headers") == {"authorization": "Bearer tok"}
     assert conns["gh"].get("timeout") == 5.0
     assert "headers" not in conns["pub"]
+
+
+def test_mcp_timeout_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        _config(timeout_s=0)
+    with pytest.raises(ValidationError):
+        _config(timeout_s=-1)
 
 
 # --- 部署注册表加载（KOKORO_MCP_CONFIG yaml） ---

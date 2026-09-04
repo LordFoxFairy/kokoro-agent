@@ -134,7 +134,7 @@ Factory 只有两条明确构造路径：
 
 工具面、审批、sandbox 和 Skill backend 接线是 Agent 构造所消费的现有能力，不归入一个
 笼统的装配目录；事件投影属于 `execution/`。任何实现文件都不得演化成 GA 自有的 Graph、State、
-router 或编译器抽象。部署可通过 `worker.main.serve(config, WorkerClients(...))` 注入 owner public clients；标准 CLI 不直读 Capability/Storage 私库。MCP egress 由 worker 启动时从 `AppConfig.mcp_egress_mode` 初始化，连接层只消费进程级快照（默认 strict，本地 fixture 显式 off）。
+router 或编译器抽象。部署可通过 `worker.main.serve(config, WorkerClients(...))` 注入 owner public clients；标准 CLI 不直读 Capability/Storage 私库。MCP egress 由 worker 启动时从 `AppConfig.mcp_egress_mode` 初始化，连接层只消费进程级快照（默认 strict；测试 fixture 仅在 `tests/support` 显式关闭）。
 
 ## 5. 状态与恢复
 
@@ -166,7 +166,7 @@ src/kokoro_agent/
 ├── execution/       Run、control、HITL、事件投影与终态
 ├── worker/          Redis ingress、共享服务、claim、recovery、drain
 ├── tools/           GA 固定工具、工具集合与 middleware
-├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
+├── skills/          Capability Skill 只读 backend adapter
 ├── clients/         Capability/Storage 窄 client
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
 ├── mcp/             MCP 配置、连接与 egress

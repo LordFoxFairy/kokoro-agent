@@ -1,7 +1,7 @@
 """Capability public contract 的 MCP 读取面。
 
-GA 只依赖这个窄协议。具体的 HTTP/gRPC 客户端由 worker 装配；本地内存 fixture 可以实现
-同一协议，但不能让 Agent/Feature 直接依赖 Capability 的数据库结构。
+GA 只依赖这个窄协议。具体的 HTTP/gRPC 客户端由 worker 装配；测试替身可以实现同一协议，
+但不能让 Agent/Feature 直接依赖 Capability 的数据库结构。
 """
 
 from __future__ import annotations

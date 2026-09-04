@@ -44,8 +44,9 @@ class RunScope:
 
     @property
     def scoped_thread_id(self) -> str:
-        # Session IDs are globally unique product IDs and are the only
-        # checkpoint locator.  Namespace remains a GA Store/workspace scope.
-        return self.session_id
+        # LangGraph's checkpoint tables have no tenant column.  Put the
+        # trusted identity-derived namespace in the locator so a caller
+        # supplied/reused session id can never select another tenant's state.
+        return f"{self.namespace}:{self.session_id}"
 
 __all__ = ["RunScope", "runtime_namespace"]

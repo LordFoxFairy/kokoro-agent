@@ -100,7 +100,7 @@ src/kokoro_agent/
 ├── execution/       Run、control、HITL、事件投影与终态
 ├── worker/          Redis ingress、共享服务、claim、recovery、drain
 ├── tools/           GA 固定工具、工具集合与 middleware
-├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
+├── skills/          Capability Skill 只读 backend adapter
 ├── clients/         Capability/Storage 窄 client
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
 ├── mcp/             MCP 配置、连接与 egress
@@ -147,11 +147,11 @@ LangChain native message/checkpoint ID 与 GA `chat_messages`/`chat_events` ID �
   `SkillReader` 读取。GA 将获准包体暴露为 `/.skills/` 只读逻辑 route；用户、项目、会话 Skill 的 CRUD/path 仍由 Capability public contract负责。
 - 产物由 Agent 显式声明 `delivery=True`。Factory 只在 Storage `DeliveryClient`
   已注入时装配 deliver；工具经同一 DeepAgents backend 读取工作区，由 client
-  闭环 upload/asset/artifact，GA 不直写 PackageStore/S3 key。
+  闭环 upload/asset/artifact，GA 不直写 Storage 内部 key。
 - `S3Workspace` 只是 GA Workbench 的 S3-compatible adapter；MinIO 是当前实现，后续可替换。
 - 标准 CLI 不直读 Capability/Storage 私库；部署通过 `serve(config, WorkerClients(...))` 注入 public client。未注入时 Skill 为空、MCP 只用 deployment YAML、deliver 不挂载，但基础 Agent 仍能执行和恢复。
 - 开发环境可以不启动 Capability/Storage/Model/Billing；生产按需注入对应 public client。缺少可选 client 只关闭该旁路能力，不拆掉基础 Agent。
-- MCP egress 是 worker 级连接策略：`worker.main` 从已校验的 `AppConfig.mcp_egress_mode` 初始化一次，连接层只读取该进程快照，不自行读取环境变量；默认 `strict`，本地 fixture 显式使用 `off`。
+- MCP egress 是 worker 级连接策略：`worker.main` 从已校验的 `AppConfig.mcp_egress_mode` 初始化一次，连接层只读取该进程快照，不自行读取环境变量；默认 `strict`，测试 fixture 仅在 `tests/support` 显式使用 `off`。
 - Capability Skill 查询失败时，Agent 以空 Skill 清单继续。MCP 查询失败时保留部署配置，
   Capability-only 名称显式标记 unavailable。两者都不拆掉
   DeepAgents 基础对话循环，也不把失败状态写入 Session/native state。

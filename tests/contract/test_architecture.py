@@ -192,6 +192,13 @@ def test_worker_entrypoint_does_not_boot_owner_database_fixtures() -> None:
     assert not (imports & forbidden)
 
 
+def test_production_source_does_not_ship_local_mcp_fixture() -> None:
+    """Fixture clients belong under tests/support, never in the package runtime."""
+    assert not (_SRC / "mcp" / "local_registry.py").exists()
+    assert "PackageStore" not in (_SRC / "clients" / "storage.py").read_text()
+    assert not (_SRC / "skills" / "package.py").exists()
+
+
 def test_skills_package_exports_only_runtime_integration() -> None:
     """Fixture CRUD/package adapters are not a supported GA package-level API."""
     from kokoro_agent import skills

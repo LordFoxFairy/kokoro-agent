@@ -47,11 +47,3 @@ class DeliveryClient(Protocol):
     """Storage Artifact public facade；不向 GA 暴露 bucket/key/签名 URL。"""
 
     async def publish(self, request: DeliveryRequest) -> DeliveryReceipt: ...
-
-
-class PackageStore(Protocol):
-    """Skill fixture/package reader 的字节面，不用于 GA 产物交付。"""
-
-    async def put(self, ref: str, data: bytes) -> None: ...
-
-    async def get(self, ref: str) -> bytes: ...

@@ -24,6 +24,8 @@ _BLOCK_MS = 1000
 _RECONNECT_BACKOFF_MIN = 0.1
 _AUTOCLAIM_IDLE_MS = 60_000
 _RECONNECT_BACKOFF_MAX = 5.0
+_SOCKET_CONNECT_TIMEOUT_S = 10.0
+_SOCKET_TIMEOUT_S = 30.0
 
 # redis-py 无类型存根，xread/xrange 返回 object；逐层收窄到下列别名。
 _Fields: TypeAlias = dict[bytes | str, bytes | str] | None
@@ -123,7 +125,13 @@ class RedisStream:
         self, url: str, block_ms: int = _BLOCK_MS, autoclaim_idle_ms: int = _AUTOCLAIM_IDLE_MS
     ) -> None:
         # 固定 RESP2+decode_responses：xread/xrange 全返回 str，无 bytes 解码开销。
-        self._redis: Redis = from_url(url, protocol=2, decode_responses=True)
+        self._redis: Redis = from_url(
+            url,
+            protocol=2,
+            decode_responses=True,
+            socket_connect_timeout=_SOCKET_CONNECT_TIMEOUT_S,
+            socket_timeout=_SOCKET_TIMEOUT_S,
+        )
         self._block_ms = block_ms
         self._autoclaim_idle_ms = autoclaim_idle_ms
 

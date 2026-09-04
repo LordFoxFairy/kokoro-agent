@@ -48,7 +48,7 @@ class WorkerDependencies:
     checkpointer: BaseCheckpointSaver[str]
     run_repository: RunRepository
     memory_store: BaseStore
-    # Skill public contract 的名称解析面与内容读取面分开；本地 fixture 可由同一对象实现二者。
+    # Skill public contract 的名称解析面与内容读取面分开；缺少 Capability 时显式为 None。
     skill_client: SkillClient | None
     skill_reader: SkillReader | None
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。

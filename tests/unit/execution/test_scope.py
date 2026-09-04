@@ -1,7 +1,7 @@
 """Runtime namespace follows stable tenancy/subject ownership."""
 
-from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
-from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
+from kokoro_agent.domain.run.scope import RunScope, runtime_namespace
 
 
 def _identity(
@@ -31,3 +31,19 @@ def test_tenant_or_subject_change_produces_another_namespace() -> None:
 
     assert runtime_namespace(_identity(tenant="tenant-b")) != baseline
     assert runtime_namespace(_identity(subject="subject-b")) != baseline
+
+
+def test_checkpoint_locator_scopes_same_session_by_trusted_tenant() -> None:
+    def request(tenant: str) -> RunRequest:
+        return RunRequest(
+            kind="run.request",
+            run_id=f"run-{tenant}",
+            session_id="shared-session-id",
+            feature_key="chat",
+            execution_identity=_identity(tenant=tenant),
+            input=RunInput(message_id=f"message-{tenant}", content="hello"),
+        )
+
+    assert RunScope.of(request("tenant-a")).scoped_thread_id != RunScope.of(
+        request("tenant-b")
+    ).scoped_thread_id

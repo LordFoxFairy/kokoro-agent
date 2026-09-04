@@ -37,7 +37,7 @@ from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
-from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.domain.run.scope import RunScope, runtime_namespace
 
 _GATED = "danger"
 _TID = "call-A"
@@ -198,14 +198,16 @@ async def test_chat_message_failure_happens_before_dispatch_claim_and_ack() -> N
     assert agent.seen_payloads == []
 
 
-# LangGraph checkpoint 只使用 GA session_id；namespace 留在 GA 资源隔离边界。
-async def test_checkpoint_thread_id_uses_session_id() -> None:
+# LangGraph checkpoint locator 必须携带 trusted tenant 派生 namespace。
+async def test_checkpoint_thread_id_is_scoped_by_trusted_namespace() -> None:
     agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
     sup, _store = _supervisor(agent)
     await sup.dispatch(bus, request("rn", namespace="tenant-a", thread_id="c1"))
     await _drain(sup)
-    assert agent.seen_config.get("configurable") == {"thread_id": "s1"}
+    assert agent.seen_config.get("configurable") == {
+        "thread_id": f"{runtime_namespace(request('rn').execution_identity)}:s1"
+    }
 
 
 # ② 重复 run_id → 租约认领去重，不二次 invoke。

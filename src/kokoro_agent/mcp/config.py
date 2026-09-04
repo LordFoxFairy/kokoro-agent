@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 _NonEmpty = Annotated[str, StringConstraints(min_length=1)]
 
@@ -31,17 +31,17 @@ class McpServerConfig(BaseModel):
     transport: Literal["http", "streamable_http"] = "streamable_http"
     url: _NonEmpty
     allowed_tools: list[_NonEmpty]
-    timeout_s: int | None = None
+    timeout_s: int | None = Field(default=None, gt=0)
     headers: dict[str, str] | None = None
 
 
 class McpServerUnavailable(BaseModel):
     """已占名但不可用的定义位：名字是已知的（不触发未知名 fail-loud），定义不可用。
 
-    来源（mcp/local_registry.py 双源合并）：
+    来源（部署配置与 Capability adapter 双源合并）：
     - 活跃禁用文档遮蔽同名低层定义、不回退（Capability owner 的 fail-closed 语义）；
     - secret_ref=`handle:srt_...` 但本 run 批解失败（Capability 不可达/跨 namespace/未配解析出口）。
-    （`secret:path` 已废除为 fail-loud，不再降级为本位——见 mcp/local_registry.py。）
+    （`secret:path` 已废除为 fail-loud，不再降级为本位。）
     装配不炸；list 标注不可用，describe/call 返回 error 文本（不可达降级同轴）。
     """
 

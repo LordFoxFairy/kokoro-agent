@@ -92,7 +92,7 @@ async def build_toolset(
     tools: list[BaseTool] = list(resolve_tools([], core=agent.tools))
     tools.extend(toolbox.tools_for(scope.namespace))
     # Agent/Feature 只声明 MCP 名称；Capability client 在本次装配中解析可见配置。没有
-    # 外部 client 时，部署注册表是本地 fixture/兜底，不把 grant 或版本快照带入 Agent。
+    # 外部 client 时，仅使用已校验的部署配置，不组装本地 fixture 或伪 client。
     mcp_names = list(agent.mcp)
     if mcp_client is None:
         mcp_definitions: Mapping[str, McpServerEntry] = select_servers(

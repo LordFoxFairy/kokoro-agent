@@ -1,4 +1,4 @@
-"""Skill 包格式：本地 fixture 写入时校验，运行时由只读 backend 提供。
+"""Skill 包格式校验：Capability 包体进入只读 backend 前的边界解析。
 
 规范对齐 Anthropic agent skills（deepagents 原生 SkillsMiddleware 消费）：
 每 skill 一目录，SKILL.md 必须带 YAML frontmatter（name 与目录同名、description

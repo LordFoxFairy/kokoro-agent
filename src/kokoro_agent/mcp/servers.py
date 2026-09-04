@@ -3,8 +3,8 @@
 连接构造处挂 egress 防线（mcp/egress.py）：strict 模式给每个连接注入 GuardedTransport
 （连接前校验+锁定解析 IP，防 DNS rebinding，禁 redirect），off 模式放行。egress 模式是
 进程级策略，由 worker/main.py 从已校验的 AppConfig 配置（KOKORO_MCP_EGRESS_MODE；本层不读
-进程环境），本层经 current_egress_mode() 读取（gate/closure 脚本在 agent 注入 off 放行
-127.0.0.1 fixture）。
+进程环境），本层经 current_egress_mode() 读取（测试 gate/closure 仅在测试边界注入 off，
+放行 127.0.0.1 测试服务）。
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def build_connections(
         if server.timeout_s is not None:
             conn["timeout"] = float(server.timeout_s)
         if server.headers is not None:
-            # 凭据来自部署配置的 ${ENV} 展开 / Capability 句柄批解（mcp/config.py、mcp/local_registry.py）；
+            # 凭据来自部署配置的 ${ENV} 展开 / Capability 句柄批解（mcp/config.py、clients/mcp.py）；
             # wire/run_repository 全程无凭据。
             conn["headers"] = dict(server.headers)
         if client_factory is not None:

@@ -16,6 +16,9 @@
 - worker 具备 dispatch CAS、lease generation fencing、终态 claim、outbox republish、control reapply、
   sandbox cleanup retry 和 graceful drain。
 - Skill/MCP/Storage 通过窄 client port 接入；Agent 不读取 Capability/Storage 私库。
+- 生产发行包不包含本地 MCP/Skill fixture；缺少可选 Capability 时使用显式 `None`/unavailable
+  状态，不组装伪 client。LangGraph checkpoint locator 使用受信 identity 派生 namespace 加 session
+  id；Redis 默认复用共享实例 Agent logical DB `9`，并设置连接/读写超时。
 - canonical schema 的 operator use case 位于 `application/schema.py`；`cli.py` 与 `worker/main.py` 从该稳定边界导入，
   不再让 CLI 依赖 worker transport。
 - OpenAPI、protocol model、canonical schema、contract test 和 provenance 已进入本仓。

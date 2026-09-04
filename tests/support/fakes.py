@@ -627,10 +627,12 @@ class FakeRunRepository:
         return self.requests.get(run_id)
 
     async def get_request_scoped(
-        self, run_id: str, namespace: str
+        self, run_id: str, tenant_ref: str, namespace: str
     ) -> RunRequest | None:
         request = self.requests.get(run_id)
         if request is None:
+            return None
+        if request.execution_identity.tenant_ref != tenant_ref:
             return None
         if runtime_namespace(request.execution_identity) != namespace:
             return None

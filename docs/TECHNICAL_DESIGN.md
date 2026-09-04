@@ -35,9 +35,11 @@ HTTP/Redis request
   -> publish/replay durable event and cleanup sandbox
 ```
 
-同一 `run_id` 的请求 body 变化返回冲突；旧 worker 的 generation 不得写入新 owner 的 run。Redis 丢帧时由
-PostgreSQL pending intent/outbox 扫描恢复。控制命令使用 durable command ledger，重复 identity 重放已有
-receipt，digest 不同则拒绝。
+同一 `run_id` 的请求 body 变化返回冲突；旧 worker 的 generation 不得写入新 owner 的 run。Run ingress scoped
+读取同时校验 trusted tenant 与派生 namespace，SQL JOIN 也按 tenant 连接，避免只依赖
+hash namespace；chat scope 的 namespace 仍只能由同一 trusted identity 派生。Redis 丢帧时由 PostgreSQL
+pending intent/outbox 扫描恢复。控制命令使用 durable command ledger，重复
+identity 重放已有 receipt，digest 不同则拒绝。
 
 ## 3. Agent 装配
 

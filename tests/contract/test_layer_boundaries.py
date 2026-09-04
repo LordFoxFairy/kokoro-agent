@@ -86,6 +86,22 @@ def test_ports_do_not_import_database_or_transport_adapters() -> None:
     assert "http.server" not in service
 
 
+def test_scoped_run_lookup_carries_explicit_tenant_lineage() -> None:
+    """A derived namespace never replaces the tenant predicate on a JOIN."""
+
+    source = (
+        _root()
+        / "src"
+        / "kokoro_agent"
+        / "infrastructure"
+        / "postgres_run_leases.py"
+    ).read_text(encoding="utf-8")
+    assert "dispatch.tenant_id = claim.tenant_id" in source
+    assert "claim.tenant_id = %s" in source
+    assert "def get_request_scoped(" in source
+    assert "tenant_ref: str, namespace: str" in source
+
+
 def test_chat_service_only_contains_application_orchestration() -> None:
     root = _root() / "src" / "kokoro_agent" / "application" / "chat"
     service = (root / "service.py").read_text(encoding="utf-8")

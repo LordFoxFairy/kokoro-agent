@@ -198,9 +198,9 @@ class PostgresRunRepository:
         return await self._leases.get_request(run_id)
 
     async def get_request_scoped(
-        self, run_id: str, namespace: str
+        self, run_id: str, tenant_ref: str, namespace: str
     ) -> RunRequest | None:
-        return await self._leases.get_request_scoped(run_id, namespace)
+        return await self._leases.get_request_scoped(run_id, tenant_ref, namespace)
 
     async def list_paused(self) -> list[str]:
         return await self._leases.list_paused()

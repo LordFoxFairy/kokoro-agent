@@ -11,7 +11,8 @@
 - `database/schema.sql` 是唯一当前 DDL；没有 `database/migrations`、迁移 ledger、外键或跨仓 SQL。
 - 数据库时间列使用 `TIMESTAMPTZ(3)`；PostgreSQL adapter 在数据库与内部 epoch-millisecond 边界间转换。
 - HTTP ingress 先做 service bearer 与 trusted identity 校验，再打开 PostgreSQL/Redis；控制命令使用
-  `Idempotency-Key` 和 request digest；查询按派生 namespace 隔离。
+  `Idempotency-Key` 和 request digest；Run 查询按 trusted tenant 与派生 namespace 双重 predicate 隔离，
+  chat 查询只接受同一 identity 派生的 namespace。
 - worker 具备 dispatch CAS、lease generation fencing、终态 claim、outbox republish、control reapply、
   sandbox cleanup retry 和 graceful drain。
 - Skill/MCP/Storage 通过窄 client port 接入；Agent 不读取 Capability/Storage 私库。

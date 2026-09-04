@@ -178,9 +178,9 @@ class PostgresRunLeases:
         return RunRequest.model_validate_json(row["request_json"])
 
     async def get_request_scoped(
-        self, run_id: str, namespace: str
+        self, run_id: str, tenant_ref: str, namespace: str
     ) -> RunRequest | None:
-        """Read an ingress-visible run only inside its durable identity scope."""
+        """Read a run only when both tenant and derived namespace match."""
 
         async with connect_pg(self._context.database_url) as conn:
             async with conn.cursor() as cur:
@@ -189,13 +189,17 @@ class PostgresRunLeases:
                     """
                     SELECT claim.request_json
                     FROM {} AS claim
-                    INNER JOIN {} AS dispatch ON dispatch.run_id = claim.run_id
-                    WHERE claim.run_id = %s AND dispatch.namespace = %s
+                    INNER JOIN {} AS dispatch
+                      ON dispatch.run_id = claim.run_id
+                     AND dispatch.tenant_id = claim.tenant_id
+                    WHERE claim.run_id = %s
+                      AND claim.tenant_id = %s
+                      AND dispatch.namespace = %s
                     """.format(
                         qualified(self._context.schema, RUN_CLAIMS_TABLE),
                         qualified(self._context.schema, RUN_DISPATCHES_TABLE),
                     ),
-                    (run_id, namespace),
+                    (run_id, tenant_ref, namespace),
                 )
                 row = await fetch_one(cur)
         if row is None or row["request_json"] is None:

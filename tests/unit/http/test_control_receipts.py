@@ -38,8 +38,13 @@ class ReceiptRepository:
     async def get_request(self, run_id: str):
         return self.requests.get(run_id)
 
-    async def get_request_scoped(self, run_id: str, namespace: str):
-        if namespace != runtime_namespace(_identity()):
+    async def get_request_scoped(
+        self, run_id: str, tenant_ref: str, namespace: str
+    ):
+        if (
+            tenant_ref != _identity().tenant_ref
+            or namespace != runtime_namespace(_identity())
+        ):
             return None
         return self.requests.get(run_id)
 

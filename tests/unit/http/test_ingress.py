@@ -20,9 +20,9 @@ from support.chat import FakeChatRepository
 from support.fakes import FakeBus, FakeRunRepository
 
 
-def identity(subject: str = "subject") -> ExecutionIdentity:
+def identity(subject: str = "subject", tenant: str = "tenant") -> ExecutionIdentity:
     return ExecutionIdentity(
-        tenant_ref="tenant",
+        tenant_ref=tenant,
         actor=IdentityRef(kind="user", opaque_ref="actor"),
         subject=IdentityRef(kind="user", opaque_ref=subject),
         identity_assertion_ref="assertion",
@@ -239,6 +239,34 @@ async def test_evidence_hides_run_from_a_different_identity_scope() -> None:
 
     with pytest.raises(IngressError) as error:
         await ingress.evidence("run-1", execution_identity=identity("other-subject"))
+
+    assert error.value.status == 404
+    assert error.value.code == "run_not_found"
+
+
+@pytest.mark.asyncio
+async def test_evidence_hides_run_from_a_different_tenant_with_the_same_subject() -> None:
+    run_repository = FakeRunRepository()
+    request = RunRequest(
+        kind="run.request",
+        request_id="request-run-1",
+        run_id="run-1",
+        session_id="session-1",
+        feature_key="chat",
+        execution_identity=identity(),
+        input=RunInput(message_id="message-run-1", content="hello"),
+    )
+    run_repository.requests[request.run_id] = request
+    ingress = AgentIngress(
+        bus=FakeBus(),
+        run_repository=run_repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+
+    with pytest.raises(IngressError) as error:
+        await ingress.evidence(
+            "run-1", execution_identity=identity(tenant="other-tenant")
+        )
 
     assert error.value.status == 404
     assert error.value.code == "run_not_found"

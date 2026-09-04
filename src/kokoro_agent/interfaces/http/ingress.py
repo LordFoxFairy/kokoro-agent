@@ -253,7 +253,9 @@ class AgentIngress:
             )
         msg, request_digest = _parse_control(run_id, body, command_id=command_id)
         request = await self._run_repository.get_request_scoped(
-            run_id, runtime_namespace(execution_identity)
+            run_id,
+            execution_identity.tenant_ref,
+            runtime_namespace(execution_identity),
         )
         if request is None:
             raise IngressError(404, "run_not_found", "Run was not found")
@@ -304,7 +306,9 @@ class AgentIngress:
             )
         if (
             await self._run_repository.get_request_scoped(
-                run_id, runtime_namespace(execution_identity)
+                run_id,
+                execution_identity.tenant_ref,
+                runtime_namespace(execution_identity),
             )
             is None
         ):

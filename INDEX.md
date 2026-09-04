@@ -34,3 +34,7 @@ src/kokoro_agent/
 - [文档索引](docs/INDEX.md)
 - [技术设计](docs/TECHNICAL_DESIGN.md)
 - [当前实现](docs/CURRENT.md)
+
+本地 profile 复用共享 PostgreSQL `127.0.0.1:55433` 中的独立 database `kokoro_worker_agent`，以及共享
+Redis `127.0.0.1:56380` 的 logical DB `9`；运行入口不负责创建重复的基础设施容器。CI 使用 workflow
+显式配置的 service 地址，不依赖本地默认值。

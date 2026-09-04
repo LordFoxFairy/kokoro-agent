@@ -22,7 +22,7 @@ def test_redis_stream_sets_bounded_connection_timeouts(monkeypatch: pytest.Monke
         return _FakeRedis()
 
     monkeypatch.setattr(redis_module, "from_url", fake_from_url)
-    redis_module.RedisStream("redis://127.0.0.1:6379/9")
+    redis_module.RedisStream("redis://127.0.0.1:56380/9")
 
     assert captured_url.endswith("/9")
     assert captured_kwargs["socket_connect_timeout"] == 10.0

@@ -70,19 +70,25 @@ Redis LaunchRunRequest
 ```bash
 uv sync
 # Worker 使用已配置的真实 provider；模型凭据只通过环境变量或 secret 注入：
-KOKORO_REDIS_URL=redis://127.0.0.1:6379/9 \
-  KOKORO_AGENT_DATABASE_URL=postgresql://localhost/postgres KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
+KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
+  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro \
+  KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   ANTHROPIC_API_KEY=... uv run kokoro-agent-worker
 ```
 
 BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己的 PostgreSQL/Redis：
 
 ```bash
-KOKORO_REDIS_URL=redis://127.0.0.1:6379/9 \
-  KOKORO_AGENT_DATABASE_URL=postgresql://localhost/postgres KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
+KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
+  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro \
+  KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   KOKORO_INTERNAL_SECRET_AGENT=... KOKORO_AGENT_HTTP_PORT=4401 \
 uv run kokoro-agent-http
 ```
+
+以上是本地 profile 的共享依赖基线：复用 `127.0.0.1:55433` 的 PostgreSQL，并只使用 Agent 自己的
+`kokoro_worker_agent` database；复用 `127.0.0.1:56380` 的 Redis logical DB `9`。启动前先探测现有实例，
+不要为 Agent 重复启动 PostgreSQL 或 Redis。CI 继续使用 workflow 显式注入的 service 端口，不继承本地默认值。
 
 Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本地 profile 只启动 Web、BFF
 和它们的 PostgreSQL/Redis；此时 BFF readiness 仍可通过，Chat/调度执行路由返回稳定的

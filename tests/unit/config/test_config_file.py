@@ -11,9 +11,9 @@ from kokoro_agent.config_file import load_config_file
 
 FULL_TREE = """\
 stream:
-  redis_url: redis://127.0.0.1:6379/5
+  redis_url: redis://redis.example.test:6380/5
 database:
-  url: postgresql://127.0.0.1/postgres
+  url: postgresql://agent:example@postgres.example.test:5433/agent_config_test
   schema: kokoro_tree
 mcp:
   egress_mode: "off"
@@ -54,10 +54,13 @@ def _config_from(
 class TestConfigTree:
     def test_full_tree_lands_in_all_domains(self, tmp_path: Path) -> None:
         config = _config_from(tmp_path, FULL_TREE)
-        assert config.stream.redis_url == "redis://127.0.0.1:6379/5"
+        assert config.stream.redis_url == "redis://redis.example.test:6380/5"
         assert config.run_repository.lease_ttl_ms == 90_000
         assert config.mcp_egress_mode == "off"
-        assert config.database_url == "postgresql://127.0.0.1/postgres"
+        assert (
+            config.database_url
+            == "postgresql://agent:example@postgres.example.test:5433/agent_config_test"
+        )
         assert config.database_schema == "kokoro_tree"
         assert config.sandbox.local_shell_root == "/data/ws"
         assert config.sandbox.local_shell_timeout == 60

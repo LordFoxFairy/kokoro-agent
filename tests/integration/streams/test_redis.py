@@ -13,7 +13,7 @@ from pydantic import JsonValue, ValidationError
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol, validate_event
 from kokoro_agent.streams.redis import RedisStream, parse_xread_response
 
-REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/9")
+REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:56380/9")
 
 
 async def _collect(

@@ -58,9 +58,10 @@ from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream
 
 _DATABASE_URL = os.environ.get(
-    "KOKORO_AGENT_DATABASE_URL", "postgresql://127.0.0.1/postgres"
+    "KOKORO_AGENT_DATABASE_URL",
+    "postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro",
 )
-_REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:6379/9")
+_REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:56380/9")
 _INTERNAL_SECRET = "acceptance-internal-secret"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 

@@ -11,15 +11,17 @@ The acceptance gate requires reachable PostgreSQL and Redis instances. Missing
 or unreachable services are test failures, not skipped tests.
 
 ```bash
-export KOKORO_AGENT_DATABASE_URL=postgresql://127.0.0.1/postgres
-export KOKORO_REDIS_URL=redis://127.0.0.1:6379/9
+export KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro
+export KOKORO_REDIS_URL=redis://127.0.0.1:56380/9
 export KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent_acceptance
 export KOKORO_INTERNAL_SECRET_AGENT=acceptance-internal-secret
 ```
 
 The test suite creates a unique PostgreSQL schema per test and removes it after
 the test. Redis stream names are run-scoped where applicable; the launch stream
-uses unique run IDs.
+uses unique run IDs. These endpoints reuse the single local PostgreSQL and Redis
+instances; probe them before the gate and do not start duplicate containers. CI
+continues to use its explicitly injected service endpoints.
 
 ## HTTP owner interface
 

@@ -6,13 +6,18 @@
 
 ```bash
 uv sync --frozen
-KOKORO_AGENT_DATABASE_URL=TARGET uv run kokoro-agent-db-apply-schema
-KOKORO_AGENT_DATABASE_URL=TARGET KOKORO_REDIS_URL=TARGET uv run kokoro-agent-worker
-KOKORO_AGENT_DATABASE_URL=TARGET KOKORO_REDIS_URL=TARGET KOKORO_INTERNAL_SECRET_AGENT=TOKEN uv run kokoro-agent-http
+export KOKORO_AGENT_DATABASE_URL=postgresql://kokoro@127.0.0.1:55433/kokoro_worker_agent?password=kokoro
+export KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent
+export KOKORO_REDIS_URL=redis://127.0.0.1:56380/9
+
+uv run kokoro-agent-db-apply-schema
+uv run kokoro-agent-worker
+KOKORO_INTERNAL_SECRET_AGENT=TOKEN uv run kokoro-agent-http
 ```
 
-每个 owner 使用独立 database/schema 和 Redis logical DB；Agent 默认 Redis DB 为 9。不要在已有依赖时
-再次 `docker run`。
+本地先探测 `127.0.0.1:55433` 与 `127.0.0.1:56380`，复用已运行的共享实例。Agent 只使用独立 database
+`kokoro_worker_agent`、应用 schema `kokoro_agent` 和 Redis logical DB `9`；不要在已有依赖时再次
+`docker run`。CI 使用 workflow 显式注入的 service 地址，不使用这组本地默认值。
 
 ## 诊断顺序
 

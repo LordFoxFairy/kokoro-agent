@@ -3,7 +3,6 @@
 # psycopg's current stubs reject the runtime driver's dynamically composed SQL
 # and dict-row factory; ruff plus the integration contract tests cover these
 # adapter boundaries while the rest of the worker remains strict-checked.
-# pyright: reportCallIssue=false, reportArgumentType=false, reportReturnType=false
 
 from __future__ import annotations
 
@@ -13,7 +12,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
-from psycopg.rows import dict_row
+
+from kokoro_agent.infrastructure.sql import connect_dict_row, execute_sql
 
 DEFAULT_PG_SCHEMA = "kokoro_agent"
 
@@ -33,12 +33,10 @@ def utc_to_epoch_millis(value: datetime | None) -> int | None:
 
 
 @asynccontextmanager
-async def connect_pg(database_url: str) -> AsyncGenerator[psycopg.AsyncConnection[Any], None]:
-    conn = await psycopg.AsyncConnection.connect(
-        database_url,
-        autocommit=True,
-        row_factory=dict_row,
-    )
+async def connect_pg(
+    database_url: str,
+) -> AsyncGenerator[psycopg.AsyncConnection[Any], None]:
+    conn = await connect_dict_row(database_url)
     try:
         yield conn
     finally:
@@ -51,7 +49,7 @@ def qualified(schema: str, name: str) -> str:
 
 async def ensure_schema(conn: psycopg.AsyncConnection[Any], schema: str) -> None:
     async with conn.cursor() as cur:
-        await cur.execute(f"CREATE SCHEMA IF NOT EXISTS \"{_quote_ident(schema)}\"")
+        await execute_sql(cur, f'CREATE SCHEMA IF NOT EXISTS "{_quote_ident(schema)}"')
 
 
 def _quote_ident(value: str) -> str:

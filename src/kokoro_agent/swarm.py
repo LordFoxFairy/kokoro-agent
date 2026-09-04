@@ -1,4 +1,3 @@
-# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportArgumentType=false, reportUnknownArgumentType=false
 """官方 ``langgraph-swarm`` 的最薄接线。
 
 每个 peer 已由 ``AgentFactory`` 通过 DeepAgents ``create_deep_agent`` 构造；本模块只把
@@ -10,11 +9,12 @@ compiler 模块或编译抽象。
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
-from langgraph_swarm import SwarmState, create_swarm as _create_swarm
+import langgraph_swarm
+from langgraph_swarm import SwarmState
 
 from kokoro_agent.execution.protocols import AgentRunnable
 
@@ -33,13 +33,21 @@ def create_swarm(
     """
     if len(peers) < 2:
         raise ValueError("swarm requires at least two peers")
-    native: object = _create_swarm(
-        list(peers),
+    # langgraph-swarm exposes a Pregel-generic signature that is narrower than
+    # the DeepAgents runnable accepted at runtime.  The official call is the
+    # sole dynamic boundary; the result is narrowed by the guard below.
+    native_constructor: Any = getattr(langgraph_swarm, "create_swarm")
+    native_agents: Any = list(peers)
+    builder: Any = native_constructor(
+        native_agents,
         default_active_agent=entry_agent,
         state_schema=SwarmState,
-    ).compile(checkpointer=checkpointer, store=store)
+    )
+    native: object = builder.compile(checkpointer=checkpointer, store=store)
     if not _is_agent_runnable(native):
-        raise TypeError("official Swarm returned an object without the DeepAgents invocation surface")
+        raise TypeError(
+            "official Swarm returned an object without the DeepAgents invocation surface"
+        )
     return native
 
 

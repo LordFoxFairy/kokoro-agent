@@ -7,7 +7,6 @@ schema/顺序漂移、本 run 的 server 集差异都不改工具面字节，前
 """
 
 # BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，create_deep_agent 同类豁免）。
-# pyright: reportUnknownMemberType=false
 
 from __future__ import annotations
 
@@ -75,7 +74,10 @@ async def _on_elicitation(
     params: ElicitRequestParams,
     context: CallbackContext,
 ) -> ElicitResult:
-    del mcp_context, context  # 桥不需要会话/回调上下文，仅按 ContextVar 配对当前执行任务。
+    del (
+        mcp_context,
+        context,
+    )  # 桥不需要会话/回调上下文，仅按 ContextVar 配对当前执行任务。
     bridge = _ELICIT_BRIDGE.get()
     # 无桥（如无工具运行时的直调路径）或非 form 形态（URL elicitation，V1 不做表单驱动）：礼貌 decline。
     if bridge is None or not isinstance(params, ElicitRequestFormParams):
@@ -85,12 +87,26 @@ async def _on_elicitation(
 
 def _stringify_result(result: object) -> str:
     # MCP 工具返回标准 content blocks（外部载荷）：稳定面统一收敛为字符串。
-    return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
+    return (
+        result
+        if isinstance(result, str)
+        else json.dumps(result, ensure_ascii=False, default=str)
+    )
 
 
 # 内层 adapter 工具经空 callbacks 调用：与 langgraph 回调树脱钩，避免作为嵌套工具泄漏进 v3 投影
 # （模型只见稳定三工具，远端工具往返是 mcp_call 的实现细节，不单独上 wire）。
 _DETACHED_CONFIG: RunnableConfig = {"callbacks": []}
+
+
+async def _invoke_bound_tool(
+    tool: BaseTool, arguments: object, config: RunnableConfig
+) -> object:
+    """Invoke an adapter tool at the single untyped ``BaseTool`` edge."""
+
+    invoke: Any = getattr(tool, "ainvoke")
+    result: object = await invoke(arguments, config)
+    return result
 
 
 async def _call_with_elicitation(
@@ -109,14 +125,16 @@ async def _call_with_elicitation(
     bridge = _ElicitBridge()
     token = _ELICIT_BRIDGE.set(bridge)
     invoke_task: asyncio.Task[object] = asyncio.ensure_future(
-        found.ainvoke(arguments or {}, _DETACHED_CONFIG)
+        _invoke_bound_tool(found, arguments or {}, _DETACHED_CONFIG)
     )
     next_task: asyncio.Task[_ElicitItem] | None = None
     try:
         while True:
             if next_task is None:
                 next_task = asyncio.ensure_future(bridge.next())
-            await asyncio.wait({invoke_task, next_task}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(
+                {invoke_task, next_task}, return_when=asyncio.FIRST_COMPLETED
+            )
             if invoke_task.done():
                 exc = invoke_task.exception()
                 if exc is not None:  # 远端执行失败：错误文本给模型自纠，不炸 run。
@@ -127,13 +145,18 @@ async def _call_with_elicitation(
             outcome = request_input(
                 request_id=request_id,
                 schema=params.requestedSchema,
-                context={"name": mcp_tool_name(server, tool), "args": {"message": params.message}},
+                context={
+                    "name": mcp_tool_name(server, tool),
+                    "args": {"message": params.message},
+                },
             )
             if isinstance(outcome, InputRejected):
                 fut.set_result(ElicitResult(action="decline"))
             else:
                 fut.set_result(
-                    ElicitResult.model_validate({"action": "accept", "content": outcome.value})
+                    ElicitResult.model_validate(
+                        {"action": "accept", "content": outcome.value}
+                    )
                 )
     finally:
         _ELICIT_BRIDGE.reset(token)
@@ -195,7 +218,9 @@ def make_mcp_tools(
             try:
                 raw = await client.get_tools(server_name=server)
             except Exception as exc:  # 运行时不可达=外部常态：该次调用降级，不炸 run。
-                raise McpConnectionError(f"mcp server {server!r} unreachable: {exc}") from exc
+                raise McpConnectionError(
+                    f"mcp server {server!r} unreachable: {exc}"
+                ) from exc
             allowed = frozenset(config.allowed_tools)
             tools_cache[server] = [t for t in raw if t.name in allowed]
         return tools_cache[server]
@@ -216,7 +241,11 @@ def make_mcp_tools(
             if not tools:
                 lines.append(f"{server}: （白名单内无可用工具）")
             for tool in tools:
-                summary = (tool.description or "").strip().splitlines()[0] if tool.description else ""
+                summary = (
+                    (tool.description or "").strip().splitlines()[0]
+                    if tool.description
+                    else ""
+                )
                 lines.append(f"{server}/{tool.name} — {summary}")
         return "\n".join(lines)
 
@@ -259,7 +288,9 @@ def make_mcp_tools(
         if runtime is None:
             # 无工具运行时（如单测直调 ainvoke）：不接 elicitation 桥，直接调用。
             try:
-                return _stringify_result(await found.ainvoke(arguments or {}, _DETACHED_CONFIG))
+                return _stringify_result(
+                    await _invoke_bound_tool(found, arguments or {}, _DETACHED_CONFIG)
+                )
             except Exception as exc:  # 远端执行失败：错误文本给模型自纠，不炸 run。
                 return f"error: {mcp_tool_name(server, tool)} 调用失败：{exc}"
         # tool_call_id 在图内工具节点恒有值（幂等锚）；类型上收窄空值兜底。

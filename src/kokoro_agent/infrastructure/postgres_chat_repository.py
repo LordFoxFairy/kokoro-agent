@@ -2,7 +2,6 @@
 
 # psycopg's dict-row and dynamic SQL APIs are runtime-typed in the installed
 # version; contract tests cover this adapter boundary.
-# pyright: reportCallIssue=false, reportArgumentType=false, reportReturnType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportIncompatibleMethodOverride=false
 
 from __future__ import annotations
 
@@ -40,6 +39,9 @@ from kokoro_agent.domain.chat.repositories import (
     ChatIdentityConflict,
 )
 from kokoro_agent.domain.run.models import LeaseFence
+from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+
+
 class PostgresChatRepositorySettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -83,7 +85,8 @@ class PostgresChatRepository:
         table = qualified(self._schema, CHAT_SESSIONS_TABLE)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     f"""
                     SELECT session_id, project_ref, title,
                            (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
@@ -93,14 +96,15 @@ class PostgresChatRepository:
                     """,
                     (namespace, session_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
                 if row is not None:
                     existing = dict(row)
                     if existing["project_ref"] != project_ref:
                         raise ChatIdentityConflict(
                             f"chat session identity drift for {session_id!r}"
                         )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         f"""
                         UPDATE {table}
                         SET updated_at = GREATEST(updated_at, to_timestamp(%s / 1000.0))
@@ -111,12 +115,13 @@ class PostgresChatRepository:
                         """,
                         (updated_at, namespace, session_id),
                     )
-                    updated = await cur.fetchone()
+                    updated = await fetch_one(cur)
                     if updated is None:
                         raise RuntimeError("chat session update returned no row")
                     return ChatSessionRecord(**dict(updated))
 
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     f"""
                     INSERT INTO {table}
                         (namespace, session_id, project_ref, title, created_at, updated_at)
@@ -136,11 +141,12 @@ class PostgresChatRepository:
                         updated_at,
                     ),
                 )
-                inserted = await cur.fetchone()
+                inserted = await fetch_one(cur)
                 if inserted is not None:
                     return ChatSessionRecord(**dict(inserted))
 
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     f"""
                     SELECT session_id, project_ref, title,
                            (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
@@ -150,7 +156,7 @@ class PostgresChatRepository:
                     """,
                     (namespace, session_id),
                 )
-                raced = await cur.fetchone()
+                raced = await fetch_one(cur)
         if raced is None:
             raise RuntimeError("chat session insert raced and row is missing")
         raced_record = ChatSessionRecord(**dict(raced))
@@ -191,7 +197,8 @@ class PostgresChatRepository:
         params.append(limit)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     f"""
                     SELECT session_id, project_ref, title,
                            (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
@@ -203,7 +210,7 @@ class PostgresChatRepository:
                     """,
                     tuple(params),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return tuple(ChatSessionRecord(**dict(row)) for row in rows)
 
     async def append(self, projection: ChatProjection) -> ChatEventRecord:
@@ -243,7 +250,8 @@ class PostgresChatRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT 1
                         FROM {}
@@ -258,7 +266,7 @@ class PostgresChatRepository:
                         ),
                         params,
                     )
-                    if await cur.fetchone() is None:
+                    if await fetch_one(cur) is None:
                         return None
                     return await self._append_projection(cur, projection)
 
@@ -274,7 +282,8 @@ class PostgresChatRepository:
         _validate_page(after_seq, limit)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT chat_event_id, namespace, session_id, run_id, source_index,
                            chat_message_id, event_type, payload_json,
@@ -287,7 +296,7 @@ class PostgresChatRepository:
                     """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                     (namespace, session_id, after_seq, limit),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return tuple(ChatEventRecord(**dict(row)) for row in rows)
 
     async def history(
@@ -296,7 +305,8 @@ class PostgresChatRepository:
         _validate_page(after_seq, limit)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT chat_message_id, namespace, session_id, run_id, role,
                            content, status,
@@ -310,13 +320,14 @@ class PostgresChatRepository:
                     """.format(qualified(self._schema, CHAT_MESSAGES_TABLE)),
                     (namespace, session_id, after_seq, limit),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return tuple(ChatMessageRecord(**dict(row)) for row in rows)
 
     async def next_source_index(self, namespace: str, run_id: str) -> int:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT max(source_index) AS source_index
                     FROM {}
@@ -324,14 +335,15 @@ class PostgresChatRepository:
                     """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                     (namespace, run_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         value = row["source_index"] if row is not None else None
         return 0 if value is None else int(value) + 1
 
     async def watermark(self, namespace: str, session_id: str) -> int:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT max(seq) AS seq
                     FROM {}
@@ -339,7 +351,7 @@ class PostgresChatRepository:
                     """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
                     (namespace, session_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         value = row["seq"] if row is not None else None
         return 0 if value is None else int(value)
 
@@ -366,7 +378,8 @@ class PostgresChatRepository:
                 ),
                 seq=seq,
             )
-            await cur.execute(
+            await execute_sql(
+                cur,
                 """
                 INSERT INTO {} (
                     namespace, session_id, run_id, source_index, chat_message_id,
@@ -403,7 +416,8 @@ class PostgresChatRepository:
             cur, "message", message.namespace, message.session_id
         )
         record = ChatMessageRecord(**message.model_dump(), seq=seq)
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             INSERT INTO {} (
                 chat_message_id, namespace, session_id, run_id, role,
@@ -430,7 +444,8 @@ class PostgresChatRepository:
         self, cur: Any, kind: str, namespace: str, session_id: str
     ) -> int:
         table = qualified(self._schema, CHAT_SEQUENCES_TABLE)
-        await cur.execute(
+        await execute_sql(
+            cur,
             f"""
             INSERT INTO {table} (kind, namespace, session_id, seq)
             VALUES (%s, %s, %s, 0)
@@ -438,7 +453,8 @@ class PostgresChatRepository:
             """,
             (kind, namespace, session_id),
         )
-        await cur.execute(
+        await execute_sql(
+            cur,
             f"""
             SELECT seq
             FROM {table}
@@ -447,11 +463,12 @@ class PostgresChatRepository:
             """,
             (kind, namespace, session_id),
         )
-        row = await cur.fetchone()
+        row = await fetch_one(cur)
         if row is None:
             raise RuntimeError(f"failed to lock {kind} sequence for {session_id!r}")
         seq = int(row["seq"]) + 1
-        await cur.execute(
+        await execute_sql(
+            cur,
             f"""
             UPDATE {table}
             SET seq = %s
@@ -464,7 +481,8 @@ class PostgresChatRepository:
     async def _get_event(
         self, cur: Any, namespace: str, run_id: str, source_index: int
     ) -> ChatEventRecord | None:
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             SELECT chat_event_id, namespace, session_id, run_id, source_index,
                    chat_message_id, event_type, payload_json,
@@ -474,13 +492,14 @@ class PostgresChatRepository:
             """.format(qualified(self._schema, CHAT_EVENTS_TABLE)),
             (namespace, run_id, source_index),
         )
-        row = await cur.fetchone()
+        row = await fetch_one(cur)
         return None if row is None else ChatEventRecord(**dict(row))
 
     async def _get_message(
         self, cur: Any, chat_message_id: str
     ) -> ChatMessageRecord | None:
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             SELECT chat_message_id, namespace, session_id, run_id, role,
                    content, status,
@@ -491,14 +510,14 @@ class PostgresChatRepository:
             """.format(qualified(self._schema, CHAT_MESSAGES_TABLE)),
             (chat_message_id,),
         )
-        row = await cur.fetchone()
+        row = await fetch_one(cur)
         return None if row is None else ChatMessageRecord(**dict(row))
 
     async def _lock_identity(self, cur: Any, identity: str) -> None:
         """Serialize duplicate immutable identities before allocating a sequence."""
 
-        await cur.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (identity,)
+        await execute_sql(
+            cur, "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (identity,)
         )
 
 

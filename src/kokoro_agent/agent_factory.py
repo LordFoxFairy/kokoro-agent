@@ -1,4 +1,3 @@
-# pyright: reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownVariableType=false
 """GA 唯一的 Agent 构造入口：Agent 定义进，DeepAgents native runnable 出。
 
 构造顺序：
@@ -16,8 +15,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import logging
+from typing import Any
 
-from deepagents import create_deep_agent
+import deepagents
 from langchain_core.tools import BaseTool
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
@@ -122,7 +122,11 @@ async def build_deep_agent(
     # declaration and worker-owned services into its documented arguments.
     # This is the only construction call in GA.  The returned object is the
     # upstream DeepAgents/LangGraph runnable; GA does not wrap its loop/state.
-    candidate: object = create_deep_agent(
+    # The upstream factory's ResponseT/ContextT generics are intentionally
+    # unresolved in the installed stubs.  Keep that uncertainty at this one
+    # official-constructor boundary; the returned value is validated below.
+    native_constructor: Any = getattr(deepagents, "create_deep_agent")
+    candidate: object = native_constructor(
         model=make_chat_model(
             dependencies.model,
             select_model_label(

@@ -2,21 +2,21 @@
 
 # LangGraph/psycopg expose the connection and row factory through runtime
 # protocols whose current stubs do not describe the installed versions.
-# pyright: reportCallIssue=false, reportArgumentType=false, reportIncompatibleMethodOverride=false
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, ConfigDict
-from psycopg import AsyncConnection
-from psycopg.rows import dict_row
 
 from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA
+from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import verify_agent_schema
+from kokoro_agent.infrastructure.sql import execute_sql
 
 
 class CheckpointSettings(BaseModel):
@@ -30,17 +30,12 @@ class CheckpointSettings(BaseModel):
 async def make_checkpointer(
     settings: CheckpointSettings,
 ) -> AsyncGenerator[BaseCheckpointSaver[str], None]:
-    conn = await AsyncConnection.connect(
-        settings.database_url,
-        autocommit=True,
-        row_factory=dict_row,
-    )
-    try:
+    async with connect_pg(settings.database_url) as conn:
         await verify_agent_schema(conn, settings.schema_name)
         # LangGraph's saver follows the connection search path; it does not
         # accept a schema_name constructor argument in the current release.
-        await conn.execute(f'SET search_path TO "{settings.schema_name.replace(chr(34), chr(34) * 2)}"')
-        saver = AsyncPostgresSaver(conn)
+        escaped_schema = settings.schema_name.replace(chr(34), chr(34) * 2)
+        await execute_sql(conn, f'SET search_path TO "{escaped_schema}"')
+        saver_constructor: Any = AsyncPostgresSaver
+        saver: BaseCheckpointSaver[str] = saver_constructor(conn)
         yield saver
-    finally:
-        await conn.close()

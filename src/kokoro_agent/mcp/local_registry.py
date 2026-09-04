@@ -2,7 +2,6 @@
 
 # This compatibility fixture accepts a mapping supplied by the process
 # boundary; the installed pyright stubs infer it as non-null.
-# pyright: reportIncompatibleMethodOverride=false, reportUnnecessaryComparison=false
 
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from pydantic import BaseModel, ConfigDict
 from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.protocol import ExecutionIdentity
 from kokoro_agent.mcp.config import (
-    McpConfigError,
     McpServerConfig,
     McpServerEntry,
     McpServerUnavailable,
@@ -55,8 +53,6 @@ async def make_local_mcp_client(
 ) -> AsyncGenerator[LocalMcpClient, None]:
     del settings
     configure_egress_mode(egress_mode_from_env(env))
-    if env is None:
-        raise McpConfigError("env required")
     yield LocalMcpClient(env)
 
 

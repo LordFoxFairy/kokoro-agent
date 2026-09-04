@@ -9,7 +9,6 @@ resume 载荷形态（supervisor 侧 submit_resume_value 产出）：list[{reque
 """
 
 # jsonschema 无 py.typed：校验调用与 ValidationError 属性均为未解类型（上游缺口，边界隔离于本函数）。
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
 
@@ -51,7 +50,9 @@ class _InputResumeItem(BaseModel):
     reason: str | None = None
 
 
-_INPUT_RESUME_ADAPTER: TypeAdapter[list[_InputResumeItem]] = TypeAdapter(list[_InputResumeItem])
+_INPUT_RESUME_ADAPTER: TypeAdapter[list[_InputResumeItem]] = TypeAdapter(
+    list[_InputResumeItem]
+)
 
 
 def _pick(raw: object, request_id: str) -> _InputResumeItem:
@@ -63,7 +64,9 @@ def _pick(raw: object, request_id: str) -> _InputResumeItem:
     return mine
 
 
-def _schema_error(value: dict[str, JsonValue], schema: dict[str, JsonValue]) -> str | None:
+def _schema_error(
+    value: dict[str, JsonValue], schema: dict[str, JsonValue]
+) -> str | None:
     # jsonschema 校验靠近消费点：不合法返回错误文案（供人重填），不抛出、不炸 run。
     try:
         jsonschema.validate(value, schema)

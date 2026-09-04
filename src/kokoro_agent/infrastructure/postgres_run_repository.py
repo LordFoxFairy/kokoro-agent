@@ -8,7 +8,6 @@ lifecycle, and PostgreSQL-specific configuration.
 # The adapter deliberately builds qualified SQL identifiers at runtime and
 # consumes psycopg dict rows. The package stubs currently model only literal
 # SQL/tuple rows, so those boundary diagnostics are covered by ruff/tests.
-# pyright: reportCallIssue=false, reportArgumentType=false, reportReturnType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportIncompatibleMethodOverride=false, reportUnusedClass=false
 
 from __future__ import annotations
 
@@ -21,13 +20,14 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.protocol import RunRequest
 from kokoro_agent.infrastructure.postgres import (
     DEFAULT_PG_SCHEMA,
     connect_pg,
     qualified,
     utc_to_epoch_millis,
 )
+from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.domain.run.repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
@@ -85,19 +85,6 @@ def _receipt_status(command_status: str) -> ControlAdmissionStatus:
     raise RuntimeError(f"unknown control command status: {command_status!r}")
 
 
-class _OutboxEntry(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    durable_seq: int
-    event_id: str
-    kind: str
-    status: str
-    index: int | None = None
-    timestamp: int | None = None
-    payload_json: str | None = None
-    published_at: int | None = None
-
-
 class _DispatchLeaseConflict(Exception):
     """Abort the dispatch transaction when its lease row cannot be created."""
 
@@ -119,12 +106,24 @@ def _sandbox_cleanup_from_row(row: dict[str, Any]) -> SandboxCleanupIntent:
         cleanup_id=str(row["cleanup_id"]),
         run_id=str(row["run_id"]),
         lease_generation=int(row["lease_generation"]),
-        backend_kind=str(row["backend_kind"]),
+        backend_kind=_sandbox_backend_kind(row["backend_kind"]),
         sandbox_id=str(row["sandbox_id"]),
         teardown_ref=str(row["teardown_ref"]),
         attempt_count=int(row["attempt_count"]),
         next_attempt_at=utc_to_epoch_millis(row["next_attempt_at"]) or 0,
     )
+
+
+def _sandbox_backend_kind(value: object) -> SandboxBackendKind:
+    """Validate the database enum before it enters the domain model."""
+
+    if value == "docker":
+        return "docker"
+    if value == "e2b":
+        return "e2b"
+    if value == "custom":
+        return "custom"
+    raise ValueError(f"unknown sandbox backend kind: {value!r}")
 
 
 class RunRepositorySettings(BaseModel):
@@ -165,7 +164,8 @@ class PostgresRunRepository:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     INSERT INTO {} (
                         run_id, tenant_id, session_id, namespace, request_json, fence, status,
@@ -186,9 +186,10 @@ class PostgresRunRepository:
                         now,
                     ),
                 )
-                if await cur.fetchone() is not None:
+                if await fetch_one(cur) is not None:
                     return DispatchAdmission(replayed=False, publish_required=True)
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT fence, status
                     FROM {}
@@ -196,7 +197,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
                     (request.run_id,),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
                 if row is None:
                     raise RuntimeError(
                         f"dispatch row disappeared for {request.run_id!r}"
@@ -222,7 +223,8 @@ class PostgresRunRepository:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     INSERT INTO {} (
                         run_id, command_id, request_digest, status, body,
@@ -234,7 +236,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
                     (run_id, command_id, request_digest, body, now, now),
                 )
-                if await cur.fetchone() is not None:
+                if await fetch_one(cur) is not None:
                     return ControlAdmission(
                         receipt=ControlAdmissionReceipt(
                             run_id=run_id,
@@ -245,7 +247,8 @@ class PostgresRunRepository:
                         replayed=False,
                         publish_required=True,
                     )
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT run_id, command_id, request_digest, status, error_code
                     FROM {}
@@ -253,7 +256,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
                     (run_id, command_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
                 if row is None:
                     raise RuntimeError(
                         f"control command disappeared for {command_id!r}"
@@ -294,7 +297,8 @@ class PostgresRunRepository:
     async def try_claim(self, request: RunRequest, owner: str) -> LeaseFence | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     INSERT INTO {} (
                         run_id, tenant_id, request_json, owner, lease_generation,
@@ -311,7 +315,7 @@ class PostgresRunRepository:
                         self._clock() + self._ttl_ms,
                     ),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
@@ -324,7 +328,8 @@ class PostgresRunRepository:
             async with connect_pg(self._database_url) as conn:
                 async with conn.transaction():
                     async with conn.cursor() as cur:
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             UPDATE {}
                             SET status = 'claimed', claimed_by = %s,
@@ -339,9 +344,10 @@ class PostgresRunRepository:
                                 request.model_dump_json(),
                             ),
                         )
-                        if await cur.fetchone() is None:
+                        if await fetch_one(cur) is None:
                             return None
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             INSERT INTO {} (
                                 run_id, tenant_id, request_json, owner, lease_generation,
@@ -359,7 +365,7 @@ class PostgresRunRepository:
                                 now + self._ttl_ms,
                             ),
                         )
-                        row = await cur.fetchone()
+                        row = await fetch_one(cur)
                         if row is None:
                             # Returning here would commit the preceding pending→claimed
                             # update. Raising through the transaction context rolls it back.
@@ -374,7 +380,8 @@ class PostgresRunRepository:
     async def get_pending_dispatch(self, run_id: str) -> RunRequest | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT request_json
                     FROM {}
@@ -382,7 +389,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
                     (run_id,),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return RunRequest.model_validate_json(row["request_json"])
@@ -392,7 +399,8 @@ class PostgresRunRepository:
             raise ValueError("limit must be between 1 and 1000")
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT request_json
                     FROM {}
@@ -402,7 +410,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
                     (limit,),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return [RunRequest.model_validate_json(row["request_json"]) for row in rows]
 
     async def quarantine_dispatch(
@@ -410,7 +418,8 @@ class PostgresRunRepository:
     ) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     INSERT INTO {} (raw_hash, source, reason, occurred_at)
                     VALUES (%s, %s, %s, to_timestamp(%s / 1000.0))
@@ -440,7 +449,8 @@ class PostgresRunRepository:
                     )
                     if not lease_current:
                         return None
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT durable_counter, event_index_counter, terminal_fence_seq
                         FROM {}
@@ -449,14 +459,15 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (run_id,),
                     )
-                    row = await cur.fetchone()
+                    row = await fetch_one(cur)
                     assert row is not None
                     seq = int(row["durable_counter"]) + 1
                     fence = row["terminal_fence_seq"]
                     if terminal and fence is None:
                         fence = seq
                     if fence is not None and seq > int(fence):
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             UPDATE {}
                             SET durable_counter = %s, terminal_fence_seq = %s
@@ -464,7 +475,8 @@ class PostgresRunRepository:
                             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                             (seq, fence, run_id),
                         )
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             INSERT INTO {} (
                                 run_id, durable_seq, event_id, kind, status, index_value,
@@ -483,7 +495,8 @@ class PostgresRunRepository:
                         )
                         return None
                     index = int(row["event_index_counter"])
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET durable_counter = %s,
@@ -493,7 +506,8 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (seq, index + 1, fence, run_id),
                     )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         INSERT INTO {} (
                             run_id, durable_seq, event_id, kind, status, index_value,
@@ -510,7 +524,8 @@ class PostgresRunRepository:
 
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT event_index_counter
                     FROM {}
@@ -518,7 +533,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (run_id,),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         return 0 if row is None else int(row["event_index_counter"])
 
     async def reserve_event_index(self, run_id: str, lease: LeaseFence) -> int | None:
@@ -529,7 +544,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return None
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET event_index_counter = event_index_counter + 1
@@ -538,7 +554,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (run_id,),
                     )
-                    row = await cur.fetchone()
+                    row = await fetch_one(cur)
                     if row is None:
                         raise RuntimeError(
                             f"failed to reserve an event index for {run_id!r}"
@@ -548,7 +564,8 @@ class PostgresRunRepository:
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET status = 'published',
@@ -565,15 +582,16 @@ class PostgresRunRepository:
     async def list_open_outbox_runs(self) -> list[str]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT DISTINCT run_id
                     FROM {}
                     WHERE status IN ('queued', 'published')
                     ORDER BY run_id ASC
-                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE))
+                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return [str(row["run_id"]) for row in rows]
 
     async def reconcile_receipts(
@@ -583,7 +601,8 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT durable_seq, event_id, kind, status, index_value,
                                (extract(epoch FROM occurred_at) * 1000)::bigint AS timestamp,
@@ -595,10 +614,11 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                         (run_id,),
                     )
-                    live_rows = await cur.fetchall()
+                    live_rows = await fetch_all(cur)
                     if not live_rows:
                         return ReceiptReconcile()
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT durable_seq, event_id, status, reason, created_at
                         FROM {}
@@ -607,7 +627,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_RECEIPTS_TABLE)),
                         (run_id,),
                     )
-                    receipt_rows = await cur.fetchall()
+                    receipt_rows = await fetch_all(cur)
                     receipts = {
                         int(row["durable_seq"]): dict(row) for row in receipt_rows
                     }
@@ -618,7 +638,8 @@ class PostgresRunRepository:
                     )
                     if rejected:
                         seq = rejected[0]
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             UPDATE {}
                             SET terminal_fence_seq = CASE
@@ -631,7 +652,7 @@ class PostgresRunRepository:
                             (seq, seq, run_id),
                         )
                         return ReceiptReconcile(rejected_seq=seq)
-                    republish = []
+                    republish: list[OutboxFrame] = []
                     for row in live_rows:
                         durable_seq = int(row["durable_seq"])
                         published_at = row["published_at"]
@@ -643,7 +664,8 @@ class PostgresRunRepository:
                         ):
                             republish.append(_outbox_row_to_frame(row, run_id=run_id))
                     for frame in republish:
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             UPDATE {}
                             SET published_at = to_timestamp(%s / 1000.0)
@@ -651,7 +673,8 @@ class PostgresRunRepository:
                             """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                             (now, run_id, frame.durable_seq),
                         )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT run_id, persisted_seq, projected_seq, consumed_seq,
                                producer_close_requested, producer_closed, updated_at
@@ -662,7 +685,7 @@ class PostgresRunRepository:
                         ),
                         (run_id,),
                     )
-                    manifest = await cur.fetchone()
+                    manifest = await fetch_one(cur)
                     if manifest is None:
                         return ReceiptReconcile(
                             receipt_state_lost=True, republish=republish
@@ -686,7 +709,8 @@ class PostgresRunRepository:
                             break
                         advanced = next_seq
                     if advanced > consumed:
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             INSERT INTO {} (
                                 run_id, persisted_seq, projected_seq, consumed_seq,
@@ -709,14 +733,16 @@ class PostgresRunRepository:
                                 now,
                             ),
                         )
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             DELETE FROM {}
                             WHERE run_id = %s AND durable_seq <= %s
                             """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                             (run_id, advanced),
                         )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT COUNT(*) AS open_count
                         FROM {}
@@ -724,7 +750,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                         (run_id,),
                     )
-                    open_count_row = await cur.fetchone()
+                    open_count_row = await fetch_one(cur)
                     if open_count_row is None:
                         raise RuntimeError(
                             f"failed to count open outbox rows for {run_id!r}"
@@ -738,7 +764,8 @@ class PostgresRunRepository:
                     )
                     close_requested = False
                     if fence is not None and advanced >= int(fence) and open_count == 0:
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             UPDATE {}
                             SET producer_close_requested = TRUE,
@@ -766,7 +793,8 @@ class PostgresRunRepository:
     ) -> bool:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT terminal
                     FROM {}
@@ -774,10 +802,11 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (run_id,),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
                 if row is None:
                     return False
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT request_digest
                     FROM {}
@@ -785,7 +814,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE)),
                     (run_id, command_id),
                 )
-                command = await cur.fetchone()
+                command = await fetch_one(cur)
                 if command is None:
                     return False
                 if (
@@ -795,7 +824,8 @@ class PostgresRunRepository:
                     raise ControlCommandConflict(
                         f"command id {command_id!r} was reused with a different request digest"
                     )
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                         SET status = 'persisted', fingerprint = %s,
@@ -810,7 +840,7 @@ class PostgresRunRepository:
                         command_id,
                     ),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def mark_control_applied(self, run_id: str, command_id: str) -> None:
         await self._update_control_status(run_id, command_id, "applied")
@@ -821,7 +851,8 @@ class PostgresRunRepository:
     async def list_pending_control_delivery(self) -> list[RunControlCommandRecord]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT i.run_id, i.command_id, i.request_digest, i.fingerprint, i.body
                     FROM {} i
@@ -831,16 +862,17 @@ class PostgresRunRepository:
                     """.format(
                         qualified(self._schema, RUN_CONTROL_COMMANDS_TABLE),
                         qualified(self._schema, RUN_CLAIMS_TABLE),
-                    )
+                    ),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return [RunControlCommandRecord(**dict(row)) for row in rows]
 
     async def renew(self, run_id: str, lease: LeaseFence) -> bool:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET lease_expires_at = to_timestamp(%s / 1000.0)
@@ -860,12 +892,13 @@ class PostgresRunRepository:
                         now,
                     ),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def adopt(self, run_id: str, owner: str) -> LeaseFence | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET owner = %s,
@@ -878,7 +911,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (owner, self._clock() + self._ttl_ms, run_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
@@ -887,7 +920,8 @@ class PostgresRunRepository:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET lease_expires_at = NULL
@@ -901,13 +935,14 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (run_id, lease.owner, lease.generation, now),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def reclaim_expired(self, owner: str) -> list[LeasedRun]:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET owner = %s,
@@ -918,7 +953,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (owner, now + self._ttl_ms, now),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return [
             LeasedRun(
                 request=RunRequest.model_validate_json(row["request_json"]),
@@ -935,7 +970,8 @@ class PostgresRunRepository:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT 1
                     FROM {}
@@ -948,14 +984,15 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (run_id, lease.owner, lease.generation, now),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def is_fence_current(self, run_id: str, lease: LeaseFence) -> bool:
         """Check generation ownership even after pause/terminal clears the active expiry."""
 
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT 1
                     FROM {}
@@ -965,7 +1002,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (run_id, lease.owner, lease.generation),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def get_fence(self, run_id: str) -> LeaseFence | None:
         row = await self._get_claim_row(run_id)
@@ -989,7 +1026,8 @@ class PostgresRunRepository:
 
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT claim.request_json
                     FROM {} AS claim
@@ -1001,7 +1039,7 @@ class PostgresRunRepository:
                     ),
                     (run_id, namespace),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None or row["request_json"] is None:
             return None
         return RunRequest.model_validate_json(row["request_json"])
@@ -1009,15 +1047,16 @@ class PostgresRunRepository:
     async def list_paused(self) -> list[str]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT run_id
                     FROM {}
                     WHERE terminal = FALSE AND lease_expires_at IS NULL AND request_json IS NOT NULL
                     ORDER BY run_id ASC
-                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE))
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return [str(row["run_id"]) for row in rows]
 
     async def add_tokens(
@@ -1026,7 +1065,8 @@ class PostgresRunRepository:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET token_total = token_total + %s
@@ -1040,7 +1080,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                     (count, run_id, lease.owner, lease.generation, now),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return int(row["token_total"])
@@ -1058,7 +1098,8 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT usage_input_total, usage_output_total
                         FROM {}
@@ -1073,10 +1114,11 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (run_id, lease.owner, lease.generation, now),
                     )
-                    claim = await cur.fetchone()
+                    claim = await fetch_one(cur)
                     if claim is None:
                         return None
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT input_tokens, output_tokens
                         FROM {}
@@ -1084,7 +1126,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_USAGE_SEGMENTS_TABLE)),
                         (run_id, lease.generation),
                     )
-                    existing = await cur.fetchone()
+                    existing = await fetch_one(cur)
                     if existing is not None:
                         if (
                             int(existing["input_tokens"]) != input_tokens
@@ -1098,7 +1140,8 @@ class PostgresRunRepository:
                             int(claim["usage_input_total"]),
                             int(claim["usage_output_total"]),
                         )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         INSERT INTO {} (
                             run_id, lease_generation, input_tokens, output_tokens, created_at
@@ -1112,7 +1155,8 @@ class PostgresRunRepository:
                             now,
                         ),
                     )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET usage_input_total = usage_input_total + %s,
@@ -1122,7 +1166,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (input_tokens, output_tokens, run_id),
                     )
-                    updated = await cur.fetchone()
+                    updated = await fetch_one(cur)
                     if updated is None:
                         raise RuntimeError(
                             f"usage aggregate disappeared for run {run_id!r}"
@@ -1137,7 +1181,8 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT claim.run_id
                         FROM {} AS claim
@@ -1156,12 +1201,13 @@ class PostgresRunRepository:
                         ),
                         (cutoff,),
                     )
-                    rows = await cur.fetchall()
+                    rows = await fetch_all(cur)
                     run_ids = [str(row["run_id"]) for row in rows]
                     if not run_ids:
                         return 0
                     await self._delete_run_rows(cur, run_ids)
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         "DELETE FROM {} WHERE run_id = ANY(%s)".format(
                             qualified(self._schema, RUN_CLAIMS_TABLE)
                         ),
@@ -1174,7 +1220,8 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET terminal = TRUE,
@@ -1193,7 +1240,7 @@ class PostgresRunRepository:
                         ),
                         (now, run_id, lease.owner, lease.generation, now),
                     )
-                    row = await cur.fetchone()
+                    row = await fetch_one(cur)
                     if row is None:
                         return False
                     await self._queue_bound_sandbox_cleanup(cur, dict(row), now=now)
@@ -1208,7 +1255,8 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET owner = %s,
@@ -1223,7 +1271,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (owner, now, run_id),
                     )
-                    row = await cur.fetchone()
+                    row = await fetch_one(cur)
                     if row is not None:
                         await self._queue_bound_sandbox_cleanup(cur, dict(row), now=now)
         if row is None:
@@ -1256,7 +1304,8 @@ class PostgresRunRepository:
             return
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     INSERT INTO {} (run_id, message_id, content, created_at)
                     VALUES (%s, %s, %s, to_timestamp(%s / 1000.0))
@@ -1268,7 +1317,8 @@ class PostgresRunRepository:
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT message_id, content
                     FROM {}
@@ -1277,7 +1327,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_STEERS_TABLE)),
                     (run_id,),
                 )
-                rows = await cur.fetchall()
+                rows = await fetch_all(cur)
         return [(str(row["message_id"]), str(row["content"])) for row in rows]
 
     async def ack_steers(
@@ -1290,7 +1340,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return False
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         DELETE FROM {}
                         WHERE run_id = %s AND message_id = ANY(%s)
@@ -1312,7 +1363,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return None
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         INSERT INTO {} (run_id, tool_id, result, is_error)
                         VALUES (%s, %s, %s, %s)
@@ -1320,7 +1372,8 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
                         (run_id, tool_id, result, is_error),
                     )
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT result, is_error
                         FROM {}
@@ -1328,7 +1381,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
                         (run_id, tool_id),
                     )
-                    row = await cur.fetchone()
+                    row = await fetch_one(cur)
         if row is None:
             raise RuntimeError(f"tool result missing after insert for {run_id!r}")
         return str(row["result"]), bool(row["is_error"])
@@ -1338,7 +1391,8 @@ class PostgresRunRepository:
     ) -> tuple[str, bool] | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT result, is_error
                     FROM {}
@@ -1346,7 +1400,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
                     (run_id, tool_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return str(row["result"]), bool(row["is_error"])
@@ -1359,7 +1413,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return False
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         INSERT INTO {} (run_id, tool_call_id, name, status, result, is_error)
                         VALUES (%s, %s, %s, 'started', '', FALSE)
@@ -1368,7 +1423,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
                         (run_id, tool_call_id, name),
                     )
-                    return await cur.fetchone() is not None
+                    return await fetch_one(cur) is not None
 
     async def journal_tool_finished(
         self,
@@ -1383,7 +1438,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return False
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET status = %s, result = %s, is_error = %s
@@ -1398,7 +1454,7 @@ class PostgresRunRepository:
                             tool_call_id,
                         ),
                     )
-                    return await cur.fetchone() is not None
+                    return await fetch_one(cur) is not None
 
     async def clear_tool_journal(
         self, run_id: str, lease: LeaseFence, tool_call_id: str
@@ -1408,7 +1464,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return False
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         DELETE FROM {}
                         WHERE run_id = %s AND tool_call_id = %s
@@ -1422,7 +1479,8 @@ class PostgresRunRepository:
     ) -> ToolJournalRecord | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT name, status, result, is_error
                     FROM {}
@@ -1430,7 +1488,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
                     (run_id, tool_call_id),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return ToolJournalRecord(**dict(row))
@@ -1456,7 +1514,8 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     if not await self._lock_active_lease(cur, run_id, lease):
                         return None
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         SELECT sandbox_id, sandbox_generation,
                                sandbox_backend_kind, sandbox_teardown_ref
@@ -1465,7 +1524,7 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                         (run_id,),
                     )
-                    row = await cur.fetchone()
+                    row = await fetch_one(cur)
                     if row is None:
                         return None
                     current = row["sandbox_id"]
@@ -1482,7 +1541,8 @@ class PostgresRunRepository:
                         # A later generation reconnecting the same sandbox must keep
                         # the destruction identity captured when that resource was
                         # created, even if deployment configuration has since changed.
-                        await cur.execute(
+                        await execute_sql(
+                            cur,
                             """
                             UPDATE {}
                             SET sandbox_generation = %s
@@ -1493,9 +1553,10 @@ class PostgresRunRepository:
                             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
                             (lease.generation, run_id, lease.owner, lease.generation),
                         )
-                        rebound = await cur.fetchone()
+                        rebound = await fetch_one(cur)
                         return None if rebound is None else str(rebound["sandbox_id"])
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         UPDATE {}
                         SET sandbox_id = %s,
@@ -1517,7 +1578,7 @@ class PostgresRunRepository:
                             lease.generation,
                         ),
                     )
-                    bound = await cur.fetchone()
+                    bound = await fetch_one(cur)
                     return None if bound is None else str(bound["sandbox_id"])
 
     async def get_sandbox_id(self, run_id: str) -> str | None:
@@ -1573,7 +1634,8 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await cur.execute(
+                    await execute_sql(
+                        cur,
                         """
                         WITH due AS (
                             SELECT cleanup_id
@@ -1603,14 +1665,15 @@ class PostgresRunRepository:
                         ),
                         (now, run_id, run_id, limit, owner, now + lease_ms, now),
                     )
-                    rows = await cur.fetchall()
+                    rows = await fetch_all(cur)
         return [_sandbox_cleanup_from_row(dict(row)) for row in rows]
 
     async def complete_sandbox_cleanup(self, cleanup_id: str) -> bool:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                         SET status = 'completed', cleanup_owner = NULL,
@@ -1620,7 +1683,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
                     (now, cleanup_id),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def reschedule_sandbox_cleanup(
         self, cleanup_id: str, error: str, *, retry_delay_ms: int
@@ -1630,7 +1693,8 @@ class PostgresRunRepository:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET status = 'pending', cleanup_owner = NULL,
@@ -1641,7 +1705,7 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
                     (now + retry_delay_ms, error[:1_000], now, cleanup_id),
                 )
-                return await cur.fetchone() is not None
+                return await fetch_one(cur) is not None
 
     async def _insert_sandbox_cleanup(
         self,
@@ -1657,7 +1721,8 @@ class PostgresRunRepository:
         cleanup_id = _sandbox_cleanup_id(
             run_id, lease_generation, backend_kind, sandbox_id
         )
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             INSERT INTO {} (
                 cleanup_id, run_id, lease_generation, backend_kind, sandbox_id,
@@ -1680,7 +1745,8 @@ class PostgresRunRepository:
                 now,
             ),
         )
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             SELECT cleanup_id, run_id, lease_generation, backend_kind, sandbox_id,
                    teardown_ref, attempt_count, next_attempt_at
@@ -1689,7 +1755,7 @@ class PostgresRunRepository:
             """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
             (cleanup_id,),
         )
-        row = await cur.fetchone()
+        row = await fetch_one(cur)
         if row is None:
             raise RuntimeError(
                 f"sandbox cleanup registration failed for {sandbox_id!r}"
@@ -1721,7 +1787,7 @@ class PostgresRunRepository:
             cur,
             run_id=str(row["run_id"]),
             lease_generation=int(generation),
-            backend_kind=backend_kind,
+            backend_kind=_sandbox_backend_kind(backend_kind),
             sandbox_id=str(sandbox_id),
             teardown_ref=teardown_ref,
             now=now,
@@ -1732,7 +1798,8 @@ class PostgresRunRepository:
     ) -> bool:
         """Serialize one execution effect with lease transfer/terminal fencing."""
 
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             SELECT 1
             FROM {}
@@ -1746,12 +1813,13 @@ class PostgresRunRepository:
             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
             (run_id, lease.owner, lease.generation, self._clock()),
         )
-        return await cur.fetchone() is not None
+        return await fetch_one(cur) is not None
 
     async def _lock_fence(self, cur: Any, run_id: str, lease: LeaseFence) -> bool:
         """Serialize a terminal/control effect with the current generation."""
 
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             SELECT 1
             FROM {}
@@ -1762,7 +1830,7 @@ class PostgresRunRepository:
             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
             (run_id, lease.owner, lease.generation),
         )
-        return await cur.fetchone() is not None
+        return await fetch_one(cur) is not None
 
     async def _get_claim_row(self, run_id: str) -> dict[str, Any] | None:
         async with connect_pg(self._database_url) as conn:
@@ -1770,7 +1838,8 @@ class PostgresRunRepository:
                 return await self._select_claim_row(cur, run_id)
 
     async def _select_claim_row(self, cur: Any, run_id: str) -> dict[str, Any] | None:
-        await cur.execute(
+        await execute_sql(
+            cur,
             """
             SELECT run_id, request_json, owner, lease_generation, lease_expires_at,
                    terminal, terminal_at,
@@ -1782,13 +1851,14 @@ class PostgresRunRepository:
             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
             (run_id,),
         )
-        row = await cur.fetchone()
+        row = await fetch_one(cur)
         return None if row is None else dict(row)
 
     async def _get_dispatch_rows(self, run_id: str) -> list[dict[str, Any]]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT run_id, session_id, namespace, request_json, fence, status,
                            claimed_by, created_at, updated_at
@@ -1797,14 +1867,15 @@ class PostgresRunRepository:
                     """.format(qualified(self._schema, RUN_DISPATCHES_TABLE)),
                     (run_id,),
                 )
-                return [dict(row) for row in await cur.fetchall()]
+                return [dict(row) for row in await fetch_all(cur)]
 
     async def _update_control_status(
         self, run_id: str, command_id: str, status: str
     ) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET status = %s, updated_at = to_timestamp(%s / 1000.0)
@@ -1823,7 +1894,8 @@ class PostgresRunRepository:
     ) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     UPDATE {}
                     SET status = %s, error_code = %s,
@@ -1837,7 +1909,8 @@ class PostgresRunRepository:
     async def _fetch_outbox(self, where_sql: str) -> list[dict[str, Any]]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     SELECT run_id, durable_seq, event_id, kind, status, index_value,
                            (extract(epoch FROM occurred_at) * 1000)::bigint AS timestamp,
@@ -1846,9 +1919,9 @@ class PostgresRunRepository:
                     FROM {}
                     WHERE {}
                     ORDER BY run_id ASC, durable_seq ASC
-                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE), where_sql)
+                    """.format(qualified(self._schema, RUN_OUTBOX_TABLE), where_sql),
                 )
-                return [dict(row) for row in await cur.fetchall()]
+                return [dict(row) for row in await fetch_all(cur)]
 
     async def _delete_run_rows(self, cur: Any, run_ids: list[str]) -> None:
         if not run_ids:
@@ -1865,7 +1938,8 @@ class PostgresRunRepository:
             TOOL_JOURNAL_TABLE,
             RUN_DISPATCHES_TABLE,
         ):
-            await cur.execute(
+            await execute_sql(
+                cur,
                 "DELETE FROM {} WHERE run_id = ANY(%s)".format(
                     qualified(self._schema, table)
                 ),

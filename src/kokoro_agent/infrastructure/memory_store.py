@@ -3,7 +3,6 @@
 # The LangGraph store protocol and psycopg dict-row stubs are not aligned with
 # the installed runtime signatures; keep this adapter's dynamic boundary
 # explicit while unit/contract tests validate behavior.
-# pyright: reportCallIssue=false, reportArgumentType=false, reportReturnType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportIncompatibleMethodOverride=false, reportAbstractUsage=false, reportAttributeAccessIssue=false, reportUnnecessaryIsInstance=false
 
 from __future__ import annotations
 
@@ -18,17 +17,25 @@ from langgraph.store.base import (
     BaseStore,
     GetOp,
     Item,
-    ListNamespacesOp,
+    MatchCondition,
     NamespacePath,
+    NotProvided,
     Op,
     PutOp,
     Result,
     SearchItem,
     SearchOp,
 )
+from pydantic import JsonValue
+
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
-from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
+from kokoro_agent.infrastructure.postgres import (
+    DEFAULT_PG_SCHEMA,
+    connect_pg,
+    qualified,
+)
 from kokoro_agent.infrastructure.schema import MEMORY_TABLE, verify_agent_schema
+from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 
 
 class PgMemoryStore(BaseStore):
@@ -44,7 +51,9 @@ class PgMemoryStore(BaseStore):
         results: list[Result] = []
         for op in ops:
             if isinstance(op, GetOp):
-                results.append(await self.aget(op.namespace, op.key, refresh_ttl=op.refresh_ttl))
+                results.append(
+                    await self.aget(op.namespace, op.key, refresh_ttl=op.refresh_ttl)
+                )
                 continue
             if isinstance(op, SearchOp):
                 results.append(
@@ -59,7 +68,9 @@ class PgMemoryStore(BaseStore):
                 )
                 continue
             if isinstance(op, PutOp):
-                results.append(
+                if op.value is None:
+                    await self.adelete(op.namespace, op.key)
+                else:
                     await self.aput(
                         op.namespace,
                         op.key,
@@ -67,20 +78,18 @@ class PgMemoryStore(BaseStore):
                         index=op.index,
                         ttl=op.ttl,
                     )
-                )
+                results.append(None)
                 continue
-            if isinstance(op, ListNamespacesOp):
-                results.append(
-                    await self.alist_namespaces(
-                        prefix=op.prefix,
-                        suffix=op.suffix,
-                        max_depth=op.max_depth,
-                        limit=op.limit,
-                        offset=op.offset,
-                    )
+            prefix, suffix = namespace_filters(op.match_conditions)
+            results.append(
+                await self.alist_namespaces(
+                    prefix=prefix,
+                    suffix=suffix,
+                    max_depth=op.max_depth,
+                    limit=op.limit,
+                    offset=op.offset,
                 )
-                continue
-            raise TypeError(f"unsupported store op: {type(op)!r}")
+            )
         return results
 
     def batch(self, ops: Iterable[Op]) -> list[Result]:
@@ -95,7 +104,8 @@ class PgMemoryStore(BaseStore):
     async def adelete(self, namespace: tuple[str, ...], key: str) -> None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     "DELETE FROM {} WHERE namespace = %s AND key = %s".format(
                         qualified(self._schema, MEMORY_TABLE)
                     ),
@@ -107,13 +117,14 @@ class PgMemoryStore(BaseStore):
     ) -> Item | None:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     "SELECT namespace, key, value_json, created_at, updated_at FROM {} WHERE namespace = %s AND key = %s".format(
                         qualified(self._schema, MEMORY_TABLE)
                     ),
                     (list(namespace), key),
                 )
-                row = await cur.fetchone()
+                row = await fetch_one(cur)
         if row is None:
             return None
         return Item(
@@ -138,9 +149,11 @@ class PgMemoryStore(BaseStore):
         matched = [
             namespace
             for namespace in namespaces
-            if _matches_namespace(namespace, prefix, suffix, max_depth)
+            if matches_namespace(namespace, prefix, suffix)
         ]
-        deduped = list(dict.fromkeys(matched))
+        if max_depth is not None:
+            matched = [namespace[:max_depth] for namespace in matched]
+        deduped = sorted(set(matched))
         return deduped[offset : offset + limit]
 
     async def aput(
@@ -150,13 +163,18 @@ class PgMemoryStore(BaseStore):
         value: dict[str, Any],
         index: list[str] | Literal[False] | None = None,
         *,
-        ttl: float | None = None,
+        ttl: float | None | NotProvided = None,
     ) -> None:
+        if ttl is not None and not isinstance(ttl, NotProvided):
+            raise NotImplementedError(
+                f"TTL is not supported by {self.__class__.__name__}"
+            )
         now = _now_ms()
         payload = json.dumps(value, sort_keys=True)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
+                await execute_sql(
+                    cur,
                     """
                     INSERT INTO {} (namespace, key, value_json, created_at, updated_at)
                     VALUES (%s, %s, %s, to_timestamp(%s / 1000.0),
@@ -183,6 +201,12 @@ class PgMemoryStore(BaseStore):
             for row in await self._all_rows()
             if tuple(row["namespace"])[: len(namespace_prefix)] == namespace_prefix
         ]
+        if filter:
+            rows = [
+                row
+                for row in rows
+                if matches_filter(json.loads(row["value_json"]), filter)
+            ]
         if query is not None:
             needle = query.strip().lower()
             rows = [
@@ -206,12 +230,14 @@ class PgMemoryStore(BaseStore):
     async def _all_rows(self) -> list[dict[str, Any]]:
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT namespace, key, value_json, created_at, updated_at FROM {}".format(
+                await execute_sql(
+                    cur,
+                    "SELECT namespace, key, value_json, created_at, updated_at FROM {} "
+                    "ORDER BY namespace ASC, key ASC".format(
                         qualified(self._schema, MEMORY_TABLE)
-                    )
+                    ),
                 )
-                return list(await cur.fetchall())
+                return list(await fetch_all(cur))
 
 
 @asynccontextmanager
@@ -226,19 +252,96 @@ async def make_memory_store(
         pass
 
 
-def _matches_namespace(
+def matches_namespace(
     namespace: tuple[str, ...],
     prefix: NamespacePath | None,
     suffix: NamespacePath | None,
-    max_depth: int | None,
 ) -> bool:
-    if prefix is not None and not tuple(namespace[: len(prefix)]) == tuple(prefix):
+    if prefix is not None and not _matches_path(namespace, prefix, from_start=True):
         return False
-    if suffix is not None and len(suffix) > 0 and not tuple(namespace[-len(suffix) :]) == tuple(suffix):
-        return False
-    if max_depth is not None and len(namespace) > max_depth:
+    if suffix is not None and not _matches_path(namespace, suffix, from_start=False):
         return False
     return True
+
+
+def namespace_filters(
+    conditions: tuple[MatchCondition, ...] | None,
+) -> tuple[NamespacePath | None, NamespacePath | None]:
+    """Translate the framework's operation shape to the public store method."""
+
+    prefix: NamespacePath | None = None
+    suffix: NamespacePath | None = None
+    for condition in conditions or ():
+        if condition.match_type == "prefix":
+            prefix = condition.path
+        elif condition.match_type == "suffix":
+            suffix = condition.path
+        else:
+            raise ValueError(
+                f"unsupported namespace match type: {condition.match_type!r}"
+            )
+    return prefix, suffix
+
+
+def _matches_path(
+    namespace: tuple[str, ...], path: NamespacePath, *, from_start: bool
+) -> bool:
+    if len(namespace) < len(path):
+        return False
+    candidate = namespace[: len(path)] if from_start else namespace[-len(path) :]
+    pairs = zip(candidate, path, strict=True)
+    return all(pattern == "*" or value == pattern for value, pattern in pairs)
+
+
+def matches_filter(value: JsonValue, expected: JsonValue) -> bool:
+    """Match the small JSON filter language exposed by LangGraph's BaseStore."""
+
+    if isinstance(expected, dict):
+        if any(key.startswith("$") for key in expected):
+            return all(
+                _matches_operator(value, operator, operand)
+                for operator, operand in expected.items()
+            )
+        if not isinstance(value, dict):
+            return False
+        return all(
+            matches_filter(value.get(key), nested) for key, nested in expected.items()
+        )
+    if isinstance(expected, (list, tuple)):
+        return (
+            isinstance(value, (list, tuple))
+            and len(value) == len(expected)
+            and all(
+                matches_filter(actual, wanted)
+                for actual, wanted in zip(value, expected, strict=True)
+            )
+        )
+    return value == expected
+
+
+def _matches_operator(value: JsonValue, operator: str, operand: JsonValue) -> bool:
+    if operator == "$eq":
+        return value == operand
+    if operator == "$ne":
+        return value != operand
+    if operator in {"$gt", "$gte", "$lt", "$lte"}:
+        actual = _as_number(value)
+        wanted = _as_number(operand)
+        if actual is None or wanted is None:
+            return False
+        return {
+            "$gt": actual > wanted,
+            "$gte": actual >= wanted,
+            "$lt": actual < wanted,
+            "$lte": actual <= wanted,
+        }[operator]
+    raise ValueError(f"unsupported memory filter operator: {operator!r}")
+
+
+def _as_number(value: JsonValue) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def _now_ms() -> int:

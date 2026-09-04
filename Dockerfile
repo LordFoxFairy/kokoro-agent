@@ -1,6 +1,7 @@
 # kokoro-agent 生产镜像（Python 3.11 + uv）。worker 进程（kokoro-agent-worker），非 HTTP 服务。
 # 依赖：redis / postgresql；LiteLLM 是可选的外置 OpenAI-compatible gateway，env 运行时注入。
-FROM python:3.11-slim
+# Pin the multi-architecture Python base to an immutable OCI index digest.
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
 WORKDIR /app
 
 # uv 装依赖管理器；git 供部分源码依赖（如有）。
@@ -21,4 +22,5 @@ ENV PYTHONUNBUFFERED=1
 ENV UV_CACHE_DIR=/app/.uv-cache
 # worker：从 redis 取 dispatch、跑 run、发事件。无端口。依赖已在 build 期 uv sync 烘焙,
 # --no-sync 免运行时再联网 sync(生产离线也能起)。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["python", "-c", "import os; raise SystemExit(0 if os.path.exists('/proc/1/cmdline') else 1)"]
 CMD ["uv", "run", "--no-sync", "kokoro-agent-worker"]

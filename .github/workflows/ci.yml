@@ -1,32 +1,47 @@
-name: CI
+name: Agent CI
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   fast:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-      # 锁定依赖安装：uv.lock 用官方源锁定（UV_NO_CONFIG），CI 无本地镜像配置，直接走锁文件。
-      - run: uv sync --locked
-      - name: ruff
-        run: uv run ruff check src tests
-      - name: pyright
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Scan dependencies, source configuration and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Check owned contract and provenance
+        run: uv run kokoro-agent-contract-check
+      - name: Ruff
+        run: uv run ruff check src tests scripts
+      - name: Pyright
         run: uv run pyright
-      - name: pytest (unit + contract fast gate)
+      - name: Pytest (unit and contract)
         run: uv run pytest -q -m "not integration and not e2e and not acceptance" tests/unit tests/contract
+      - name: Build wheel and source distribution
+        run: uv build --wheel --sdist
 
   service-acceptance:
     runs-on: ubuntu-latest
-    # The complete gate owns real PostgreSQL and Redis fixtures. Tests fail loudly if either is absent.
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -39,7 +54,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:7
+        image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
         ports:
           - 6379:6379
         options: >-
@@ -48,44 +63,19 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     env:
-      KOKORO_REDIS_URL: redis://127.0.0.1:6379/0
+      KOKORO_REDIS_URL: redis://127.0.0.1:6379/9
       KOKORO_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kokoro_agent
       KOKORO_AGENT_DATABASE_SCHEMA: kokoro_agent_ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-      - run: uv sync --locked
-      - name: verify PostgreSQL and Redis fixtures
-        run: |
-          uv run python - <<'PY'
-          import asyncio
-          import os
-
-          import psycopg
-          from redis.asyncio import Redis
-
-          async def main() -> None:
-              async with await psycopg.AsyncConnection.connect(
-                  os.environ["KOKORO_AGENT_DATABASE_URL"]
-              ) as connection:
-                  async with connection.cursor() as cursor:
-                      await cursor.execute("SELECT 1")
-
-              redis = Redis.from_url(os.environ["KOKORO_REDIS_URL"])
-              try:
-                  assert await redis.ping()
-              finally:
-                  await redis.aclose()
-
-          asyncio.run(main())
-          PY
-      - name: ruff
-        run: uv run ruff check src tests
-      - name: pyright
-        run: uv run pyright
-      - name: pytest (complete service acceptance gate)
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Install canonical schema
+        run: uv run kokoro-agent-db-apply-schema
+      - name: Run real PostgreSQL and Redis integration tests
         run: >-
           uv run pytest -q -o addopts=''
           tests/unit tests/contract tests/integration tests/e2e tests/acceptance

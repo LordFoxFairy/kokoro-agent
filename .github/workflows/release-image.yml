@@ -3,11 +3,13 @@ name: Publish Agent image
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
 
 env:
   REGISTRY: ghcr.io
@@ -16,10 +18,9 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    # Release verification runs the same real service-backed gate as branch CI.
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -32,7 +33,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:7
+        image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
         ports:
           - 6379:6379
         options: >-
@@ -41,79 +42,150 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     env:
-      KOKORO_REDIS_URL: redis://127.0.0.1:6379/0
+      KOKORO_REDIS_URL: redis://127.0.0.1:6379/9
       KOKORO_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kokoro_agent
-      KOKORO_AGENT_DATABASE_SCHEMA: kokoro_agent_ci
+      KOKORO_AGENT_DATABASE_SCHEMA: kokoro_agent_release
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-      - run: uv sync --locked
-      - name: verify PostgreSQL and Redis fixtures
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Scan dependencies, source configuration and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Check contract and run complete verification
         run: |
-          uv run python - <<'PY'
-          import asyncio
-          import os
-
-          import psycopg
-          from redis.asyncio import Redis
-
-          async def main() -> None:
-              async with await psycopg.AsyncConnection.connect(
-                  os.environ["KOKORO_AGENT_DATABASE_URL"]
-              ) as connection:
-                  async with connection.cursor() as cursor:
-                      await cursor.execute("SELECT 1")
-
-              redis = Redis.from_url(os.environ["KOKORO_REDIS_URL"])
-              try:
-                  assert await redis.ping()
-              finally:
-                  await redis.aclose()
-
-          asyncio.run(main())
-          PY
-      - name: Ruff
-        run: uv run ruff check src tests
-      - name: Pyright
-        run: uv run pyright
-      - name: Pytest (complete service acceptance gate)
-        run: >-
-          uv run pytest -q -o addopts=''
-          tests/unit tests/contract tests/integration tests/e2e tests/acceptance
+          uv run kokoro-agent-contract-check
+          uv run ruff check src tests scripts
+          uv run pyright
+          uv run pytest -q -o addopts='' tests/unit tests/contract tests/integration tests/e2e tests/acceptance
+      - name: Install canonical schema
+        run: uv run kokoro-agent-db-apply-schema
+      - name: Build wheel and source distribution
+        run: uv build --wheel --sdist
 
   publish:
     needs: verify
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kokoro_agent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kokoro_agent"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build local production candidate
+        id: candidate
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: kokoro-agent:candidate-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan candidate image before push
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: kokoro-agent:candidate-${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Verify candidate health before push
+        shell: bash
+        env:
+          KOKORO_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kokoro_agent
+          KOKORO_AGENT_DATABASE_SCHEMA: kokoro_agent_candidate
+          KOKORO_REDIS_URL: redis://127.0.0.1:6379/9
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm -f kokoro-agent-candidate >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --rm --network host \
+            --env KOKORO_AGENT_DATABASE_URL \
+            --env KOKORO_AGENT_DATABASE_SCHEMA \
+            --env KOKORO_REDIS_URL \
+            kokoro-agent:candidate-${{ github.sha }} \
+            uv run --no-sync kokoro-agent-db-apply-schema
+          docker run --detach --name kokoro-agent-candidate --network host \
+            --env KOKORO_AGENT_DATABASE_URL \
+            --env KOKORO_AGENT_DATABASE_SCHEMA \
+            --env KOKORO_REDIS_URL \
+            kokoro-agent:candidate-${{ github.sha }}
+          for attempt in $(seq 1 30); do
+            if ! docker inspect --format='{{.State.Running}}' kokoro-agent-candidate | grep -qx true; then
+              docker logs kokoro-agent-candidate
+              exit 1
+            fi
+            health=$(docker inspect --format='{{.State.Health.Status}}' kokoro-agent-candidate 2>/dev/null || true)
+            if [ "$health" = healthy ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs kokoro-agent-candidate
+          exit 1
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Generate image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=tag
+            type=semver,pattern={{version}}
             type=raw,value=latest
-
-      - name: Build and push production image
-        uses: docker/build-push-action@v6
+            type=raw,value=sha-${{ github.sha }}
+      - name: Build and push verified image with SBOM and provenance
+        id: push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign immutable image digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_NAME}@${DIGEST}"

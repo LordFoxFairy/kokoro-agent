@@ -16,6 +16,8 @@
 - worker 具备 dispatch CAS、lease generation fencing、终态 claim、outbox republish、control reapply、
   sandbox cleanup retry 和 graceful drain。
 - Skill/MCP/Storage 通过窄 client port 接入；Agent 不读取 Capability/Storage 私库。
+- canonical schema 的 operator use case 位于 `application/schema.py`；`cli.py` 与 `worker/main.py` 从该稳定边界导入，
+  不再让 CLI 依赖 worker transport。
 - OpenAPI、protocol model、canonical schema、contract test 和 provenance 已进入本仓。
 
 ## 当前证据
@@ -37,7 +39,8 @@ uv build --wheel --sdist
 
 1. 历史包目录中的部分执行编排仍较大，需按 use case、repository adapter、outbox 和 supervisor 生命周期
    语义拆分，不能按行号机械切割。
-2. Domain/Application/Interfaces 目录正在从旧包结构迁入；迁移时必须保持单向依赖并删除重复入口。
+2. `domain/`、`application/`、`infrastructure/`、`interfaces/` 是当前目标架构边界；叶子运行模块按真实职责保留，
+   新代码不得恢复顶层 `repositories/`、`services/` 或 `http/` 重复入口。
 3. Capability/Storage 真实 HTTP/RPC client 的生产装配需在部署配置中显式启用；未配置可选能力时应返回
    明确 unavailable，而不是创建伪实现。
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。

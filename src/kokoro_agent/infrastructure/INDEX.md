@@ -14,4 +14,6 @@
 - `checkpoints.py`：DeepAgents/LangGraph 官方 PostgreSQL checkpointer 装配。
 - `memory_store.py`：DeepAgents Store 的 PostgreSQL 装配。
 
-这里不定义 Agent 运行用例，也不承载业务 owner 数据；它只实现 `repositories/` 的 port 和外部技术 adapter。
+这里不定义 Agent 运行用例，也不承载业务 owner 数据；它实现 `domain/<context>/` 的 repository port、
+application port 的具体技术 adapter，以及 canonical schema。`application/schema.py` 是 schema apply 的稳定
+operator boundary，负责配置映射和调用这里的 DDL 实现。

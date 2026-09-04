@@ -22,15 +22,16 @@ src/kokoro_agent/
 ├── agent_factory.py 唯一内部组装入口，直接调用 DeepAgents
 ├── swarm.py         official langgraph-swarm handoff 薄接线
 ├── protocol/        Agent-owned command/event/Redis wire；不包含其他 owner 的模型
+├── domain/          领域模型、规则与按 context 放置的 repository port
+├── application/     用例编排、DTO 与 schema operator boundary
+├── infrastructure/  PostgreSQL、Redis、checkpoint 与外部技术 adapter
+├── interfaces/      HTTP/RPC/event 传输映射
 ├── execution/       Run、control、HITL、事件投影与终态
-├── chat/            GA chat_messages/chat_events 与安全产品投影（供 BFF Chat 使用）
 ├── worker/          Redis ingress、共享服务、claim、recovery、drain
-├── http/             BFF business ingress；durable admission、control、safe replay
 ├── tools/           GA 固定工具、每次运行的工具集合与 middleware
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client（Skill、MCP、Artifact 交付）
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── repositories/         RunRepository、schema；infrastructure/ 保存 PG、LangGraph Store 与 checkpoint adapter
 ├── mcp/             MCP 连接、工具与本地 fixture
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产

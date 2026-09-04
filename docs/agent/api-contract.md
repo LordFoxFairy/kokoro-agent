@@ -10,11 +10,12 @@ IAM、Model 的业务 API 由各自 owner 维护，Agent 只通过窄 client por
 
 | 内容 | 本仓位置 | 职责 |
 |---|---|---|
-| HTTP ingress | `src/kokoro_agent/http/` | v1 请求校验、可信上下文、admission、响应与错误映射 |
+| HTTP ingress | `src/kokoro_agent/interfaces/http/` | v1 请求校验、可信上下文、admission、响应与错误映射 |
 | 执行 command/event | `src/kokoro_agent/protocol/` | Agent-owned 严格 Pydantic wire；不包含其他 owner 的数据库模型 |
-| Application | `src/kokoro_agent/services/`、`execution/` | 用例、Run/control/HITL 和安全产品投影 |
-| Repository port/records | `src/kokoro_agent/repositories/` | Agent 自己的运行持久化边界 |
+| Application | `src/kokoro_agent/application/`、`execution/` | 用例、DTO、Run/control/HITL 和安全产品投影 |
+| Repository port/records | `src/kokoro_agent/domain/<context>/` | Agent 自己的运行持久化边界；port 与 record 按 context 放置 |
 | 数据库/Redis 实现 | `src/kokoro_agent/infrastructure/`、`streams/` | PostgreSQL、checkpoint 与 Redis 技术实现 |
+| Schema operator | `src/kokoro_agent/application/schema.py` | 从受管环境映射到 infrastructure 的 canonical fresh install |
 | Workspace naming | `src/kokoro_agent/sandbox/workspace.py` | Agent 本地/S3 工作区 key；不是 Storage 服务契约 |
 
 旧 `contract/storage.py` 中的 BSON、Skill/MCP document、collection 与跨仓 receipt 镜像已退出运行包。

@@ -25,6 +25,15 @@ def _imports(path: Path) -> set[str]:
     return modules
 
 
+def _from_imported_names(path: Path, module: str) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            names.update(alias.name for alias in node.names)
+    return names
+
+
 def _rel(path: Path) -> str:
     return str(path.relative_to(_SRC))
 
@@ -44,9 +53,9 @@ def test_protocol_has_zero_inward_dependencies() -> None:
         )
 
 
-def test_config_only_imported_by_worker_main() -> None:
+def test_config_imports_are_limited_to_process_entrypoints() -> None:
     for path in _py_files():
-        if _rel(path) in {"config.py", "worker/main.py"}:
+        if _rel(path) in {"config.py", "worker/main.py", "application/schema.py"}:
             continue
         offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.config")}
         assert not offenders, f"{_rel(path)} must not import kokoro_agent.config"
@@ -55,13 +64,15 @@ def test_config_only_imported_by_worker_main() -> None:
 def test_agent_core_does_not_import_worker() -> None:
     """Worker is the transport edge, never a dependency of the Agent core."""
     core_roots = (
+        "domain/",
+        "application/",
+        "interfaces/",
         "agents/",
         "execution/",
         "tools/",
         "skills/",
         "mcp/",
         "sandbox/",
-        "repositories/",
         "infrastructure/",
         "model/",
         "streams/",
@@ -209,10 +220,10 @@ def test_no_stream_name_literals_outside_protocol() -> None:
         )
 
 
-def test_environ_read_only_in_worker_main() -> None:
-    # env 单点纪律：os.environ 只出现在 worker/main.py（经 AppConfig 读一次）。
+def test_environ_reads_are_limited_to_process_entrypoints() -> None:
+    # env 单点纪律：worker/main.py 与 schema operator 入口各自只读一次。
     for path in _py_files():
-        if _rel(path) == "worker/main.py":
+        if _rel(path) in {"worker/main.py", "application/schema.py"}:
             continue
         assert "os.environ" not in path.read_text(encoding="utf-8"), (
             f"{_rel(path)} reads os.environ outside worker/main.py"
@@ -254,3 +265,24 @@ def test_retired_root_contract_mirrors_are_absent() -> None:
         assert "contract/spec/" not in source
         assert "contract/generate.py" not in source
         assert "Source Root commit:" not in source
+
+
+def test_schema_apply_entrypoint_is_shared_without_worker_transport_import() -> None:
+    """Schema installation belongs to an application boundary, not worker transport."""
+    schema_module = "kokoro_agent.application.schema"
+    cli = _SRC / "cli.py"
+    worker = _SRC / "worker" / "main.py"
+
+    assert "apply_database_schema" in _from_imported_names(cli, schema_module)
+    assert "db_apply_schema_main" in _from_imported_names(cli, schema_module)
+    assert "apply_database_schema" in _from_imported_names(worker, schema_module)
+    assert "db_apply_schema_main" in _from_imported_names(worker, schema_module)
+    cli_worker_imports = {
+        module for module in _imports(cli) if module.startswith("kokoro_agent.worker")
+    }
+    assert not cli_worker_imports
+
+    schema_source = (_SRC / "application" / "schema.py").read_text(
+        encoding="utf-8"
+    )
+    assert "def apply_database_schema(" in schema_source

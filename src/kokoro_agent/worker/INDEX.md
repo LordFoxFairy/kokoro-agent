@@ -39,10 +39,10 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 
 ## 关键协作者
 
-- 下游依赖：`execution/`（invoke_once/RunEmitter/approvals 全套）、`repositories/run_repository`（RunRepository port）、
+- 下游依赖：`execution/`（invoke_once/RunEmitter/approvals 全套）、`domain/run/repository.py`（RunRepository port）、
   `infrastructure/postgres_run_repository`（公开 PostgreSQL façade 及 capability adapters）、
   `streams/`（StreamProtocol）、`features/` + `agent_factory.py`（Feature 装配）、`skills/`、`sandbox/`、
-  `mcp/config`、`contract`。
+  `mcp/config`、`protocol/`。
 - 上游：kokoro-bff 内部 Chat 模块经 Redis Streams 投递 RunRequest（REQUESTS_STREAM）与
   per-run control 流（resume/cancel/steer）。
 - `metrics`（OBS-1）：claim 胜负/inbox 相位/outbox 相位/租约 gauge 埋点（fail-open，只观测）；

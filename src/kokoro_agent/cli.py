@@ -8,9 +8,9 @@ from collections.abc import Mapping, Sequence
 
 from kokoro_agent.features import FEATURE_CATALOG
 from kokoro_agent.inspect import describe_feature, render_catalog
-from kokoro_agent.worker.main import (
+from kokoro_agent.application.schema import (
     apply_database_schema,
-    db_apply_schema_main as _worker_db_apply_schema_main,
+    db_apply_schema_main as _schema_db_apply_schema_main,
 )
 
 
@@ -53,7 +53,7 @@ def main(
 def db_apply_schema_main() -> int:
     """Console-script entry point for deployments that expose one DB command."""
 
-    return _worker_db_apply_schema_main()
+    return _schema_db_apply_schema_main()
 
 
 __all__ = ["apply_database_schema", "db_apply_schema_main", "main"]

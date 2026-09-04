@@ -89,6 +89,10 @@ package）不是两层业务架构。保留 `src` 隔离，包内只按 GA 的�
 
 ```text
 src/kokoro_agent/
+├── domain/           领域模型、规则与按 bounded context 放置的 repository port
+├── application/      用例、DTO 与 schema operator boundary
+├── infrastructure/   PostgreSQL schema、具体 adapter、LangGraph Store/checkpoint
+├── interfaces/       HTTP/RPC/event 传输映射
 ├── agents/          完整、可复用的 DeepAgents Agent 声明
 ├── features/        对外产品能力与 Agent 组装声明
 ├── agent_factory.py 唯一内部组装入口，直接调用 DeepAgents
@@ -99,8 +103,6 @@ src/kokoro_agent/
 ├── skills/          Capability Skill 只读 backend adapter 与本地 fixture reader
 ├── clients/         Capability/Storage 窄 client
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
-├── repositories/         RunRepository/ChatRepository port、运行结果模型；不放数据库驱动
-├── infrastructure/       PostgreSQL schema 与具体 adapter、LangGraph Store/checkpoint
 ├── mcp/             MCP 配置、连接与 egress
 ├── model/           模型选择与 provider adapter
 ├── prompts/         静态提示词资产

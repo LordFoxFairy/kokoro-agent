@@ -2,8 +2,9 @@
 
 ## 运行入口
 
-- `src/kokoro_agent/worker/main.py`：worker/http 启动装配和环境读取唯一入口。
-- `src/kokoro_agent/http/`：Agent-owned HTTP ingress；不执行浏览器 SSE/AG-UI。
+- `src/kokoro_agent/worker/main.py`：worker/http 启动装配入口；worker 环境读取在此完成。
+- `src/kokoro_agent/interfaces/http/`：Agent-owned HTTP ingress；不执行浏览器 SSE/AG-UI。
+- `src/kokoro_agent/application/schema.py`：canonical schema operator use case；CLI 与 worker 共同导入。
 - `src/kokoro_agent/worker/supervisor.py`：Redis dispatch、lease fencing、control 和终态收口。
 - `src/kokoro_agent/agent_factory.py`：唯一 DeepAgents native runnable 构造入口。
 
@@ -12,19 +13,15 @@
 ```text
 src/kokoro_agent/
   protocol/       Agent 自有 command/event/stream wire 模型
-  domain/         领域实体、值对象、规则（逐步收敛中）
-  application/    用例编排与窄 port（逐步收敛中）
+  domain/         领域实体、值对象、规则与按 context 放置的 repository port
+  application/    用例编排、DTO 与 schema operator boundary
   infrastructure/ PostgreSQL、Redis、checkpoint、外部 adapter
-  interfaces/     HTTP/RPC/event 传输映射（逐步收敛中）
+  interfaces/     HTTP/RPC/event 传输映射
   agents/         DeepAgents 能力声明
   features/       Feature -> Agent 装配声明
   execution/      run、approval、event projection
-  repositories/   持久化 port 和 transport-neutral record
-  services/       既有应用服务；新代码迁入 application
   clients/        Capability/Storage public client port
   worker/         Redis worker、recovery、graceful drain
-  http/           版本化业务 ingress
-  chat/           Agent-owned chat fact model/projection
   sandbox/        workspace/backend adapter
   model/          provider/model adapter
   tools/          工具、middleware、权限 guard

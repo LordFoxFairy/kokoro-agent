@@ -1,0 +1,13 @@
+{
+  "owner": "kokoro-agent",
+  "contract": "openapi/v1/openapi.json",
+  "source_files": [
+    "contract/openapi/v1/openapi.json",
+    "src/kokoro_agent/protocol/control.py",
+    "src/kokoro_agent/protocol/events.py",
+    "src/kokoro_agent/protocol/streams.py"
+  ],
+  "combined_sha256": "0a15cbf8daea20ebb234668e79da25f1c26411d5d11b8066d93c449af244e831",
+  "generated_artifacts": [],
+  "source_revision": "same Git commit as the listed files"
+}

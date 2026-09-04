@@ -1,0 +1,1514 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Kokoro Agent internal HTTP API",
+    "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://{host}:{port}",
+      "variables": {
+        "host": {
+          "default": "127.0.0.1"
+        },
+        "port": {
+          "default": "4401"
+        }
+      }
+    }
+  ],
+  "x-kokoro-owner": "kokoro-agent",
+  "x-kokoro-visibility": "internal-owner",
+  "x-kokoro-stability": "stable",
+  "tags": [
+    {
+      "name": "health",
+      "description": "Process and dependency health."
+    },
+    {
+      "name": "runs",
+      "description": "Run admission, control and execution evidence."
+    },
+    {
+      "name": "sessions",
+      "description": "Identity-scoped chat history and replay."
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "AgentServiceBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque service credential",
+        "description": "BFF or another trusted service credential. The credential is supplied by deployment, never by a browser."
+      }
+    },
+    "parameters": {
+      "RequestId": {
+        "name": "X-Request-Id",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "Caller correlation identifier. The Agent creates one when absent."
+      },
+      "TenantRef": {
+        "name": "X-Kokoro-Tenant-Ref",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "SubjectRef": {
+        "name": "X-Kokoro-Subject-Ref",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "SubjectKind": {
+        "name": "X-Kokoro-Subject-Kind",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "service"
+          ],
+          "default": "user"
+        }
+      },
+      "ActorRef": {
+        "name": "X-Kokoro-Actor-Ref",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "ActorKind": {
+        "name": "X-Kokoro-Actor-Kind",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "service"
+          ],
+          "default": "user"
+        }
+      },
+      "AssertionRef": {
+        "name": "X-Kokoro-Identity-Assertion-Ref",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": "Stable command identity. Reusing it with a different request body is rejected."
+      },
+      "AfterSeq": {
+        "name": "after_seq",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "EvidenceLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 200
+        }
+      },
+      "SessionLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "ProjectRef": {
+        "name": "project_ref",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "SessionCursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "required": [
+          "status",
+          "service"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "ready"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "const": "kokoro-agent"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Meta": {
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IdentityRef": {
+        "type": "object",
+        "required": [
+          "kind",
+          "opaque_ref"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "project",
+              "service"
+            ]
+          },
+          "opaque_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExecutionIdentity": {
+        "type": "object",
+        "required": [
+          "tenant_ref",
+          "actor",
+          "subject",
+          "identity_assertion_ref"
+        ],
+        "properties": {
+          "tenant_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actor": {
+            "$ref": "#/components/schemas/IdentityRef"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/IdentityRef"
+          },
+          "identity_assertion_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "LaunchRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "run_id",
+          "session_id",
+          "feature_key",
+          "message_id",
+          "content"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "feature_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requested_model_label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "trace": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LaunchReceipt": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "session_id",
+          "replayed"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CancelControl": {
+        "type": "object",
+        "required": [
+          "kind",
+          "session_id"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "run.cancel"
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "SteerControl": {
+        "type": "object",
+        "required": [
+          "kind",
+          "session_id",
+          "message_id",
+          "content"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "run.steer"
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResumeDecision": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "tool_id"
+            ],
+            "properties": {
+              "type": {
+                "const": "approve"
+              },
+              "tool_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "tool_id",
+              "args"
+            ],
+            "properties": {
+              "type": {
+                "const": "edit"
+              },
+              "tool_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "tool_id"
+            ],
+            "properties": {
+              "type": {
+                "const": "reject"
+              },
+              "tool_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "tool_id",
+              "response"
+            ],
+            "properties": {
+              "type": {
+                "const": "respond"
+              },
+              "tool_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "response": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "request_id",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "const": "submit"
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ResumeControl": {
+        "type": "object",
+        "required": [
+          "kind",
+          "session_id",
+          "decisions"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "run.resume"
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decisions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/ResumeDecision"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ControlRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CancelControl"
+          },
+          {
+            "$ref": "#/components/schemas/SteerControl"
+          },
+          {
+            "$ref": "#/components/schemas/ResumeControl"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind"
+        }
+      },
+      "ControlReceipt": {
+        "type": "object",
+        "required": [
+          "command_id",
+          "request_digest",
+          "status",
+          "replayed"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "error_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentEvent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "run_id",
+          "index",
+          "timestamp",
+          "payload"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Internal Agent event time in UTC epoch milliseconds; public BFF projections translate it to RFC 3339."
+          },
+          "durable_seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvidencePage": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "events",
+          "next_seq",
+          "terminal"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentEvent"
+            }
+          },
+          "next_seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "terminal": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": [
+          "chat_message_id",
+          "session_id",
+          "run_id",
+          "role",
+          "content",
+          "status",
+          "seq",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "chat_message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Internal Agent UTC epoch milliseconds."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Internal Agent UTC epoch milliseconds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatEvent": {
+        "type": "object",
+        "required": [
+          "chat_event_id",
+          "session_id",
+          "run_id",
+          "source_index",
+          "event_type",
+          "payload_json",
+          "seq",
+          "created_at"
+        ],
+        "properties": {
+          "chat_event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_index": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "chat_message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "event_type": {
+            "type": "string",
+            "enum": [
+              "run.started",
+              "assistant.delta",
+              "assistant.completed",
+              "activity",
+              "interaction",
+              "delivery",
+              "run.completed",
+              "run.failed"
+            ]
+          },
+          "payload_json": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Internal Agent UTC epoch milliseconds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Session": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "project_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Internal Agent UTC epoch milliseconds."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Internal Agent UTC epoch milliseconds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionListPage": {
+        "type": "object",
+        "required": [
+          "sessions"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            }
+          },
+          "next_cursor": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPage": {
+        "type": "object",
+        "required": [
+          "messages",
+          "next_seq"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "next_seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReplayPage": {
+        "type": "object",
+        "required": [
+          "events",
+          "next_seq",
+          "watermark"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatEvent"
+            }
+          },
+          "next_seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "watermark": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DataEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {},
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Request validation failed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Service credential or trusted identity is missing or invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The identity-scoped resource does not exist.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The idempotency identity was reused with a different request.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "A required Agent dependency is unavailable.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Process health",
+        "operationId": "getHealth",
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "public-health",
+        "responses": {
+          "200": {
+            "description": "Process is alive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Dependency readiness",
+        "operationId": "getReadiness",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "200": {
+            "description": "Required dependencies are reachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/runs": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Durably admit a run",
+        "operationId": "createRun",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaunchRequest"
+              }
+            }
+          }
+        },
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "run_id-and-request-fence",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "202": {
+            "description": "Admission persisted and notification published or replayable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/runs/{run_id}/control": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Admit an idempotent run control command",
+        "operationId": "controlRun",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ControlRequest"
+              }
+            }
+          }
+        },
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "Idempotency-Key",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "202": {
+            "description": "Command receipt admitted or replayed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/runs/{run_id}/events": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Read identity-scoped run evidence",
+        "operationId": "listRunEvents",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AfterSeq"
+          },
+          {
+            "$ref": "#/components/parameters/EvidenceLimit"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "200": {
+            "description": "Evidence page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "List identity-scoped sessions",
+        "operationId": "listSessions",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SessionCursor"
+          },
+          {
+            "$ref": "#/components/parameters/SessionLimit"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "200": {
+            "description": "Session page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}/messages": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Read identity-scoped chat history",
+        "operationId": "listSessionMessages",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AfterSeq"
+          },
+          {
+            "$ref": "#/components/parameters/EvidenceLimit"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "200": {
+            "description": "History page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}/events": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Replay identity-scoped chat events",
+        "operationId": "replaySessionEvents",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/AfterSeq"
+          },
+          {
+            "$ref": "#/components/parameters/EvidenceLimit"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "200": {
+            "description": "Replay page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    }
+  }
+}

@@ -10,7 +10,11 @@ from kokoro_agent.chat.models import (
     ChatProjection,
     chat_event_id,
 )
-from kokoro_agent.repositories.chat_repository import ChatIdentityConflict
+from kokoro_agent.repositories.chat_repository import (
+    ChatFenceMode,
+    ChatIdentityConflict,
+)
+from kokoro_agent.repositories.run_records import LeaseFence
 
 
 class FakeChatRepository:
@@ -91,7 +95,9 @@ class FakeChatRepository:
         record = ChatEventRecord(
             **projection.event.model_dump(),
             chat_event_id=chat_event_id(
-                projection.event.namespace, projection.event.run_id, projection.event.source_index
+                projection.event.namespace,
+                projection.event.run_id,
+                projection.event.source_index,
             ),
             seq=len(self.records) + 1,
         )
@@ -99,6 +105,16 @@ class FakeChatRepository:
         if projection.message is not None:
             await self.save_message(projection.message)
         return record
+
+    async def append_fenced(
+        self,
+        projection: ChatProjection,
+        lease: LeaseFence,
+        *,
+        mode: ChatFenceMode,
+    ) -> ChatEventRecord | None:
+        del lease, mode
+        return await self.append(projection)
 
     async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
         existing = self.messages.get(message.chat_message_id)
@@ -112,9 +128,7 @@ class FakeChatRepository:
             ):
                 raise ChatIdentityConflict("fake chat message identity drift")
             return existing
-        record = ChatMessageRecord(
-            **message.model_dump(), seq=len(self.messages) + 1
-        )
+        record = ChatMessageRecord(**message.model_dump(), seq=len(self.messages) + 1)
         self.messages[record.chat_message_id] = record
         return record
 
@@ -124,7 +138,9 @@ class FakeChatRepository:
         return tuple(
             event
             for event in self.records
-            if event.namespace == namespace and event.session_id == session_id and event.seq > after_seq
+            if event.namespace == namespace
+            and event.session_id == session_id
+            and event.seq > after_seq
         )[:limit]
 
     async def history(
@@ -133,16 +149,26 @@ class FakeChatRepository:
         return tuple(
             message
             for message in self.messages.values()
-            if message.namespace == namespace and message.session_id == session_id and message.seq > after_seq
+            if message.namespace == namespace
+            and message.session_id == session_id
+            and message.seq > after_seq
         )[:limit]
 
     async def next_source_index(self, namespace: str, run_id: str) -> int:
-        indices = [event.source_index for event in self.records if event.namespace == namespace and event.run_id == run_id]
+        indices = [
+            event.source_index
+            for event in self.records
+            if event.namespace == namespace and event.run_id == run_id
+        ]
         return max(indices, default=-1) + 1
 
     async def watermark(self, namespace: str, session_id: str) -> int:
         return max(
-            (event.seq for event in self.records if event.namespace == namespace and event.session_id == session_id),
+            (
+                event.seq
+                for event in self.records
+                if event.namespace == namespace and event.session_id == session_id
+            ),
             default=0,
         )
 

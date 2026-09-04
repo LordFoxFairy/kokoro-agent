@@ -28,14 +28,19 @@ IMAGE = "busybox"
 
 def _docker_available() -> bool:
     try:
-        return subprocess.run(
-            ["docker", "info"], capture_output=True, timeout=10, check=False
-        ).returncode == 0
+        return (
+            subprocess.run(
+                ["docker", "info"], capture_output=True, timeout=10, check=False
+            ).returncode
+            == 0
+        )
     except Exception:
         return False
 
 
-needs_docker = pytest.mark.skipif(not _docker_available(), reason="docker daemon unreachable")
+needs_docker = pytest.mark.skipif(
+    not _docker_available(), reason="docker daemon unreachable"
+)
 
 _SPAWNED: list[str] = []
 
@@ -61,10 +66,16 @@ def _dispatch_settings() -> SandboxSettings:
     )
 
 
-def _connect(root: Path, container_id: str | None = None, run_id: str = "run_x") -> DockerShellBackend:
+def _connect(
+    root: Path, container_id: str | None = None, run_id: str = "run_x"
+) -> DockerShellBackend:
     backend = connect_docker_sandbox(
-        _settings(), root=root, container_id=container_id, run_id=run_id,
-        exec_timeout=30, max_output_bytes=100000,
+        _settings(),
+        root=root,
+        container_id=container_id,
+        run_id=run_id,
+        exec_timeout=30,
+        max_output_bytes=100000,
     )
     _SPAWNED.append(backend.container_id)
     return backend
@@ -80,8 +91,12 @@ def cleanup_containers():
 def test_missing_image_fail_loud(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="KOKORO_DOCKER_IMAGE"):
         connect_docker_sandbox(
-            _settings(image=None), root=tmp_path, container_id=None, run_id="r",
-            exec_timeout=30, max_output_bytes=100000,
+            _settings(image=None),
+            root=tmp_path,
+            container_id=None,
+            run_id="r",
+            exec_timeout=30,
+            max_output_bytes=100000,
         )
 
 
@@ -121,7 +136,9 @@ class TestDockerSandbox:
 
     def test_dead_container_replaced(self, tmp_path: Path) -> None:
         first = _connect(tmp_path, run_id="run_dead")
-        subprocess.run(["docker", "rm", "-f", first.container_id], capture_output=True, check=True)
+        subprocess.run(
+            ["docker", "rm", "-f", first.container_id], capture_output=True, check=True
+        )
         second = _connect(tmp_path, container_id=first.container_id, run_id="run_dead")
         assert second.container_id != first.container_id
 
@@ -134,15 +151,26 @@ class TestDockerSandbox:
             update={"local_shell_root": str(tmp_path)}
         )
         # 生产路径：run 先被认领（建 run 文档），容器绑定才落账。
-        await run_repository.try_claim(request(run_id), "owner")
+        lease = await run_repository.try_claim(request(run_id), "owner")
+        assert lease is not None
         first = await make_backend_for_run(
-            "docker", settings, workspace="ns:s1", run_id=run_id, sandbox_store=run_repository
+            "docker",
+            settings,
+            workspace="ns:s1",
+            run_id=run_id,
+            lease=lease,
+            sandbox_store=run_repository,
         )
         assert isinstance(first, DockerShellBackend)
         _SPAWNED.append(first.container_id)
         assert await run_repository.get_sandbox_id(run_id) == first.container_id
         second = await make_backend_for_run(
-            "docker", settings, workspace="ns:s1", run_id=run_id, sandbox_store=run_repository
+            "docker",
+            settings,
+            workspace="ns:s1",
+            run_id=run_id,
+            lease=lease,
+            sandbox_store=run_repository,
         )
         assert isinstance(second, DockerShellBackend)
         assert second.container_id == first.container_id
@@ -170,10 +198,16 @@ class TestDockerWithS3Archive:
         from kokoro_agent.sandbox.docker_backend import ArchivingDockerShellBackend
 
         minio = boto3.client(
-            "s3", endpoint_url=MINIO_URL, region_name="us-east-1",
-            aws_access_key_id=_ACCESS, aws_secret_access_key=_SECRET,
-            config=BotoConfig(s3={"addressing_style": "path"}, connect_timeout=1,
-                              retries={"max_attempts": 1}),
+            "s3",
+            endpoint_url=MINIO_URL,
+            region_name="us-east-1",
+            aws_access_key_id=_ACCESS,
+            aws_secret_access_key=_SECRET,
+            config=BotoConfig(
+                s3={"addressing_style": "path"},
+                connect_timeout=1,
+                retries={"max_attempts": 1},
+            ),
         )
         bucket = f"kokoro-docker-s3-{uuid.uuid4().hex[:6]}"
         try:
@@ -186,7 +220,8 @@ class TestDockerWithS3Archive:
             container_id=plain.container_id,
             archiver=S3Archiver(
                 S3Workspace(type="s3", endpoint=MINIO_URL, bucket=bucket),
-                access_key=SecretStr(_ACCESS), secret_key=SecretStr(_SECRET),
+                access_key=SecretStr(_ACCESS),
+                secret_key=SecretStr(_SECRET),
             ),
             prefix="ns:ds3",
             timeout=30,

@@ -17,7 +17,7 @@ from kokoro_agent.tools.middleware import (
     ToolPolicyMiddleware,
     ToolResultReviewMiddleware,
 )
-from kokoro_agent.repositories.run_repository import RunRepository
+from kokoro_agent.repositories.run_repository import LeaseFence, RunRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +46,7 @@ def build_guard_chains(
     run_repository: RunRepository,
     run_token_budget: int,
     request: RunRequest,
+    lease: LeaseFence,
     permissions: Permissions,
 ) -> GuardChains:
     """守卫两件套：终态闸恒挂 + 预算闸按政策；主 agent 与每个子代理同套下发
@@ -56,7 +57,9 @@ def build_guard_chains(
         # 再送人工复核=人审人答死循环，装配期即拒绝。
         raise ValueError("ask_user cannot be a result-review tool")
     guards: list[AgentMiddleware] = [
-        TerminalGuardMiddleware(run_repository=run_repository, run_id=request.run_id)
+        TerminalGuardMiddleware(
+            run_repository=run_repository, run_id=request.run_id, lease=lease
+        )
     ]
     if run_token_budget > 0:
         guards.append(
@@ -64,14 +67,17 @@ def build_guard_chains(
                 budget=run_token_budget,
                 run_repository=run_repository,
                 run_id=request.run_id,
+                lease=lease,
             )
         )
     review = (
-        ToolResultReviewMiddleware(review_tools, run_repository, request.run_id)
+        ToolResultReviewMiddleware(review_tools, run_repository, request.run_id, lease)
         if review_tools
         else None
     )
-    journal = ToolEffectJournalMiddleware(run_repository=run_repository, run_id=request.run_id)
+    journal = ToolEffectJournalMiddleware(
+        run_repository=run_repository, run_id=request.run_id, lease=lease
+    )
     # 子代理链：守卫 →（审核）→ journal（最内层）。子代理内工具同经 backend 执行，同守门。
     subagent_guards: tuple[AgentMiddleware, ...] = tuple(guards)
     if review is not None:
@@ -80,7 +86,9 @@ def build_guard_chains(
     return GuardChains(
         subagent=subagent_guards,
         guards=tuple(guards),
-        steering=SteeringMiddleware(run_repository=run_repository, run_id=request.run_id),
+        steering=SteeringMiddleware(
+            run_repository=run_repository, run_id=request.run_id, lease=lease
+        ),
         review=review,
         journal=journal,
     )

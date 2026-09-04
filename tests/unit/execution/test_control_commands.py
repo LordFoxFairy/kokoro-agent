@@ -42,6 +42,7 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
+from kokoro_agent.repositories.run_repository import LeaseFence
 
 _GATED = "danger"
 _TID = "call-A"
@@ -73,8 +74,10 @@ _PENDING_STATE = FakeState(
 )
 
 
-def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AgentHandle]]:
-    async def _build(_request: RunRequest) -> AgentHandle:
+def _builder(
+    agent: FakeAgent,
+) -> Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]:
+    async def _build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     return _build

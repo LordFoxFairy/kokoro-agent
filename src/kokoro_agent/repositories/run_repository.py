@@ -14,6 +14,7 @@ from kokoro_agent.repositories.run_ports import (
     RunEffectPort,
     RunEventPort,
     RunLifecyclePort,
+    RunSandboxCleanupPort,
 )
 from kokoro_agent.repositories.run_records import (
     ControlAdmission,
@@ -25,6 +26,8 @@ from kokoro_agent.repositories.run_records import (
     OutboxFrame,
     ReceiptReconcile,
     RunControlCommandRecord,
+    SandboxBackendKind,
+    SandboxCleanupIntent,
     StagedFrame,
     ToolJournalRecord,
 )
@@ -36,6 +39,7 @@ class RunRepository(
     RunEffectPort,
     RunEventPort,
     RunLifecyclePort,
+    RunSandboxCleanupPort,
     Protocol,
 ):
     """Composite port used by the worker composition root.
@@ -55,6 +59,10 @@ class ControlCommandConflict(RuntimeError):
     """A command id was reused with a different immutable request digest."""
 
 
+class UsageIdentityConflict(RuntimeError):
+    """A lease generation was replayed with different immutable usage totals."""
+
+
 __all__ = [
     "ControlAdmission",
     "ControlAdmissionReceipt",
@@ -68,6 +76,9 @@ __all__ = [
     "ReceiptReconcile",
     "RunControlCommandRecord",
     "RunRepository",
+    "SandboxBackendKind",
+    "SandboxCleanupIntent",
     "StagedFrame",
     "ToolJournalRecord",
+    "UsageIdentityConflict",
 ]

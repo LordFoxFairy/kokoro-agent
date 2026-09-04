@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,8 +22,18 @@ from kokoro_agent.chat.models import (
     ChatSessionRecord,
     chat_event_id,
 )
-from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, ensure_schema, qualified
-from kokoro_agent.repositories.chat_repository import ChatIdentityConflict
+from kokoro_agent.infrastructure.postgres import (
+    DEFAULT_PG_SCHEMA,
+    connect_pg,
+    ensure_schema,
+    qualified,
+)
+from kokoro_agent.repositories.chat_repository import (
+    ChatFenceMode,
+    ChatIdentityConflict,
+)
+from kokoro_agent.repositories.run_records import LeaseFence
+from kokoro_agent.infrastructure.schema import RUN_CLAIMS_TABLE
 
 CHAT_MESSAGES_COLLECTION = "kokoro_agent_chat_messages"
 CHAT_EVENTS_COLLECTION = "kokoro_agent_chat_events"
@@ -39,9 +51,15 @@ class PostgresChatRepositorySettings(BaseModel):
 class PostgresChatRepository:
     """Append-only events plus idempotent final-message projection."""
 
-    def __init__(self, database_url: str, schema: str = DEFAULT_PG_SCHEMA) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        schema: str = DEFAULT_PG_SCHEMA,
+        clock: Callable[[], int] | None = None,
+    ) -> None:
         self._database_url = database_url
         self._schema = schema
+        self._clock = clock or _now_ms
 
     async def setup(self) -> None:
         async with connect_pg(self._database_url) as conn:
@@ -164,7 +182,14 @@ class PostgresChatRepository:
                     ON CONFLICT (namespace, session_id) DO NOTHING
                     RETURNING session_id, project_ref, title, created_at, updated_at
                     """,
-                    (namespace, session_id, project_ref, title.strip()[:80], updated_at, updated_at),
+                    (
+                        namespace,
+                        session_id,
+                        project_ref,
+                        title.strip()[:80],
+                        updated_at,
+                        updated_at,
+                    ),
                 )
                 inserted = await cur.fetchone()
                 if inserted is not None:
@@ -183,7 +208,9 @@ class PostgresChatRepository:
             raise RuntimeError("chat session insert raced and row is missing")
         raced_record = ChatSessionRecord(**dict(raced))
         if raced_record.project_ref != project_ref:
-            raise ChatIdentityConflict(f"chat session identity drift for {session_id!r}")
+            raise ChatIdentityConflict(
+                f"chat session identity drift for {session_id!r}"
+            )
         return raced_record
 
     async def list_sessions(
@@ -218,7 +245,7 @@ class PostgresChatRepository:
                     f"""
                     SELECT session_id, project_ref, title, created_at, updated_at
                     FROM {qualified(self._schema, CHAT_SESSIONS_COLLECTION)}
-                    WHERE {' AND '.join(clauses)}
+                    WHERE {" AND ".join(clauses)}
                     ORDER BY updated_at DESC, session_id ASC
                     LIMIT %s
                     """,
@@ -228,92 +255,66 @@ class PostgresChatRepository:
         return tuple(ChatSessionRecord(**dict(row)) for row in rows)
 
     async def append(self, projection: ChatProjection) -> ChatEventRecord:
-        draft = projection.event
-        existing = await self._get_event(draft.namespace, draft.run_id, draft.source_index)
-        if existing is not None:
-            record = existing
-            _assert_event_identity(record, draft)
-        else:
-            seq = await self._next_seq("event", draft.namespace, draft.session_id)
-            record = ChatEventRecord(
-                **draft.model_dump(),
-                chat_event_id=chat_event_id(draft.namespace, draft.run_id, draft.source_index),
-                seq=seq,
-            )
-            async with connect_pg(self._database_url) as conn:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    return await self._append_projection(cur, projection)
+
+    async def append_fenced(
+        self,
+        projection: ChatProjection,
+        lease: LeaseFence,
+        *,
+        mode: ChatFenceMode,
+    ) -> ChatEventRecord | None:
+        """Hold the run generation lock until its chat projection is durable."""
+
+        if mode not in {"active", "current_generation"}:
+            raise ValueError(f"unsupported chat fence mode: {mode!r}")
+        active_predicate = (
+            """
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at > %s
+              AND terminal = FALSE
+            """
+            if mode == "active"
+            else ""
+        )
+        params: tuple[object, ...] = (
+            projection.event.run_id,
+            lease.owner,
+            lease.generation,
+        )
+        if mode == "active":
+            params = (*params, self._clock())
+
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        INSERT INTO {} (
-                            namespace, session_id, run_id, source_index, chat_message_id,
-                            event_type, payload_json, created_at, seq, chat_event_id
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (namespace, run_id, source_index) DO NOTHING
-                        RETURNING chat_event_id
-                        """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
-                        (
-                            record.namespace,
-                            record.session_id,
-                            record.run_id,
-                            record.source_index,
-                            record.chat_message_id,
-                            record.event_type,
-                            record.payload_json,
-                            record.created_at,
-                            record.seq,
-                            record.chat_event_id,
+                        SELECT 1
+                        FROM {}
+                        WHERE run_id = %s
+                          AND owner = %s
+                          AND lease_generation = %s
+                          {}
+                        FOR UPDATE
+                        """.format(
+                            qualified(self._schema, RUN_CLAIMS_TABLE),
+                            active_predicate,
                         ),
+                        params,
                     )
                     if await cur.fetchone() is None:
-                        existing = await self._get_event(
-                            draft.namespace, draft.run_id, draft.source_index
-                        )
-                        if existing is None:
-                            raise RuntimeError("chat event insert raced and row is missing")
-                        _assert_event_identity(existing, draft)
-                        record = existing
-        if projection.message is not None:
-            await self.save_message(projection.message)
-        return record
+                        return None
+                    return await self._append_projection(cur, projection)
 
     async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
-        existing = await self._get_message(message.chat_message_id)
-        if existing is not None:
-            _assert_message_identity(existing, message)
-            return existing
-        seq = await self._next_seq("message", message.namespace, message.session_id)
-        record = ChatMessageRecord(**message.model_dump(), seq=seq)
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO {} (
-                        chat_message_id, namespace, session_id, run_id, role,
-                        content, status, created_at, updated_at, seq
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (chat_message_id) DO NOTHING
-                    RETURNING chat_message_id
-                    """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
-                    (
-                        record.chat_message_id,
-                        record.namespace,
-                        record.session_id,
-                        record.run_id,
-                        record.role,
-                        record.content,
-                        record.status,
-                        record.created_at,
-                        record.updated_at,
-                        record.seq,
-                    ),
-                )
-                if await cur.fetchone() is None:
-                    existing = await self._get_message(message.chat_message_id)
-                    if existing is None:
-                        raise RuntimeError("chat message insert raced and row is missing")
-                    _assert_message_identity(existing, message)
-                    return existing
-        return record
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    return await self._save_message(cur, message)
 
     async def replay(
         self, namespace: str, session_id: str, *, after_seq: int = 0, limit: int = 500
@@ -385,55 +386,158 @@ class PostgresChatRepository:
         value = row["seq"] if row is not None else None
         return 0 if value is None else int(value)
 
-    async def _next_seq(self, kind: str, namespace: str, session_id: str) -> int:
-        async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO {} AS current_sequence (kind, namespace, session_id, seq)
-                    VALUES (%s, %s, %s, 1)
-                    ON CONFLICT (kind, namespace, session_id)
-                    DO UPDATE SET seq = current_sequence.seq + 1
-                    RETURNING seq
-                    """.format(qualified(self._schema, CHAT_SEQUENCES_COLLECTION)),
-                    (kind, namespace, session_id),
-                )
-                row = await cur.fetchone()
+    async def _append_projection(
+        self, cur: Any, projection: ChatProjection
+    ) -> ChatEventRecord:
+        draft = projection.event
+        await self._lock_identity(
+            cur,
+            f"chat-event:{draft.namespace}:{draft.run_id}:{draft.source_index}",
+        )
+        existing = await self._get_event(
+            cur, draft.namespace, draft.run_id, draft.source_index
+        )
+        if existing is not None:
+            _assert_event_identity(existing, draft)
+            record = existing
+        else:
+            seq = await self._next_seq(cur, "event", draft.namespace, draft.session_id)
+            record = ChatEventRecord(
+                **draft.model_dump(),
+                chat_event_id=chat_event_id(
+                    draft.namespace, draft.run_id, draft.source_index
+                ),
+                seq=seq,
+            )
+            await cur.execute(
+                """
+                INSERT INTO {} (
+                    namespace, session_id, run_id, source_index, chat_message_id,
+                    event_type, payload_json, created_at, seq, chat_event_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+                (
+                    record.namespace,
+                    record.session_id,
+                    record.run_id,
+                    record.source_index,
+                    record.chat_message_id,
+                    record.event_type,
+                    record.payload_json,
+                    record.created_at,
+                    record.seq,
+                    record.chat_event_id,
+                ),
+            )
+        if projection.message is not None:
+            await self._save_message(cur, projection.message)
+        return record
+
+    async def _save_message(
+        self, cur: Any, message: ChatMessageDraft
+    ) -> ChatMessageRecord:
+        await self._lock_identity(cur, f"chat-message:{message.chat_message_id}")
+        existing = await self._get_message(cur, message.chat_message_id)
+        if existing is not None:
+            _assert_message_identity(existing, message)
+            return existing
+        seq = await self._next_seq(
+            cur, "message", message.namespace, message.session_id
+        )
+        record = ChatMessageRecord(**message.model_dump(), seq=seq)
+        await cur.execute(
+            """
+            INSERT INTO {} (
+                chat_message_id, namespace, session_id, run_id, role,
+                content, status, created_at, updated_at, seq
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
+            (
+                record.chat_message_id,
+                record.namespace,
+                record.session_id,
+                record.run_id,
+                record.role,
+                record.content,
+                record.status,
+                record.created_at,
+                record.updated_at,
+                record.seq,
+            ),
+        )
+        return record
+
+    async def _next_seq(
+        self, cur: Any, kind: str, namespace: str, session_id: str
+    ) -> int:
+        table = qualified(self._schema, CHAT_SEQUENCES_COLLECTION)
+        await cur.execute(
+            f"""
+            INSERT INTO {table} (kind, namespace, session_id, seq)
+            VALUES (%s, %s, %s, 0)
+            ON CONFLICT (kind, namespace, session_id) DO NOTHING
+            """,
+            (kind, namespace, session_id),
+        )
+        await cur.execute(
+            f"""
+            SELECT seq
+            FROM {table}
+            WHERE kind = %s AND namespace = %s AND session_id = %s
+            FOR UPDATE
+            """,
+            (kind, namespace, session_id),
+        )
+        row = await cur.fetchone()
         if row is None:
-            raise RuntimeError(f"failed to allocate {kind} sequence for {session_id!r}")
-        return int(row["seq"])
+            raise RuntimeError(f"failed to lock {kind} sequence for {session_id!r}")
+        seq = int(row["seq"]) + 1
+        await cur.execute(
+            f"""
+            UPDATE {table}
+            SET seq = %s
+            WHERE kind = %s AND namespace = %s AND session_id = %s
+            """,
+            (seq, kind, namespace, session_id),
+        )
+        return seq
 
     async def _get_event(
-        self, namespace: str, run_id: str, source_index: int
+        self, cur: Any, namespace: str, run_id: str, source_index: int
     ) -> ChatEventRecord | None:
-        async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT chat_event_id, namespace, session_id, run_id, source_index,
-                           chat_message_id, event_type, payload_json, created_at, seq
-                    FROM {}
-                    WHERE namespace = %s AND run_id = %s AND source_index = %s
-                    """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
-                    (namespace, run_id, source_index),
-                )
-                row = await cur.fetchone()
+        await cur.execute(
+            """
+            SELECT chat_event_id, namespace, session_id, run_id, source_index,
+                   chat_message_id, event_type, payload_json, created_at, seq
+            FROM {}
+            WHERE namespace = %s AND run_id = %s AND source_index = %s
+            """.format(qualified(self._schema, CHAT_EVENTS_COLLECTION)),
+            (namespace, run_id, source_index),
+        )
+        row = await cur.fetchone()
         return None if row is None else ChatEventRecord(**dict(row))
 
-    async def _get_message(self, chat_message_id: str) -> ChatMessageRecord | None:
-        async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT chat_message_id, namespace, session_id, run_id, role,
-                           content, status, created_at, updated_at, seq
-                    FROM {}
-                    WHERE chat_message_id = %s
-                    """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
-                    (chat_message_id,),
-                )
-                row = await cur.fetchone()
+    async def _get_message(
+        self, cur: Any, chat_message_id: str
+    ) -> ChatMessageRecord | None:
+        await cur.execute(
+            """
+            SELECT chat_message_id, namespace, session_id, run_id, role,
+                   content, status, created_at, updated_at, seq
+            FROM {}
+            WHERE chat_message_id = %s
+            """.format(qualified(self._schema, CHAT_MESSAGES_COLLECTION)),
+            (chat_message_id,),
+        )
+        row = await cur.fetchone()
         return None if row is None else ChatMessageRecord(**dict(row))
+
+    async def _lock_identity(self, cur: Any, identity: str) -> None:
+        """Serialize duplicate immutable identities before allocating a sequence."""
+
+        await cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (identity,)
+        )
 
 
 @asynccontextmanager
@@ -453,6 +557,10 @@ def _validate_page(after_seq: int, limit: int) -> None:
         raise ValueError("after_seq must be non-negative")
     if limit <= 0 or limit > 1000:
         raise ValueError("limit must be between 1 and 1000")
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def _assert_event_identity(record: ChatEventRecord, draft: ChatEventDraft) -> None:

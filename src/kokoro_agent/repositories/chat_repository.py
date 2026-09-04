@@ -7,7 +7,7 @@ consume this port instead of a concrete database adapter.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 from kokoro_agent.chat.models import (
     ChatEventRecord,
@@ -16,10 +16,14 @@ from kokoro_agent.chat.models import (
     ChatProjection,
     ChatSessionRecord,
 )
+from kokoro_agent.repositories.run_records import LeaseFence
 
 
 class ChatIdentityConflict(RuntimeError):
     """A stable chat identity was reused for different immutable content."""
+
+
+ChatFenceMode = Literal["active", "current_generation"]
 
 
 class ChatRepository(Protocol):
@@ -44,6 +48,14 @@ class ChatRepository(Protocol):
 
     async def append(self, projection: ChatProjection) -> ChatEventRecord: ...
 
+    async def append_fenced(
+        self,
+        projection: ChatProjection,
+        lease: LeaseFence,
+        *,
+        mode: ChatFenceMode,
+    ) -> ChatEventRecord | None: ...
+
     async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord: ...
 
     async def replay(
@@ -59,4 +71,4 @@ class ChatRepository(Protocol):
     async def watermark(self, namespace: str, session_id: str) -> int: ...
 
 
-__all__ = ["ChatIdentityConflict", "ChatRepository"]
+__all__ = ["ChatFenceMode", "ChatIdentityConflict", "ChatRepository"]

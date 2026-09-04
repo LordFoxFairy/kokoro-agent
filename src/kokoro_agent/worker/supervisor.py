@@ -64,6 +64,7 @@ from kokoro_agent.repositories.run_repository import (
     LeaseFence,
     OutboxFrame,
     RunRepository,
+    SandboxBackendKind,
 )
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
@@ -85,12 +86,17 @@ def _raw_hash(event: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-AgentBuilder = Callable[[RunRequest], Awaitable[AgentHandle]]
+AgentBuilder = Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
 TraceFactory = Callable[[RunRequest], RunnableConfig | None]
 SourceResolver = Callable[[str], SubagentSource]
 BackendResolver = Callable[[RunRequest], Backend]
 FeatureResolver = Callable[[str], Feature]
+SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
+
+SANDBOX_CLEANUP_CLAIM_LEASE_MS = 30_000
+SANDBOX_CLEANUP_RETRY_BASE_MS = 1_000
+SANDBOX_CLEANUP_RETRY_MAX_MS = 60_000
 
 
 def _default_backend(_request: RunRequest) -> Backend:
@@ -126,8 +132,7 @@ class RunSupervisor:
         # R4：published 但回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
         outbox_republish_ms: int = 30_000,
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
-        sandbox_teardown: Callable[[Backend, str | None], Awaitable[None]]
-        | None = None,
+        sandbox_teardown: SandboxTeardown | None = None,
         chat_repository: ChatRepository | None = None,
     ) -> None:
         self._build = agent_builder
@@ -188,6 +193,7 @@ class RunSupervisor:
         await self._republish_outbox(bus)
         # control command 续办（R2）：persisted 未 applied 的 resume/cancel——fingerprint 匹配才续 apply。
         await self._reapply_pending_control(bus)
+        await self._retry_sandbox_cleanups()
         heartbeat = asyncio.create_task(self._heartbeat_loop(bus))
         try:
             async for item in bus.subscribe(
@@ -252,7 +258,7 @@ class RunSupervisor:
             return
         metrics.record_dispatch_claim(won=True)
         self._leases[canonical.run_id] = lease
-        await self._start_run(bus, canonical)
+        await self._start_run(bus, canonical, lease)
 
     async def _republish_outbox(self, bus: StreamProtocol) -> None:
         # 崩溃/瞬时故障后 queued 的 critical 行：按 seq 序补发到事件流（复用固定 event_id/durable_seq，
@@ -365,7 +371,7 @@ class RunSupervisor:
                     await task
             LOGGER.warning("reclaiming expired run_id=%s", request.run_id)
             self._leases[request.run_id] = reclaimed.lease
-            await self._start_run(bus, request)
+            await self._start_run(bus, request, reclaimed.lease)
         # control 监听收养：暂停 run 的认领 worker 崩溃后，其 resume/cancel 无人处理会永久卡死；
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
         for run_id in await self._run_repository.list_paused():
@@ -377,6 +383,7 @@ class RunSupervisor:
         # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
         for run_id in await self._run_repository.list_open_outbox_runs():
             await self._reconcile_run_receipts(bus, run_id)
+        await self._retry_sandbox_cleanups()
         if self._run_ttl_s > 0:
             purged = await self._run_repository.purge_terminal(self._run_ttl_s * 1000)
             if purged:
@@ -486,11 +493,13 @@ class RunSupervisor:
             LOGGER.debug("skipping already-claimed run_id=%s", request.run_id)
             return
         self._leases[request.run_id] = lease
-        await self._start_run(bus, request)
+        await self._start_run(bus, request, lease)
 
-    async def _start_run(self, bus: StreamProtocol, request: RunRequest) -> None:
+    async def _start_run(
+        self, bus: StreamProtocol, request: RunRequest, lease: LeaseFence
+    ) -> None:
         try:
-            built = await self._build(request)
+            built = await self._build(request, lease)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(
                 bus, request.run_id, error, code="assembly_failed"
@@ -515,6 +524,7 @@ class RunSupervisor:
             payload,
             self._approval_tool_names(request),
             trace=self._trace(request),
+            lease=lease,
         )
         # agent 就位后订阅该 run 的独立 control 流：resume/cancel 从此来，与请求流解耦。
         self._ensure_control_listener(bus, request.run_id)
@@ -538,7 +548,7 @@ class RunSupervisor:
             return
         self._leases[msg.run_id] = lease
         try:
-            built = await self._build(request)
+            built = await self._build(request, lease)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(bus, msg.run_id, error, code="assembly_failed")
             return
@@ -566,7 +576,7 @@ class RunSupervisor:
                 cached = await self._run_repository.get_tool_result(msg.run_id, tool_id)
                 if cached is not None:
                     results[tool_id] = cached
-            emitter = await self._emitter(bus, msg.run_id)
+            emitter = await self._emitter(bus, msg.run_id, lease)
             for resolution in review_resolution_payloads(ordered, rframe, results):
                 await emitter.emit(resolution)
             command = Command(resume=review_resume_value(ordered))
@@ -580,7 +590,7 @@ class RunSupervisor:
             frame, requests = approval_frame(snapshot, names)
             # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。
             ordered = align_decisions(msg.decisions, frame, requests)
-            emitter = await self._emitter(bus, msg.run_id)
+            emitter = await self._emitter(bus, msg.run_id, lease)
             # reject/respond 不经 v3 projection → 据快照+decision 直发 tool.returned。
             for resolution in resolution_payloads(ordered, frame):
                 await emitter.emit(resolution)
@@ -605,6 +615,7 @@ class RunSupervisor:
             command,
             names,
             trace=self._trace(request),
+            lease=lease,
         )
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
@@ -634,10 +645,14 @@ class RunSupervisor:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        emitter = await self._emitter(bus, msg.run_id)
-        await emitter.emit(RunCompletedPayload(status="cancelled", token_usage=None))
-        self._emitters.pop(msg.run_id, None)
-        await self._teardown_control(bus, msg.run_id)
+        try:
+            emitter = await self._emitter(bus, msg.run_id, terminal_lease)
+            await emitter.emit(
+                RunCompletedPayload(status="cancelled", token_usage=None)
+            )
+            self._emitters.pop(msg.run_id, None)
+        finally:
+            await self._teardown_control(bus, msg.run_id)
 
     def _spawn_agent(
         self,
@@ -649,10 +664,10 @@ class RunSupervisor:
         approval_tool_names: frozenset[str],
         *,
         trace: RunnableConfig | None,
+        lease: LeaseFence,
     ) -> None:
-        lease = self._leases.get(run_id)
-        if lease is None:
-            raise RuntimeError(f"cannot spawn run {run_id!r} without a lease fence")
+        if self._leases.get(run_id) != lease:
+            raise RuntimeError(f"cannot spawn run {run_id!r} with a stale lease fence")
         task = asyncio.create_task(
             self._guarded(
                 bus,
@@ -700,7 +715,7 @@ class RunSupervisor:
             if not await self._guarded_entry_gate(run_id, lease):
                 LOGGER.warning("skipping execution for terminal run_id=%s", run_id)
                 return
-            emitter = await self._emitter(bus, run_id)
+            emitter = await self._emitter(bus, run_id, lease)
             terminal_claimed = False
 
             async def claim_terminal() -> bool:
@@ -711,22 +726,40 @@ class RunSupervisor:
                     terminal_claimed = await self._claim_terminal(run_id, lease)
                 return terminal_claimed
 
-            terminal = await invoke_once(
-                emitter,
-                built.runnable,
-                thread_id,
-                payload,
-                approval_tool_names=approval_tool_names,
-                # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
-                describe_tool=built.describe_tool,
-                source_for=self._source_for,
-                trace=trace,
-                recursion_limit=self._recursion_limit,
-                # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
-                claim_terminal=claim_terminal,
-                # 用量跨段累计真源：run.completed 报累计而非末段。
-                record_usage=lambda i, o: self._run_repository.add_usage(run_id, i, o),
-            )
+            async def record_usage(
+                input_tokens: int, output_tokens: int
+            ) -> tuple[int, int]:
+                totals = await self._run_repository.add_usage(
+                    run_id, lease, input_tokens, output_tokens
+                )
+                if totals is None:
+                    raise RuntimeError(
+                        f"run {run_id!r} lost its lease while recording usage"
+                    )
+                return totals
+
+            try:
+                terminal = await invoke_once(
+                    emitter,
+                    built.runnable,
+                    thread_id,
+                    payload,
+                    approval_tool_names=approval_tool_names,
+                    # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
+                    describe_tool=built.describe_tool,
+                    source_for=self._source_for,
+                    trace=trace,
+                    recursion_limit=self._recursion_limit,
+                    # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
+                    claim_terminal=claim_terminal,
+                    # 用量跨段累计真源：run.completed 报累计而非末段。
+                    record_usage=record_usage,
+                )
+            finally:
+                # The terminal CAS durably queues sandbox cleanup in the same
+                # transaction.  A failed terminal publish must not skip the
+                # immediate attempt; heartbeat recovery remains the backstop.
+                await self._retry_sandbox_cleanups(run_id=run_id)
         if terminal:
             if terminal_claimed:
                 self._emitters.pop(run_id, None)
@@ -875,7 +908,12 @@ class RunSupervisor:
     ) -> None:
         # 内部 raw kind（走既有 run events 流）：进入 Agent 的 durable outbox，
         # 只供执行进度/recovery 观察，永不写入 chat projection 或直接投影浏览器。
-        emitter = await self._emitter(bus, run_id)
+        lease = await self._run_repository.get_fence(run_id)
+        if lease is None:
+            raise RuntimeError(
+                f"cannot emit control receipt without run fence: {run_id!r}"
+            )
+        emitter = await self._emitter(bus, run_id, lease)
         await emitter.emit(
             RunControlReceiptPayload(command_id=command_id, control_status=status)
         )
@@ -893,8 +931,14 @@ class RunSupervisor:
         request = await self._run_repository.get_request(run_id)
         if request is None:
             return None
+        # 指纹读取同样会装配 backend/guards；先原子收养暂停 lease，禁止无 fence 构建。
+        # 读取完成后恢复暂停哨兵，真正 resume 再 adopt 新 generation。
+        lease = await self._run_repository.adopt(run_id, self._consumer)
+        if lease is None:
+            return None
+        self._leases[run_id] = lease
         try:
-            built = await self._build(request)
+            built = await self._build(request, lease)
             scope = RunScope.of(request)
             config: RunnableConfig = {
                 "configurable": {"thread_id": scope.scoped_thread_id}
@@ -903,6 +947,9 @@ class RunSupervisor:
         except Exception:  # noqa: BLE001 — 指纹是 stale 判定辅助，取不到降级 None（续办侧按不匹配处理）
             LOGGER.exception("interrupt fingerprint build failed run_id=%s", run_id)
             return None
+        finally:
+            if not await self._run_repository.pause(run_id, lease):
+                self._release_local_ownership(run_id, lease)
         interrupts = snapshot.interrupts
         if not interrupts:
             return None
@@ -962,18 +1009,54 @@ class RunSupervisor:
                     continue
             await self._apply_recorded_control(bus, entry.run_id, msg)
 
-    async def _teardown_sandbox(self, run_id: str) -> None:
+    @staticmethod
+    def _sandbox_cleanup_retry_delay(attempt_count: int) -> int:
+        exponent = max(0, min(attempt_count - 1, 6))
+        return min(
+            SANDBOX_CLEANUP_RETRY_MAX_MS,
+            SANDBOX_CLEANUP_RETRY_BASE_MS * (2**exponent),
+        )
+
+    async def _retry_sandbox_cleanups(self, run_id: str | None = None) -> None:
         if self._sandbox_teardown is None:
             return
-        request = await self._run_repository.get_request(run_id)
-        if request is None:
+        try:
+            intents = await self._run_repository.claim_sandbox_cleanups(
+                self._consumer,
+                run_id=run_id,
+                limit=100,
+                lease_ms=SANDBOX_CLEANUP_CLAIM_LEASE_MS,
+            )
+        except Exception:  # noqa: BLE001 — durable intent stays claimable next heartbeat
+            LOGGER.exception("sandbox cleanup claim failed run_id=%s", run_id)
             return
-        sandbox_id = await self._run_repository.get_sandbox_id(run_id)
-        await self._sandbox_teardown(self._backend_for(request), sandbox_id)
+        for intent in intents:
+            try:
+                await self._sandbox_teardown(
+                    intent.backend_kind, intent.sandbox_id, intent.teardown_ref
+                )
+            except Exception as error:  # noqa: BLE001 — retry metadata is the durable recovery path
+                await self._run_repository.reschedule_sandbox_cleanup(
+                    intent.cleanup_id,
+                    str(error),
+                    retry_delay_ms=self._sandbox_cleanup_retry_delay(
+                        intent.attempt_count
+                    ),
+                )
+                LOGGER.warning(
+                    "sandbox cleanup failed run_id=%s kind=%s sandbox_id=%s attempt=%d",
+                    intent.run_id,
+                    intent.backend_kind,
+                    intent.sandbox_id,
+                    intent.attempt_count,
+                    exc_info=True,
+                )
+                continue
+            await self._run_repository.complete_sandbox_cleanup(intent.cleanup_id)
 
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
         # 终态统一漏斗：三路（自然完成/失败/取消）都经此——沙箱随终态回收。
-        await self._teardown_sandbox(run_id)
+        await self._retry_sandbox_cleanups(run_id=run_id)
         if self._events_ttl_s > 0:
             # raw run event stream 只是 Session relay 传输面，终态后限期存活。
             await bus.expire(run_events_stream(run_id), self._events_ttl_s)
@@ -985,9 +1068,11 @@ class RunSupervisor:
             task.cancel()
         self._leases.pop(run_id, None)
 
-    async def _emitter(self, bus: StreamProtocol, run_id: str) -> RunEmitter:
+    async def _emitter(
+        self, bus: StreamProtocol, run_id: str, lease: LeaseFence
+    ) -> RunEmitter:
         emitter = self._emitters.get(run_id)
-        if emitter is None:
+        if emitter is None or emitter.lease != lease:
             # 审核工具集用于抑制投影侧 raw returned：无 request（如迟到 cancel）按空集处理，
             # 此时不再有投影流量，抑制与否无副作用。
             request = await self._run_repository.get_request(run_id)
@@ -1006,6 +1091,7 @@ class RunSupervisor:
                 run_id,
                 review,
                 self._run_repository,
+                lease,
                 namespace=(
                     RunScope.of(request).namespace
                     if request is not None and self._chat_repository is not None
@@ -1067,7 +1153,9 @@ class RunSupervisor:
         if lease is None:
             return
         if await self._claim_terminal(run_id, lease):
-            emitter = await self._emitter(bus, run_id)
-            await emitter.emit(run_failed_payload(error, code=code))
-            self._emitters.pop(run_id, None)
-            await self._teardown_control(bus, run_id)
+            try:
+                emitter = await self._emitter(bus, run_id, lease)
+                await emitter.emit(run_failed_payload(error, code=code))
+                self._emitters.pop(run_id, None)
+            finally:
+                await self._teardown_control(bus, run_id)

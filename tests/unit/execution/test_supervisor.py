@@ -44,8 +44,10 @@ _TID = "call-A"
 _CHAT_NS = RunScope.of(request("scope")).namespace
 
 
-def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AgentHandle]]:
-    async def _build(_request: RunRequest) -> AgentHandle:
+def _builder(
+    agent: FakeAgent,
+) -> Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]:
+    async def _build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     return _build
@@ -484,7 +486,7 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 
 
 async def test_builder_failure_emits_run_failed_once() -> None:
-    async def boom(_request: RunRequest) -> AgentHandle:
+    async def boom(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
         raise ValueError("bad model")
 
     bus = FakeBus()
@@ -760,9 +762,13 @@ async def test_non_owner_cancel_fences_active_generation() -> None:
 async def test_terminal_claim_remains_latched_when_usage_persistence_fails() -> None:
     class _UsageFailureRepository(FakeRunRepository):
         async def add_usage(
-            self, run_id: str, input_tokens: int, output_tokens: int
-        ) -> tuple[int, int]:
-            del run_id, input_tokens, output_tokens
+            self,
+            run_id: str,
+            lease: LeaseFence,
+            input_tokens: int,
+            output_tokens: int,
+        ) -> tuple[int, int] | None:
+            del run_id, lease, input_tokens, output_tokens
             raise RuntimeError("usage persistence unavailable")
 
     store = _UsageFailureRepository()
@@ -830,11 +836,12 @@ class _FailingOutboxBus(FakeBus):
 
 async def test_heartbeat_republishes_queued_outbox_and_dedupes_after_success() -> None:
     store = FakeRunRepository()
-    await store.try_claim(request("queued-outbox"))
+    lease = await store.try_claim(request("queued-outbox"))
+    assert lease is not None
     await store.stage_critical_frame(
         "queued-outbox",
+        lease,
         "run.started",
-        0,
         111,
         "{}",
         terminal=False,
@@ -852,11 +859,12 @@ async def test_heartbeat_republishes_queued_outbox_and_dedupes_after_success() -
 
 async def test_heartbeat_keeps_queued_outbox_recoverable_on_publish_failure() -> None:
     store = FakeRunRepository()
-    await store.try_claim(request("queued-fail"))
+    lease = await store.try_claim(request("queued-fail"))
+    assert lease is not None
     await store.stage_critical_frame(
         "queued-fail",
+        lease,
         "run.started",
-        0,
         111,
         "{}",
         terminal=False,
@@ -1134,16 +1142,28 @@ async def test_steer_persist_failure_does_not_kill_healthy_run() -> None:
 
 async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
     # 审计缺口③：终态统一漏斗回收沙箱——自然完成与 cancel 两路都要触发（kind+sandbox_id 透传）。
-    torn: list[tuple[str, str | None]] = []
+    torn: list[tuple[str, str, str]] = []
 
-    async def teardown(kind: str, sandbox_id: str | None) -> None:
-        torn.append((kind, sandbox_id))
+    async def teardown(kind: str, sandbox_id: str, teardown_ref: str) -> None:
+        torn.append((kind, sandbox_id, teardown_ref))
 
     agent = FakeAgent(run=text_run("hi"))
     bus = FakeBus()
     store = FakeRunRepository()
+
+    async def builder(current: RunRequest, lease: LeaseFence) -> AgentHandle:
+        await store.bind_sandbox_id(
+            current.run_id,
+            lease,
+            expected_sandbox_id=None,
+            sandbox_id="sbx_123",
+            backend_kind="custom",
+            teardown_ref="fixtures.sandbox:destroy",
+        )
+        return AgentHandle(runnable=agent, tool_descriptions={})
+
     sup = RunSupervisor(
-        agent_builder=_builder(agent),
+        agent_builder=builder,
         run_repository=store,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
@@ -1152,10 +1172,99 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
         heartbeat_s=30.0,
         sandbox_teardown=teardown,
     )
-    store.sandbox_ids["t1"] = "sbx_123"
     await sup.dispatch(bus, request("t1"))
     await _drain(sup)
-    assert torn == [("state", "sbx_123")]
+    assert torn == [("custom", "sbx_123", "fixtures.sandbox:destroy")]
+
+
+async def test_heartbeat_retries_a_failed_durable_sandbox_cleanup() -> None:
+    attempts: list[tuple[str, str, str]] = []
+
+    async def teardown(kind: str, sandbox_id: str, teardown_ref: str) -> None:
+        attempts.append((kind, sandbox_id, teardown_ref))
+        if len(attempts) == 1:
+            raise RuntimeError("transient teardown failure")
+
+    store = FakeRunRepository()
+    await store.register_sandbox_cleanup(
+        run_id="orphan-run",
+        lease_generation=7,
+        backend_kind="custom",
+        sandbox_id="orphan-sandbox",
+        teardown_ref="fixtures.sandbox:destroy",
+    )
+    supervisor = RunSupervisor(
+        agent_builder=_builder(FakeAgent()),
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="cleanup-worker",
+        sandbox_teardown=teardown,
+    )
+
+    await supervisor.heartbeat_once(FakeBus())
+    assert len(attempts) == 1
+    store.clock_ms += 1_000
+    await supervisor.heartbeat_once(FakeBus())
+    assert attempts == [
+        ("custom", "orphan-sandbox", "fixtures.sandbox:destroy"),
+        ("custom", "orphan-sandbox", "fixtures.sandbox:destroy"),
+    ]
+    assert (
+        await store.claim_sandbox_cleanups(
+            "assertion-worker", run_id="orphan-run", limit=10, lease_ms=1_000
+        )
+        == []
+    )
+
+
+async def test_terminal_publish_failure_still_runs_durable_sandbox_cleanup() -> None:
+    class _TerminalPublishFailureBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ):
+            if event.get("kind") == "run.completed":
+                raise RuntimeError("terminal transport failed")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    gate = asyncio.Event()
+    agent = FakeAgent(run=text_run("done"), gates=[gate])
+    store = FakeRunRepository()
+    torn: list[tuple[str, str, str]] = []
+
+    async def builder(current: RunRequest, lease: LeaseFence) -> AgentHandle:
+        await store.bind_sandbox_id(
+            current.run_id,
+            lease,
+            expected_sandbox_id=None,
+            sandbox_id="terminal-sandbox",
+            backend_kind="custom",
+            teardown_ref="fixtures.sandbox:destroy",
+        )
+        return AgentHandle(runnable=agent, tool_descriptions={})
+
+    async def teardown(kind: str, sandbox_id: str, teardown_ref: str) -> None:
+        torn.append((kind, sandbox_id, teardown_ref))
+
+    supervisor = RunSupervisor(
+        agent_builder=builder,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="cleanup-worker",
+        sandbox_teardown=teardown,
+    )
+    bus = _TerminalPublishFailureBus()
+    await supervisor.dispatch(bus, request("terminal-publish-failure"))
+    tasks = tuple(supervisor.tasks.values())
+    gate.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert results == [None]
+    assert await store.is_terminal("terminal-publish-failure") is True
+    assert torn == [("custom", "terminal-sandbox", "fixtures.sandbox:destroy")]
 
 
 async def test_fencing_yields_local_task_when_ownership_lost() -> None:

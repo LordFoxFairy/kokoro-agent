@@ -74,11 +74,30 @@ class ToolJournalRecord(BaseModel):
     is_error: bool
 
 
+SandboxBackendKind = Literal["docker", "e2b", "custom"]
+
+
+class SandboxCleanupIntent(BaseModel):
+    """Durable, retryable destruction identity for one run-scoped sandbox."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    cleanup_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    lease_generation: int = Field(ge=1)
+    backend_kind: SandboxBackendKind
+    sandbox_id: str = Field(min_length=1)
+    teardown_ref: str = Field(min_length=1)
+    attempt_count: int = Field(ge=0)
+    next_attempt_at: int
+
+
 class StagedFrame(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     durable_seq: int
     event_id: str
+    index: int
 
 
 class OutboxFrame(BaseModel):
@@ -113,6 +132,8 @@ __all__ = [
     "OutboxFrame",
     "ReceiptReconcile",
     "RunControlCommandRecord",
+    "SandboxBackendKind",
+    "SandboxCleanupIntent",
     "StagedFrame",
     "ToolJournalRecord",
 ]

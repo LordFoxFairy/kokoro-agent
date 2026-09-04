@@ -6,7 +6,6 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-
 from typing import Annotated, Protocol
 
 from deepagents.backends.local_shell import LocalShellBackend
@@ -21,16 +20,32 @@ from kokoro_agent.sandbox.archive import (
     S3Archiver,
     S3Workspace,
 )
-from kokoro_agent.sandbox.custom_backend import CustomBackendSettings, connect_custom_sandbox
+from kokoro_agent.sandbox.custom_backend import (
+    CustomBackendSettings,
+    connect_custom_sandbox,
+    teardown_custom_sandbox,
+    teardown_custom_sandbox_ref,
+)
 from kokoro_agent.sandbox.docker_backend import (
     destroy_docker_sandbox,
     ArchivingDockerShellBackend,
     DockerSettings,
     connect_docker_sandbox,
 )
-from kokoro_agent.sandbox.e2b_backend import E2BSettings, connect_e2b_sandbox, kill_e2b_sandbox
+from kokoro_agent.sandbox.e2b_backend import (
+    E2BSettings,
+    connect_e2b_sandbox,
+    kill_e2b_sandbox,
+)
+from kokoro_agent.repositories.run_repository import (
+    LeaseFence,
+    SandboxBackendKind,
+    SandboxCleanupIntent,
+)
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox")
+DOCKER_TEARDOWN_REF = "kokoro-agent:builtin:docker:v1"
+E2B_TEARDOWN_REF = "kokoro-agent:builtin:e2b:v1"
 
 
 class SandboxSettings(BaseModel):
@@ -107,7 +122,9 @@ def make_backend(
             inherit_env=settings.local_shell_inherit_env,
         )
     # docker/e2b/custom 有 run 级生命周期（run_repository 记录），走 make_backend_for_run 的 async 编排。
-    raise ValueError(f"backend {kind} requires run-scoped assembly via make_backend_for_run")
+    raise ValueError(
+        f"backend {kind} requires run-scoped assembly via make_backend_for_run"
+    )
 
 
 def _workspace_root(settings: SandboxSettings, workspace: str | None) -> str | None:
@@ -122,9 +139,40 @@ def _workspace_root(settings: SandboxSettings, workspace: str | None) -> str | N
 class RunSandboxStore(Protocol):
     """run 级沙箱记录存取（RunRepository 子集）：装配路径只依赖这两个方法。"""
 
-    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None: ...
+    async def bind_sandbox_id(
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        *,
+        expected_sandbox_id: str | None,
+        sandbox_id: str,
+        backend_kind: SandboxBackendKind,
+        teardown_ref: str,
+    ) -> str | None: ...
 
     async def get_sandbox_id(self, run_id: str) -> str | None: ...
+
+    async def is_lease_current(self, run_id: str, lease: LeaseFence) -> bool: ...
+
+    async def register_sandbox_cleanup(
+        self,
+        *,
+        run_id: str,
+        lease_generation: int,
+        backend_kind: SandboxBackendKind,
+        sandbox_id: str,
+        teardown_ref: str,
+    ) -> SandboxCleanupIntent: ...
+
+    async def complete_sandbox_cleanup(self, cleanup_id: str) -> bool: ...
+
+    async def reschedule_sandbox_cleanup(
+        self, cleanup_id: str, error: str, *, retry_delay_ms: int
+    ) -> bool: ...
+
+
+class SandboxLeaseSuperseded(RuntimeError):
+    """Sandbox assembly lost its execution generation before it could bind."""
 
 
 @dataclass(frozen=True)
@@ -187,7 +235,9 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
 
 
 def _connect_e2b(context: SandboxContext) -> BackendProtocol | None:
-    return connect_e2b_sandbox(context.settings.e2b, sandbox_id=context.prior_sandbox_id)
+    return connect_e2b_sandbox(
+        context.settings.e2b, sandbox_id=context.prior_sandbox_id
+    )
 
 
 def _connect_custom(context: SandboxContext) -> BackendProtocol | None:
@@ -210,47 +260,196 @@ _CONNECTORS: dict[Backend, SandboxConnector] = {
 }
 
 
+def sandbox_teardown_ref(kind: Backend, settings: SandboxSettings) -> str | None:
+    """Return the immutable executor identity persisted with a managed sandbox."""
+
+    if kind == "docker":
+        return DOCKER_TEARDOWN_REF
+    if kind == "e2b":
+        return E2B_TEARDOWN_REF
+    if kind == "custom":
+        return settings.custom.teardown_ref
+    return None
+
+
+def _managed_backend_kind(kind: Backend) -> SandboxBackendKind:
+    if kind == "docker":
+        return "docker"
+    if kind == "e2b":
+        return "e2b"
+    if kind == "custom":
+        return "custom"
+    raise ValueError(f"backend {kind!r} does not own a run-scoped sandbox")
+
+
+async def _cleanup_abandoned_sandbox(
+    kind: SandboxBackendKind,
+    settings: SandboxSettings,
+    *,
+    run_id: str,
+    lease: LeaseFence,
+    sandbox_id: str,
+    teardown_ref: str,
+    sandbox_store: RunSandboxStore,
+) -> None:
+    """Persist a CAS loser's identity before its only in-memory handle is lost."""
+
+    try:
+        intent = await sandbox_store.register_sandbox_cleanup(
+            run_id=run_id,
+            lease_generation=lease.generation,
+            backend_kind=kind,
+            sandbox_id=sandbox_id,
+            teardown_ref=teardown_ref,
+        )
+    except Exception:
+        # The durable store being unavailable must fail assembly, but make one
+        # best-effort strict destruction attempt while the only handle is alive.
+        await teardown_backend_for_run(
+            kind,
+            settings,
+            sandbox_id,
+            teardown_ref=teardown_ref,
+            strict=True,
+        )
+        raise
+    try:
+        await teardown_backend_for_run(
+            kind,
+            settings,
+            sandbox_id,
+            teardown_ref=intent.teardown_ref,
+            strict=True,
+        )
+    except Exception as error:
+        await sandbox_store.reschedule_sandbox_cleanup(
+            intent.cleanup_id, str(error), retry_delay_ms=0
+        )
+        raise
+    await sandbox_store.complete_sandbox_cleanup(intent.cleanup_id)
+
+
 async def make_backend_for_run(
     kind: Backend,
     settings: SandboxSettings,
     *,
     workspace: str,
     run_id: str,
+    lease: LeaseFence,
     sandbox_store: RunSandboxStore,
 ) -> BackendProtocol | None:
-    """统一装配入口：注册表选连接器 + 生命周期单点收口——
-    产物带非空 `sandbox_id` 即落 run_repository（keep-first），resume 经 prior 重连而非新建。
-    """
+    """统一装配入口：每个 lease generation 只确认一个权威沙箱。"""
     connector = _CONNECTORS.get(kind)
     if connector is None:
         raise NotImplementedError(f"backend {kind!r} has no registered connector")
+    if not await sandbox_store.is_lease_current(run_id, lease):
+        raise SandboxLeaseSuperseded(
+            f"run {run_id!r} lease was superseded before sandbox assembly"
+        )
     prior = await sandbox_store.get_sandbox_id(run_id)
-    context = SandboxContext(
-        settings=settings, workspace=workspace, run_id=run_id, prior_sandbox_id=prior
-    )
-    # 连接器一律 sync（docker CLI / SDK 网络调用秒级阻塞）：to_thread 让出事件循环。
-    backend = await asyncio.to_thread(connector, context)
-    bound = getattr(backend, "sandbox_id", None)
-    if isinstance(bound, str) and bound and bound != prior:
-        await sandbox_store.put_sandbox_id(run_id, bound)
-    return backend
+    for _attempt in range(3):
+        context = SandboxContext(
+            settings=settings,
+            workspace=workspace,
+            run_id=run_id,
+            prior_sandbox_id=prior,
+        )
+        # 连接器一律 sync（docker CLI / SDK 网络调用秒级阻塞）：to_thread 让出事件循环。
+        backend = await asyncio.to_thread(connector, context)
+        bound = getattr(backend, "sandbox_id", None)
+        if not isinstance(bound, str) or not bound:
+            if not await sandbox_store.is_lease_current(run_id, lease):
+                raise SandboxLeaseSuperseded(
+                    f"run {run_id!r} lease was superseded during sandbox assembly"
+                )
+            return backend
+
+        teardown_ref = sandbox_teardown_ref(kind, settings)
+        if teardown_ref is None:
+            raise RuntimeError(
+                f"backend {kind!r} exposed sandbox_id without a teardown identity"
+            )
+        managed_kind = _managed_backend_kind(kind)
+        authoritative = await sandbox_store.bind_sandbox_id(
+            run_id,
+            lease,
+            expected_sandbox_id=prior,
+            sandbox_id=bound,
+            backend_kind=managed_kind,
+            teardown_ref=teardown_ref,
+        )
+        if authoritative is None:
+            # Only a newly created loser belongs to this worker. Never destroy a
+            # reconnected prior id that a newer generation may already own.
+            if bound != prior:
+                await _cleanup_abandoned_sandbox(
+                    managed_kind,
+                    settings,
+                    run_id=run_id,
+                    lease=lease,
+                    sandbox_id=bound,
+                    teardown_ref=teardown_ref,
+                    sandbox_store=sandbox_store,
+                )
+            raise SandboxLeaseSuperseded(
+                f"run {run_id!r} lease was superseded during sandbox assembly"
+            )
+        if authoritative == bound:
+            return backend
+
+        # Another same-generation assembler won the CAS. Dispose our fresh
+        # loser and reconnect the authoritative id instead of returning an
+        # untracked backend.
+        if bound != prior:
+            await _cleanup_abandoned_sandbox(
+                managed_kind,
+                settings,
+                run_id=run_id,
+                lease=lease,
+                sandbox_id=bound,
+                teardown_ref=teardown_ref,
+                sandbox_store=sandbox_store,
+            )
+        prior = authoritative
+
+    raise RuntimeError(f"sandbox binding did not converge for run {run_id!r}")
 
 
 async def teardown_backend_for_run(
-    kind: Backend, settings: SandboxSettings, sandbox_id: str | None
+    kind: Backend,
+    settings: SandboxSettings,
+    sandbox_id: str | None,
+    *,
+    teardown_ref: str | None = None,
+    strict: bool = False,
 ) -> None:
-    """终态/cancel 后主动回收沙箱（审计缺口③）：尽力而为——失败落回 TTL 自清兜底，
-    绝不影响终态收口。state/local_shell 无箱；custom 生命周期归 BYO 作者（升级路径：
-    工厂返回 teardown 钩子）。"""
+    """回收 run 沙箱；严格模式将失败交给持久化清理队列重试。"""
     if sandbox_id is None:
         return
     try:
         if kind == "docker":
+            if teardown_ref not in {None, DOCKER_TEARDOWN_REF}:
+                raise ValueError("docker sandbox teardown identity is invalid")
             await asyncio.to_thread(destroy_docker_sandbox, sandbox_id)
         elif kind == "e2b":
+            if teardown_ref not in {None, E2B_TEARDOWN_REF}:
+                raise ValueError("e2b sandbox teardown identity is invalid")
             await asyncio.to_thread(kill_e2b_sandbox, settings.e2b, sandbox_id)
+        elif kind == "custom":
+            if teardown_ref is None:
+                await asyncio.to_thread(
+                    teardown_custom_sandbox, settings.custom, sandbox_id
+                )
+            else:
+                await asyncio.to_thread(
+                    teardown_custom_sandbox_ref, teardown_ref, sandbox_id
+                )
     except Exception:
-        LOGGER.warning("sandbox teardown failed kind=%s id=%s", kind, sandbox_id, exc_info=True)
+        if strict:
+            raise
+        LOGGER.warning(
+            "sandbox teardown failed kind=%s id=%s", kind, sandbox_id, exc_info=True
+        )
 
 
 def registered_backends() -> frozenset[str]:

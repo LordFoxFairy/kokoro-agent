@@ -28,6 +28,7 @@ sandbox:
     ttl: 900
   custom:
     factory: my_pkg.sandbox:make_backend
+    teardown: my_pkg.sandbox:destroy_backend
 web_tools:
   fetch_allow_private: true
   search:
@@ -42,7 +43,9 @@ retention:
 """
 
 
-def _config_from(tmp_path: Path, tree: str, extra_env: dict[str, str] | None = None) -> AppConfig:
+def _config_from(
+    tmp_path: Path, tree: str, extra_env: dict[str, str] | None = None
+) -> AppConfig:
     file = tmp_path / "kokoro-agent.yaml"
     file.write_text(tree)
     return AppConfig.from_env({"KOKORO_AGENT_CONFIG": str(file), **(extra_env or {})})
@@ -58,8 +61,12 @@ class TestConfigTree:
         assert config.database_schema == "kokoro_tree"
         assert config.sandbox.local_shell_root == "/data/ws"
         assert config.sandbox.local_shell_timeout == 60
-        assert (config.sandbox.docker.image, config.sandbox.docker.ttl) == ("python:3.12-slim", 900)
+        assert (config.sandbox.docker.image, config.sandbox.docker.ttl) == (
+            "python:3.12-slim",
+            900,
+        )
         assert config.sandbox.custom.factory_ref == "my_pkg.sandbox:make_backend"
+        assert config.sandbox.custom.teardown_ref == "my_pkg.sandbox:destroy_backend"
         assert config.web_tools.fetch_allow_private is True
         assert config.web_tools.search_provider == "searxng"
         assert config.enabled_builtin_subagents == frozenset({"researcher", "coder"})
@@ -68,7 +75,8 @@ class TestConfigTree:
 
     def test_env_overrides_yaml(self, tmp_path: Path) -> None:
         config = _config_from(
-            tmp_path, FULL_TREE,
+            tmp_path,
+            FULL_TREE,
             {"KOKORO_RECURSION_LIMIT": "77", "KOKORO_DOCKER_IMAGE": "busybox"},
         )
         assert config.recursion_limit == 77
@@ -103,9 +111,14 @@ class TestConfigTree:
         flat = load_config_file(None)
         assert flat == {}
         file = tmp_path / "a.yaml"
-        file.write_text("web_tools:\n  fetch_allow_private: false\nlimits:\n  run_token_budget: 0\n")
+        file.write_text(
+            "web_tools:\n  fetch_allow_private: false\nlimits:\n  run_token_budget: 0\n"
+        )
         flat = load_config_file(str(file))
-        assert flat == {"KOKORO_WEB_FETCH_ALLOW_PRIVATE": False, "KOKORO_RUN_TOKEN_BUDGET": 0}
+        assert flat == {
+            "KOKORO_WEB_FETCH_ALLOW_PRIVATE": False,
+            "KOKORO_RUN_TOKEN_BUDGET": 0,
+        }
 
 
 class TestExamplesStayValid:
@@ -113,10 +126,15 @@ class TestExamplesStayValid:
 
     EXAMPLES = Path(__file__).parents[3] / "config" / "examples"
 
-    @pytest.mark.skipif(not EXAMPLES.exists(), reason="parent-repo examples not present")
+    @pytest.mark.skipif(
+        not EXAMPLES.exists(), reason="parent-repo examples not present"
+    )
     def test_agent_full_example_loads(self) -> None:
         flat = load_config_file(str(self.EXAMPLES / "agent.example.full.yaml"))
         assert flat["KOKORO_DOCKER_IMAGE"] == "python:3.12-slim"
         assert flat["KOKORO_CUSTOM_BACKEND"] == "my_pkg.sandbox:make_backend"
+        assert (
+            flat["KOKORO_CUSTOM_BACKEND_TEARDOWN"] == "my_pkg.sandbox:destroy_backend"
+        )
         # 原生 yaml 列表直接落座（不再 CSV stringify）；AppConfig 再收窄成 frozenset。
         assert flat["KOKORO_BUILTIN_SUBAGENTS"] == ["web-researcher"]

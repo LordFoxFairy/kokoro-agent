@@ -1,8 +1,7 @@
 """Canonical PostgreSQL schema for Agent-owned durable execution state.
 
-The Agent database is created from this schema only.  Schema evolution belongs
-in an explicit migration before a new application version is deployed; the
-runtime repository does not inspect or rewrite unknown historical tables.
+Kokoro V1 installs only the current schema into an empty database. The runtime
+repository neither migrates nor rewrites historical tables.
 """
 
 # psycopg's async cursor stubs model only literal/template queries while this
@@ -25,6 +24,8 @@ RUN_RECEIPTS_TABLE = "kokoro_agent_run_receipts"
 RUN_RECEIPT_MANIFESTS_TABLE = "kokoro_agent_run_receipt_manifests"
 RUN_CONTROL_COMMANDS_TABLE = "kokoro_agent_run_control_commands"
 RUN_STEERS_TABLE = "kokoro_agent_run_steers"
+RUN_USAGE_SEGMENTS_TABLE = "kokoro_agent_run_usage_segments"
+SANDBOX_CLEANUP_INTENTS_TABLE = "kokoro_agent_sandbox_cleanup_intents"
 TOOL_RESULTS_TABLE = "kokoro_agent_tool_results"
 TOOL_JOURNAL_TABLE = "kokoro_agent_tool_journal"
 
@@ -43,13 +44,51 @@ def schema_statements(schema: str) -> tuple[str, ...]:
             terminal boolean NOT NULL DEFAULT FALSE,
             terminal_at bigint,
             durable_counter bigint NOT NULL DEFAULT 0,
+            event_index_counter bigint NOT NULL DEFAULT 0,
             terminal_fence_seq bigint,
             token_total bigint NOT NULL DEFAULT 0,
             usage_input_total bigint NOT NULL DEFAULT 0,
             usage_output_total bigint NOT NULL DEFAULT 0,
-            sandbox_id text
+            sandbox_id text,
+            sandbox_generation bigint,
+            sandbox_backend_kind text,
+            sandbox_teardown_ref text,
+            CONSTRAINT ck_kokoro_agent_runs_sandbox_binding CHECK (
+                (sandbox_id IS NULL
+                    AND sandbox_generation IS NULL
+                    AND sandbox_backend_kind IS NULL
+                    AND sandbox_teardown_ref IS NULL)
+                OR
+                (sandbox_id IS NOT NULL
+                    AND sandbox_generation IS NOT NULL
+                    AND sandbox_backend_kind IN ('docker', 'e2b', 'custom')
+                    AND sandbox_teardown_ref IS NOT NULL)
+            )
         )
         """.format(qualified(schema, RUN_CLAIMS_TABLE)),
+        """
+        CREATE TABLE IF NOT EXISTS {} (
+            cleanup_id text PRIMARY KEY,
+            run_id text NOT NULL,
+            lease_generation bigint NOT NULL CHECK (lease_generation >= 1),
+            backend_kind text NOT NULL CHECK (backend_kind IN ('docker', 'e2b', 'custom')),
+            sandbox_id text NOT NULL,
+            teardown_ref text NOT NULL,
+            status text NOT NULL CHECK (status IN ('pending', 'processing', 'completed')),
+            cleanup_owner text,
+            attempt_count bigint NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+            next_attempt_at bigint NOT NULL,
+            last_error text,
+            created_at bigint NOT NULL,
+            updated_at bigint NOT NULL,
+            CONSTRAINT uq_kokoro_agent_sandbox_cleanup_resource
+                UNIQUE (run_id, lease_generation, backend_kind, sandbox_id)
+        )
+        """.format(qualified(schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
+        """
+        CREATE INDEX IF NOT EXISTS ix_kokoro_agent_sandbox_cleanup_due
+        ON {} (status, next_attempt_at, created_at, cleanup_id)
+        """.format(qualified(schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
         """
         CREATE TABLE IF NOT EXISTS {} (
             run_id text PRIMARY KEY,
@@ -84,6 +123,11 @@ def schema_statements(schema: str) -> tuple[str, ...]:
             published_at bigint,
             PRIMARY KEY (run_id, durable_seq)
         )
+        """.format(qualified(schema, RUN_OUTBOX_TABLE)),
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_kokoro_agent_run_outbox_run_index
+        ON {} (run_id, index_value)
+        WHERE index_value IS NOT NULL AND status <> 'superseded'
         """.format(qualified(schema, RUN_OUTBOX_TABLE)),
         """
         CREATE TABLE IF NOT EXISTS {} (
@@ -138,6 +182,16 @@ def schema_statements(schema: str) -> tuple[str, ...]:
         """
         CREATE TABLE IF NOT EXISTS {} (
             run_id text NOT NULL,
+            lease_generation bigint NOT NULL,
+            input_tokens bigint NOT NULL CHECK (input_tokens >= 0),
+            output_tokens bigint NOT NULL CHECK (output_tokens >= 0),
+            created_at bigint NOT NULL,
+            PRIMARY KEY (run_id, lease_generation)
+        )
+        """.format(qualified(schema, RUN_USAGE_SEGMENTS_TABLE)),
+        """
+        CREATE TABLE IF NOT EXISTS {} (
+            run_id text NOT NULL,
             tool_id text NOT NULL,
             result text NOT NULL,
             is_error boolean NOT NULL,
@@ -178,6 +232,8 @@ __all__ = [
     "RUN_RECEIPT_MANIFESTS_TABLE",
     "RUN_RECEIPTS_TABLE",
     "RUN_STEERS_TABLE",
+    "RUN_USAGE_SEGMENTS_TABLE",
+    "SANDBOX_CLEANUP_INTENTS_TABLE",
     "TOOL_JOURNAL_TABLE",
     "TOOL_RESULTS_TABLE",
     "schema_statements",

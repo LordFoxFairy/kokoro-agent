@@ -10,8 +10,12 @@ from langchain_core.messages import ToolMessage
 from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from support.fakes import FakeRunRepository
-from kokoro_agent.tools.middleware import ToolEffectJournalMiddleware
+from support.fakes import FakeRunRepository, request
+from kokoro_agent.repositories.run_repository import LeaseFence
+from kokoro_agent.tools.middleware import (
+    RunSupersededError,
+    ToolEffectJournalMiddleware,
+)
 
 
 def _runtime() -> ToolRuntime[Any, Any]:
@@ -47,8 +51,9 @@ class _RaceLosingRepository(FakeRunRepository):
     """模拟首次读取后，另一 Worker 抢先写入 started 行。"""
 
     async def journal_tool_started(
-        self, run_id: str, tool_call_id: str, name: str
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
     ) -> bool:
+        del lease
         self.tool_journal[(run_id, tool_call_id)] = {
             "name": name,
             "status": "started",
@@ -72,15 +77,19 @@ def _request(name: str = "write_file", tool_id: str = "c1") -> ToolCallRequest:
     )
 
 
-def _mw(store: FakeRunRepository) -> ToolEffectJournalMiddleware:
-    return ToolEffectJournalMiddleware(run_repository=store, run_id="rn")
+async def _mw(store: FakeRunRepository) -> ToolEffectJournalMiddleware:
+    lease = store.current_lease("rn")
+    if lease is None:
+        lease = await store.try_claim(request("rn"))
+    assert lease is not None
+    return ToolEffectJournalMiddleware(run_repository=store, run_id="rn", lease=lease)
 
 
 async def test_exempt_read_tool_never_journaled() -> None:
     # 纯读工具（白名单）：不落 journal，直接执行。
     store = FakeRunRepository()
     handler = _Handler("file body")
-    result = await _mw(store).awrap_tool_call(_request("read_file"), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request("read_file"), handler)
     assert isinstance(result, ToolMessage) and result.text == "file body"
     assert handler.calls == 1
     assert store.tool_journal == {}
@@ -90,7 +99,7 @@ async def test_first_execution_records_started_then_finished() -> None:
     # 副作用工具首跑：执行前落 started，返回后 succeeded 附结果。
     store = FakeRunRepository()
     handler = _Handler("wrote file")
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "wrote file"
     assert handler.calls == 1
     entry = store.tool_journal[("rn", "c1")]
@@ -101,7 +110,7 @@ async def test_first_execution_records_started_then_finished() -> None:
 async def test_failed_tool_records_failed_status() -> None:
     store = FakeRunRepository()
     handler = _Handler("boom", is_error=True)
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.status == "error"
     entry = store.tool_journal[("rn", "c1")]
     assert entry["status"] == "failed" and entry["is_error"] is True
@@ -117,7 +126,7 @@ async def test_replay_succeeded_short_circuits_without_reexecuting() -> None:
         "is_error": False,
     }
     handler = _Handler("SHOULD NOT RUN")
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "wrote file"
     assert result.status == "success"
     assert handler.calls == 0
@@ -132,7 +141,7 @@ async def test_replay_failed_short_circuits_as_error() -> None:
         "is_error": True,
     }
     handler = _Handler("SHOULD NOT RUN")
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "disk full"
     assert result.status == "error"
     assert handler.calls == 0
@@ -149,7 +158,7 @@ async def test_replay_unknown_outcome_started_does_not_reexecute() -> None:
         "is_error": None,
     }
     handler = _Handler("SHOULD NOT RUN")
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.status == "error"
     assert "unknown_outcome" in result.text
     assert handler.calls == 0
@@ -161,7 +170,7 @@ async def test_concurrent_journal_loser_replays_winner_without_executing() -> No
     store = _RaceLosingRepository()
     handler = _Handler("SHOULD NOT RUN")
 
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
 
     assert isinstance(result, ToolMessage) and result.status == "error"
     assert "unknown_outcome" in result.text
@@ -177,13 +186,31 @@ async def test_tool_internal_interrupt_clears_started_then_resume_reenters() -> 
         raise GraphInterrupt()
 
     with pytest.raises(GraphInterrupt):
-        await _mw(store).awrap_tool_call(_request(), interrupting)
+        await (await _mw(store)).awrap_tool_call(_request(), interrupting)
     # started 行已撤销（视同无行）。
     assert ("rn", "c1") not in store.tool_journal
 
     # resume 重进：守门无行 → 正常执行并落 succeeded（合法重入未被误判 unknown-outcome）。
     handler = _Handler("wrote after resume")
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "wrote after resume"
     assert handler.calls == 1
     assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
+
+
+async def test_stale_generation_never_enters_tool_handler() -> None:
+    store = FakeRunRepository()
+    stale = await store.try_claim(request("rn"), "same-worker")
+    assert stale is not None
+    store.expired = [request("rn")]
+    current = (await store.reclaim_expired("same-worker"))[0].lease
+    assert current.generation > stale.generation
+    middleware = ToolEffectJournalMiddleware(
+        run_repository=store, run_id="rn", lease=stale
+    )
+    handler = _Handler("MUST NOT RUN")
+
+    with pytest.raises(RunSupersededError):
+        await middleware.awrap_tool_call(_request(), handler)
+
+    assert handler.calls == 0

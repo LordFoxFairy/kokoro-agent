@@ -39,6 +39,7 @@ _YAML_TO_ENV: dict[str, str] = {
     "sandbox.e2b.timeout": "KOKORO_E2B_TIMEOUT",
     "sandbox.custom.factory": "KOKORO_CUSTOM_BACKEND",
     "sandbox.custom.config": "KOKORO_CUSTOM_BACKEND_CONFIG",
+    "sandbox.custom.teardown": "KOKORO_CUSTOM_BACKEND_TEARDOWN",
     "workspace_config": "KOKORO_WORKSPACE_CONFIG",
     "mcp.config": "KOKORO_MCP_CONFIG",
     "mcp.egress_mode": "KOKORO_MCP_EGRESS_MODE",

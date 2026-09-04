@@ -44,6 +44,7 @@ from kokoro_agent.features.definition import Feature
 from kokoro_agent.swarm import create_swarm
 from langgraph_swarm import create_handoff_tool
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
+from kokoro_agent.repositories.run_repository import LeaseFence
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ async def build_deep_agent(
     agent: Agent,
     dependencies: WorkerDependencies,
     request: RunRequest,
+    lease: LeaseFence,
     *,
     additional_tools: Sequence[BaseTool] = (),
     name: str | None = None,
@@ -76,6 +78,7 @@ async def build_deep_agent(
         dependencies.sandbox,
         workspace=workspace_key(scope.namespace, scope.session_id),
         run_id=request.run_id,
+        lease=lease,
         sandbox_store=dependencies.run_repository,
     )
     resolved_skills = await resolve_declared_skills(
@@ -98,6 +101,7 @@ async def build_deep_agent(
         dependencies.run_repository,
         dependencies.run_token_budget,
         request,
+        lease,
         policy,
     )
     subagent_bundle = build_subagent_bundle(
@@ -191,7 +195,9 @@ class AgentFactory:
     """worker-local 构造器；运行依赖存于实例，不暴露给运行 API。"""
 
     def __init__(
-        self, dependencies: WorkerDependencies, catalog: FeatureCatalog = FEATURE_CATALOG
+        self,
+        dependencies: WorkerDependencies,
+        catalog: FeatureCatalog = FEATURE_CATALOG,
     ) -> None:
         self._dependencies = dependencies
         self._catalog = catalog
@@ -205,16 +211,20 @@ class AgentFactory:
         feature = self.feature(request.feature_key)
         return feature.agents[0].backend
 
-    async def build(self, request: RunRequest) -> AgentHandle:
+    async def build(self, request: RunRequest, lease: LeaseFence) -> AgentHandle:
         """按受信 Feature key 构造；请求本身不携带 Agent/图配方。"""
-        return await self._build_feature(self.feature(request.feature_key), request)
+        return await self._build_feature(
+            self.feature(request.feature_key), request, lease
+        )
 
     async def _build_feature(
-        self, feature: Feature, request: RunRequest
+        self, feature: Feature, request: RunRequest, lease: LeaseFence
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
         if len(feature.agents) == 1:
-            return await build_deep_agent(feature.agents[0], self._dependencies, request)
+            return await build_deep_agent(
+                feature.agents[0], self._dependencies, request, lease
+            )
         if not feature.handoffs:
             raise ValueError(
                 f"feature {feature.key!r} has multiple agents but no handoffs"
@@ -230,6 +240,7 @@ class AgentFactory:
                     agent,
                     self._dependencies,
                     request,
+                    lease,
                     additional_tools=handoffs,
                     name=agent.key,
                 )

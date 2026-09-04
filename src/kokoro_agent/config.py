@@ -22,7 +22,10 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
-from kokoro_agent.infrastructure.postgres_run_repository import DEFAULT_LEASE_TTL_S, RunRepositorySettings
+from kokoro_agent.infrastructure.postgres_run_repository import (
+    DEFAULT_LEASE_TTL_S,
+    RunRepositorySettings,
+)
 from kokoro_agent.streams.factory import StreamSettings
 
 
@@ -58,37 +61,60 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore", frozen=True)
 
     # --- model 域 ---
-    disable_streaming: bool = Field(default=False, validation_alias="KOKORO_DISABLE_STREAMING")
+    disable_streaming: bool = Field(
+        default=False, validation_alias="KOKORO_DISABLE_STREAMING"
+    )
     openai_api_key: OptSecret = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_base_url: OptStr = Field(default=None, validation_alias="OPENAI_BASE_URL")
-    openai_reasoning: bool = Field(default=False, validation_alias="KOKORO_OPENAI_REASONING")
-    anthropic_api_key: OptSecret = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    anthropic_base_url: OptStr = Field(default=None, validation_alias="ANTHROPIC_BASE_URL")
+    openai_reasoning: bool = Field(
+        default=False, validation_alias="KOKORO_OPENAI_REASONING"
+    )
+    anthropic_api_key: OptSecret = Field(
+        default=None, validation_alias="ANTHROPIC_API_KEY"
+    )
+    anthropic_base_url: OptStr = Field(
+        default=None, validation_alias="ANTHROPIC_BASE_URL"
+    )
     # litellm 网关档：agent 只持网关地址与网关 key（不存任何底层 provider 凭据）。
-    litellm_enabled: bool = Field(default=False, validation_alias="KOKORO_LITELLM_ENABLED")
-    litellm_base_url: OptStr = Field(default=None, validation_alias="KOKORO_LITELLM_BASE_URL")
-    litellm_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_LITELLM_API_KEY")
+    litellm_enabled: bool = Field(
+        default=False, validation_alias="KOKORO_LITELLM_ENABLED"
+    )
+    litellm_base_url: OptStr = Field(
+        default=None, validation_alias="KOKORO_LITELLM_BASE_URL"
+    )
+    litellm_api_key: OptSecret = Field(
+        default=None, validation_alias="KOKORO_LITELLM_API_KEY"
+    )
 
     # --- stream / durable-state 域（PG 为 checkpoint+run_repository+memory+chat 共用真后端）---
     redis_url: str = Field(
         default="redis://127.0.0.1:6379/0", validation_alias="KOKORO_REDIS_URL"
     )
     database_url: str = Field(
-        default="postgresql://localhost/postgres", validation_alias="KOKORO_AGENT_DATABASE_URL"
+        default="postgresql://localhost/postgres",
+        validation_alias="KOKORO_AGENT_DATABASE_URL",
     )
     database_schema: str = Field(
         default="kokoro_agent", validation_alias="KOKORO_AGENT_DATABASE_SCHEMA"
     )
 
     # --- observability 域 ---
-    langfuse_public_key: OptSecret = Field(default=None, validation_alias="LANGFUSE_PUBLIC_KEY")
-    langfuse_secret_key: OptSecret = Field(default=None, validation_alias="LANGFUSE_SECRET_KEY")
+    langfuse_public_key: OptSecret = Field(
+        default=None, validation_alias="LANGFUSE_PUBLIC_KEY"
+    )
+    langfuse_secret_key: OptSecret = Field(
+        default=None, validation_alias="LANGFUSE_SECRET_KEY"
+    )
 
     # --- run_repository 域（lease_ttl_s → lease_ttl_ms×1000；gt=0 使 0 值构造期 fail-loud）---
-    lease_ttl_s: int = Field(default=DEFAULT_LEASE_TTL_S, gt=0, validation_alias="KOKORO_LEASE_TTL_S")
+    lease_ttl_s: int = Field(
+        default=DEFAULT_LEASE_TTL_S, gt=0, validation_alias="KOKORO_LEASE_TTL_S"
+    )
 
     # --- sandbox 域 ---
-    local_shell_root: OptStr = Field(default=None, validation_alias="KOKORO_AGENT_LOCAL_SHELL_ROOT")
+    local_shell_root: OptStr = Field(
+        default=None, validation_alias="KOKORO_AGENT_LOCAL_SHELL_ROOT"
+    )
     local_shell_inherit_env: bool = Field(
         default=False, validation_alias="KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV"
     )
@@ -96,10 +122,14 @@ class AppConfig(BaseModel):
         default=120, gt=0, validation_alias="KOKORO_AGENT_LOCAL_SHELL_TIMEOUT"
     )
     local_shell_max_output_bytes: int = Field(
-        default=100000, gt=0, validation_alias="KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES"
+        default=100000,
+        gt=0,
+        validation_alias="KOKORO_AGENT_LOCAL_SHELL_MAX_OUTPUT_BYTES",
     )
     # 工作区形态 yaml（ADR-009）：与 session 读同一文件；缺省=local 默认档。
-    workspace_config: OptStr = Field(default=None, validation_alias="KOKORO_WORKSPACE_CONFIG")
+    workspace_config: OptStr = Field(
+        default=None, validation_alias="KOKORO_WORKSPACE_CONFIG"
+    )
     workspace_s3_access_key: OptSecret = Field(
         default=None, validation_alias="KOKORO_WORKSPACE_S3_ACCESS_KEY"
     )
@@ -112,31 +142,46 @@ class AppConfig(BaseModel):
     e2b_timeout: int = Field(default=1800, gt=0, validation_alias="KOKORO_E2B_TIMEOUT")
     docker_image: OptStr = Field(default=None, validation_alias="KOKORO_DOCKER_IMAGE")
     docker_ttl: int = Field(default=1800, gt=0, validation_alias="KOKORO_DOCKER_TTL")
-    custom_backend_ref: OptStr = Field(default=None, validation_alias="KOKORO_CUSTOM_BACKEND")
+    custom_backend_ref: OptStr = Field(
+        default=None, validation_alias="KOKORO_CUSTOM_BACKEND"
+    )
     custom_backend_config: OptStr = Field(
         default=None, validation_alias="KOKORO_CUSTOM_BACKEND_CONFIG"
+    )
+    custom_backend_teardown_ref: OptStr = Field(
+        default=None, validation_alias="KOKORO_CUSTOM_BACKEND_TEARDOWN"
     )
 
     # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
     mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
     # Capability public endpoint 与内部调用凭据；具体 owner client 由部署在 worker 启动时注入。
     # 标准 CLI 不据此直读 Capability 私库。
-    capability_base_url: OptStr = Field(default=None, validation_alias="KOKORO_CAPABILITY_BASE_URL")
+    capability_base_url: OptStr = Field(
+        default=None, validation_alias="KOKORO_CAPABILITY_BASE_URL"
+    )
     internal_secret_agent: OptSecret = Field(
         default=None, validation_alias="KOKORO_INTERNAL_SECRET_AGENT"
     )
-    mcp_egress_mode: str = Field(default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE")
+    mcp_egress_mode: str = Field(
+        default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE"
+    )
 
     # --- web_tools 域 ---
     fetch_allow_private: bool = Field(
         default=False, validation_alias="KOKORO_WEB_FETCH_ALLOW_PRIVATE"
     )
-    search_provider: OptStr = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_PROVIDER")
-    search_api_key: OptSecret = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_API_KEY")
+    search_provider: OptStr = Field(
+        default=None, validation_alias="KOKORO_WEB_SEARCH_PROVIDER"
+    )
+    search_api_key: OptSecret = Field(
+        default=None, validation_alias="KOKORO_WEB_SEARCH_API_KEY"
+    )
     search_url: OptStr = Field(default=None, validation_alias="KOKORO_WEB_SEARCH_URL")
 
     # --- subagents 域 ---
-    custom_subagents_json: OptStr = Field(default=None, validation_alias="KOKORO_CUSTOM_SUBAGENTS")
+    custom_subagents_json: OptStr = Field(
+        default=None, validation_alias="KOKORO_CUSTOM_SUBAGENTS"
+    )
     # 内建子代理按名启用（env=CSV 串 / yaml=串列表；默认全关，未知名由 build_subagent_catalog fail-loud）。
     builtin_subagents_raw: str | list[str] | None = Field(
         default=None, validation_alias="KOKORO_BUILTIN_SUBAGENTS"
@@ -147,11 +192,17 @@ class AppConfig(BaseModel):
         default=30.0, gt=0, validation_alias="KOKORO_LEASE_HEARTBEAT_S"
     )
     # 失控熔断：单 run 图步数上限（无限工具循环 → GraphRecursionError → run.failed）。
-    recursion_limit: int = Field(default=100, gt=0, validation_alias="KOKORO_RECURSION_LIMIT")
+    recursion_limit: int = Field(
+        default=100, gt=0, validation_alias="KOKORO_RECURSION_LIMIT"
+    )
     # SIGTERM 优雅停机：限时等活跃 run 收尾（超时交 TTL 租约重拾）。
-    drain_timeout_s: float = Field(default=60.0, gt=0, validation_alias="KOKORO_DRAIN_TIMEOUT_S")
+    drain_timeout_s: float = Field(
+        default=60.0, gt=0, validation_alias="KOKORO_DRAIN_TIMEOUT_S"
+    )
     # run 级 token 预算（0=关闭）：跨 HITL 段累计，超限 run.failed(TokenBudgetExceeded)。
-    run_token_budget: int = Field(default=0, ge=0, validation_alias="KOKORO_RUN_TOKEN_BUDGET")
+    run_token_budget: int = Field(
+        default=0, ge=0, validation_alias="KOKORO_RUN_TOKEN_BUDGET"
+    )
     # R4：critical 帧 published 后回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
     outbox_republish_ms: int = Field(
         default=30_000, gt=0, validation_alias="KOKORO_OUTBOX_REPUBLISH_MS"
@@ -238,6 +289,7 @@ class AppConfig(BaseModel):
                 "custom": {
                     "factory_ref": self.custom_backend_ref,
                     "config_path": self.custom_backend_config,
+                    "teardown_ref": self.custom_backend_teardown_ref,
                 },
             }
         )

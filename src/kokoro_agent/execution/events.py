@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import asyncio
 from collections.abc import Callable, Mapping
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
@@ -45,9 +46,13 @@ from kokoro_agent.tools.middleware import TokenBudgetExceeded
 from kokoro_agent import metrics
 from kokoro_agent.chat.projection import project_chat_fact
 from kokoro_agent.chat.models import ChatEventRecord
-from kokoro_agent.repositories.chat_repository import ChatRepository
+from kokoro_agent.repositories.chat_repository import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
-from kokoro_agent.repositories.run_repository import OutboxFrame, RunRepository
+from kokoro_agent.repositories.run_repository import (
+    LeaseFence,
+    OutboxFrame,
+    RunRepository,
+)
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
@@ -61,6 +66,7 @@ CRITICAL_KINDS: frozenset[str] = frozenset(
 )
 # 终态帧：分配时 CAS 设 local fence（first-terminal），其后更大 seq 一律 superseded。
 TERMINAL_KINDS: frozenset[str] = frozenset({"run.completed", "run.failed"})
+PUBLISH_TIMEOUT_SECONDS = 5.0
 
 AgentEventPayload = (
     RunStartedPayload
@@ -124,6 +130,7 @@ class RunEmitter:
         tool_segments: dict[str, str] | None = None,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunRepository | None = None,
+        lease: LeaseFence | None = None,
         namespace: str | None = None,
         session_id: str | None = None,
         chat_repository: ChatRepository | None = None,
@@ -140,8 +147,13 @@ class RunEmitter:
         # R4 durable outbox（None=不启用 critical durability，供独立 emitter 使用）：critical 帧经此分配 durable_seq/event_id、
         # 落 queued 行、发布后置 published。live 序（index）不动，durable_seq 独立并行。
         self._outbox = outbox
+        if outbox is not None and lease is None:
+            raise ValueError("a durable RunEmitter requires an execution lease fence")
+        self._lease = lease
         if len({namespace is None, session_id is None, chat_repository is None}) != 1:
-            raise ValueError("namespace, session_id and chat_repository must be configured together")
+            raise ValueError(
+                "namespace, session_id and chat_repository must be configured together"
+            )
         self._namespace = namespace
         self._session_id = session_id
         self._chat_repository = chat_repository
@@ -155,6 +167,10 @@ class RunEmitter:
         # index==0 才是 run 真起点：resume/重启/重拾续段不重复宣告 run.started。
         return self._next_index == 0
 
+    @property
+    def lease(self) -> LeaseFence | None:
+        return self._lease
+
     @classmethod
     async def attach(
         cls,
@@ -162,6 +178,7 @@ class RunEmitter:
         run_id: str,
         review_tool_names: frozenset[str] = frozenset(),
         outbox: RunRepository | None = None,
+        lease: LeaseFence | None = None,
         namespace: str | None = None,
         session_id: str | None = None,
         chat_repository: ChatRepository | None = None,
@@ -172,13 +189,18 @@ class RunEmitter:
         tool_segments: dict[str, str] = {}
         for item in await bus.read_all(run_events_stream(run_id)):
             event = agent_event_adapter.validate_python(item.event)
-            next_index = max(next_index, event.index + 1)
+            if outbox is None:
+                next_index = max(next_index, event.index + 1)
             if isinstance(event.payload, ToolAwaitingApprovalPayload):
                 tool_segments[event.payload.tool_id] = event.payload.segment_id
-        if chat_repository is not None:
+        if chat_repository is not None and outbox is None:
             if namespace is None:
                 raise ValueError("namespace is required with chat_repository")
-            next_index = max(next_index, await chat_repository.next_source_index(namespace, run_id))
+            next_index = max(
+                next_index, await chat_repository.next_source_index(namespace, run_id)
+            )
+        if outbox is not None:
+            next_index = await outbox.next_event_index(run_id)
         return cls(
             bus,
             run_id,
@@ -186,6 +208,7 @@ class RunEmitter:
             tool_segments,
             review_tool_names,
             outbox,
+            lease,
             namespace,
             session_id,
             chat_repository,
@@ -212,22 +235,20 @@ class RunEmitter:
             return
         payload = self._with_owner_segment(payload)
         kind = _KIND_BY_PAYLOAD[type(payload)]
-        index = self._next_index
+        lease = self._lease
+        if not await self._lease_allows(kind):
+            return
         timestamp = _now_ms()
-        base: dict[str, object] = {
-            "kind": kind,
-            "run_id": self._run_id,
-            "index": index,
-            "timestamp": timestamp,
-            "payload": payload,
-        }
         if self._outbox is not None and kind in CRITICAL_KINDS:
-            # critical 帧：先分配 durable_seq/event_id + 落 queued 行，再发布（live），后置 published。
-            payload_json = json.dumps(payload.model_dump(mode="json", exclude_none=True))
+            assert lease is not None
+            # critical 帧：claims 行锁内原子分配 index/durable_seq 并落 queued 行。
+            payload_json = json.dumps(
+                payload.model_dump(mode="json", exclude_none=True)
+            )
             staged = await self._outbox.stage_critical_frame(
                 self._run_id,
+                lease,
                 kind,
-                index,
                 timestamp,
                 payload_json,
                 terminal=kind in TERMINAL_KINDS,
@@ -236,34 +257,78 @@ class RunEmitter:
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
                 return
             metrics.record_outbox("queued")
+            index = staged.index
+            base: dict[str, object] = {
+                "kind": kind,
+                "run_id": self._run_id,
+                "index": index,
+                "timestamp": timestamp,
+                "payload": payload,
+            }
             event = agent_event_adapter.validate_python(
                 {**base, "durable_seq": staged.durable_seq, "event_id": staged.event_id}
             )
-            await self._persist_chat(payload, index, timestamp)
-            self._next_index += 1
-            await self._bus.publish(
-                run_events_stream(self._run_id),
-                event.model_dump(exclude_none=True),
-                maxlen=RUN_EVENTS_MAXLEN,
-            )
+            if not await self._persist_chat(payload, index, timestamp, mode=None):
+                return
+            self._next_index = max(self._next_index, index + 1)
+            await self._publish_event(event.model_dump(exclude_none=True))
             await self._outbox.mark_critical_published(self._run_id, staged.durable_seq)
             metrics.record_outbox("published")
             return
+        if self._outbox is not None:
+            assert lease is not None
+            reserved = await self._outbox.reserve_event_index(self._run_id, lease)
+            if reserved is None:
+                return
+            index = reserved
+        else:
+            index = self._next_index
+        base = {
+            "kind": kind,
+            "run_id": self._run_id,
+            "index": index,
+            "timestamp": timestamp,
+            "payload": payload,
+        }
         event = agent_event_adapter.validate_python(base)
-        await self._persist_chat(payload, index, timestamp)
-        self._next_index += 1
-        # exclude_none：契约 optional 字段的 None 即"缺席"；null 上 wire 会被 session 的 zod .optional() 拒收。
-        await self._bus.publish(
-            run_events_stream(self._run_id),
-            event.model_dump(exclude_none=True),
-            maxlen=RUN_EVENTS_MAXLEN,
-        )
+        chat_mode: ChatFenceMode | None = "active" if self._outbox is not None else None
+        if not await self._persist_chat(payload, index, timestamp, mode=chat_mode):
+            return
+        self._next_index = max(self._next_index, index + 1)
+        wire_event = event.model_dump(exclude_none=True)
+        if self._outbox is not None:
+            assert lease is not None
+
+            async def publish() -> None:
+                await self._publish_event(wire_event)
+
+            await self._outbox.execute_active_effect(self._run_id, lease, publish)
+            return
+        await self._publish_event(wire_event)
+
+    async def _lease_allows(self, kind: str) -> bool:
+        if self._outbox is None:
+            return True
+        lease = self._lease
+        assert lease is not None
+        if kind in TERMINAL_KINDS or kind == "run.control.receipt":
+            return await self._outbox.is_fence_current(self._run_id, lease)
+        return await self._outbox.is_lease_current(self._run_id, lease)
 
     async def _persist_chat(
-        self, payload: AgentEventPayload, index: int, timestamp: int
-    ) -> ChatEventRecord | None:
-        if self._chat_repository is None or self._session_id is None or self._namespace is None:
-            return None
+        self,
+        payload: AgentEventPayload,
+        index: int,
+        timestamp: int,
+        *,
+        mode: ChatFenceMode | None,
+    ) -> bool:
+        if (
+            self._chat_repository is None
+            or self._session_id is None
+            or self._namespace is None
+        ):
+            return True
         projection = project_chat_fact(
             namespace=self._namespace,
             session_id=self._session_id,
@@ -272,7 +337,29 @@ class RunEmitter:
             timestamp=timestamp,
             payload=payload,
         )
-        return None if projection is None else await self._chat_repository.append(projection)
+        if projection is None:
+            return True
+        if mode is not None:
+            assert self._lease is not None
+            return (
+                await self._chat_repository.append_fenced(
+                    projection, self._lease, mode=mode
+                )
+                is not None
+            )
+        await self._chat_repository.append(projection)
+        return True
+
+    async def _publish_event(self, event: Mapping[str, JsonValue]) -> None:
+        # Redis is a bounded live transport. Critical recovery comes from the
+        # PostgreSQL outbox; a broken connection must not hold a run lease forever.
+        await asyncio.wait_for(
+            self._bus.publish(
+                run_events_stream(self._run_id), event, maxlen=RUN_EVENTS_MAXLEN
+            ),
+            timeout=PUBLISH_TIMEOUT_SECONDS,
+        )
+
 
 def outbox_wire_event(frame: OutboxFrame) -> dict[str, JsonValue]:
     """queued outbox 行 → 补发用 wire 帧（复用原 index/timestamp/durable_seq/event_id，幂等不漂移）。"""
@@ -316,12 +403,18 @@ def message_delta_payload(text: str, *, segment_id: str) -> MessageDeltaPayload 
     return MessageDeltaPayload(segment_id=segment_id, delta=text) if text else None
 
 
-def message_completed_payload(text: str, *, segment_id: str) -> MessageCompletedPayload | None:
+def message_completed_payload(
+    text: str, *, segment_id: str
+) -> MessageCompletedPayload | None:
     # 空文本不发（tool-only 段 output_message.text==""）。
-    return MessageCompletedPayload(segment_id=segment_id, content=text) if text else None
+    return (
+        MessageCompletedPayload(segment_id=segment_id, content=text) if text else None
+    )
 
 
-def thinking_delta_payload(text: str, *, segment_id: str) -> ThinkingDeltaPayload | None:
+def thinking_delta_payload(
+    text: str, *, segment_id: str
+) -> ThinkingDeltaPayload | None:
     return ThinkingDeltaPayload(segment_id=segment_id, delta=text) if text else None
 
 
@@ -330,7 +423,9 @@ def subagent_thinking_delta_payload(
 ) -> SubagentThinkingDeltaPayload | None:
     if not text:
         return None
-    return SubagentThinkingDeltaPayload(segment_id=segment_id, subagent_id=subagent_id, delta=text)
+    return SubagentThinkingDeltaPayload(
+        segment_id=segment_id, subagent_id=subagent_id, delta=text
+    )
 
 
 def subagent_text_delta_payload(
@@ -338,7 +433,9 @@ def subagent_text_delta_payload(
 ) -> SubagentTextDeltaPayload | None:
     if not text:
         return None
-    return SubagentTextDeltaPayload(segment_id=segment_id, subagent_id=subagent_id, text=text)
+    return SubagentTextDeltaPayload(
+        segment_id=segment_id, subagent_id=subagent_id, text=text
+    )
 
 
 def subagent_text_completed_payload(
@@ -346,7 +443,9 @@ def subagent_text_completed_payload(
 ) -> SubagentTextCompletedPayload | None:
     if not text:
         return None
-    return SubagentTextCompletedPayload(segment_id=segment_id, subagent_id=subagent_id, text=text)
+    return SubagentTextCompletedPayload(
+        segment_id=segment_id, subagent_id=subagent_id, text=text
+    )
 
 
 def tool_invoked_payload(tc: ToolCallInfo) -> ToolInvokedPayload:
@@ -359,11 +458,16 @@ def tool_invoked_payload(tc: ToolCallInfo) -> ToolInvokedPayload:
     )
 
 
-def tool_output_delta_payload(tc: ToolCallInfo, delta: str) -> ToolOutputDeltaPayload | None:
+def tool_output_delta_payload(
+    tc: ToolCallInfo, delta: str
+) -> ToolOutputDeltaPayload | None:
     if not delta:
         return None
     return ToolOutputDeltaPayload(
-        segment_id=tc.tool_call_id, tool_id=tc.tool_call_id, name=tc.tool_name, delta=delta
+        segment_id=tc.tool_call_id,
+        tool_id=tc.tool_call_id,
+        name=tc.tool_name,
+        delta=delta,
     )
 
 
@@ -435,7 +539,9 @@ def todo_payload(tc: ToolCallInfo) -> TodoUpdatedPayload:
     return TodoUpdatedPayload(todos=_TODOS_ADAPTER.validate_python(todos))
 
 
-def subagent_started_payload(sub: SubagentInfo, *, source: SubagentSource) -> SubagentStartedPayload:
+def subagent_started_payload(
+    sub: SubagentInfo, *, source: SubagentSource
+) -> SubagentStartedPayload:
     name = sub.name or "subagent"
     return SubagentStartedPayload(
         segment_id=sub.trigger_call_id or "subagent",
@@ -550,7 +656,9 @@ def delivery_created_payload(tc: ToolCallInfo) -> DeliveryCreatedPayload | None:
     )
 
 
-_BLOCKS_ADAPTER: TypeAdapter[list[dict[str, object]]] = TypeAdapter(list[dict[str, object]])
+_BLOCKS_ADAPTER: TypeAdapter[list[dict[str, object]]] = TypeAdapter(
+    list[dict[str, object]]
+)
 
 
 def _render_content_blocks(output: object) -> str | None:

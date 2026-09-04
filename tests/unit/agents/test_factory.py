@@ -41,7 +41,9 @@ def _request(feature_key: str) -> RunRequest:
     )
 
 
-def _factory(monkeypatch: pytest.MonkeyPatch) -> AgentFactory:
+def _factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
     def test_model(_settings: ChatModelSettings, _model: ModelConfig) -> BaseChatModel:
@@ -50,6 +52,7 @@ def _factory(monkeypatch: pytest.MonkeyPatch) -> AgentFactory:
     monkeypatch.setattr(agent_factory_module, "make_chat_model", test_model)
     config = AppConfig.from_env({})
     clients = WorkerClients()
+    repository = FakeRunRepository()
     return AgentFactory(
         WorkerDependencies(
             model=config.model,
@@ -58,21 +61,25 @@ def _factory(monkeypatch: pytest.MonkeyPatch) -> AgentFactory:
             subagent_catalog=build_subagent_catalog(None),
             toolbox=ProcessToolbox(configured=()),
             checkpointer=InMemorySaver(),
-            run_repository=FakeRunRepository(),
+            run_repository=repository,
             memory_store=InMemoryStore(),
             skill_client=clients.skill_client,
             skill_reader=clients.skill_reader,
             mcp_client=clients.mcp,
             delivery=clients.delivery,
         )
-    )
+    ), repository
 
 
 @pytest.mark.parametrize("feature_key", ["chat", "music", "music_chat"])
 async def test_builds_native_agent_without_external_clients(
     feature_key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    handle = await _factory(monkeypatch).build(_request(feature_key))
+    factory, repository = _factory(monkeypatch)
+    run_request = _request(feature_key)
+    lease = await repository.try_claim(run_request)
+    assert lease is not None
+    handle = await factory.build(run_request, lease)
 
     assert callable(handle.runnable.astream_events)
     assert callable(handle.runnable.aget_state)
@@ -83,7 +90,11 @@ async def test_invokes_native_agent_without_external_clients(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The local path exercises the actual DeepAgents loop, not just construction."""
-    handle = await _factory(monkeypatch).build(_request("chat"))
+    factory, repository = _factory(monkeypatch)
+    run_request = _request("chat")
+    lease = await repository.try_claim(run_request)
+    assert lease is not None
+    handle = await factory.build(run_request, lease)
 
     run = await handle.runnable.astream_events(
         {"messages": [HumanMessage(content="hello")]},
@@ -101,8 +112,7 @@ async def test_invokes_native_agent_without_external_clients(
         assert await run.interrupted() is False
 
     assert any(
-        output.startswith("本地预览：DeepAgents 活动流已接通")
-        for output in outputs[0]
+        output.startswith("本地预览：DeepAgents 活动流已接通") for output in outputs[0]
     )
 
 

@@ -17,7 +17,7 @@ from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agent_factory import AgentFactory
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
-from kokoro_agent.policy import Backend
+from kokoro_agent.repositories.run_repository import SandboxBackendKind
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
@@ -29,7 +29,10 @@ from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
-from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepositorySettings, make_chat_repository
+from kokoro_agent.infrastructure.postgres_chat_repository import (
+    PostgresChatRepositorySettings,
+    make_chat_repository,
+)
 from kokoro_agent.http.server import create_http_server
 
 LOGGER = logging.getLogger(__name__)
@@ -46,12 +49,24 @@ def toolbox_from_config(config: AppConfig) -> ProcessToolbox:
             base_url=config.web_tools.search_url,
         )
     )
-    return build_toolbox(fetch_allow_private=config.web_tools.fetch_allow_private, search=search)
+    return build_toolbox(
+        fetch_allow_private=config.web_tools.fetch_allow_private, search=search
+    )
 
 
-def _sandbox_teardown(config: AppConfig) -> "Callable[[Backend, str | None], Awaitable[None]]":
-    async def teardown(kind: Backend, sandbox_id: str | None) -> None:
-        await teardown_backend_for_run(kind, config.sandbox, sandbox_id)
+def _sandbox_teardown(
+    config: AppConfig,
+) -> "Callable[[SandboxBackendKind, str, str], Awaitable[None]]":
+    async def teardown(
+        kind: SandboxBackendKind, sandbox_id: str, teardown_ref: str
+    ) -> None:
+        await teardown_backend_for_run(
+            kind,
+            config.sandbox,
+            sandbox_id,
+            teardown_ref=teardown_ref,
+            strict=True,
+        )
 
     return teardown
 
@@ -127,7 +142,9 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             sandbox_teardown=_sandbox_teardown(config),
             chat_repository=chat_repository,
         )
-        LOGGER.info("kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name())
+        LOGGER.info(
+            "kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name()
+        )
         serve_task = asyncio.create_task(supervisor.serve(bus))
         loop = asyncio.get_running_loop()
         # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。
@@ -157,7 +174,9 @@ def http_main() -> None:
     port = int(os.environ.get("KOKORO_AGENT_HTTP_PORT", "4401"))
     log_config_summary(config, logging.getLogger(__name__))
     server = create_http_server(config, host, port)
-    logging.getLogger(__name__).info("kokoro-agent HTTP ingress listening on %s:%d", host, port)
+    logging.getLogger(__name__).info(
+        "kokoro-agent HTTP ingress listening on %s:%d", host, port
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

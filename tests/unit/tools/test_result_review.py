@@ -10,7 +10,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 import kokoro_agent.hitl.request as request_module
-from support.fakes import FakeRunRepository
+from support.fakes import FakeRunRepository, request
 from kokoro_agent.tools.middleware import ToolResultReviewMiddleware
 
 
@@ -44,8 +44,12 @@ def _request(name: str = "lookup") -> ToolCallRequest:
     )
 
 
-def _mw(store: FakeRunRepository) -> ToolResultReviewMiddleware:
-    return ToolResultReviewMiddleware(frozenset({"lookup"}), store, "rn")
+async def _mw(store: FakeRunRepository) -> ToolResultReviewMiddleware:
+    lease = store.current_lease("rn")
+    if lease is None:
+        lease = await store.try_claim(request("rn"))
+    assert lease is not None
+    return ToolResultReviewMiddleware(frozenset({"lookup"}), store, "rn", lease)
 
 
 def _patch_interrupt(monkeypatch: pytest.MonkeyPatch, value: object) -> list[object]:
@@ -65,18 +69,18 @@ async def test_non_review_tool_bypasses(monkeypatch: pytest.MonkeyPatch) -> None
     store = FakeRunRepository()
     handler = _Handler()
     seen = _patch_interrupt(monkeypatch, [])
-    result = await _mw(store).awrap_tool_call(_request("other"), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request("other"), handler)
     assert isinstance(result, ToolMessage) and result.text == "raw result"
     assert handler.calls == 1 and seen == [] and store.tool_results == {}
 
 
-async def test_first_pass_caches_then_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_first_pass_caches_then_interrupts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = FakeRunRepository()
     handler = _Handler()
-    seen = _patch_interrupt(
-        monkeypatch, [{"tool_id": "c1", "type": "approve"}]
-    )
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    seen = _patch_interrupt(monkeypatch, [{"tool_id": "c1", "type": "approve"}])
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "raw result"
     assert handler.calls == 1
     assert store.tool_results[("rn", "c1")] == ("raw result", False)
@@ -103,7 +107,7 @@ async def test_resume_reentry_skips_handler(monkeypatch: pytest.MonkeyPatch) -> 
     store.tool_results[("rn", "c1")] = ("first run result", False)
     handler = _Handler("second run result")
     _patch_interrupt(monkeypatch, [{"tool_id": "c1", "type": "approve"}])
-    result = await _mw(store).awrap_tool_call(_request(), handler)
+    result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "first run result"
     assert handler.calls == 0
 
@@ -113,7 +117,7 @@ async def test_respond_replaces_result(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_interrupt(
         monkeypatch, [{"tool_id": "c1", "type": "respond", "response": "curated"}]
     )
-    result = await _mw(store).awrap_tool_call(_request(), _Handler())
+    result = await (await _mw(store)).awrap_tool_call(_request(), _Handler())
     assert isinstance(result, ToolMessage) and result.text == "curated"
 
 
@@ -122,7 +126,7 @@ async def test_reject_discards_result(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_interrupt(
         monkeypatch, [{"tool_id": "c1", "type": "reject", "reason": "wrong data"}]
     )
-    result = await _mw(store).awrap_tool_call(_request(), _Handler())
+    result = await (await _mw(store)).awrap_tool_call(_request(), _Handler())
     assert isinstance(result, ToolMessage)
     assert result.text == "[result rejected by user: wrong data]"
     assert result.status != "error"
@@ -143,4 +147,4 @@ async def test_bad_resume_values_fail_loud(
     store = FakeRunRepository()
     _patch_interrupt(monkeypatch, resume_value)
     with pytest.raises((ValueError, Exception)):
-        await _mw(store).awrap_tool_call(_request(), _Handler())
+        await (await _mw(store)).awrap_tool_call(_request(), _Handler())

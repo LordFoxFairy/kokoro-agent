@@ -12,7 +12,8 @@ lifecycle, and PostgreSQL-specific configuration.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable
+import hashlib
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -39,8 +40,11 @@ from kokoro_agent.repositories.run_repository import (
     ReceiptReconcile,
     RunControlCommandRecord,
     RunRepository,
+    SandboxBackendKind,
+    SandboxCleanupIntent,
     StagedFrame,
     ToolJournalRecord,
+    UsageIdentityConflict,
 )
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
@@ -51,6 +55,8 @@ from kokoro_agent.infrastructure.schema import (
     RUN_RECEIPT_MANIFESTS_TABLE,
     RUN_RECEIPTS_TABLE,
     RUN_STEERS_TABLE,
+    RUN_USAGE_SEGMENTS_TABLE,
+    SANDBOX_CLEANUP_INTENTS_TABLE,
     TOOL_JOURNAL_TABLE,
     TOOL_RESULTS_TABLE,
     ensure_run_repository_schema,
@@ -93,6 +99,31 @@ class _OutboxEntry(BaseModel):
 
 class _DispatchLeaseConflict(Exception):
     """Abort the dispatch transaction when its lease row cannot be created."""
+
+
+def _sandbox_cleanup_id(
+    run_id: str,
+    lease_generation: int,
+    backend_kind: SandboxBackendKind,
+    sandbox_id: str,
+) -> str:
+    identity = "\0".join(
+        (run_id, str(lease_generation), backend_kind, sandbox_id)
+    ).encode()
+    return f"scu_{hashlib.sha256(identity).hexdigest()}"
+
+
+def _sandbox_cleanup_from_row(row: dict[str, Any]) -> SandboxCleanupIntent:
+    return SandboxCleanupIntent(
+        cleanup_id=str(row["cleanup_id"]),
+        run_id=str(row["run_id"]),
+        lease_generation=int(row["lease_generation"]),
+        backend_kind=str(row["backend_kind"]),
+        sandbox_id=str(row["sandbox_id"]),
+        teardown_ref=str(row["teardown_ref"]),
+        attempt_count=int(row["attempt_count"]),
+        next_attempt_at=int(row["next_attempt_at"]),
+    )
 
 
 class RunRepositorySettings(BaseModel):
@@ -382,8 +413,8 @@ class PostgresRunRepository:
     async def stage_critical_frame(
         self,
         run_id: str,
+        lease: LeaseFence,
         kind: str,
-        index: int,
         timestamp: int,
         payload_json: str,
         *,
@@ -393,10 +424,16 @@ class PostgresRunRepository:
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
-                    await self._seed_run_row(cur, run_id)
+                    lease_current = (
+                        await self._lock_active_lease(cur, run_id, lease)
+                        if kind == "run.started"
+                        else await self._lock_fence(cur, run_id, lease)
+                    )
+                    if not lease_current:
+                        return None
                     await cur.execute(
                         """
-                        SELECT durable_counter, terminal_fence_seq
+                        SELECT durable_counter, event_index_counter, terminal_fence_seq
                         FROM {}
                         WHERE run_id = %s
                         FOR UPDATE
@@ -409,33 +446,43 @@ class PostgresRunRepository:
                     fence = row["terminal_fence_seq"]
                     if terminal and fence is None:
                         fence = seq
-                    await cur.execute(
-                        """
-                        UPDATE {}
-                        SET durable_counter = %s, terminal_fence_seq = %s
-                        WHERE run_id = %s
-                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-                        (seq, fence, run_id),
-                    )
                     if fence is not None and seq > int(fence):
+                        await cur.execute(
+                            """
+                            UPDATE {}
+                            SET durable_counter = %s, terminal_fence_seq = %s
+                            WHERE run_id = %s
+                            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                            (seq, fence, run_id),
+                        )
                         await cur.execute(
                             """
                             INSERT INTO {} (
                                 run_id, durable_seq, event_id, kind, status, index_value,
                                 timestamp, payload_json, published_at
-                            ) VALUES (%s, %s, %s, %s, 'superseded', %s, %s, %s, NULL)
+                            ) VALUES (%s, %s, %s, %s, 'superseded', NULL, %s, %s, NULL)
                             """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                             (
                                 run_id,
                                 seq,
                                 event_id,
                                 kind,
-                                index,
                                 timestamp,
                                 payload_json,
                             ),
                         )
                         return None
+                    index = int(row["event_index_counter"])
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET durable_counter = %s,
+                            event_index_counter = %s,
+                            terminal_fence_seq = %s
+                        WHERE run_id = %s
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (seq, index + 1, fence, run_id),
+                    )
                     await cur.execute(
                         """
                         INSERT INTO {} (
@@ -445,7 +492,47 @@ class PostgresRunRepository:
                         """.format(qualified(self._schema, RUN_OUTBOX_TABLE)),
                         (run_id, seq, event_id, kind, index, timestamp, payload_json),
                     )
-        return StagedFrame(durable_seq=seq, event_id=event_id)
+        return StagedFrame(durable_seq=seq, event_id=event_id, index=index)
+
+    async def next_event_index(self, run_id: str) -> int:
+        """Read the claims-owned event-index high-water mark."""
+
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT event_index_counter
+                    FROM {}
+                    WHERE run_id = %s
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (run_id,),
+                )
+                row = await cur.fetchone()
+        return 0 if row is None else int(row["event_index_counter"])
+
+    async def reserve_event_index(self, run_id: str, lease: LeaseFence) -> int | None:
+        """Atomically reserve one live-event index under the active lease row lock."""
+
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return None
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET event_index_counter = event_index_counter + 1
+                        WHERE run_id = %s
+                        RETURNING event_index_counter - 1 AS index_value
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (run_id,),
+                    )
+                    row = await cur.fetchone()
+                    if row is None:
+                        raise RuntimeError(
+                            f"failed to reserve an event index for {run_id!r}"
+                        )
+                    return int(row["index_value"])
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         async with connect_pg(self._database_url) as conn:
@@ -628,7 +715,7 @@ class PostgresRunRepository:
                             f"failed to count open outbox rows for {run_id!r}"
                         )
                     open_count = int(open_count_row["open_count"])
-                    fence_row = await self._get_claim_row(cur, run_id)
+                    fence_row = await self._select_claim_row(cur, run_id)
                     fence = (
                         fence_row["terminal_fence_seq"]
                         if fence_row is not None
@@ -846,6 +933,32 @@ class PostgresRunRepository:
                 )
                 return await cur.fetchone() is not None
 
+    async def is_fence_current(self, run_id: str, lease: LeaseFence) -> bool:
+        """Check generation ownership even after pause/terminal clears the active expiry."""
+
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 1
+                    FROM {}
+                    WHERE run_id = %s
+                      AND owner = %s
+                      AND lease_generation = %s
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (run_id, lease.owner, lease.generation),
+                )
+                return await cur.fetchone() is not None
+
+    async def get_fence(self, run_id: str) -> LeaseFence | None:
+        row = await self._get_claim_row(run_id)
+        if row is None or row["owner"] is None:
+            return None
+        generation = int(row["lease_generation"])
+        if generation < 1:
+            return None
+        return LeaseFence(owner=str(row["owner"]), generation=generation)
+
     async def get_request(self, run_id: str) -> RunRequest | None:
         row = await self._get_claim_row(run_id)
         if row is None or row["request_json"] is None:
@@ -890,47 +1003,117 @@ class PostgresRunRepository:
                 rows = await cur.fetchall()
         return [str(row["run_id"]) for row in rows]
 
-    async def add_tokens(self, run_id: str, count: int) -> int:
+    async def add_tokens(
+        self, run_id: str, lease: LeaseFence, count: int
+    ) -> int | None:
+        now = self._clock()
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
-                    INSERT INTO {} AS current_run (run_id, token_total)
-                    VALUES (%s, %s)
-                    ON CONFLICT (run_id) DO UPDATE SET token_total = current_run.token_total + EXCLUDED.token_total
+                    UPDATE {}
+                    SET token_total = token_total + %s
+                    WHERE run_id = %s
+                      AND owner = %s
+                      AND lease_generation = %s
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at > %s
+                      AND terminal = FALSE
                     RETURNING token_total
-                    """.format(
-                        qualified(self._schema, RUN_CLAIMS_TABLE),
-                    ),
-                    (run_id, count),
+                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                    (count, run_id, lease.owner, lease.generation, now),
                 )
                 row = await cur.fetchone()
         if row is None:
-            raise RuntimeError(f"failed to add tokens for {run_id!r}")
+            return None
         return int(row["token_total"])
 
     async def add_usage(
-        self, run_id: str, input_tokens: int, output_tokens: int
-    ) -> tuple[int, int]:
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> tuple[int, int] | None:
+        if input_tokens < 0 or output_tokens < 0:
+            raise ValueError("usage token counts must be non-negative")
+        now = self._clock()
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO {} AS current_run (run_id, usage_input_total, usage_output_total)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (run_id) DO UPDATE SET
-                        usage_input_total = current_run.usage_input_total + EXCLUDED.usage_input_total,
-                        usage_output_total = current_run.usage_output_total + EXCLUDED.usage_output_total
-                    RETURNING usage_input_total, usage_output_total
-                    """.format(
-                        qualified(self._schema, RUN_CLAIMS_TABLE),
-                    ),
-                    (run_id, input_tokens, output_tokens),
-                )
-                row = await cur.fetchone()
-        if row is None:
-            raise RuntimeError(f"failed to add usage for {run_id!r}")
-        return int(row["usage_input_total"]), int(row["usage_output_total"])
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT usage_input_total, usage_output_total
+                        FROM {}
+                        WHERE run_id = %s
+                          AND owner = %s
+                          AND lease_generation = %s
+                          AND (
+                            terminal = TRUE
+                            OR (lease_expires_at IS NOT NULL AND lease_expires_at > %s)
+                          )
+                        FOR UPDATE
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (run_id, lease.owner, lease.generation, now),
+                    )
+                    claim = await cur.fetchone()
+                    if claim is None:
+                        return None
+                    await cur.execute(
+                        """
+                        SELECT input_tokens, output_tokens
+                        FROM {}
+                        WHERE run_id = %s AND lease_generation = %s
+                        """.format(qualified(self._schema, RUN_USAGE_SEGMENTS_TABLE)),
+                        (run_id, lease.generation),
+                    )
+                    existing = await cur.fetchone()
+                    if existing is not None:
+                        if (
+                            int(existing["input_tokens"]) != input_tokens
+                            or int(existing["output_tokens"]) != output_tokens
+                        ):
+                            raise UsageIdentityConflict(
+                                "usage identity conflict for "
+                                f"run {run_id!r} generation {lease.generation}"
+                            )
+                        return (
+                            int(claim["usage_input_total"]),
+                            int(claim["usage_output_total"]),
+                        )
+                    await cur.execute(
+                        """
+                        INSERT INTO {} (
+                            run_id, lease_generation, input_tokens, output_tokens, created_at
+                        ) VALUES (%s, %s, %s, %s, %s)
+                        """.format(qualified(self._schema, RUN_USAGE_SEGMENTS_TABLE)),
+                        (
+                            run_id,
+                            lease.generation,
+                            input_tokens,
+                            output_tokens,
+                            now,
+                        ),
+                    )
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET usage_input_total = usage_input_total + %s,
+                            usage_output_total = usage_output_total + %s
+                        WHERE run_id = %s
+                        RETURNING usage_input_total, usage_output_total
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (input_tokens, output_tokens, run_id),
+                    )
+                    updated = await cur.fetchone()
+                    if updated is None:
+                        raise RuntimeError(
+                            f"usage aggregate disappeared for run {run_id!r}"
+                        )
+                    return (
+                        int(updated["usage_input_total"]),
+                        int(updated["usage_output_total"]),
+                    )
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self._clock() - max_age_ms
@@ -939,10 +1122,21 @@ class PostgresRunRepository:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        SELECT run_id
-                        FROM {}
-                        WHERE terminal = TRUE AND terminal_at IS NOT NULL AND terminal_at <= %s
-                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        SELECT claim.run_id
+                        FROM {} AS claim
+                        WHERE claim.terminal = TRUE
+                          AND claim.terminal_at IS NOT NULL
+                          AND claim.terminal_at <= %s
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM {} AS cleanup
+                              WHERE cleanup.run_id = claim.run_id
+                                AND cleanup.status <> 'completed'
+                          )
+                        """.format(
+                            qualified(self._schema, RUN_CLAIMS_TABLE),
+                            qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE),
+                        ),
                         (cutoff,),
                     )
                     rows = await cur.fetchall()
@@ -961,26 +1155,32 @@ class PostgresRunRepository:
     async def try_mark_terminal(self, run_id: str, lease: LeaseFence) -> bool:
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE {}
-                    SET terminal = TRUE,
-                        terminal_at = COALESCE(terminal_at, %s),
-                        lease_expires_at = NULL
-                    WHERE run_id = %s
-                      AND owner = %s
-                      AND lease_generation = %s
-                      AND lease_expires_at IS NOT NULL
-                      AND lease_expires_at > %s
-                      AND terminal = FALSE
-                    RETURNING run_id
-                    """.format(
-                        qualified(self._schema, RUN_CLAIMS_TABLE),
-                    ),
-                    (now, run_id, lease.owner, lease.generation, now),
-                )
-                return await cur.fetchone() is not None
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET terminal = TRUE,
+                            terminal_at = COALESCE(terminal_at, %s),
+                            lease_expires_at = NULL
+                        WHERE run_id = %s
+                          AND owner = %s
+                          AND lease_generation = %s
+                          AND lease_expires_at IS NOT NULL
+                          AND lease_expires_at > %s
+                          AND terminal = FALSE
+                        RETURNING run_id, sandbox_id, sandbox_generation,
+                                  sandbox_backend_kind, sandbox_teardown_ref
+                        """.format(
+                            qualified(self._schema, RUN_CLAIMS_TABLE),
+                        ),
+                        (now, run_id, lease.owner, lease.generation, now),
+                    )
+                    row = await cur.fetchone()
+                    if row is None:
+                        return False
+                    await self._queue_bound_sandbox_cleanup(cur, dict(row), now=now)
+                    return True
 
     async def fence_and_mark_terminal(
         self, run_id: str, owner: str
@@ -989,21 +1189,26 @@ class PostgresRunRepository:
 
         now = self._clock()
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE {}
-                    SET owner = %s,
-                        lease_generation = lease_generation + 1,
-                        terminal = TRUE,
-                        terminal_at = COALESCE(terminal_at, %s),
-                        lease_expires_at = NULL
-                    WHERE run_id = %s AND terminal = FALSE
-                    RETURNING lease_generation
-                    """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-                    (owner, now, run_id),
-                )
-                row = await cur.fetchone()
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET owner = %s,
+                            lease_generation = lease_generation + 1,
+                            terminal = TRUE,
+                            terminal_at = COALESCE(terminal_at, %s),
+                            lease_expires_at = NULL
+                        WHERE run_id = %s AND terminal = FALSE
+                        RETURNING run_id, lease_generation, sandbox_id,
+                                  sandbox_generation, sandbox_backend_kind,
+                                  sandbox_teardown_ref
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (owner, now, run_id),
+                    )
+                    row = await cur.fetchone()
+                    if row is not None:
+                        await self._queue_bound_sandbox_cleanup(cur, dict(row), now=now)
         if row is None:
             return None
         return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
@@ -1011,6 +1216,22 @@ class PostgresRunRepository:
     async def is_terminal(self, run_id: str) -> bool:
         row = await self._get_claim_row(run_id)
         return bool(row and row["terminal"])
+
+    async def execute_active_effect(
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        effect: Callable[[], Awaitable[None]],
+    ) -> bool:
+        """Linearize one bounded external effect with reclaim, pause, and terminal CAS."""
+
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return False
+                    await effect()
+                    return True
 
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
         row = await self._get_claim_row(run_id)
@@ -1042,32 +1263,58 @@ class PostgresRunRepository:
                 rows = await cur.fetchall()
         return [(str(row["message_id"]), str(row["content"])) for row in rows]
 
-    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
+    async def ack_steers(
+        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    ) -> bool:
         if not message_ids:
-            return
+            return await self.is_lease_current(run_id, lease)
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    DELETE FROM {}
-                    WHERE run_id = %s AND message_id = ANY(%s)
-                    """.format(qualified(self._schema, RUN_STEERS_TABLE)),
-                    (run_id, message_ids),
-                )
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return False
+                    await cur.execute(
+                        """
+                        DELETE FROM {}
+                        WHERE run_id = %s AND message_id = ANY(%s)
+                        """.format(qualified(self._schema, RUN_STEERS_TABLE)),
+                        (run_id, message_ids),
+                    )
+        return True
 
     async def put_tool_result(
-        self, run_id: str, tool_id: str, result: str, is_error: bool
-    ) -> None:
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_id: str,
+        result: str,
+        is_error: bool,
+    ) -> tuple[str, bool] | None:
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO {} (run_id, tool_id, result, is_error)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (run_id, tool_id) DO NOTHING
-                    """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
-                    (run_id, tool_id, result, is_error),
-                )
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return None
+                    await cur.execute(
+                        """
+                        INSERT INTO {} (run_id, tool_id, result, is_error)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (run_id, tool_id) DO NOTHING
+                        """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
+                        (run_id, tool_id, result, is_error),
+                    )
+                    await cur.execute(
+                        """
+                        SELECT result, is_error
+                        FROM {}
+                        WHERE run_id = %s AND tool_id = %s
+                        """.format(qualified(self._schema, TOOL_RESULTS_TABLE)),
+                        (run_id, tool_id),
+                    )
+                    row = await cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"tool result missing after insert for {run_id!r}")
+        return str(row["result"]), bool(row["is_error"])
 
     async def get_tool_result(
         self, run_id: str, tool_id: str
@@ -1088,51 +1335,70 @@ class PostgresRunRepository:
         return str(row["result"]), bool(row["is_error"])
 
     async def journal_tool_started(
-        self, run_id: str, tool_call_id: str, name: str
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
     ) -> bool:
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO {} (run_id, tool_call_id, name, status, result, is_error)
-                    VALUES (%s, %s, %s, 'started', '', FALSE)
-                    ON CONFLICT (run_id, tool_call_id) DO NOTHING
-                    RETURNING tool_call_id
-                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
-                    (run_id, tool_call_id, name),
-                )
-                return await cur.fetchone() is not None
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return False
+                    await cur.execute(
+                        """
+                        INSERT INTO {} (run_id, tool_call_id, name, status, result, is_error)
+                        VALUES (%s, %s, %s, 'started', '', FALSE)
+                        ON CONFLICT (run_id, tool_call_id) DO NOTHING
+                        RETURNING tool_call_id
+                        """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                        (run_id, tool_call_id, name),
+                    )
+                    return await cur.fetchone() is not None
 
     async def journal_tool_finished(
-        self, run_id: str, tool_call_id: str, result: str, is_error: bool
-    ) -> None:
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        result: str,
+        is_error: bool,
+    ) -> bool:
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    UPDATE {}
-                    SET status = %s, result = %s, is_error = %s
-                    WHERE run_id = %s AND tool_call_id = %s AND status = 'started'
-                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
-                    (
-                        "failed" if is_error else "succeeded",
-                        result,
-                        is_error,
-                        run_id,
-                        tool_call_id,
-                    ),
-                )
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return False
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET status = %s, result = %s, is_error = %s
+                        WHERE run_id = %s AND tool_call_id = %s AND status = 'started'
+                        RETURNING tool_call_id
+                        """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                        (
+                            "failed" if is_error else "succeeded",
+                            result,
+                            is_error,
+                            run_id,
+                            tool_call_id,
+                        ),
+                    )
+                    return await cur.fetchone() is not None
 
-    async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
+    async def clear_tool_journal(
+        self, run_id: str, lease: LeaseFence, tool_call_id: str
+    ) -> bool:
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    DELETE FROM {}
-                    WHERE run_id = %s AND tool_call_id = %s
-                    """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
-                    (run_id, tool_call_id),
-                )
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return False
+                    await cur.execute(
+                        """
+                        DELETE FROM {}
+                        WHERE run_id = %s AND tool_call_id = %s
+                        """.format(qualified(self._schema, TOOL_JOURNAL_TABLE)),
+                        (run_id, tool_call_id),
+                    )
+        return True
 
     async def get_tool_journal(
         self, run_id: str, tool_call_id: str
@@ -1152,19 +1418,90 @@ class PostgresRunRepository:
             return None
         return ToolJournalRecord(**dict(row))
 
-    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
+    async def bind_sandbox_id(
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        *,
+        expected_sandbox_id: str | None,
+        sandbox_id: str,
+        backend_kind: SandboxBackendKind,
+        teardown_ref: str,
+    ) -> str | None:
+        if not sandbox_id.strip():
+            raise ValueError("sandbox_id must be non-empty")
+        if backend_kind not in {"docker", "e2b", "custom"}:
+            raise ValueError("sandbox backend must have a managed lifecycle")
+        if not teardown_ref.strip():
+            raise ValueError("sandbox teardown_ref must be non-empty")
         async with connect_pg(self._database_url) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO {} AS current_run (run_id, sandbox_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT (run_id) DO UPDATE SET sandbox_id = COALESCE(current_run.sandbox_id, EXCLUDED.sandbox_id)
-                    """.format(
-                        qualified(self._schema, RUN_CLAIMS_TABLE),
-                    ),
-                    (run_id, sandbox_id),
-                )
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._lock_active_lease(cur, run_id, lease):
+                        return None
+                    await cur.execute(
+                        """
+                        SELECT sandbox_id, sandbox_generation,
+                               sandbox_backend_kind, sandbox_teardown_ref
+                        FROM {}
+                        WHERE run_id = %s
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (run_id,),
+                    )
+                    row = await cur.fetchone()
+                    if row is None:
+                        return None
+                    current = row["sandbox_id"]
+                    confirmed_generation = row["sandbox_generation"]
+                    if (
+                        current is not None
+                        and confirmed_generation is not None
+                        and int(confirmed_generation) == lease.generation
+                    ):
+                        return str(current)
+                    if current != expected_sandbox_id:
+                        return None if current is None else str(current)
+                    if current is not None and str(current) == sandbox_id:
+                        # A later generation reconnecting the same sandbox must keep
+                        # the destruction identity captured when that resource was
+                        # created, even if deployment configuration has since changed.
+                        await cur.execute(
+                            """
+                            UPDATE {}
+                            SET sandbox_generation = %s
+                            WHERE run_id = %s
+                              AND owner = %s
+                              AND lease_generation = %s
+                            RETURNING sandbox_id
+                            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                            (lease.generation, run_id, lease.owner, lease.generation),
+                        )
+                        rebound = await cur.fetchone()
+                        return None if rebound is None else str(rebound["sandbox_id"])
+                    await cur.execute(
+                        """
+                        UPDATE {}
+                        SET sandbox_id = %s,
+                            sandbox_generation = %s,
+                            sandbox_backend_kind = %s,
+                            sandbox_teardown_ref = %s
+                        WHERE run_id = %s
+                          AND owner = %s
+                          AND lease_generation = %s
+                        RETURNING sandbox_id
+                        """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+                        (
+                            sandbox_id,
+                            lease.generation,
+                            backend_kind,
+                            teardown_ref,
+                            run_id,
+                            lease.owner,
+                            lease.generation,
+                        ),
+                    )
+                    bound = await cur.fetchone()
+                    return None if bound is None else str(bound["sandbox_id"])
 
     async def get_sandbox_id(self, run_id: str) -> str | None:
         row = await self._get_claim_row(run_id)
@@ -1172,15 +1509,240 @@ class PostgresRunRepository:
             return None
         return row["sandbox_id"]
 
-    async def _seed_run_row(self, cur: Any, run_id: str) -> None:
+    async def register_sandbox_cleanup(
+        self,
+        *,
+        run_id: str,
+        lease_generation: int,
+        backend_kind: SandboxBackendKind,
+        sandbox_id: str,
+        teardown_ref: str,
+    ) -> SandboxCleanupIntent:
+        if lease_generation < 1:
+            raise ValueError("sandbox cleanup lease_generation must be positive")
+        if backend_kind not in {"docker", "e2b", "custom"}:
+            raise ValueError("sandbox cleanup backend must have a managed lifecycle")
+        if not sandbox_id.strip() or not teardown_ref.strip():
+            raise ValueError("sandbox cleanup identity must be non-empty")
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    return await self._insert_sandbox_cleanup(
+                        cur,
+                        run_id=run_id,
+                        lease_generation=lease_generation,
+                        backend_kind=backend_kind,
+                        sandbox_id=sandbox_id,
+                        teardown_ref=teardown_ref,
+                        now=now,
+                    )
+
+    async def claim_sandbox_cleanups(
+        self,
+        owner: str,
+        *,
+        run_id: str | None = None,
+        limit: int = 100,
+        lease_ms: int = 30_000,
+    ) -> list[SandboxCleanupIntent]:
+        if not owner.strip():
+            raise ValueError("sandbox cleanup owner must be non-empty")
+        if limit < 1 or limit > 1_000:
+            raise ValueError("sandbox cleanup claim limit must be between 1 and 1000")
+        if lease_ms < 1:
+            raise ValueError("sandbox cleanup claim lease must be positive")
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        WITH due AS (
+                            SELECT cleanup_id
+                            FROM {}
+                            WHERE status IN ('pending', 'processing')
+                              AND next_attempt_at <= %s
+                              AND (%s::text IS NULL OR run_id = %s)
+                            ORDER BY next_attempt_at ASC, created_at ASC, cleanup_id ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT %s
+                        )
+                        UPDATE {} AS cleanup
+                        SET status = 'processing',
+                            cleanup_owner = %s,
+                            attempt_count = cleanup.attempt_count + 1,
+                            next_attempt_at = %s,
+                            updated_at = %s
+                        FROM due
+                        WHERE cleanup.cleanup_id = due.cleanup_id
+                        RETURNING cleanup.cleanup_id, cleanup.run_id,
+                                  cleanup.lease_generation, cleanup.backend_kind,
+                                  cleanup.sandbox_id, cleanup.teardown_ref,
+                                  cleanup.attempt_count, cleanup.next_attempt_at
+                        """.format(
+                            qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE),
+                            qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE),
+                        ),
+                        (now, run_id, run_id, limit, owner, now + lease_ms, now),
+                    )
+                    rows = await cur.fetchall()
+        return [_sandbox_cleanup_from_row(dict(row)) for row in rows]
+
+    async def complete_sandbox_cleanup(self, cleanup_id: str) -> bool:
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = 'completed', cleanup_owner = NULL,
+                        last_error = NULL, updated_at = %s
+                    WHERE cleanup_id = %s AND status <> 'completed'
+                    RETURNING cleanup_id
+                    """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
+                    (now, cleanup_id),
+                )
+                return await cur.fetchone() is not None
+
+    async def reschedule_sandbox_cleanup(
+        self, cleanup_id: str, error: str, *, retry_delay_ms: int
+    ) -> bool:
+        if retry_delay_ms < 0:
+            raise ValueError("sandbox cleanup retry delay must be non-negative")
+        now = self._clock()
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE {}
+                    SET status = 'pending', cleanup_owner = NULL,
+                        next_attempt_at = %s, last_error = %s, updated_at = %s
+                    WHERE cleanup_id = %s AND status <> 'completed'
+                    RETURNING cleanup_id
+                    """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
+                    (now + retry_delay_ms, error[:1_000], now, cleanup_id),
+                )
+                return await cur.fetchone() is not None
+
+    async def _insert_sandbox_cleanup(
+        self,
+        cur: Any,
+        *,
+        run_id: str,
+        lease_generation: int,
+        backend_kind: SandboxBackendKind,
+        sandbox_id: str,
+        teardown_ref: str,
+        now: int,
+    ) -> SandboxCleanupIntent:
+        cleanup_id = _sandbox_cleanup_id(
+            run_id, lease_generation, backend_kind, sandbox_id
+        )
         await cur.execute(
             """
-            INSERT INTO {} (run_id)
-            VALUES (%s)
-            ON CONFLICT (run_id) DO NOTHING
-            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
-            (run_id,),
+            INSERT INTO {} (
+                cleanup_id, run_id, lease_generation, backend_kind, sandbox_id,
+                teardown_ref, status, cleanup_owner, attempt_count,
+                next_attempt_at, last_error, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'pending', NULL, 0, %s, NULL, %s, %s)
+            ON CONFLICT DO NOTHING
+            """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
+            (
+                cleanup_id,
+                run_id,
+                lease_generation,
+                backend_kind,
+                sandbox_id,
+                teardown_ref,
+                now,
+                now,
+                now,
+            ),
         )
+        await cur.execute(
+            """
+            SELECT cleanup_id, run_id, lease_generation, backend_kind, sandbox_id,
+                   teardown_ref, attempt_count, next_attempt_at
+            FROM {}
+            WHERE cleanup_id = %s
+            """.format(qualified(self._schema, SANDBOX_CLEANUP_INTENTS_TABLE)),
+            (cleanup_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise RuntimeError(
+                f"sandbox cleanup registration failed for {sandbox_id!r}"
+            )
+        intent = _sandbox_cleanup_from_row(dict(row))
+        if intent.teardown_ref != teardown_ref:
+            raise RuntimeError(f"sandbox cleanup identity conflict for {sandbox_id!r}")
+        return intent
+
+    async def _queue_bound_sandbox_cleanup(
+        self, cur: Any, row: dict[str, Any], *, now: int
+    ) -> None:
+        sandbox_id = row.get("sandbox_id")
+        generation = row.get("sandbox_generation")
+        backend_kind = row.get("sandbox_backend_kind")
+        teardown_ref = row.get("sandbox_teardown_ref")
+        if sandbox_id is None:
+            return
+        if (
+            generation is None
+            or backend_kind not in {"docker", "e2b", "custom"}
+            or not isinstance(teardown_ref, str)
+            or not teardown_ref
+        ):
+            raise RuntimeError(
+                "terminal sandbox binding has incomplete cleanup identity"
+            )
+        await self._insert_sandbox_cleanup(
+            cur,
+            run_id=str(row["run_id"]),
+            lease_generation=int(generation),
+            backend_kind=backend_kind,
+            sandbox_id=str(sandbox_id),
+            teardown_ref=teardown_ref,
+            now=now,
+        )
+
+    async def _lock_active_lease(
+        self, cur: Any, run_id: str, lease: LeaseFence
+    ) -> bool:
+        """Serialize one execution effect with lease transfer/terminal fencing."""
+
+        await cur.execute(
+            """
+            SELECT 1
+            FROM {}
+            WHERE run_id = %s
+              AND owner = %s
+              AND lease_generation = %s
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at > %s
+              AND terminal = FALSE
+            FOR UPDATE
+            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+            (run_id, lease.owner, lease.generation, self._clock()),
+        )
+        return await cur.fetchone() is not None
+
+    async def _lock_fence(self, cur: Any, run_id: str, lease: LeaseFence) -> bool:
+        """Serialize a terminal/control effect with the current generation."""
+
+        await cur.execute(
+            """
+            SELECT 1
+            FROM {}
+            WHERE run_id = %s
+              AND owner = %s
+              AND lease_generation = %s
+            FOR UPDATE
+            """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
+            (run_id, lease.owner, lease.generation),
+        )
+        return await cur.fetchone() is not None
 
     async def _get_claim_row(self, run_id: str) -> dict[str, Any] | None:
         async with connect_pg(self._database_url) as conn:
@@ -1192,8 +1754,9 @@ class PostgresRunRepository:
             """
             SELECT run_id, request_json, owner, lease_generation, lease_expires_at,
                    terminal, terminal_at,
-                   durable_counter, terminal_fence_seq, token_total, usage_input_total,
-                   usage_output_total, sandbox_id
+                   durable_counter, event_index_counter, terminal_fence_seq, token_total,
+                   usage_input_total, usage_output_total, sandbox_id, sandbox_generation,
+                   sandbox_backend_kind, sandbox_teardown_ref
             FROM {}
             WHERE run_id = %s
             """.format(qualified(self._schema, RUN_CLAIMS_TABLE)),
@@ -1273,6 +1836,8 @@ class PostgresRunRepository:
             RUN_RECEIPT_MANIFESTS_TABLE,
             RUN_CONTROL_COMMANDS_TABLE,
             RUN_STEERS_TABLE,
+            RUN_USAGE_SEGMENTS_TABLE,
+            SANDBOX_CLEANUP_INTENTS_TABLE,
             TOOL_RESULTS_TABLE,
             TOOL_JOURNAL_TABLE,
             RUN_DISPATCHES_TABLE,

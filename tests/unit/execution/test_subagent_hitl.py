@@ -150,7 +150,9 @@ async def test_general_purpose_delegation_runs_inside_guards(
     lease = await run_repository.try_claim(request(run_id))
     assert lease is not None
     assert await run_repository.try_mark_terminal(run_id, lease)
-    guard = TerminalGuardMiddleware(run_repository=run_repository, run_id=run_id)
+    guard = TerminalGuardMiddleware(
+        run_repository=run_repository, run_id=run_id, lease=lease
+    )
     main_model = LocalFakeChatModel.with_script(
         [
             AIMessage(
@@ -218,10 +220,12 @@ async def test_subagent_review_pauses_with_cached_result(
     saver = checkpointer
     run_id = f"rrev-{uuid4().hex}"
     store = FakeRunRepository()
+    lease = await store.try_claim(request(run_id))
+    assert lease is not None
     gate_tool = StructuredTool(
         name="gated", description="d", args_schema=_NoArgs, func=_gated
     )
-    review = ToolResultReviewMiddleware(frozenset({"gated"}), store, run_id)
+    review = ToolResultReviewMiddleware(frozenset({"gated"}), store, run_id, lease)
     main_model = LocalFakeChatModel.with_script(
         [
             AIMessage(

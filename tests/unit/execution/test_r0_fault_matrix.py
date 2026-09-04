@@ -21,6 +21,7 @@ from support.fakes import (
     text_run,
     usage_recorder,
 )
+from support.chat import FakeChatRepository
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
@@ -28,7 +29,11 @@ from kokoro_agent.protocol import (
     SubagentSource,
     run_events_stream,
 )
-from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
+from kokoro_agent.execution.events import (
+    RunEmitter,
+    message_delta_payload,
+    outbox_wire_event,
+)
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.execution.scope import RunScope
 from kokoro_agent.repositories.run_repository import LeaseFence
@@ -36,8 +41,10 @@ from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.worker.supervisor import RunSupervisor
 
 
-def _builder(agent: FakeAgent) -> Callable[[RunRequest], Awaitable[AgentHandle]]:
-    async def _build(_request: RunRequest) -> AgentHandle:
+def _builder(
+    agent: FakeAgent,
+) -> Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]:
+    async def _build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     return _build
@@ -118,11 +125,42 @@ class _FlakyTerminalBus(FakeBus):
         return await super().publish(stream, event, maxlen=maxlen)
 
 
+async def test_stale_generation_emitter_drops_live_and_durable_events() -> None:
+    bus = FakeBus()
+    store = FakeRunRepository()
+    chat = FakeChatRepository()
+    run = request("stale-emitter")
+    stale = await store.try_claim(run, "same-worker")
+    assert stale is not None
+    emitter = await RunEmitter.attach(
+        bus,
+        run.run_id,
+        frozenset(),
+        store,
+        lease=stale,
+        namespace=RunScope.of(run).namespace,
+        session_id=run.session_id,
+        chat_repository=chat,
+    )
+    store.expired = [run]
+    current = (await store.reclaim_expired("same-worker"))[0].lease
+    assert current.generation > stale.generation
+    payload = message_delta_payload("must-not-publish", segment_id="segment")
+    assert payload is not None
+
+    await emitter.emit(payload)
+
+    assert bus.run_events(run.run_id) == []
+    assert await store.list_unpublished_outbox() == []
+    assert await chat.replay(RunScope.of(run).namespace, run.session_id) == ()
+
+
 async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> None:
     bus = _FlakyTerminalBus()
     store = FakeRunRepository()
-    await store.try_claim(request("term-drop"))  # 建 run 文档：stage 落 outbox 行的前提
-    emitter = await RunEmitter.attach(bus, "term-drop", frozenset(), store)
+    lease = await store.try_claim(request("term-drop"))
+    assert lease is not None
+    emitter = await RunEmitter.attach(bus, "term-drop", frozenset(), store, lease=lease)
     await invoke_once(
         emitter,
         FakeAgent(run=text_run("hi")),
@@ -130,7 +168,7 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
-        claim_terminal=lambda: store.try_mark_terminal("term-drop"),
+        claim_terminal=lambda: store.try_mark_terminal("term-drop", lease),
         record_usage=usage_recorder()[0],
     )
     # 首次 publish 失败被顶层 except 吞掉 → run.completed 未上 wire，但 outbox 行留 queued。
@@ -173,8 +211,9 @@ class _FlakyFailureBus(FakeBus):
 async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> None:
     bus = _FlakyFailureBus()
     store = FakeRunRepository()
-    await store.try_claim(request("term-fail"))
-    emitter = await RunEmitter.attach(bus, "term-fail", frozenset(), store)
+    lease = await store.try_claim(request("term-fail"))
+    assert lease is not None
+    emitter = await RunEmitter.attach(bus, "term-fail", frozenset(), store, lease=lease)
     handled = await invoke_once(
         emitter,
         FakeAgent(raise_on_stream=RuntimeError("boom")),
@@ -182,7 +221,7 @@ async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> N
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
-        claim_terminal=lambda: store.try_mark_terminal("term-fail"),
+        claim_terminal=lambda: store.try_mark_terminal("term-fail", lease),
         record_usage=usage_recorder()[0],
     )
     assert handled is True

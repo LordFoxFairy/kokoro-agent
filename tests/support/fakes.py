@@ -35,8 +35,11 @@ from kokoro_agent.repositories.run_repository import (
     LeasedRun,
     OutboxFrame,
     ReceiptReconcile,
+    SandboxBackendKind,
+    SandboxCleanupIntent,
     StagedFrame,
     ToolJournalRecord,
+    UsageIdentityConflict,
 )
 from kokoro_agent.streams.protocol import StreamItem
 
@@ -142,8 +145,12 @@ class FakeRunRepository:
         self.tool_results: dict[tuple[str, str], tuple[str, bool]] = {}
         self.token_totals: dict[str, int] = {}
         self.usage_totals: dict[str, tuple[int, int]] = {}
+        self.usage_segments: dict[tuple[str, int], tuple[int, int]] = {}
         self.steers: dict[str, list[tuple[str, str]]] = {}
         self.sandbox_ids: dict[str, str] = {}
+        self.sandbox_generations: dict[str, int] = {}
+        self.sandbox_bindings: dict[str, tuple[SandboxBackendKind, str]] = {}
+        self.sandbox_cleanups: dict[str, dict[str, object]] = {}
         self.terminal_at: dict[str, int] = {}
         self.clock_ms = 0
         # dispatch CAS 记录（run_id → status）：默认无记录=放行；测试可预置 pending/claimed。
@@ -154,6 +161,7 @@ class FakeRunRepository:
         self.dlq: list[tuple[str, str, str]] = []
         # R4 critical outbox：per-run durable_seq 计数、local fence、outbox 行；回执/清单由测试 seed。
         self.durable_counter: dict[str, int] = {}
+        self.event_index_counter: dict[str, int] = {}
         self.terminal_fence: dict[str, int] = {}
         self.outbox: dict[str, list[dict[str, object]]] = {}
         # session 写域（测试 seed）：run_event_receipts 行 + run_receipt_manifests 单行。
@@ -242,13 +250,20 @@ class FakeRunRepository:
     async def stage_critical_frame(
         self,
         run_id: str,
+        lease: LeaseFence,
         kind: str,
-        index: int,
         timestamp: int,
         payload_json: str,
         *,
         terminal: bool,
     ) -> StagedFrame | None:
+        lease_current = (
+            await self.is_lease_current(run_id, lease)
+            if kind == "run.started"
+            else await self.is_fence_current(run_id, lease)
+        )
+        if not lease_current:
+            return None
         seq = self.durable_counter.get(run_id, 0) + 1
         self.durable_counter[run_id] = seq
         if terminal and run_id not in self.terminal_fence:
@@ -266,6 +281,8 @@ class FakeRunRepository:
                 }
             )
             return None
+        index = self.event_index_counter.get(run_id, 0)
+        self.event_index_counter[run_id] = index + 1
         rows.append(
             {
                 "durable_seq": seq,
@@ -277,7 +294,17 @@ class FakeRunRepository:
                 "status": "queued",
             }
         )
-        return StagedFrame(durable_seq=seq, event_id=event_id)
+        return StagedFrame(durable_seq=seq, event_id=event_id, index=index)
+
+    async def next_event_index(self, run_id: str) -> int:
+        return self.event_index_counter.get(run_id, 0)
+
+    async def reserve_event_index(self, run_id: str, lease: LeaseFence) -> int | None:
+        if not await self.is_lease_current(run_id, lease):
+            return None
+        index = self.event_index_counter.get(run_id, 0)
+        self.event_index_counter[run_id] = index + 1
+        return index
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None:
         for row in self.outbox.get(run_id, []):
@@ -580,6 +607,15 @@ class FakeRunRepository:
             and expires_at > self.clock_ms
         )
 
+    async def is_fence_current(self, run_id: str, lease: LeaseFence) -> bool:
+        return (
+            self.owners.get(run_id) == lease.owner
+            and self.generations.get(run_id) == lease.generation
+        )
+
+    async def get_fence(self, run_id: str) -> LeaseFence | None:
+        return self.current_lease(run_id)
+
     async def list_paused(self) -> list[str]:
         return sorted(
             run_id
@@ -600,14 +636,40 @@ class FakeRunRepository:
             return None
         return request
 
-    async def add_tokens(self, run_id: str, count: int) -> int:
+    async def add_tokens(
+        self, run_id: str, lease: LeaseFence, count: int
+    ) -> int | None:
+        if not await self.is_lease_current(run_id, lease):
+            return None
         self.token_totals[run_id] = self.token_totals.get(run_id, 0) + count
         return self.token_totals[run_id]
 
     async def add_usage(
-        self, run_id: str, input_tokens: int, output_tokens: int
-    ) -> tuple[int, int]:
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> tuple[int, int] | None:
+        current = (
+            await self.is_fence_current(run_id, lease)
+            if run_id in self.terminals
+            else await self.is_lease_current(run_id, lease)
+        )
+        if not current:
+            return None
+        segment = (run_id, lease.generation)
+        usage = (input_tokens, output_tokens)
+        existing = self.usage_segments.get(segment)
+        if existing is not None:
+            if existing != usage:
+                raise UsageIdentityConflict(
+                    "usage identity conflict for "
+                    f"run {run_id!r} generation {lease.generation}"
+                )
+            return self.usage_totals.get(run_id, (0, 0))
         cur_in, cur_out = self.usage_totals.get(run_id, (0, 0))
+        self.usage_segments[segment] = usage
         self.usage_totals[run_id] = (cur_in + input_tokens, cur_out + output_tokens)
         return self.usage_totals[run_id]
 
@@ -623,6 +685,7 @@ class FakeRunRepository:
             return False
         self.terminals.add(run_id)
         self.terminal_at[run_id] = self.clock_ms
+        await self._queue_bound_sandbox_cleanup(run_id)
         return True
 
     async def fence_and_mark_terminal(
@@ -636,11 +699,21 @@ class FakeRunRepository:
         self.leases[run_id] = None
         self.terminals.add(run_id)
         self.terminal_at[run_id] = self.clock_ms
+        await self._queue_bound_sandbox_cleanup(run_id)
         return LeaseFence(owner=owner, generation=generation)
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self.clock_ms - max_age_ms
-        stale = [r for r in self.terminals if self.terminal_at.get(r, 0) <= cutoff]
+        blocked = {
+            str(row["run_id"])
+            for row in self.sandbox_cleanups.values()
+            if row["status"] != "completed"
+        }
+        stale = [
+            r
+            for r in self.terminals
+            if self.terminal_at.get(r, 0) <= cutoff and r not in blocked
+        ]
         for run_id in stale:
             self.terminals.discard(run_id)
             self.terminal_at.pop(run_id, None)
@@ -650,7 +723,20 @@ class FakeRunRepository:
             self.generations.pop(run_id, None)
             self.token_totals.pop(run_id, None)
             self.usage_totals.pop(run_id, None)
+            self.usage_segments = {
+                key: value
+                for key, value in self.usage_segments.items()
+                if key[0] != run_id
+            }
             self.steers.pop(run_id, None)
+            self.sandbox_ids.pop(run_id, None)
+            self.sandbox_generations.pop(run_id, None)
+            self.sandbox_bindings.pop(run_id, None)
+            self.sandbox_cleanups = {
+                key: value
+                for key, value in self.sandbox_cleanups.items()
+                if value["run_id"] != run_id
+            }
             self.tool_results = {
                 k: v for k, v in self.tool_results.items() if k[0] != run_id
             }
@@ -675,18 +761,31 @@ class FakeRunRepository:
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         return list(self.steers.get(run_id, []))
 
-    async def ack_steers(self, run_id: str, message_ids: list[str]) -> None:
+    async def ack_steers(
+        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    ) -> bool:
+        if not await self.is_lease_current(run_id, lease):
+            return False
         box = self.steers.get(run_id)
         if box is None:
-            return
+            return True
         self.steers[run_id] = [
             (mid, c) for mid, c in box if mid not in set(message_ids)
         ]
+        return True
 
     async def put_tool_result(
-        self, run_id: str, tool_id: str, result: str, is_error: bool
-    ) -> None:
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_id: str,
+        result: str,
+        is_error: bool,
+    ) -> tuple[str, bool] | None:
+        if not await self.is_lease_current(run_id, lease):
+            return None
         self.tool_results.setdefault((run_id, tool_id), (result, is_error))
+        return self.tool_results[(run_id, tool_id)]
 
     async def get_tool_result(
         self, run_id: str, tool_id: str
@@ -694,8 +793,10 @@ class FakeRunRepository:
         return self.tool_results.get((run_id, tool_id))
 
     async def journal_tool_started(
-        self, run_id: str, tool_call_id: str, name: str
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
     ) -> bool:
+        if not await self.is_lease_current(run_id, lease):
+            return False
         key = (run_id, tool_call_id)
         if key in self.tool_journal:
             return False
@@ -708,17 +809,30 @@ class FakeRunRepository:
         return True
 
     async def journal_tool_finished(
-        self, run_id: str, tool_call_id: str, result: str, is_error: bool
-    ) -> None:
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        result: str,
+        is_error: bool,
+    ) -> bool:
+        if not await self.is_lease_current(run_id, lease):
+            return False
         entry = self.tool_journal.get((run_id, tool_call_id))
         if entry is None or entry["status"] != "started":
-            return
+            return False
         entry["status"] = "failed" if is_error else "succeeded"
         entry["result"] = result
         entry["is_error"] = is_error
+        return True
 
-    async def clear_tool_journal(self, run_id: str, tool_call_id: str) -> None:
+    async def clear_tool_journal(
+        self, run_id: str, lease: LeaseFence, tool_call_id: str
+    ) -> bool:
+        if not await self.is_lease_current(run_id, lease):
+            return False
         self.tool_journal.pop((run_id, tool_call_id), None)
+        return True
 
     async def get_tool_journal(
         self, run_id: str, tool_call_id: str
@@ -733,11 +847,155 @@ class FakeRunRepository:
             is_error=bool(entry["is_error"]),
         )
 
-    async def put_sandbox_id(self, run_id: str, sandbox_id: str) -> None:
-        self.sandbox_ids.setdefault(run_id, sandbox_id)
+    async def execute_active_effect(
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        effect: Callable[[], Awaitable[None]],
+    ) -> bool:
+        if not await self.is_lease_current(run_id, lease):
+            return False
+        await effect()
+        return True
+
+    async def bind_sandbox_id(
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        *,
+        expected_sandbox_id: str | None,
+        sandbox_id: str,
+        backend_kind: SandboxBackendKind,
+        teardown_ref: str,
+    ) -> str | None:
+        if not await self.is_lease_current(run_id, lease):
+            return None
+        current = self.sandbox_ids.get(run_id)
+        if (
+            current is not None
+            and self.sandbox_generations.get(run_id) == lease.generation
+        ):
+            return current
+        if current != expected_sandbox_id:
+            return current
+        self.sandbox_ids[run_id] = sandbox_id
+        self.sandbox_generations[run_id] = lease.generation
+        if current != sandbox_id or run_id not in self.sandbox_bindings:
+            self.sandbox_bindings[run_id] = (backend_kind, teardown_ref)
+        return sandbox_id
 
     async def get_sandbox_id(self, run_id: str) -> str | None:
         return self.sandbox_ids.get(run_id)
+
+    async def register_sandbox_cleanup(
+        self,
+        *,
+        run_id: str,
+        lease_generation: int,
+        backend_kind: SandboxBackendKind,
+        sandbox_id: str,
+        teardown_ref: str,
+    ) -> SandboxCleanupIntent:
+        cleanup_id = f"cleanup:{run_id}:{lease_generation}:{backend_kind}:{sandbox_id}"
+        row = self.sandbox_cleanups.setdefault(
+            cleanup_id,
+            {
+                "cleanup_id": cleanup_id,
+                "run_id": run_id,
+                "lease_generation": lease_generation,
+                "backend_kind": backend_kind,
+                "sandbox_id": sandbox_id,
+                "teardown_ref": teardown_ref,
+                "status": "pending",
+                "attempt_count": 0,
+                "next_attempt_at": self.clock_ms,
+            },
+        )
+        if row["teardown_ref"] != teardown_ref:
+            raise RuntimeError(f"sandbox cleanup identity conflict for {sandbox_id!r}")
+        return self._sandbox_cleanup_record(row)
+
+    async def claim_sandbox_cleanups(
+        self,
+        owner: str,
+        *,
+        run_id: str | None = None,
+        limit: int = 100,
+        lease_ms: int = 30_000,
+    ) -> list[SandboxCleanupIntent]:
+        due = [
+            row
+            for row in self.sandbox_cleanups.values()
+            if row["status"] in {"pending", "processing"}
+            and _as_int(row["next_attempt_at"]) <= self.clock_ms
+            and (run_id is None or row["run_id"] == run_id)
+        ]
+        due.sort(
+            key=lambda row: (
+                _as_int(row["next_attempt_at"]),
+                str(row["cleanup_id"]),
+            )
+        )
+        claimed: list[SandboxCleanupIntent] = []
+        for row in due[:limit]:
+            row["status"] = "processing"
+            row["cleanup_owner"] = owner
+            row["attempt_count"] = _as_int(row["attempt_count"]) + 1
+            row["next_attempt_at"] = self.clock_ms + lease_ms
+            claimed.append(self._sandbox_cleanup_record(row))
+        return claimed
+
+    async def complete_sandbox_cleanup(self, cleanup_id: str) -> bool:
+        row = self.sandbox_cleanups.get(cleanup_id)
+        if row is None or row["status"] == "completed":
+            return False
+        row["status"] = "completed"
+        row["cleanup_owner"] = None
+        row["last_error"] = None
+        return True
+
+    async def reschedule_sandbox_cleanup(
+        self, cleanup_id: str, error: str, *, retry_delay_ms: int
+    ) -> bool:
+        row = self.sandbox_cleanups.get(cleanup_id)
+        if row is None or row["status"] == "completed":
+            return False
+        row["status"] = "pending"
+        row["cleanup_owner"] = None
+        row["last_error"] = error[:1_000]
+        row["next_attempt_at"] = self.clock_ms + retry_delay_ms
+        return True
+
+    async def _queue_bound_sandbox_cleanup(self, run_id: str) -> None:
+        sandbox_id = self.sandbox_ids.get(run_id)
+        generation = self.sandbox_generations.get(run_id)
+        binding = self.sandbox_bindings.get(run_id)
+        if sandbox_id is None:
+            return
+        if generation is None or binding is None:
+            raise RuntimeError(
+                "terminal sandbox binding has incomplete cleanup identity"
+            )
+        await self.register_sandbox_cleanup(
+            run_id=run_id,
+            lease_generation=generation,
+            backend_kind=binding[0],
+            sandbox_id=sandbox_id,
+            teardown_ref=binding[1],
+        )
+
+    @staticmethod
+    def _sandbox_cleanup_record(row: Mapping[str, object]) -> SandboxCleanupIntent:
+        return SandboxCleanupIntent(
+            cleanup_id=str(row["cleanup_id"]),
+            run_id=str(row["run_id"]),
+            lease_generation=_as_int(row["lease_generation"]),
+            backend_kind=cast(SandboxBackendKind, row["backend_kind"]),
+            sandbox_id=str(row["sandbox_id"]),
+            teardown_ref=str(row["teardown_ref"]),
+            attempt_count=_as_int(row["attempt_count"]),
+            next_attempt_at=_as_int(row["next_attempt_at"]),
+        )
 
 
 @dataclass

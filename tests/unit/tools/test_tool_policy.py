@@ -5,15 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
+from langchain.agents.middleware.types import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallRequest,
+)
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from support.fakes import FakeRunRepository
+from support.fakes import FakeRunRepository, request
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.tools.middleware import (
     TokenBudgetExceeded,
     TokenBudgetMiddleware,
+    RunSupersededError,
+    TerminalGuardMiddleware,
     ToolPolicyMiddleware,
 )
 
@@ -99,7 +105,9 @@ class _TaskHandler:
 
 async def test_delegation_deny_blocks_undeclared_including_general_purpose() -> None:
     middleware = ToolPolicyMiddleware(
-        frozenset({"task"}), declared_subagents=frozenset({"researcher"}), subagent_create="deny"
+        frozenset({"task"}),
+        declared_subagents=frozenset({"researcher"}),
+        subagent_create="deny",
     )
     handler = _TaskHandler()
     for undeclared in ("general-purpose", "ghost"):
@@ -111,7 +119,9 @@ async def test_delegation_deny_blocks_undeclared_including_general_purpose() -> 
 
 async def test_delegation_deny_allows_declared() -> None:
     middleware = ToolPolicyMiddleware(
-        frozenset({"task"}), declared_subagents=frozenset({"researcher"}), subagent_create="deny"
+        frozenset({"task"}),
+        declared_subagents=frozenset({"researcher"}),
+        subagent_create="deny",
     )
     handler = _TaskHandler()
     result = await middleware.awrap_tool_call(_task_request("researcher"), handler)
@@ -138,14 +148,22 @@ def _model_request() -> ModelRequest:
 def _model_response(total_tokens: int) -> ModelResponse:
     message = AIMessage(
         content="ok",
-        usage_metadata={"input_tokens": total_tokens - 1, "output_tokens": 1, "total_tokens": total_tokens},
+        usage_metadata={
+            "input_tokens": total_tokens - 1,
+            "output_tokens": 1,
+            "total_tokens": total_tokens,
+        },
     )
     return ModelResponse(result=[message])
 
 
 async def test_token_budget_allows_then_trips() -> None:
     store = FakeRunRepository()
-    middleware = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="r1")
+    lease = await store.try_claim(request("r1"))
+    assert lease is not None
+    middleware = TokenBudgetMiddleware(
+        budget=100, run_repository=store, run_id="r1", lease=lease
+    )
 
     async def handler(_request: object) -> ModelResponse:
         return _model_response(60)
@@ -159,24 +177,62 @@ async def test_token_budget_allows_then_trips() -> None:
 async def test_token_budget_survives_middleware_rebuild() -> None:
     # resume 重建 middleware：计数在 store，不清零。
     store = FakeRunRepository()
-    first = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="r1")
+    lease = await store.try_claim(request("r1"))
+    assert lease is not None
+    first = TokenBudgetMiddleware(
+        budget=100, run_repository=store, run_id="r1", lease=lease
+    )
 
     async def handler(_request: object) -> ModelResponse:
         return _model_response(60)
 
     await first.awrap_model_call(_model_request(), handler)
-    rebuilt = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="r1")
+    rebuilt = TokenBudgetMiddleware(
+        budget=100, run_repository=store, run_id="r1", lease=lease
+    )
     with pytest.raises(TokenBudgetExceeded):
         await rebuilt.awrap_model_call(_model_request(), handler)
 
 
 async def test_token_budget_isolated_per_run() -> None:
     store = FakeRunRepository()
-    a = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="ra")
-    b = TokenBudgetMiddleware(budget=100, run_repository=store, run_id="rb")
+    lease_a = await store.try_claim(request("ra"))
+    lease_b = await store.try_claim(request("rb"))
+    assert lease_a is not None and lease_b is not None
+    a = TokenBudgetMiddleware(
+        budget=100, run_repository=store, run_id="ra", lease=lease_a
+    )
+    b = TokenBudgetMiddleware(
+        budget=100, run_repository=store, run_id="rb", lease=lease_b
+    )
 
     async def handler(_request: object) -> ModelResponse:
         return _model_response(90)
 
     await a.awrap_model_call(_model_request(), handler)
     await b.awrap_model_call(_model_request(), handler)  # 各自 90，均不超
+
+
+async def test_model_guard_rejects_stale_generation_before_provider_call() -> None:
+    store = FakeRunRepository()
+    stale = await store.try_claim(request("stale-model"), "same-worker")
+    assert stale is not None
+    store.expired = [request("stale-model")]
+    current = (await store.reclaim_expired("same-worker"))[0].lease
+    assert current.generation > stale.generation
+    middleware = TerminalGuardMiddleware(
+        run_repository=store,
+        run_id="stale-model",
+        lease=stale,
+    )
+    calls = 0
+
+    async def handler(_request: object) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return _model_response(1)
+
+    with pytest.raises(RunSupersededError):
+        await middleware.awrap_model_call(_model_request(), handler)
+
+    assert calls == 0

@@ -10,9 +10,13 @@ import pytest
 from e2b import CommandExitException, SandboxException
 from pydantic import SecretStr
 
-from support.fakes import request
+from support.fakes import FakeRunRepository, request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
-from kokoro_agent.sandbox.e2b_backend import E2BSandboxBackend, E2BSettings, connect_e2b_sandbox
+from kokoro_agent.sandbox.e2b_backend import (
+    E2BSandboxBackend,
+    E2BSettings,
+    connect_e2b_sandbox,
+)
 from kokoro_agent.repositories.run_repository import RunRepository
 
 
@@ -75,9 +79,13 @@ class FakeSandbox:
     """镜像 e2b 2.30 调用面：create / 构造+connect / commands.run / sandbox_id。"""
 
     created: list[FakeSandbox] = []
+    killed: list[str] = []
     connect_should_fail = False
+    connect_failures_remaining = 0
 
-    def __init__(self, sandbox_id: str = "sbx_new", api_key: str | None = None, **_: object) -> None:
+    def __init__(
+        self, sandbox_id: str = "sbx_new", api_key: str | None = None, **_: object
+    ) -> None:
         self.sandbox_id = sandbox_id
         self.api_key = api_key
         self.commands_run: list[tuple[str, str | None]] = []
@@ -86,23 +94,39 @@ class FakeSandbox:
         self.files = FakeFiles()
 
     @classmethod
-    def create(cls, template: str | None = None, timeout: int | None = None, **opts: object) -> Self:
-        instance = cls(sandbox_id=f"sbx_created_{len(cls.created)}", api_key=str(opts.get("api_key")))
+    def create(
+        cls, template: str | None = None, timeout: int | None = None, **opts: object
+    ) -> Self:
+        instance = cls(
+            sandbox_id=f"sbx_created_{len(cls.created)}",
+            api_key=str(opts.get("api_key")),
+        )
         cls.created.append(instance)
         return instance
 
     @classmethod
-    def connect(cls, sandbox_id: str, timeout: int | None = None, **opts: object) -> Self:
+    def connect(
+        cls, sandbox_id: str, timeout: int | None = None, **opts: object
+    ) -> Self:
         # 镜像 e2b 类形态 connect：按 id 重连，paused 自动 resume。
+        if cls.connect_failures_remaining > 0:
+            cls.connect_failures_remaining -= 1
+            raise SandboxException("sandbox gone")
         if cls.connect_should_fail:
             raise SandboxException("sandbox gone")
         return cls(sandbox_id=sandbox_id, api_key=str(opts.get("api_key")))
+
+    @classmethod
+    def kill(cls, sandbox_id: str, **_: object) -> None:
+        cls.killed.append(sandbox_id)
 
 
 @pytest.fixture(autouse=True)
 def fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSandbox.created = []
+    FakeSandbox.killed = []
     FakeSandbox.connect_should_fail = False
+    FakeSandbox.connect_failures_remaining = 0
     monkeypatch.setattr("kokoro_agent.sandbox.e2b_backend.Sandbox", FakeSandbox)
 
 
@@ -119,7 +143,9 @@ class TestLifecycle:
     def test_resume_reconnects_existing_sandbox_not_create(self) -> None:
         backend = connect_e2b_sandbox(_e2b_settings(), sandbox_id="sbx_prior")
         assert backend.id == "sbx_prior"
-        assert FakeSandbox.created == []  # 关键语义：resume 绝不新建（暂停期文件在箱内）
+        assert (
+            FakeSandbox.created == []
+        )  # 关键语义：resume 绝不新建（暂停期文件在箱内）
 
     def test_resume_falls_back_to_create_when_sandbox_gone(self) -> None:
         FakeSandbox.connect_should_fail = True
@@ -127,21 +153,96 @@ class TestLifecycle:
         assert backend.id == "sbx_created_0"
 
     @pytest.mark.asyncio
-    async def test_run_scoped_binding_new_sandbox_and_reuse(self, run_repository: RunRepository) -> None:
+    async def test_run_scoped_binding_new_sandbox_and_reuse(
+        self, run_repository: RunRepository
+    ) -> None:
         # 生产路径：run 先被认领（建 run 文档），箱绑定才落账。
-        await run_repository.try_claim(request("run_1"), "owner")
+        lease = await run_repository.try_claim(request("run_1"), "owner")
+        assert lease is not None
         first = await make_backend_for_run(
-            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", sandbox_store=run_repository
+            "e2b",
+            _dispatch_settings(),
+            workspace="ns:s1",
+            run_id="run_1",
+            lease=lease,
+            sandbox_store=run_repository,
         )
         assert isinstance(first, E2BSandboxBackend)
         assert await run_repository.get_sandbox_id("run_1") == first.id
         # HITL resume：重建 backend 走重连，箱不重建、绑定不被覆盖（keep-first）。
         second = await make_backend_for_run(
-            "e2b", _dispatch_settings(), workspace="ns:s1", run_id="run_1", sandbox_store=run_repository
+            "e2b",
+            _dispatch_settings(),
+            workspace="ns:s1",
+            run_id="run_1",
+            lease=lease,
+            sandbox_store=run_repository,
         )
         assert isinstance(second, E2BSandboxBackend)
         assert second.id == first.id
         assert len(FakeSandbox.created) == 1
+
+    @pytest.mark.asyncio
+    async def test_dead_prior_replacement_becomes_authoritative(self) -> None:
+        repository = FakeRunRepository()
+        lease = await repository.try_claim(request("run_replacement"), "owner")
+        assert lease is not None
+        first = await make_backend_for_run(
+            "e2b",
+            _dispatch_settings(),
+            workspace="ns:s1",
+            run_id="run_replacement",
+            lease=lease,
+            sandbox_store=repository,
+        )
+        assert isinstance(first, E2BSandboxBackend)
+        assert await repository.pause("run_replacement", lease) is True
+        replacement_lease = await repository.adopt("run_replacement", "owner")
+        assert replacement_lease is not None
+        FakeSandbox.connect_should_fail = True
+
+        replacement = await make_backend_for_run(
+            "e2b",
+            _dispatch_settings(),
+            workspace="ns:s1",
+            run_id="run_replacement",
+            lease=replacement_lease,
+            sandbox_store=repository,
+        )
+
+        assert isinstance(replacement, E2BSandboxBackend)
+        assert replacement.id != first.id
+        assert await repository.get_sandbox_id("run_replacement") == replacement.id
+
+    @pytest.mark.asyncio
+    async def test_same_generation_cannot_replace_confirmed_sandbox(self) -> None:
+        repository = FakeRunRepository()
+        lease = await repository.try_claim(request("run_competing"), "owner")
+        assert lease is not None
+        first = await make_backend_for_run(
+            "e2b",
+            _dispatch_settings(),
+            workspace="ns:s1",
+            run_id="run_competing",
+            lease=lease,
+            sandbox_store=repository,
+        )
+        assert isinstance(first, E2BSandboxBackend)
+        FakeSandbox.connect_failures_remaining = 1
+
+        competing = await make_backend_for_run(
+            "e2b",
+            _dispatch_settings(),
+            workspace="ns:s1",
+            run_id="run_competing",
+            lease=lease,
+            sandbox_store=repository,
+        )
+
+        assert isinstance(competing, E2BSandboxBackend)
+        assert competing.id == first.id
+        assert await repository.get_sandbox_id("run_competing") == first.id
+        assert FakeSandbox.killed == ["sbx_created_1"]
 
 
 class TestExecuteMapping:
@@ -163,5 +264,7 @@ class TestExecuteMapping:
     def test_download_missing_file_maps_error(self) -> None:
         response = E2BSandboxBackend(FakeSandbox()).download_files(["/ghost.md"])[0]
         assert (response.path, response.content, response.error) == (
-            "/ghost.md", None, "file_not_found",
+            "/ghost.md",
+            None,
+            "file_not_found",
         )

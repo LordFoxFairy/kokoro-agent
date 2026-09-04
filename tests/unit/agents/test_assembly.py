@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from kokoro_agent.config import AppConfig
 from support.fakes import FakeRunRepository
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
+from kokoro_agent.repositories.run_repository import LeaseFence
 from kokoro_agent.model.factory import make_chat_model
 from kokoro_agent.policy import ModelConfig
 
@@ -367,9 +368,7 @@ def test_builtin_subagents_opt_in_matrix() -> None:
     assert dict(defs[0]).get("tools") == [index["web_search"], index["web_fetch"]]
 
     # Catalog 只是部署可用池；某个 Agent 未声明时不得被全局配置隐式装入。
-    unselected, selected_names = catalog_subagents(
-        catalog, index, selected=frozenset()
-    )
+    unselected, selected_names = catalog_subagents(catalog, index, selected=frozenset())
     assert unselected == []
     assert selected_names == frozenset()
 
@@ -390,7 +389,11 @@ def test_builtin_subagents_env_parse() -> None:
 
 def test_general_purpose_override_carries_guards_and_inherits() -> None:
     # 同名覆盖内生 GP：middleware 挂守卫；不带 tools/model 键 = 继承主 agent（GP 语义）。
-    guard = TerminalGuardMiddleware(run_repository=FakeRunRepository(), run_id="r1")
+    guard = TerminalGuardMiddleware(
+        run_repository=FakeRunRepository(),
+        run_id="r1",
+        lease=LeaseFence(owner="test", generation=1),
+    )
     spec = general_purpose_subagent([guard])
     assert spec["name"] == "general-purpose"
     assert spec["description"] and spec["system_prompt"]
@@ -400,7 +403,11 @@ def test_general_purpose_override_carries_guards_and_inherits() -> None:
 
 def test_guards_propagate_to_every_subagent() -> None:
     # 子代理 middleware 链独立：预算/终态闸不逐个下发 = task 委派旁路（真旁路回归钉）。
-    guard = TerminalGuardMiddleware(run_repository=FakeRunRepository(), run_id="r1")
+    guard = TerminalGuardMiddleware(
+        run_repository=FakeRunRepository(),
+        run_id="r1",
+        lease=LeaseFence(owner="test", generation=1),
+    )
     catalog = build_subagent_catalog(None, frozenset({"web-researcher"}))
     tools = toolbox_from_config(
         AppConfig.from_env(

@@ -1,6 +1,6 @@
 """custom backend（ADR-010 BYO 扩展点）：`pkg.module:factory` 引用自带 BackendProtocol 实现。
 
-企业/私有云不改本仓源码即可插入自己的沙箱：pip 装自己的包 + 两个 env。
+企业/私有云不改本仓源码即可插入自己的沙箱：pip 装自己的包并配置 factory/teardown。
 工厂契约 sync（编排层 to_thread）；自由参数 yaml 原样透传（工厂自校验，本仓不猜形状）。
 返回的 backend 若带 `sandbox_id` 属性即接入 run 级 run_repository 记录（与 docker/e2b 同构）。
 """
@@ -15,7 +15,7 @@ from typing import Protocol, runtime_checkable
 
 import yaml
 from deepagents.backends.protocol import BackendProtocol
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.custom")
 
@@ -53,9 +53,21 @@ class BoundSandbox(Protocol):
 class CustomBackendSettings(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    # `pkg.module:attribute` 引用；选 custom backend 时缺失即 fail-loud。
+    # `pkg.module:attribute` 引用；factory 与 teardown 必须成对配置，避免 CAS loser 泄漏。
     factory_ref: str | None
     config_path: str | None
+    teardown_ref: str | None = None
+
+    @model_validator(mode="after")
+    def _factory_requires_teardown(self) -> CustomBackendSettings:
+        if self.factory_ref is not None and self.teardown_ref is None:
+            raise ValueError(
+                "custom backend factory requires KOKORO_CUSTOM_BACKEND_TEARDOWN "
+                "(pkg.module:function)"
+            )
+        if self.factory_ref is None and self.teardown_ref is not None:
+            raise ValueError("custom backend teardown requires KOKORO_CUSTOM_BACKEND")
+        return self
 
 
 def load_custom_factory(ref: str) -> Callable[[CustomBackendContext], object]:
@@ -64,11 +76,47 @@ def load_custom_factory(ref: str) -> Callable[[CustomBackendContext], object]:
     """
     module_path, _, attribute = ref.partition(":")
     if not module_path or not attribute:
-        raise ValueError(f"custom backend ref must be 'pkg.module:attribute', got {ref!r}")
+        raise ValueError(
+            f"custom backend ref must be 'pkg.module:attribute', got {ref!r}"
+        )
     factory: object = getattr(import_module(module_path), attribute)
     if not callable(factory):
         raise TypeError(f"custom backend factory {ref!r} is not callable")
     return factory
+
+
+def load_custom_teardown(ref: str) -> Callable[[str], object]:
+    """Load the mandatory idempotent sandbox teardown hook."""
+
+    module_path, _, attribute = ref.partition(":")
+    if not module_path or not attribute:
+        raise ValueError(
+            f"custom backend teardown ref must be 'pkg.module:attribute', got {ref!r}"
+        )
+    teardown: object = getattr(import_module(module_path), attribute)
+    if not callable(teardown):
+        raise TypeError(f"custom backend teardown {ref!r} is not callable")
+    return teardown
+
+
+def teardown_custom_sandbox(settings: CustomBackendSettings, sandbox_id: str) -> None:
+    """Destroy one BYO sandbox by authoritative id.
+
+    The hook must be idempotent because terminal recovery can repeat cleanup.
+    """
+
+    if settings.teardown_ref is None:
+        raise ValueError(
+            "backend custom requires KOKORO_CUSTOM_BACKEND_TEARDOWN "
+            "(pkg.module:function)"
+        )
+    load_custom_teardown(settings.teardown_ref)(sandbox_id)
+
+
+def teardown_custom_sandbox_ref(teardown_ref: str, sandbox_id: str) -> None:
+    """Destroy with the immutable hook identity captured beside the sandbox."""
+
+    load_custom_teardown(teardown_ref)(sandbox_id)
 
 
 def load_custom_config(path: str | None) -> dict[str, object]:
@@ -78,7 +126,9 @@ def load_custom_config(path: str | None) -> dict[str, object]:
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        raise TypeError(f"custom backend config must be a mapping, got {type(raw).__name__}")
+        raise TypeError(
+            f"custom backend config must be a mapping, got {type(raw).__name__}"
+        )
     return _CONFIG_ADAPTER.validate_python(raw)
 
 
@@ -91,7 +141,16 @@ def connect_custom_sandbox(
     prior_sandbox_id: str | None,
 ) -> BackendProtocol:
     if settings.factory_ref is None:
-        raise ValueError("backend custom requires KOKORO_CUSTOM_BACKEND (pkg.module:factory)")
+        raise ValueError(
+            "backend custom requires KOKORO_CUSTOM_BACKEND (pkg.module:factory)"
+        )
+    if settings.teardown_ref is None:
+        raise ValueError(
+            "backend custom requires KOKORO_CUSTOM_BACKEND_TEARDOWN "
+            "(pkg.module:function)"
+        )
+    # Resolve both lifecycle hooks before the factory can allocate a resource.
+    load_custom_teardown(settings.teardown_ref)
     factory = load_custom_factory(settings.factory_ref)
     context = CustomBackendContext(
         run_id=run_id,

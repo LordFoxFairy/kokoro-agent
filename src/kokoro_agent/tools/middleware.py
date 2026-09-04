@@ -23,7 +23,7 @@ from langgraph.runtime import Runtime
 
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
-from kokoro_agent.repositories.run_repository import RunRepository
+from kokoro_agent.repositories.run_repository import LeaseFence, RunRepository
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
@@ -108,22 +108,33 @@ class RunSupersededError(RuntimeError):
     """run 已被他处终态（cancel）：模型轮边界静默熔断，不再产生事件与副作用。"""
 
 
+async def _require_current_lease(
+    run_repository: RunRepository, run_id: str, lease: LeaseFence
+) -> None:
+    if not await run_repository.is_lease_current(run_id, lease):
+        raise RunSupersededError(
+            f"run {run_id!r} execution lease generation was superseded"
+        )
+
+
 class TerminalGuardMiddleware(AgentMiddleware):
     """跨 worker cancel 的执行侧闸：每个模型轮前查终态，命中即熔断（invoke 的
     claim_terminal 已被 cancel 方拿走 → 异常路径不再发任何事件）。"""
 
-    def __init__(self, *, run_repository: RunRepository, run_id: str) -> None:
+    def __init__(
+        self, *, run_repository: RunRepository, run_id: str, lease: LeaseFence
+    ) -> None:
         super().__init__()
         self._run_repository = run_repository
         self._run_id = run_id
+        self._lease = lease
 
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        if await self._run_repository.is_terminal(self._run_id):
-            raise RunSupersededError(f"run {self._run_id!r} was terminated elsewhere")
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
         return await handler(request)
 
 
@@ -135,18 +146,25 @@ class TokenBudgetMiddleware(AgentMiddleware):
     """token 预算熔断：每次模型调用后累计 usage（RunRepository 背书，跨 HITL 段不清零），超限即炸。"""
 
     def __init__(
-        self, *, budget: int, run_repository: RunRepository, run_id: str
+        self,
+        *,
+        budget: int,
+        run_repository: RunRepository,
+        run_id: str,
+        lease: LeaseFence,
     ) -> None:
         super().__init__()
         self._budget = budget
         self._run_repository = run_repository
         self._run_id = run_id
+        self._lease = lease
 
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
         response = await handler(request)
         spent = sum(
             usage.get("total_tokens", 0)
@@ -154,7 +172,11 @@ class TokenBudgetMiddleware(AgentMiddleware):
             if isinstance(message, AIMessage)
             and (usage := message.usage_metadata) is not None
         )
-        total = await self._run_repository.add_tokens(self._run_id, spent)
+        total = await self._run_repository.add_tokens(self._run_id, self._lease, spent)
+        if total is None:
+            raise RunSupersededError(
+                f"run {self._run_id!r} lost its lease while recording token usage"
+            )
         if total > self._budget:
             raise TokenBudgetExceeded(
                 f"run token budget exceeded: spent {total} > budget {self._budget}"
@@ -170,12 +192,17 @@ class ToolResultReviewMiddleware(AgentMiddleware):
     """
 
     def __init__(
-        self, review: frozenset[str], run_repository: RunRepository, run_id: str
+        self,
+        review: frozenset[str],
+        run_repository: RunRepository,
+        run_id: str,
+        lease: LeaseFence,
     ) -> None:
         super().__init__()
         self._review = review
         self._run_repository = run_repository
         self._run_id = run_id
+        self._lease = lease
 
     async def awrap_tool_call(
         self, request: ToolCallRequest, handler: _ToolHandler
@@ -184,6 +211,7 @@ class ToolResultReviewMiddleware(AgentMiddleware):
         name = call["name"]
         if name not in self._review:
             return await handler(request)
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
         tool_id = call["id"] or ""
         cached = await self._run_repository.get_tool_result(self._run_id, tool_id)
         if cached is None:
@@ -193,10 +221,14 @@ class ToolResultReviewMiddleware(AgentMiddleware):
                 return result
             # .text 是框架的文本收窄口（content 联合 → str），不自拆 content 块。
             first = (result.text, result.status == "error")
-            await self._run_repository.put_tool_result(
-                self._run_id, tool_id, first[0], first[1]
+            persisted = await self._run_repository.put_tool_result(
+                self._run_id, self._lease, tool_id, first[0], first[1]
             )
-            cached = first
+            if persisted is None:
+                raise RunSupersededError(
+                    f"run {self._run_id!r} lost its lease while caching a tool result"
+                )
+            cached = persisted
         content, is_error = cached
         # 结果审核 = request_human(kind="review") 预设：request_id=tool_id（工具边界幂等锚），
         # context 携已执行结果供人裁决。resume 值语义不变（list[decision dict]），wire 投影不变。
@@ -260,11 +292,13 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         *,
         run_repository: RunRepository,
         run_id: str,
+        lease: LeaseFence,
         exempt: frozenset[str] = JOURNAL_EXEMPT_TOOLS,
     ) -> None:
         super().__init__()
         self._run_repository = run_repository
         self._run_id = run_id
+        self._lease = lease
         self._exempt = exempt
 
     async def awrap_tool_call(
@@ -272,6 +306,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
         name = call["name"]
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
         if name in self._exempt:
             # 纯读/幂等 / Command 形态工具：不落 journal，直接放行（重执行安全）。
             return await handler(request)
@@ -280,7 +315,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         if recorded is not None:
             return self._replay(recorded, tool_id=tool_id, name=name)
         won_journal = await self._run_repository.journal_tool_started(
-            self._run_id, tool_id, name
+            self._run_id, self._lease, tool_id, name
         )
         if not won_journal:
             # 首次读取与 keep-first 插入之间存在竞争窗口。输掉 journal 所有权的一方必须重新
@@ -289,6 +324,10 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             recorded = await self._run_repository.get_tool_journal(
                 self._run_id, tool_id
             )
+            if recorded is None:
+                await _require_current_lease(
+                    self._run_repository, self._run_id, self._lease
+                )
             return self._replay(
                 recorded if recorded is not None else object(),
                 tool_id=tool_id,
@@ -300,14 +339,24 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             # 工具内 interrupt（MCP elicitation / request_input 等 HITL 暂停）≠崩溃：GraphInterrupt
             # 穿透中间件、resume 后工具按设计从头重进。撤销本次 started 行（视同无行）再原样重抛，
             # 否则合法重入会被守门误判 unknown-outcome。真进程死不走 except 路径，守门语义不变。
-            await self._run_repository.clear_tool_journal(self._run_id, tool_id)
+            await self._run_repository.clear_tool_journal(
+                self._run_id, self._lease, tool_id
+            )
             raise
         if isinstance(result, ToolMessage):
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
-            await self._run_repository.journal_tool_finished(
-                self._run_id, tool_id, result.text, result.status == "error"
+            finished = await self._run_repository.journal_tool_finished(
+                self._run_id,
+                self._lease,
+                tool_id,
+                result.text,
+                result.status == "error",
             )
+            if not finished:
+                raise RunSupersededError(
+                    f"run {self._run_id!r} lost its lease while finishing a tool effect"
+                )
         return result
 
     def _replay(self, recorded: object, *, tool_id: str, name: str) -> ToolMessage:
@@ -339,10 +388,13 @@ class SteeringMiddleware(AgentMiddleware):
     """运行中插话：模型轮前排空信箱，按到达序注入 HumanMessage——协作式转向，
     不打断进行中的工具；稳定 id=message_id 保 checkpoint 重放幂等。只挂主链。"""
 
-    def __init__(self, *, run_repository: RunRepository, run_id: str) -> None:
+    def __init__(
+        self, *, run_repository: RunRepository, run_id: str, lease: LeaseFence
+    ) -> None:
         super().__init__()
         self._run_repository = run_repository
         self._run_id = run_id
+        self._lease = lease
 
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
@@ -350,6 +402,7 @@ class SteeringMiddleware(AgentMiddleware):
         # peek + 下一轮见证 ack（审计缺口：排空与 checkpoint 落盘非原子会窄窗丢插话）——
         # 只有已出现在 state["messages"]（即已随 checkpoint 落定）的插话才从信箱删除；
         # 未落定的每轮重注入，稳定 id 由 add_messages 去重，任意崩溃点收敛且绝不丢。
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
         steers = await self._run_repository.peek_steers(self._run_id)
         if not steers:
             return None
@@ -359,7 +412,12 @@ class SteeringMiddleware(AgentMiddleware):
         seen_ids = {message.id for message in state["messages"]}
         landed = [message_id for message_id, _ in steers if message_id in seen_ids]
         if landed:
-            await self._run_repository.ack_steers(self._run_id, landed)
+            if not await self._run_repository.ack_steers(
+                self._run_id, self._lease, landed
+            ):
+                raise RunSupersededError(
+                    f"run {self._run_id!r} lost its lease while acknowledging steering"
+                )
         fresh = [(mid, content) for mid, content in steers if mid not in seen_ids]
         if not fresh:
             return None

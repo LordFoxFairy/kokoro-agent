@@ -7,7 +7,11 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
+from langchain.agents.middleware.types import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallRequest,
+)
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
@@ -73,7 +77,10 @@ class ToolPolicyMiddleware(AgentMiddleware):
             if denial is not None:
                 _logger.warning("tool_policy denied delegation: %s", denial)
                 return ToolMessage(
-                    content=denial, tool_call_id=call["id"] or "", name=name, status="error"
+                    content=denial,
+                    tool_call_id=call["id"] or "",
+                    name=name,
+                    status="error",
                 )
         result = await handler(request)
         is_error = isinstance(result, ToolMessage) and result.status == "error"
@@ -92,7 +99,9 @@ class _ReviewDecision(BaseModel):
     reason: str | None = None
 
 
-_REVIEW_DECISIONS_ADAPTER: TypeAdapter[list[_ReviewDecision]] = TypeAdapter(list[_ReviewDecision])
+_REVIEW_DECISIONS_ADAPTER: TypeAdapter[list[_ReviewDecision]] = TypeAdapter(
+    list[_ReviewDecision]
+)
 
 
 class RunSupersededError(RuntimeError):
@@ -109,7 +118,9 @@ class TerminalGuardMiddleware(AgentMiddleware):
         self._run_id = run_id
 
     async def awrap_model_call(
-        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         if await self._run_repository.is_terminal(self._run_id):
             raise RunSupersededError(f"run {self._run_id!r} was terminated elsewhere")
@@ -123,20 +134,25 @@ class TokenBudgetExceeded(RuntimeError):
 class TokenBudgetMiddleware(AgentMiddleware):
     """token 预算熔断：每次模型调用后累计 usage（RunRepository 背书，跨 HITL 段不清零），超限即炸。"""
 
-    def __init__(self, *, budget: int, run_repository: RunRepository, run_id: str) -> None:
+    def __init__(
+        self, *, budget: int, run_repository: RunRepository, run_id: str
+    ) -> None:
         super().__init__()
         self._budget = budget
         self._run_repository = run_repository
         self._run_id = run_id
 
     async def awrap_model_call(
-        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         response = await handler(request)
         spent = sum(
             usage.get("total_tokens", 0)
             for message in response.result
-            if isinstance(message, AIMessage) and (usage := message.usage_metadata) is not None
+            if isinstance(message, AIMessage)
+            and (usage := message.usage_metadata) is not None
         )
         total = await self._run_repository.add_tokens(self._run_id, spent)
         if total > self._budget:
@@ -153,7 +169,9 @@ class ToolResultReviewMiddleware(AgentMiddleware):
     重入命中缓存即跳过工具执行——审核暂停绝不导致工具双跑。
     """
 
-    def __init__(self, review: frozenset[str], run_repository: RunRepository, run_id: str) -> None:
+    def __init__(
+        self, review: frozenset[str], run_repository: RunRepository, run_id: str
+    ) -> None:
         super().__init__()
         self._review = review
         self._run_repository = run_repository
@@ -175,7 +193,9 @@ class ToolResultReviewMiddleware(AgentMiddleware):
                 return result
             # .text 是框架的文本收窄口（content 联合 → str），不自拆 content 块。
             first = (result.text, result.status == "error")
-            await self._run_repository.put_tool_result(self._run_id, tool_id, first[0], first[1])
+            await self._run_repository.put_tool_result(
+                self._run_id, tool_id, first[0], first[1]
+            )
             cached = first
         content, is_error = cached
         # 结果审核 = request_human(kind="review") 预设：request_id=tool_id（工具边界幂等锚），
@@ -190,7 +210,9 @@ class ToolResultReviewMiddleware(AgentMiddleware):
                 "is_error": is_error,
             },
         )
-        return _apply_review_decision(decisions, tool_id=tool_id, name=name, content=content)
+        return _apply_review_decision(
+            decisions, tool_id=tool_id, name=name, content=content
+        )
 
 
 def _apply_review_decision(
@@ -211,7 +233,9 @@ def _apply_review_decision(
         suffix = f": {mine.reason}" if mine.reason else ""
         # 普通文本而非 error：模型感知结果被废弃，可自行换路，不视为工具故障。
         return ToolMessage(
-            content=f"[result rejected by user{suffix}]", tool_call_id=tool_id, name=name
+            content=f"[result rejected by user{suffix}]",
+            tool_call_id=tool_id,
+            name=name,
         )
     raise ValueError(f"result review got unsupported decision type {mine.type!r}")
 
@@ -255,7 +279,21 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         recorded = await self._run_repository.get_tool_journal(self._run_id, tool_id)
         if recorded is not None:
             return self._replay(recorded, tool_id=tool_id, name=name)
-        await self._run_repository.journal_tool_started(self._run_id, tool_id, name)
+        won_journal = await self._run_repository.journal_tool_started(
+            self._run_id, tool_id, name
+        )
+        if not won_journal:
+            # 首次读取与 keep-first 插入之间存在竞争窗口。输掉 journal 所有权的一方必须重新
+            # 读取赢家结果并短路；即使赢家恰好清理了记录，也按 unknown-outcome fail closed，
+            # 绝不能让两个 Worker 同时执行同一个非幂等副作用。
+            recorded = await self._run_repository.get_tool_journal(
+                self._run_id, tool_id
+            )
+            return self._replay(
+                recorded if recorded is not None else object(),
+                tool_id=tool_id,
+                name=name,
+            )
         try:
             result = await handler(request)
         except GraphInterrupt:
@@ -327,6 +365,7 @@ class SteeringMiddleware(AgentMiddleware):
             return None
         return {
             "messages": [
-                HumanMessage(content=content, id=message_id) for message_id, content in fresh
+                HumanMessage(content=content, id=message_id)
+                for message_id, content in fresh
             ]
         }

@@ -43,9 +43,29 @@ class _Handler:
         )
 
 
+class _RaceLosingRepository(FakeRunRepository):
+    """模拟首次读取后，另一 Worker 抢先写入 started 行。"""
+
+    async def journal_tool_started(
+        self, run_id: str, tool_call_id: str, name: str
+    ) -> bool:
+        self.tool_journal[(run_id, tool_call_id)] = {
+            "name": name,
+            "status": "started",
+            "result": None,
+            "is_error": None,
+        }
+        return False
+
+
 def _request(name: str = "write_file", tool_id: str = "c1") -> ToolCallRequest:
     return ToolCallRequest(
-        tool_call={"name": name, "args": {"path": "a.txt"}, "id": tool_id, "type": "tool_call"},
+        tool_call={
+            "name": name,
+            "args": {"path": "a.txt"},
+            "id": tool_id,
+            "type": "tool_call",
+        },
         tool=None,
         state=None,
         runtime=_runtime(),
@@ -130,6 +150,19 @@ async def test_replay_unknown_outcome_started_does_not_reexecute() -> None:
     }
     handler = _Handler("SHOULD NOT RUN")
     result = await _mw(store).awrap_tool_call(_request(), handler)
+    assert isinstance(result, ToolMessage) and result.status == "error"
+    assert "unknown_outcome" in result.text
+    assert handler.calls == 0
+
+
+async def test_concurrent_journal_loser_replays_winner_without_executing() -> None:
+    # 首次读取无行后，另一 Worker 可能先插入 started。输掉 keep-first 竞争的一方必须重新读取并
+    # 短路，绝不能继续执行同一个非幂等副作用。
+    store = _RaceLosingRepository()
+    handler = _Handler("SHOULD NOT RUN")
+
+    result = await _mw(store).awrap_tool_call(_request(), handler)
+
     assert isinstance(result, ToolMessage) and result.status == "error"
     assert "unknown_outcome" in result.text
     assert handler.calls == 0

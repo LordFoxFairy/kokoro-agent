@@ -162,6 +162,12 @@ class AppConfig(BaseModel):
     internal_secret_agent: OptSecret = Field(
         default=None, validation_alias="KOKORO_INTERNAL_SECRET_AGENT"
     )
+    system_base_url: OptStr = Field(
+        default=None, validation_alias="KOKORO_SYSTEM_BASE_URL"
+    )
+    system_timeout_s: float = Field(
+        default=5, gt=0, le=60, validation_alias="KOKORO_SYSTEM_TIMEOUT_S"
+    )
     mcp_egress_mode: str = Field(
         default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE"
     )

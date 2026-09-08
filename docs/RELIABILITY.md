@@ -23,3 +23,10 @@ Capability Skill、MCP、Storage 是可选旁路；其不可用时记录明确�
 
 日志字段至少包括 `service`、`operation`、`request_id`、`run_id`、结果和耗时；指标关注 admission、claim、
 lease loss、outbox age、control latency、terminal success、replay gap、cleanup backlog。目标阈值见 `SLO.md`。
+
+## System 路由消费故障
+
+一个进程一个HTTPX client；连接/读写/pool及总体deadline受KOKORO_SYSTEM_TIMEOUT_S控制（默认5秒，上限60秒），
+响应最大64KiB，不跟随重定向，不自动重试，任务取消直接传播。错误不回显上游原文或服务凭据。
+System路由失败在分配sandbox前终止当前Run；恢复构造重新解析当前策略，revision/digest/generation只记日志，
+不宣称已有durable route snapshot或跨重启固定模型。模型服务不参与独立HTTP ingress的admission事务。

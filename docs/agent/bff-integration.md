@@ -141,3 +141,9 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 - [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 Agent command ledger 去重和恢复。
 - [x] BFF session list 通过 Agent durable identity-scoped ingress 投影；detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现。
 - [x] Agent PostgreSQL + Redis 执行事实、Run/control/HITL、outbox/recovery worker 门禁由本仓测试覆盖。
+
+## System 模型解析消费者更新（2026-09-08）
+
+requested_model_label是System目录的不透明label，不再是provider:name解释语法。worker在实际DeepAgents模型
+实例化前以可信tenant/feature解析；缺省标签由tenant默认路由决定。配置、固定契约pin、错误/恢复边界
+以本仓docs/TECHNICAL_DESIGN §6与docs/API_CONTRACT的System消费节为准。未改变RunRequest或本仓数据库。

@@ -52,3 +52,10 @@ uv build --wheel --sdist
    并在协议升级切片中删除重复时间语义。
 
 这些条目是代码工作的清单，不以文档声明替代实现或验证。
+
+## System 模型解析消费切片（2026-09-08，消费者切片静态/单元已验）
+
+System HTTP client已注入真实worker/AgentFactory，先解析可信tenant/feature/可选label，再构造DeepAgents模型；
+移除select_model_label与anthropic/claude兜底。CLI需System服务凭据及LiteLLM配置，嵌入部署可显式注入ModelResolver。
+System revision/digest/generation记结构化日志；本仓DB与公开Run wire未变，源契约pin见contract/provenance.json。
+尚未运行live System/网关smoke，不声称完整执行链路通过；本轮验证见ACCEPTANCE，commit随Root交付记录。

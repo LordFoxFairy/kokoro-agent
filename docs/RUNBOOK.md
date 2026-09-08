@@ -11,7 +11,10 @@ export KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent
 export KOKORO_REDIS_URL=redis://127.0.0.1:56380/9
 
 uv run kokoro-agent-db-apply-schema
-uv run kokoro-agent-worker
+KOKORO_SYSTEM_BASE_URL=http://127.0.0.1:4240 \
+KOKORO_INTERNAL_SECRET_AGENT=TOKEN \
+KOKORO_LITELLM_ENABLED=1 KOKORO_LITELLM_BASE_URL=http://127.0.0.1:4000/v1 \
+KOKORO_LITELLM_API_KEY=TOKEN uv run kokoro-agent-worker
 KOKORO_INTERNAL_SECRET_AGENT=TOKEN uv run kokoro-agent-http
 ```
 
@@ -40,3 +43,9 @@ KOKORO_INTERNAL_SECRET_AGENT=TOKEN uv run kokoro-agent-http
 
 回滚到上一不可变镜像 digest，并保留当前 PostgreSQL/Redis durable facts；先验证 contract/schema 版本一致，再
 恢复流量。禁止用旧代码写入新 schema 未定义的字段，也禁止删除生产数据来“修复”版本不一致。
+
+## System 模型解析诊断
+
+解析调用 /v1/system/model-catalog/resolve，专用服务身份kokoro-agent；确认System已为可信tenant/feature配置可见默认policy。
+ROUTE_NOT_FOUND/POLICY_DENIED为配置/授权失败，MODEL_UNAVAILABLE为健康路由不可用；客户端不自行重试或直连provider。
+检查模型解析日志的revision_id/digest/generation/request_id，不粘贴secret或owner原始错误。System客户端随worker context关闭。

@@ -25,8 +25,8 @@ GA 内部声明，worker 启动时注册；运行中不接收临时 graph JSON�
 
 当前 `music` Feature 和真实 provider/model 仍是本地骨架。正式代码的 `model/factory.py`
 只负责真实 provider adapter；没有凭证时的确定性循环位于 `tests/support/local_fake.py`，
-仅供测试验证，不进入 distribution，也不成为 worker 配置。后续接入 Model public client/LiteLLM
-时只替换 `ChatModelSettings` 与 catalog，不改变 `RunRequest`、AgentFactory 或 DeepAgents 链路。
+仅供测试验证，不进入 distribution，也不成为 worker 配置。System 模型解析已在 AgentFactory 实例化模型前接线；CLI必须配置 System/LiteLLM，
+RunRequest 保持不变，实际路由由受信 owner 返回，不再解释 caller provider:name。
 
 ## 2. 对象与命名
 
@@ -207,6 +207,5 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
 - Feature/Agent API 没有 `deps`、namespace、thread、binding 或版本字段。
 - Capability、Storage、Studio 等可选旁路短暂不可用时，未声明其操作的 GA 核心仍可运行；Redis、
   RunRepository 与 checkpoint 是当前 worker 执行入口的必要基础设施，不伪装成可选依赖。
-- Model public client 尚未接入时，生产 worker 仍只接受已配置的真实 provider；确定性 fake 仅存在于
-  `tests/support`。生产接线必须在 GA 侧重新校验 `requested_model_label` 的可用性，再交给
-  `ChatModelSettings`，不能只依赖 Chat admission。
+- System ModelResolver 已在 worker/AgentFactory 接线，使用 trusted tenant/feature 和可选模型标签；
+  实例化前验证可执行路由，无可用路由或凭据时失败关闭。确定性 fake 仅在 tests；live System 联调证据见 ACCEPTANCE。

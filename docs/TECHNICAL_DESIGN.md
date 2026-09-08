@@ -60,3 +60,27 @@ MCP 或 namespace 配方。native state、checkpoint 和 loop 归上游框架所
 worker 启动依次 republish pending dispatch、outbox、未应用 control 和 cleanup intent；心跳续租失败时旧
 任务停止副作用。SIGTERM 停止新消费，drain 超时后交给 lease TTL 恢复。异常单 run 收口为 `run.failed`，
 不杀死长驻调度循环。
+
+## 6. System 模型路由接线（2026-09-08，已接线、live smoke待验）
+
+本节是 ADR-031 的窄消费者切片，不把上文当前四层目录当作新增代码模板。Root 为本仓唯一 writer；
+基线 `70a38138f42f29e8a482fde7890fe0e2d0c27e34`，工作树干净。跨仓任务表是 System 的 IMPLEMENTATION_PLAN G6-Agent。
+
+| 放置项 | 决定 |
+|---|---|
+| Owner | System 拥有 label/policy/availability→route；Agent 拥有执行、模型实例及进程凭据 |
+| 当前事实 | `agent_factory.py` 创建 DeepAgents 时调用 `select_model_label`；没有 System client，默认硬编码 anthropic/claude |
+| 目标职责 | 创建实际模型前以 trusted tenant、feature、可选 label 调用 System；失败关闭，不绕过回本地名称 |
+| 目录比较 | 采用已有 `clients/system.py`，与现有 owner clients 邻接；拒绝新 `infrastructure/system` 或第二 runtime 层 |
+| 粒度 | 一个单一 HTTP 边界模块含窄 Protocol/内部路由结果；`model/factory.py` 负责路由到模型实例映射 |
+| 依赖 | worker 入口创建进程级 HTTPX client 并关闭，Factory 依赖窄 ModelResolver；不跨仓 import/SQL，不导出 HTTPX Response |
+| 数据/API | 本仓 schema/Run wire 不变；System 契约 pin 见 API_CONTRACT；解析不处于数据库事务内 |
+| 删除 | 删除 `select_model_label` 与硬编码模型 fallback；显式 Agent model 若与路由冲突则拒绝，不静默覆盖 |
+| 验证 | HTTP client、真实Factory调用、缺配置/404/403/503/坏响应/超时/取消/限额；Ruff/Pyright/pytest/contract/build和live smoke |
+
+System 当前只返回 `litellm` 路由，`gateway_model_name` 映射为 Agent `ModelConfig.name`；
+provider endpoint/secret 永不来自解析响应。Agent 声明的 effort/thinking 仍属于执行设置。
+CLI 启动必须配置 System URL/服务凭据及 LiteLLM 网关；嵌入部署可显式注入同一窄 resolver，fake 只在 tests。
+HTTP 客户端设置总体 deadline、各阶段 timeout、响应上限、不跟随重定向、不自动重试；取消直接传播。
+模型解析在创建 sandbox/附属能力前执行，失败不先制造外部资源。每次 build（含恢复构造）重新受信解析并记录
+revision/digest/generation 的结构化日志；本切片不承诺持久化 run-level 模型快照，也不复制模型表。

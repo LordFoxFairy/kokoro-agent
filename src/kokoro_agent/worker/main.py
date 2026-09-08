@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 import logging
 import os
 import signal
@@ -12,6 +13,7 @@ import socket
 from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig, log_config_summary
+from kokoro_agent.clients.system import ModelResolver, SystemModelClient
 from kokoro_agent.application.schema import (
     apply_database_schema,
     db_apply_schema_main as _schema_db_apply_schema_main,
@@ -88,11 +90,37 @@ def _consumer_name() -> str:
     return f"{socket.gethostname()}-{os.getpid()}"
 
 
+@asynccontextmanager
+async def worker_model_resolver(
+    config: AppConfig, injected: ModelResolver | None
+) -> AsyncGenerator[ModelResolver, None]:
+    """Own the CLI HTTP pool; an explicitly injected resolver remains caller-owned."""
+    if injected is not None:
+        yield injected
+        return
+    if config.system_base_url is None or config.internal_secret_agent is None:
+        raise ValueError(
+            "System model resolver URL and service credential are required"
+        )
+    if (
+        not config.litellm_enabled
+        or config.litellm_base_url is None
+        or config.litellm_api_key is None
+    ):
+        raise ValueError("System model routing requires a configured LiteLLM gateway")
+    async with SystemModelClient(
+        config.system_base_url,
+        config.internal_secret_agent,
+        timeout_s=config.system_timeout_s,
+    ) as resolver:
+        yield resolver
+
+
 async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None:
     """Run one worker with deployment-selected public clients.
 
-    The standard CLI supplies none. Embedded deployments may inject Capability/Storage
-    adapters here without changing Agent, Feature or Run request APIs.
+    The standard CLI constructs a configured System resolver. Embedded deployments may
+    inject that same boundary plus optional Capability/Storage adapters.
     """
     owner_clients = clients or WorkerClients()
     # egress is a worker-wide connection policy. Configure it from the already
@@ -109,6 +137,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
     )
     # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
+        worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
         make_checkpointer(config.checkpoint) as saver,
         make_run_repository(config.run_repository) as run_repository,
         make_memory_store(config.checkpoint) as memory_store,
@@ -135,6 +164,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
             mcp_client=owner_clients.mcp,
             delivery=owner_clients.delivery,
+            model_resolver=model_resolver,
         )
         agent_factory = AgentFactory(dependencies)
         supervisor = RunSupervisor(

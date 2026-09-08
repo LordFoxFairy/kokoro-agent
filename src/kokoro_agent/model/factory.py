@@ -1,4 +1,4 @@
-"""聊天模型工厂：provider/name/effort 每请求经 wire ModelConfig 决定，凭证进程级注入。"""
+"""模型构造：System 路由确定目标，Agent 声明确定执行参数，凭据进程级注入。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 
 from kokoro_agent.policy import ModelConfig
 
-_REQUESTED_MODEL_PROVIDER_ALLOWLIST = frozenset({"anthropic", "litellm", "openai"})
+from kokoro_agent.clients.system import ResolvedModel
 
 
 class ChatModelSettings(BaseModel):
@@ -41,33 +41,18 @@ def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChat
     raise ValueError(f"unsupported model provider: {model.provider!r}")
 
 
-def select_model_label(label: str | None, fallback: ModelConfig) -> ModelConfig:
-    """Translate the narrow Agent API model label into a worker model setting.
-
-    The launch contract intentionally carries only ``provider:name`` rather
-    than a provider configuration.  Credentials and endpoint selection stay
-    in ``ChatModelSettings``; a missing label keeps the Feature/Agent default.
-    """
-
-    if label is None:
-        return fallback
-    provider, separator, name = label.partition(":")
-    if separator == "":
-        provider, name = fallback.provider, provider
-    if not provider or not name:
-        raise ValueError("requested_model_label must be provider:name or a non-empty model name")
-    if provider not in _REQUESTED_MODEL_PROVIDER_ALLOWLIST:
-        raise ValueError(f"requested_model_label provider {provider!r} is not allowlisted")
-    if provider != fallback.provider:
-        raise ValueError(
-            "requested_model_label provider must match the Feature/Agent model provider "
-            f"({fallback.provider!r})"
-        )
+def model_from_route(route: ResolvedModel, declared: ModelConfig | None) -> ModelConfig:
+    """Map an authenticated owner result; a static declaration may only narrow it."""
+    if declared is not None and (
+        declared.provider != route.transport
+        or declared.name != route.gateway_model_name
+    ):
+        raise ValueError("declared model conflicts with System route")
     return ModelConfig(
-        provider=provider,
-        name=name,
-        effort=fallback.effort,
-        thinking=fallback.thinking,
+        provider=route.transport,
+        name=route.gateway_model_name,
+        effort=declared.effort if declared is not None else None,
+        thinking=declared.thinking if declared is not None else None,
     )
 
 
@@ -82,7 +67,9 @@ def _thinking_effort(model: ModelConfig, *, off: str) -> str | None:
     return model.effort
 
 
-def _build_openai_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+def _build_openai_model(
+    settings: ChatModelSettings, model: ModelConfig
+) -> BaseChatModel:
     if settings.openai_reasoning:
         if not settings.openai_base_url:
             raise ValueError("KOKORO_OPENAI_REASONING=1 requires OPENAI_BASE_URL")
@@ -110,7 +97,9 @@ def _build_openai_model(settings: ChatModelSettings, model: ModelConfig) -> Base
     )
 
 
-def _build_anthropic_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+def _build_anthropic_model(
+    settings: ChatModelSettings, model: ModelConfig
+) -> BaseChatModel:
     # anthropic 推理参数名为 effort（非 reasoning_effort），混用会静默失效。
     # api_key=None 被 ChatAnthropic pydantic 拒绝，须省略以回退环境变量；base_url=None 可安全传入。
     # thinking 意图翻成 effort 档（thinking 优先于 policy 的 model.effort），否则回落 low。
@@ -132,7 +121,9 @@ def _build_anthropic_model(settings: ChatModelSettings, model: ModelConfig) -> B
     )
 
 
-def _build_litellm_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+def _build_litellm_model(
+    settings: ChatModelSettings, model: ModelConfig
+) -> BaseChatModel:
     if not settings.litellm_enabled:
         raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_ENABLED=1")
     # litellm 网关档 = OpenAI 兼容客户端指向网关。model.name 是网关侧 model_name（路由别名），

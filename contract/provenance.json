@@ -9,5 +9,17 @@
   ],
   "combined_sha256": "0a15cbf8daea20ebb234668e79da25f1c26411d5d11b8066d93c449af244e831",
   "generated_artifacts": [],
-  "source_revision": "same Git commit as the listed files"
+  "source_revision": "same Git commit as the listed files",
+  "consumer_dependencies": [
+    {
+      "owner": "kokoro-system",
+      "contract": "contract/openapi/system.openapi.json",
+      "version": "2.0.0",
+      "source_commit": "f5702068d4416ad90b1bd02af57d2825c32be916",
+      "sha256": "f9ea76f107e1ea0fc19df20ee7c59032c0fbac66e640e9a16a1b770ab27c1f37",
+      "operations": [
+        "POST /v1/system/model-catalog/resolve"
+      ]
+    }
+  ]
 }

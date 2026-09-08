@@ -117,3 +117,9 @@ LangChain checkpoint 与 Agent 的 `chat_messages`、`chat_events` 分开。Agen
 
 本仓运行 `uv run ruff check .`、`uv run pyright`、`uv run pytest`；真实 PostgreSQL/Redis acceptance 另按
 `ACCEPTANCE.md` 运行。Root 的 topology/E2E 只编排和验证，不替代本仓 contract，也不生成源代码。
+
+## System 模型解析消费者更新（2026-09-08）
+
+requested_model_label是System目录的不透明label，不再是provider:name解释语法。worker在实际DeepAgents模型
+实例化前以可信tenant/feature解析；缺省标签由tenant默认路由决定。配置、固定契约pin、错误/恢复边界
+以本仓docs/TECHNICAL_DESIGN §6与docs/API_CONTRACT的System消费节为准。未改变RunRequest或本仓数据库。

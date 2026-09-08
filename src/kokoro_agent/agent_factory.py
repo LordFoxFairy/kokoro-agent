@@ -1,6 +1,7 @@
 """GA 唯一的 Agent 构造入口：Agent 定义进，DeepAgents native runnable 出。
 
 构造顺序：
+  route      ⓪ 向 System 解析受信租户模型路由，失败时不创建外部资源
   backend    ① 创建本次运行的 DeepAgents backend
   skills     ② 将声明的 Skill 名称解析为 ``/.skills/`` 原生 backend 路由
   tools      ③ 合并 Agent、worker 内置工具及可选 MCP/Storage 工具
@@ -15,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import logging
+from time import monotonic
+from uuid import uuid4
 from typing import Any
 
 import deepagents
@@ -30,10 +33,11 @@ from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.sandbox.workspace import workspace_key
-from kokoro_agent.policy import Backend, ModelConfig
+from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
-from kokoro_agent.model.factory import make_chat_model, select_model_label
+from kokoro_agent.model.factory import make_chat_model, model_from_route
+from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.skills.backend import CapabilitySkillBackend, SKILLS_ROOT
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
@@ -69,6 +73,35 @@ async def build_deep_agent(
     additional_tools: Sequence[BaseTool] = (),
     name: str | None = None,
 ) -> AgentHandle:
+    started = monotonic()
+    resolver = dependencies.model_resolver
+    if resolver is None:
+        raise ModelResolutionError("MODEL_RESOLVER_NOT_CONFIGURED")
+    correlation_id = request.request_id or str(uuid4())
+    route = await resolver.resolve(
+        tenant_id=request.execution_identity.tenant_ref,
+        feature_key=request.feature_key,
+        label=request.requested_model_label,
+        request_id=correlation_id,
+    )
+    model = model_from_route(route, agent.model)
+    LOGGER.info(
+        "model route resolved",
+        extra={
+            "service": "kokoro-agent",
+            "operation": "model.resolve",
+            "request_id": correlation_id,
+            "trace_id": None,
+            "run_id": request.run_id,
+            "result": "success",
+            "duration": monotonic() - started,
+            "model_id": route.model_id,
+            "revision_id": route.revision_id,
+            "digest": route.digest,
+            "generation": route.generation,
+            "tenant_generation": route.tenant_generation,
+        },
+    )
     scope = RunScope.of(request)
     policy = agent.permissions
     # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
@@ -127,13 +160,7 @@ async def build_deep_agent(
     # official-constructor boundary; the returned value is validated below.
     native_constructor: Any = getattr(deepagents, "create_deep_agent")
     candidate: object = native_constructor(
-        model=make_chat_model(
-            dependencies.model,
-            select_model_label(
-                request.requested_model_label,
-                agent.model or ModelConfig(provider="anthropic", name="claude"),
-            ),
-        ),
+        model=make_chat_model(dependencies.model, model),
         tools=toolset.tools,
         system_prompt=agent.prompt,
         skills=[SKILLS_ROOT],

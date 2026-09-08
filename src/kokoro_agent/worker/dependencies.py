@@ -13,6 +13,7 @@ from langgraph.store.base import BaseStore
 
 from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.clients.mcp import McpClient
+from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.clients.skills import SkillClient, SkillReader
 from kokoro_agent.clients.storage import DeliveryClient
@@ -30,6 +31,7 @@ class WorkerClients:
     skill_reader: SkillReader | None = None
     mcp: McpClient | None = None
     delivery: DeliveryClient | None = None
+    model_resolver: ModelResolver | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,3 +61,4 @@ class WorkerDependencies:
     mcp_client: McpClient | None = None
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。
     delivery: DeliveryClient | None = None
+    model_resolver: ModelResolver | None = None

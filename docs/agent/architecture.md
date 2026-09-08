@@ -200,3 +200,9 @@ secret handle，不决定 Feature、Agent 或 peer 关系。
 
 检查输出刻意排除 prompt 正文、secret、ExecutionIdentity、RuntimeNamespace、Session/checkpoint
 定位和运行状态，避免诊断能力变成配置或数据泄漏面。
+
+## System 模型解析消费者更新（2026-09-08）
+
+requested_model_label是System目录的不透明label，不再是provider:name解释语法。worker在实际DeepAgents模型
+实例化前以可信tenant/feature解析；缺省标签由tenant默认路由决定。配置、固定契约pin、错误/恢复边界
+以本仓docs/TECHNICAL_DESIGN §6与docs/API_CONTRACT的System消费节为准。未改变RunRequest或本仓数据库。

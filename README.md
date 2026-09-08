@@ -73,7 +73,10 @@ uv sync
 KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
   KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
-  ANTHROPIC_API_KEY=... uv run kokoro-agent-worker
+  KOKORO_SYSTEM_BASE_URL=http://127.0.0.1:4240 \
+  KOKORO_INTERNAL_SECRET_AGENT=... \
+  KOKORO_LITELLM_ENABLED=1 KOKORO_LITELLM_BASE_URL=http://127.0.0.1:4000/v1 \
+  KOKORO_LITELLM_API_KEY=... uv run kokoro-agent-worker
 ```
 
 BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己的 PostgreSQL/Redis：
@@ -96,11 +99,12 @@ Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本
 durable ingress）和 `kokoro-agent-worker`（实际执行 loop）；只运行 HTTP 进程只能完成 admission，
 不会执行任务。
 
-LiteLLM 同样是可选的外置 OpenAI-compatible gateway。Agent 不包含 LiteLLM Python 包，也不
-启动 LiteLLM 进程；只有在 `KOKORO_LITELLM_ENABLED=1` 且同时配置
-`KOKORO_LITELLM_BASE_URL`、`KOKORO_LITELLM_API_KEY` 时，Model 的 `litellm` transport 才会
-被 Agent 使用。没有 LiteLLM 时可使用直接的 OpenAI-compatible 或 Anthropic provider；Model
-目录服务也不会因为 LiteLLM 未部署而启动失败。
+启用 worker 时，必须配置 System 模型解析及 LiteLLM 网关：`KOKORO_SYSTEM_BASE_URL`、
+`KOKORO_INTERNAL_SECRET_AGENT`、`KOKORO_LITELLM_ENABLED=1`、`KOKORO_LITELLM_BASE_URL`、
+`KOKORO_LITELLM_API_KEY`。System 当前 executable transport 仅 litellm；缺配置启动失败，
+每次构造模型先解析可信 tenant/feature/label，拒绝本地名称或默认 provider 兜底。
+Agent 不包含 LiteLLM Python 包、不启动网关、不接收底层 provider 凭据。单独的 Agent HTTP ingress
+仍可接收 durable admission；模型解析失败只终止对应 Run，不让假路由进入执行。
 
 HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 业务入口是：
 

@@ -1,6 +1,6 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-04。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+状态日期：2026-09-11。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
 ## 已落地
@@ -50,6 +50,10 @@ uv build --wheel --sdist
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。
+6. Agent execution proof/JWKS 只有已通过 SPEC/QUALITY 设计门的目标设计：当前没有
+   `contract/execution-proof/v1/schema.json`、Ed25519 signer、worker private-key provider、public JWKS route或对应 provenance/test。
+   现有 lease helper 在数据库连接前读取应用 clock，不能作为 proof freshness gate；当前 Skill/MCP client 也没有 run-scoped proof supplier。
+   因此不得把文档描述为可用鉴权能力，也不得先放行 IAM verifier 或 Platform consumer。
 
 这些条目是代码工作的清单，不以文档声明替代实现或验证。
 
@@ -59,3 +63,28 @@ System HTTP client已注入真实worker/AgentFactory，先解析可信tenant/fea
 移除select_model_label与anthropic/claude兜底。CLI需System服务凭据及LiteLLM配置，嵌入部署可显式注入ModelResolver。
 System revision/digest/generation记结构化日志；本仓DB与公开Run wire未变，源契约pin见contract/provenance.json。
 尚未运行live System/网关smoke，不声称完整执行链路通过；本轮验证见ACCEPTANCE，commit随Root交付记录。
+
+## Agent execution proof 设计门（2026-09-11，已验收）
+
+目标边界已记录在 TECHNICAL_DESIGN §7、API_CONTRACT、DATA_MODEL、SECURITY 与 ADR-004：Agent 将拥有 exact v1 proof
+schema/canonical bytes、每次调用前的 database-clock lease gate、Ed25519 signer、分离的 worker private-key/HTTP public-ring 配置和
+`GET|HEAD /v1/execution-proof/jwks`。数据库与 Redis 均不变化；Skills/MCP typed opaque identity 仍属于 Platform，proof 不携带资源 ID。
+
+IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 已对齐 owner、proof/JWKS 方向、TTL/skew 与 current authorization，但仍只写正整数
+`lease_generation`，尚未纳入本 R2 的 safe-integer/token 拒绝矩阵，且交付段尚未拆成下面六个独立门。该差异属于第 2 步的显式输入；
+在 IAM 文档、verifier、OpenAPI/SDK 和 consumer tests 固定消费 Agent artifact 前，不记录为跨仓契约已对齐。
+
+当前授权仅包含 7 个文档文件，没有修改 source、OpenAPI/provenance、schema、依赖、lockfile或测试。后续必须串行推进：
+
+1. Agent machine artifact/signer/JWKS/run-scoped supplier 独立验收；supplier 单元/fake-client 证据不称为真实 Platform call 接线；
+2. IAM ADR/API/安全设计先对齐 exact profile、数字矩阵与六段依赖，再实现 verifier/OpenAPI/generated SDK；
+3. Platform owner 发布最终 compact-proof wire/request-binding/generated helper，不发布临时 wire 或 fallback；
+4. Agent 固定 Platform artifact，在真实 Skills/MCP client 每个 owner call 边界完成 supplier 接线与 transmitted proof 验证；
+5. Platform consumer 切 IAM SDK、删除旧手写 wire 并完成 fresh/completed-replay receipt 闭环；
+6. Root 真实 Agent -> IAM -> Platform -> PostgreSQL receipt sandbox。
+
+实现验收必须覆盖 canonical header/payload/signing-input/vector、malformed key/file权限/symlink、worker/HTTP descriptor 与各自 key 不一致、
+JSON safe integer矩阵（2^53-1、2^53、2^53+1、0、负数、bool、float、无coercion）、多副本descriptor/ring正常与紧急rotation、
+stale/paused/terminal/owner或generation变化、数据库连接排队跨 expiry、签后 lease race、clock skew、nonce唯一、
+unknown kid/禁止URL header、无敏感日志、JWKS GET/HEAD/400/404/405/503/no-store、OpenAPI/provenance drift，以及真实 IAM verifier消费。
+此设计门通过不等于上述能力已经实现。

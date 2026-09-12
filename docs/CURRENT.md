@@ -25,8 +25,9 @@
 - OpenAPI、protocol model、canonical database schema、contract test 和 provenance 已进入本仓。
 - Execution proof A1 已发布 Draft 2020-12 decoded-profile schema 与跨语言 canonical/negative/one-bit-tampered vectors；checker 以硬编码
   有序 owner inventory、逐 artifact digest、aggregate digest、strict duplicate/token parser、expected schema pointer/keyword、RFC 8785、
-  canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。HTTP route、signer、key/JWKS、lease reader
-  与 Platform client 尚未实现。
+  canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。A2a 独立 runtime exact profile 与
+  Ed25519 signer 已通过 SPEC/QUALITY 与 Root 验证，并以 A1 positive vector 和第二个 RFC 8032 KAT
+  固定数学签名；HTTP route、private loader、JWKS、lease supplier 与 Platform client 仍未实现。
 
 ## 当前证据
 
@@ -54,10 +55,11 @@ uv build --wheel --sdist
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。
-6. Agent execution proof A1 只有 schema/vectors/checker/provenance；仍没有 Ed25519 signer、worker private-key provider、
-   public JWKS route 或 lease-aware supplier。现有 lease helper 在数据库连接前读取应用 clock，不能作为 proof freshness gate；
-   当前 Skill/MCP client 也没有 run-scoped proof supplier。因此 A1 通过不等于 proof 可签发，不得把文档描述为
-   可用鉴权能力，也不得跳过 signer/JWKS 串行门直接放行 IAM verifier 或 Platform consumer。
+6. Agent execution proof A2a 已通过 SPEC/QUALITY 与 Root 验证；当前只有 pure profile 与 Ed25519 signer，
+   无 production caller，仍没有 worker private-key loader、
+   public JWKS route 或 statement-time lease supplier。现有 lease helper 在数据库连接前读取应用 clock，不能作为 proof freshness gate；
+   当前 Skill/MCP client 也没有 run-scoped supplier。因此 focused signer 可复现 vector 不等于 proof 已可签发/传输，不得跳过
+   key/JWKS/supplier 串行门直接放行 IAM verifier 或 Platform consumer。
 
 这些条目是代码工作的清单，不以文档声明替代实现或验证。
 
@@ -81,6 +83,10 @@ IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 已对齐 owner、proof/JWKS 方�
 2026-09-12 的 A1 切片已新增 owner machine schema/vectors、contract test、checker/provenance gate，并直接声明
 `jsonschema>=4.26.0` 与 `rfc8785>=0.1.4`；未修改 OpenAPI route、数据库、Redis、signer/key/JWKS/lease 或
 Platform/IAM/Capability。后续必须串行推进：
+
+2026-09-12 的 A2a runtime profile 与 signer 已通过 SPEC/QUALITY 与 Root 验证；直接声明
+`PyJWT>=2.14.0`、`cryptography>=50.0.1`，lock 为 `2.14.0`/`50.0.1`；没有读取或装配 private key、发布 JWKS、
+查询 lease、修改 wire 或调用 Platform。
 
 1. Agent machine artifact/signer/JWKS/run-scoped supplier 独立验收；supplier 单元/fake-client 证据不称为真实 Platform call 接线；
 2. IAM ADR/API/安全设计先对齐 exact profile、数字矩阵与六段依赖，再实现 verifier/OpenAPI/generated SDK；

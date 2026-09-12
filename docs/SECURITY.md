@@ -29,11 +29,13 @@ provider payload 和文件内容做脱敏。JSON body 有大小上限，未知�
 CI 阻断依赖、源码和 secret 扫描；镜像使用不可变 base digest、非 root、healthcheck、SBOM、provenance、
 漏洞扫描和签名/attestation。第三方 GitHub Action 固定完整 commit SHA。
 
-## Execution proof contract（A1 当前）与 signing key/JWKS（后续）
+## Execution proof contract 与 signer（A2a 已验收）；key/JWKS（后续）
 
-A1 当前只有 Agent-owned strict schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 contract checker；没有 signer、
-private/public key provider、JWKS route、lease-aware supplier、IAM verifier 或 Platform consumer，不能据此接受任何授权。checker 在 crypto
-前固定 duplicate/member/token/schema/JCS/canonical-base64url/TTL 语义与 digest；A2 才以 Ed25519 验证正向 signature并拒绝 tampered fixture。
+A1 已有 Agent-owned strict schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 contract checker。A2a pure runtime
+profile 与 Ed25519 signer 已通过 SPEC/QUALITY 与 Root 验证：owner-controlled immutable config 只持有
+issuer/kid/private key，caller input 不能覆盖 header/version/
+issuer/audience/kid；签发前预计算 exact JCS bytes，PyJWT 签发后逐段核对、限制 16 KiB、验证64-byte signature并用派生公钥自验。
+本片没有 production caller、private/public key provider、JWKS route、lease-aware supplier、IAM verifier 或 Platform consumer，不能据此接受授权。
 
 Agent 独占 execution proof 私钥与 canonical signing bytes。worker private-key 配置和 HTTP public-ring 配置必须是不同类型、不同对象图：
 worker 进程不加载 public JWKS ring，HTTP 进程不读取或持有 private key/path/provider。worker 与 HTTP 各有独立、非 secret 的
@@ -45,6 +47,8 @@ worker 进程不加载 public JWKS ring，HTTP 进程不读取或持有 private 
 多 key 或同一 fd 校验失败均阻止 worker 开始消费。public ring同样从受信、non-symlink regular file读取并做有界 strict parse。private key bytes、
 compact proof、signature、完整 binding、原始 identity assertion、token 和 key parse error detail 不得写日志、trace、metric label、checkpoint、
 event 或 exception response。结构化日志只记录 operation、run/request/trace correlation、`kid`、contract version、结果码与耗时；不记录 `jti`。
+A2a signer 将所有 profile/JOSE/crypto failure 收敛为稳定脱敏错误，不含 private key/path、compact proof/signature、JTI或完整 binding；
+它不读取环境、文件、数据库或网络。private file parser/permission/symlink与 descriptor 核验仍属于 A2b，尚未实现。
 
 public ring 只接受 strict Ed25519 public JWK，不包含 `d`、certificate chain、URL 或 provider metadata。JWKS route
 `GET|HEAD /v1/execution-proof/jwks` 是现有“除 health 外都要求 bearer”规则的第二个具名例外：public key 可匿名读取，但部署层只允许 IAM

@@ -32,6 +32,11 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 - `protocols.py`：LangGraph/DeepAgents 的窄调用契约（`AgentRunnable`、
   `AgentRunStream`、`ModelStream`、`ToolCallView`、`SubagentRunStream`、`NativeStateSnapshot`）——
   框架私有泛型止步于此。
+- `execution_proof_profile.py`：Agent-owned V1 header/14 claims 常量、不可变动态签发输入、strict safe-integer/
+  operation/binding/JTI/TTL 校验，以及不做 Unicode normalization 的 RFC 8785 UTF-8 和 canonical unpadded base64url。
+- `execution_proof_signer.py`：immutable issuer/kid/Ed25519 private-key config 与 `ExecutionProofSigner`；使用 PyJWT
+  public `jwt.encode(..., json_encoder=...)`，并在返回前逐段核对预计算 JCS bytes、64-byte signature、16 KiB 上限和派生公钥自验。
+  本切片没有 production caller；后续只有 run-scoped `execution_proof_supplier.py` 可在真实 Platform call 前调用。
 
 ## 关键协作者
 
@@ -45,6 +50,8 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 - 终态发射前必经 `claim_terminal` 原子认领：cancel/自然完成/异常三路共用认领键，多 pod 恰好一个终态。
 - emit 用 `exclude_none` 上 wire：null 会被 BFF Chat 的契约校验拒收。
 - 工具中途 interrupt 被 langgraph 浮现为 error=Interrupt repr：按前缀识别、抑制伪 returned。
+- execution proof signer 不读环境、文件、数据库或网络，不记录或返回 private key/path、signature、JTI、完整 binding；
+  private loader、JWKS、statement-time lease supplier 和真实 client 装配尚未实现。
 
 ## 扩展规则
 

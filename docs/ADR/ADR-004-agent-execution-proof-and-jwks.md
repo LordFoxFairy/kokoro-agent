@@ -1,6 +1,6 @@
 # ADR-004：Agent execution proof 与 public JWKS
 
-- 状态：Accepted；SPEC/QUALITY 设计审查通过；A1 machine artifact 已实现，A2 signer/JWKS 待串行实现
+- 状态：Accepted；A1 machine artifact 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证；A2b/A2c 待串行实现
 - 日期：2026-09-11
 - 决策 owner：`kokoro-agent`（proof schema/canonical bytes、lease-aware signer、private key 与 public JWKS）
 - 关联 owner：`kokoro-iam@bf160be173ef473bebe8e4a93b74ec52c230f180`（proof verification/current authorization/audit）；
@@ -9,8 +9,10 @@
 ## 上下文与当前态
 
 Agent 已持久化 canonical `RunRequest`、typed `ExecutionIdentity` 与 monotonic `LeaseFence.generation`，并在 A1 发布 proof machine
-schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 checker；仍没有 signed execution proof、signing key provider、
-JWKS route、lease-aware supplier 或 Platform client 接线。Capability 当前的临时 attestation/wire 不是 Agent/IAM 已发布契约；IAM ADR-005 已裁决
+schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 checker。A2a pure exact profile 与 Ed25519 signer 已通过
+SPEC/QUALITY 与 Root 验证，但没有 production caller；仍没有 private signing-key provider、
+JWKS route、lease-aware supplier 或 Platform client 接线。
+Capability 当前的临时 attestation/wire 不是 Agent/IAM 已发布契约；IAM ADR-005 已裁决
 新 verifier 必须等待 Agent owner artifact，Platform 必须等待 IAM generated SDK。
 
 关联的 IAM 固定提交已裁决 owner、proof/JWKS 方向、TTL/skew 与 current authorization，但目前仍只描述正整数 `lease_generation`，没有
@@ -28,8 +30,8 @@ OpenAPI/SDK 与 consumer tests 消费同一 schema/vectors；IAM 不拥有或复
 
 Agent 已新增唯一 decoded-profile machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`，并将 schema/vectors 纳入
 `contract/provenance.json` 与 `kokoro-agent-contract-check`；固定 test vector验证 protected header、claims、JCS UTF-8 bytes、unpadded
-base64url signing input、64-byte Ed25519 signature shape、JWK 与 one-bit tampered signature recomposition。A1 不做数学验签；A2 才验证正向
-signature并拒绝 tampered fixture。未来 OpenAPI 只描述 JWKS HTTP projection，不复制 claims schema。
+base64url signing input、64-byte Ed25519 signature shape、JWK 与 one-bit tampered signature recomposition。A2a runtime test 现以 RFC 8032
+seed复现 exact positive compact proof，并用派生 public key自验、拒绝 one-bit tamper；未来 OpenAPI 只描述 JWKS HTTP projection，不复制claims schema。
 
 protected header 精确为 `typ=kokoro-agent-execution+jwt`、`alg=EdDSA`、`kid`。claims 精确为 `contract_version`、`iss`、`aud`、
 `tenant_ref`、typed `actor`/`subject`、`run_id`、`execution_session_id`、JSON safe integer `lease_generation`、exact `operation`、lowercase 64-hex
@@ -145,6 +147,24 @@ RFC 8785 实现，或经独立审计后内置最小 canonicalizer，不改变 sc
 Draft 2020-12 meta-schema与同一负向矩阵的前提下替换 validator；依赖升级必须重新核验 Python 3.11、许可证、
 供应链 attestation、API 与完整 contract gate。
 
+### 8. A2a signer 依赖核验（2026-09-12）
+
+A2a 实施日重新核验上游 PyPI、官方 API reference 与 cryptography Ed25519 文档：最新稳定 PyJWT 为 `2.14.0`，MIT、
+Python >=3.9、PyPI Production/Stable；最新稳定 cryptography 为 `50.0.1`，`Apache-2.0 OR BSD-3-Clause`、
+Python `>=3.9, !=3.9.0, !=3.9.1`、PyPI Production/Stable。两者均支持本仓 Python 3.11，现作为直接依赖声明
+`PyJWT>=2.14.0` 与 `cryptography>=50.0.1`，lock 精确固定 `2.14.0`/`50.0.1` 及 wheel/sdist hashes；PyPI 显示
+PyJWT 2.14.0 通过 Trusted Publishing 发布并提供 provenance，cryptography 由 PyCA 维护并提供 CPython 3.11 ABI wheel。
+
+生产实现只调用 PyJWT 顶层公开 `jwt.encode(payload, key, algorithm, headers, json_encoder)`；自定义 encoder 将 header/payload
+绑定到既有 RFC 8785 bytes。签后不信任 library serialization：逐段 canonical base64url 解码、与预计算 bytes exact 比较、
+检查64-byte signature，并通过 cryptography `Ed25519PrivateKey.public_key().verify` 自验。源码与 AST 门拒绝 `jwt.api_*` 私有 API。
+
+维护/供应链风险：PyJWT 当前 PyPI 仅列一名 maintainer，JOSE serialization/default header 行为可能在 minor 升级变化；
+cryptography 包含 native/Rust/OpenSSL wheel 与频繁 major release，平台 wheel、ABI、构建工具链和安全公告需要持续跟进。
+升级必须重跑 A1 exact compact vector、独立 RFC 8032 KAT、tamper/alg/curve/length 矩阵、wheel build 和完整 contract gate。
+退出路径是在相同 public API、exact pre/post bytes与向量下评估另一成熟 JOSE library；若替换 cryptography，则必须保留成熟的
+Ed25519 provider与同一KAT。不得回退到 `jwt.api_*`、自研 JOSE/Ed25519 或放宽 canonical wire。
+
 ## 替代方案
 
 - IAM签 proof：倒置 Run/lease owner并要求IAM复制Agent事实。
@@ -165,5 +185,6 @@ header/claim/alg/typ/kid/aud/iss/TTL/skew/jti；private file type/owner/mode/sym
 连接排队跨expiry RED/GREEN；签后generation race；每call新proof/no cache；无secret日志；JWKS GET/HEAD/no input/405/404/503/no-store；
 schema/OpenAPI/provenance/package drift；以及真实 Agent signer -> IAM verifier -> Platform receipt sandbox。所有证据绑定同一commit。
 
-本 ADR 的 A1 machine artifact/source/dependency/test 已实现；signer、key/JWKS、lease reader、Platform client、
+本 ADR 的 A1 machine artifact/source/dependency/test 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证，
+且没有 production caller。private loader、key/JWKS、statement-time lease supplier、Platform client、
 IAM verifier 与跨仓 sandbox 仍按既定顺序待实现。

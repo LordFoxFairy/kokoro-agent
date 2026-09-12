@@ -3,11 +3,13 @@
   "contract": "openapi/v1/openapi.json",
   "source_files": [
     "contract/openapi/v1/openapi.json",
+    "contract/execution-proof/v1/schema.json",
+    "contract/execution-proof/v1/vectors.json",
     "src/kokoro_agent/protocol/control.py",
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py"
   ],
-  "combined_sha256": "0a15cbf8daea20ebb234668e79da25f1c26411d5d11b8066d93c449af244e831",
+  "combined_sha256": "97fa33861db2e616c01300b3af4a66a1822755571a6ee7207da3af56deee15ad",
   "generated_artifacts": [],
   "source_revision": "same Git commit as the listed files",
   "consumer_dependencies": [
@@ -21,5 +23,16 @@
         "POST /v1/system/model-catalog/resolve"
       ]
     }
-  ]
+  ],
+  "execution_proof": {
+    "version": "1.0.0",
+    "schema": {
+      "path": "contract/execution-proof/v1/schema.json",
+      "sha256": "264f2a86230ccdc20c46ff8664407c2a6f382c664970539274cca569f178ab5f"
+    },
+    "vectors": {
+      "path": "contract/execution-proof/v1/vectors.json",
+      "sha256": "a65b9b4a1c6da8c25bf012ec0aa9c04de037f5e166c1cd7cbee7df340dc17c41"
+    }
+  }
 }

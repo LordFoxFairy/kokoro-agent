@@ -10,6 +10,7 @@ dependencies = [
   "deepagents==0.6.6",
   "e2b>=2.30.0",
   "httpx>=0.28.1",
+  "jsonschema>=4.26.0",
   "langchain",
   "langchain-anthropic",
   "langchain-deepseek>=1.1.0",
@@ -24,6 +25,7 @@ dependencies = [
   "python-dotenv>=1.2.2",
   "psycopg[binary]>=3.2.10",
   "redis>=5",
+  "rfc8785>=0.1.4",
 ]
 
 [project.scripts]

@@ -1,6 +1,6 @@
 # ADR-004：Agent execution proof 与 public JWKS
 
-- 状态：Accepted；SPEC/QUALITY 设计审查通过，等待串行实现
+- 状态：Accepted；SPEC/QUALITY 设计审查通过；A1 machine artifact 已实现，A2 signer/JWKS 待串行实现
 - 日期：2026-09-11
 - 决策 owner：`kokoro-agent`（proof schema/canonical bytes、lease-aware signer、private key 与 public JWKS）
 - 关联 owner：`kokoro-iam@bf160be173ef473bebe8e4a93b74ec52c230f180`（proof verification/current authorization/audit）；
@@ -8,8 +8,9 @@
 
 ## 上下文与当前态
 
-Agent 已持久化 canonical `RunRequest`、typed `ExecutionIdentity` 与 monotonic `LeaseFence.generation`，但没有 signed execution proof、
-proof machine schema、signing key provider或 JWKS。Capability 当前的临时 attestation/wire 不是 Agent/IAM 已发布契约；IAM ADR-005 已裁决
+Agent 已持久化 canonical `RunRequest`、typed `ExecutionIdentity` 与 monotonic `LeaseFence.generation`，并在 A1 发布 proof machine
+schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 checker；仍没有 signed execution proof、signing key provider、
+JWKS route、lease-aware supplier 或 Platform client 接线。Capability 当前的临时 attestation/wire 不是 Agent/IAM 已发布契约；IAM ADR-005 已裁决
 新 verifier 必须等待 Agent owner artifact，Platform 必须等待 IAM generated SDK。
 
 关联的 IAM 固定提交已裁决 owner、proof/JWKS 方向、TTL/skew 与 current authorization，但目前仍只描述正整数 `lease_generation`，没有
@@ -25,14 +26,17 @@ OpenAPI/SDK 与 consumer tests 消费同一 schema/vectors；IAM 不拥有或复
 
 ### 1. Owner 与机器事实
 
-Agent 新增唯一 decoded-profile machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`。后续实现把它纳入现有
+Agent 已新增唯一 decoded-profile machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`，并将 schema/vectors 纳入
 `contract/provenance.json` 与 `kokoro-agent-contract-check`；固定 test vector验证 protected header、claims、JCS UTF-8 bytes、unpadded
-base64url signing input、Ed25519 signature 与 JWKS。OpenAPI 只描述 JWKS HTTP projection，不复制 claims schema。
+base64url signing input、64-byte Ed25519 signature shape、JWK 与 one-bit tampered signature recomposition。A1 不做数学验签；A2 才验证正向
+signature并拒绝 tampered fixture。未来 OpenAPI 只描述 JWKS HTTP projection，不复制 claims schema。
 
 protected header 精确为 `typ=kokoro-agent-execution+jwt`、`alg=EdDSA`、`kid`。claims 精确为 `contract_version`、`iss`、`aud`、
 `tenant_ref`、typed `actor`/`subject`、`run_id`、`execution_session_id`、JSON safe integer `lease_generation`、exact `operation`、lowercase 64-hex
-`request_binding_sha256`、integer `iat`/`exp` 与 unique `jti`。`jti` 是每次签发新生成的 128-bit CSPRNG value，以 22-character
-unpadded base64url 表达。`contract_version="1.0.0"`；audience exact
+`request_binding_sha256`、integer `iat`/`exp` 与 unique `jti`。`kid`、`iss`、`tenant_ref`、actor/subject `opaque_ref`、`run_id` 与
+`execution_session_id` 只要求非空字符串，不附加 pattern/maxLength。`jti` 是每次签发新生成的 128-bit CSPRNG value，以匹配
+`^[A-Za-z0-9_-]{21}[AQgw]$` 的 canonical 22-character unpadded base64url 表达；decode 必须恰好 16 bytes并 re-encode 相等。
+`contract_version="1.0.0"`；audience exact
 `https://kokoro.dev/resources/iam-execution-authorization`；TTL 不超过 60 秒，clock skew 前后 5 秒。V1 不允许其他 header/claim，尤其不携带
 `identity_assertion_ref`、`nbf`、owner scope、permission、Skill/MCP ID 或 key-source URL。
 
@@ -40,7 +44,7 @@ unpadded base64url 表达。`contract_version="1.0.0"`；audience exact
 `exp>iat`、TTL、clock 与 lease-expiry policy。strict parser 在 crypto 前拒绝 bool、任何 float、负数、`2^53` 及更大值，禁止
 truncate、round、string conversion 或 coercion。Schema 的 integer/min/max、pre-coercion runtime type guard 与 canonical-byte
 equality 共同执行；尤其 JSON Schema 可能按数学值把 `1.0` 视为 integer，后两层必须仍拒绝该 float token。
-future schema 因此对三字段标记 `x-kokoro-require-integer-token=true`，contract-check必须从原始JSON token执行该扩展。
+当前 schema 因此对三字段标记 `x-kokoro-require-integer-token=true`，contract-check从原始JSON token执行该扩展。
 
 header/payload 分别按 RFC 8785/JCS 生成 UTF-8 bytes；compact JWS 三段都使用 unpadded base64url。解码拒绝 duplicate member、额外字段、
 非 canonical bytes、float NumericDate 与隐式 Unicode normalization。IAM exact验证 issuer/audience/profile/signature/time；Platform 不解析 proof。
@@ -125,6 +129,22 @@ EdDSA选择、PKCS#8/JWK parsing与signature verification边界，Agent只实现
 安全审计面。若实现核验发现 PyJWT 的公开 API不能保持本 ADR 的 exact bytes，必须先回到 ADR比较成熟 JOSE候选，不能静默手写或放宽
 canonical contract。
 
+### 7. A1 schema/canonicalization 依赖核验（2026-09-12）
+
+A1 直接声明 `jsonschema>=4.26.0` 与 `rfc8785>=0.1.4`，lock 实际解析为 `jsonschema==4.26.0`、
+`rfc8785==0.1.4`。前者是 MIT、PyPI 标记 Production/Stable、要求 Python >=3.10，支持本仓 Python 3.11
+目标与 Draft 2020-12 meta-schema；后者是 Apache-2.0、纯 Python/无依赖、要求 Python >=3.8，公开 `dumps`
+直接返回 RFC 8785 UTF-8 bytes。两者均从 PyPI wheel/sdist hash 固定，未引入 PyJWT/cryptography 的 A2
+生产依赖。
+
+候选比较：继续使用 Pydantic 会在解析前丢失 duplicate-member/token spelling；只用 stdlib `json` 不实现
+RFC 8785；在本仓手写 JCS 会扩大安全审计面。因此 A1 组合 strict stdlib raw parser + jsonschema + rfc8785，
+并用 owner vectors 固定边界。`rfc8785` 当前仍标记 Beta、最新版本停留在 2024-09 且维护者规模较小，升级风险
+由固定 vectors、canonical-byte equality 和 package drift 门隔离；退出路径是在相同 vectors 下评估另一成熟
+RFC 8785 实现，或经独立审计后内置最小 canonicalizer，不改变 schema/wire。`jsonschema` 的退出路径是在保持
+Draft 2020-12 meta-schema与同一负向矩阵的前提下替换 validator；依赖升级必须重新核验 Python 3.11、许可证、
+供应链 attestation、API 与完整 contract gate。
+
 ## 替代方案
 
 - IAM签 proof：倒置 Run/lease owner并要求IAM复制Agent事实。
@@ -145,4 +165,5 @@ header/claim/alg/typ/kid/aud/iss/TTL/skew/jti；private file type/owner/mode/sym
 连接排队跨expiry RED/GREEN；签后generation race；每call新proof/no cache；无secret日志；JWKS GET/HEAD/no input/405/404/503/no-store；
 schema/OpenAPI/provenance/package drift；以及真实 Agent signer -> IAM verifier -> Platform receipt sandbox。所有证据绑定同一commit。
 
-本 ADR 只通过设计门，不声明上述 artifact/source/dependency/test 已实现。
+本 ADR 的 A1 machine artifact/source/dependency/test 已实现；signer、key/JWKS、lease reader、Platform client、
+IAM verifier 与跨仓 sandbox 仍按既定顺序待实现。

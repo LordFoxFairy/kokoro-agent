@@ -85,12 +85,16 @@ HTTP 客户端设置总体 deadline、各阶段 timeout、响应上限、不跟�
 模型解析在创建 sandbox/附属能力前执行，失败不先制造外部资源。每次 build（含恢复构造）重新受信解析并记录
 revision/digest/generation 的结构化日志；本切片不承诺持久化 run-level 模型快照，也不复制模型表。
 
-## 7. Execution proof 与 JWKS（2026-09-11，目标设计、尚未实现）
+## 7. Execution proof 与 JWKS（2026-09-12，A1 machine contract 已实现）
 
 本节承接 IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 的 ADR-005，但不复制 IAM 的 operation/permission
 catalog。Agent 是 execution proof schema、canonical claims、Ed25519 signer、active signing key 和 public JWKS 的唯一
 owner；IAM 只验证 proof 并重验当前 IAM 事实，Platform 只拥有 Skills/MCP operation、request binding 与业务 receipt。
 固定交付顺序见 §7.5；任何阶段都不创建临时 wire、手写兼容 DTO、fallback 或双读。
+
+A1 当前已发布 strict decoded-profile schema、canonical/negative/one-bit-tampered vectors、provenance pins 和薄 OpenAPI+
+proof-checker 编排；proof 专项校验集中在 `src/kokoro_agent/execution_proof_contract.py`。A1 未实现 runtime profile/signer、private/public
+key 读取、JWKS HTTP projection、database-clock lease reader、run-scoped supplier 或 Platform adapter 接线，不能作为可用授权能力。
 
 该 IAM 固定提交目前只把 `lease_generation` 描述为正整数，尚未固定本节的 JSON safe-integer 上界、原始 integer-token/
 `1.0` 拒绝规则；其 ADR-005 的交付段也尚未拆出 Agent 真实 Platform client 接线与 Platform fresh/completed-replay receipt 两个门。
@@ -102,7 +106,7 @@ Agent 已固定 artifact 消费同一数字矩阵与六段依赖，再称跨仓�
 | 项       | 决定                                                                                                                                                                                                                                      |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Owner    | `kokoro-agent/execution` 唯一写 proof profile 与签发语义；`interfaces/http` 只投影 public JWKS                                                                                                                                            |
-| 当前事实 | `protocol/control.py` 已有 typed `ExecutionIdentity`；`RunRequest.session_id` 是目标 claim 的 `execution_session_id`；`LeaseFence` 已有 owner/generation，但现有 `is_lease_current` 使用连接前取得的应用时钟，不能作为签发 freshness 证据 |
+| 当前事实 | A1 schema/vectors/checker/provenance 已发布；`protocol/control.py` 已有 typed `ExecutionIdentity`；`RunRequest.session_id` 是目标 claim 的 `execution_session_id`；`LeaseFence` 已有 owner/generation，但现有 `is_lease_current` 使用连接前取得的应用时钟，不能作为签发 freshness 证据 |
 | 目标职责 | 每次真实 Platform 出站调用前，使用 canonical Run、当前 execution identity、同一 run/owner/generation 的未过期 lease、Platform 边界已校验的 operation/binding 即时签发；proof 不缓存                                                       |
 | 采用位置 | `execution/` 保存纯 profile/canonicalization、signer、worker-only private-key provider 与 run-scoped proof supplier；现有 Platform client adapter 接收 supplier；`interfaces/http/` 保存 HTTP-only public-ring reader/JWKS handler        |
 | 淘汰位置 | 不新建顶层 `auth`/`attestation`/`ports`，不把签名塞进 `protocol/`，不在 supervisor 或 `build_deep_agent` 中拼 compact JWT，不让 IAM 反向读取 Run，也不让 Platform 自签或验签                                                              |
@@ -145,23 +149,26 @@ proof supplier；每次出站前重新验 lease、生成新 `jti` 并签发，�
 
 ### 7.3 Profile、机器事实与依赖选择
 
-目标机器事实为 `contract/execution-proof/v1/schema.json`，version=`1.0.0`。它定义 decoded protected header 与 claims 的
+当前机器事实为 `contract/execution-proof/v1/schema.json`，version=`1.0.0`。它定义 decoded protected header 与 claims 的
 strict JSON Schema，`additionalProperties=false`，并以扩展元数据固定 compact JWS、RFC 8785/JCS、UTF-8 和 unpadded base64url。
-后续 machine-artifact 片把该文件加入 `contract/provenance.json.source_files` 与 `kokoro-agent-contract-check`，并提供固定 header、
-payload、signing-input、signature/JWKS test vector；OpenAPI 只引用 JWKS response，不复制 claims schema。
+A1 已把该文件和 vectors 加入 `contract/provenance.json.source_files` 与 `kokoro-agent-contract-check`，并提供固定 header、payload、
+signing-input、signature/JWK、one-bit tampered signature 与语义负向 vectors；OpenAPI 仍未新增 JWKS route，未来只引用 JWKS response，
+不复制 claims schema。
 
 protected header 只有 `typ=kokoro-agent-execution+jwt`、`alg=EdDSA`、非空 `kid`。claims 只有
 `contract_version="1.0.0"`、`iss`、固定 `aud=https://kokoro.dev/resources/iam-execution-authorization`、`tenant_ref`、typed
 `actor`/`subject`、`run_id`、`execution_session_id`、JSON safe integer `lease_generation`、exact `operation`、lowercase 64-hex
 `request_binding_sha256`、integer NumericDate `iat`/`exp` 与唯一 `jti`。`jti` 是每次签发新生成的 128-bit CSPRNG value，以
-22-character unpadded base64url 表达。V1 不携带 `identity_assertion_ref`、`nbf`、Skill/MCP ID、
+匹配 `^[A-Za-z0-9_-]{21}[AQgw]$` 的 canonical 22-character unpadded base64url 表达，解码恰好 16 bytes并要求重新编码相等。
+`kid`、`iss`、`tenant_ref`、actor/subject `opaque_ref`、`run_id` 与 `execution_session_id` 只要求非空字符串，不附加 pattern/maxLength。
+V1 不携带 `identity_assertion_ref`、`nbf`、Skill/MCP ID、
 owner scope、permission 或 provider secret。解析端拒绝重复 JSON member、额外 header/claim、URL-based key header 和非 canonical bytes。
 
 `lease_generation` 精确范围为 `1..9007199254740991`；`iat`/`exp` 精确范围为 `0..9007199254740991`，并继续满足
 `exp > iat`、TTL、lease expiry 与 clock policy。三者必须以 JSON integer token 进入 strict parser；Python `bool`、任何 float（包括
 `1.0`）、负数、越界数都在签名/验签前拒绝，禁止截断、round、stringify 或先 coercion 再验证。JSON Schema 负责
 integer/minimum/maximum，strict runtime type guard 负责拒绝 host-language bool/float，canonical-byte equality 另拒绝把 `1.0` 编码成
-数字的非 canonical payload。未来 schema 对三字段同时标记 `x-kokoro-require-integer-token=true`，contract-check 必须从原始 JSON token
+数字的非 canonical payload。当前 schema 对三字段同时标记 `x-kokoro-require-integer-token=true`，contract-check 从原始 JSON token
 验证该扩展，不能只依赖 JSON Schema 的数学 integer 判定。
 
 实现前重新核验精确依赖版本、维护状态、许可证与 Python 3.11 支持。ADR-004 选择直接声明成熟 PyJWT 与其实际使用的

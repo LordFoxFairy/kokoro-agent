@@ -1,15 +1,16 @@
-"""Validate the Agent-owned OpenAPI document and its provenance record."""
+"""Validate Agent-owned OpenAPI and execution-proof machine contracts."""
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
+
 from pydantic import TypeAdapter, ValidationError
+
+from kokoro_agent.execution_proof_contract import validate_execution_proof_contract
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OPENAPI = ROOT / "contract" / "openapi" / "v1" / "openapi.json"
-PROVENANCE = ROOT / "contract" / "provenance.json"
+OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
 REQUIRED_PATHS = {
     "/healthz",
     "/readyz",
@@ -28,41 +29,35 @@ REQUIRED_EXTENSIONS = {
     "x-kokoro-permission",
 }
 _OBJECT = TypeAdapter(dict[str, object])
-_STRINGS = TypeAdapter(list[str])
 
 
 def _object(value: object, *, source: str) -> dict[str, object]:
     try:
         return _OBJECT.validate_python(value)
     except ValidationError as error:
-        raise ValueError(f"{source} must contain a JSON object with string keys") from error
+        raise ValueError(
+            f"{source} must contain a JSON object with string keys"
+        ) from error
 
 
-def _read_json(path: Path) -> dict[str, object]:
+def _read_openapi(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        raise ValueError(f"contract source is missing: {path}")
     try:
         return _OBJECT.validate_json(path.read_bytes())
     except ValidationError as error:
         raise ValueError(f"{path} must contain a JSON object") from error
 
 
-def _combined_digest(source_files: list[str]) -> str:
-    digest = hashlib.sha256()
-    for relative in source_files:
-        path = ROOT / relative
-        if not path.is_file():
-            raise ValueError(f"provenance source is missing: {relative}")
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
-def validate() -> None:
-    document = _read_json(OPENAPI)
+def _validate_openapi(document: dict[str, object]) -> None:
     openapi = document.get("openapi")
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
     if info.get("version") != "1.0.0":
-        raise ValueError("Agent HTTP contract version must remain 1.0.0 for the v1 source")
+        raise ValueError(
+            "Agent HTTP contract version must remain 1.0.0 for the v1 source"
+        )
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -76,17 +71,18 @@ def validate() -> None:
             operation_object = _object(operation, source="operation")
             missing = REQUIRED_EXTENSIONS - set(operation_object)
             if missing:
-                raise ValueError(f"operation governance metadata missing: {sorted(missing)}")
+                raise ValueError(
+                    f"operation governance metadata missing: {sorted(missing)}"
+                )
             if operation_object["x-kokoro-owner"] != "kokoro-agent":
                 raise ValueError("operation owner must be kokoro-agent")
-    provenance = _read_json(PROVENANCE)
-    try:
-        source_files = _STRINGS.validate_python(provenance.get("source_files"))
-    except ValidationError as error:
-        raise ValueError("provenance source_files must be a string list") from error
-    expected = _combined_digest(source_files)
-    if provenance.get("combined_sha256") != expected:
-        raise ValueError("contract provenance digest is stale")
+
+
+def validate(root: Path = ROOT) -> None:
+    """Validate all Agent-owned machine facts rooted at ``root``."""
+
+    _validate_openapi(_read_openapi(root / OPENAPI_RELATIVE))
+    validate_execution_proof_contract(root)
 
 
 def main() -> int:

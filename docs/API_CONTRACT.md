@@ -47,17 +47,19 @@ System 成功仅 `{data}`，错误 `{error:{code,message,retryable}}`，每个�
 404 ROUTE_NOT_FOUND、403 POLICY_DENIED 不重试；503与传输超时标记暂时故障，客户端不自动重试；
 worker 既有单 Run 失败路径收口，不泄漏上游 message/secret。
 
-## Execution proof/JWKS 契约（2026-09-11，目标、尚未实现）
+## Execution proof machine contract 与 JWKS 目标（2026-09-12，A1 已实现）
 
-Agent 将新增 owner machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`；当前文件、OpenAPI、provenance 与
-源码都尚无该 artifact/route/signer。实现时按 TECHNICAL_DESIGN §7.5 串行发布；Agent supplier 独立测试、Platform 最终 contract、Agent
-真实 client 接线与 Platform server cutover 是不同验收门，不能用前者冒充后者。
+Agent 已发布 owner machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`，以及 owner-authored
+canonical/negative/tampered-signature vectors；两者已进入 provenance 有序 inventory、逐 artifact digest、aggregate digest 和
+`kokoro-agent-contract-check`。A1 没有修改 OpenAPI，也没有 route、signer、key/JWKS、lease reader 或 Platform client 接线，因而不是
+可签发或可验证的授权能力。后续仍按 TECHNICAL_DESIGN §7.5 串行发布；supplier 独立测试、Platform 最终 contract、Agent 真实 client
+接线与 Platform server cutover 是不同验收门，不能互相冒充。
 
 IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 是当前 owner/方向基线，不是本候选已经发布的消费者契约：该提交仍只写正整数
 `lease_generation`，尚无本节 safe-integer/token 矩阵，也未把六段交付全部展开。第 2 步必须在 IAM ADR、API、verifier、OpenAPI/SDK 与
 测试中消费 Agent 固定 artifact 和同一拒绝向量；不得由 IAM 复制一份可独立漂移的 claims schema。
 
-1. Agent machine artifact/signer/JWKS/run-scoped supplier 独立验收；
+1. Agent A1 machine artifact 已验；A2 signer/JWKS/run-scoped supplier 仍须独立验收；
 2. IAM ADR/API/安全设计对齐后实现 verifier/OpenAPI/generated SDK，并消费同一 strict profile、数字矩阵与 canonical vectors；
 3. Platform owner 发布最终 compact-proof wire、request-binding 与 generated helper；
 4. Agent 真实 Platform client 逐 call 接入 supplier；
@@ -75,14 +77,17 @@ proof 是最大 16 KiB 的 compact JWS/JWT。decoded protected header 和 claims
 | protected header | `typ="kokoro-agent-execution+jwt"`、`alg="EdDSA"`、`kid`                                                                                                                                     |
 | claims           | `contract_version="1.0.0"`、`iss`、`aud`、`tenant_ref`、`actor`、`subject`、`run_id`、`execution_session_id`、`lease_generation`、`operation`、`request_binding_sha256`、`iat`、`exp`、`jti` |
 
-`actor`/`subject` 各自为 `{kind:"user|project|service",opaque_ref}`；kind 必须保留。`aud` 精确为
+`kid`、`iss`、`tenant_ref`、`actor/subject.opaque_ref`、`run_id` 与 `execution_session_id` 只约束为非空字符串，不附加
+pattern/maxLength，也不收窄当前 canonical Run/identity 可表达的 Unicode、空格、slash、URN 或长度。`actor`/`subject` 各自为
+`{kind:"user|project|service",opaque_ref}`；kind 必须保留。`aud` 精确为
 `https://kokoro.dev/resources/iam-execution-authorization`；`iss` 是部署固定、由 IAM 配置 exact match 的 Agent issuer。
 `lease_generation` 必须是 JSON safe integer `1..9007199254740991`；`iat`/`exp` 必须是 JSON safe integer
 `0..9007199254740991`。三者拒绝 boolean、float、负数与越界值，不截断、不 round、不转 string；`iat`/`exp` 仍要求
 `0 < exp - iat <= 60`，且 `exp` 不晚于当前 lease expiry 的整秒下界。`operation` 匹配 `^[a-z][a-z0-9_.]{0,127}$`；binding 只接受
 lowercase 64-hex。IAM verifier 的 5 秒 skew 语义固定为
 `iat <= verifier_now + 5s` 且 `verifier_now < exp + 5s`；它不改变 minted `exp-iat`，但最坏接受时间可到 `iat+65s`。`jti` 是每次
-Platform outbound call 新生成的 128-bit CSPRNG value，以 22-character unpadded base64url 表达。V1 不允许 `nbf`、
+Platform outbound call 新生成的 128-bit CSPRNG value，以匹配 `^[A-Za-z0-9_-]{21}[AQgw]$` 的 canonical 22-character
+unpadded base64url 表达；解码必须恰好 16 bytes并重新编码相等，trailing pad-bit alias 也拒绝。V1 不允许 `nbf`、
 `identity_assertion_ref`、permission/scope、Platform resource ID 或其他 claim。
 
 header 与 payload 分别按 RFC 8785/JCS 产生 UTF-8 bytes，再用 unpadded base64url 组成 signing input；Ed25519 signature 同样用
@@ -102,7 +107,7 @@ canonical bytes 的验收事实，不以不同 JSON serialization 只要能验�
 | `1.0` 或其他 float token      | 拒绝               | 拒绝                      | 不 coerce 为 integer                              |
 
 JSON Schema 的 `type/minimum/maximum` 与 strict runtime type guard 共同执行该矩阵；由于 JSON Schema 按数学值可能把 `1.0` 视为
-integer，三字段在 future schema 还必须标记 `x-kokoro-require-integer-token=true`，由 contract-check、canonical-byte equality 与
+integer，当前 schema 对三字段标记 `x-kokoro-require-integer-token=true`，由 contract-check、canonical-byte equality 与
 pre-coercion parser 从原始 JSON token 拒绝 float。
 
 `operation` 与 `request_binding_sha256` 来自 Platform owner 的固定 generated contract/helper。Agent adapter 在 Platform call boundary
@@ -133,8 +138,8 @@ HEAD /v1/execution-proof/jwks
 
 该 route 后续加入 `contract/openapi/v1/openapi.json`；OpenAPI 只描述 HTTP method/response/JWK shape并引用 Agent-owned proof artifact，
 operation治理元数据固定 `x-kokoro-permission=none`，不在 OpenAPI 重建 claims schema。`contract/provenance.json` 同时纳入 proof schema；
-`kokoro-agent-contract-check` 校验 schema、OpenAPI、
-source digest 与固定 canonical/signature/JWKS vector。
+当前 `kokoro-agent-contract-check` 已校验 schema、source digest、canonical/signature/JWK vectors、单 bit tampered signature fixture、
+duplicate/token/schema/JCS/base64url/TTL 负向语义；A2 才进行 Ed25519 数学验签与 tampered rejection。
 
 ### 调用与错误边界
 

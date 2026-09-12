@@ -29,7 +29,11 @@ provider payload 和文件内容做脱敏。JSON body 有大小上限，未知�
 CI 阻断依赖、源码和 secret 扫描；镜像使用不可变 base digest、非 root、healthcheck、SBOM、provenance、
 漏洞扫描和签名/attestation。第三方 GitHub Action 固定完整 commit SHA。
 
-## Execution proof signing key 与 JWKS（目标、尚未实现）
+## Execution proof contract（A1 当前）与 signing key/JWKS（后续）
+
+A1 当前只有 Agent-owned strict schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 contract checker；没有 signer、
+private/public key provider、JWKS route、lease-aware supplier、IAM verifier 或 Platform consumer，不能据此接受任何授权。checker 在 crypto
+前固定 duplicate/member/token/schema/JCS/canonical-base64url/TTL 语义与 digest；A2 才以 Ed25519 验证正向 signature并拒绝 tampered fixture。
 
 Agent 独占 execution proof 私钥与 canonical signing bytes。worker private-key 配置和 HTTP public-ring 配置必须是不同类型、不同对象图：
 worker 进程不加载 public JWKS ring，HTTP 进程不读取或持有 private key/path/provider。worker 与 HTTP 各有独立、非 secret 的
@@ -67,7 +71,11 @@ canonical header/claims 只含 API_CONTRACT 列出的 exact fields。`lease_gene
 `none`/symmetric/错误 alg、unknown kid、`jku`/`x5u`/embedded `jwk`、跨 tenant、operation/binding 篡改和超 TTL/clock skew。Signer 不复制
 IAM permission catalog或Platform Skills/MCP资源目录；typed actor/subject kind不可丢弃或默认成 user。
 
-future machine schema 对 `lease_generation/iat/exp` 的 `x-kokoro-require-integer-token=true` 是安全规则，不是说明性注释；
+`kid`、`iss`、`tenant_ref`、actor/subject `opaque_ref`、`run_id` 与 `execution_session_id` 只要求非空字符串；不得在 proof contract
+另加 ingress 不具备的 pattern/maxLength。`jti` 必须匹配 `^[A-Za-z0-9_-]{21}[AQgw]$`，canonical decode 为恰好 16 bytes且 re-encode
+相等；trailing pad-bit alias 与 `=` padding 均在进入 crypto 前拒绝。
+
+当前 machine schema 对 `lease_generation/iat/exp` 的 `x-kokoro-require-integer-token=true` 是安全规则，不是说明性注释；
 contract-check必须对原始JSON token执行，并以`1.0`失败样本防止解析器先coerce后通过。IAM 当前固定基线尚未写入该矩阵；后续 verifier
 必须在通用 JSON number coercion 丢失 token 形态前或通过 canonical-byte equality 执行同一拒绝规则，并用 Agent canonical vectors 做
 跨仓 consumer test，不能只验证签名或只依赖数学 integer schema。

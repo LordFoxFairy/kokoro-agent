@@ -1,6 +1,6 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-11。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+状态日期：2026-09-12。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
 ## 已落地
@@ -22,7 +22,11 @@
   `127.0.0.1:56380/9`，并设置连接/读写超时；CI 由 workflow 显式注入 service 地址。
 - canonical schema 的 operator use case 位于 `application/schema.py`；`cli.py` 与 `worker/main.py` 从该稳定边界导入，
   不再让 CLI 依赖 worker transport。
-- OpenAPI、protocol model、canonical schema、contract test 和 provenance 已进入本仓。
+- OpenAPI、protocol model、canonical database schema、contract test 和 provenance 已进入本仓。
+- Execution proof A1 已发布 Draft 2020-12 decoded-profile schema 与跨语言 canonical/negative/one-bit-tampered vectors；checker 以硬编码
+  有序 owner inventory、逐 artifact digest、aggregate digest、strict duplicate/token parser、expected schema pointer/keyword、RFC 8785、
+  canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。HTTP route、signer、key/JWKS、lease reader
+  与 Platform client 尚未实现。
 
 ## 当前证据
 
@@ -50,10 +54,10 @@ uv build --wheel --sdist
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。
-6. Agent execution proof/JWKS 只有已通过 SPEC/QUALITY 设计门的目标设计：当前没有
-   `contract/execution-proof/v1/schema.json`、Ed25519 signer、worker private-key provider、public JWKS route或对应 provenance/test。
-   现有 lease helper 在数据库连接前读取应用 clock，不能作为 proof freshness gate；当前 Skill/MCP client 也没有 run-scoped proof supplier。
-   因此不得把文档描述为可用鉴权能力，也不得先放行 IAM verifier 或 Platform consumer。
+6. Agent execution proof A1 只有 schema/vectors/checker/provenance；仍没有 Ed25519 signer、worker private-key provider、
+   public JWKS route 或 lease-aware supplier。现有 lease helper 在数据库连接前读取应用 clock，不能作为 proof freshness gate；
+   当前 Skill/MCP client 也没有 run-scoped proof supplier。因此 A1 通过不等于 proof 可签发，不得把文档描述为
+   可用鉴权能力，也不得跳过 signer/JWKS 串行门直接放行 IAM verifier 或 Platform consumer。
 
 这些条目是代码工作的清单，不以文档声明替代实现或验证。
 
@@ -74,7 +78,9 @@ IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 已对齐 owner、proof/JWKS 方�
 `lease_generation`，尚未纳入本 R2 的 safe-integer/token 拒绝矩阵，且交付段尚未拆成下面六个独立门。该差异属于第 2 步的显式输入；
 在 IAM 文档、verifier、OpenAPI/SDK 和 consumer tests 固定消费 Agent artifact 前，不记录为跨仓契约已对齐。
 
-当前授权仅包含 7 个文档文件，没有修改 source、OpenAPI/provenance、schema、依赖、lockfile或测试。后续必须串行推进：
+2026-09-12 的 A1 切片已新增 owner machine schema/vectors、contract test、checker/provenance gate，并直接声明
+`jsonschema>=4.26.0` 与 `rfc8785>=0.1.4`；未修改 OpenAPI route、数据库、Redis、signer/key/JWKS/lease 或
+Platform/IAM/Capability。后续必须串行推进：
 
 1. Agent machine artifact/signer/JWKS/run-scoped supplier 独立验收；supplier 单元/fake-client 证据不称为真实 Platform call 接线；
 2. IAM ADR/API/安全设计先对齐 exact profile、数字矩阵与六段依赖，再实现 verifier/OpenAPI/generated SDK；

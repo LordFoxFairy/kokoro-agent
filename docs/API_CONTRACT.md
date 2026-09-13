@@ -10,8 +10,10 @@
 ## HTTP 边界
 
 Agent HTTP 是 `internal-owner`，不是浏览器 API，也不提供 AG-UI/SSE。路由只有 health/readiness、Run
-admission/control/evidence 和 identity-scoped session list/history/replay。所有 `/v1/*` 请求使用 service
-bearer、tenant/subject/actor/assertion trusted context；身份不从 body 推导。
+admission/control/evidence、identity-scoped session list/history/replay 和 exact `/v1/execution-proof/jwks` GET/HEAD。
+除下述匿名例外，所有 `/v1/*` 请求使用 service bearer、tenant/subject/actor/assertion trusted context；身份不从 body 推导。
+匿名例外只有 exact `GET /healthz` and exact `GET|HEAD /v1/execution-proof/jwks`；其他 method/path 均先执行
+service bearer 校验。
 
 成功响应为 `{data, meta:{request_id}}`，错误为
 `{error:{code,message},meta:{request_id}}`。错误 code 稳定且不暴露 SQL、堆栈、provider 原文或 secret。
@@ -47,19 +49,19 @@ System 成功仅 `{data}`，错误 `{error:{code,message,retryable}}`，每个�
 404 ROUTE_NOT_FOUND、403 POLICY_DENIED 不重试；503与传输超时标记暂时故障，客户端不自动重试；
 worker 既有单 Run 失败路径收口，不泄漏上游 message/secret。
 
-## Execution proof machine contract 与 JWKS 目标（2026-09-12，A1 已实现）
+## Execution proof machine contract 与 JWKS 当前态（2026-09-12）
 
-Agent 已发布 owner machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`，以及 owner-authored
-canonical/negative/tampered-signature vectors；两者已进入 provenance 有序 inventory、逐 artifact digest、aggregate digest 和
-`kokoro-agent-contract-check`。A1 没有修改 OpenAPI，也没有 route、signer、key/JWKS、lease reader 或 Platform client 接线，因而不是
-可签发或可验证的授权能力。后续仍按 TECHNICAL_DESIGN §7.5 串行发布；supplier 独立测试、Platform 最终 contract、Agent 真实 client
+Agent A1 artifact 与 A2a signer 已提交：owner machine fact `contract/execution-proof/v1/schema.json` version=`1.0.0`、
+canonical/negative/tampered-signature vectors 和 immutable Ed25519 signer 已分别验收。A2b 当前是待复审候选，增加隔离 key loader、
+public-ring snapshot 与 HTTP JWKS projection；这仍不是端到端授权能力。A2c/consumer、IAM verifier、Platform proof wire 均待实现，
+真实 transport 也尚未接线。后续仍按 TECHNICAL_DESIGN §7.5 串行发布；supplier 独立测试、Platform 最终 contract、Agent 真实 client
 接线与 Platform server cutover 是不同验收门，不能互相冒充。
 
 IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 是当前 owner/方向基线，不是本候选已经发布的消费者契约：该提交仍只写正整数
 `lease_generation`，尚无本节 safe-integer/token 矩阵，也未把六段交付全部展开。第 2 步必须在 IAM ADR、API、verifier、OpenAPI/SDK 与
 测试中消费 Agent 固定 artifact 和同一拒绝向量；不得由 IAM 复制一份可独立漂移的 claims schema。
 
-1. Agent A1 machine artifact 已验；A2 signer/JWKS/run-scoped supplier 仍须独立验收；
+1. Agent A1 machine artifact 与 A2a signer 已验；A2b key/JWKS 是当前待复审候选，A2c run-scoped supplier/consumer 尚待实现；
 2. IAM ADR/API/安全设计对齐后实现 verifier/OpenAPI/generated SDK，并消费同一 strict profile、数字矩阵与 canonical vectors；
 3. Platform owner 发布最终 compact-proof wire、request-binding 与 generated helper；
 4. Agent 真实 Platform client 逐 call 接入 supplier；
@@ -125,21 +127,21 @@ HEAD /v1/execution-proof/jwks
 
 - visibility 为 `internal-owner`；仅通过内部网络暴露。
 - public key 不是 secret，因此该路径是不要求 service bearer 的具名例外；也不接受 bearer 身份作为业务输入。
-- 不接受 tenant/actor/subject/assertion header、query 或 body；带 query/body 的请求返回 400 `invalid_request`。
+- 不接受 tenant/actor/subject/assertion header、query 或 body；带 query/body 的请求返回 400 execution_proof_jwks_invalid_request。
 - GET 200 返回标准 JWKS `{ "keys": [...] }`；HEAD 200 返回相同 status 与 representation headers（`Content-Length` 为 GET 表示长度）但不写 body。
 - key 仅含 `kty="OKP"`、`crv="Ed25519"`、`use="sig"`、`alg="EdDSA"`、唯一 `kid`、32-byte unpadded-base64url `x`；
   禁止 private `d`、`x5c`、`x5u`、`jku`、`jwk` 与额外字段。
 - known path 的非 GET/HEAD 为 405，带 `Allow: GET, HEAD`；unknown v1 path 为 404。
 - 200/400/404/405/503 都发送 `Cache-Control: no-store`；不发送 ETag，不支持 304。IAM 自己的 30 秒 fresh snapshot 是唯一 cache。
-- route 不重定向，完整 canonical response 不超过 64 KiB；兼容 IAM 的 2 秒总 timeout、64 KiB limit、禁止 redirect、per-issuer
+- route 不重定向，JWKS representation body 不超过 64 KiB（不含 HTTP headers）；兼容 IAM 对 response body 的 2 秒总 timeout、64 KiB limit、禁止 redirect、per-issuer
   single-flight、known-key 30 秒 freshness和 fresh unknown-kid最多一次强制 refresh策略。
 - public ring 缺失、格式错误、重复 kid、HTTP active descriptor 缺失或其 kid/thumbprint 不在当前 ring 时 readiness 为 503，JWKS route 也为 503，
   不发布部分 key set。
 
-该 route 后续加入 `contract/openapi/v1/openapi.json`；OpenAPI 只描述 HTTP method/response/JWK shape并引用 Agent-owned proof artifact，
+该 route 已加入 `contract/openapi/v1/openapi.json` 的 HTTP `1.1.0`；OpenAPI 只描述 HTTP method/response/JWK shape并引用 Agent-owned proof artifact，
 operation治理元数据固定 `x-kokoro-permission=none`，不在 OpenAPI 重建 claims schema。`contract/provenance.json` 同时纳入 proof schema；
 当前 `kokoro-agent-contract-check` 已校验 schema、source digest、canonical/signature/JWK vectors、单 bit tampered signature fixture、
-duplicate/token/schema/JCS/base64url/TTL 负向语义；A2 才进行 Ed25519 数学验签与 tampered rejection。
+duplicate/token/schema/JCS/base64url/TTL 负向语义；A2a 已实现并验证 Ed25519 数学签名、自验与 tampered rejection。
 
 ### 调用与错误边界
 
@@ -155,3 +157,9 @@ resource/provider/receipt policy；任一依赖失败都不得复用旧 allow/pr
 正常 rotation 的可观察组合固定为：`ring{old}/http old/worker old` -> `ring{old,new}/http old/worker old` ->
 `ring{old,new}/http old/worker new` -> `ring{old,new}/http new/worker new` -> 等待最后一次 old 签名至少 70 秒 ->
 `ring{new}/http new/worker new`。每阶段覆盖全部 replica；有落后、readiness 失败或 thumbprint 不一致就停止，不带病进入下一阶段。
+
+### HTTP 1.1.0 JWKS current wire (A2b)
+
+Exact anonymous `GET|HEAD /v1/execution-proof/jwks` returns the precomputed RFC 8785 JWK set as `application/jwk-set+json`; GET and HEAD share representation status/type/cache/length and HEAD writes no body. Query markers, transfer/expect framing, identity-header presence, and any content length other than one exact OWS-trimmed `0` are `400 execution_proof_jwks_invalid_request`. Other methods are `405 execution_proof_jwks_method_not_allowed` with `Allow: GET, HEAD`; missing/invalid ring is `503 execution_proof_jwks_unavailable`. All responses are `no-store`, without ETag, 304, redirect, bearer, tenant, or database dependency.
+
+Launch identity remains trusted `X-Kokoro-*` headers. It is not accepted from the launch body. A2c proof supplier, IAM verifier, Platform proof wire, and real transport are not part of HTTP `1.1.0`.

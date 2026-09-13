@@ -12,7 +12,7 @@ kokoro-agent 的进程域：env 一次解析 → 共享件装配 → RunSupervis
 
 - `main.py`：`main()` 标准进程入口；`serve(config, clients)` 是部署装配入口。`AppConfig.from_env`
   单点读 env → 创建 GA 自有 Redis stream + PostgreSQL checkpointer/run_repository/memory/chat → 注入可选 public clients →
-  `AgentFactory` → `RunSupervisor.serve`。标准 CLI 的 owner clients 为空能力，不直读外部私库。
+  `AgentFactory` → `RunSupervisor.serve`。标准 CLI 的 owner clients 为空能力，不直读外部私库。HTTP 已迁至 `interfaces/http/main.py`；worker 不导入 HTTP root/server，A2b private loader 也尚未接入 worker。
   SIGTERM 优雅停机：停消费新请求，`drain` 限时等活跃 run 收尾，超时交 TTL 租约重拾。
 - `dependencies.py`：`WorkerClients` 是部署期可选 owner-client 集；`WorkerDependencies` 集中保存 worker
   warm 时创建一次的模型、checkpoint、run_repository、store、sandbox 和窄 clients。两者都不是 caller

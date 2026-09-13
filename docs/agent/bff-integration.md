@@ -27,24 +27,24 @@
 当前 v1 ingress 由本仓 `kokoro-agent-http` 提供，执行仍由独立的
 `kokoro-agent-worker` 完成：
 
-| 方法 | 路径 | 作用 | 成功 |
-|---|---|---|---|
-| `POST` | `/v1/runs` | launch：durable admission 后投递 Run | `202` |
-| `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
-| `GET` | `/v1/runs/{run_id}/events` | Run evidence，按 `after_seq` 分页 | `200` |
-| `GET` | `/v1/sessions` | identity-scoped durable session list | `200` |
-| `GET` | `/v1/sessions/{session_id}/messages` | 安全 session history | `200` |
-| `GET` | `/v1/sessions/{session_id}/events` | 安全 session replay | `200` |
+| 方法   | 路径                                 | 作用                                 | 成功  |
+| ------ | ------------------------------------ | ------------------------------------ | ----- |
+| `POST` | `/v1/runs`                           | launch：durable admission 后投递 Run | `202` |
+| `POST` | `/v1/runs/{run_id}/control`          | cancel/resume/steer                  | `202` |
+| `GET`  | `/v1/runs/{run_id}/events`           | Run evidence，按 `after_seq` 分页    | `200` |
+| `GET`  | `/v1/sessions`                       | identity-scoped durable session list | `200` |
+| `GET`  | `/v1/sessions/{session_id}/messages` | 安全 session history                 | `200` |
+| `GET`  | `/v1/sessions/{session_id}/events`   | 安全 session replay                  | `200` |
 
-另外提供未经内部认证保护的 `GET /healthz`，以及检查 Agent-owned PostgreSQL/Redis 的
+另外提供未经内部认证保护的 `GET /healthz` 与 exact JWKS `GET/HEAD`，以及检查 public ring 和 Agent-owned PostgreSQL/Redis 的
 `GET /readyz`；`/readyz` 与所有业务路由一样受内部服务认证保护。HTTP ingress 不执行 Agent
 loop，也不把 Redis stream 暴露给 BFF。
 
 ### 请求、认证与响应约束
 
 - `POST /v1/runs` 接受 Agent v1 `LaunchRunRequest` 的 JSON transport 映射：`request_id`、`run_id`、
-  `session_id`、`feature_key`、`execution_identity`、顶层 `message_id`/`content`，以及可选
-  `requested_model_label`/`trace`。
+  `session_id`、`feature_key`、顶层 `message_id`/`content`，以及可选 `requested_model_label`/`trace`。
+  tenant/actor/subject/assertion identity only comes from trusted headers；strict body 使用 `extra=forbid`，不得携带 identity 字段。
 - `POST /v1/runs/{run_id}/control` 接受 `run.cancel`、`run.resume`、`run.steer`；当前 strict
   transport body 要求 `kind`、`session_id`，steer 另需 `message_id`/`content`，resume 还需
   `decisions`。调用方必须发送标准 `Authorization: Bearer <secret>`、`X-Request-Id`（可选）和
@@ -53,7 +53,7 @@ loop，也不把 Redis stream 暴露给 BFF。
   request digest 去重、用 resume fingerprint 做恢复时的 stale 判定。HTTP receipt 只是这条记录的
   transport projection，状态为 `pending`、`succeeded`、`failed`，重复
   请求返回 `replayed: true`，digest 漂移返回 `409 command_digest_mismatch`。
-- 除 `/healthz` 外的请求始终要求配置可信的 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带
+- 匿名例外仅为 exact `GET /healthz` 和 exact JWKS `GET/HEAD`；其余请求始终要求配置可信的 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带
   `Authorization: Bearer <KOKORO_INTERNAL_SECRET_AGENT>`。未配置 secret 时返回
   `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
   session list/history/replay 还必须带
@@ -95,10 +95,10 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 
 当前 Agent ingress/worker 只保留两个基础设施：
 
-| 组件 | Owner | 用途 |
-|---|---|---|
+| 组件       | Owner                          | 用途                                                             |
+| ---------- | ------------------------------ | ---------------------------------------------------------------- |
 | PostgreSQL | Agent/各业务服务各自的 adapter | Durable truth：执行事实、Chat 事实索引及各业务服务自己的领域数据 |
-| Redis | transport/worker owner | stream、队列、lease、heartbeat、wakeup、短缓存和限流 |
+| Redis      | transport/worker owner         | stream、队列、lease、heartbeat、wakeup、短缓存和限流             |
 
 - Web 不连接 PostgreSQL 或 Redis。
 - BFF 不连接 Agent Redis 或 Agent PostgreSQL；BFF 自己的持久化接入也必须通过其业务 adapter。
@@ -120,13 +120,13 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 
 ## 6. 跨仓允许的连接面
 
-| 连接面 | 用途 | 约束 |
-|---|---|---|
-| BFF Chat v1 HTTP | Web → BFF | 根仓契约生成、BFF 自己的鉴权/幂等/错误 envelope |
-| Agent business HTTP v1 | BFF → Agent 业务层 | 只走 HTTP ingress；不直连 Agent PG/Redis；兼容性由双方 contract 测试守住 |
-| Redis worker contract | transport owner → Agent | 只消费已定义 internal envelope；BFF 不直连 |
-| 环境变量/secret | 选择 adapter、endpoint、数据库和 Redis | 不把地址、凭据、key 写入源码或业务 payload |
-| 独立 CI | 各仓自证实现和兼容性 | 不跨仓 import 私有模块，不共享数据库来代替契约 |
+| 连接面                 | 用途                                   | 约束                                                                     |
+| ---------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
+| BFF Chat v1 HTTP       | Web → BFF                              | 根仓契约生成、BFF 自己的鉴权/幂等/错误 envelope                          |
+| Agent business HTTP v1 | BFF → Agent 业务层                     | 只走 HTTP ingress；不直连 Agent PG/Redis；兼容性由双方 contract 测试守住 |
+| Redis worker contract  | transport owner → Agent                | 只消费已定义 internal envelope；BFF 不直连                               |
+| 环境变量/secret        | 选择 adapter、endpoint、数据库和 Redis | 不把地址、凭据、key 写入源码或业务 payload                               |
+| 独立 CI                | 各仓自证实现和兼容性                   | 不跨仓 import 私有模块，不共享数据库来代替契约                           |
 
 不得通过共享源码路径、未发布内部包、手工复制 DTO 或共享运行时数据库建立隐式依赖。
 每个子仓只闭环自己的代码、测试、Docker 和发布门禁；跨仓只交换版本化 contract fixture、
@@ -136,8 +136,8 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 
 - [x] Agent HTTP ingress 支持 launch、control、Run events evidence、session history 和 session replay。
 - [x] BFF 到 Agent 只走版本化 HTTP；BFF 不读取 Agent PostgreSQL/Redis。
-- [x] 除 `/healthz` 外的请求始终由标准 `Authorization: Bearer` 认证；未配置
-  secret 时 fail-closed 返回 `503 service_auth_not_configured`，history/replay 使用受信 identity headers。
+- [x] 匿名例外仅为 exact `/healthz` 与 exact JWKS `GET/HEAD`；其余请求始终由标准 `Authorization: Bearer` 认证；未配置
+      secret 时 fail-closed 返回 `503 service_auth_not_configured`，history/replay 使用受信 identity headers。
 - [x] 响应使用统一 envelope；launch 以不可变 fence 幂等，control 由 Agent command ledger 去重和恢复。
 - [x] BFF session list 通过 Agent durable identity-scoped ingress 投影；detail、title、share、delete、public snapshot、浏览器 SSE/AG-UI 仍由 BFF 自己实现。
 - [x] Agent PostgreSQL + Redis 执行事实、Run/control/HITL、outbox/recovery worker 门禁由本仓测试覆盖。
@@ -147,3 +147,7 @@ KOKORO_AGENT_HTTP_CONTRACT_VERSION=v1
 requested_model_label是System目录的不透明label，不再是provider:name解释语法。worker在实际DeepAgents模型
 实例化前以可信tenant/feature解析；缺省标签由tenant默认路由决定。配置、固定契约pin、错误/恢复边界
 以本仓docs/TECHNICAL_DESIGN §6与docs/API_CONTRACT的System消费节为准。未改变RunRequest或本仓数据库。
+
+## A2b integration note
+
+The JWKS route is an internal anonymous bootstrap exception and does not change BFF run/chat routes. BFF continues sending service bearer plus trusted launch identity headers for existing business operations; it does not put identity or execution proof fields in the launch body. IAM and Platform, not BFF, will consume the proof flow after A2c and their owner contracts are implemented.

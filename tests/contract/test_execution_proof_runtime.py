@@ -31,6 +31,7 @@ RFC8032_SEED = bytes.fromhex(
 )
 _OBJECT: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 SIGNER_PATH = ROOT / "src" / "kokoro_agent" / "execution" / "execution_proof_signer.py"
+KEYS_PATH = ROOT / "src" / "kokoro_agent" / "execution" / "execution_proof_keys.py"
 PROFILE_PATH = (
     ROOT / "src" / "kokoro_agent" / "execution" / "execution_proof_profile.py"
 )
@@ -161,8 +162,14 @@ def _production_source_violations(path: Path, source: str) -> tuple[list[str], i
             ):
                 violations.append("unapproved jwt from-import")
             resolved = _resolved_from_imports(path, node)
-            if SIGNER_MODULE in resolved and path != SIGNER_PATH:
-                violations.append("signer import outside signer")
+            if SIGNER_MODULE in resolved and path not in {SIGNER_PATH, KEYS_PATH}:
+                violations.append("signer import outside approved modules")
+            if path == KEYS_PATH and SIGNER_MODULE in resolved:
+                if {alias.name for alias in node.names} != {
+                    "ExecutionProofSigner",
+                    "ExecutionProofSignerConfig",
+                }:
+                    violations.append("keys signer import shape is invalid")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if (
                 isinstance(node.func.value, ast.Name)
@@ -174,6 +181,21 @@ def _production_source_violations(path: Path, source: str) -> tuple[list[str], i
                     violations.append("jwt.encode outside signer")
     if path == SIGNER_PATH and plain_jwt_imports != 1:
         violations.append("signer must have one plain jwt import")
+    if path.is_relative_to(PRODUCTION_ROOT):
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "issue_execution_proof"
+            ):
+                violations.append("production proof issue call is forbidden before A2c")
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ExecutionProofSigner"
+                and path != KEYS_PATH
+            ):
+                violations.append("signer construction outside key loader")
     return violations, jwt_encode_calls
 
 
@@ -290,6 +312,26 @@ def test_runtime_ast_gate_detects_package_reexport_or_its_consumer() -> None:
     )
 
     assert package_violations or consumer_violations
+
+
+def test_runtime_ast_gate_allows_only_key_loader_construction_and_no_issue_calls() -> (
+    None
+):
+    key_source = KEYS_PATH.read_text(encoding="utf-8")
+    violations, _ = _production_source_violations(KEYS_PATH, key_source)
+    assert violations == []
+
+    consumer = ROOT / "src" / "kokoro_agent" / "worker" / "consumer.py"
+    bad_constructor, _ = _production_source_violations(
+        consumer,
+        "from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner\nExecutionProofSigner(config)",
+    )
+    bad_issue, _ = _production_source_violations(
+        KEYS_PATH,
+        "from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner, ExecutionProofSignerConfig\nsigner.issue_execution_proof(value)",
+    )
+    assert bad_constructor
+    assert bad_issue
 
 
 def test_runtime_ast_gate_does_not_reject_unrelated_same_named_method() -> None:

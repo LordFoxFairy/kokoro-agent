@@ -8,15 +8,15 @@ IAM、Model 的业务 API 由各自 owner 维护，Agent 只通过窄 client por
 
 ## 1. 代码与契约归属
 
-| 内容 | 本仓位置 | 职责 |
-|---|---|---|
-| HTTP ingress | `src/kokoro_agent/interfaces/http/` | v1 请求校验、可信上下文、admission、响应与错误映射 |
-| 执行 command/event | `src/kokoro_agent/protocol/` | Agent-owned 严格 Pydantic wire；不包含其他 owner 的数据库模型 |
-| Application | `src/kokoro_agent/application/`、`execution/` | 用例、DTO、Run/control/HITL 和安全产品投影 |
-| Repository port/records | `src/kokoro_agent/domain/<context>/` | Agent 自己的运行持久化边界；port 与 record 按 context 放置 |
-| 数据库/Redis 实现 | `src/kokoro_agent/infrastructure/`、`streams/` | PostgreSQL、checkpoint 与 Redis 技术实现 |
-| Schema operator | `src/kokoro_agent/application/schema.py` | 从受管环境映射到 infrastructure 的 canonical fresh install |
-| Workspace naming | `src/kokoro_agent/sandbox/workspace.py` | Agent 本地/S3 工作区 key；不是 Storage 服务契约 |
+| 内容                    | 本仓位置                                       | 职责                                                          |
+| ----------------------- | ---------------------------------------------- | ------------------------------------------------------------- |
+| HTTP ingress            | `src/kokoro_agent/interfaces/http/`            | v1 请求校验、可信上下文、admission、响应与错误映射            |
+| 执行 command/event      | `src/kokoro_agent/protocol/`                   | Agent-owned 严格 Pydantic wire；不包含其他 owner 的数据库模型 |
+| Application             | `src/kokoro_agent/application/`、`execution/`  | 用例、DTO、Run/control/HITL 和安全产品投影                    |
+| Repository port/records | `src/kokoro_agent/domain/<context>/`           | Agent 自己的运行持久化边界；port 与 record 按 context 放置    |
+| 数据库/Redis 实现       | `src/kokoro_agent/infrastructure/`、`streams/` | PostgreSQL、checkpoint 与 Redis 技术实现                      |
+| Schema operator         | `src/kokoro_agent/application/schema.py`       | 从受管环境映射到 infrastructure 的 canonical fresh install    |
+| Workspace naming        | `src/kokoro_agent/sandbox/workspace.py`        | Agent 本地/S3 工作区 key；不是 Storage 服务契约               |
 
 旧 `contract/storage.py` 中的 BSON、Skill/MCP document、collection 与跨仓 receipt 镜像已退出运行包。
 本仓也不保留未接线的 Root-generated gRPC consumer。
@@ -26,16 +26,17 @@ IAM、Model 的业务 API 由各自 owner 维护，Agent 只通过窄 client por
 HTTP ingress 只负责 transport/admission；Agent 执行由独立的 `kokoro-agent-worker` 进程完成。
 BFF 只调用版本化入口，不读 Agent PostgreSQL、Redis、checkpoint 或 RunRepository。
 
-| 方法 | 路径 | 作用 | 成功 |
-|---|---|---|---|
-| `GET` | `/healthz` | 进程存活 | `200` |
-| `GET` | `/readyz` | PostgreSQL + Redis 可用 | `200` |
-| `POST` | `/v1/runs` | durable admission 后投递 Run | `202` |
-| `POST` | `/v1/runs/{run_id}/control` | cancel/resume/steer | `202` |
-| `GET` | `/v1/runs/{run_id}/events` | 内部执行证据，按 `after_seq` 分页 | `200` |
-| `GET` | `/v1/sessions` | identity-scoped 会话摘要 | `200` |
-| `GET` | `/v1/sessions/{session_id}/messages` | 安全 Chat history | `200` |
-| `GET` | `/v1/sessions/{session_id}/events` | 安全 Chat replay | `200` |
+| 方法       | 路径                                 | 作用                                  | 成功  |
+| ---------- | ------------------------------------ | ------------------------------------- | ----- |
+| `GET`      | `/healthz`                           | 进程存活                              | `200` |
+| `GET`      | `/readyz`                            | public ring + PostgreSQL + Redis 可用 | `200` |
+| `GET/HEAD` | `/v1/execution-proof/jwks`           | 匿名读取 exact public JWK set         | `200` |
+| `POST`     | `/v1/runs`                           | durable admission 后投递 Run          | `202` |
+| `POST`     | `/v1/runs/{run_id}/control`          | cancel/resume/steer                   | `202` |
+| `GET`      | `/v1/runs/{run_id}/events`           | 内部执行证据，按 `after_seq` 分页     | `200` |
+| `GET`      | `/v1/sessions`                       | identity-scoped 会话摘要              | `200` |
+| `GET`      | `/v1/sessions/{session_id}/messages` | 安全 Chat history                     | `200` |
+| `GET`      | `/v1/sessions/{session_id}/events`   | 安全 Chat replay                      | `200` |
 
 Session detail、title、share、delete 和 public snapshot 属于 BFF，不通过直接访问 Agent 数据库补齐。
 
@@ -45,9 +46,10 @@ Session detail、title、share、delete 和 public snapshot 属于 BFF，不通�
 
 ### Run admission
 
-`POST /v1/runs` 接受 `request_id`、`run_id`、`session_id`、`feature_key`、`execution_identity`、顶层
-`message_id`、`content`，以及可选的 `requested_model_label`、`trace`。HTTP ingress 将其校验后映射为
-本仓内部 `RunRequest`，其中消息放在 `input` 对象。两种 transport shape 不形成两个业务 owner。
+`POST /v1/runs` 接受 `request_id`、`run_id`、`session_id`、`feature_key`、顶层 `message_id`、`content`，以及可选的
+`requested_model_label`、`trace`。tenant/actor/subject/assertion identity 只来自 trusted headers；body 使用 `extra=forbid`，
+不得包含 identity 字段。HTTP ingress 将请求映射为本仓内部 `RunRequest`，其中消息放在 `input` 对象。两种 transport shape
+不形成两个业务 owner。
 
 Agent 在自己的 `run_dispatches` 中保存不可变 request digest，随后发布 `REQUESTS_STREAM`。
 同一 `run_id` 和 body 重试复用 receipt；body 漂移返回 `409 run_identity_conflict`。
@@ -63,7 +65,7 @@ HTTP receipt 状态为 `pending`、`succeeded`、`failed`，是同一条控制�
 
 ## 3. 认证、上下文与响应
 
-除 `/healthz` 外，入口要求 `KOKORO_INTERNAL_SECRET_AGENT` 和标准 `Authorization: Bearer <secret>`。
+The anonymous exceptions are exact `GET /healthz` and exact `GET|HEAD` JWKS; all other ingress requires `KOKORO_INTERNAL_SECRET_AGENT` and standard `Authorization: Bearer <secret>`.
 未配置 secret 返回 `503 service_auth_not_configured`；认证缺失或错误返回 `401 service_auth_failed`。
 
 Session query/replay 通过 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、
@@ -123,3 +125,7 @@ LangChain checkpoint 与 Agent 的 `chat_messages`、`chat_events` 分开。Agen
 requested_model_label是System目录的不透明label，不再是provider:name解释语法。worker在实际DeepAgents模型
 实例化前以可信tenant/feature解析；缺省标签由tenant默认路由决定。配置、固定契约pin、错误/恢复边界
 以本仓docs/TECHNICAL_DESIGN §6与docs/API_CONTRACT的System消费节为准。未改变RunRequest或本仓数据库。
+
+## Execution-proof JWKS (HTTP 1.1.0)
+
+Agent publishes exact anonymous `GET|HEAD /v1/execution-proof/jwks` inside the trusted service network. Consumers pin the owner repository/commit plus `contract/openapi/v1/openapi.json` version `1.1.0` and its direct provenance SHA. Launch actor/subject/tenant/assertion values remain trusted headers, never self-reported body fields. IAM verification and Platform proof transport remain subsequent serial slices.

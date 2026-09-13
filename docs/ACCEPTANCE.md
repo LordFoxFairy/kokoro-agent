@@ -59,3 +59,7 @@ Root 主工作树实跑证据（2026-09-08）：
 - `git diff --check`：通过；Root 串行提交，实际 SHA 由交付报告和 System 唯一任务表记录。
 
 live System / LiteLLM smoke 随 System G5/G6 验收；不会把 HTTPX MockTransport 称为真实 owner 集成。
+
+### A2b execution-proof acceptance
+
+Acceptance requires strict private/public file matrices (including nonblocking FIFO and fd closure), RFC 7638 A1 KAT, immutable/degraded snapshots, raw-socket JWKS method/framing/header precedence, no auth/dependency calls for JWKS, readiness-before-dependencies, health continuity, OpenAPI/provenance mutation gates, separated installed entrypoint smoke, full default tests, and existing real PostgreSQL/Redis ingress regression. SIGINT/SIGTERM must stop new business admission, report readiness as draining, let each active handler drain within the fixed bound, preserve any declared response that completes inside it, and release the port; active handler 在固定 2 秒 deadline 内 drain，但 Python threads are not claimed to be forcibly cancellable after timeout. A2b does not count A2c supplier, IAM/Platform verification, or real proof transport as complete.

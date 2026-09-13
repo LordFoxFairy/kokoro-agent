@@ -30,7 +30,7 @@ worker -> 启动装配与 Redis ingress，不成为 Domain 的依赖
 - HTTP：`contract/openapi/v1/openapi.json`
 - Redis command/event：`src/kokoro_agent/protocol/`
 - PostgreSQL：`database/schema.sql`，只有 fresh install，没有历史迁移链
-- 配置：只由 `worker/main.py` 读取环境并注入
+- 配置：`worker/main.py`、`interfaces/http/main.py` 与 `application/schema.py` 分别只解析自身进程/操作边界；HTTP root 不加载 worker/private 配置
 - 真实依赖：共享 PostgreSQL 与 Redis；不重复创建已有容器
 
 ## 工作协议

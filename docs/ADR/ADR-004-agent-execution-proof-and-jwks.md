@@ -1,6 +1,6 @@
 # ADR-004：Agent execution proof 与 public JWKS
 
-- 状态：Accepted；A1 machine artifact 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证；A2b/A2c 待串行实现
+- 状态：Accepted；A1 machine artifact 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证；A2b key/JWKS implementation candidate 已落地；A2c 待串行实现
 - 日期：2026-09-11
 - 决策 owner：`kokoro-agent`（proof schema/canonical bytes、lease-aware signer、private key 与 public JWKS）
 - 关联 owner：`kokoro-iam@bf160be173ef473bebe8e4a93b74ec52c230f180`（proof verification/current authorization/audit）；
@@ -10,8 +10,7 @@
 
 Agent 已持久化 canonical `RunRequest`、typed `ExecutionIdentity` 与 monotonic `LeaseFence.generation`，并在 A1 发布 proof machine
 schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 checker。A2a pure exact profile 与 Ed25519 signer 已通过
-SPEC/QUALITY 与 Root 验证，但没有 production caller；仍没有 private signing-key provider、
-JWKS route、lease-aware supplier 或 Platform client 接线。
+SPEC/QUALITY 与 Root 验证，但没有 production caller；A2b 已落地隔离 private signing-key loader、strict public ring 与 HTTP JWKS route，worker 尚未装配private loader，且仍没有 lease-aware supplier 或 Platform client 接线。
 Capability 当前的临时 attestation/wire 不是 Agent/IAM 已发布契约；IAM ADR-005 已裁决
 新 verifier 必须等待 Agent owner artifact，Platform 必须等待 IAM generated SDK。
 
@@ -31,7 +30,7 @@ OpenAPI/SDK 与 consumer tests 消费同一 schema/vectors；IAM 不拥有或复
 Agent 已新增唯一 decoded-profile machine fact `contract/execution-proof/v1/schema.json`，version=`1.0.0`，并将 schema/vectors 纳入
 `contract/provenance.json` 与 `kokoro-agent-contract-check`；固定 test vector验证 protected header、claims、JCS UTF-8 bytes、unpadded
 base64url signing input、64-byte Ed25519 signature shape、JWK 与 one-bit tampered signature recomposition。A2a runtime test 现以 RFC 8032
-seed复现 exact positive compact proof，并用派生 public key自验、拒绝 one-bit tamper；未来 OpenAPI 只描述 JWKS HTTP projection，不复制claims schema。
+seed复现 exact positive compact proof，并用派生 public key自验、拒绝 one-bit tamper；A2b OpenAPI `1.1.0` 已描述 JWKS HTTP projection，且不复制claims schema。
 
 protected header 精确为 `typ=kokoro-agent-execution+jwt`、`alg=EdDSA`、`kid`。claims 精确为 `contract_version`、`iss`、`aud`、
 `tenant_ref`、typed `actor`/`subject`、`run_id`、`execution_session_id`、JSON safe integer `lease_generation`、exact `operation`、lowercase 64-hex
@@ -73,12 +72,12 @@ lease query 与 Ed25519 signature/网络请求不是原子事务；generation �
 public-ring reader/JWKS handler 放在既有 `src/kokoro_agent/interfaces/http/`；client call site在既有 Skills/MCP adapter中接收 supplier。
 不新建顶层 auth/attestation/ports，不污染 `protocol/`，不让 supervisor 组装 JWT。
 
-worker 与 HTTP 是同一 package 的两个进程，但 key 配置严格分离。worker 只解析 private key file 及 worker active
-`kid/thumbprint`；HTTP 只解析 public ring 及 HTTP active `kid/thumbprint`。worker 从 private key 派生并核对，HTTP 从 ring 核对；
+worker 与 HTTP 是同一 package 的两个进程，但 key 配置严格分离。A2b 提供 worker-only private key file 与 active
+`kid/thumbprint` descriptor/loader，却不在没有 A2c consumer 时让 worker 解析它；HTTP 只解析 public ring 及 HTTP active `kid/thumbprint`。loader 从 private key 派生并核对，HTTP 从 ring 核对；
 不一致分别阻止 worker 消费和 HTTP readiness。两个 descriptor 在 rotation 中间阶段允许不同，跨进程组合由部署阶段门验证。HTTP 对象、
 配置摘要与错误路径永远不持有 private path/bytes/provider。
 
-private key 必须以 `O_NOFOLLOW` 打开并在同一 fd 上 `fstat`，来自 effective UID持有、mode `0400`或`0600`的regular file，内容非空、
+private key final component必须以 `O_NOFOLLOW|O_NONBLOCK` 打开并在同一 fd 上 `fstat`；parent directory由受信secret-mount deployment boundary负责。final来自 effective UID持有、mode `0400`或`0600`的regular file，内容非空、
 有界且只含单一 PKCS#8 Ed25519 key，不允许 environment plaintext。HTTP public ring也从受信non-symlink regular file有界读取，
 只允许 strict OKP/Ed25519 signing JWK且绝不含 `d`。所有 key/proof/signature/binding/identity assertion 均按 SECURITY 脱敏。
 
@@ -88,7 +87,7 @@ private key 必须以 `O_NOFOLLOW` 打开并在同一 fd 上 `fstat`，来自 ef
 规则的具名匿名例外；不接受 tenant、identity、query或 body。GET 返回标准 JWKS，HEAD 同 status与representation headers（包括GET
 表示长度）但不写 body；known path其他 method为
 405并发送 `Allow: GET, HEAD`，unknown为404。所有响应 `Cache-Control: no-store`，无 ETag/304，避免中间 cache 与 IAM 30秒 snapshot叠加。
-route不重定向，完整canonical response不超过64 KiB，兼容IAM的2秒total timeout、64 KiB limit、no redirect、per-issuer single-flight、
+route不重定向，JWKS representation body不超过64 KiB（不含 HTTP headers），兼容IAM client对response body的2秒total timeout、64 KiB limit、no redirect、per-issuer single-flight、
 known-key 30秒freshness和unknown-kid最多一次refresh。OpenAPI operation固定`x-kokoro-permission=none`。
 
 正常多副本 rotation 的允许组合依次为：
@@ -186,5 +185,4 @@ header/claim/alg/typ/kid/aud/iss/TTL/skew/jti；private file type/owner/mode/sym
 schema/OpenAPI/provenance/package drift；以及真实 Agent signer -> IAM verifier -> Platform receipt sandbox。所有证据绑定同一commit。
 
 本 ADR 的 A1 machine artifact/source/dependency/test 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证，
-且没有 production caller。private loader、key/JWKS、statement-time lease supplier、Platform client、
-IAM verifier 与跨仓 sandbox 仍按既定顺序待实现。
+且没有 production caller。A2b private loader、public key ring/JWKS 与 HTTP `1.1.0` direct pin 已形成实现候选；worker signer gate、statement-time lease supplier、Platform client、IAM verifier 与跨仓 sandbox 仍按既定顺序待实现。

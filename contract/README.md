@@ -16,13 +16,13 @@ BFF 是浏览器 Product API 和 AG-UI projection 的 owner；Capability、Stora
 
 ## Visibility
 
-本契约所有 HTTP operation 都是 `internal-owner`，只供 BFF 或受信服务调用；除 `/healthz` 外需要
+本契约所有 HTTP operation 都是 `internal-owner`，只供 BFF 或受信服务调用；除 `/healthz` 与 exact `GET|HEAD /v1/execution-proof/jwks` 外需要
 Agent service bearer credential，`/v1/*` 还需要由受信调用方传入的 tenant、subject、actor 和 IAM
 assertion headers。浏览器不得直接调用此服务。每个 operation 的 `x-kokoro-*` 扩展是机器可审查治理元数据。
 
 ## Version
 
-当前 HTTP contract version 为 `1.0.0`，路径版本为 `/v1`。Protobuf/RPC 不在本仓发布；Redis envelope
+当前 HTTP contract version 为 `1.1.0`，路径版本为 `/v1`。Protobuf/RPC 不在本仓发布；Redis envelope
 的 `kind` 集合由 `protocol/control.py` 和 `protocol/events.py` 的严格模型定义。Breaking change 必须
 新建 `/v2` 或新的消息版本，并在 ADR 中记录，不通过修改文档标题伪装成兼容变更。
 
@@ -52,7 +52,7 @@ BFF consumer contract test 验证。
 ## Provenance
 
 contract source 与实现属于同一个 Git commit；`contract/provenance.json` 的 `source_files` 必须精确等于
-checker 内置的完整有序 owner inventory，且同时记录 execution-proof schema/vector 各自 digest 和 aggregate
+checker 内置的完整有序 owner inventory，同时记录 HTTP `1.1.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
 digest。消费者固定 `repository + commit + version + schema path/hash + vectors path/hash`，不把会随无关
 OpenAPI/protocol 变化的 aggregate 当作 proof digest。重新计算 provenance 后，必须把 contract、测试和文档放在同一逻辑 commit 中。运行时
 事件的持久化顺序由 PostgreSQL ledger/receipt owner 保证，Redis 只是可重放传输，不是公开协议事实源。

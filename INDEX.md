@@ -2,8 +2,9 @@
 
 ## 运行入口
 
-- `src/kokoro_agent/worker/main.py`：worker/http 启动装配入口；worker 环境读取在此完成。
-- `src/kokoro_agent/interfaces/http/`：Agent-owned HTTP ingress；不执行浏览器 SSE/AG-UI。
+- `src/kokoro_agent/worker/main.py`：worker 启动装配入口；只读取 worker 环境。
+- `src/kokoro_agent/interfaces/http/main.py`：HTTP-only 启动装配入口；只读取 HTTP 业务配置与 public JWKS descriptor。
+- `src/kokoro_agent/interfaces/http/`：Agent-owned HTTP ingress 与 immutable public-ring projection；不持有 private key，不执行浏览器 SSE/AG-UI。
 - `src/kokoro_agent/application/schema.py`：canonical schema operator use case；CLI 与 worker 共同导入。
 - `src/kokoro_agent/worker/supervisor.py`：Redis dispatch、lease fencing、control 和终态收口。
 - `src/kokoro_agent/agent_factory.py`：唯一 DeepAgents native runnable 构造入口。

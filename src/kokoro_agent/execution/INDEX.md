@@ -36,7 +36,8 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   operation/binding/JTI/TTL 校验，以及不做 Unicode normalization 的 RFC 8785 UTF-8 和 canonical unpadded base64url。
 - `execution_proof_signer.py`：immutable issuer/kid/Ed25519 private-key config 与 `ExecutionProofSigner`；使用 PyJWT
   public `jwt.encode(..., json_encoder=...)`，并在返回前逐段核对预计算 JCS bytes、64-byte signature、16 KiB 上限和派生公钥自验。
-  本切片没有 production caller；后续只有 run-scoped `execution_proof_supplier.py` 可在真实 Platform call 前调用。
+  当前没有 production issue caller；后续只有 run-scoped `execution_proof_supplier.py` 可在真实 Platform call 前调用。
+- `execution_proof_keys.py`：worker-only strict immutable descriptor 与 private PKCS#8 Ed25519 loader；以 nofollow/nonblock fd snapshot、RFC 7638 thumbprint和challenge核对后构造唯一 signer。worker root 尚未装配它。
 
 ## 关键协作者
 
@@ -51,7 +52,7 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 - emit 用 `exclude_none` 上 wire：null 会被 BFF Chat 的契约校验拒收。
 - 工具中途 interrupt 被 langgraph 浮现为 error=Interrupt repr：按前缀识别、抑制伪 returned。
 - execution proof signer 不读环境、文件、数据库或网络，不记录或返回 private key/path、signature、JTI、完整 binding；
-  private loader、JWKS、statement-time lease supplier 和真实 client 装配尚未实现。
+  private loader 与 HTTP public JWKS snapshot 已实现；worker signer gate、statement-time lease supplier 和真实 client 装配尚未实现。
 
 ## 扩展规则
 

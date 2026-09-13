@@ -93,8 +93,7 @@ owner；IAM 只验证 proof 并重验当前 IAM 事实，Platform 只拥有 Skil
 固定交付顺序见 §7.5；任何阶段都不创建临时 wire、手写兼容 DTO、fallback 或双读。
 
 A1 当前已发布 strict decoded-profile schema、canonical/negative/one-bit-tampered vectors、provenance pins 和薄 OpenAPI+
-proof-checker 编排；proof 专项校验集中在 `src/kokoro_agent/execution_proof_contract.py`。A1 未实现 runtime profile/signer、private/public
-key 读取、JWKS HTTP projection、database-clock lease reader、run-scoped supplier 或 Platform adapter 接线，不能作为可用授权能力。
+proof-checker 编排；proof 专项校验集中在 `src/kokoro_agent/execution_proof_contract.py`。A2a 已实现 pure runtime profile/signer；A2b 当前实现 private loader、anchored public-ring snapshot、JWKS HTTP projection 与独立 HTTP root。worker 尚未装配 private loader，database-clock lease reader、run-scoped supplier、IAM verifier 与 Platform adapter 接线仍未实现，不能作为端到端授权能力。
 
 该 IAM 固定提交目前只把 `lease_generation` 描述为正整数，尚未固定本节的 JSON safe-integer 上界、原始 integer-token/
 `1.0` 拒绝规则；其 ADR-005 的交付段也尚未拆出 Agent 真实 Platform client 接线与 Platform fresh/completed-replay receipt 两个门。
@@ -110,7 +109,7 @@ Agent 已固定 artifact 消费同一数字矩阵与六段依赖，再称跨仓�
 | 目标职责 | 每次真实 Platform 出站调用前，使用 canonical Run、当前 execution identity、同一 run/owner/generation 的未过期 lease、Platform 边界已校验的 operation/binding 即时签发；proof 不缓存                                                       |
 | 采用位置 | `execution/` 保存纯 profile/canonicalization、signer、worker-only private-key provider 与 run-scoped proof supplier；现有 Platform client adapter 接收 supplier；`interfaces/http/` 保存 HTTP-only public-ring reader/JWKS handler        |
 | 淘汰位置 | 不新建顶层 `auth`/`attestation`/`ports`，不把签名塞进 `protocol/`，不在 supervisor 或 `build_deep_agent` 中拼 compact JWT，不让 IAM 反向读取 Run，也不让 Platform 自签或验签                                                              |
-| 进程隔离 | worker 只装配 signer private-key settings/provider；HTTP 只装配 public-ring settings/handler。两者使用不同配置类型、启动检查、readiness 状态和脱敏日志，HTTP 对象图不得包含 private path/bytes/provider                                   |
+| 进程隔离 | A2b 提供 worker-only signer private-key settings/provider，但尚不接入 worker；HTTP 已只装配 public-ring settings/handler。两者使用不同配置类型、启动检查、readiness 状态和脱敏日志，HTTP 对象图不得包含 private path/bytes/provider |
 | 数据     | 复用 canonical Run/lease；本设计不加表、列、Redis key、nonce receipt 或 key store                                                                                                                                                         |
 
 实现时按真实变化原因拆文件，不把 schema model、key I/O、签发编排和 HTTP handler 混成单文件。Signer 依赖注入 UTC clock、
@@ -152,8 +151,8 @@ proof supplier；每次出站前重新验 lease、生成新 `jti` 并签发，�
 当前机器事实为 `contract/execution-proof/v1/schema.json`，version=`1.0.0`。它定义 decoded protected header 与 claims 的
 strict JSON Schema，`additionalProperties=false`，并以扩展元数据固定 compact JWS、RFC 8785/JCS、UTF-8 和 unpadded base64url。
 A1 已把该文件和 vectors 加入 `contract/provenance.json.source_files` 与 `kokoro-agent-contract-check`，并提供固定 header、payload、
-signing-input、signature/JWK、one-bit tampered signature 与语义负向 vectors；OpenAPI 仍未新增 JWKS route，未来只引用 JWKS response，
-不复制 claims schema。
+signing-input、signature/JWK、one-bit tampered signature 与语义负向 vectors；A2b OpenAPI `1.1.0` 已新增 JWKS route，并只引用
+`ExecutionProofJwkSet` response component，不复制 claims schema。
 
 protected header 只有 `typ=kokoro-agent-execution+jwt`、`alg=EdDSA`、非空 `kid`。claims 只有
 `contract_version="1.0.0"`、`iss`、固定 `aud=https://kokoro.dev/resources/iam-execution-authorization`、`tenant_ref`、typed
@@ -192,8 +191,8 @@ HTTP 只加载 public ring。每个 key 必须严格为 Ed25519 public JWK：`kt
 policy 暴露。GET 返回标准 `{ "keys": [...] }`，HEAD 返回同 status 与 representation headers（包括 GET 表示长度）但不写 body；
 已知路径其他 method 返回 405 与
 `Allow: GET, HEAD`，未知路径返回 404。所有响应 `Cache-Control: no-store`，不生成 ETag/304，使 IAM 的 30 秒内存 snapshot 成为唯一
-freshness cache，避免代理 cache 叠加撤销延迟。route 不重定向，完整 canonical response 必须小于等于 64 KiB；这与 IAM 固定的
-2 秒总 timeout、64 KiB response limit、禁止 redirect、per-issuer single-flight、known-key 30 秒 freshness和 unknown-kid 最多一次
+freshness cache，避免代理 cache 叠加撤销延迟。route 不重定向，JWKS representation body 必须小于等于 64 KiB（不含 HTTP headers）；这与 IAM client 固定的
+2 秒总 timeout、64 KiB response-body limit、禁止 redirect、per-issuer single-flight、known-key 30 秒 freshness和 unknown-kid 最多一次
 强制 refresh策略兼容。OpenAPI operation 明确 `x-kokoro-permission=none`，不能让匿名公钥读取被误解为 IAM authorization grant。
 
 正常 rotation 固定状态机为：
@@ -227,3 +226,9 @@ machine schema 与 strict parser 向量必须逐字段覆盖：`2^53-1=900719925
 `2^53=9007199254740992`、`2^53+1=9007199254740993`、0、负数、JSON boolean 和 float。`lease_generation` 只接受
 1..2^53-1；`iat/exp` 的 0 与 2^53-1 先通过 type/range 层，再由 `exp>iat` 与 current-time policy 裁决；其余越界/type 样本都在
 crypto 前拒绝，且不截断或转成 string。
+
+### A2b current implementation boundary (2026-09-12)
+
+A2b separates three lifetimes: `execution_proof_keys.py` owns worker-only private PKCS#8 loading and signer construction; `interfaces/http/execution_proof_jwks.py` owns an anchored immutable public-ring snapshot; `interfaces/http/main.py` owns only HTTP business configuration and the public descriptor. The HTTP process never imports worker, private loader, signer, provider, model, sandbox, or MCP configuration. The OpenAPI `1.1.0` JWKS route is dispatched before body/auth/identity/dependency creation. Private parent directories remain a deployment-trusted secret-mount boundary; the public ring performs the stricter anchored parent walk.
+
+This slice still has zero production `issue_execution_proof` calls. Worker signer gating, statement-time lease supplier, Platform transport/call sites, IAM verification, and the real cross-owner transport remain A2c/later work.

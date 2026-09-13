@@ -318,21 +318,19 @@ class AppConfig(BaseModel):
         return frozenset(name.strip() for name in items if name.strip())
 
 
-def _mask_secret(value: object) -> object:
-    """secret 只留头尾（绝不打全值）：短值整体打码，长值 head…tail。"""
-    if isinstance(value, SecretStr):
-        raw = value.get_secret_value()
-        if not raw:
-            return None
-        if len(raw) <= 8:
-            return "****"
-        return f"{raw[:3]}…{raw[-2:]}"
-    return value
-
-
 def log_config_summary(config: AppConfig, logger: logging.Logger) -> None:
-    """启动期打印扁平配置快照（仅叶子字段，不触发域视图装配），secret 掩码。"""
-    summary = {
-        name: _mask_secret(getattr(config, name)) for name in type(config).model_fields
-    }
-    logger.info("kokoro-agent config: %s", summary)
+    """Log only explicitly safe worker configuration facts."""
+    logger.info(
+        "kokoro-agent config: %s",
+        {
+            "metrics_port": config.metrics_port,
+            "lease_ttl_s": config.lease_ttl_s,
+            "lease_heartbeat_s": config.lease_heartbeat_s,
+            "recursion_limit": config.recursion_limit,
+            "drain_timeout_s": config.drain_timeout_s,
+            "service_auth_configured": config.internal_secret_agent is not None,
+            "system_endpoint_configured": config.system_base_url is not None,
+            "model_gateway_configured": config.litellm_base_url is not None,
+            "search_provider_configured": config.search_provider is not None,
+        },
+    )

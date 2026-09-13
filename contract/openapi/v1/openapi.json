@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "servers": [
     {
@@ -80,11 +80,7 @@
         "required": false,
         "schema": {
           "type": "string",
-          "enum": [
-            "user",
-            "project",
-            "service"
-          ],
+          "enum": ["user", "project", "service"],
           "default": "user"
         }
       },
@@ -103,11 +99,7 @@
         "required": false,
         "schema": {
           "type": "string",
-          "enum": [
-            "user",
-            "project",
-            "service"
-          ],
+          "enum": ["user", "project", "service"],
           "default": "user"
         }
       },
@@ -186,17 +178,11 @@
     "schemas": {
       "Health": {
         "type": "object",
-        "required": [
-          "status",
-          "service"
-        ],
+        "required": ["status", "service"],
         "properties": {
           "status": {
             "type": "string",
-            "enum": [
-              "ok",
-              "ready"
-            ]
+            "enum": ["ok", "ready"]
           },
           "service": {
             "type": "string",
@@ -207,9 +193,7 @@
       },
       "Meta": {
         "type": "object",
-        "required": [
-          "request_id"
-        ],
+        "required": ["request_id"],
         "properties": {
           "request_id": {
             "type": "string",
@@ -220,10 +204,7 @@
       },
       "Error": {
         "type": "object",
-        "required": [
-          "code",
-          "message"
-        ],
+        "required": ["code", "message"],
         "properties": {
           "code": {
             "type": "string",
@@ -242,10 +223,7 @@
       },
       "ErrorEnvelope": {
         "type": "object",
-        "required": [
-          "error",
-          "meta"
-        ],
+        "required": ["error", "meta"],
         "properties": {
           "error": {
             "$ref": "#/components/schemas/Error"
@@ -258,18 +236,11 @@
       },
       "IdentityRef": {
         "type": "object",
-        "required": [
-          "kind",
-          "opaque_ref"
-        ],
+        "required": ["kind", "opaque_ref"],
         "properties": {
           "kind": {
             "type": "string",
-            "enum": [
-              "user",
-              "project",
-              "service"
-            ]
+            "enum": ["user", "project", "service"]
           },
           "opaque_ref": {
             "type": "string",
@@ -352,11 +323,7 @@
       },
       "LaunchReceipt": {
         "type": "object",
-        "required": [
-          "run_id",
-          "session_id",
-          "replayed"
-        ],
+        "required": ["run_id", "session_id", "replayed"],
         "properties": {
           "run_id": {
             "type": "string",
@@ -374,10 +341,7 @@
       },
       "CancelControl": {
         "type": "object",
-        "required": [
-          "kind",
-          "session_id"
-        ],
+        "required": ["kind", "session_id"],
         "properties": {
           "kind": {
             "type": "string",
@@ -392,12 +356,7 @@
       },
       "SteerControl": {
         "type": "object",
-        "required": [
-          "kind",
-          "session_id",
-          "message_id",
-          "content"
-        ],
+        "required": ["kind", "session_id", "message_id", "content"],
         "properties": {
           "kind": {
             "type": "string",
@@ -422,10 +381,7 @@
         "oneOf": [
           {
             "type": "object",
-            "required": [
-              "type",
-              "tool_id"
-            ],
+            "required": ["type", "tool_id"],
             "properties": {
               "type": {
                 "const": "approve"
@@ -443,11 +399,7 @@
           },
           {
             "type": "object",
-            "required": [
-              "type",
-              "tool_id",
-              "args"
-            ],
+            "required": ["type", "tool_id", "args"],
             "properties": {
               "type": {
                 "const": "edit"
@@ -465,10 +417,7 @@
           },
           {
             "type": "object",
-            "required": [
-              "type",
-              "tool_id"
-            ],
+            "required": ["type", "tool_id"],
             "properties": {
               "type": {
                 "const": "reject"
@@ -485,11 +434,7 @@
           },
           {
             "type": "object",
-            "required": [
-              "type",
-              "tool_id",
-              "response"
-            ],
+            "required": ["type", "tool_id", "response"],
             "properties": {
               "type": {
                 "const": "respond"
@@ -507,11 +452,7 @@
           },
           {
             "type": "object",
-            "required": [
-              "type",
-              "request_id",
-              "value"
-            ],
+            "required": ["type", "request_id", "value"],
             "properties": {
               "type": {
                 "const": "submit"
@@ -531,11 +472,7 @@
       },
       "ResumeControl": {
         "type": "object",
-        "required": [
-          "kind",
-          "session_id",
-          "decisions"
-        ],
+        "required": ["kind", "session_id", "decisions"],
         "properties": {
           "kind": {
             "type": "string",
@@ -573,12 +510,7 @@
       },
       "ControlReceipt": {
         "type": "object",
-        "required": [
-          "command_id",
-          "request_digest",
-          "status",
-          "replayed"
-        ],
+        "required": ["command_id", "request_digest", "status", "replayed"],
         "properties": {
           "command_id": {
             "type": "string",
@@ -590,11 +522,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "pending",
-              "succeeded",
-              "failed"
-            ]
+            "enum": ["pending", "succeeded", "failed"]
           },
           "error_code": {
             "type": "string",
@@ -608,13 +536,7 @@
       },
       "AgentEvent": {
         "type": "object",
-        "required": [
-          "kind",
-          "run_id",
-          "index",
-          "timestamp",
-          "payload"
-        ],
+        "required": ["kind", "run_id", "index", "timestamp", "payload"],
         "properties": {
           "kind": {
             "type": "string",
@@ -653,12 +575,7 @@
       },
       "EvidencePage": {
         "type": "object",
-        "required": [
-          "run_id",
-          "events",
-          "next_seq",
-          "terminal"
-        ],
+        "required": ["run_id", "events", "next_seq", "terminal"],
         "properties": {
           "run_id": {
             "type": "string",
@@ -709,20 +626,14 @@
           },
           "role": {
             "type": "string",
-            "enum": [
-              "user",
-              "assistant"
-            ]
+            "enum": ["user", "assistant"]
           },
           "content": {
             "type": "string"
           },
           "status": {
             "type": "string",
-            "enum": [
-              "completed",
-              "failed"
-            ]
+            "enum": ["completed", "failed"]
           },
           "seq": {
             "type": "integer",
@@ -810,12 +721,7 @@
       },
       "Session": {
         "type": "object",
-        "required": [
-          "session_id",
-          "title",
-          "created_at",
-          "updated_at"
-        ],
+        "required": ["session_id", "title", "created_at", "updated_at"],
         "properties": {
           "session_id": {
             "type": "string",
@@ -846,9 +752,7 @@
       },
       "SessionListPage": {
         "type": "object",
-        "required": [
-          "sessions"
-        ],
+        "required": ["sessions"],
         "properties": {
           "sessions": {
             "type": "array",
@@ -865,10 +769,7 @@
       },
       "HistoryPage": {
         "type": "object",
-        "required": [
-          "messages",
-          "next_seq"
-        ],
+        "required": ["messages", "next_seq"],
         "properties": {
           "messages": {
             "type": "array",
@@ -886,11 +787,7 @@
       },
       "ReplayPage": {
         "type": "object",
-        "required": [
-          "events",
-          "next_seq",
-          "watermark"
-        ],
+        "required": ["events", "next_seq", "watermark"],
         "properties": {
           "events": {
             "type": "array",
@@ -913,10 +810,7 @@
       },
       "DataEnvelope": {
         "type": "object",
-        "required": [
-          "data",
-          "meta"
-        ],
+        "required": ["data", "meta"],
         "properties": {
           "data": {},
           "meta": {
@@ -924,6 +818,48 @@
           }
         },
         "additionalProperties": false
+      },
+      "ExecutionProofJwkSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["keys"],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kty", "crv", "use", "alg", "kid", "x"],
+              "properties": {
+                "kty": {
+                  "type": "string",
+                  "const": "OKP"
+                },
+                "crv": {
+                  "type": "string",
+                  "const": "Ed25519"
+                },
+                "use": {
+                  "type": "string",
+                  "const": "sig"
+                },
+                "alg": {
+                  "type": "string",
+                  "const": "EdDSA"
+                },
+                "kid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "x": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -982,9 +918,7 @@
   "paths": {
     "/healthz": {
       "get": {
-        "tags": [
-          "health"
-        ],
+        "tags": ["health"],
         "summary": "Process health",
         "operationId": "getHealth",
         "x-kokoro-owner": "kokoro-agent",
@@ -1008,9 +942,7 @@
     },
     "/readyz": {
       "get": {
-        "tags": [
-          "health"
-        ],
+        "tags": ["health"],
         "summary": "Dependency readiness",
         "operationId": "getReadiness",
         "security": [
@@ -1045,9 +977,7 @@
     },
     "/v1/runs": {
       "post": {
-        "tags": [
-          "runs"
-        ],
+        "tags": ["runs"],
         "summary": "Durably admit a run",
         "operationId": "createRun",
         "security": [
@@ -1121,9 +1051,7 @@
     },
     "/v1/runs/{run_id}/control": {
       "post": {
-        "tags": [
-          "runs"
-        ],
+        "tags": ["runs"],
         "summary": "Admit an idempotent run control command",
         "operationId": "controlRun",
         "security": [
@@ -1212,9 +1140,7 @@
     },
     "/v1/runs/{run_id}/events": {
       "get": {
-        "tags": [
-          "runs"
-        ],
+        "tags": ["runs"],
         "summary": "Read identity-scoped run evidence",
         "operationId": "listRunEvents",
         "security": [
@@ -1290,9 +1216,7 @@
     },
     "/v1/sessions": {
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "List identity-scoped sessions",
         "operationId": "listSessions",
         "security": [
@@ -1362,9 +1286,7 @@
     },
     "/v1/sessions/{session_id}/messages": {
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Read identity-scoped chat history",
         "operationId": "listSessionMessages",
         "security": [
@@ -1437,9 +1359,7 @@
     },
     "/v1/sessions/{session_id}/events": {
       "get": {
-        "tags": [
-          "sessions"
-        ],
+        "tags": ["sessions"],
         "summary": "Replay identity-scoped chat events",
         "operationId": "replaySessionEvents",
         "security": [
@@ -1506,6 +1426,278 @@
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/execution-proof/jwks": {
+      "get": {
+        "tags": ["execution-proof"],
+        "summary": "Read the execution-proof public JWK set",
+        "operationId": "getExecutionProofJwks",
+        "security": [],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "none",
+        "responses": {
+          "200": {
+            "description": "Canonical Agent execution-proof public JWK set.",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              }
+            },
+            "content": {
+              "application/jwk-set+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionProofJwkSet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request framing or headers are invalid.",
+            "x-kokoro-error-code": "execution_proof_jwks_invalid_request",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Only GET and HEAD are allowed.",
+            "x-kokoro-error-code": "execution_proof_jwks_method_not_allowed",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              },
+              "Allow": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "GET, HEAD"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The immutable public key ring is unavailable.",
+            "x-kokoro-error-code": "execution_proof_jwks_unavailable",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "tags": ["execution-proof"],
+        "summary": "Inspect the execution-proof public JWK set",
+        "operationId": "headExecutionProofJwks",
+        "security": [],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "none",
+        "responses": {
+          "200": {
+            "description": "Canonical Agent execution-proof public JWK set.",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              }
+            },
+            "content": {
+              "application/jwk-set+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionProofJwkSet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request framing or headers are invalid.",
+            "x-kokoro-error-code": "execution_proof_jwks_invalid_request",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Only GET and HEAD are allowed.",
+            "x-kokoro-error-code": "execution_proof_jwks_method_not_allowed",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              },
+              "Allow": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "GET, HEAD"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The immutable public key ring is unavailable.",
+            "x-kokoro-error-code": "execution_proof_jwks_unavailable",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                },
+                "description": "Every representation is non-cacheable."
+              },
+              "Content-Length": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "description": "Exact GET representation byte length; HEAD returns no body with the same value."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }

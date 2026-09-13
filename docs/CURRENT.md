@@ -27,7 +27,7 @@
   有序 owner inventory、逐 artifact digest、aggregate digest、strict duplicate/token parser、expected schema pointer/keyword、RFC 8785、
   canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。A2a 独立 runtime exact profile 与
   Ed25519 signer 已通过 SPEC/QUALITY 与 Root 验证，并以 A1 positive vector 和第二个 RFC 8032 KAT
-  固定数学签名；HTTP route、private loader、JWKS、lease supplier 与 Platform client 仍未实现。
+  固定数学签名；A2b 当前实现 HTTP route、private loader 与 JWKS snapshot，但 worker gate、lease supplier、IAM verifier 与 Platform client 仍未实现。
 
 ## 当前证据
 
@@ -55,9 +55,8 @@ uv build --wheel --sdist
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。
-6. Agent execution proof A2a 已通过 SPEC/QUALITY 与 Root 验证；当前只有 pure profile 与 Ed25519 signer，
-   无 production caller，仍没有 worker private-key loader、
-   public JWKS route 或 statement-time lease supplier。现有 lease helper 在数据库连接前读取应用 clock，不能作为 proof freshness gate；
+6. Agent execution proof A2a 已通过 SPEC/QUALITY 与 Root 验证；A2b candidate 已包含独立 private-key loader、public-ring snapshot 与
+   anonymous JWKS route，但尚未把 private loader 装配进 worker，且仍无 production caller 或 statement-time lease supplier。现有 lease helper在数据库连接前读取应用 clock，不能作为 proof freshness gate；
    当前 Skill/MCP client 也没有 run-scoped supplier。因此 focused signer 可复现 vector 不等于 proof 已可签发/传输，不得跳过
    key/JWKS/supplier 串行门直接放行 IAM verifier 或 Platform consumer。
 
@@ -100,3 +99,9 @@ JSON safe integer矩阵（2^53-1、2^53、2^53+1、0、负数、bool、float、�
 stale/paused/terminal/owner或generation变化、数据库连接排队跨 expiry、签后 lease race、clock skew、nonce唯一、
 unknown kid/禁止URL header、无敏感日志、JWKS GET/HEAD/400/404/405/503/no-store、OpenAPI/provenance drift，以及真实 IAM verifier消费。
 此设计门通过不等于上述能力已经实现。
+
+## Execution proof A2b current candidate (2026-09-12)
+
+The working implementation now contains the isolated private Ed25519 loader, anchored strict public-ring/JWKS snapshot, HTTP-only configuration root, anonymous exact JWKS GET/HEAD handling, OpenAPI `1.1.0`, and direct HTTP provenance pin. `kokoro-agent-http` points only to `interfaces.http.main:main`; the legacy worker HTTP entry is removed. Invalid or missing public material degrades JWKS and authenticated readiness before dependencies while health stays 200.
+
+A2a remains the accepted pure signer. There is still no production signing call: worker private-loader composition, A2c statement-time lease supplier, IAM verifier, Platform owner contract/call site, and real Agent→IAM→Platform transport remain incomplete.

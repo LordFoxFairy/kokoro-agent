@@ -39,14 +39,12 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepositorySettings,
     make_chat_repository,
 )
-from kokoro_agent.interfaces.http.server import create_http_server
 
 LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "apply_database_schema",
     "db_apply_schema_main",
-    "http_main",
     "main",
     "serve",
 ]
@@ -211,26 +209,6 @@ def db_apply_schema_main() -> int:
     """Install the current schema as an explicit operator command."""
 
     return _schema_db_apply_schema_main()
-
-
-def http_main() -> None:
-    """Start only the Agent business HTTP ingress."""
-    logging.basicConfig(level=logging.INFO)
-    load_dotenv()
-    config = AppConfig.from_env(os.environ)
-    host = os.environ.get("KOKORO_AGENT_HTTP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-    port = int(os.environ.get("KOKORO_AGENT_HTTP_PORT", "4401"))
-    log_config_summary(config, logging.getLogger(__name__))
-    server = create_http_server(config, host, port)
-    logging.getLogger(__name__).info(
-        "kokoro-agent HTTP ingress listening on %s:%d", host, port
-    )
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
 
 
 if __name__ == "__main__":

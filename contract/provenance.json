@@ -9,7 +9,7 @@
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py"
   ],
-  "combined_sha256": "97fa33861db2e616c01300b3af4a66a1822755571a6ee7207da3af56deee15ad",
+  "combined_sha256": "266c7931e16ebbbb68adc0112ccbb5e40d56aceca6ea0b68de06affccc1376df",
   "generated_artifacts": [],
   "source_revision": "same Git commit as the listed files",
   "consumer_dependencies": [
@@ -19,9 +19,7 @@
       "version": "2.0.0",
       "source_commit": "f5702068d4416ad90b1bd02af57d2825c32be916",
       "sha256": "f9ea76f107e1ea0fc19df20ee7c59032c0fbac66e640e9a16a1b770ab27c1f37",
-      "operations": [
-        "POST /v1/system/model-catalog/resolve"
-      ]
+      "operations": ["POST /v1/system/model-catalog/resolve"]
     }
   ],
   "execution_proof": {
@@ -34,5 +32,10 @@
       "path": "contract/execution-proof/v1/vectors.json",
       "sha256": "a65b9b4a1c6da8c25bf012ec0aa9c04de037f5e166c1cd7cbee7df340dc17c41"
     }
+  },
+  "http_contract": {
+    "version": "1.1.0",
+    "path": "contract/openapi/v1/openapi.json",
+    "sha256": "20e679c5e46ec3fee0b1e002b2b37bdbcae21b1bee5616bd8013bd62d4d7e71f"
   }
 }

@@ -113,10 +113,11 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 - `GET /v1/runs/{run_id}/events`：Run evidence；
 - `GET /v1/sessions`：按 trusted identity 查询持久化 session list，支持 `project_ref`、`limit`、`cursor`；
 - `GET /v1/sessions/{session_id}/messages`：安全 session history；
-- `GET /v1/sessions/{session_id}/events`：安全 session replay。
+- `GET /v1/sessions/{session_id}/events`：安全 session replay；
+- `GET|HEAD /v1/execution-proof/jwks`：匿名 internal-owner Ed25519 public ring（无 body/query/identity）。
 
 BFF 只通过这些版本化 HTTP 入口访问 Agent，不读取 Agent PostgreSQL/Redis、checkpoint、
-RunRepository 或内部 Python 类型。除 `/healthz` 外的请求始终要求配置可信的
+RunRepository 或内部 Python 类型。除 `/healthz` 与 exact JWKS GET/HEAD 外的请求始终要求配置可信的
 `KOKORO_INTERNAL_SECRET_AGENT`，并必须带标准 `Authorization: Bearer <secret>`；未配置 secret
 时请求返回 `503 service_auth_not_configured`，认证缺失或错误时返回 `401 service_auth_failed`。
 control 还必须带 `Idempotency-Key`；history/replay 还要带
@@ -187,3 +188,7 @@ HTTP owner 的接口、fixture 要求和验收证据见 [`ACCEPTANCE.md`](ACCEPT
 
 > 注：本仓走 aliyun 镜像，`uv run` 后 `uv.lock` 可能被改写——非依赖变更时 `git checkout uv.lock`；
 > 真依赖变更用 `UV_NO_CONFIG=1 uv lock`。
+
+### Execution-proof public keys
+
+`kokoro-agent-http` now uses the independent `kokoro_agent.interfaces.http.main:main` root. It can publish the anonymous internal-owner `GET|HEAD /v1/execution-proof/jwks` from an env-only public ring; an absent or invalid ring degrades JWKS/readiness while `/healthz` remains live. The worker does not load this public ring, and its private-key loader is not wired until the A2c statement-time supplier exists.

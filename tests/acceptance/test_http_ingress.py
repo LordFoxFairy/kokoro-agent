@@ -17,7 +17,11 @@ from psycopg import sql
 from support.fakes import FakeBus
 
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
-from kokoro_agent.domain.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
+from kokoro_agent.domain.chat.models import (
+    ChatEventDraft,
+    ChatMessageDraft,
+    ChatProjection,
+)
 from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepository,
     PostgresChatRepositorySettings,
@@ -38,6 +42,7 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.execution.events import RunEmitter, message_delta_payload
+from kokoro_agent.interfaces.http.execution_proof_jwks import ExecutionProofJwksState
 from kokoro_agent.interfaces.http.server import create_http_server
 from kokoro_agent.infrastructure.postgres_run_repository import (
     DEFAULT_LEASE_TTL_S,
@@ -196,7 +201,19 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
 async def http_client(
     acceptance_state: _AcceptanceState,
 ) -> AsyncIterator[httpx.AsyncClient]:
-    server = create_http_server(acceptance_state.config, "127.0.0.1", 0)
+    server = create_http_server(
+        acceptance_state.config,
+        "127.0.0.1",
+        0,
+        execution_proof_jwks=ExecutionProofJwksState(
+            available=True,
+            body=(
+                b'{"keys":[{"alg":"EdDSA","crv":"Ed25519",'
+                b'"kid":"acceptance","kty":"OKP","use":"sig",'
+                b'"x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}]}'
+            ),
+        ),
+    )
     thread = threading.Thread(
         target=server.serve_forever, name="agent-http-acceptance", daemon=True
     )

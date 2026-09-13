@@ -25,7 +25,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "1.0.0"
+    assert _object(document["info"])["version"] == "1.1.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -38,7 +38,7 @@ def test_every_operation_declares_governance_metadata() -> None:
         _object(operation)
         for path_item in paths.values()
         for method, operation in _object(path_item).items()
-        if method in {"get", "post", "put", "patch", "delete"}
+        if method in {"get", "head", "post", "put", "patch", "delete"}
     ]
     assert operations
     for operation in operations:
@@ -54,6 +54,7 @@ def test_http_route_set_is_explicit() -> None:
     assert set(paths) == {
         "/healthz",
         "/readyz",
+        "/v1/execution-proof/jwks",
         "/v1/runs",
         "/v1/runs/{run_id}/control",
         "/v1/runs/{run_id}/events",

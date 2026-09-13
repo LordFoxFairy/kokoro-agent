@@ -55,7 +55,12 @@ def test_protocol_has_zero_inward_dependencies() -> None:
 
 def test_config_imports_are_limited_to_process_entrypoints() -> None:
     for path in _py_files():
-        if _rel(path) in {"config.py", "worker/main.py", "application/schema.py"}:
+        if _rel(path) in {
+            "config.py",
+            "worker/main.py",
+            "interfaces/http/main.py",
+            "application/schema.py",
+        }:
             continue
         offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.config")}
         assert not offenders, f"{_rel(path)} must not import kokoro_agent.config"
@@ -80,11 +85,7 @@ def test_agent_core_does_not_import_worker() -> None:
     for path in _py_files():
         if not _rel(path).startswith(core_roots):
             continue
-        offenders = {
-            m
-            for m in _imports(path)
-            if m.startswith("kokoro_agent.worker")
-        }
+        offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.worker")}
         assert not offenders, f"{_rel(path)} must not import kokoro_agent.worker"
 
 
@@ -238,7 +239,11 @@ def test_no_stream_name_literals_outside_protocol() -> None:
 def test_environ_reads_are_limited_to_process_entrypoints() -> None:
     # env 单点纪律：worker/main.py 与 schema operator 入口各自只读一次。
     for path in _py_files():
-        if _rel(path) in {"worker/main.py", "application/schema.py"}:
+        if _rel(path) in {
+            "worker/main.py",
+            "interfaces/http/main.py",
+            "application/schema.py",
+        }:
             continue
         assert "os.environ" not in path.read_text(encoding="utf-8"), (
             f"{_rel(path)} reads os.environ outside worker/main.py"
@@ -297,7 +302,30 @@ def test_schema_apply_entrypoint_is_shared_without_worker_transport_import() -> 
     }
     assert not cli_worker_imports
 
-    schema_source = (_SRC / "application" / "schema.py").read_text(
-        encoding="utf-8"
-    )
+    schema_source = (_SRC / "application" / "schema.py").read_text(encoding="utf-8")
     assert "def apply_database_schema(" in schema_source
+
+
+def test_http_root_has_only_http_owned_dependencies() -> None:
+    path = _SRC / "interfaces" / "http" / "main.py"
+    imports = _imports(path)
+    forbidden = (
+        "kokoro_agent.worker",
+        "kokoro_agent.execution.execution_proof_keys",
+        "kokoro_agent.execution.execution_proof_signer",
+        "kokoro_agent.agent_factory",
+        "kokoro_agent.model",
+        "kokoro_agent.sandbox",
+        "kokoro_agent.mcp",
+        "kokoro_agent.clients",
+    )
+    assert not {name for name in imports if name.startswith(forbidden)}
+
+
+def test_http_and_worker_entrypoints_are_separate_and_unique() -> None:
+    project = (_SRC.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    worker = (_SRC / "worker" / "main.py").read_text(encoding="utf-8")
+    assert 'kokoro-agent-http = "kokoro_agent.interfaces.http.main:main"' in project
+    assert "worker.main:http_main" not in project
+    assert "def http_main(" not in worker
+    assert "kokoro_agent.interfaces.http" not in worker

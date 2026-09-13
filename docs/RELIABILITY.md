@@ -30,3 +30,18 @@ lease loss、outbox age、control latency、terminal success、replay gap、clea
 响应最大64KiB，不跟随重定向，不自动重试，任务取消直接传播。错误不回显上游原文或服务凭据。
 System路由失败在分配sandbox前终止当前Run；恢复构造重新解析当前策略，revision/digest/generation只记日志，
 不宣称已有durable route snapshot或跨重启固定模型。模型服务不参与独立HTTP ingress的admission事务。
+
+## Execution-proof A2c standalone lease gate
+
+`PostgresExecutionProofLeaseReader` gives connection acquisition, its single statement, row fetch and decode one shared
+**逻辑数据库工作 deadline** of at most two seconds. Once a connection exists, timeout or cancellation invokes public `AsyncConnection.close()` 恰好一次
+before unconditionally cancelling and awaiting the active child operation. If that public close raises or exhausts the
+bounded cleanup wait, the reader still settles every reader-owned local task and fails closed; it does not retry through a private driver path. Cleanup has an independent **0.25 秒 cleanup budget**;
+single or repeated external cancellation is propagated after owned cleanup completes. These bounds prevent signing after the logical
+budget has expired, but this **不是 Python/OS hard real-time wall guarantee**: event-loop or operating-system stalls can extend observed
+wall time, and owned backend PID disappearance is checked with a separate bounded operational poll.
+
+The reader uses one direct non-pooled connection and one statement-time `clock_timestamp()` fact. The run-scoped supplier re-reads for
+every issue, then uses exact aware-datetime/timedelta and integer epoch arithmetic before a fresh nonce and signature. The production transport 仍未完成:
+the worker private loader, Skills/MCP clients, IAM verifier and Platform request-binding wire are not composed in
+this slice, so standalone component evidence is not an end-to-end authorization claim.

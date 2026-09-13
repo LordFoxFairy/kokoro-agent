@@ -54,6 +54,6 @@ ROUTE_NOT_FOUND/POLICY_DENIED为配置/授权失败，MODEL_UNAVAILABLE为健康
 
 ### Execution-proof key/JWKS operations (A2b)
 
-Mount the worker PKCS#8 file under a trusted secret directory, owned by the worker euid and mode `0400` or `0600`; configure the worker issuer/kid/thumbprint env values only when A2c wires the loader. Mount the HTTP public ring on a root/euid-owned non-group/world-writable parent chain with an allowed read-only file mode, then set only the three HTTP descriptor env variables. Never place private bytes in env or YAML and never log paths/descriptors.
+Mount the worker PKCS#8 file under a trusted secret directory, owned by the worker euid and mode `0400` or `0600`; configure the worker issuer/kid/thumbprint env values only in the future production-composition slice. The A2c standalone supplier exists, but the worker private loader 仍未装配. Mount the HTTP public ring on a root/euid-owned non-group/world-writable parent chain with an allowed read-only file mode, then set only the three HTTP descriptor env variables. Never place private bytes in env or YAML and never log paths/descriptors.
 
 A missing or invalid public ring intentionally leaves `/healthz` at 200 while `/readyz` and JWKS return 503. Correct the mount/descriptor and restart to build a fresh immutable snapshot. Rotation follows the five-stage old→old+new→new fleet gate in ADR-004; `kid` is a header identifier while the thumbprint is the cryptographic key binding.

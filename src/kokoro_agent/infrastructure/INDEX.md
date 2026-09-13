@@ -8,6 +8,7 @@
 - `postgres_run_dispatch.py`：dispatch claim、pending 查询和 DLQ capability。
 - `postgres_run_events.py`：durable event、outbox、receipt reconcile capability。
 - `postgres_run_leases.py`：lease、lifecycle、usage 和 terminal capability。
+- `postgres_execution_proof_lease.py`：proof 专用 direct non-pooled statement-time current-lease reader；单 statement、总逻辑工作 deadline 与独立 bounded cleanup。
 - `postgres_run_effects.py`：execution effect、steer、tool result/journal capability。
 - `postgres_run_sandbox.py`：sandbox binding 与 durable cleanup capability。
 - `postgres_chat_repository.py`：ChatRepository 的 PostgreSQL 实现。

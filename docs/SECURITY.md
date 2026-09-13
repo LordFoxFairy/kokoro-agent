@@ -35,7 +35,7 @@ A1 已有 Agent-owned strict schema、canonical/negative/one-bit-tampered vector
 profile 与 Ed25519 signer 已通过 SPEC/QUALITY 与 Root 验证：owner-controlled immutable config 只持有
 issuer/kid/private key，caller input 不能覆盖 header/version/
 issuer/audience/kid；签发前预计算 exact JCS bytes，PyJWT 签发后逐段核对、限制 16 KiB、验证64-byte signature并用派生公钥自验。
-当前没有 production caller。A2b 已实现隔离 private loader、public-ring snapshot 与 JWKS route；worker 装配、lease-aware supplier、IAM verifier 与 Platform consumer 仍不存在，不能据此接受端到端授权。
+A2c 新增的唯一 production signer caller 位于 standalone run-scoped supplier；它没有 worker/client composition。A2b 已实现隔离 private loader、public-ring snapshot 与 JWKS route；worker 装配、IAM verifier 与 Platform consumer 仍不存在，不能据此接受端到端授权。
 
 Agent 独占 execution proof 私钥与 canonical signing bytes。worker private-key 配置和 HTTP public-ring 配置必须是不同类型、不同对象图：
 worker 进程不加载 public JWKS ring，HTTP 进程不读取或持有 private key/path/provider。worker 与 HTTP 各有独立、非 secret 的
@@ -66,7 +66,7 @@ HTTP lifecycle 在 SIGINT/SIGTERM 后先启用 draining admission gate，停止�
 不一致都停止推进；禁止同一 deployment 中随机选择 active key。紧急事件先停止受影响 signer，再移除 public key；IAM 已缓存 snapshot
 仍可能在 30 秒 freshness 加 2 秒 refresh timeout 边界内接受旧 key，这不是实时撤销保证。
 
-proof supplier 只在实际 Platform 出站调用前签发。lease reader 必须在连接获取后以 PostgreSQL database clock验证 same run/owner/generation、
+A2c standalone proof supplier 每次 issue 都重新读 lease、nonce 与签名；未来 production composition 只可在实际 Platform 出站调用前触发。已落地的 lease reader 在连接获取后以 PostgreSQL database clock验证 same run/owner/generation、
 unexpired、not paused、not terminal；不得复用连接前应用时钟的现有 helper，也不得在 build 阶段签发后供多个 Skill/MCP 调用复用。
 签发后 generation race 的 claim TTL 受 `exp <= min(iat+60s, floor(lease_expiry))` 限制；IAM 5 秒 verifier skew仍可能接受到
 `exp+5s`。IAM 仍验证固定 issuer/audience/header/time/signature并重验当前 permission；Platform 仍重算 exact binding并执行资源策略，
@@ -93,4 +93,4 @@ The worker-only loader accepts only an euid-owned exact `0400/0600` regular fina
 
 The HTTP-only reader anchors at `/`, retains nofollow directory fds, rejects unsafe owners/write bits and symlinks, reads a bounded regular public file, verifies full pre/post/path identity, strict UTF-8/duplicate-free exact Ed25519 JWKs, active descriptor, UTF-8 kid ordering, and immutable JCS output. FIFO and all failures close every fd and publish only an unavailable state. Safe startup logs contain only allowlisted booleans/numerics—never URLs, bearer, path, kid, thumbprint, key/proof bytes, or underlying exception text.
 
-A2b does not yet wire the private loader into worker startup. Statement-time lease proof minting, IAM verification, Platform policy/binding, and real transport remain absent.
+A2b does not wire the private loader into worker startup. A2c now supplies standalone statement-time lease proof minting, while worker composition, IAM verification, Platform policy/binding, and real transport remain absent.

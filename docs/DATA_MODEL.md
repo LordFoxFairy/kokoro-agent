@@ -43,7 +43,7 @@ checkpoint API，但不得把 Unix 秒写入数据库。金额如未来进入 Ag
 只属于System；Agent不复制、不JOIN。每次模型构造的解析revision/digest/generation记结构化日志；这不是持久化模型快照。
 当前 schema/contract 验证命令保持不变；目标失败路径与依赖 pin 见 TECHNICAL_DESIGN §6、API_CONTRACT。
 
-## Execution proof 数据边界（2026-09-11，目标、无 schema 变更）
+## Execution proof 数据边界（2026-09-12，statement-time reader 已落地、无 schema 变更）
 
 execution proof 是由 canonical Run/ExecutionIdentity 与当前 lease 派生的短期 signed artifact，不是新的 PostgreSQL/Redis durable fact。
 本设计不修改 `database/schema.sql`，不新增 proof、nonce、key、delegation、receipt 或 outbox 表，也不新增 Redis key。私钥/public ring
@@ -60,9 +60,8 @@ execution proof 是由 canonical Run/ExecutionIdentity 与当前 lease 派生的
 | lease validity                      | 同一 PostgreSQL statement 的 `clock_timestamp()` 与 `lease_expires_at`，并要求 `terminal=false`、expiry 非空且未到期              |
 | `operation`/binding                 | Platform owner contract 在 Agent client boundary 已校验的值；不写回 Run 表                                                        |
 
-现有 `is_lease_current` 在取得数据库连接前读取应用 clock，不能为 proof freshness 提供目标证据。后续实现新增/收窄一个
-consumer-owned current-lease query，使用同 statement database instant并返回 checked time/expiry；它只读现有行，不改变 transaction、lock
-或 schema。proof `exp` 取 `min(iat+60s, floor(lease_expires_at))`，没有至少 1 秒正有效期时不签；IAM 5 秒 verifier skew 可能使
+现有 `is_lease_current` 在取得数据库连接前读取应用 clock，不能为 proof freshness 提供证据。A2c proof 专用 statement-time reader 已落地：
+它使用同 statement database instant 返回 checked time/expiry，只读现有 canonical Run 行，不写入 schema 或业务事务，不改变通用 lease API。proof `exp` 取 `min(iat+60s, floor(lease_expires_at))`，没有至少 1 秒正有效期时不签；IAM 5 秒 verifier skew 可能使
 接受延到 `exp+5s`。query 与签名间仍存在 generation race，文档/API 明确最长在途窗口而不冒充实时撤销。
 
 数据库 `lease_generation` 当前是整数事实，但跨 JSON/JWS 边界必须在 canonicalization 前显式检查 `1..9007199254740991`；不得因

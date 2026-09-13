@@ -329,3 +329,47 @@ def test_http_and_worker_entrypoints_are_separate_and_unique() -> None:
     assert "worker.main:http_main" not in project
     assert "def http_main(" not in worker
     assert "kokoro_agent.interfaces.http" not in worker
+
+
+def test_execution_proof_supplier_is_standalone_without_dead_composition() -> None:
+    supplier = _SRC / "execution" / "execution_proof_supplier.py"
+    reader = _SRC / "infrastructure" / "postgres_execution_proof_lease.py"
+    supplier_imports = _imports(supplier)
+    reader_imports = _imports(reader)
+
+    assert not {
+        module
+        for module in supplier_imports
+        if module.startswith(
+            (
+                "kokoro_agent.infrastructure",
+                "kokoro_agent.clients",
+                "kokoro_agent.skills",
+                "kokoro_agent.mcp",
+                "kokoro_agent.interfaces",
+                "httpx",
+                "requests",
+            )
+        )
+    }
+    assert not {
+        module
+        for module in reader_imports
+        if module.startswith(
+            ("kokoro_agent.worker", "kokoro_agent.clients", "httpx", "requests")
+        )
+    }
+
+    composition_paths = (
+        _SRC / "agent_factory.py",
+        _SRC / "worker" / "main.py",
+        _SRC / "worker" / "supervisor.py",
+        _SRC / "interfaces" / "http" / "main.py",
+        *_SRC.joinpath("clients").glob("*.py"),
+        *_SRC.joinpath("skills").glob("*.py"),
+        *_SRC.joinpath("mcp").glob("*.py"),
+    )
+    for path in composition_paths:
+        source = path.read_text(encoding="utf-8")
+        assert "execution_proof_supplier" not in source
+        assert "ExecutionProofSupplier" not in source

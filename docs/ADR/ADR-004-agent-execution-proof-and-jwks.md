@@ -1,6 +1,6 @@
 # ADR-004：Agent execution proof 与 public JWKS
 
-- 状态：Accepted；A1 machine artifact 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证；A2b key/JWKS implementation candidate 已落地；A2c 待串行实现
+- 状态：Accepted；A1 machine artifact、A2a runtime profile/signer、A2b key/JWKS 与 A2c standalone statement-time supplier 已落地；production composition 待串行实现
 - 日期：2026-09-11
 - 决策 owner：`kokoro-agent`（proof schema/canonical bytes、lease-aware signer、private key 与 public JWKS）
 - 关联 owner：`kokoro-iam@bf160be173ef473bebe8e4a93b74ec52c230f180`（proof verification/current authorization/audit）；
@@ -10,7 +10,7 @@
 
 Agent 已持久化 canonical `RunRequest`、typed `ExecutionIdentity` 与 monotonic `LeaseFence.generation`，并在 A1 发布 proof machine
 schema、canonical/negative/one-bit-tampered vectors、provenance 和静态 checker。A2a pure exact profile 与 Ed25519 signer 已通过
-SPEC/QUALITY 与 Root 验证，但没有 production caller；A2b 已落地隔离 private signing-key loader、strict public ring 与 HTTP JWKS route，worker 尚未装配private loader，且仍没有 lease-aware supplier 或 Platform client 接线。
+SPEC/QUALITY 与 Root 验证；A2b 已落地隔离 private signing-key loader、strict public ring 与 HTTP JWKS route。A2c 已落地 proof 专用 direct PostgreSQL statement-time reader 与 immutable run-scoped supplier，形成唯一 production signer caller；worker 尚未装配 private loader，且仍没有 Platform client 接线。
 Capability 当前的临时 attestation/wire 不是 Agent/IAM 已发布契约；IAM ADR-005 已裁决
 新 verifier 必须等待 Agent owner artifact，Platform 必须等待 IAM generated SDK。
 
@@ -185,4 +185,4 @@ header/claim/alg/typ/kid/aud/iss/TTL/skew/jti；private file type/owner/mode/sym
 schema/OpenAPI/provenance/package drift；以及真实 Agent signer -> IAM verifier -> Platform receipt sandbox。所有证据绑定同一commit。
 
 本 ADR 的 A1 machine artifact/source/dependency/test 已实现；A2a runtime profile/signer 已通过 SPEC/QUALITY 与 Root 验证，
-且没有 production caller。A2b private loader、public key ring/JWKS 与 HTTP `1.1.0` direct pin 已形成实现候选；worker signer gate、statement-time lease supplier、Platform client、IAM verifier 与跨仓 sandbox 仍按既定顺序待实现。
+A2b private loader、public key ring/JWKS 与 HTTP `1.1.0` direct pin 已落地；A2c standalone statement-time lease reader/supplier 形成唯一 signer caller。worker signer gate、Platform client、IAM verifier 与跨仓 sandbox 仍按既定顺序待实现。

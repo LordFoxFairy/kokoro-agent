@@ -51,17 +51,18 @@ worker 既有单 Run 失败路径收口，不泄漏上游 message/secret。
 
 ## Execution proof machine contract 与 JWKS 当前态（2026-09-12）
 
-Agent A1 artifact 与 A2a signer 已提交：owner machine fact `contract/execution-proof/v1/schema.json` version=`1.0.0`、
-canonical/negative/tampered-signature vectors 和 immutable Ed25519 signer 已分别验收。A2b 当前是待复审候选，增加隔离 key loader、
-public-ring snapshot 与 HTTP JWKS projection；这仍不是端到端授权能力。A2c/consumer、IAM verifier、Platform proof wire 均待实现，
-真实 transport 也尚未接线。后续仍按 TECHNICAL_DESIGN §7.5 串行发布；supplier 独立测试、Platform 最终 contract、Agent 真实 client
-接线与 Platform server cutover 是不同验收门，不能互相冒充。
+Agent A1 artifact 与 A2a signer 已提交，A2b 已提交：owner machine fact `contract/execution-proof/v1/schema.json` version=`1.0.0`、
+canonical/negative/tampered-signature vectors、immutable Ed25519 signer、隔离 key loader、public-ring snapshot 与 HTTP JWKS projection
+已分别验收。A2c standalone owner-internal component 现提供 statement-time lease reader 与 run-scoped supplier；A2c 不新增 wire，也未装入 worker
+或真实 client。IAM verifier、Platform proof wire 与 production transport 仍待实现。后续仍按 TECHNICAL_DESIGN §7.5 串行发布；supplier
+独立测试、Platform 最终 contract、Agent 真实 client 接线与 Platform server cutover 是不同验收门，不能互相冒充。
+旧陈述“A2b 当前是待复审候选；A2c/consumer、IAM verifier、Platform proof wire 均待实现”不再描述 current fact。
 
 IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 是当前 owner/方向基线，不是本候选已经发布的消费者契约：该提交仍只写正整数
 `lease_generation`，尚无本节 safe-integer/token 矩阵，也未把六段交付全部展开。第 2 步必须在 IAM ADR、API、verifier、OpenAPI/SDK 与
 测试中消费 Agent 固定 artifact 和同一拒绝向量；不得由 IAM 复制一份可独立漂移的 claims schema。
 
-1. Agent A1 machine artifact 与 A2a signer 已验；A2b key/JWKS 是当前待复审候选，A2c run-scoped supplier/consumer 尚待实现；
+1. Agent A1 machine artifact、A2a signer、A2b key/JWKS 与 A2c standalone supplier 已在 owner 内实现；production consumer 尚待实现；
 2. IAM ADR/API/安全设计对齐后实现 verifier/OpenAPI/generated SDK，并消费同一 strict profile、数字矩阵与 canonical vectors；
 3. Platform owner 发布最终 compact-proof wire、request-binding 与 generated helper；
 4. Agent 真实 Platform client 逐 call 接入 supplier；
@@ -162,4 +163,4 @@ resource/provider/receipt policy；任一依赖失败都不得复用旧 allow/pr
 
 Exact anonymous `GET|HEAD /v1/execution-proof/jwks` returns the precomputed RFC 8785 JWK set as `application/jwk-set+json`; GET and HEAD share representation status/type/cache/length and HEAD writes no body. Query markers, transfer/expect framing, identity-header presence, and any content length other than one exact OWS-trimmed `0` are `400 execution_proof_jwks_invalid_request`. Other methods are `405 execution_proof_jwks_method_not_allowed` with `Allow: GET, HEAD`; missing/invalid ring is `503 execution_proof_jwks_unavailable`. All responses are `no-store`, without ETag, 304, redirect, bearer, tenant, or database dependency.
 
-Launch identity remains trusted `X-Kokoro-*` headers. It is not accepted from the launch body. A2c proof supplier, IAM verifier, Platform proof wire, and real transport are not part of HTTP `1.1.0`.
+Launch identity remains trusted `X-Kokoro-*` headers. It is not accepted from the launch body. The standalone A2c supplier adds no HTTP wire; IAM verifier, Platform proof wire, production composition, and real transport are not part of HTTP `1.1.0`.

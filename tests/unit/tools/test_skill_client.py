@@ -66,7 +66,9 @@ async def test_declared_skill_names_resolve_through_client() -> None:
     resolved = await resolve_declared_skills(agent, client, request)
 
     assert [skill.name for skill in resolved] == ["music", "lyrics"]
-    assert client.calls == [(('music', 'lyrics'), identity, runtime_namespace(identity))]
+    assert client.calls == [
+        (("music", "lyrics"), identity, runtime_namespace(identity))
+    ]
 
 
 def test_agent_does_not_carry_resolved_skills() -> None:

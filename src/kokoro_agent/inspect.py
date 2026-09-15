@@ -48,9 +48,7 @@ def describe_feature(catalog: FeatureCatalog, key: str) -> FeatureDescription:
 
 
 def describe_catalog(catalog: FeatureCatalog) -> CatalogDescription:
-    features = tuple(
-        describe_feature(catalog, key) for key in sorted(catalog.keys())
-    )
+    features = tuple(describe_feature(catalog, key) for key in sorted(catalog.keys()))
     agents_by_key = {
         agent.key: agent
         for feature in catalog.entries.values()

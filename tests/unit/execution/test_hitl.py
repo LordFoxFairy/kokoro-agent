@@ -48,7 +48,10 @@ def _interrupt(names: list[str]) -> Interrupt:
                 for i, name in enumerate(names)
             ],
             "review_configs": [
-                {"action_name": name, "allowed_decisions": ["approve", "edit", "reject"]}
+                {
+                    "action_name": name,
+                    "allowed_decisions": ["approve", "edit", "reject"],
+                }
                 for name in names
             ],
         }
@@ -59,7 +62,9 @@ def _state(tool_calls: list[tuple[str, str]], names: list[str]) -> FakeState:
     ai = AIMessage(
         content="",
         id="seg-1",
-        tool_calls=[{"name": name, "args": {}, "id": tool_id} for tool_id, name in tool_calls],
+        tool_calls=[
+            {"name": name, "args": {}, "id": tool_id} for tool_id, name in tool_calls
+        ],
     )
     return FakeState(
         interrupts=(_interrupt(names),),
@@ -67,7 +72,9 @@ def _state(tool_calls: list[tuple[str, str]], names: list[str]) -> FakeState:
     )
 
 
-_TWO_TOOL_STATE = _state([("call-A", "danger"), ("call-B", "danger")], ["danger", "danger"])
+_TWO_TOOL_STATE = _state(
+    [("call-A", "danger"), ("call-B", "danger")], ["danger", "danger"]
+)
 _NAMES = frozenset({"danger"})
 
 
@@ -95,10 +102,14 @@ def test_pending_frame_no_messages_is_empty() -> None:
 def test_awaiting_description_is_tool_self_description_never_template() -> None:
     # wire 只带数据：description=工具自述（describe_tool 提供）；查不到发空串，
     # deepagents 的英文 interrupt 模板永不上 wire。
-    state = _state([("call-A", "danger"), ("call-B", "harmless")], ["danger", "harmless"])
+    state = _state(
+        [("call-A", "danger"), ("call-B", "harmless")], ["danger", "harmless"]
+    )
     names = frozenset({"danger", "harmless"})
     payloads = awaiting_payloads(
-        state, names, describe_tool=lambda name: "危险操作，写真实文件" if name == "danger" else None
+        state,
+        names,
+        describe_tool=lambda name: "危险操作，写真实文件" if name == "danger" else None,
     )
     by_name = {p.name: p.description for p in payloads}
     assert by_name["danger"] == "危险操作，写真实文件"
@@ -120,12 +131,22 @@ def test_awaiting_payloads_carry_full_pending_set() -> None:
 
 def test_awaiting_payloads_ask_user_kind() -> None:
     ai = AIMessage(
-        content="", id="seg-2", tool_calls=[{"name": "ask_user_question", "args": {}, "id": "q1"}]
+        content="",
+        id="seg-2",
+        tool_calls=[{"name": "ask_user_question", "args": {}, "id": "q1"}],
     )
     interrupt = Interrupt(
         value={
-            "action_requests": [{"name": "ask_user_question", "args": {"question": "?"}, "description": "ask"}],
-            "review_configs": [{"action_name": "ask_user_question", "allowed_decisions": ["respond"]}],
+            "action_requests": [
+                {
+                    "name": "ask_user_question",
+                    "args": {"question": "?"},
+                    "description": "ask",
+                }
+            ],
+            "review_configs": [
+                {"action_name": "ask_user_question", "allowed_decisions": ["respond"]}
+            ],
         }
     )
     state = FakeState(interrupts=(interrupt,), values={"messages": [ai]})
@@ -197,13 +218,17 @@ def test_align_decisions_reorders_by_pending() -> None:
         [{"type": "approve", "tool_id": "ghost"}],  # 全未知
     ],
 )
-def test_align_decisions_fail_loud_matrix(decisions: list[dict[str, JsonValue]]) -> None:
+def test_align_decisions_fail_loud_matrix(
+    decisions: list[dict[str, JsonValue]],
+) -> None:
     with pytest.raises(ValueError):
         align_decisions([_decision(d) for d in decisions], _FRAME)
 
 
 def test_align_decisions_respond_only_for_ask_user() -> None:
-    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user_question")))
+    frame = PendingFrame(
+        "seg-1", (("call-A", "danger"), ("call-B", "ask_user_question"))
+    )
     # respond 用于普通审批工具即越界 fail-loud。
     with pytest.raises(ValueError, match="respond decision not allowed"):
         align_decisions(
@@ -247,7 +272,9 @@ def test_resume_command_approve_with_args_becomes_edit() -> None:
 
 
 def test_resume_command_reject_and_respond_messages() -> None:
-    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user_question")))
+    frame = PendingFrame(
+        "seg-1", (("call-A", "danger"), ("call-B", "ask_user_question"))
+    )
     ordered = [
         _decision({"type": "reject", "tool_id": "call-A"}),
         _decision({"type": "respond", "tool_id": "call-B", "response": "北京"}),
@@ -259,7 +286,9 @@ def test_resume_command_reject_and_respond_messages() -> None:
 
 
 def test_resolution_payloads_reject_and_respond_snapshot() -> None:
-    frame = PendingFrame("seg-1", (("call-A", "danger"), ("call-B", "ask_user_question")))
+    frame = PendingFrame(
+        "seg-1", (("call-A", "danger"), ("call-B", "ask_user_question"))
+    )
     ordered = [
         _decision({"type": "reject", "tool_id": "call-A", "reason": "太危险"}),
         _decision({"type": "respond", "tool_id": "call-B", "response": "北京"}),
@@ -285,7 +314,9 @@ def test_resolution_payloads_skip_approve_and_edit() -> None:
 # --- result_review 暂停帧 ---
 
 
-def _review_interrupt(tool_id: str, name: str = "lookup", result: str = "raw") -> Interrupt:
+def _review_interrupt(
+    tool_id: str, name: str = "lookup", result: str = "raw"
+) -> Interrupt:
     # review 预设的 HumanRequest 信封（request_id=tool_id）：与 ToolResultReviewMiddleware
     # 经 request_human(kind="review") 发出的 interrupt.value 同构。
     return Interrupt(
@@ -307,7 +338,9 @@ def _review_interrupt(tool_id: str, name: str = "lookup", result: str = "raw") -
 
 def _review_state(tool_id: str = "call-R") -> FakeState:
     ai = AIMessage(
-        content="", id="seg-r", tool_calls=[{"name": "lookup", "args": {}, "id": tool_id}]
+        content="",
+        id="seg-r",
+        tool_calls=[{"name": "lookup", "args": {}, "id": tool_id}],
     )
     return FakeState(
         interrupts=(_review_interrupt(tool_id),),
@@ -350,10 +383,14 @@ def test_align_review_decisions_matrix() -> None:
     entries = review_entries(_review_state().interrupts)
     assert entries is not None
     frame = review_frame(_review_state(), entries)
-    ordered = align_review_decisions([_decision({"type": "approve", "tool_id": "call-R"})], frame)
+    ordered = align_review_decisions(
+        [_decision({"type": "approve", "tool_id": "call-R"})], frame
+    )
     assert _tid(ordered[0]) == "call-R"
     with pytest.raises(ValueError):
-        align_review_decisions([_decision({"type": "approve", "tool_id": "other"})], frame)
+        align_review_decisions(
+            [_decision({"type": "approve", "tool_id": "other"})], frame
+        )
     with pytest.raises(ValueError, match="not allowed"):
         align_review_decisions(
             [_decision({"type": "edit", "tool_id": "call-R", "args": {}})], frame
@@ -417,11 +454,15 @@ def _input_state(
     validation_error: str | None = None,
 ) -> FakeState:
     ai = AIMessage(
-        content="", id="seg-i", tool_calls=[{"name": "mcp_call", "args": {}, "id": request_id}]
+        content="",
+        id="seg-i",
+        tool_calls=[{"name": "mcp_call", "args": {}, "id": request_id}],
     )
     return FakeState(
         interrupts=(
-            _input_interrupt(request_id, schema=schema, validation_error=validation_error),
+            _input_interrupt(
+                request_id, schema=schema, validation_error=validation_error
+            ),
         ),
         values={"messages": [HumanMessage(content="go"), ai]},
     )
@@ -462,7 +503,9 @@ def test_input_awaiting_payload_shape() -> None:
 def test_input_awaiting_payload_surfaces_validation_error() -> None:
     # 重问：上一轮回灌不合法时 validation_error 随 args 上 wire，web 表单据此提示重填。
     payloads = awaiting_payloads(
-        _input_state(schema=_OTP_SCHEMA, validation_error="'otp' is a required property"),
+        _input_state(
+            schema=_OTP_SCHEMA, validation_error="'otp' is a required property"
+        ),
         frozenset(),
     )
     assert payloads[0].args["validation_error"] == "'otp' is a required property"
@@ -473,12 +516,17 @@ _INPUT_FRAME = PendingFrame("seg-i", (("call-I", "mcp_call"),))
 
 def test_align_input_decisions_submit_and_reject() -> None:
     submit = align_input_decisions(
-        [_decision({"type": "submit", "request_id": "call-I", "value": {"otp": "123456"}})],
+        [
+            _decision(
+                {"type": "submit", "request_id": "call-I", "value": {"otp": "123456"}}
+            )
+        ],
         _INPUT_FRAME,
     )
     assert submit[0].type == "submit"
     reject = align_input_decisions(
-        [_decision({"type": "reject", "tool_id": "call-I", "reason": "no"})], _INPUT_FRAME
+        [_decision({"type": "reject", "tool_id": "call-I", "reason": "no"})],
+        _INPUT_FRAME,
     )
     assert reject[0].type == "reject"
 

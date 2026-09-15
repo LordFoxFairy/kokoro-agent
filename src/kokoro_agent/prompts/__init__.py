@@ -10,7 +10,12 @@ from importlib.resources import files
 
 
 def load_prompt(name: str) -> str:
-    return files("kokoro_agent.prompts").joinpath(f"{name}.md").read_text(encoding="utf-8").strip()
+    return (
+        files("kokoro_agent.prompts")
+        .joinpath(f"{name}.md")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
 
 
 GENERAL_PROMPT: str = load_prompt("general")

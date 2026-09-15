@@ -37,7 +37,8 @@ def make_web_search_tool(provider: SearchProvider) -> StructuredTool:
         if not hits:
             return "no results"
         return "\n".join(
-            f"- {hit.title or hit.url} — {hit.url}\n  {hit.snippet}".rstrip() for hit in hits
+            f"- {hit.title or hit.url} — {hit.url}\n  {hit.snippet}".rstrip()
+            for hit in hits
         )
 
     return StructuredTool(
@@ -54,7 +55,9 @@ def make_web_search_tool(provider: SearchProvider) -> StructuredTool:
 # --- provider 适配器（tavily / searxng / zhipu）：工具原语只见 SearchProvider 协议 ---
 
 _TIMEOUT_S = 15.0
-_RAW_RESULTS: TypeAdapter[list[dict[str, object]]] = TypeAdapter(list[dict[str, object]])
+_RAW_RESULTS: TypeAdapter[list[dict[str, object]]] = TypeAdapter(
+    list[dict[str, object]]
+)
 _RAW_BODY: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 
 
@@ -67,7 +70,9 @@ class SearchProviderSettings(BaseModel):
     base_url: str | None
 
 
-def parse_hits(results: object, *, url_keys: tuple[str, ...] = ("url", "link")) -> list[SearchHit]:
+def parse_hits(
+    results: object, *, url_keys: tuple[str, ...] = ("url", "link")
+) -> list[SearchHit]:
     hits: list[SearchHit] = []
     for item in _RAW_RESULTS.validate_python(results or []):
         url = next((str(item[k]) for k in url_keys if item.get(k)), "")
@@ -134,14 +139,20 @@ class ZhipuSearch:
             httpx.Request(
                 "POST",
                 self._url,
-                json={"search_query": query, "search_engine": "search_std", "count": count},
+                json={
+                    "search_query": query,
+                    "search_engine": "search_std",
+                    "count": count,
+                },
                 headers={"authorization": f"Bearer {self._api_key}"},
             )
         )
         return parse_hits(body.get("search_result"))
 
 
-SUPPORTED_SEARCH_PROVIDERS: Final[frozenset[str]] = frozenset({"tavily", "searxng", "zhipu"})
+SUPPORTED_SEARCH_PROVIDERS: Final[frozenset[str]] = frozenset(
+    {"tavily", "searxng", "zhipu"}
+)
 
 
 def make_search_provider(settings: SearchProviderSettings) -> SearchProvider:

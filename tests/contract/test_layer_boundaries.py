@@ -90,11 +90,7 @@ def test_scoped_run_lookup_carries_explicit_tenant_lineage() -> None:
     """A derived namespace never replaces the tenant predicate on a JOIN."""
 
     source = (
-        _root()
-        / "src"
-        / "kokoro_agent"
-        / "infrastructure"
-        / "postgres_run_leases.py"
+        _root() / "src" / "kokoro_agent" / "infrastructure" / "postgres_run_leases.py"
     ).read_text(encoding="utf-8")
     assert "dispatch.tenant_id = claim.tenant_id" in source
     assert "claim.tenant_id = %s" in source

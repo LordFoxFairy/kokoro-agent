@@ -110,9 +110,7 @@ class CapabilitySkillBackend(BackendProtocol):
             return LsResult(error=FILE_NOT_FOUND)
         return LsResult(entries=list(children.values()))
 
-    async def adownload_files(
-        self, paths: list[str]
-    ) -> list[FileDownloadResponse]:
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         responses: list[FileDownloadResponse] = []
         for path in paths:
             parsed = self._parts(path)
@@ -154,7 +152,8 @@ class CapabilitySkillBackend(BackendProtocol):
             matches=[
                 FileInfo(path=name, is_dir=False, size=len(content.encode("utf-8")))
                 for name, content in sorted(files.items())
-                if name.startswith(prefix) and fnmatch.fnmatch(name.lstrip("/"), pattern)
+                if name.startswith(prefix)
+                and fnmatch.fnmatch(name.lstrip("/"), pattern)
             ]
         )
 
@@ -209,7 +208,9 @@ class CapabilitySkillBackend(BackendProtocol):
     async def aupload_files(
         self, files: list[tuple[str, bytes]]
     ) -> list[FileUploadResponse]:
-        return [FileUploadResponse(path=path, error=PERMISSION_DENIED) for path, _ in files]
+        return [
+            FileUploadResponse(path=path, error=PERMISSION_DENIED) for path, _ in files
+        ]
 
 
 __all__ = ["CapabilitySkillBackend", "SKILLS_ROOT"]

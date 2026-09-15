@@ -68,7 +68,9 @@ def make_web_fetch_tool(*, allow_private: bool = False) -> StructuredTool:
         # 外部抓取失败（非 2xx / 网络 / 超时）作工具结果回给模型自行改道，绝不抛异常炸整轮；
         # SSRF 拒绝与重定向超限是策略边界，仍 fail-loud 抛 ValueError。
         try:
-            async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_S, follow_redirects=False) as client:
+            async with httpx.AsyncClient(
+                timeout=_FETCH_TIMEOUT_S, follow_redirects=False
+            ) as client:
                 for _ in range(_MAX_REDIRECTS + 1):
                     if not allow_private:
                         await _assert_public_target(target)
@@ -92,7 +94,9 @@ def make_web_fetch_tool(*, allow_private: bool = False) -> StructuredTool:
                         body = b"".join(chunks)[:_FETCH_MAX_BYTES].decode(
                             response.charset_encoding or "utf-8", errors="replace"
                         )
-                    return _clip(_extract_text(response.headers.get("content-type", ""), body))
+                    return _clip(
+                        _extract_text(response.headers.get("content-type", ""), body)
+                    )
         except httpx.HTTPError as exc:
             return f"web_fetch 未取到内容：{type(exc).__name__} — {target}"
         raise ValueError(f"too many redirects fetching {url!r}")

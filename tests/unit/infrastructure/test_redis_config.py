@@ -7,7 +7,9 @@ import pytest
 import kokoro_agent.streams.redis as redis_module
 
 
-def test_redis_stream_sets_bounded_connection_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_redis_stream_sets_bounded_connection_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured_url = ""
     captured_kwargs: dict[str, object] = {}
 

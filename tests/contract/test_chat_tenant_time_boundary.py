@@ -34,7 +34,9 @@ def test_chat_schema_and_queries_use_explicit_tenant_predicates() -> None:
     assert "to_timestamp(%s / 1000.0)" not in repository
 
 
-def test_chat_has_an_explicit_wire_to_domain_mapper_without_changing_wire_schema() -> None:
+def test_chat_has_an_explicit_wire_to_domain_mapper_without_changing_wire_schema() -> (
+    None
+):
     root = _root()
     mapper = root / "src" / "kokoro_agent" / "application" / "chat" / "mappers.py"
     assert mapper.is_file()

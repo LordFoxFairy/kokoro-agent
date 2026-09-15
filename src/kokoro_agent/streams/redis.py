@@ -84,7 +84,9 @@ def _parse_entries(value: object) -> list[_Entry]:
         raise ValueError("xread entries must be a list")
     parsed: list[_Entry] = []
     for entry in value:
-        entry_id, fields = _expect_pair(entry, "xread item must be an (id, fields) pair")
+        entry_id, fields = _expect_pair(
+            entry, "xread item must be an (id, fields) pair"
+        )
         parsed.append(
             (
                 _strlike_or_none(entry_id, "xread id must be bytes, str, or None"),
@@ -113,7 +115,9 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
         )
         parsed.append(
             (
-                _strlike_or_none(stream_name, "xread stream name must be bytes, str, or None"),
+                _strlike_or_none(
+                    stream_name, "xread stream name must be bytes, str, or None"
+                ),
                 _parse_entries(entries),
             )
         )
@@ -122,7 +126,10 @@ def parse_xread_response(raw: object) -> _ReadResponse | None:
 
 class RedisStream:
     def __init__(
-        self, url: str, block_ms: int = _BLOCK_MS, autoclaim_idle_ms: int = _AUTOCLAIM_IDLE_MS
+        self,
+        url: str,
+        block_ms: int = _BLOCK_MS,
+        autoclaim_idle_ms: int = _AUTOCLAIM_IDLE_MS,
     ) -> None:
         # 固定 RESP2+decode_responses：xread/xrange 全返回 str，无 bytes 解码开销。
         self._redis: Redis = from_url(
@@ -141,7 +148,9 @@ class RedisStream:
     def _to_item(self, entry_id: bytes | str | None, fields: _Fields) -> StreamItem:
         raw = fields.get(_REDIS_FIELD) if fields is not None else None
         payload: object = json.loads(_decode(raw)) if raw is not None else {}
-        return StreamItem(cursor=_decode_cursor(entry_id), event=validate_event(payload))
+        return StreamItem(
+            cursor=_decode_cursor(entry_id), event=validate_event(payload)
+        )
 
     async def publish(
         self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
@@ -223,7 +232,10 @@ class RedisStream:
             except (RedisConnectionError, RedisTimeoutError) as error:
                 # 断线/抖动绝不冒泡杀死订阅流；group 游标在 redis 侧存活，重连不重放已投递消息。
                 LOGGER.warning(
-                    "redis xreadgroup on %s failed, reconnect in %.1fs: %s", stream, backoff, error
+                    "redis xreadgroup on %s failed, reconnect in %.1fs: %s",
+                    stream,
+                    backoff,
+                    error,
                 )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)

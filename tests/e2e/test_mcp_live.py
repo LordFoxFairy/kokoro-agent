@@ -87,7 +87,9 @@ def _registry(url: str, allowed: list[str]) -> dict[str, McpServerConfig]:
 
 async def test_live_roundtrip_via_stable_surface(mcp_base_url: str) -> None:
     # 稳定三工具全链：list（白名单过滤 secret）→ describe（schema）→ call（真调用往返）。
-    list_tool, describe_tool, call_tool = make_mcp_tools(["fx"], _registry(mcp_base_url, ["echo"]))
+    list_tool, describe_tool, call_tool = make_mcp_tools(
+        ["fx"], _registry(mcp_base_url, ["echo"])
+    )
     listed: str = await list_tool.ainvoke({})
     assert "fx/echo" in listed and "secret" not in listed
     described: str = await describe_tool.ainvoke({"server": "fx", "tool": "echo"})

@@ -84,7 +84,9 @@ class AgentRunStream(_RunProjections, Protocol):
 
     async def interrupted(self) -> bool: ...
     async def __aenter__(self) -> AgentRunStream: ...
-    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool | None: ...
+    async def __aexit__(
+        self, exc_type: object, exc: object, tb: object
+    ) -> bool | None: ...
 
 
 @runtime_checkable
@@ -125,7 +127,5 @@ def require_agent_runnable(value: object) -> AgentRunnable:
     """Validate a third-party construction result without wrapping its runtime."""
 
     if not is_agent_runnable(value):
-        raise TypeError(
-            "DeepAgents returned an object without its native call surface"
-        )
+        raise TypeError("DeepAgents returned an object without its native call surface")
     return value

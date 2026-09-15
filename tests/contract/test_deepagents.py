@@ -68,6 +68,7 @@ class ToolCapturingFakeModel(FakeListChatModel):
         self._bound_tool_names = [str(getattr(tool_, "name", tool_)) for tool_ in tools]
         return self
 
+
 class SkillPromptCapturingFakeModel(ToolCapturingFakeModel):
     """Captures the normal agent request used by the native Skill middleware proof."""
 
@@ -117,6 +118,7 @@ class BoundProfileFakeModel(ToolCapturingFakeModel):
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         self._received_message_text = [str(message.content) for message in input]
         return super().invoke(input, config=config, **kwargs)
+
 
 _ACTIVE_RUN_MODEL: ContextVar[ToolCapturingFakeModel | None] = ContextVar(
     "active_run_model", default=None
@@ -194,7 +196,7 @@ def _register_bound_profile() -> None:
         "kokoro:bound_chat",
         HarnessProfile(
             system_prompt_suffix=_BOUND_PROFILE_SUFFIX,
-        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
             excluded_tools=frozenset({"delete", "execute"}),
         ),
     )
@@ -777,7 +779,7 @@ def test_official_tool_middleware_rejects_an_unbound_destructive_tool_call(
     register_harness_profile(
         "toolcallingfakemodel",
         HarnessProfile(
-        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
             excluded_tools=frozenset({"delete", "execute"}),
         ),
     )

@@ -41,7 +41,9 @@ LOGGER = logging.getLogger(__name__)
 _EventQueue = asyncio.Queue[AgentEventPayload | None]
 
 
-async def pump_run(emitter: RunEmitter, run: AgentRunStream, *, source_for: SourceResolver) -> None:
+async def pump_run(
+    emitter: RunEmitter, run: AgentRunStream, *, source_for: SourceResolver
+) -> None:
     """并发抽干 v3 四路 typed 投影 → 本地 queue 合流 → RunEmitter 单点发布。
 
     LangGraph v3 用 caller-driven single-flight pump 驱动全图，四路 typed 投影必须并发
@@ -66,7 +68,9 @@ async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
         try:
             await emitter.emit(payload)
         except Exception:  # noqa: BLE001 — 局部容错：单事件发布失败隔离，不毁整条流
-            LOGGER.warning("dropping event on publish failure: %s", type(payload).__name__)
+            LOGGER.warning(
+                "dropping event on publish failure: %s", type(payload).__name__
+            )
 
 
 async def _consume(
@@ -92,7 +96,9 @@ async def _consume_messages(
         if model.node != "model":
             # 非模型节点的消息投影（如 before_model 注入的 steer HumanMessage、
             # summarization 改写）：绝不冒充正文上 wire；仍抽干防回压。
-            await asyncio.gather(_drain_aiter(model.text), _drain_aiter(model.reasoning))
+            await asyncio.gather(
+                _drain_aiter(model.text), _drain_aiter(model.reasoning)
+            )
             continue
         segment_id = model.message_id or ""
         # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全）。
@@ -106,7 +112,9 @@ async def _consume_messages(
         # thinking 无 completed kind，故仅 text 收终态帧。
         text_final = final.text if final is not None else text_full
         completed = (
-            subagent_text_completed_payload(text_final, segment_id=seg, subagent_id=subagent_id)
+            subagent_text_completed_payload(
+                text_final, segment_id=seg, subagent_id=subagent_id
+            )
             if subagent_id is not None
             else message_completed_payload(text_final, segment_id=seg)
         )
@@ -115,13 +123,18 @@ async def _consume_messages(
 
 
 async def _pump_text(
-    deltas: AsyncIterable[str], queue: _EventQueue, segment_id: str, subagent_id: str | None
+    deltas: AsyncIterable[str],
+    queue: _EventQueue,
+    segment_id: str,
+    subagent_id: str | None,
 ) -> str:
     acc = ""
     async for text in deltas:
         acc += text
         payload = (
-            subagent_text_delta_payload(text, segment_id=segment_id, subagent_id=subagent_id)
+            subagent_text_delta_payload(
+                text, segment_id=segment_id, subagent_id=subagent_id
+            )
             if subagent_id is not None
             else message_delta_payload(text, segment_id=segment_id)
         )
@@ -131,7 +144,10 @@ async def _pump_text(
 
 
 async def _pump_reasoning(
-    deltas: AsyncIterable[str], queue: _EventQueue, segment_id: str, subagent_id: str | None
+    deltas: AsyncIterable[str],
+    queue: _EventQueue,
+    segment_id: str,
+    subagent_id: str | None,
 ) -> None:
     async for text in deltas:
         payload: AgentEventPayload | None
@@ -194,12 +210,16 @@ async def _consume_tools(
 
 
 async def _consume_subagents(
-    subagents: AsyncIterable[SubagentRunStream], queue: _EventQueue, source_for: SourceResolver
+    subagents: AsyncIterable[SubagentRunStream],
+    queue: _EventQueue,
+    source_for: SourceResolver,
 ) -> None:
     async for sub in subagents:
         source = source_for(sub.name or "subagent")
         await queue.put(subagent_started_payload(sub, source=source))
-        await _consume(sub, queue, subagent_id=sub.trigger_call_id, source_for=source_for)
+        await _consume(
+            sub, queue, subagent_id=sub.trigger_call_id, source_for=source_for
+        )
         await queue.put(subagent_finished_payload(sub, source=source))
 
 

@@ -38,14 +38,18 @@ async def _redis_required() -> RedisStream:
         await asyncio.wait_for(port.read_all("kokoro-test-ping"), timeout=1.0)
     except Exception as exc:  # noqa: BLE001 — 服务缺失显式炸
         await port.aclose()
-        raise RuntimeError(f"redis required but unreachable at {REDIS_URL}: {exc}") from exc
+        raise RuntimeError(
+            f"redis required but unreachable at {REDIS_URL}: {exc}"
+        ) from exc
     return port
 
 
 # --- 边界洗净（无需 redis） ---
 
 
-@pytest.mark.parametrize("bad", [object(), {"k": object()}, {"k": {1, 2}}, [1, 2], "str", None])
+@pytest.mark.parametrize(
+    "bad", [object(), {"k": object()}, {"k": {1, 2}}, [1, 2], "str", None]
+)
 def test_event_boundary_rejects_non_json(bad: object) -> None:
     # publish 的入参洗净单点：非 JSON 载荷在边界即 ValidationError，绝不入流。
     with pytest.raises(ValidationError):
@@ -89,7 +93,8 @@ def test_redis_satisfies_protocol() -> None:
 
 
 @pytest.mark.parametrize(
-    "empty", [{}, {"empty_str": ""}, {"empty_list": []}, {"empty_dict": {}}, {"null": None}],
+    "empty",
+    [{}, {"empty_str": ""}, {"empty_list": []}, {"empty_dict": {}}, {"null": None}],
 )
 async def test_publish_accepts_json_edge_values(empty: dict[str, JsonValue]) -> None:
     port = await _redis_required()
@@ -105,7 +110,9 @@ async def test_redis_round_trip_and_group_ack() -> None:
     port = await _redis_required()
     stream = f"kokoro-test:{uuid.uuid4().hex}"
     try:
-        published = await port.publish(stream, {"n": 1, "nested": {"深": "值"}}, maxlen=100)
+        published = await port.publish(
+            stream, {"n": 1, "nested": {"深": "值"}}, maxlen=100
+        )
         items = await port.read_all(stream)
         assert [item.event for item in items] == [{"n": 1, "nested": {"深": "值"}}]
         assert items[0].cursor == published.cursor
@@ -129,10 +136,14 @@ async def test_redis_autoclaim_adopts_stale_pending() -> None:
     stream = f"kokoro-test:{uuid.uuid4().hex}"
     try:
         await port_a.publish(stream, {"n": "orphan"}, maxlen=100)
-        got_a = await _collect(port_a.subscribe(stream, group="g", consumer="crashed"), 1)
+        got_a = await _collect(
+            port_a.subscribe(stream, group="g", consumer="crashed"), 1
+        )
         assert got_a[0].event == {"n": "orphan"}  # 未 ack：留在 crashed 的 PEL
         await asyncio.sleep(0.1)  # 超过 idle 阈值
-        got_b = await _collect(port_b.subscribe(stream, group="g", consumer="survivor"), 1)
+        got_b = await _collect(
+            port_b.subscribe(stream, group="g", consumer="survivor"), 1
+        )
         assert got_b[0].event == {"n": "orphan"}
         await port_b.ack(stream, "g", got_b[0].cursor)
     finally:
@@ -153,7 +164,9 @@ async def test_redis_publish_respects_maxlen() -> None:
         await port.aclose()
 
 
-async def test_redis_subscribe_survives_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_redis_subscribe_survives_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # 断线退避：xreadgroup 先抛 ConnectionError，再恢复返回数据；订阅流不死、从断点续读。
     from redis.exceptions import ConnectionError as RedisConnectionError
 

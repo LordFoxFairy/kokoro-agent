@@ -247,7 +247,9 @@ async def test_evidence_hides_run_from_a_different_identity_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evidence_hides_run_from_a_different_tenant_with_the_same_subject() -> None:
+async def test_evidence_hides_run_from_a_different_tenant_with_the_same_subject() -> (
+    None
+):
     run_repository = FakeRunRepository()
     request = RunRequest(
         kind="run.request",

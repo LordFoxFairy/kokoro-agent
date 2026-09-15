@@ -13,7 +13,11 @@ from kokoro_agent.inspect import describe_catalog, describe_feature, render_cata
 def test_catalog_description_is_stable_and_does_not_expose_prompt_text() -> None:
     description = describe_catalog(FEATURE_CATALOG)
 
-    assert tuple(item.key for item in description.features) == ("chat", "music", "music_chat")
+    assert tuple(item.key for item in description.features) == (
+        "chat",
+        "music",
+        "music_chat",
+    )
     music = next(item for item in description.agents if item.key == "music")
     assert music.features == ("music", "music_chat")
     assert music.skills == ("music",)

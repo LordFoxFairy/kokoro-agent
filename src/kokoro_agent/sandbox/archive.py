@@ -12,7 +12,12 @@ import yaml
 from botocore.config import Config as BotoConfig
 from mypy_boto3_s3 import S3Client
 from deepagents.backends.local_shell import LocalShellBackend
-from deepagents.backends.protocol import EditResult, ExecuteResponse, FileUploadResponse, WriteResult
+from deepagents.backends.protocol import (
+    EditResult,
+    ExecuteResponse,
+    FileUploadResponse,
+    WriteResult,
+)
 from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.archive")
@@ -122,7 +127,9 @@ class ArchivingWritesMixin(LocalShellBackend):
         try:
             self._archiver.archive_tree(self._archive_root, self._prefix)
         except Exception:
-            LOGGER.warning("workspace tree archive failed for %s", self._prefix, exc_info=True)
+            LOGGER.warning(
+                "workspace tree archive failed for %s", self._prefix, exc_info=True
+            )
 
     def write(self, file_path: str, content: str) -> WriteResult:
         result = super().write(file_path, content)
@@ -135,14 +142,22 @@ class ArchivingWritesMixin(LocalShellBackend):
         return result
 
     def edit(
-        self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
     ) -> EditResult:
         result = super().edit(file_path, old_string, new_string, replace_all)
         self._archive_file(file_path)
         return result
 
     async def aedit(
-        self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
     ) -> EditResult:
         result = await super().aedit(file_path, old_string, new_string, replace_all)
         await asyncio.to_thread(self._archive_file, file_path)
@@ -153,7 +168,9 @@ class ArchivingWritesMixin(LocalShellBackend):
         self._archive_all()
         return result
 
-    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+    async def aexecute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
         result = await super().aexecute(command, timeout=timeout)
         await asyncio.to_thread(self._archive_all)
         return result
@@ -163,7 +180,9 @@ class ArchivingWritesMixin(LocalShellBackend):
         self._archive_all()
         return result
 
-    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+    async def aupload_files(
+        self, files: list[tuple[str, bytes]]
+    ) -> list[FileUploadResponse]:
         result = await super().aupload_files(files)
         await asyncio.to_thread(self._archive_all)
         return result

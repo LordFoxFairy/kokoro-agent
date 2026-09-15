@@ -30,7 +30,11 @@ from kokoro_agent.infrastructure.chat_mappers import (
     chat_message_from_row,
     chat_session_from_row,
 )
-from kokoro_agent.infrastructure.postgres import DEFAULT_PG_SCHEMA, connect_pg, qualified
+from kokoro_agent.infrastructure.postgres import (
+    DEFAULT_PG_SCHEMA,
+    connect_pg,
+    qualified,
+)
 from kokoro_agent.infrastructure.schema import (
     CHAT_EVENTS_TABLE,
     CHAT_MESSAGES_TABLE,
@@ -193,9 +197,7 @@ class PostgresChatRepository:
             clauses.append("project_ref = %s")
             params.append(project_ref)
         if after is not None:
-            clauses.append(
-                "(updated_at < %s OR (updated_at = %s AND session_id > %s))"
-            )
+            clauses.append("(updated_at < %s OR (updated_at = %s AND session_id > %s))")
             params.extend([after[0], after[0], after[1]])
         params.append(limit)
         async with connect_pg(self._database_url) as conn:
@@ -339,7 +341,9 @@ class PostgresChatRepository:
                 rows = await fetch_all(cur)
         return tuple(chat_message_from_row(row) for row in rows)
 
-    async def next_source_index(self, tenant_id: str, namespace: str, run_id: str) -> int:
+    async def next_source_index(
+        self, tenant_id: str, namespace: str, run_id: str
+    ) -> int:
         _validate_scope(tenant_id, namespace, run_id)
         async with connect_pg(self._database_url) as conn:
             async with conn.cursor() as cur:
@@ -432,7 +436,9 @@ class PostgresChatRepository:
         await self._lock_identity(
             cur, f"chat-message:{message.tenant_id}:{message.chat_message_id}"
         )
-        existing = await self._get_message(cur, message.tenant_id, message.chat_message_id)
+        existing = await self._get_message(
+            cur, message.tenant_id, message.chat_message_id
+        )
         if existing is not None:
             _assert_message_identity(existing, message)
             return existing

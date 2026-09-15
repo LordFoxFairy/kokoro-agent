@@ -102,14 +102,18 @@ async def test_pins_connection_to_resolved_ip_and_keeps_sni() -> None:
     async with httpx.AsyncClient(transport=transport) as client:
         response = await client.get("https://mcp.example.com:8443/mcp")
     assert response.status_code == 200
-    assert inner.host == "93.184.216.34"  # 连接目标是解析 IP（防 rebinding：同一次解析既校验又连）
+    assert (
+        inner.host == "93.184.216.34"
+    )  # 连接目标是解析 IP（防 rebinding：同一次解析既校验又连）
     assert inner.sni == "mcp.example.com"  # TLS 主机名不被 pin 篡改
     assert inner.port == 8443
 
 
 async def test_hostname_resolving_to_forbidden_is_blocked() -> None:
     # DNS 指向内网/元数据：解析全量校验，任一落禁段即拒（挡 rebinding 的内网跳板）。
-    transport = GuardedTransport(_RecordingInner(), _resolver("93.184.216.34", "169.254.169.254"))
+    transport = GuardedTransport(
+        _RecordingInner(), _resolver("93.184.216.34", "169.254.169.254")
+    )
     async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(EgressBlocked, match="禁止网段"):
             await client.get("https://rebind.example/")
@@ -143,7 +147,9 @@ def test_egress_mode_from_env_defaults_strict() -> None:
     assert egress_mode_from_env({}) == "strict"
     assert egress_mode_from_env({"KOKORO_MCP_EGRESS_MODE": "off"}) == "off"
     assert egress_mode_from_env({"KOKORO_MCP_EGRESS_MODE": "OFF"}) == "off"
-    assert egress_mode_from_env({"KOKORO_MCP_EGRESS_MODE": "bogus"}) == "strict"  # fail-safe
+    assert (
+        egress_mode_from_env({"KOKORO_MCP_EGRESS_MODE": "bogus"}) == "strict"
+    )  # fail-safe
 
 
 def _config(url: str) -> McpServerConfig:

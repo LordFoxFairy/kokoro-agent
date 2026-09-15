@@ -21,7 +21,9 @@ def main(
 ) -> int:
     parser = argparse.ArgumentParser(prog="kokoro-agent")
     subcommands = parser.add_subparsers(dest="command", required=True)
-    inspect_parser = subcommands.add_parser("inspect", help="inspect Agent/Feature declarations")
+    inspect_parser = subcommands.add_parser(
+        "inspect", help="inspect Agent/Feature declarations"
+    )
     inspect_parser.add_argument("feature", nargs="?")
     inspect_parser.add_argument("--json", action="store_true", dest="as_json")
     subcommands.add_parser(

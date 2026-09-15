@@ -27,7 +27,8 @@ def build_interrupt_on(
     """pause_tools=类型包的 respond 语义暂停点（对话型={ask_user}，studio 类型=∅）；
     approval_tools 挂 approve/edit/reject；subagent_create=ask 时委派工具同样进审批门控。"""
     interrupt_on: dict[str, bool | InterruptOnConfig] = {
-        tool: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS) for tool in pause_tools
+        tool: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS)
+        for tool in pause_tools
     }
     interrupt_on.update(
         {

@@ -45,4 +45,6 @@ async def test_chat_fact_is_durable_before_raw_agent_event() -> None:
     assert order == ["chat", "raw"]
     assert store.records[0].event_type == "assistant.delta"
     assert "native-segment" not in store.records[0].payload_json
-    assert all(stream != live_stream("session-1") for stream, _event, _maxlen in bus.published)
+    assert all(
+        stream != live_stream("session-1") for stream, _event, _maxlen in bus.published
+    )

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from support.fakes import FakeAgent, FakeBus, FakeRunStream, FakeToolCall, usage_recorder
+from support.fakes import (
+    FakeAgent,
+    FakeBus,
+    FakeRunStream,
+    FakeToolCall,
+    usage_recorder,
+)
 
 from kokoro_agent.protocol import DeliveryCreated, SubagentSource
 from kokoro_agent.execution.events import RunEmitter, delivery_created_payload
@@ -95,7 +101,9 @@ async def test_delivery_follows_tool_returned_via_same_emitter() -> None:
     await _invoke(bus, FakeRunStream(tool_views=(_deliver_call(_delivered_json()),)))
 
     kinds = bus.kinds("r1")
-    assert kinds.index("delivery.created") == kinds.index("tool.returned") + 1  # 紧随，序号连续。
+    assert (
+        kinds.index("delivery.created") == kinds.index("tool.returned") + 1
+    )  # 紧随，序号连续。
     events = bus.run_events("r1")
     returned = next(e for e in events if e.kind == "tool.returned")
     delivery = next(e for e in events if e.kind == "delivery.created")

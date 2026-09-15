@@ -52,7 +52,8 @@ def test_tool_primitive_is_vendor_free() -> None:
     import inspect
 
     section = "".join(
-        inspect.getsource(obj) for obj in (make_web_search_tool, SearchProvider, SearchHit)
+        inspect.getsource(obj)
+        for obj in (make_web_search_tool, SearchProvider, SearchHit)
     ).lower()
     for vendor in ("zhipu", "tavily", "searxng", "bigmodel"):
         assert vendor not in section
@@ -65,7 +66,10 @@ def test_tool_primitive_is_vendor_free() -> None:
         (None, []),
         ([{"title": "T", "url": "https://a", "content": "C"}], ["https://a"]),
         ([{"title": "T", "link": "https://b"}], ["https://b"]),  # link 别名（zhipu 形）
-        ([{"title": "T", "url": "https://c", "snippet": "S"}], ["https://c"]),  # snippet 别名
+        (
+            [{"title": "T", "url": "https://c", "snippet": "S"}],
+            ["https://c"],
+        ),  # snippet 别名
         ([{"no_url": 1}], []),  # 无 url 脏条目剔除
     ],
 )
@@ -74,7 +78,9 @@ def test_parse_hits_boundary_matrix(raw: object, expected_urls: list[str]) -> No
     assert [hit.url for hit in hits] == expected_urls
 
 
-def _settings(provider: str, *, key: str | None = "k", url: str | None = None) -> SearchProviderSettings:
+def _settings(
+    provider: str, *, key: str | None = "k", url: str | None = None
+) -> SearchProviderSettings:
     return SearchProviderSettings(
         provider=provider, api_key=None if key is None else SecretStr(key), base_url=url
     )
@@ -84,7 +90,8 @@ def test_provider_registry_matrix() -> None:
     assert isinstance(make_search_provider(_settings("tavily")), TavilySearch)
     assert isinstance(make_search_provider(_settings("zhipu")), ZhipuSearch)
     assert isinstance(
-        make_search_provider(_settings("searxng", url="https://searx.local")), SearxngSearch
+        make_search_provider(_settings("searxng", url="https://searx.local")),
+        SearxngSearch,
     )
     assert SUPPORTED_SEARCH_PROVIDERS == {"tavily", "searxng", "zhipu"}
 

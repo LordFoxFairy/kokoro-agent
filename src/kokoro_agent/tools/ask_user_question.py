@@ -20,7 +20,9 @@ class AskUserArgs(BaseModel):
 def _ask_user_uninterrupted(
     question: str, choices: tuple[str, ...] = (), allow_free_text: bool = True
 ) -> str:
-    raise RuntimeError("ask_user must be resolved through HITL respond before execution")
+    raise RuntimeError(
+        "ask_user must be resolved through HITL respond before execution"
+    )
 
 
 ASK_USER_TOOL = StructuredTool(

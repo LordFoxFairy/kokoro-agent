@@ -32,7 +32,10 @@ def test_dispatch_admission_persists_replayable_request_without_silent_expiry() 
 
     assert "request_json text not null" in sql
     assert "deadline_at" not in sql
-    assert "ck_kokoro_agent_run_dispatch_status check (status in ('pending', 'claimed'))" in sql
+    assert (
+        "ck_kokoro_agent_run_dispatch_status check (status in ('pending', 'claimed'))"
+        in sql
+    )
 
 
 def test_event_indices_and_sandbox_binding_are_generation_safe() -> None:
@@ -42,9 +45,7 @@ def test_event_indices_and_sandbox_binding_are_generation_safe() -> None:
     assert "sandbox_generation bigint" in sql
     assert "sandbox_backend_kind text" in sql
     assert "sandbox_teardown_ref text" in sql
-    assert (
-        "on kokoro_agent_run_outbox (run_id, index_value)" in sql
-    )
+    assert "on kokoro_agent_run_outbox (run_id, index_value)" in sql
     assert "where index_value is not null and status <> 'superseded'" in sql
 
 

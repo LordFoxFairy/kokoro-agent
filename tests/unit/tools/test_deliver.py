@@ -60,7 +60,9 @@ def _tool(tmp_path: Path, client: FakeDeliveryClient):
     )
 
 
-async def test_deliver_publishes_workspace_bytes_through_public_client(tmp_path: Path) -> None:
+async def test_deliver_publishes_workspace_bytes_through_public_client(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "report.pdf").write_bytes(b"final report")
     client = FakeDeliveryClient()
 
@@ -80,7 +82,9 @@ async def test_deliver_publishes_workspace_bytes_through_public_client(tmp_path:
     assert request.mime_type == "application/pdf"
 
 
-async def test_deliver_request_is_idempotent_for_same_run_path_and_bytes(tmp_path: Path) -> None:
+async def test_deliver_request_is_idempotent_for_same_run_path_and_bytes(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "a.txt").write_bytes(b"same")
     client = FakeDeliveryClient()
     tool = _tool(tmp_path, client)

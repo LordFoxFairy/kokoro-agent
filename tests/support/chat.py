@@ -74,7 +74,9 @@ class FakeChatRepository:
             and record_namespace == namespace
             and (project_ref is None or record.project_ref == project_ref)
         ]
-        records.sort(key=lambda record: (-record.updated_at.timestamp(), record.session_id))
+        records.sort(
+            key=lambda record: (-record.updated_at.timestamp(), record.session_id)
+        )
         if after is not None:
             records = [
                 record
@@ -214,7 +216,9 @@ class FakeChatRepository:
         )
         return tuple(messages[:limit])
 
-    async def next_source_index(self, tenant_id: str, namespace: str, run_id: str) -> int:
+    async def next_source_index(
+        self, tenant_id: str, namespace: str, run_id: str
+    ) -> int:
         indices = [
             event.source_index
             for event in self.records

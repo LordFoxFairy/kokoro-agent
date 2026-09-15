@@ -61,9 +61,7 @@ def canonical_schema_path() -> Path:
     source_path = Path(__file__).resolve().parents[3] / "database" / "schema.sql"
     if source_path.is_file():
         return source_path
-    installed_path = (
-        Path(sys.prefix) / "share" / "kokoro-agent" / "schema.sql"
-    )
+    installed_path = Path(sys.prefix) / "share" / "kokoro-agent" / "schema.sql"
     if installed_path.is_file():
         return installed_path
     raise FileNotFoundError(
@@ -112,9 +110,7 @@ async def apply_agent_schema(
             await dynamic_cursor.execute(canonical_schema_sql())
 
 
-async def verify_agent_schema(
-    conn: psycopg.AsyncConnection[Any], schema: str
-) -> None:
+async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -> None:
     """Fail loudly when runtime starts against an incomplete deployment schema."""
 
     async with conn.cursor() as cur:
@@ -130,7 +126,8 @@ async def verify_agent_schema(
     missing = sorted(set(AGENT_TABLES) - actual)
     if missing:
         raise SchemaNotReadyError(
-            "Agent canonical schema is incomplete; missing tables: " + ", ".join(missing)
+            "Agent canonical schema is incomplete; missing tables: "
+            + ", ".join(missing)
         )
 
 

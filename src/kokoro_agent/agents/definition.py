@@ -60,11 +60,17 @@ class Agent:
             raise ValueError(f"invalid agent key: {self.key!r}")
         if not self.prompt.strip():
             raise ValueError(f"agent {self.key!r} needs a prompt")
-        for label, values in (("skills", self.skills), ("mcp", self.mcp), ("subagents", self.subagents)):
+        for label, values in (
+            ("skills", self.skills),
+            ("mcp", self.mcp),
+            ("subagents", self.subagents),
+        ):
             if len(set(values)) != len(values):
                 raise ValueError(f"agent {self.key!r} has duplicate {label}")
         if not self.pause_tools.issubset({tool.name for tool in self.tools}):
-            raise ValueError(f"agent {self.key!r} declares a pause tool that is not mounted")
+            raise ValueError(
+                f"agent {self.key!r} declares a pause tool that is not mounted"
+            )
 
 
 __all__ = ["Agent"]

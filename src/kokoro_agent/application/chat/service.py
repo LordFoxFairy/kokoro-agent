@@ -48,7 +48,9 @@ class ChatService:
             updated_at=wire_epoch_millis_to_utc(updated_at),
         )
 
-    async def list_sessions(self, request: ChatSessionListRequest) -> ChatSessionListPage:
+    async def list_sessions(
+        self, request: ChatSessionListRequest
+    ) -> ChatSessionListPage:
         decoded = decode_session_cursor(request.cursor) if request.cursor else None
         after = (
             (wire_epoch_millis_to_utc(decoded[0]), decoded[1])
@@ -106,7 +108,6 @@ class ChatService:
                 request.execution_identity.tenant_ref, namespace, request.session_id
             ),
         )
-
 
 
 __all__ = ["ChatService"]

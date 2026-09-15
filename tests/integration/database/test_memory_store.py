@@ -24,16 +24,12 @@ async def test_memory_store_delete_filter_and_namespace_projection(
         {"kind": "note", "priority": 1},
     )
 
-    matches = await memory_store.asearch(
-        ("tenant", "user"), filter={"kind": "note"}
-    )
+    matches = await memory_store.asearch(("tenant", "user"), filter={"kind": "note"})
     assert [(item.namespace, item.key) for item in matches] == [
         (("tenant", "user", "memory"), "note")
     ]
 
-    namespaces = await memory_store.alist_namespaces(
-        prefix=("tenant",), max_depth=2
-    )
+    namespaces = await memory_store.alist_namespaces(prefix=("tenant",), max_depth=2)
     assert namespaces == [("tenant", "other"), ("tenant", "user")]
 
     await memory_store.adelete(("tenant", "user", "memory"), "note")

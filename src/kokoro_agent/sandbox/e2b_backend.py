@@ -115,11 +115,23 @@ class E2BSandboxBackend(BaseSandbox):
         responses: list[FileDownloadResponse] = []
         for path in paths:
             try:
-                raw = self._sandbox.files.read(f"{_WORKDIR}/{path.lstrip('/')}", format="bytes")
-                content = bytes(raw) if isinstance(raw, (bytes, bytearray)) else str(raw).encode()
-                responses.append(FileDownloadResponse(path=path, content=content, error=None))
+                raw = self._sandbox.files.read(
+                    f"{_WORKDIR}/{path.lstrip('/')}", format="bytes"
+                )
+                content = (
+                    bytes(raw)
+                    if isinstance(raw, (bytes, bytearray))
+                    else str(raw).encode()
+                )
+                responses.append(
+                    FileDownloadResponse(path=path, content=content, error=None)
+                )
             except SandboxException:
-                responses.append(FileDownloadResponse(path=path, content=None, error="file_not_found"))
+                responses.append(
+                    FileDownloadResponse(
+                        path=path, content=None, error="file_not_found"
+                    )
+                )
         return responses
 
 
@@ -130,7 +142,9 @@ def kill_e2b_sandbox(settings: E2BSettings, sandbox_id: str) -> None:
     Sandbox.kill(sandbox_id, api_key=settings.api_key.get_secret_value())
 
 
-def connect_e2b_sandbox(settings: E2BSettings, *, sandbox_id: str | None) -> E2BSandboxBackend:
+def connect_e2b_sandbox(
+    settings: E2BSettings, *, sandbox_id: str | None
+) -> E2BSandboxBackend:
     """run 级生命周期：有既往 sandbox_id 先重连（HITL 暂停期文件在箱内）；
     箱已被 TTL 回收则新建并告警（文件面由归档兜底）。SDK 网络调用是同步阻塞——
     调用方（async 装配路径）须经 to_thread。
@@ -141,10 +155,14 @@ def connect_e2b_sandbox(settings: E2BSettings, *, sandbox_id: str | None) -> E2B
     if sandbox_id is not None:
         try:
             # 类形态 connect：按 id 重连（paused 箱自动 resume）——HITL 暂停期文件都在。
-            sandbox = Sandbox.connect(sandbox_id, timeout=settings.timeout, api_key=api_key)
+            sandbox = Sandbox.connect(
+                sandbox_id, timeout=settings.timeout, api_key=api_key
+            )
             return E2BSandboxBackend(sandbox)
         except SandboxException:
-            LOGGER.warning("e2b sandbox %s gone (TTL?), creating a fresh one", sandbox_id)
+            LOGGER.warning(
+                "e2b sandbox %s gone (TTL?), creating a fresh one", sandbox_id
+            )
     created = Sandbox.create(
         template=settings.template, timeout=settings.timeout, api_key=api_key
     )

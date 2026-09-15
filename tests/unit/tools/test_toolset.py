@@ -44,9 +44,7 @@ def test_toolset_extension_rejects_handoff_collision() -> None:
 def test_mcp_client_outage_keeps_deployment_and_marks_dynamic_names() -> None:
     local = McpServerConfig(url="https://mcp.example.test", allowed_tools=["search"])
 
-    resolved = mcp_outage_definitions(
-        {"local": local}, ("local", "capability-only")
-    )
+    resolved = mcp_outage_definitions({"local": local}, ("local", "capability-only"))
 
     assert resolved["local"] == local
     assert isinstance(resolved["capability-only"], McpServerUnavailable)

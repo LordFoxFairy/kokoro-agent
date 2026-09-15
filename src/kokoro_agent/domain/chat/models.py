@@ -6,7 +6,14 @@ from datetime import datetime
 from typing import Annotated, Literal, Self
 from uuid import NAMESPACE_URL, uuid5
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from kokoro_agent.domain.chat.time import normalize_utc_datetime
 

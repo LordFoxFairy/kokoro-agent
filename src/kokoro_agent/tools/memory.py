@@ -52,7 +52,8 @@ def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
         if not matched:
             return "no memories found"
         return "\n".join(
-            f"- {item.key}: {item.value.get('content', '')}" for item in matched[:_SEARCH_LIMIT]
+            f"- {item.key}: {item.value.get('content', '')}"
+            for item in matched[:_SEARCH_LIMIT]
         )
 
     return (

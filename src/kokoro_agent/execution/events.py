@@ -152,14 +152,17 @@ class RunEmitter:
         if outbox is not None and lease is None:
             raise ValueError("a durable RunEmitter requires an execution lease fence")
         self._lease = lease
-        if len(
-            {
-                tenant_id is None,
-                namespace is None,
-                session_id is None,
-                chat_repository is None,
-            }
-        ) != 1:
+        if (
+            len(
+                {
+                    tenant_id is None,
+                    namespace is None,
+                    session_id is None,
+                    chat_repository is None,
+                }
+            )
+            != 1
+        ):
             raise ValueError(
                 "tenant_id, namespace, session_id and chat_repository must be configured together"
             )
@@ -206,7 +209,9 @@ class RunEmitter:
                 tool_segments[event.payload.tool_id] = event.payload.segment_id
         if chat_repository is not None and outbox is None:
             if tenant_id is None or namespace is None:
-                raise ValueError("tenant_id and namespace are required with chat_repository")
+                raise ValueError(
+                    "tenant_id and namespace are required with chat_repository"
+                )
             next_index = max(
                 next_index,
                 await chat_repository.next_source_index(tenant_id, namespace, run_id),

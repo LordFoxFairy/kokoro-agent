@@ -34,7 +34,9 @@ def _echo_tool(name: str, description: str = "echo tool") -> BaseTool:
     def run(text: str) -> str:
         return f"{name}:{text}"
 
-    return StructuredTool(name=name, description=description, args_schema=_EchoArgs, func=run)
+    return StructuredTool(
+        name=name, description=description, args_schema=_EchoArgs, func=run
+    )
 
 
 class _FakeClient:
@@ -73,7 +75,9 @@ def _patched(monkeypatch: pytest.MonkeyPatch, client: type) -> None:
     monkeypatch.setattr(tools_mod, "MultiServerMCPClient", client)
 
 
-async def test_list_filters_whitelist_and_shows_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_list_filters_whitelist_and_shows_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _patched(monkeypatch, _FakeClient)
     list_tool, _, _ = make_mcp_tools(["srv"], REGISTRY)
     out = await list_tool.ainvoke({})
@@ -92,7 +96,9 @@ def test_unknown_server_name_fails_loud_at_assembly() -> None:
         make_mcp_tools(["ghost"], REGISTRY)
 
 
-async def test_lazy_connection_and_per_run_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_lazy_connection_and_per_run_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _FakeClient.instances = 0
     _patched(monkeypatch, _FakeClient)
     list_tool, describe_tool, _ = make_mcp_tools(["srv"], REGISTRY)
@@ -112,18 +118,28 @@ async def test_describe_returns_schema(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_call_roundtrip_and_unknown_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     _patched(monkeypatch, _FakeClient)
     _, _, call_tool = make_mcp_tools(["srv"], REGISTRY)
-    result = await call_tool.ainvoke({"server": "srv", "tool": "ok", "arguments": {"text": "你好"}})
+    result = await call_tool.ainvoke(
+        {"server": "srv", "tool": "ok", "arguments": {"text": "你好"}}
+    )
     assert result == "ok:你好"
-    assert "error" in await call_tool.ainvoke({"server": "srv", "tool": "blocked", "arguments": {}})
-    assert "error" in await call_tool.ainvoke({"server": "other", "tool": "ok", "arguments": {}})
+    assert "error" in await call_tool.ainvoke(
+        {"server": "srv", "tool": "blocked", "arguments": {}}
+    )
+    assert "error" in await call_tool.ainvoke(
+        {"server": "other", "tool": "ok", "arguments": {}}
+    )
 
 
-async def test_unreachable_server_degrades_not_crashes(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_unreachable_server_degrades_not_crashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _patched(monkeypatch, _BoomClient)
     list_tool, _, call_tool = make_mcp_tools(["srv"], REGISTRY)
     listed = await list_tool.ainvoke({})
     assert "不可达" in listed  # 运行时不可达=外部常态：降级告知，不炸 run。
-    assert "error" in await call_tool.ainvoke({"server": "srv", "tool": "ok", "arguments": {}})
+    assert "error" in await call_tool.ainvoke(
+        {"server": "srv", "tool": "ok", "arguments": {}}
+    )
 
 
 def test_server_set_change_keeps_tool_surface_identical() -> None:
@@ -149,7 +165,9 @@ def test_select_servers_dedupes_and_keeps_order() -> None:
 def test_connection_carries_headers_and_timeout() -> None:
     servers = {
         "gh": _config(
-            url="https://mcp.example/x", timeout_s=5, headers={"authorization": "Bearer tok"}
+            url="https://mcp.example/x",
+            timeout_s=5,
+            headers={"authorization": "Bearer tok"},
         ),
         "pub": _config(url="https://mcp.example/y"),
     }

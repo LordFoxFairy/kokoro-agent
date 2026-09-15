@@ -17,7 +17,11 @@ from kokoro_agent.domain.chat.models import (
 from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.infrastructure.chat_mappers import chat_event_from_row
-from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, MessageCompletedPayload
+from kokoro_agent.protocol import (
+    ExecutionIdentity,
+    IdentityRef,
+    MessageCompletedPayload,
+)
 from support.chat import FakeChatRepository
 
 
@@ -32,9 +36,7 @@ def _identity(tenant: str = "tenant-a", subject: str = "subject") -> ExecutionId
 
 def _instant(milliseconds: int) -> datetime:
     seconds, remainder = divmod(milliseconds, 1000)
-    return datetime.fromtimestamp(seconds, tz=UTC).replace(
-        microsecond=remainder * 1000
-    )
+    return datetime.fromtimestamp(seconds, tz=UTC).replace(microsecond=remainder * 1000)
 
 
 def test_chat_domain_facts_carry_tenant_and_utc_aware_database_time() -> None:
@@ -109,7 +111,9 @@ def test_chat_row_mapper_rejects_unknown_event_type_before_domain_mapping() -> N
         )
 
 
-async def test_chat_query_keeps_epoch_millisecond_wire_shape_and_isolates_tenant() -> None:
+async def test_chat_query_keeps_epoch_millisecond_wire_shape_and_isolates_tenant() -> (
+    None
+):
     store = FakeChatRepository()
     owner = _identity("tenant-a")
     other = _identity("tenant-b")
@@ -175,8 +179,12 @@ async def test_chat_repository_scope_isolates_tenants_with_the_same_namespace() 
             )
         )
 
-    tenant_a_messages = await store.history("tenant-a", "shared-namespace", "shared-session")
-    tenant_b_messages = await store.history("tenant-b", "shared-namespace", "shared-session")
+    tenant_a_messages = await store.history(
+        "tenant-a", "shared-namespace", "shared-session"
+    )
+    tenant_b_messages = await store.history(
+        "tenant-b", "shared-namespace", "shared-session"
+    )
 
     assert [message.content for message in tenant_a_messages] == ["private-a"]
     assert [message.content for message in tenant_b_messages] == ["private-b"]

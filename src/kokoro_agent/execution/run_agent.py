@@ -10,7 +10,12 @@ from langchain_core.messages import UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
-from kokoro_agent.protocol import RunCompletedPayload, RunFailedPayload, RunStartedPayload, TokenUsage
+from kokoro_agent.protocol import (
+    RunCompletedPayload,
+    RunFailedPayload,
+    RunStartedPayload,
+    TokenUsage,
+)
 from kokoro_agent.execution.approvals import awaiting_payloads
 from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
@@ -63,13 +68,18 @@ async def invoke_once(
                     await _record(record_usage, usage_cb.usage_metadata)
                     return False
             if await claim_terminal():
-                total_in, total_out = await _record(record_usage, usage_cb.usage_metadata)
+                total_in, total_out = await _record(
+                    record_usage, usage_cb.usage_metadata
+                )
                 token_usage = (
                     TokenUsage(input_tokens=total_in, output_tokens=total_out)
                     if total_in or total_out
                     else None
                 )
-                await _emit_terminal(emitter, RunCompletedPayload(status="completed", token_usage=token_usage))
+                await _emit_terminal(
+                    emitter,
+                    RunCompletedPayload(status="completed", token_usage=token_usage),
+                )
             return True
         except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
             if await claim_terminal():
@@ -104,9 +114,14 @@ async def _emit_terminal(
         )
 
 
-def _config(thread_id: str, trace: RunnableConfig | None, recursion_limit: int) -> RunnableConfig:
+def _config(
+    thread_id: str, trace: RunnableConfig | None, recursion_limit: int
+) -> RunnableConfig:
     # 失控熔断：无限工具循环在限额处炸成 GraphRecursionError → run.failed fail-loud。
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": recursion_limit,
+    }
     if trace is not None:
         callbacks = trace.get("callbacks")
         metadata = trace.get("metadata")

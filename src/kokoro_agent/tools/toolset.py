@@ -48,7 +48,9 @@ class Toolset:
         by_name: dict[str, BaseTool] = {}
         for tool in tools:
             if tool.name in by_name:
-                raise ValueError(f"duplicate tool name across GA sources: {tool.name!r}")
+                raise ValueError(
+                    f"duplicate tool name across GA sources: {tool.name!r}"
+                )
             by_name[tool.name] = tool
         return cls(
             tools=tuple(tools),
@@ -66,9 +68,7 @@ class Toolset:
 
         mounted_names = frozenset(tool.name for tool in self.tools)
         implicit = self.authorized - mounted_names
-        return self.from_tools(
-            (*self.tools, *tools), implicit_authorized=implicit
-        )
+        return self.from_tools((*self.tools, *tools), implicit_authorized=implicit)
 
 
 async def build_toolset(
@@ -113,9 +113,7 @@ async def build_toolset(
                 "MCP capability lookup unavailable for agent=%s; using deployment definitions",
                 agent.key,
             )
-            mcp_definitions = mcp_outage_definitions(
-                mcp_servers, mcp_names
-            )
+            mcp_definitions = mcp_outage_definitions(mcp_servers, mcp_names)
     tools.extend(make_mcp_tools(mcp_names, mcp_definitions))
     if agent.delivery and delivery is not None:
         tools.append(_deliver_tool(request, backend, delivery))

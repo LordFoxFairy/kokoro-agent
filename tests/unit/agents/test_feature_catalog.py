@@ -56,7 +56,9 @@ def test_feature_rejects_mixed_backends() -> None:
 
 
 def test_feature_can_narrow_agent_capabilities_without_a_new_role_type() -> None:
-    configured = MUSIC_AGENT.configured(skills=("music", "lyrics"), mcp=("music_provider",))
+    configured = MUSIC_AGENT.configured(
+        skills=("music", "lyrics"), mcp=("music_provider",)
+    )
     assert configured.key == MUSIC_AGENT.key
     assert configured.skills == ("music", "lyrics")
     assert configured.mcp == ("music_provider",)
@@ -72,7 +74,9 @@ def test_agent_mcp_surface_contains_names_only() -> None:
 
 def test_multi_agent_feature_requires_handoffs_at_declaration() -> None:
     with pytest.raises(ValueError, match="must declare official handoffs"):
-        Feature(key="invalid", agents=(GENERAL_AGENT, MUSIC_AGENT), entry_agent="general")
+        Feature(
+            key="invalid", agents=(GENERAL_AGENT, MUSIC_AGENT), entry_agent="general"
+        )
 
 
 def test_multi_agent_feature_rejects_members_unreachable_from_entry() -> None:

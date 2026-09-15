@@ -112,7 +112,9 @@ class GuardedTransport(httpx.AsyncBaseTransport):
     """校验并锁定解析 IP 的 httpx transport：字面 IP 直接判段；主机名解析全量校验后
     把连接 pin 到已校验 IP（改 URL host + sni_hostname），杜绝校验↔连接之间的 DNS 重绑。"""
 
-    def __init__(self, inner: httpx.AsyncBaseTransport, resolver: AddressResolver) -> None:
+    def __init__(
+        self, inner: httpx.AsyncBaseTransport, resolver: AddressResolver
+    ) -> None:
         self._inner = inner
         self._resolve = resolver
 
@@ -175,7 +177,9 @@ def build_mcp_client_factory(
 
 def egress_mode_from_env(env: Mapping[str, str]) -> str:
     """缺省 strict；仅显式 off 关闭防线（未知值 fail-safe 归 strict）。"""
-    return _OFF if env.get(_EGRESS_MODE_ENV, _STRICT).strip().lower() == _OFF else _STRICT
+    return (
+        _OFF if env.get(_EGRESS_MODE_ENV, _STRICT).strip().lower() == _OFF else _STRICT
+    )
 
 
 # 进程级 egress 模式（连接层策略）：worker/main.py 从已校验的 AppConfig 配置一次（不读

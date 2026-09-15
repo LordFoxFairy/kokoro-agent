@@ -70,7 +70,9 @@ def _resolve_header(value: str, env: Mapping[str, str]) -> str:
     return resolved
 
 
-def load_mcp_servers(path: str | None, env: Mapping[str, str]) -> Mapping[str, McpServerConfig]:
+def load_mcp_servers(
+    path: str | None, env: Mapping[str, str]
+) -> Mapping[str, McpServerConfig]:
     """缺省（未配置文件）= 空注册表：wire 点名任何 server 都会 fail-loud。"""
     if path is None or path == "":
         return {}
@@ -81,7 +83,9 @@ def load_mcp_servers(path: str | None, env: Mapping[str, str]) -> Mapping[str, M
         if config.headers is None:
             registry[name] = config
             continue
-        headers = {key: _resolve_header(value, env) for key, value in config.headers.items()}
+        headers = {
+            key: _resolve_header(value, env) for key, value in config.headers.items()
+        }
         registry[name] = config.model_copy(update={"headers": headers})
     return registry
 
@@ -89,7 +93,9 @@ def load_mcp_servers(path: str | None, env: Mapping[str, str]) -> Mapping[str, M
 _EntryT = TypeVar("_EntryT")
 
 
-def select_servers(registry: Mapping[str, _EntryT], names: Sequence[str]) -> dict[str, _EntryT]:
+def select_servers(
+    registry: Mapping[str, _EntryT], names: Sequence[str]
+) -> dict[str, _EntryT]:
     """wire names → 配置子集：未知名 fail-loud（配置即授权边界，绝不静默跳过）。"""
     unknown = sorted(set(names) - set(registry))
     if unknown:

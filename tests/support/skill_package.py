@@ -33,7 +33,9 @@ _FRONTMATTER_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, obj
 def parse_frontmatter(name: str, skill_md: str) -> SkillFrontmatter:
     """装载期校验（fail-loud）：--- 包裹的 YAML 头、name 与目录同名、description 非空。"""
     if not skill_md.startswith("---"):
-        raise SkillPackageError(f"skill {name!r}: SKILL.md missing YAML frontmatter (--- block)")
+        raise SkillPackageError(
+            f"skill {name!r}: SKILL.md missing YAML frontmatter (--- block)"
+        )
     parts = skill_md.split("---", 2)
     if len(parts) < 3:
         raise SkillPackageError(f"skill {name!r}: unterminated frontmatter block")
@@ -46,5 +48,7 @@ def parse_frontmatter(name: str, skill_md: str) -> SkillFrontmatter:
             f"skill {name!r}: frontmatter name {meta.name!r} must match directory name"
         )
     if meta.description.strip() == "":
-        raise SkillPackageError(f"skill {name!r}: frontmatter description must be non-empty")
+        raise SkillPackageError(
+            f"skill {name!r}: frontmatter description must be non-empty"
+        )
     return meta

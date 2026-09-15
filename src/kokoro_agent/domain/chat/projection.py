@@ -221,7 +221,9 @@ def project_chat_fact(
         event_type = "run.completed"
         safe_payload = _Terminal(
             status=payload.status,
-            token_usage=None if payload.token_usage is None else payload.token_usage.model_dump(mode="json"),
+            token_usage=None
+            if payload.token_usage is None
+            else payload.token_usage.model_dump(mode="json"),
         )
     elif isinstance(payload, RunFailedPayload):
         event_type = "run.failed"

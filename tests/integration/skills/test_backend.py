@@ -42,17 +42,13 @@ def _skill() -> ResolvedSkill:
 async def test_native_route_lists_and_lazily_reads_authorized_skill() -> None:
     reader = _Reader()
     route = CapabilitySkillBackend((_skill(),), reader)
-    backend = CompositeBackend(
-        default=StateBackend(), routes={SKILLS_ROOT: route}
-    )
+    backend = CompositeBackend(default=StateBackend(), routes={SKILLS_ROOT: route})
 
     listed = await backend.als(SKILLS_ROOT)
     downloaded = await backend.adownload_files([f"{SKILLS_ROOT}style/SKILL.md"])
     nested = await backend.als(f"{SKILLS_ROOT}style/references")
 
-    assert [entry["path"] for entry in listed.entries or []] == [
-        f"{SKILLS_ROOT}style/"
-    ]
+    assert [entry["path"] for entry in listed.entries or []] == [f"{SKILLS_ROOT}style/"]
     assert downloaded[0].content is not None
     assert b"Lead with the conclusion" in downloaded[0].content
     assert [entry["path"] for entry in nested.entries or []] == [

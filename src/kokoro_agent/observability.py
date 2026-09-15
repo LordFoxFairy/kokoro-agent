@@ -21,10 +21,15 @@ class ObservabilitySettings(BaseModel):
 
     @property
     def configured(self) -> bool:
-        return self.langfuse_public_key is not None and self.langfuse_secret_key is not None
+        return (
+            self.langfuse_public_key is not None
+            and self.langfuse_secret_key is not None
+        )
 
 
-def trace_config(settings: ObservabilitySettings, request: RunRequest) -> RunnableConfig | None:
+def trace_config(
+    settings: ObservabilitySettings, request: RunRequest
+) -> RunnableConfig | None:
     """配置齐全时返回带 Langfuse handler 与 run 元数据的 config，否则 None（tracing 关）。
 
     CallbackHandler() 内部 get_client() 自行从进程 env 读 public/secret/host 并维护单例——
@@ -34,7 +39,11 @@ def trace_config(settings: ObservabilitySettings, request: RunRequest) -> Runnab
         return None
     scope = RunScope.of(request)
     feature = get_feature(request.feature_key)
-    model_name = feature.agents[0].model.name if feature.agents[0].model is not None else "default"
+    model_name = (
+        feature.agents[0].model.name
+        if feature.agents[0].model is not None
+        else "default"
+    )
     return {
         "callbacks": [CallbackHandler()],
         "metadata": {

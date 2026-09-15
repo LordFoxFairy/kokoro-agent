@@ -44,6 +44,7 @@ def test_checkpoint_locator_scopes_same_session_by_trusted_tenant() -> None:
             input=RunInput(message_id=f"message-{tenant}", content="hello"),
         )
 
-    assert RunScope.of(request("tenant-a")).scoped_thread_id != RunScope.of(
-        request("tenant-b")
-    ).scoped_thread_id
+    assert (
+        RunScope.of(request("tenant-a")).scoped_thread_id
+        != RunScope.of(request("tenant-b")).scoped_thread_id
+    )

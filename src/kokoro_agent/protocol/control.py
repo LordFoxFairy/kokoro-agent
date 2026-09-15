@@ -10,7 +10,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, TypeAdapter
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    TypeAdapter,
+)
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
@@ -90,7 +97,9 @@ class SubmitDecision(StrictModel):
 
 
 ResumeDecision = Annotated[
-    Union[ApproveDecision, EditDecision, RejectDecision, RespondDecision, SubmitDecision],
+    Union[
+        ApproveDecision, EditDecision, RejectDecision, RespondDecision, SubmitDecision
+    ],
     Field(discriminator="type"),
 ]
 

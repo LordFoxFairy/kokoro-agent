@@ -63,7 +63,9 @@ def make_deliver_tool(
             return "error: 工作区未返回请求的文件。"
         file = downloaded[0]
         if file.error is not None or file.content is None:
-            return f"error: 文件 {path!r} 无法读取（{file.error or 'empty response'}）。"
+            return (
+                f"error: 文件 {path!r} 无法读取（{file.error or 'empty response'}）。"
+            )
 
         content_hash = hashlib.sha256(file.content).hexdigest()
         mime = mimetypes.guess_type(PurePosixPath(normalized).name)[0]
@@ -116,7 +118,11 @@ def make_deliver_tool(
 
 def _workspace_path(path: str) -> str | None:
     candidate = PurePosixPath(path)
-    if not path.startswith("/") or ".." in candidate.parts or path.startswith("/.skills/"):
+    if (
+        not path.startswith("/")
+        or ".." in candidate.parts
+        or path.startswith("/.skills/")
+    ):
         return None
     normalized = str(candidate)
     if normalized == "/" or path.endswith("/"):

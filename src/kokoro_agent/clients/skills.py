@@ -44,6 +44,7 @@ class SkillClient(Protocol):
         self, selectors: Sequence[str], identity: ExecutionIdentity, namespace: str
     ) -> tuple[ResolvedSkill, ...]: ...
 
+
 class SkillReader(Protocol):
     """GA 在运行中需要的最小 Skill 读取面。
 

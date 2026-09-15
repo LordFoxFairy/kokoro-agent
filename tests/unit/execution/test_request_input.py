@@ -16,7 +16,11 @@ from langgraph.stream import CustomTransformer
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from kokoro_agent.protocol import ToolReturnedPayload, agent_event_adapter, run_events_stream
+from kokoro_agent.protocol import (
+    ToolReturnedPayload,
+    agent_event_adapter,
+    run_events_stream,
+)
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.protocols import AgentRunnable
@@ -54,13 +58,20 @@ def _probe(topic: str) -> str:
 
 
 def _build(checkpointer: BaseCheckpointSaver[str]) -> AgentRunnable:
-    probe_tool = StructuredTool(name="probe", description="d", args_schema=_ProbeArgs, func=_probe)
+    probe_tool = StructuredTool(
+        name="probe", description="d", args_schema=_ProbeArgs, func=_probe
+    )
     model = LocalFakeChatModel.with_script(
         [
             AIMessage(
                 content="",
                 tool_calls=[
-                    {"name": "probe", "args": {"topic": "login"}, "id": "p1", "type": "tool_call"}
+                    {
+                        "name": "probe",
+                        "args": {"topic": "login"},
+                        "id": "p1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(content="done"),
@@ -93,7 +104,9 @@ async def _returned(stream: RedisStream, run_id: str) -> list[str]:
         agent_event_adapter.validate_python(item.event)
         for item in await stream.read_all(run_events_stream(run_id))
     ]
-    return [e.payload.result for e in events if isinstance(e.payload, ToolReturnedPayload)]
+    return [
+        e.payload.result for e in events if isinstance(e.payload, ToolReturnedPayload)
+    ]
 
 
 async def test_submit_valid_value_resumes(
@@ -104,7 +117,9 @@ async def test_submit_valid_value_resumes(
     emitter = RunEmitter(stream, run_id)
     config: RunnableConfig = {"configurable": {"thread_id": f"tri-{uuid4().hex}"}}
 
-    paused = await _drive(agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter)
+    paused = await _drive(
+        agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter
+    )
     assert paused is True
 
     resume: list[dict[str, JsonValue]] = [
@@ -123,10 +138,14 @@ async def test_invalid_value_reprompts_with_validation_error_then_submits(
     emitter = RunEmitter(stream, run_id)
     config: RunnableConfig = {"configurable": {"thread_id": f"tri-{uuid4().hex}"}}
 
-    await _drive(agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter)
+    await _drive(
+        agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter
+    )
 
     # ① 不合法回灌（缺必填 otp）：不炸 run，原地重新 interrupt 且 context 附 validation_error。
-    bad: list[dict[str, JsonValue]] = [{"request_id": "probe-1", "type": "submit", "value": {}}]
+    bad: list[dict[str, JsonValue]] = [
+        {"request_id": "probe-1", "type": "submit", "value": {}}
+    ]
     still_paused = await _drive(agent, Command(resume=bad), config, emitter)
     assert still_paused is True
     snapshot = await agent.aget_state(config)
@@ -151,7 +170,9 @@ async def test_reject_returns_rejected(
     emitter = RunEmitter(stream, run_id)
     config: RunnableConfig = {"configurable": {"thread_id": f"tri-{uuid4().hex}"}}
 
-    await _drive(agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter)
+    await _drive(
+        agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter
+    )
     resume: list[dict[str, JsonValue]] = [
         {"request_id": "probe-1", "type": "reject", "reason": "用户拒绝"}
     ]

@@ -28,7 +28,9 @@ class Feature:
         if len(set(keys)) != len(keys):
             raise ValueError(f"feature {self.key!r} has duplicate agents")
         if self.entry_agent not in keys:
-            raise ValueError(f"feature {self.key!r} entry_agent is not one of its agents")
+            raise ValueError(
+                f"feature {self.key!r} entry_agent is not one of its agents"
+            )
         backends = {agent.backend for agent in self.agents}
         if len(backends) > 1:
             raise ValueError(
@@ -47,7 +49,9 @@ class Feature:
         if len(set(self.handoffs)) != len(self.handoffs):
             raise ValueError(f"feature {self.key!r} has duplicate handoffs")
         if len(self.agents) == 1 and self.handoffs:
-            raise ValueError(f"single-agent feature {self.key!r} cannot declare handoffs")
+            raise ValueError(
+                f"single-agent feature {self.key!r} cannot declare handoffs"
+            )
         if len(self.agents) > 1:
             reachable = {self.entry_agent}
             while True:

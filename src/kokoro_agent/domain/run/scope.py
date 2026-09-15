@@ -49,4 +49,5 @@ class RunScope:
         # supplied/reused session id can never select another tenant's state.
         return f"{self.namespace}:{self.session_id}"
 
+
 __all__ = ["RunScope", "runtime_namespace"]

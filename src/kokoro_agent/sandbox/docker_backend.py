@@ -71,18 +71,28 @@ class DockerShellBackend(LocalShellBackend):
         effective = timeout if timeout is not None else self._exec_timeout
         try:
             result = _docker(
-                "exec", "-w", _MOUNT_POINT, self.container_id, "sh", "-lc", command,
+                "exec",
+                "-w",
+                _MOUNT_POINT,
+                self.container_id,
+                "sh",
+                "-lc",
+                command,
                 timeout=effective,
             )
         except subprocess.TimeoutExpired:
             return ExecuteResponse(
-                output=f"command timed out after {effective}s", exit_code=124, truncated=False
+                output=f"command timed out after {effective}s",
+                exit_code=124,
+                truncated=False,
             )
         output = result.stdout + result.stderr
         truncated = len(output.encode()) > self._max_output_bytes
         if truncated:
             output = output.encode()[: self._max_output_bytes].decode(errors="replace")
-        return ExecuteResponse(output=output, exit_code=result.returncode, truncated=truncated)
+        return ExecuteResponse(
+            output=output, exit_code=result.returncode, truncated=truncated
+        )
 
 
 def destroy_docker_sandbox(container_id: str) -> None:
@@ -117,12 +127,19 @@ def connect_docker_sandbox(
             max_output_bytes=max_output_bytes,
         )
     result = _docker(
-        "run", "-d", "--rm",
-        "--label", f"kokoro-run={run_id}",
+        "run",
+        "-d",
+        "--rm",
+        "--label",
+        f"kokoro-run={run_id}",
         # --mount 键值语法：workspace 目录名含 ':'（{namespace}:{session_id} 约定），-v 短语法会被撕裂。
-        "--mount", f"type=bind,source={root},target={_MOUNT_POINT}",
-        "-w", _MOUNT_POINT,
-        settings.image, "sleep", str(settings.ttl),
+        "--mount",
+        f"type=bind,source={root},target={_MOUNT_POINT}",
+        "-w",
+        _MOUNT_POINT,
+        settings.image,
+        "sleep",
+        str(settings.ttl),
         timeout=120,
     )
     if result.returncode != 0:

@@ -3,7 +3,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, TypeAdapter
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    TypeAdapter,
+)
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 NonNegInt = Annotated[int, Field(ge=0)]
@@ -14,7 +21,15 @@ AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review", "i
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 ControlReceiptStatus = Literal["persisted", "applied"]
 RunCompletedStatus = Literal["completed", "cancelled"]
-RunErrorCode = Literal["token_budget_exceeded", "recursion_limit_exceeded", "assembly_failed", "enqueue_failed", "dispatch_exhausted", "contract_incompatible", "internal_error"]
+RunErrorCode = Literal[
+    "token_budget_exceeded",
+    "recursion_limit_exceeded",
+    "assembly_failed",
+    "enqueue_failed",
+    "dispatch_exhausted",
+    "contract_incompatible",
+    "internal_error",
+]
 
 
 class StrictModel(BaseModel):

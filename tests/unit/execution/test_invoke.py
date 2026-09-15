@@ -185,11 +185,20 @@ async def test_tool_events_inherit_awaiting_segment(stream: RedisStream) -> None
     )
     # 模拟 resume：从流重建发射器（归属映射经历史回放恢复）。
     resumed = await RunEmitter.attach(stream, run_id)
-    await resumed.emit(ToolInvokedPayload(segment_id="t1", tool_id="t1", name="write_file", args={}))
+    await resumed.emit(
+        ToolInvokedPayload(segment_id="t1", tool_id="t1", name="write_file", args={})
+    )
     await resumed.emit(
         ToolReturnedPayload(
-            segment_id="t1", tool_id="t1", name="write_file", result="ok", is_error=False,
-            rejected=None, reject_reason=None, responded=None, summary=None,
+            segment_id="t1",
+            tool_id="t1",
+            name="write_file",
+            result="ok",
+            is_error=False,
+            rejected=None,
+            reject_reason=None,
+            responded=None,
+            summary=None,
         )
     )
     items = await stream.read_all(run_events_stream(run_id))
@@ -203,7 +212,9 @@ async def test_tool_events_inherit_awaiting_segment(stream: RedisStream) -> None
     assert segs == ["seg_msg", "seg_msg"]
 
 
-async def test_optional_none_fields_never_serialize_as_null(stream: RedisStream) -> None:
+async def test_optional_none_fields_never_serialize_as_null(
+    stream: RedisStream,
+) -> None:
     # 契约 optional 字段的 None 即缺席：null 上 wire 会被 session zod .optional() 拒收（跨栈 e2e 抓获的真实缺陷）。
     run_id = f"rn-{uuid4().hex}"
     emitter = RunEmitter(stream, run_id)
@@ -253,7 +264,9 @@ async def test_empty_text_frames_skipped() -> None:
 
 
 async def test_tool_invoked_and_returned() -> None:
-    tool = FakeToolCall(tool_call_id="t1", tool_name="lookup", input={"q": "x"}, output="found")
+    tool = FakeToolCall(
+        tool_call_id="t1", tool_name="lookup", input={"q": "x"}, output="found"
+    )
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tool,))))
     events = bus.run_events("r1")
@@ -266,7 +279,9 @@ async def test_tool_invoked_and_returned() -> None:
 
 
 async def test_tool_error_marks_is_error() -> None:
-    tool = FakeToolCall(tool_call_id="t1", tool_name="lookup", input={}, error="exploded")
+    tool = FakeToolCall(
+        tool_call_id="t1", tool_name="lookup", input={}, error="exploded"
+    )
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tool,))))
     returned = find_event(bus.run_events("r1"), ToolReturned)
@@ -276,7 +291,9 @@ async def test_tool_error_marks_is_error() -> None:
 
 async def test_todo_tool_becomes_todo_updated() -> None:
     todos: list[dict[str, object]] = [{"content": "plan", "status": "pending"}]
-    tool = FakeToolCall(tool_call_id="t1", tool_name="write_todos", input={"todos": todos})
+    tool = FakeToolCall(
+        tool_call_id="t1", tool_name="write_todos", input={"todos": todos}
+    )
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tool,))))
     kinds = bus.kinds("r1")
@@ -287,7 +304,9 @@ async def test_todo_tool_becomes_todo_updated() -> None:
 async def test_malformed_todos_fail_loud_as_run_failed() -> None:
     # LLM 产出的 todos 是不可信载荷：strict 洗净失败收口为 run.failed，不发脏 wire。
     tool = FakeToolCall(
-        tool_call_id="t1", tool_name="write_todos", input={"todos": [{"content": "", "status": "?"}]}
+        tool_call_id="t1",
+        tool_name="write_todos",
+        input={"todos": [{"content": "", "status": "?"}]},
     )
     bus = FakeBus()
     done = await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tool,))))
@@ -296,10 +315,14 @@ async def test_malformed_todos_fail_loud_as_run_failed() -> None:
 
 
 async def test_task_tool_not_double_emitted() -> None:
-    tool = FakeToolCall(tool_call_id="t1", tool_name="task", input={"description": "go"})
+    tool = FakeToolCall(
+        tool_call_id="t1", tool_name="task", input={"description": "go"}
+    )
     sub = FakeSubagentRun(trigger_call_id="t1")
     bus = FakeBus()
-    await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tool,), subagent_runs=(sub,))))
+    await _invoke(
+        bus, FakeAgent(run=FakeRunStream(tool_views=(tool,), subagent_runs=(sub,)))
+    )
     kinds = bus.kinds("r1")
     assert "tool.invoked" not in kinds
     assert kinds.count("subagent.started") == 1
@@ -363,12 +386,16 @@ async def test_subagent_todo_stays_in_subagent_channel() -> None:
 
 
 async def test_nested_task_inside_subagent_not_double_emitted() -> None:
-    inner_task = FakeToolCall(tool_call_id="nt1", tool_name="task", input={"description": "go"})
+    inner_task = FakeToolCall(
+        tool_call_id="nt1", tool_name="task", input={"description": "go"}
+    )
     sub = FakeSubagentRun(trigger_call_id="sub-1", tool_views=(inner_task,))
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(subagent_runs=(sub,))))
     kinds = bus.kinds("r1")
-    assert "subagent.tool.invoked" not in kinds and "subagent.tool.returned" not in kinds
+    assert (
+        "subagent.tool.invoked" not in kinds and "subagent.tool.returned" not in kinds
+    )
 
 
 async def test_failed_subagent_flagged() -> None:
@@ -445,17 +472,26 @@ async def test_no_usage_is_null() -> None:
 
 def _interrupt_state() -> FakeState:
     ai = AIMessage(
-        content="", id="seg-1", tool_calls=[{"name": "danger", "args": {"x": 1}, "id": "call-A"}]
+        content="",
+        id="seg-1",
+        tool_calls=[{"name": "danger", "args": {"x": 1}, "id": "call-A"}],
     )
     interrupt = Interrupt(
         value={
-            "action_requests": [{"name": "danger", "args": {"x": 1}, "description": "do danger"}],
+            "action_requests": [
+                {"name": "danger", "args": {"x": 1}, "description": "do danger"}
+            ],
             "review_configs": [
-                {"action_name": "danger", "allowed_decisions": ["approve", "edit", "reject"]}
+                {
+                    "action_name": "danger",
+                    "allowed_decisions": ["approve", "edit", "reject"],
+                }
             ],
         }
     )
-    return FakeState(interrupts=(interrupt,), values={"messages": [HumanMessage(content="go"), ai]})
+    return FakeState(
+        interrupts=(interrupt,), values={"messages": [HumanMessage(content="go"), ai]}
+    )
 
 
 async def test_pending_interrupt_emits_awaiting_no_terminal() -> None:
@@ -524,7 +560,10 @@ async def test_trace_config_merged() -> None:
     await _invoke(bus, agent, trace=trace)
     assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
     assert agent.seen_config.get("callbacks") == [handler]
-    assert agent.seen_config.get("metadata") == {"langfuse_session_id": "s1", "kokoro_run_id": "r1"}
+    assert agent.seen_config.get("metadata") == {
+        "langfuse_session_id": "s1",
+        "kokoro_run_id": "r1",
+    }
 
 
 async def test_trace_none_config_only_configurable() -> None:
@@ -574,12 +613,16 @@ class _LoopingModel(LocalFakeChatModel):
         calls = sum(1 for m in messages if isinstance(m, AIMessage))
         message = AIMessage(
             content="",
-            tool_calls=[{"name": "noop", "args": {}, "id": f"loop{calls}", "type": "tool_call"}],
+            tool_calls=[
+                {"name": "noop", "args": {}, "id": f"loop{calls}", "type": "tool_call"}
+            ],
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
-async def test_runaway_loop_hits_recursion_limit_and_fails_loud(stream: RedisStream) -> None:
+async def test_runaway_loop_hits_recursion_limit_and_fails_loud(
+    stream: RedisStream,
+) -> None:
     noop = StructuredTool(
         name="noop", description="no-op", args_schema=_NoopArgs, func=lambda: "ok"
     )
@@ -632,43 +675,71 @@ def test_tool_returned_renders_content_blocks_readably() -> None:
 
 
 async def test_tool_output_streams_between_invoked_and_returned() -> None:
-    tc = FakeToolCall(tool_call_id="t1", tool_name="execute", output="done", deltas=("line1\n", "line2\n"))
+    tc = FakeToolCall(
+        tool_call_id="t1",
+        tool_name="execute",
+        output="done",
+        deltas=("line1\n", "line2\n"),
+    )
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tc,))))
     kinds = bus.kinds("r1")
-    assert kinds.index("tool.invoked") < kinds.index("tool.output.delta") < kinds.index("tool.returned")
-    deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"]
+    assert (
+        kinds.index("tool.invoked")
+        < kinds.index("tool.output.delta")
+        < kinds.index("tool.returned")
+    )
+    deltas = [
+        e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"
+    ]
     assert deltas == ["line1\n", "line2\n"]
 
 
 async def test_tool_output_stream_budget_clips_silently() -> None:
     tc = FakeToolCall(
-        tool_call_id="t1", tool_name="execute", output="done",
+        tool_call_id="t1",
+        tool_name="execute",
+        output="done",
         deltas=("a" * 3000, "b" * 3000, "c" * 3000),
     )
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(tool_views=(tc,))))
-    deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"]
+    deltas = [
+        e.payload.delta for e in bus.run_events("r1") if e.kind == "tool.output.delta"
+    ]
     assert sum(len(d) for d in deltas) == 4000  # TOOL_RESULT_MAX_CHARS 预算截停
     assert bus.kinds("r1")[-1] == "run.completed"
 
 
 async def test_subagent_thinking_streams_on_wire() -> None:
     sub = FakeSubagentRun(
-        models=(FakeModel(text_deltas=("hi",), reasoning_deltas=("hmm",), output_message=AIMessage(content="hi", id="s")),),
-        name="poet", trigger_call_id="sub1",
+        models=(
+            FakeModel(
+                text_deltas=("hi",),
+                reasoning_deltas=("hmm",),
+                output_message=AIMessage(content="hi", id="s"),
+            ),
+        ),
+        name="poet",
+        trigger_call_id="sub1",
     )
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(subagent_runs=(sub,))))
     kinds = bus.kinds("r1")
     assert "subagent.thinking.delta" in kinds
-    deltas = [e.payload.delta for e in bus.run_events("r1") if e.kind == "subagent.thinking.delta"]
+    deltas = [
+        e.payload.delta
+        for e in bus.run_events("r1")
+        if e.kind == "subagent.thinking.delta"
+    ]
     assert deltas == ["hmm"]
 
 
 async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
     # 多段 run 少报回归钉：终态 token_usage 取 record_usage 返回的跨段累计，而非本段测量。
-    async def preloaded_recorder(input_tokens: int, output_tokens: int) -> tuple[int, int]:
+    async def preloaded_recorder(
+        input_tokens: int, output_tokens: int
+    ) -> tuple[int, int]:
         return (30 + input_tokens, 3 + output_tokens)  # 模拟前段已入账 30/3
 
     bus = FakeBus()
@@ -704,7 +775,10 @@ async def test_pause_segment_records_usage_too() -> None:
     )
     emitter = await RunEmitter.attach(bus, "rpause")
     terminal = await invoke_once(
-        emitter, agent, "c1", {"messages": []},
+        emitter,
+        agent,
+        "c1",
+        {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         claim_terminal=_always_claim,
@@ -724,4 +798,7 @@ def test_failure_code_classification_matrix() -> None:
     assert failure_code(TokenBudgetExceeded("over budget")) == "token_budget_exceeded"
     assert failure_code(GraphRecursionError("loop")) == "recursion_limit_exceeded"
     assert failure_code(ValueError("x")) == "internal_error"
-    assert run_failed_payload(ValueError("x"), code="assembly_failed").code == "assembly_failed"
+    assert (
+        run_failed_payload(ValueError("x"), code="assembly_failed").code
+        == "assembly_failed"
+    )

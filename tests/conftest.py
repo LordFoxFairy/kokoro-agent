@@ -15,7 +15,10 @@ from psycopg import sql
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.infrastructure.checkpoints import CheckpointSettings, make_checkpointer
+from kokoro_agent.infrastructure.checkpoints import (
+    CheckpointSettings,
+    make_checkpointer,
+)
 from kokoro_agent.infrastructure.postgres_run_repository import (
     DEFAULT_LEASE_TTL_S,
     RunRepositorySettings,
@@ -34,7 +37,9 @@ DATABASE_URL = os.environ.get(
     "postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent",
 )
 
-_INTEGRATION_FIXTURES = frozenset({"stream", "checkpointer", "memory_store", "run_repository"})
+_INTEGRATION_FIXTURES = frozenset(
+    {"stream", "checkpointer", "memory_store", "run_repository"}
+)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -95,7 +100,9 @@ async def require_redis() -> None:
     try:
         await port.read_all("kokoro-test-ping")
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"redis required but unreachable at {REDIS_URL}: {exc}") from exc
+        raise RuntimeError(
+            f"redis required but unreachable at {REDIS_URL}: {exc}"
+        ) from exc
     finally:
         await port.aclose()
 

@@ -76,9 +76,13 @@ def review_entries(interrupts: tuple[Interrupt, ...]) -> list[ReviewEntry] | Non
     if not any(is_review):
         return None
     if not all(is_review):
-        raise ValueError("mixed approval/review interrupts in one frame is unsupported (V1)")
+        raise ValueError(
+            "mixed approval/review interrupts in one frame is unsupported (V1)"
+        )
     if len(requests) != 1:
-        raise ValueError("multiple result-review interrupts in one frame is unsupported (V1)")
+        raise ValueError(
+            "multiple result-review interrupts in one frame is unsupported (V1)"
+        )
     request = requests[0]
     if request is None:  # is_review[0] 已保证非空；显式收窄给类型检查器。
         raise ValueError("result review interrupt missing human request envelope")
@@ -126,7 +130,9 @@ def input_entries(interrupts: tuple[Interrupt, ...]) -> list[InputEntry] | None:
     if not any(is_input):
         return None
     if not all(is_input):
-        raise ValueError("mixed input/other interrupts in one frame is unsupported (V1)")
+        raise ValueError(
+            "mixed input/other interrupts in one frame is unsupported (V1)"
+        )
     entries: list[InputEntry] = []
     for req in requests:
         if req is None:  # is_input 已保证非空；显式收窄给类型检查器。
@@ -147,7 +153,9 @@ def input_entries(interrupts: tuple[Interrupt, ...]) -> list[InputEntry] | None:
     return entries
 
 
-def input_frame(snapshot: NativeStateSnapshot, entries: Sequence[InputEntry]) -> PendingFrame:
+def input_frame(
+    snapshot: NativeStateSnapshot, entries: Sequence[InputEntry]
+) -> PendingFrame:
     # input 帧归属段=发起请求的工具调用所在 AIMessage（request_id=该工具 tool_id）；
     # 条目顺序即 interrupt 顺序。
     raw: Any = snapshot.values.get("messages") or []
@@ -161,7 +169,9 @@ def has_pending_interrupt(snapshot: NativeStateSnapshot) -> bool:
     return bool(snapshot.interrupts)
 
 
-def pending_frame(snapshot: NativeStateSnapshot, approval_tool_names: frozenset[str]) -> PendingFrame:
+def pending_frame(
+    snapshot: NativeStateSnapshot, approval_tool_names: frozenset[str]
+) -> PendingFrame:
     # 触发 HITL 的 AIMessage 中命中审批工具名的子序列（与 langgraph HITL 同序）——全仓唯一实现。
     # LangGraph state values 为 Any 框架边界：messages 在此一次过滤为 typed AIMessage。
     raw: Any = snapshot.values.get("messages") or []
@@ -169,12 +179,16 @@ def pending_frame(snapshot: NativeStateSnapshot, approval_tool_names: frozenset[
     if last_ai is None:
         return PendingFrame("", ())
     tools = tuple(
-        (tc["id"] or "", tc["name"]) for tc in last_ai.tool_calls if tc["name"] in approval_tool_names
+        (tc["id"] or "", tc["name"])
+        for tc in last_ai.tool_calls
+        if tc["name"] in approval_tool_names
     )
     return PendingFrame(last_ai.id or "", tools)
 
 
-def review_frame(snapshot: NativeStateSnapshot, entries: Sequence[ReviewEntry]) -> PendingFrame:
+def review_frame(
+    snapshot: NativeStateSnapshot, entries: Sequence[ReviewEntry]
+) -> PendingFrame:
     # 审核帧归属段=触发帧的 AIMessage（与审批帧同源）；条目顺序即 interrupt 顺序。
     raw: Any = snapshot.values.get("messages") or []
     last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
@@ -221,10 +235,18 @@ def approval_requests(interrupts: tuple[Interrupt, ...]) -> list[ApprovalRequest
     requests: list[ApprovalRequest] = []
     for interrupt in interrupts:
         payload = _ApprovalInterrupt.model_validate(interrupt.value)
-        config_by_name = {config.action_name: config for config in payload.review_configs}
-        missing = [req.name for req in payload.action_requests if req.name not in config_by_name]
+        config_by_name = {
+            config.action_name: config for config in payload.review_configs
+        }
+        missing = [
+            req.name
+            for req in payload.action_requests
+            if req.name not in config_by_name
+        ]
         if missing:
-            raise ValueError(f"HITL review_configs missing action names: {sorted(missing)}")
+            raise ValueError(
+                f"HITL review_configs missing action names: {sorted(missing)}"
+            )
         requests.extend(
             ApprovalRequest(
                 name=req.name,
@@ -297,7 +319,9 @@ def awaiting_payloads(
                 args=request.args,
                 description=describe_tool(request.name) or "",
                 allowed_decisions=request.allowed_decisions,
-                kind="ask_user_question" if request.name == ASK_USER_TOOL_NAME else "tool_approval",
+                kind="ask_user_question"
+                if request.name == ASK_USER_TOOL_NAME
+                else "tool_approval",
                 editable="edit" in request.allowed_decisions,
                 # 同帧完整待批集合进契约：web 暂存逻辑读契约字段而非内嵌 agent 算法。
                 pending_tool_ids=pending_ids,
@@ -330,7 +354,9 @@ def _nested_frame(snapshot: NativeStateSnapshot) -> PendingFrame:
     last_ai = next((m for m in reversed(raw) if isinstance(m, AIMessage)), None)
     segment_id = ""
     if last_ai is not None:
-        task_call = next((tc for tc in last_ai.tool_calls if tc["name"] == SUBAGENT_TOOL_NAME), None)
+        task_call = next(
+            (tc for tc in last_ai.tool_calls if tc["name"] == SUBAGENT_TOOL_NAME), None
+        )
         segment_id = (task_call["id"] if task_call else None) or last_ai.id or ""
     tools: list[tuple[str, str]] = []
     for interrupt in snapshot.interrupts:
@@ -378,10 +404,14 @@ def align_decisions(
         tool_id = _decision_id(decision)
         is_ask_user = name_by_id[tool_id] == ASK_USER_TOOL_NAME
         if allowed_by_id is not None and decision.type not in allowed_by_id[tool_id]:
-            raise ValueError(f"decision {decision.type!r} not allowed for tool {tool_id!r}")
+            raise ValueError(
+                f"decision {decision.type!r} not allowed for tool {tool_id!r}"
+            )
         # respond 是 ask_user 专属人工作答；普通审批工具只接 approve/edit/reject。双向越界即 fail-loud。
         if decision.type == "respond" and not is_ask_user:
-            raise ValueError(f"respond decision not allowed for tool {decision.tool_id!r}")
+            raise ValueError(
+                f"respond decision not allowed for tool {decision.tool_id!r}"
+            )
         if decision.type != "respond" and is_ask_user:
             raise ValueError(f"ask_user tool {tool_id!r} accepts only respond")
     return [by_id[tool_id] for tool_id in frame.tool_ids]
@@ -415,7 +445,9 @@ def align_input_decisions(
     by_id: dict[str, ResumeDecision] = {}
     for decision in decisions:
         if decision.type not in INPUT_DECISIONS:
-            raise ValueError(f"decision {decision.type!r} not allowed for input request")
+            raise ValueError(
+                f"decision {decision.type!r} not allowed for input request"
+            )
         # submit 用 request_id，reject 沿用 tool_id 槽（工具边界二者同值）。
         by_id[_decision_id(decision)] = decision
     if len(by_id) != len(decisions):
@@ -427,24 +459,38 @@ def align_input_decisions(
     return [by_id[request_id] for request_id in frame.tool_ids]
 
 
-def submit_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, JsonValue]]:
+def submit_resume_value(
+    decisions: Sequence[ResumeDecision],
+) -> list[dict[str, JsonValue]]:
     # kind=input 的 resume 契约：list[{request_id, type, value?/reason?}]，request_input 按 request_id 自取。
     out: list[dict[str, JsonValue]] = []
     for decision in decisions:
         if isinstance(decision, SubmitDecision):
             out.append(
-                {"request_id": decision.request_id, "type": "submit", "value": decision.value}
+                {
+                    "request_id": decision.request_id,
+                    "type": "submit",
+                    "value": decision.value,
+                }
             )
         elif isinstance(decision, RejectDecision):
             out.append(
-                {"request_id": decision.tool_id, "type": "reject", "reason": decision.reason}
+                {
+                    "request_id": decision.tool_id,
+                    "type": "reject",
+                    "reason": decision.reason,
+                }
             )
         else:
-            raise ValueError(f"decision {decision.type!r} not allowed for input request")
+            raise ValueError(
+                f"decision {decision.type!r} not allowed for input request"
+            )
     return out
 
 
-def review_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, JsonValue]]:
+def review_resume_value(
+    decisions: Sequence[ResumeDecision],
+) -> list[dict[str, JsonValue]]:
     # ToolResultReviewMiddleware 的 resume 契约：list[decision dict]，按 tool_id 自取。
     out: list[dict[str, JsonValue]] = []
     for decision in decisions:
@@ -452,7 +498,11 @@ def review_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, J
             out.append({"tool_id": decision.tool_id, "type": "approve"})
         elif decision.type == "respond":
             out.append(
-                {"tool_id": decision.tool_id, "type": "respond", "response": decision.response}
+                {
+                    "tool_id": decision.tool_id,
+                    "type": "respond",
+                    "response": decision.response,
+                }
             )
         elif decision.type == "reject":
             out.append(
@@ -463,7 +513,9 @@ def review_resume_value(decisions: Sequence[ResumeDecision]) -> list[dict[str, J
                 }
             )
         else:
-            raise ValueError(f"decision {decision.type!r} not allowed for result review")
+            raise ValueError(
+                f"decision {decision.type!r} not allowed for result review"
+            )
     return out
 
 
@@ -554,23 +606,36 @@ def resume_command_decisions(
                 out.append(
                     {
                         "type": "edit",
-                        "edited_action": {"name": name_by_id[decision.tool_id], "args": decision.args},
+                        "edited_action": {
+                            "name": name_by_id[decision.tool_id],
+                            "args": decision.args,
+                        },
                     }
                 )
         elif decision.type == "edit":
             out.append(
                 {
                     "type": "edit",
-                    "edited_action": {"name": name_by_id[decision.tool_id], "args": decision.args},
+                    "edited_action": {
+                        "name": name_by_id[decision.tool_id],
+                        "args": decision.args,
+                    },
                 }
             )
         elif decision.type == "reject":
-            out.append({"type": "reject", "message": decision.reason or _DEFAULT_REJECT_MESSAGE})
+            out.append(
+                {
+                    "type": "reject",
+                    "message": decision.reason or _DEFAULT_REJECT_MESSAGE,
+                }
+            )
         elif decision.type == "respond":
             out.append({"type": "respond", "message": decision.response})
         else:
             # submit 不经审批帧的 langgraph resume（走 input 分支的 submit_resume_value）。
-            raise ValueError(f"decision {decision.type!r} not allowed for approval resume")
+            raise ValueError(
+                f"decision {decision.type!r} not allowed for approval resume"
+            )
     return out
 
 

@@ -13,7 +13,11 @@ from langgraph.stream import CustomTransformer
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from kokoro_agent.protocol import ToolReturnedPayload, agent_event_adapter, run_events_stream
+from kokoro_agent.protocol import (
+    ToolReturnedPayload,
+    agent_event_adapter,
+    run_events_stream,
+)
 from support.deepagents import create_test_deep_agent
 from kokoro_agent.execution.events import RunEmitter
 from kokoro_agent.execution.protocols import AgentRunnable
@@ -45,7 +49,10 @@ def test_human_request_envelope_roundtrip() -> None:
 
 def test_from_interrupt_value_none_for_foreign_shapes() -> None:
     # langchain approval 形态（action_requests/review_configs）与非 dict 均非本信封：返回 None。
-    assert HumanRequest.from_interrupt_value({"action_requests": [], "review_configs": []}) is None
+    assert (
+        HumanRequest.from_interrupt_value({"action_requests": [], "review_configs": []})
+        is None
+    )
     assert HumanRequest.from_interrupt_value("nope") is None
 
 
@@ -95,7 +102,12 @@ async def test_request_human_pauses_mid_tool_then_resumes_value(
             AIMessage(
                 content="",
                 tool_calls=[
-                    {"name": "probe", "args": {"topic": "login"}, "id": "p1", "type": "tool_call"}
+                    {
+                        "name": "probe",
+                        "args": {"topic": "login"},
+                        "id": "p1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(content="done"),
@@ -115,7 +127,9 @@ async def test_request_human_pauses_mid_tool_then_resumes_value(
     config: RunnableConfig = {"configurable": {"thread_id": f"trh-{uuid4().hex}"}}
 
     # ① 首跑：工具执行中途 request_human 挂起，信封由 checkpoint 承载。
-    paused = await _drive(agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter)
+    paused = await _drive(
+        agent, {"messages": [HumanMessage(content="go", id="m1")]}, config, emitter
+    )
     assert paused is True
     snapshot = await agent.aget_state(config)
     hr = HumanRequest.from_interrupt_value(snapshot.interrupts[0].value)

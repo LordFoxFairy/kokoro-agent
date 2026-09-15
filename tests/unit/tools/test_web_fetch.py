@@ -11,7 +11,11 @@ import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import ValidationError
 
-from kokoro_agent.tools.web_fetch import FETCH_MAX_CHARS, WebFetchArgs, make_web_fetch_tool
+from kokoro_agent.tools.web_fetch import (
+    FETCH_MAX_CHARS,
+    WebFetchArgs,
+    make_web_fetch_tool,
+)
 
 
 class _Handler(BaseHTTPRequestHandler):

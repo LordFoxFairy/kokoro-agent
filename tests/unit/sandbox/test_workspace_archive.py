@@ -16,7 +16,11 @@ from mypy_boto3_s3 import S3Client
 from pydantic import SecretStr, ValidationError
 
 from kokoro_agent.sandbox import load_workspace_config, make_backend
-from kokoro_agent.sandbox.archive import ArchivingLocalShellBackend, S3Archiver, S3Workspace
+from kokoro_agent.sandbox.archive import (
+    ArchivingLocalShellBackend,
+    S3Archiver,
+    S3Workspace,
+)
 from kokoro_agent.sandbox.backend import SandboxSettings
 from support.dev_minio import MINIO_URL, minio_creds
 
@@ -65,7 +69,9 @@ def _probe_minio() -> S3Client | None:
 
 
 _MINIO = _probe_minio()
-needs_minio = pytest.mark.skipif(_MINIO is None, reason=f"no minio reachable at {MINIO_URL}")
+needs_minio = pytest.mark.skipif(
+    _MINIO is None, reason=f"no minio reachable at {MINIO_URL}"
+)
 
 
 class TestWorkspaceConfig:
@@ -130,22 +136,26 @@ class TestWorkspaceConfig:
                     "workspace_s3_access_key": None,
                     "workspace_s3_secret_key": None,
                     "e2b": {"api_key": None, "template": None, "timeout": 1800},
-            "docker": {"image": None, "ttl": 1800},
-            "custom": {"factory_ref": None, "config_path": None},
+                    "docker": {"image": None, "ttl": 1800},
+                    "custom": {"factory_ref": None, "config_path": None},
                 }
             )
 
 
 class TestBackendDispatch:
     def test_local_default_plain_backend(self, tmp_path: Path) -> None:
-        backend = make_backend("local_shell", _sandbox_settings(str(tmp_path)), workspace="ns:s1")
+        backend = make_backend(
+            "local_shell", _sandbox_settings(str(tmp_path)), workspace="ns:s1"
+        )
         assert backend is not None
         assert not isinstance(backend, ArchivingLocalShellBackend)
 
     def test_s3_workspace_gets_archiving_backend(self, tmp_path: Path) -> None:
         workspace = {"type": "s3", "endpoint": MINIO_URL, "bucket": BUCKET}
         backend = make_backend(
-            "local_shell", _sandbox_settings(str(tmp_path), workspace), workspace="ns:s1"
+            "local_shell",
+            _sandbox_settings(str(tmp_path), workspace),
+            workspace="ns:s1",
         )
         assert isinstance(backend, ArchivingLocalShellBackend)
 
@@ -191,7 +201,9 @@ class TestArchivingBackend:
         assert self._object(f"{prefix}/plan.md") == b"draft v2"
 
     @pytest.mark.asyncio
-    async def test_aexecute_shell_write_caught_by_full_archive(self, tmp_path: Path) -> None:
+    async def test_aexecute_shell_write_caught_by_full_archive(
+        self, tmp_path: Path
+    ) -> None:
         prefix = f"ns:s_{uuid.uuid4().hex[:6]}"
         backend = self._backend(tmp_path, prefix)
         await backend.aexecute("echo kokoro-shell-write > shell.txt")
@@ -201,7 +213,9 @@ class TestArchivingBackend:
     async def test_hidden_and_junk_dirs_not_archived(self, tmp_path: Path) -> None:
         prefix = f"ns:s_{uuid.uuid4().hex[:6]}"
         backend = self._backend(tmp_path, prefix)
-        await backend.aexecute("mkdir -p __pycache__ && echo x > __pycache__/junk.pyc && echo y > .hidden")
+        await backend.aexecute(
+            "mkdir -p __pycache__ && echo x > __pycache__/junk.pyc && echo y > .hidden"
+        )
         assert self._object(f"{prefix}/__pycache__/junk.pyc") is None
         assert self._object(f"{prefix}/.hidden") is None
 

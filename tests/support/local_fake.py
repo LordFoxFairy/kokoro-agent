@@ -55,7 +55,10 @@ def hitl_script() -> list[AIMessage]:
             tool_calls=[
                 {
                     "name": "ask_user_question",
-                    "args": {"question": "偏好中文还是英文？", "choices": ["中文", "英文"]},
+                    "args": {
+                        "question": "偏好中文还是英文？",
+                        "choices": ["中文", "英文"],
+                    },
                     "id": "local_ask",
                     "type": "tool_call",
                 }
@@ -166,7 +169,11 @@ class LocalFakeChatModel(BaseChatModel):
             # UsageMetadataCallbackHandler 同时要求 response_metadata.model_name,缺一不记。
             reply = reply.model_copy(
                 update={
-                    "usage_metadata": {"input_tokens": 120, "output_tokens": 45, "total_tokens": 165},
+                    "usage_metadata": {
+                        "input_tokens": 120,
+                        "output_tokens": 45,
+                        "total_tokens": 165,
+                    },
                     # 脚本消息不带 response_metadata,直接置值(spread 上游裸 dict 注解会污染类型面)。
                     "response_metadata": {"model_name": "kokoro-local-fake"},
                 }
@@ -174,7 +181,9 @@ class LocalFakeChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
 
-def make_local_fake_chat_model(script: Sequence[AIMessage] | None = None) -> BaseChatModel:
+def make_local_fake_chat_model(
+    script: Sequence[AIMessage] | None = None,
+) -> BaseChatModel:
     if script is not None:
         return LocalFakeChatModel.with_script(script)
     return LocalFakeChatModel()

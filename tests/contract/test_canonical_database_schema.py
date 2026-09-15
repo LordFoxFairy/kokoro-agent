@@ -37,7 +37,9 @@ def test_database_schema_is_clean_slate_utc_and_application_related() -> None:
     assert "CHECKPOINT_MIGRATIONS" not in upper
     assert "TIMESTAMP WITHOUT TIME ZONE" not in upper
     assert "TIMESTAMPTZ(3)" in upper
-    assert not re.search(r"\b(?:CREATED|UPDATED|TERMINAL|EXPIRES|PUBLISHED)_AT\s+BIGINT\b", upper)
+    assert not re.search(
+        r"\b(?:CREATED|UPDATED|TERMINAL|EXPIRES|PUBLISHED)_AT\s+BIGINT\b", upper
+    )
 
 
 def test_database_schema_contains_every_agent_owned_durable_surface() -> None:

@@ -1,7 +1,11 @@
 """GA chat query derives isolation from ExecutionIdentity."""
 
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
-from kokoro_agent.domain.chat.models import ChatEventDraft, ChatMessageDraft, ChatProjection
+from kokoro_agent.domain.chat.models import (
+    ChatEventDraft,
+    ChatMessageDraft,
+    ChatProjection,
+)
 from kokoro_agent.application.chat.dto import ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
@@ -18,7 +22,9 @@ def _identity(subject: str) -> ExecutionIdentity:
     )
 
 
-async def test_history_and_replay_are_identity_scoped_without_caller_namespace() -> None:
+async def test_history_and_replay_are_identity_scoped_without_caller_namespace() -> (
+    None
+):
     store = FakeChatRepository()
     owner = _identity("owner")
     other = _identity("other")
@@ -81,9 +87,15 @@ async def test_session_list_is_cursor_paged_and_identity_scoped() -> None:
     owner = _identity("owner")
     other = _identity("other")
     query = ChatService(store)
-    await query.ensure_session(owner, "session-a", project_ref="project", title="A", updated_at=30)
-    await query.ensure_session(owner, "session-b", project_ref="project", title="B", updated_at=20)
-    await query.ensure_session(owner, "session-c", project_ref="other-project", title="C", updated_at=10)
+    await query.ensure_session(
+        owner, "session-a", project_ref="project", title="A", updated_at=30
+    )
+    await query.ensure_session(
+        owner, "session-b", project_ref="project", title="B", updated_at=20
+    )
+    await query.ensure_session(
+        owner, "session-c", project_ref="other-project", title="C", updated_at=10
+    )
 
     first = await query.list_sessions(
         ChatSessionListRequest(execution_identity=owner, project_ref="project", limit=1)
@@ -96,7 +108,9 @@ async def test_session_list_is_cursor_paged_and_identity_scoped() -> None:
             limit=1,
         )
     )
-    isolated = await query.list_sessions(ChatSessionListRequest(execution_identity=other))
+    isolated = await query.list_sessions(
+        ChatSessionListRequest(execution_identity=other)
+    )
 
     assert [session.session_id for session in first.sessions] == ["session-a"]
     assert first.next_cursor is not None

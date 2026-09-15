@@ -30,7 +30,9 @@ class SecretResolveError(Exception):
 
 
 class SecretResolver(Protocol):
-    async def resolve(self, namespace: str, handles: Sequence[str]) -> Mapping[str, str]: ...
+    async def resolve(
+        self, namespace: str, handles: Sequence[str]
+    ) -> Mapping[str, str]: ...
 
 
 class CapabilitySecretSettings(BaseModel):
@@ -60,7 +62,9 @@ class CapabilitySecretResolver:
         self._base_url = settings.base_url.rstrip("/")
         self._secret = settings.service_secret
 
-    async def resolve(self, namespace: str, handles: Sequence[str]) -> Mapping[str, str]:
+    async def resolve(
+        self, namespace: str, handles: Sequence[str]
+    ) -> Mapping[str, str]:
         if not handles:
             return {}
         headers = {
@@ -75,10 +79,14 @@ class CapabilitySecretResolver:
                     f"{self._base_url}{_RESOLVE_PATH}", json=body, headers=headers
                 )
         except httpx.HTTPError as exc:
-            raise SecretResolveError(f"secret resolve request failed: {type(exc).__name__}") from exc
+            raise SecretResolveError(
+                f"secret resolve request failed: {type(exc).__name__}"
+            ) from exc
         if response.status_code != 200:
             # 404(跨 namespace/不存在)/503(broker 未配)/其它：统一失败，不回显响应体。
-            raise SecretResolveError(f"secret resolve returned HTTP {response.status_code}")
+            raise SecretResolveError(
+                f"secret resolve returned HTTP {response.status_code}"
+            )
         try:
             parsed = _ResolveResponse.model_validate(response.json())
         except (ValueError, ValidationError) as exc:
@@ -86,7 +94,9 @@ class CapabilitySecretResolver:
         return dict(parsed.data.secrets)
 
 
-def capability_secret_resolver_from_env(env: Mapping[str, str]) -> CapabilitySecretResolver | None:
+def capability_secret_resolver_from_env(
+    env: Mapping[str, str],
+) -> CapabilitySecretResolver | None:
     """两项 env 齐备才装配（KOKORO_CAPABILITY_BASE_URL + KOKORO_INTERNAL_SECRET_AGENT）；
     缺任一 → None（`handle:` 引用无解析出口 → registry 侧占名不可用，不炸 run）。"""
     base_url = env.get("KOKORO_CAPABILITY_BASE_URL")

@@ -27,6 +27,11 @@ lookup 必须同时 predicate `tenant_id` 与派生 namespace，且 tenant-owned
 receipt、chat event 查询结果的传输约束；本切片不增删表、列、索引或事务，也不把 BFF 的
 Conversation/Message 投影写入 Agent schema。
 
+模型最后一个 segment 的 `message.completed.content=""` 会进入现有 `chat_event` 的
+`assistant.completed` 安全投影，并以同一 segment 派生的稳定 message ID 保存空内容
+`chat_message`。空字符串是有效内容，不等于缺失事件；重放顺序仍由 `seq` 与 `source_index`
+约束。本切片不改变 canonical DDL、事务边界或 retention。
+
 ## 字段与约束原则
 
 - `id`/业务 identity 只在真正幂等或唯一不变量时建主键/唯一索引。

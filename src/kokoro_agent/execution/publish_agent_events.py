@@ -108,8 +108,11 @@ async def _consume_messages(
         )
         final = model.output_message
         seg = final.id if (final is not None and final.id) else segment_id
-        # 终态帧全文覆盖累积。text 用原生 message.text（排除 tool 块）；
-        # thinking 无 completed kind，故仅 text 收终态帧。
+        if final is None and not text_full:
+            # 投影没有任何终值/文本，不凭空制造空完成；真实空 AIMessage 则必须发。
+            continue
+        # 终态帧全文覆盖累积，包括 tool-only/空最终文本；空 delta 仍不上 wire。
+        # text 用原生 message.text（排除 tool 块）；thinking 无 completed kind。
         text_final = final.text if final is not None else text_full
         completed = (
             subagent_text_completed_payload(

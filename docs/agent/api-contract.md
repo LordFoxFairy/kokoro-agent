@@ -101,6 +101,8 @@ interaction | delivery | run.completed | run.failed
 ```
 
 BFF 通过本仓 HTTP replay 按 `seq` 读取，再按 BFF 自己的 AG-UI contract 投影。
+`assistant.completed` 可携带 `content=""`：它是实际模型空最终段的权威全文，按 replay
+顺序覆盖之前的非空草稿；空 delta 不发布。没有模型终值和文本的投影不会产生该完成帧。
 raw thinking、tool args/results、subagent text、sandbox path、object key、prompt、secret 和 LangChain native state
 不进入安全 Chat projection。内部执行证据与浏览器产品事件不是同一个数据面。
 

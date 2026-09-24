@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -31,6 +32,7 @@ from support.fakes import (
     text_run,
     usage_recorder,
 )
+from support.chat import FakeChatRepository
 from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
     MessageCompleted,
@@ -253,14 +255,100 @@ async def test_thinking_channel_and_final_frame() -> None:
     assert completed.payload.content == "hello"
 
 
-async def test_empty_text_frames_skipped() -> None:
-    # tool-only 段：output_message.text==""，不发空 message.delta / message.completed。
+async def test_empty_text_segment_completes_without_empty_delta() -> None:
+    # tool-only 段的终态必须可见，不能让前一段正文继续冒充最终答案。
     model = FakeModel(text_deltas=(), output_message=AIMessage(content="", id="seg"))
     bus = FakeBus()
     await _invoke(bus, FakeAgent(run=FakeRunStream(models=(model,))))
     kinds = bus.kinds("r1")
     assert "message.delta" not in kinds
-    assert "message.completed" not in kinds
+    completed = find_events(bus.run_events("r1"), MessageCompleted)
+    assert [
+        (event.payload.segment_id, event.payload.content) for event in completed
+    ] == [("seg", "")]
+    assert kinds.index("message.completed") < kinds.index("run.completed")
+
+
+async def test_no_final_message_or_text_does_not_invent_empty_completion() -> None:
+    model = FakeModel(text_deltas=(), output_message=None, message_id="no-output")
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(models=(model,))))
+    assert "message.completed" not in bus.kinds("r1")
+
+
+async def test_text_tool_and_empty_final_segment_are_replayable_in_order() -> None:
+    bus = FakeBus()
+    chat = FakeChatRepository()
+    run_id = "text-tool-empty-final"
+    emitter = await RunEmitter.attach(
+        bus,
+        run_id,
+        tenant_id="tenant",
+        namespace="tenant:subject",
+        session_id="session-1",
+        chat_repository=chat,
+    )
+    models = (
+        text_model("draft", msg_id="draft-segment"),
+        FakeModel(
+            message_id="tool-segment",
+            output_message=AIMessage(
+                content="",
+                id="tool-segment",
+                tool_calls=[{"name": "lookup", "args": {"q": "x"}, "id": "tool-1"}],
+            ),
+        ),
+        FakeModel(
+            message_id="final-segment",
+            output_message=AIMessage(content="", id="final-segment"),
+        ),
+    )
+    agent = FakeAgent(
+        run=FakeRunStream(
+            models=models,
+            tool_views=(
+                FakeToolCall(
+                    tool_call_id="tool-1",
+                    tool_name="lookup",
+                    input={"q": "x"},
+                    output="found",
+                ),
+            ),
+        )
+    )
+    done = await invoke_once(
+        emitter,
+        agent,
+        "thread-1",
+        {"messages": []},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        claim_terminal=_always_claim,
+        record_usage=usage_recorder()[0],
+    )
+    assert done is True
+    events = bus.run_events(run_id)
+    completed = find_events(events, MessageCompleted)
+    assert [
+        (event.payload.segment_id, event.payload.content) for event in completed
+    ] == [
+        ("draft-segment", "draft"),
+        ("tool-segment", ""),
+        ("final-segment", ""),
+    ]
+    assert [event.index for event in events] == list(range(len(events)))
+    assert events[-1].kind == "run.completed"
+    assert [event.kind for event in events].count("message.delta") == 1
+    assert [event.kind for event in events].count("tool.invoked") == 1
+    replay = await chat.replay("tenant", "tenant:subject", "session-1")
+    completed_replay = [
+        json.loads(event.payload_json)["content"]
+        for event in replay
+        if event.event_type == "assistant.completed"
+    ]
+    assert completed_replay == ["draft", "", ""]
+    history = await chat.history("tenant", "tenant:subject", "session-1")
+    assert [message.content for message in history] == ["draft", "", ""]
 
 
 async def test_tool_invoked_and_returned() -> None:
@@ -598,6 +686,64 @@ async def test_events_published_with_run_events_maxlen() -> None:
 
 class _NoopArgs(PydanticBaseModel):
     pass
+
+
+async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
+    noop = StructuredTool(
+        name="noop", description="no-op", args_schema=_NoopArgs, func=lambda: "ok"
+    )
+    agent = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="draft",
+                    id="native-draft",
+                    tool_calls=[
+                        {
+                            "name": "noop",
+                            "args": {},
+                            "id": "native-tool",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(content="", id="native-empty-final"),
+            ]
+        ),
+        tools=[noop],
+        system_prompt="x",
+        subagents=[],
+        checkpointer=None,
+        permissions=[],
+        interrupt_on={},
+    )
+    bus = FakeBus()
+    done = await invoke_once(
+        RunEmitter(bus, "native-empty-final"),
+        agent,
+        "native-thread",
+        {"messages": [HumanMessage(content="go")]},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        claim_terminal=_always_claim,
+        record_usage=usage_recorder()[0],
+    )
+    assert done is True
+    events = bus.run_events("native-empty-final")
+    significant = [
+        event.kind
+        for event in events
+        if event.kind in {"message.completed", "tool.invoked", "tool.returned"}
+    ]
+    assert significant == [
+        "message.completed",
+        "tool.invoked",
+        "tool.returned",
+        "message.completed",
+    ]
+    assert [
+        event.payload.content for event in find_events(events, MessageCompleted)
+    ] == ["draft", ""]
 
 
 class _LoopingModel(LocalFakeChatModel):

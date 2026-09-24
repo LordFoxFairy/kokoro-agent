@@ -28,6 +28,12 @@ service bearer 校验。
 非空时为非空字符串。重放为空时 `events=[]`、游标与 watermark 仍为数值。其他 operation 的泛型
 `DataEnvelope` 不作为这两条响应的回退，BFF 应固定消费 Agent owner OpenAPI 版本与 digest。
 
+执行 wire 的 `message.completed.payload.content` 允许空字符串：有真实模型终值时，空值仍是
+该 `segment_id` 的完整最终快照；不以缺失事件或空 `message.delta` 表达。BFF 消费安全
+`assistant.completed` replay 时按 `seq`/segment 更新最终内容，不能把较早的非空草稿当作
+`run.completed` 的最终文本。没有模型终值、也没有文本 delta 的空投影不产生完成事件。
+这是既有 `content: str` 契约的运行时修正，不新增 wire 字段、schema 或版本。
+
 当前 Agent 内部事件和 chat view 的时间字段以 UTC epoch milliseconds 表达，这是现有 BFF adapter 的内部
 传输约定；任何公开 Product API/AG-UI 输出必须在 BFF 边界转换为 RFC 3339 UTC。时间约定升级时同时修改
 machine contract、consumer contract、实现、测试和文档。

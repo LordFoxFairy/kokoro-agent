@@ -428,13 +428,9 @@ def message_delta_payload(text: str, *, segment_id: str) -> MessageDeltaPayload 
     return MessageDeltaPayload(segment_id=segment_id, delta=text) if text else None
 
 
-def message_completed_payload(
-    text: str, *, segment_id: str
-) -> MessageCompletedPayload | None:
-    # 空文本不发（tool-only 段 output_message.text==""）。
-    return (
-        MessageCompletedPayload(segment_id=segment_id, content=text) if text else None
-    )
+def message_completed_payload(text: str, *, segment_id: str) -> MessageCompletedPayload:
+    # 完成帧是该 segment 的权威全文；空最终文本也必须覆盖此前的草稿段。
+    return MessageCompletedPayload(segment_id=segment_id, content=text)
 
 
 def thinking_delta_payload(

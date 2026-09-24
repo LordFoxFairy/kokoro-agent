@@ -46,6 +46,12 @@ identity 重放已有 receipt，digest 不同则拒绝。
 机器 OpenAPI 使用 `LaunchReceiptEnvelope`、`ReplayPageEnvelope` 固定这两条响应，不能退回
 `data: {}`。Run admission/Chat replay 的 owner、事务、幂等和数据写路径均不因此变化。
 
+执行事件中 `message.completed` 是单个模型 segment 的权威全文快照，不是“存在非空文本”信号。
+原生 `output_message` 存在且 `text=""` 时仍发一次空完成帧；`message.delta` 不发送空片段，
+而没有 `output_message` 且没有 text delta 的投影不虚构完成帧。空完成沿现有 RunEmitter
+index、Chat projection、SQL 事务与 replay 序列持久化，必须早于同 run 的 `run.completed`；
+这样工具之后的空最终段不会让先前非空草稿冒充最终回复。
+
 ## 3. Agent 装配
 
 `Agent` 是静态能力声明，`Feature` 是产品入口和 peer handoff 声明，`AgentFactory` 直接调用

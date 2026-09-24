@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import uuid
@@ -12,9 +13,17 @@ from dataclasses import dataclass
 import httpx
 import psycopg
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel as PydanticBaseModel
 from pydantic import JsonValue, SecretStr, TypeAdapter
 from psycopg import sql
-from support.fakes import FakeBus
+from support.fakes import (
+    FakeBus,
+    usage_recorder,
+)
+from support.deepagents import create_test_deep_agent
+from support.local_fake import LocalFakeChatModel
 
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import (
@@ -41,7 +50,12 @@ from kokoro_agent.protocol import (
     run_events_stream,
 )
 from kokoro_agent.domain.run.scope import runtime_namespace
-from kokoro_agent.execution.events import RunEmitter, message_delta_payload
+from kokoro_agent.execution.events import (
+    RunEmitter,
+    message_completed_payload,
+    message_delta_payload,
+)
+from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.interfaces.http.execution_proof_jwks import ExecutionProofJwksState
 from kokoro_agent.interfaces.http.server import create_http_server
 from kokoro_agent.infrastructure.postgres_run_repository import (
@@ -69,6 +83,10 @@ _DATABASE_URL = os.environ.get(
 _REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:56380/9")
 _INTERNAL_SECRET = "acceptance-internal-secret"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
+
+
+class _LookupArgs(PydanticBaseModel):
+    pass
 
 
 @dataclass(frozen=True)
@@ -1261,3 +1279,244 @@ async def test_history_and_replay_are_identity_scoped_over_http(
     assert foreign.status_code == 200
     foreign_data = _nested(_json_object(foreign.json()), "data")
     assert foreign_data["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_empty_final_segment_persists_and_replays_after_tool(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+) -> None:
+    run_id = f"empty-final-{uuid.uuid4().hex}"
+    namespace = runtime_namespace(_identity())
+    stream_name = run_events_stream(run_id)
+    stream = RedisStream(acceptance_state.redis_url)
+    settings = PostgresChatRepositorySettings(
+        database_url=acceptance_state.config.database_url,
+        schema_name=acceptance_state.config.database_schema,
+    )
+    try:
+        async with (
+            make_run_repository(acceptance_state.config.run_repository) as runs,
+            make_chat_repository(settings) as chat,
+        ):
+            request = _request(run_id)
+            await runs.enqueue_dispatch(request, namespace, f"acceptance:{run_id}")
+            lease = await runs.claim_dispatch(request, "empty-final-worker")
+            assert lease is not None
+            emitter = await RunEmitter.attach(
+                stream,
+                run_id,
+                outbox=runs,
+                lease=lease,
+                tenant_id="tenant",
+                namespace=namespace,
+                session_id="session-1",
+                chat_repository=chat,
+            )
+
+            async def claim_terminal() -> bool:
+                return await runs.try_mark_terminal(run_id, lease)
+
+            def lookup() -> str:
+                return "done"
+
+            tool = StructuredTool(
+                name="lookup",
+                description="deterministic lookup",
+                args_schema=_LookupArgs,
+                func=lookup,
+            )
+            agent = create_test_deep_agent(
+                model=LocalFakeChatModel.with_script(
+                    [
+                        AIMessage(
+                            content="draft",
+                            id="draft-segment",
+                            tool_calls=[
+                                {
+                                    "name": "lookup",
+                                    "args": {},
+                                    "id": "tool-1",
+                                    "type": "tool_call",
+                                }
+                            ],
+                        ),
+                        AIMessage(
+                            content="",
+                            id="tool-segment",
+                            tool_calls=[
+                                {
+                                    "name": "lookup",
+                                    "args": {},
+                                    "id": "tool-2",
+                                    "type": "tool_call",
+                                }
+                            ],
+                        ),
+                        AIMessage(content="", id="final-segment"),
+                    ]
+                ),
+                tools=[tool],
+                system_prompt="x",
+                subagents=[],
+                checkpointer=None,
+                permissions=[],
+                interrupt_on={},
+            )
+            await invoke_once(
+                emitter,
+                agent,
+                "thread-1",
+                {"messages": [HumanMessage(content="go")]},
+                approval_tool_names=frozenset(),
+                source_for=lambda _name: "runtime-custom",
+                claim_terminal=claim_terminal,
+                record_usage=usage_recorder()[0],
+            )
+
+        # 重新打开 SQL repository，证据来自落库后的 replay 而非进程内缓存。
+        async with make_chat_repository(settings) as reopened:
+            replay = await reopened.replay("tenant", namespace, "session-1")
+            history = await reopened.history("tenant", namespace, "session-1")
+        completed = [
+            (event.seq, json.loads(event.payload_json)["content"])
+            for event in replay
+            if event.event_type == "assistant.completed"
+        ]
+        assert [content for _seq, content in completed] == ["draft", "", ""]
+        assert [seq for seq, _content in completed] == sorted(
+            seq for seq, _content in completed
+        )
+        assert [message.content for message in history] == ["draft", "", ""]
+        replay_by_index = {event.source_index: event.seq for event in replay}
+        response = await http_client.get(
+            "/v1/sessions/session-1/events", headers=_headers()
+        )
+        assert response.status_code == 200
+        page = _nested(_json_object(response.json()), "data")
+        http_events = page["events"]
+        assert isinstance(http_events, list)
+        completed_http: list[str] = []
+        http_seq_by_index: dict[int, int] = {}
+        for item in http_events:
+            record = _json_object(item)
+            source_index, seq = record["source_index"], record["seq"]
+            assert isinstance(source_index, int) and isinstance(seq, int)
+            http_seq_by_index[source_index] = seq
+            if record["event_type"] != "assistant.completed":
+                continue
+            payload_json = record["payload_json"]
+            assert isinstance(payload_json, str)
+            content = json.loads(payload_json)["content"]
+            assert isinstance(content, str)
+            completed_http.append(content)
+        assert completed_http == ["draft", "", ""]
+        assert http_seq_by_index == replay_by_index
+        wire = await stream.read_all(stream_name)
+        assert [item.event["index"] for item in wire] == list(range(len(wire)))
+        assert wire[-1].event["kind"] == "run.completed"
+        assert [item.event["kind"] for item in wire].count("message.delta") == 1
+        ordered = [
+            (item.event["kind"], item.event["payload"])
+            for item in wire
+            if item.event["kind"]
+            in {"message.completed", "tool.invoked", "tool.returned"}
+        ]
+        assert [kind for kind, _payload in ordered] == [
+            "message.completed",
+            "tool.invoked",
+            "tool.returned",
+            "message.completed",
+            "tool.invoked",
+            "tool.returned",
+            "message.completed",
+        ]
+        completed_indices: list[int] = []
+        for item in wire:
+            if item.event["kind"] != "message.completed":
+                continue
+            index = item.event["index"]
+            assert isinstance(index, int)
+            completed_indices.append(index)
+        assert [replay_by_index[index] for index in completed_indices] == [
+            seq for seq, _content in completed
+        ]
+    finally:
+        await stream.delete(stream_name)
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stale_lease_cannot_publish_or_persist_empty_completion(
+    acceptance_state: _AcceptanceState,
+) -> None:
+    clock_ms = [10_000]
+    run_id = f"stale-empty-final-{uuid.uuid4().hex}"
+    namespace = runtime_namespace(_identity())
+    repository = PostgresRunRepository(
+        acceptance_state.config.database_url,
+        ttl_ms=10,
+        schema=acceptance_state.config.database_schema,
+        clock=lambda: clock_ms[0],
+    )
+    await repository.setup()
+    request = _request(run_id)
+    await repository.enqueue_dispatch(request, namespace, f"acceptance:{run_id}")
+    stale = await repository.claim_dispatch(request, "reused-worker")
+    assert stale is not None
+    stream_name = run_events_stream(run_id)
+    stream = RedisStream(acceptance_state.redis_url)
+    chat = PostgresChatRepository(
+        acceptance_state.config.database_url,
+        schema=acceptance_state.config.database_schema,
+        clock=lambda: clock_ms[0],
+    )
+    await chat.setup()
+    try:
+        stale_emitter = await RunEmitter.attach(
+            stream,
+            run_id,
+            outbox=repository,
+            lease=stale,
+            tenant_id="tenant",
+            namespace=namespace,
+            session_id="session-1",
+            chat_repository=chat,
+        )
+        clock_ms[0] += 11
+        reclaimed = await repository.reclaim_expired("reused-worker")
+        assert len(reclaimed) == 1
+        current = reclaimed[0].lease
+        assert current.generation == stale.generation + 1
+
+        await stale_emitter.emit(
+            message_completed_payload("", segment_id="stale-empty")
+        )
+        assert await repository.next_event_index(run_id) == 0
+        assert await stream.read_all(stream_name) == []
+        assert await chat.replay("tenant", namespace, "session-1") == ()
+
+        current_emitter = await RunEmitter.attach(
+            stream,
+            run_id,
+            outbox=repository,
+            lease=current,
+            tenant_id="tenant",
+            namespace=namespace,
+            session_id="session-1",
+            chat_repository=chat,
+        )
+        await current_emitter.emit(
+            message_completed_payload("", segment_id="current-empty")
+        )
+        assert await repository.next_event_index(run_id) == 1
+        replay = await chat.replay("tenant", namespace, "session-1")
+        assert len(replay) == 1
+        assert json.loads(replay[0].payload_json)["content"] == ""
+        wire = await stream.read_all(stream_name)
+        assert len(wire) == 1
+        assert wire[0].event["kind"] == "message.completed"
+        assert wire[0].event["index"] == replay[0].source_index == 0
+    finally:
+        await stream.delete(stream_name)
+        await stream.aclose()

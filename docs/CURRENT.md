@@ -1,6 +1,6 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-23。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+状态日期：2026-09-24。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
 ## 已落地
@@ -27,6 +27,12 @@
   `LaunchReceiptEnvelope`/`ReplayPageEnvelope`；两者分别引用既有 `LaunchReceipt`/`ReplayPage`，
   不再以泛型 `DataEnvelope.data={}` 描述。HTTP dispatch 的 202/200 实际字段、泛型回退拒绝及
   provenance digest 由 owner 测试与 checker 校验；未改运行时响应字段和数据库。
+- 实际模型 `output_message.text=""` 现在仍发布一次 `message.completed(content="")`，并沿
+  原有 `assistant.completed` Chat 投影持久化/replay；不发空 `message.delta`，没有模型终值
+  且没有文本 delta 时也不虚构完成帧。真实 DeepAgents v3 离线模型（草稿+工具→空工具段→空最终段）
+  经 dispatch claim、Run outbox/lease fence、Redis 及 PostgreSQL Chat 投影后按模型/工具因果顺序重放；
+  HTTP replay 的 `seq` 与 owner event `index` 已对照。过期 lease 的空完成帧不会进入 Redis/Chat；
+  四路完全独立的 FakeRunStream 不模拟上游 v3 跨投影时序，未将其工具相对顺序当作生产保证。
 - Execution proof A1 已发布 Draft 2020-12 decoded-profile schema 与跨语言 canonical/negative/one-bit-tampered vectors；checker 以硬编码
   有序 owner inventory、逐 artifact digest、aggregate digest、strict duplicate/token parser、expected schema pointer/keyword、RFC 8785、
   canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。A2a 独立 runtime exact profile 与
@@ -53,6 +59,15 @@ uv build --wheel --sdist
 163 deselected）、`uv run kokoro-agent-contract-check` 与 `uv build --wheel --sdist`，均通过。
 本轮 HTTP 202/200 验证为进程内 fake ports 的真实 dispatcher 路由，不冒称 PostgreSQL/Redis
 acceptance；真实依赖验收留给 Root 隔离组合切片。
+
+2026-09-24 空最终 segment 修复：TDD 先见 2 个旧行为失败、实现后对应 4 个聚焦用例通过；
+随后“无模型终值且无文本”负向用例先失败，再增加不虚构完成帧的 guard。当前切片
+`uv lock --check`、`uv sync --frozen`、`uv run ruff format --check .`（223 files）、
+`uv run ruff check src tests`、`uv run pyright`（0 errors）、`uv run pytest -q`
+（1100 passed、6 skipped、164 deselected）、`uv run kokoro-agent-contract-check`、
+`uv build --wheel --sdist` 均通过。复用本地一个 PostgreSQL/Redis 实例、各次独立 schema 与
+Redis DB 14 的 3 个针对性真实 acceptance 通过；测试后 DB 14 key 数及临时 schema 数均为 0。
+这只证明 Agent owner 的空完成与持久 replay；BFF 对该事件的最终文本消费仍须由其 owner 验收。
 
 ## 仍需收敛的工程项
 

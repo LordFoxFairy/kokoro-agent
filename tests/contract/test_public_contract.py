@@ -12,6 +12,7 @@ from kokoro_agent.protocol import (
     REQUESTS_MAXLEN,
     REQUESTS_STREAM,
     RUN_EVENTS_MAXLEN,
+    MessageCompletedPayload,
     agent_event_adapter,
     event_id,
     inbound_adapter,
@@ -182,6 +183,14 @@ def test_missing_kind_rejected() -> None:
         agent_event_adapter.validate_python(
             {"run_id": "r1", "index": 0, "timestamp": 1, "payload": {}}
         )
+
+
+def test_empty_completed_content_is_valid() -> None:
+    event = agent_event_adapter.validate_python(
+        _envelope("message.completed", {"segment_id": "final", "content": ""})
+    )
+    assert isinstance(event.payload, MessageCompletedPayload)
+    assert event.payload.content == ""
 
 
 @pytest.mark.parametrize("status", ["completed", "cancelled"])

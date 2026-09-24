@@ -339,6 +339,19 @@
         },
         "additionalProperties": false
       },
+      "LaunchReceiptEnvelope": {
+        "type": "object",
+        "required": ["data", "meta"],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LaunchReceipt"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "additionalProperties": false
+      },
       "CancelControl": {
         "type": "object",
         "required": ["kind", "session_id"],
@@ -686,7 +699,7 @@
             "minimum": 0
           },
           "chat_message_id": {
-            "type": "string",
+            "type": ["string", "null"],
             "minLength": 1
           },
           "event_type": {
@@ -804,6 +817,19 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReplayPageEnvelope": {
+        "type": "object",
+        "required": ["data", "meta"],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReplayPage"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
           }
         },
         "additionalProperties": false
@@ -1029,7 +1055,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DataEnvelope"
+                  "$ref": "#/components/schemas/LaunchReceiptEnvelope"
                 }
               }
             }
@@ -1416,7 +1442,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DataEnvelope"
+                  "$ref": "#/components/schemas/ReplayPageEnvelope"
                 }
               }
             }

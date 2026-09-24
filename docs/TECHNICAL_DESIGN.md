@@ -41,6 +41,11 @@ hash namespace；chat scope 的 namespace 仍只能由同一 trusted identity �
 pending intent/outbox 扫描恢复。控制命令使用 durable command ledger，重复
 identity 重放已有 receipt，digest 不同则拒绝。
 
+`POST /v1/runs` 的 202 和 `GET /v1/sessions/{session_id}/events` 的 200 分别投影现有
+`LaunchReceipt`、`ReplayPage`。HTTP envelope 仅封装对应强类型 `data` 与 request-id `meta`；
+机器 OpenAPI 使用 `LaunchReceiptEnvelope`、`ReplayPageEnvelope` 固定这两条响应，不能退回
+`data: {}`。Run admission/Chat replay 的 owner、事务、幂等和数据写路径均不因此变化。
+
 ## 3. Agent 装配
 
 `Agent` 是静态能力声明，`Feature` 是产品入口和 peer handoff 声明，`AgentFactory` 直接调用

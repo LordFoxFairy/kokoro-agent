@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
+from kokoro_agent.chat_contract_check import validate_chat_response_contract
 from kokoro_agent.execution_proof_contract import validate_execution_proof_contract
 
 
@@ -81,6 +82,7 @@ def validate_openapi_document(document: dict[str, object]) -> None:
                 raise ValueError("operation owner must be kokoro-agent")
     _validate_jwks(paths)
     _validate_jwk_set_component(document)
+    validate_chat_response_contract(document, paths)
 
 
 def _validate_jwks(paths: dict[str, object]) -> None:

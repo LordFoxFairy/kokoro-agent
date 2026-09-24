@@ -1,6 +1,6 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-12。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+状态日期：2026-09-23。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
 ## 已落地
@@ -23,6 +23,10 @@
 - canonical schema 的 operator use case 位于 `application/schema.py`；`cli.py` 与 `worker/main.py` 从该稳定边界导入，
   不再让 CLI 依赖 worker transport。
 - OpenAPI、protocol model、canonical database schema、contract test 和 provenance 已进入本仓。
+- `createRun` 202 与 `replaySessionEvents` 200 已绑定 Agent owner OpenAPI 的
+  `LaunchReceiptEnvelope`/`ReplayPageEnvelope`；两者分别引用既有 `LaunchReceipt`/`ReplayPage`，
+  不再以泛型 `DataEnvelope.data={}` 描述。HTTP dispatch 的 202/200 实际字段、泛型回退拒绝及
+  provenance digest 由 owner 测试与 checker 校验；未改运行时响应字段和数据库。
 - Execution proof A1 已发布 Draft 2020-12 decoded-profile schema 与跨语言 canonical/negative/one-bit-tampered vectors；checker 以硬编码
   有序 owner inventory、逐 artifact digest、aggregate digest、strict duplicate/token parser、expected schema pointer/keyword、RFC 8785、
   canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。A2a 独立 runtime exact profile 与
@@ -43,6 +47,12 @@ uv build --wheel --sdist
 
 真实 PostgreSQL/Redis 验收必须显式提供 `KOKORO_AGENT_DATABASE_URL` 和 `KOKORO_REDIS_URL`，不能用内存
 替身代替 integration/acceptance。
+
+2026-09-23 本轮 Agent contract 切片已执行 `uv lock --check`、`uv run ruff format --check .`、
+`uv run ruff check src tests`、`uv run pyright`、`uv run pytest -q`（1093 passed、6 skipped、
+163 deselected）、`uv run kokoro-agent-contract-check` 与 `uv build --wheel --sdist`，均通过。
+本轮 HTTP 202/200 验证为进程内 fake ports 的真实 dispatcher 路由，不冒称 PostgreSQL/Redis
+acceptance；真实依赖验收留给 Root 隔离组合切片。
 
 ## 仍需收敛的工程项
 

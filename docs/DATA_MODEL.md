@@ -23,6 +23,10 @@ lookup 必须同时 predicate `tenant_id` 与派生 namespace，且 tenant-owned
 不得把 caller-provided namespace 当作权限。子表通过受保护的 application/repository 查询和固定事务路径关联，
 不依赖数据库外键。跨 owner 的 tenant/resource ref 只保存 opaque reference，不做数据库 JOIN。
 
+`createRun` 202 与 `replaySessionEvents` 200 的 typed HTTP envelope 只是既有 dispatch
+receipt、chat event 查询结果的传输约束；本切片不增删表、列、索引或事务，也不把 BFF 的
+Conversation/Message 投影写入 Agent schema。
+
 ## 字段与约束原则
 
 - `id`/业务 identity 只在真正幂等或唯一不变量时建主键/唯一索引。

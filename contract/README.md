@@ -29,11 +29,19 @@ assertion headers。浏览器不得直接调用此服务。每个 operation 的 
 ## Generation
 
 OpenAPI 文件是本仓手工审查的 canonical source，不从 Root、BFF 或数据库生成。Pydantic 模型、HTTP
-handler 和 contract tests 必须与它同步；禁止手改任何未来生成的 client。检查命令：
+handler 和 contract tests 必须与它同步；禁止手改任何未来生成的 client。
+
+`createRun` 202 与 `replaySessionEvents` 200 分别以 `LaunchReceiptEnvelope`、
+`ReplayPageEnvelope` 约束既有 `LaunchReceipt`、`ReplayPage`，不以开放的
+`DataEnvelope.data={}` 代替。这一绑定由 owner contract checker 和实际 HTTP dispatch
+测试共同防漂移。
+
+检查命令：
 
 ```bash
 uv run kokoro-agent-contract-check
 uv run pytest -q tests/contract/test_machine_contract.py
+uv run pytest -q tests/contract/test_chat_response_envelopes.py
 uv run pytest -q tests/contract/test_execution_proof_artifact.py
 ```
 

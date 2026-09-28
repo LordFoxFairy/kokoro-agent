@@ -6,11 +6,17 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.protocol import ExecutionIdentity
 
 
 class StorageClientError(RuntimeError):
     """Storage public client 在发布产物时不可用或拒绝请求。"""
+
+    def __init__(self, code: str, *, retryable: bool = False) -> None:
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
 
 
 class DeliveryRequest(BaseModel):
@@ -28,6 +34,24 @@ class DeliveryRequest(BaseModel):
     mime_type: str
     content_sha256: str
     content: bytes
+    # Set by the claimed worker/tool middleware, never by model tool arguments.
+    lease: LeaseFence | None = None
+    tool_call_id: str | None = None
+
+
+class DeliveryRecoveryRequest(BaseModel):
+    """Trusted tool-call metadata; content comes only from a prior frozen journal."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    request_id: str
+    run_id: str
+    identity: ExecutionIdentity
+    path: str
+    title: str
+    note: str
+    lease: LeaseFence | None = None
+    tool_call_id: str | None = None
 
 
 class DeliveryReceipt(BaseModel):
@@ -47,3 +71,7 @@ class DeliveryClient(Protocol):
     """Storage Artifact public facade；不向 GA 暴露 bucket/key/签名 URL。"""
 
     async def publish(self, request: DeliveryRequest) -> DeliveryReceipt: ...
+
+    async def recover(
+        self, request: DeliveryRecoveryRequest
+    ) -> DeliveryReceipt | None: ...

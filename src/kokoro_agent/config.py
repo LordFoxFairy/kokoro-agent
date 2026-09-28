@@ -175,6 +175,15 @@ class AppConfig(BaseModel):
     system_timeout_s: float = Field(
         default=5, gt=0, le=60, validation_alias="KOKORO_SYSTEM_TIMEOUT_S"
     )
+    storage_base_url: OptStr = Field(
+        default=None, validation_alias="KOKORO_STORAGE_BASE_URL"
+    )
+    storage_object_origin: OptStr = Field(
+        default=None, validation_alias="KOKORO_STORAGE_OBJECT_ORIGIN"
+    )
+    storage_service_secret: OptSecret = Field(
+        default=None, repr=False, validation_alias="KOKORO_STORAGE_SERVICE_SECRET"
+    )
     mcp_egress_mode: str = Field(
         default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE"
     )
@@ -265,6 +274,19 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def platform_configuration_complete(self) -> AppConfig:
+        if (
+            len(
+                {
+                    self.storage_base_url is None,
+                    self.storage_object_origin is None,
+                    self.storage_service_secret is None,
+                }
+            )
+            != 1
+        ):
+            raise ValueError(
+                "Storage URL, object origin and service credential must be configured together"
+            )
         values = (
             self.iam_base_url,
             self.platform_base_url,

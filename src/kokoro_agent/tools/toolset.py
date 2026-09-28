@@ -15,6 +15,7 @@ from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.clients.mcp import McpClientError
 from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.clients.storage import DeliveryClient
+from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.toolbox import ProcessToolbox
@@ -77,6 +78,7 @@ async def build_toolset(
     mcp_client: McpClient | None,
     backend: BackendProtocol,
     delivery: DeliveryClient | None,
+    lease: LeaseFence | None = None,
     resolved_mcp: Mapping[str, McpServerEntry] | None = None,
 ) -> Toolset:
     """五路工具来源合流（顺序即挂载序）：
@@ -97,7 +99,7 @@ async def build_toolset(
     )
     tools.extend(make_mcp_tools(mcp_names, mcp_definitions))
     if agent.delivery and delivery is not None:
-        tools.append(_deliver_tool(request, backend, delivery))
+        tools.append(_deliver_tool(request, backend, delivery, lease))
     return Toolset.from_tools(tools)
 
 
@@ -129,6 +131,7 @@ def _deliver_tool(
     request: RunRequest,
     backend: BackendProtocol,
     delivery: DeliveryClient,
+    lease: LeaseFence | None,
 ) -> StructuredTool:
     """Read through the same DeepAgents backend used by filesystem tools."""
     namespace = RunScope.of(request).namespace
@@ -138,4 +141,5 @@ def _deliver_tool(
         namespace=namespace,
         run_id=request.run_id,
         identity=request.execution_identity,
+        lease=lease,
     )

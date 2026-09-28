@@ -146,6 +146,7 @@ async def build_deep_agent(
         mcp_client=dependencies.mcp_client,
         backend=native_backend,
         delivery=dependencies.delivery,
+        lease=lease,
         resolved_mcp=capabilities.mcp,
     )
     if additional_tools:

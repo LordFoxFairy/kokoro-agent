@@ -98,6 +98,9 @@ class StagedFrame(BaseModel):
     durable_seq: int
     event_id: str
     index: int
+    timestamp: int
+    published: bool = False
+    newly_staged: bool = True
 
 
 class OutboxFrame(BaseModel):

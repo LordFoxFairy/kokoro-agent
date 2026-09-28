@@ -25,6 +25,7 @@ from kokoro_agent.protocol import (
     InboundMessage,
     REQUESTS_STREAM,
     RunCompleted,
+    RunCancel,
     RunFailed,
     RunRequest,
     RunSteer,
@@ -550,6 +551,152 @@ async def test_control_stream_delivers_cancel() -> None:
     completed = find_event(bus.run_events("cx"), RunCompleted)
     assert completed.payload.status == "cancelled"
     assert run_control_stream("cx") in bus.deleted
+
+
+async def test_cancel_reconciles_final_delivery_before_terminal_event() -> None:
+    from kokoro_agent.tools.deliver import DeliverResult
+
+    bus = FakeBus()
+    sup, store = _supervisor(FakeAgent(run=text_run("unused")))
+    run = request("cancel-delivery")
+    assert await store.try_claim(run) is not None
+    store.tool_journal[(run.run_id, "tool-1")] = {
+        "name": "deliver",
+        "status": "succeeded",
+        "result": DeliverResult(
+            status="delivered",
+            artifact_id="artifact-1",
+            asset_id="asset-1",
+            path="/report.pdf",
+            title="Report",
+            mime="application/pdf",
+            size=6,
+            content_hash="a" * 64,
+            note="",
+        ).model_dump_json(),
+        "is_error": False,
+    }
+    await sup.dispatch(
+        bus,
+        _inbound(
+            {"kind": "run.cancel", "command_id": "cancel-f2", "run_id": run.run_id}
+        ),
+    )
+    assert bus.kinds(run.run_id).index("delivery.created") < bus.kinds(
+        run.run_id
+    ).index("run.completed")
+
+
+async def test_cancel_waits_for_started_delivery_then_reapplies_once() -> None:
+    from kokoro_agent.tools.deliver import DeliverResult
+
+    bus = FakeBus()
+    sup, store = _supervisor(FakeAgent(run=text_run("unused")))
+    run = request("cancel-pending-delivery")
+    lease = await store.try_claim(run, "other-worker")
+    assert lease is not None
+    assert await store.journal_tool_started(run.run_id, lease, "tool-1", "deliver")
+    assert await store.journal_delivery_intent(
+        run.run_id, lease, "tool-1", '{"version":1}'
+    )
+    cancel = _inbound(
+        {"kind": "run.cancel", "command_id": "cancel-pending", "run_id": run.run_id}
+    )
+    assert isinstance(cancel, RunCancel)
+    assert await store.record_control_delivery(
+        run.run_id,
+        cancel.command_id,
+        cancel.request_digest,
+        None,
+        cancel.model_dump_json(),
+    )
+    await sup.heartbeat_once(bus)
+    assert not await store.is_terminal(run.run_id)
+    assert bus.kinds(run.run_id).count("run.completed") == 0
+    assert (
+        store.control_commands[(run.run_id, cancel.command_id)]["status"] == "persisted"
+    )
+
+    result = DeliverResult(
+        status="delivered",
+        artifact_id="artifact-1",
+        asset_id="asset-1",
+        path="/report.pdf",
+        title="Report",
+        mime="application/pdf",
+        size=6,
+        content_hash="a" * 64,
+        note="",
+    )
+    assert await store.journal_tool_finished(
+        run.run_id, lease, "tool-1", result.model_dump_json(), False
+    )
+    await sup.heartbeat_once(bus)
+    await sup.heartbeat_once(bus)
+    kinds = bus.kinds(run.run_id)
+    assert kinds.count("delivery.created") == 1
+    assert kinds.count("run.completed") == 1
+    assert kinds.index("delivery.created") < kinds.index("run.completed")
+    assert await store.is_terminal(run.run_id)
+
+
+async def test_cancel_queued_terminal_waits_for_delivery_replay_after_publish_failure() -> (
+    None
+):
+    from kokoro_agent.tools.deliver import DeliverResult
+
+    class DeliveryDownBus(FakeBus):
+        delivery_down = True
+
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            if self.delivery_down and event.get("kind") == "delivery.created":
+                raise ConnectionError("delivery event stream unavailable")
+            return await super().publish(stream, event, maxlen=maxlen)
+
+    bus = DeliveryDownBus()
+    sup, store = _supervisor(FakeAgent(run=text_run("unused")))
+    run = request("cancel-replay-delivery")
+    assert await store.try_claim(run) is not None
+    store.tool_journal[(run.run_id, "tool-1")] = {
+        "name": "deliver",
+        "status": "succeeded",
+        "result": DeliverResult(
+            status="delivered",
+            artifact_id="artifact-1",
+            asset_id="asset-1",
+            path="/report.pdf",
+            title="Report",
+            mime="application/pdf",
+            size=6,
+            content_hash="a" * 64,
+            note="",
+        ).model_dump_json(),
+        "is_error": False,
+    }
+    await sup.dispatch(
+        bus,
+        _inbound(
+            {"kind": "run.cancel", "command_id": "cancel-replay", "run_id": run.run_id}
+        ),
+    )
+    assert await store.is_terminal(run.run_id)
+    assert "run.completed" not in bus.kinds(run.run_id)
+    assert [row["status"] for row in store.outbox[run.run_id]] == [
+        "queued",
+        "queued",
+        "queued",
+    ]
+    bus.delivery_down = False
+    await sup.heartbeat_once(bus)
+    assert bus.kinds(run.run_id) == [
+        "delivery.created",
+        "run.control.receipt",
+        "run.completed",
+    ]
+    await sup.heartbeat_once(bus)
+    assert bus.kinds(run.run_id).count("run.completed") == 1
 
 
 # ⑥ HITL 暂停任务收束后，resume 建立独立的新 generation 与 task 句柄。

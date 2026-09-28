@@ -160,6 +160,10 @@ class SupervisorExecutionMixin(SupervisorContext):
                 # 一旦本 generation 已认领终态，后续异常收口必须保持成功状态；
                 # 不能让第二次 CAS 的 False 覆盖第一次成功，导致漏发终态和漏清理。
                 if not terminal_claimed:
+                    # Storage may have finalized after the live projection was
+                    # dropped. Reconcile journal -> critical outbox -> Chat
+                    # before the terminal CAS seals this Run's event sequence.
+                    await emitter.ensure_delivery_events()
                     terminal_claimed = await self._claim_terminal(run_id, lease)
                 return terminal_claimed
 
@@ -304,9 +308,10 @@ class SupervisorExecutionMixin(SupervisorContext):
         lease = await self._control_lease(run_id)
         if lease is None:
             return
+        emitter = await self._emitter(bus, run_id, lease)
+        await emitter.ensure_delivery_events()
         if await self._claim_terminal(run_id, lease):
             try:
-                emitter = await self._emitter(bus, run_id, lease)
                 await emitter.emit(run_failed_payload(error, code=code))
                 self._emitters.pop(run_id, None)
             finally:

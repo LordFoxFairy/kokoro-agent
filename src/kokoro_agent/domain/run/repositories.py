@@ -63,6 +63,7 @@ class RunEventPort(Protocol):
         payload_json: str,
         *,
         terminal: bool,
+        event_id: str | None = None,
     ) -> StagedFrame | None: ...
 
     async def mark_critical_published(self, run_id: str, durable_seq: int) -> None: ...
@@ -146,6 +147,16 @@ class RunLifecyclePort(Protocol):
         self, run_id: str, owner: str
     ) -> LeaseFence | None: ...
 
+    async def cancel_with_delivery_barrier(
+        self,
+        run_id: str,
+        owner: str,
+        command_id: str,
+        delivery_snapshot: tuple[tuple[str, str, str], ...],
+        receipt_payload_json: str,
+        terminal_payload_json: str,
+    ) -> LeaseFence | None: ...
+
     async def is_terminal(self, run_id: str) -> bool: ...
 
 
@@ -209,6 +220,10 @@ class RunEffectPort(Protocol):
         self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
     ) -> bool: ...
 
+    async def journal_delivery_intent(
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, intent: str
+    ) -> bool: ...
+
     async def journal_tool_finished(
         self,
         run_id: str,
@@ -225,6 +240,10 @@ class RunEffectPort(Protocol):
     async def get_tool_journal(
         self, run_id: str, tool_call_id: str
     ) -> ToolJournalRecord | None: ...
+
+    async def list_delivery_journal(
+        self, run_id: str
+    ) -> list[tuple[str, str, str]]: ...
 
     async def bind_sandbox_id(
         self,

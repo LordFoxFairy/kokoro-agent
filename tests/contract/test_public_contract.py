@@ -98,6 +98,9 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
     (
         "delivery.created",
         {
+            "tool_call_id": "t1",
+            "artifact_id": "artifact-1",
+            "asset_id": "asset-1",
             "path": "/report.pdf",
             "title": "Report",
             "mime": "application/pdf",

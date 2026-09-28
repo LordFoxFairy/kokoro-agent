@@ -1,0 +1,6 @@
+{
+  "authority": "local contract/proto",
+  "source": "contract/proto",
+  "files": ["kokoro/common/v1/common.proto", "kokoro/storage/v2/storage.proto"],
+  "combinedSha256": "8317e644d45c8db310b44f114afa22892a6a40d6ee7d0c1c4a37a8203e79f427"
+}

@@ -14,6 +14,9 @@ from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig, log_config_summary
 from kokoro_agent.clients.system import ModelResolver, SystemModelClient
+from kokoro_agent.clients.storage import DeliveryClient
+from kokoro_agent.clients.storage_delivery import StorageDeliveryClient
+from kokoro_agent.clients.storage_transport import StorageDeliveryTransport
 from kokoro_agent.application.schema import (
     apply_database_schema,
     db_apply_schema_main as _schema_db_apply_schema_main,
@@ -25,6 +28,7 @@ from kokoro_agent.agent_factory import AgentFactory
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from kokoro_agent.worker.platform import worker_platform_runtime
 from kokoro_agent.domain.run.repository import SandboxBackendKind
+from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
@@ -115,6 +119,31 @@ async def worker_model_resolver(
         yield resolver
 
 
+@asynccontextmanager
+async def worker_storage_delivery(
+    config: AppConfig,
+    injected: DeliveryClient | None,
+    run_repository: RunRepository,
+) -> AsyncGenerator[DeliveryClient | None, None]:
+    """Own one Storage transport per worker; embedded client remains caller-owned."""
+    if injected is not None:
+        yield injected
+        return
+    if (
+        config.storage_base_url is None
+        or config.storage_object_origin is None
+        or config.storage_service_secret is None
+    ):
+        yield None
+        return
+    async with StorageDeliveryTransport(
+        config.storage_base_url,
+        config.storage_object_origin,
+        config.storage_service_secret.get_secret_value(),
+    ) as transport:
+        yield StorageDeliveryClient(run_repository, transport)
+
+
 async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None:
     """Run one worker with deployment-selected public clients.
 
@@ -140,6 +169,9 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
         make_checkpointer(config.checkpoint) as saver,
         make_run_repository(config.run_repository) as run_repository,
+        worker_storage_delivery(
+            config, owner_clients.delivery, run_repository
+        ) as delivery,
         make_memory_store(config.checkpoint) as memory_store,
         make_chat_repository(
             PostgresChatRepositorySettings(
@@ -164,7 +196,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
             mcp_client=owner_clients.mcp,
-            delivery=owner_clients.delivery,
+            delivery=delivery,
             model_resolver=model_resolver,
         )
         agent_factory = AgentFactory(dependencies)

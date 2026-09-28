@@ -13,5 +13,6 @@ GENERAL_AGENT = Agent(
     key="general",
     prompt=GENERAL_PROMPT,
     tools=(ASK_USER_TOOL,),
+    delivery=True,
     pause_tools=frozenset({ASK_USER_TOOL_NAME}),
 )

@@ -7,10 +7,13 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from deepagents.backends.local_shell import LocalShellBackend
 
 from kokoro_agent.clients.storage import (
     DeliveryReceipt,
+    DeliveryRecoveryRequest,
     DeliveryRequest,
     StorageClientError,
 )
@@ -31,6 +34,10 @@ class FakeDeliveryClient:
     def __init__(self) -> None:
         self.requests: list[DeliveryRequest] = []
         self.failure: StorageClientError | None = None
+        self.recovery: DeliveryReceipt | None = None
+
+    async def recover(self, request: DeliveryRecoveryRequest) -> DeliveryReceipt | None:
+        return self.recovery
 
     async def publish(self, request: DeliveryRequest) -> DeliveryReceipt:
         if self.failure is not None:
@@ -60,6 +67,35 @@ def _tool(tmp_path: Path, client: FakeDeliveryClient):
     )
 
 
+async def test_recovered_final_receipt_does_not_read_missing_workspace_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def tool_call_id(_run_id: str) -> str:
+        return "tool-1"
+
+    monkeypatch.setattr(
+        "kokoro_agent.tools.deliver.current_delivery_tool_call_id",
+        tool_call_id,
+    )
+    client = FakeDeliveryClient()
+    client.recovery = DeliveryReceipt(
+        artifact_id="artifact-1",
+        asset_id="asset-1",
+        content_sha256="a" * 64,
+        size_bytes=6,
+        mime_type="application/pdf",
+        replayed=True,
+    )
+    result = DeliverResult.model_validate_json(
+        await _tool(tmp_path, client).ainvoke(
+            {"path": "/missing.pdf", "title": "Report"}
+        )
+    )
+    assert result.artifact_id == "artifact-1"
+    assert result.asset_id == "asset-1"
+    assert client.requests == []
+
+
 async def test_deliver_publishes_workspace_bytes_through_public_client(
     tmp_path: Path,
 ) -> None:
@@ -74,6 +110,8 @@ async def test_deliver_publishes_workspace_bytes_through_public_client(
     request = client.requests[0]
     assert result.status == "delivered"
     assert result.content_hash == hashlib.sha256(b"final report").hexdigest()
+    assert result.artifact_id == f"artifact-{result.content_hash}"
+    assert result.asset_id == f"asset-{result.content_hash}"
     assert request.namespace == _NS
     assert request.run_id == _RUN
     assert request.identity == _IDENTITY
@@ -141,3 +179,14 @@ async def test_storage_client_failure_is_readable(tmp_path: Path) -> None:
     out = await _tool(tmp_path, client).ainvoke({"path": "/a.txt", "title": "A"})
 
     assert "交付存储暂不可用" in out
+
+
+async def test_retryable_storage_failure_preserves_journal_intent(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "a.txt").write_text("hello")
+    client = FakeDeliveryClient()
+    client.failure = StorageClientError("network", retryable=True)
+
+    with pytest.raises(StorageClientError, match="network"):
+        await _tool(tmp_path, client).ainvoke({"path": "/a.txt", "title": "A"})

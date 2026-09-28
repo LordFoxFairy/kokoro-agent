@@ -1,0 +1,338 @@
+// Canonical contract source owned by kokoro-storage; generated clients are derived from this file.
+// Every RPC requires authenticated x-kokoro-service, x-kokoro-internal-secret,
+// x-kokoro-tenant-id, x-kokoro-subject-id, and x-kokoro-request-id transport metadata.
+// x-kokoro-scope-kind (personal|project|conversation) and x-kokoro-scope-id are required.
+// Scope is asserted by an authenticated, permitted business owner; body identity is forbidden.
+// kokoro-agent has only conversation/artifact-purpose delivery operations;
+// web-bff retains ordinary personal/project Asset operations and conversation
+// final-Artifact reads, not Artifact writes. kokoro-platform has only
+// GetPackageReference. ListAssets permits only personal or project scope.
+// Service registration alone grants no product-scope operation.
+// Tenant, subject, caller and scope are deliberately absent from request messages.
+syntax = "proto3";
+
+package kokoro.storage.v2;
+
+import "kokoro/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+enum ArtifactState {
+  ARTIFACT_STATE_UNSPECIFIED = 0;
+  ARTIFACT_STATE_DRAFT = 1;
+  ARTIFACT_STATE_FINAL = 2;
+}
+
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_DOCUMENT = 1;
+  ARTIFACT_KIND_CODE = 2;
+  ARTIFACT_KIND_IMAGE = 3;
+  ARTIFACT_KIND_AUDIO = 4;
+  ARTIFACT_KIND_VIDEO = 5;
+  ARTIFACT_KIND_DATA = 6;
+  ARTIFACT_KIND_ARCHIVE = 7;
+  ARTIFACT_KIND_OTHER = 8;
+}
+
+enum ScanState {
+  SCAN_STATE_UNSPECIFIED = 0;
+  SCAN_STATE_PENDING = 1;
+  SCAN_STATE_CLEAN = 2;
+  SCAN_STATE_INFECTED = 3;
+  SCAN_STATE_UNKNOWN = 4;
+}
+
+enum UploadPurpose {
+  UPLOAD_PURPOSE_UNSPECIFIED = 0;
+  UPLOAD_PURPOSE_CAPABILITY_PACKAGE = 1;
+  UPLOAD_PURPOSE_ASSET = 2;
+  UPLOAD_PURPOSE_ARTIFACT = 3;
+}
+
+enum UploadState {
+  UPLOAD_STATE_UNSPECIFIED = 0;
+  UPLOAD_STATE_PENDING = 1;
+  UPLOAD_STATE_COMPLETED = 2;
+  UPLOAD_STATE_ABORTED = 3;
+}
+
+enum AssetOrigin {
+  ASSET_ORIGIN_UNSPECIFIED = 0;
+  ASSET_ORIGIN_UPLOADED = 1;
+  ASSET_ORIGIN_GENERATED = 2;
+}
+
+// Ephemeral signing output: never persisted in command receipts or message history.
+message TransferReference {
+  string url = 1;
+  // PUT for uploads, GET for downloads/packages; never caller-selected.
+  string method = 2;
+  // Browser-settable required transport headers only; no internal service credentials.
+  map<string, string> required_headers = 3;
+  // Signature upper bound, not asset retention; credentials can invalidate it earlier.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message CreateUploadRequest {
+  reserved 1, 3, 4;
+  reserved "request_id", "tenant_id", "owner_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string filename = 5;
+  string mime_type = 6;
+  uint64 size_bytes = 7;
+  string content_sha256 = 8;
+  kokoro.storage.v2.UploadPurpose upload_purpose = 10;
+}
+
+message CreateUploadResponse {
+  string upload_id = 1;
+  reserved 3;
+  reserved "upload_url";
+  kokoro.storage.v2.TransferReference upload_reference = 4;
+}
+
+message CompleteUploadRequest {
+  reserved 1, 3;
+  reserved "request_id", "tenant_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string upload_id = 4;
+  string content_sha256 = 5;
+  uint64 size_bytes = 6;
+}
+
+message CompleteUploadResponse {
+  string upload_id = 1;
+  string asset_id = 2;
+  kokoro.storage.v2.ScanState scan_state = 3;
+  bool replayed = 4;
+}
+
+message AbortUploadRequest {
+  reserved 1, 3;
+  reserved "request_id", "tenant_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string upload_id = 4;
+  string reason = 5;
+}
+
+message AbortUploadResponse {
+  string upload_id = 1;
+  kokoro.storage.v2.UploadState state = 2;
+  bool replayed = 3;
+}
+
+message GetUploadStatusRequest {
+  reserved 1;
+  reserved "tenant_id";
+  string upload_id = 2;
+}
+
+message GetUploadStatusResponse {
+  string upload_id = 1;
+  kokoro.storage.v2.UploadState state = 2;
+  string expected_sha256 = 4;
+  uint64 expected_size_bytes = 5;
+  string mime_type = 6;
+  // Present only for completed uploads with a validated same-scope Asset relation.
+  optional string asset_id = 7;
+}
+
+message GetAssetRequest {
+  reserved 1, 2, 3;
+  reserved "request_id", "command", "tenant_id";
+  string asset_id = 4;
+  string content_sha256 = 5;
+}
+
+message GetAssetResponse {
+  reserved 2;
+  reserved "tenant_id";
+  string asset_id = 1;
+  string content_sha256 = 5;
+  uint64 size_bytes = 6;
+  string mime_type = 7;
+  kokoro.storage.v2.ScanState scan_state = 8;
+  reserved 9;
+  reserved "visibility";
+  kokoro.storage.v2.UploadPurpose upload_purpose = 10;
+  kokoro.storage.v2.AssetOrigin origin = 11;
+  string filename = 12;
+}
+
+// Personal files or project resources: the server fixes purpose=ASSET and scan=CLEAN before pagination.
+// Caller must be web-bff; personal scope must match authenticated subject.
+// Personal and project cursors use distinct kinds and are not access grants.
+message ListAssetsRequest {
+  // Required; 1..100. Zero is invalid rather than an implicit default.
+  uint32 limit = 1;
+  string cursor = 2;
+}
+
+message ListAssetItem {
+  string asset_id = 1;
+  string filename = 2;
+  string mime_type = 3;
+  string content_sha256 = 4;
+  uint64 size_bytes = 5;
+  kokoro.storage.v2.UploadPurpose upload_purpose = 6;
+  kokoro.storage.v2.AssetOrigin origin = 7;
+  kokoro.storage.v2.ScanState scan_state = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message ListAssetsResponse {
+  repeated kokoro.storage.v2.ListAssetItem items = 1;
+  // Absent when there is no following page.
+  optional string next_cursor = 2;
+}
+
+message GetPackageReferenceRequest {
+  reserved 1, 3;
+  reserved "request_id", "tenant_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string asset_id = 4;
+  string content_sha256 = 5;
+}
+
+message GetPackageReferenceResponse {
+  string asset_id = 1;
+  reserved 3;
+  reserved "download_url";
+  kokoro.storage.v2.TransferReference download_reference = 8;
+  string content_sha256 = 4;
+  uint64 size_bytes = 5;
+  string mime_type = 6;
+  kokoro.storage.v2.ScanState scan_state = 7;
+}
+
+message GetScanStatusRequest {
+  reserved 1;
+  reserved "tenant_id";
+  string asset_id = 2;
+}
+
+message GetScanStatusResponse {
+  string asset_id = 1;
+  kokoro.storage.v2.ScanState state = 2;
+  string report_id = 3;
+}
+
+message FinalizeArtifactRequest {
+  reserved 1, 3;
+  reserved "request_id", "tenant_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string asset_id = 4;
+  string artifact_id = 5;
+  string content_sha256 = 6;
+}
+
+message FinalizeArtifactResponse {
+  string artifact_id = 1;
+  kokoro.storage.v2.ArtifactState state = 2;
+  bool replayed = 3;
+  string asset_id = 4;
+  string content_sha256 = 5;
+}
+
+message CreateArtifactRequest {
+  reserved 1, 3;
+  reserved "request_id", "tenant_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string asset_id = 4;
+  string artifact_id = 5;
+  string content_sha256 = 6;
+  kokoro.storage.v2.ArtifactKind kind = 7;
+  string title = 8;
+  string source_run_id = 9;
+}
+
+message CreateArtifactResponse {
+  string artifact_id = 1;
+  string asset_id = 2;
+  string content_sha256 = 3;
+  kokoro.storage.v2.ArtifactState state = 4;
+  bool replayed = 5;
+  kokoro.storage.v2.ArtifactKind kind = 6;
+  string title = 7;
+  string source_run_id = 8;
+}
+
+message ListFinalArtifactsRequest {
+  uint32 limit = 1;
+  string cursor = 2;
+}
+
+message FinalArtifactItem {
+  string artifact_id = 1;
+  string asset_id = 2;
+  string content_sha256 = 3;
+  kokoro.storage.v2.ArtifactKind kind = 4;
+  string title = 5;
+  string source_run_id = 6;
+  string filename = 7;
+  string mime_type = 8;
+  uint64 size_bytes = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp finalized_at = 11;
+}
+
+message ListFinalArtifactsResponse {
+  repeated kokoro.storage.v2.FinalArtifactItem items = 1;
+  optional string next_cursor = 2;
+}
+
+message GetFinalArtifactRequest {
+  string artifact_id = 1;
+}
+
+message GetFinalArtifactResponse {
+  kokoro.storage.v2.FinalArtifactItem item = 1;
+}
+
+message GetFinalArtifactDownloadReferenceRequest {
+  kokoro.common.v1.CommandIdentity command = 1;
+  string artifact_id = 2;
+}
+
+message GetFinalArtifactDownloadReferenceResponse {
+  string artifact_id = 1;
+  string asset_id = 2;
+  string content_sha256 = 3;
+  kokoro.storage.v2.TransferReference download_reference = 4;
+}
+
+message GetDownloadReferenceRequest {
+  reserved 1, 3;
+  reserved "request_id", "tenant_id";
+  kokoro.common.v1.CommandIdentity command = 2;
+  string asset_id = 4;
+  string content_sha256 = 5;
+}
+
+message GetDownloadReferenceResponse {
+  string asset_id = 1;
+  reserved 2;
+  reserved "download_url";
+  kokoro.storage.v2.TransferReference download_reference = 7;
+  string content_sha256 = 3;
+  uint64 size_bytes = 4;
+  string mime_type = 5;
+  kokoro.storage.v2.ScanState scan_state = 6;
+}
+
+service StorageService {
+  rpc CreateUpload(kokoro.storage.v2.CreateUploadRequest) returns (kokoro.storage.v2.CreateUploadResponse);
+  rpc CompleteUpload(kokoro.storage.v2.CompleteUploadRequest) returns (kokoro.storage.v2.CompleteUploadResponse);
+  rpc AbortUpload(kokoro.storage.v2.AbortUploadRequest) returns (kokoro.storage.v2.AbortUploadResponse);
+  rpc GetUploadStatus(kokoro.storage.v2.GetUploadStatusRequest) returns (kokoro.storage.v2.GetUploadStatusResponse);
+  rpc GetAsset(kokoro.storage.v2.GetAssetRequest) returns (kokoro.storage.v2.GetAssetResponse);
+  rpc ListAssets(kokoro.storage.v2.ListAssetsRequest) returns (kokoro.storage.v2.ListAssetsResponse);
+  rpc GetPackageReference(kokoro.storage.v2.GetPackageReferenceRequest) returns (kokoro.storage.v2.GetPackageReferenceResponse);
+  rpc GetScanStatus(kokoro.storage.v2.GetScanStatusRequest) returns (kokoro.storage.v2.GetScanStatusResponse);
+  rpc CreateArtifact(kokoro.storage.v2.CreateArtifactRequest) returns (kokoro.storage.v2.CreateArtifactResponse);
+  rpc FinalizeArtifact(kokoro.storage.v2.FinalizeArtifactRequest) returns (kokoro.storage.v2.FinalizeArtifactResponse);
+  rpc GetDownloadReference(kokoro.storage.v2.GetDownloadReferenceRequest) returns (kokoro.storage.v2.GetDownloadReferenceResponse);
+  rpc ListFinalArtifacts(kokoro.storage.v2.ListFinalArtifactsRequest) returns (kokoro.storage.v2.ListFinalArtifactsResponse);
+  rpc GetFinalArtifact(kokoro.storage.v2.GetFinalArtifactRequest) returns (kokoro.storage.v2.GetFinalArtifactResponse);
+  rpc GetFinalArtifactDownloadReference(kokoro.storage.v2.GetFinalArtifactDownloadReferenceRequest) returns (kokoro.storage.v2.GetFinalArtifactDownloadReferenceResponse);
+}

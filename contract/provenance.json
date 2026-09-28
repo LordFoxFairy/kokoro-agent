@@ -9,7 +9,7 @@
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py"
   ],
-  "combined_sha256": "6e2ad8b430047ef2184bce077487773e4c2f7acefbc0e58e3abdfa56f8432133",
+  "combined_sha256": "5b5b1f98976c39781d4749c8f559690eb049cb66930c77ada0b0b62e9f763c4a",
   "generated_artifacts": [],
   "source_revision": "same Git commit as the listed files",
   "consumer_dependencies": [

@@ -1,0 +1,33 @@
+{
+  "owner": "kokoro-storage",
+  "owner_repository": "apps/kokoro-storage",
+  "owner_commit": "d5cfc442c675e32363ae767f5ec662a9e0d9eaea",
+  "sources": [
+    {
+      "owner_path": "contract/proto/kokoro/common/v1/common.proto",
+      "path": "contract/storage/v2/proto/kokoro/common/v1/common.proto",
+      "sha256": "4604725ec7d5896c9d74b53c6f06d19b20ee758d5ab9e1cb90177ede95bba9fd"
+    },
+    {
+      "owner_path": "contract/proto/kokoro/storage/v2/storage.proto",
+      "path": "contract/storage/v2/proto/kokoro/storage/v2/storage.proto",
+      "sha256": "5a5dcaec2e1fd0d5eed369b8f79477fd0f8f653b32f9ebe14a8c339f4eb713ac"
+    }
+  ],
+  "owner_provenance": {
+    "path": "contract/storage/v2/owner-provenance.json",
+    "sha256": "c04b73b263d83dbc6e1bf2e3afb5b2b720a237e6a5478197439e8eac04b24981",
+    "combined_sha256": "8317e644d45c8db310b44f114afa22892a6a40d6ee7d0c1c4a37a8203e79f427"
+  },
+  "codegen": {
+    "python": "3.11",
+    "buf_bin": "1.73.0",
+    "protoc_gen_py": "0.1.1",
+    "protoc_gen_connectrpc": "0.11.1",
+    "connectrpc_parameter": "io=async"
+  },
+  "runtime": {
+    "connectrpc": "0.12.1",
+    "protobuf_py": ">=0.3.0,<0.4.0"
+  }
+}

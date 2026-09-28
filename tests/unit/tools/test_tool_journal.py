@@ -15,6 +15,7 @@ from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.tools.middleware import (
     RunSupersededError,
     ToolEffectJournalMiddleware,
+    current_delivery_tool_call_id,
 )
 
 
@@ -132,6 +133,20 @@ async def test_replay_succeeded_short_circuits_without_reexecuting() -> None:
     assert handler.calls == 0
 
 
+async def test_deliver_succeeded_with_corrupt_result_fails_closed() -> None:
+    store = FakeRunRepository()
+    store.tool_journal[("rn", "c1")] = {
+        "name": "deliver",
+        "status": "succeeded",
+        "result": "not-a-final-receipt",
+        "is_error": False,
+    }
+    handler = _Handler()
+    with pytest.raises(RuntimeError, match="valid final receipt"):
+        await (await _mw(store)).awrap_tool_call(_request("deliver"), handler)
+    assert handler.calls == 0
+
+
 async def test_replay_failed_short_circuits_as_error() -> None:
     store = FakeRunRepository()
     store.tool_journal[("rn", "c1")] = {
@@ -162,6 +177,49 @@ async def test_replay_unknown_outcome_started_does_not_reexecute() -> None:
     assert isinstance(result, ToolMessage) and result.status == "error"
     assert "unknown_outcome" in result.text
     assert handler.calls == 0
+
+
+async def test_durable_deliver_intent_reenters_same_tool_call_only() -> None:
+    store = FakeRunRepository()
+    store.tool_journal[("rn", "c1")] = {
+        "name": "deliver",
+        "status": "started",
+        "result": '{"version":1}',
+        "is_error": False,
+    }
+    observed: list[str | None] = []
+
+    async def handler(request: ToolCallRequest) -> ToolMessage:
+        observed.append(current_delivery_tool_call_id("rn"))
+        return ToolMessage(content="delivered", tool_call_id="c1", name="deliver")
+
+    result = await (await _mw(store)).awrap_tool_call(_request("deliver"), handler)
+    assert isinstance(result, ToolMessage) and result.text == "delivered"
+    assert observed == ["c1"]
+    assert current_delivery_tool_call_id("rn") is None
+
+
+async def test_deliver_without_frozen_intent_remains_unknown_outcome() -> None:
+    store = FakeRunRepository()
+    store.tool_journal[("rn", "c1")] = {
+        "name": "deliver",
+        "status": "started",
+        "result": "",
+        "is_error": False,
+    }
+    handler = _Handler("MUST NOT RUN")
+    result = await (await _mw(store)).awrap_tool_call(_request("deliver"), handler)
+    assert isinstance(result, ToolMessage) and result.status == "error"
+    assert handler.calls == 0
+
+
+async def test_deliver_definitive_error_is_not_journaled_as_success() -> None:
+    store = FakeRunRepository()
+    result = await (await _mw(store)).awrap_tool_call(
+        _request("deliver"), _Handler("error: infected file")
+    )
+    assert isinstance(result, ToolMessage) and result.status == "error"
+    assert store.tool_journal[("rn", "c1")]["status"] == "failed"
 
 
 async def test_concurrent_journal_loser_replays_winner_without_executing() -> None:

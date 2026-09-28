@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeVar, cast
@@ -256,6 +257,7 @@ class FakeRunRepository:
         payload_json: str,
         *,
         terminal: bool,
+        event_id: str | None = None,
     ) -> StagedFrame | None:
         lease_current = (
             await self.is_lease_current(run_id, lease)
@@ -264,12 +266,28 @@ class FakeRunRepository:
         )
         if not lease_current:
             return None
+        if event_id is not None:
+            for existing in self.outbox.get(run_id, []):
+                if existing["event_id"] == event_id:
+                    if (
+                        existing["kind"] != kind
+                        or existing["payload_json"] != payload_json
+                    ):
+                        raise RuntimeError("delivery event identity drift")
+                    return StagedFrame(
+                        durable_seq=cast(int, existing["durable_seq"]),
+                        event_id=event_id,
+                        index=cast(int, existing["index"]),
+                        timestamp=cast(int, existing["timestamp"]),
+                        published=existing["status"] == "published",
+                        newly_staged=False,
+                    )
         seq = self.durable_counter.get(run_id, 0) + 1
         self.durable_counter[run_id] = seq
         if terminal and run_id not in self.terminal_fence:
             self.terminal_fence[run_id] = seq
         fence = self.terminal_fence.get(run_id)
-        event_id = f"evt_fake_{run_id}_{seq}"
+        event_id = event_id or f"evt_fake_{run_id}_{seq}"
         rows = self.outbox.setdefault(run_id, [])
         if fence is not None and seq > fence:
             rows.append(
@@ -294,7 +312,9 @@ class FakeRunRepository:
                 "status": "queued",
             }
         )
-        return StagedFrame(durable_seq=seq, event_id=event_id, index=index)
+        return StagedFrame(
+            durable_seq=seq, event_id=event_id, index=index, timestamp=timestamp
+        )
 
     async def next_event_index(self, run_id: str) -> int:
         return self.event_index_counter.get(run_id, 0)
@@ -704,6 +724,72 @@ class FakeRunRepository:
         await self._queue_bound_sandbox_cleanup(run_id)
         return LeaseFence(owner=owner, generation=generation)
 
+    async def cancel_with_delivery_barrier(
+        self,
+        run_id: str,
+        owner: str,
+        command_id: str,
+        delivery_snapshot: tuple[tuple[str, str, str], ...],
+        receipt_payload_json: str,
+        terminal_payload_json: str,
+    ) -> LeaseFence | None:
+        if run_id in self.terminals or self.terminal_fence.get(run_id) is not None:
+            return None
+        if tuple(await self.list_delivery_journal(run_id)) != delivery_snapshot:
+            return None
+        if any(status == "started" for _, status, _ in delivery_snapshot):
+            return None
+        for tool_id, status, _ in delivery_snapshot:
+            if status != "succeeded":
+                continue
+            event_id = (
+                "evt_"
+                + hashlib.sha256(f"delivery\0{run_id}\0{tool_id}".encode()).hexdigest()
+            )
+            if not any(
+                row.get("event_id") == event_id
+                and row.get("status") in {"queued", "published"}
+                for row in self.outbox.get(run_id, [])
+            ):
+                return None
+        command = self.control_commands.get((run_id, command_id))
+        if command is not None and command["status"] != "persisted":
+            return None
+        if command is not None:
+            command["status"] = "succeeded"
+        generation = self.generations.get(run_id, 0) + 1
+        self.owners[run_id] = owner
+        self.generations[run_id] = generation
+        self.leases[run_id] = None
+        self.terminals.add(run_id)
+        self.terminal_at[run_id] = self.clock_ms
+        start_seq = self.durable_counter.get(run_id, 0)
+        start_index = self.event_index_counter.get(run_id, 0)
+        self.durable_counter[run_id] = start_seq + 2
+        self.event_index_counter[run_id] = start_index + 2
+        self.terminal_fence[run_id] = start_seq + 2
+        rows = self.outbox.setdefault(run_id, [])
+        for offset, (kind, payload_json) in enumerate(
+            (
+                ("run.control.receipt", receipt_payload_json),
+                ("run.completed", terminal_payload_json),
+            ),
+            start=1,
+        ):
+            rows.append(
+                {
+                    "durable_seq": start_seq + offset,
+                    "event_id": f"evt_fake_cancel_{run_id}_{start_seq + offset}",
+                    "kind": kind,
+                    "index": start_index + offset - 1,
+                    "timestamp": self.clock_ms,
+                    "payload_json": payload_json,
+                    "status": "queued",
+                }
+            )
+        await self._queue_bound_sandbox_cleanup(run_id)
+        return LeaseFence(owner=owner, generation=generation)
+
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self.clock_ms - max_age_ms
         blocked = {
@@ -810,6 +896,17 @@ class FakeRunRepository:
         }
         return True
 
+    async def journal_delivery_intent(
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, intent: str
+    ) -> bool:
+        if not await self.is_lease_current(run_id, lease):
+            return False
+        entry = self.tool_journal.get((run_id, tool_call_id))
+        if entry is None or entry["name"] != "deliver" or entry["status"] != "started":
+            return False
+        entry["result"] = intent
+        return True
+
     async def journal_tool_finished(
         self,
         run_id: str,
@@ -848,6 +945,13 @@ class FakeRunRepository:
             result=str(entry["result"] or ""),
             is_error=bool(entry["is_error"]),
         )
+
+    async def list_delivery_journal(self, run_id: str) -> list[tuple[str, str, str]]:
+        return [
+            (tool_id, str(row["status"]), str(row["result"] or ""))
+            for (row_run, tool_id), row in sorted(self.tool_journal.items())
+            if row_run == run_id and row["name"] == "deliver"
+        ]
 
     async def execute_active_effect(
         self,

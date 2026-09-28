@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
@@ -15,6 +16,8 @@ from kokoro_agent.infrastructure.schema import (
     TOOL_RESULTS_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+
+_INTENT = TypeAdapter(dict[str, JsonValue])
 
 
 class PostgresRunEffects:
@@ -164,6 +167,59 @@ class PostgresRunEffects:
                     )
                     return await fetch_one(cur) is not None
 
+    async def journal_delivery_intent(
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, intent: str
+    ) -> bool:
+        """Freeze the file/identity before owner I/O and monotonically record upload_id.
+
+        The existing journal row is the sole Agent-owned intent; no second table or
+        cross-owner transaction is introduced. Recovery may only advance upload_id.
+        """
+        try:
+            proposed = _INTENT.validate_json(intent)
+        except ValidationError:
+            return False
+        if proposed.get("version") != 1:
+            return False
+        async with connect_pg(self._context.database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    if not await self._context.lock_active_lease(cur, run_id, lease):
+                        return False
+                    await execute_sql(
+                        cur,
+                        """
+                        SELECT name, status, result FROM {}
+                        WHERE run_id = %s AND tool_call_id = %s FOR UPDATE
+                        """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
+                        (run_id, tool_call_id),
+                    )
+                    row = await fetch_one(cur)
+                    if (
+                        row is None
+                        or row["name"] != "deliver"
+                        or row["status"] != "started"
+                    ):
+                        return False
+                    previous = str(row["result"])
+                    if previous:
+                        try:
+                            prior = _INTENT.validate_json(previous)
+                        except ValidationError:
+                            return False
+                        for key, value in prior.items():
+                            if proposed.get(key) != value:
+                                return False
+                    await execute_sql(
+                        cur,
+                        """
+                        UPDATE {} SET result = %s, updated_at = NOW()
+                        WHERE run_id = %s AND tool_call_id = %s AND status = 'started'
+                        """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
+                        (intent, run_id, tool_call_id),
+                    )
+                    return True
+
     async def journal_tool_finished(
         self,
         run_id: str,
@@ -231,3 +287,22 @@ class PostgresRunEffects:
         if row is None:
             return None
         return ToolJournalRecord(**dict(row))
+
+    async def list_delivery_journal(self, run_id: str) -> list[tuple[str, str, str]]:
+        """Terminal barrier input: every deliver outcome for this Run."""
+        async with connect_pg(self._context.database_url) as conn:
+            async with conn.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    """
+                    SELECT tool_call_id, status, result FROM {}
+                    WHERE run_id = %s AND name = 'deliver'
+                    ORDER BY created_at, tool_call_id
+                    """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
+                    (run_id,),
+                )
+                rows = await fetch_all(cur)
+        return [
+            (str(row["tool_call_id"]), str(row["status"]), str(row["result"]))
+            for row in rows
+        ]

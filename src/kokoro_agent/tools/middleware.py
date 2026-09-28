@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -15,7 +16,7 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import HumanMessage
@@ -24,12 +25,24 @@ from langgraph.runtime import Runtime
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
 from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
+from kokoro_agent.protocol.events import DeliveryCreatedPayload
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
 
 # Command[Any] 对齐框架基类签名：其类型参数是运行时动态图更新，属真实边界。
 _ToolHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]]
+
+_DELIVERY_CALL: ContextVar[tuple[str, str] | None] = ContextVar(
+    "kokoro_delivery_call", default=None
+)
+_DELIVERY_INTENT = TypeAdapter(dict[str, JsonValue])
+
+
+def current_delivery_tool_call_id(run_id: str) -> str | None:
+    """Return only the journal-bound invocation, never a model-supplied argument."""
+    current = _DELIVERY_CALL.get()
+    return current[1] if current is not None and current[0] == run_id else None
 
 
 class ToolPolicyMiddleware(AgentMiddleware):
@@ -312,10 +325,19 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             return await handler(request)
         tool_id = call["id"] or ""
         recorded = await self._run_repository.get_tool_journal(self._run_id, tool_id)
-        if recorded is not None:
+        recovering_delivery = (
+            name == "deliver"
+            and recorded is not None
+            and recorded.status == "started"
+            and self._has_delivery_intent(recorded.result)
+        )
+        if recorded is not None and not recovering_delivery:
             return self._replay(recorded, tool_id=tool_id, name=name)
-        won_journal = await self._run_repository.journal_tool_started(
-            self._run_id, self._lease, tool_id, name
+        won_journal = (
+            recovering_delivery
+            or await self._run_repository.journal_tool_started(
+                self._run_id, self._lease, tool_id, name
+            )
         )
         if not won_journal:
             # 首次读取与 keep-first 插入之间存在竞争窗口。输掉 journal 所有权的一方必须重新
@@ -333,6 +355,9 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
                 tool_id=tool_id,
                 name=name,
             )
+        token = (
+            _DELIVERY_CALL.set((self._run_id, tool_id)) if name == "deliver" else None
+        )
         try:
             result = await handler(request)
         except GraphInterrupt:
@@ -343,7 +368,12 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
                 self._run_id, self._lease, tool_id
             )
             raise
+        finally:
+            if token is not None:
+                _DELIVERY_CALL.reset(token)
         if isinstance(result, ToolMessage):
+            if name == "deliver" and result.text.startswith("error:"):
+                result = result.model_copy(update={"status": "error"})
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
             finished = await self._run_repository.journal_tool_finished(
@@ -358,6 +388,14 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
                     f"run {self._run_id!r} lost its lease while finishing a tool effect"
                 )
         return result
+
+    @staticmethod
+    def _has_delivery_intent(result: str) -> bool:
+        try:
+            value = _DELIVERY_INTENT.validate_json(result)
+        except ValidationError:
+            return False
+        return value.get("version") == 1
 
     def _replay(self, recorded: object, *, tool_id: str, name: str) -> ToolMessage:
         # recorded: ToolJournalRecord（repository 层导出）——按状态短路。
@@ -376,6 +414,19 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             )
         result = getattr(recorded, "result", "")
         is_error = bool(getattr(recorded, "is_error", False))
+        if name == "deliver" and status == "succeeded" and not is_error:
+            try:
+                parsed = _DELIVERY_INTENT.validate_json(result)
+                if parsed.get("status") != "delivered":
+                    raise ValueError("delivery journal status is not delivered")
+                DeliveryCreatedPayload.model_validate(
+                    {key: value for key, value in parsed.items() if key != "status"}
+                    | {"tool_call_id": tool_id}
+                )
+            except (ValidationError, ValueError) as exc:
+                raise RuntimeError(
+                    "successful delivery journal has no valid final receipt"
+                ) from exc
         return ToolMessage(
             content=result,
             tool_call_id=tool_id,

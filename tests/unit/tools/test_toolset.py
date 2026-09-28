@@ -42,7 +42,7 @@ def test_toolset_extension_rejects_handoff_collision() -> None:
 
 def test_delivery_is_an_explicit_agent_capability() -> None:
     assert MUSIC_AGENT.delivery is True
-    assert GENERAL_AGENT.delivery is False
+    assert GENERAL_AGENT.delivery is True
     assert replace(MUSIC_AGENT, delivery=False).delivery is False
 
 

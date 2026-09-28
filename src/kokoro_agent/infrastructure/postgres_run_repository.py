@@ -148,9 +148,16 @@ class PostgresRunRepository:
         payload_json: str,
         *,
         terminal: bool,
+        event_id: str | None = None,
     ) -> StagedFrame | None:
         return await self._events.stage_critical_frame(
-            run_id, lease, kind, timestamp, payload_json, terminal=terminal
+            run_id,
+            lease,
+            kind,
+            timestamp,
+            payload_json,
+            terminal=terminal,
+            event_id=event_id,
         )
 
     async def next_event_index(self, run_id: str) -> int:
@@ -226,6 +233,24 @@ class PostgresRunRepository:
     ) -> LeaseFence | None:
         return await self._leases.fence_and_mark_terminal(run_id, owner)
 
+    async def cancel_with_delivery_barrier(
+        self,
+        run_id: str,
+        owner: str,
+        command_id: str,
+        delivery_snapshot: tuple[tuple[str, str, str], ...],
+        receipt_payload_json: str,
+        terminal_payload_json: str,
+    ) -> LeaseFence | None:
+        return await self._leases.cancel_with_delivery_barrier(
+            run_id,
+            owner,
+            command_id,
+            delivery_snapshot,
+            receipt_payload_json,
+            terminal_payload_json,
+        )
+
     async def is_terminal(self, run_id: str) -> bool:
         return await self._leases.is_terminal(run_id)
 
@@ -264,6 +289,13 @@ class PostgresRunRepository:
             run_id, lease, tool_call_id, name
         )
 
+    async def journal_delivery_intent(
+        self, run_id: str, lease: LeaseFence, tool_call_id: str, intent: str
+    ) -> bool:
+        return await self._effects.journal_delivery_intent(
+            run_id, lease, tool_call_id, intent
+        )
+
     async def journal_tool_finished(
         self,
         run_id: str,
@@ -285,6 +317,9 @@ class PostgresRunRepository:
         self, run_id: str, tool_call_id: str
     ) -> ToolJournalRecord | None:
         return await self._effects.get_tool_journal(run_id, tool_call_id)
+
+    async def list_delivery_journal(self, run_id: str) -> list[tuple[str, str, str]]:
+        return await self._effects.list_delivery_journal(run_id)
 
     async def bind_sandbox_id(
         self,

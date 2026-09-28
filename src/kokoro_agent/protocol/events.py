@@ -182,6 +182,9 @@ class SubagentToolReturnedPayload(StrictModel):
 
 
 class DeliveryCreatedPayload(StrictModel):
+    tool_call_id: NonEmptyStr
+    artifact_id: NonEmptyStr
+    asset_id: NonEmptyStr
     path: NonEmptyStr
     title: NonEmptyStr
     mime: NonEmptyStr

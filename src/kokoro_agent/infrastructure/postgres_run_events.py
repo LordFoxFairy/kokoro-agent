@@ -38,8 +38,9 @@ class PostgresRunEvents:
         payload_json: str,
         *,
         terminal: bool,
+        event_id: str | None = None,
     ) -> StagedFrame | None:
-        event_id = f"evt_{uuid4().hex}"
+        event_id = event_id or f"evt_{uuid4().hex}"
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
@@ -50,6 +51,37 @@ class PostgresRunEvents:
                     )
                     if not lease_current:
                         return None
+                    if kind == "delivery.created":
+                        await execute_sql(
+                            cur,
+                            """
+                            SELECT run_id, durable_seq, kind, status, index_value,
+                                   occurred_at, payload_json
+                            FROM {} WHERE event_id = %s
+                            """.format(
+                                qualified(self._context.schema, RUN_OUTBOX_TABLE)
+                            ),
+                            (event_id,),
+                        )
+                        existing = await fetch_one(cur)
+                        if existing is not None:
+                            if (
+                                existing["run_id"] != run_id
+                                or existing["kind"] != kind
+                                or existing["payload_json"] != payload_json
+                                or existing["index_value"] is None
+                            ):
+                                raise RuntimeError("delivery event identity drift")
+                            return StagedFrame(
+                                durable_seq=int(existing["durable_seq"]),
+                                event_id=event_id,
+                                index=int(existing["index_value"]),
+                                timestamp=int(
+                                    existing["occurred_at"].timestamp() * 1000
+                                ),
+                                published=existing["status"] == "published",
+                                newly_staged=False,
+                            )
                     await execute_sql(
                         cur,
                         """
@@ -122,7 +154,9 @@ class PostgresRunEvents:
                         """.format(qualified(self._context.schema, RUN_OUTBOX_TABLE)),
                         (run_id, seq, event_id, kind, index, timestamp, payload_json),
                     )
-        return StagedFrame(durable_seq=seq, event_id=event_id, index=index)
+        return StagedFrame(
+            durable_seq=seq, event_id=event_id, index=index, timestamp=timestamp
+        )
 
     async def next_event_index(self, run_id: str) -> int:
         """Read the claims-owned event-index high-water mark."""

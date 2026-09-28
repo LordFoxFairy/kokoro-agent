@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from uuid import uuid4
+
 from kokoro_agent.domain.run.repository import (
     LeaseFence,
     LeasedRun,
@@ -13,9 +16,12 @@ from kokoro_agent.infrastructure.postgres_run_context import (
 )
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
+    RUN_CONTROL_COMMANDS_TABLE,
     RUN_DISPATCHES_TABLE,
+    RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     SANDBOX_CLEANUP_INTENTS_TABLE,
+    TOOL_JOURNAL_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.protocol import RunRequest
@@ -448,6 +454,161 @@ class PostgresRunLeases:
                         )
         if row is None:
             return None
+        return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
+
+    async def cancel_with_delivery_barrier(
+        self,
+        run_id: str,
+        owner: str,
+        command_id: str,
+        delivery_snapshot: tuple[tuple[str, str, str], ...],
+        receipt_payload_json: str,
+        terminal_payload_json: str,
+    ) -> LeaseFence | None:
+        """Atomically commit cancel command and its ordered terminal outbox.
+
+        Every journal writer takes the claims row lock first. A snapshot taken
+        before Chat projection is rechecked under that same lock, so a newly
+        started or newly finished delivery cannot slip past the terminal fence.
+        """
+        now = self._context.clock()
+        async with connect_pg(self._context.database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await execute_sql(
+                        cur,
+                        """
+                        SELECT durable_counter, event_index_counter,
+                               terminal_fence_seq
+                        FROM {} WHERE run_id = %s AND terminal = FALSE
+                        FOR UPDATE
+                        """.format(qualified(self._context.schema, RUN_CLAIMS_TABLE)),
+                        (run_id,),
+                    )
+                    claim = await fetch_one(cur)
+                    if claim is None or claim["terminal_fence_seq"] is not None:
+                        return None
+                    await execute_sql(
+                        cur,
+                        """
+                        SELECT tool_call_id, status, result FROM {}
+                        WHERE run_id = %s AND name = 'deliver'
+                        ORDER BY created_at, tool_call_id
+                        """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
+                        (run_id,),
+                    )
+                    observed = tuple(
+                        (
+                            str(row["tool_call_id"]),
+                            str(row["status"]),
+                            str(row["result"]),
+                        )
+                        for row in await fetch_all(cur)
+                    )
+                    if observed != delivery_snapshot or any(
+                        status == "started" for _, status, _ in observed
+                    ):
+                        return None
+                    final_event_ids = {
+                        "evt_"
+                        + hashlib.sha256(
+                            f"delivery\0{run_id}\0{tool_id}".encode()
+                        ).hexdigest()
+                        for tool_id, status, _ in observed
+                        if status == "succeeded"
+                    }
+                    if final_event_ids:
+                        await execute_sql(
+                            cur,
+                            """
+                            SELECT event_id FROM {}
+                            WHERE run_id = %s AND kind = 'delivery.created'
+                              AND status IN ('queued', 'published')
+                              AND event_id = ANY(%s)
+                            """.format(
+                                qualified(self._context.schema, RUN_OUTBOX_TABLE)
+                            ),
+                            (run_id, list(final_event_ids)),
+                        )
+                        found = {str(row["event_id"]) for row in await fetch_all(cur)}
+                        if found != final_event_ids:
+                            return None
+                    await execute_sql(
+                        cur,
+                        """
+                        UPDATE {} SET status = 'succeeded',
+                            updated_at = to_timestamp(%s / 1000.0)
+                        WHERE run_id = %s AND command_id = %s AND status = 'persisted'
+                        RETURNING command_id
+                        """.format(
+                            qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+                        ),
+                        (now, run_id, command_id),
+                    )
+                    if await fetch_one(cur) is None:
+                        return None
+                    start_seq = int(claim["durable_counter"])
+                    start_index = int(claim["event_index_counter"])
+                    await execute_sql(
+                        cur,
+                        """
+                        UPDATE {}
+                        SET owner = %s,
+                            lease_generation = lease_generation + 1,
+                            terminal = TRUE,
+                            terminal_at = COALESCE(terminal_at, to_timestamp(%s / 1000.0)),
+                            lease_expires_at = NULL,
+                            durable_counter = %s,
+                            event_index_counter = %s,
+                            terminal_fence_seq = %s
+                        WHERE run_id = %s AND terminal = FALSE
+                        RETURNING run_id, lease_generation, sandbox_id,
+                                  sandbox_generation, sandbox_backend_kind,
+                                  sandbox_teardown_ref
+                        """.format(qualified(self._context.schema, RUN_CLAIMS_TABLE)),
+                        (
+                            owner,
+                            now,
+                            start_seq + 2,
+                            start_index + 2,
+                            start_seq + 2,
+                            run_id,
+                        ),
+                    )
+                    row = await fetch_one(cur)
+                    if row is None:
+                        raise RuntimeError("cancel lost the locked claims row")
+                    for offset, (kind, payload_json) in enumerate(
+                        (
+                            ("run.control.receipt", receipt_payload_json),
+                            ("run.completed", terminal_payload_json),
+                        ),
+                        start=1,
+                    ):
+                        await execute_sql(
+                            cur,
+                            """
+                            INSERT INTO {} (
+                                run_id, durable_seq, event_id, kind, status,
+                                index_value, occurred_at, payload_json, published_at
+                            ) VALUES (%s, %s, %s, %s, 'queued', %s,
+                                      to_timestamp(%s / 1000.0), %s, NULL)
+                            """.format(
+                                qualified(self._context.schema, RUN_OUTBOX_TABLE)
+                            ),
+                            (
+                                run_id,
+                                start_seq + offset,
+                                f"evt_{uuid4().hex}",
+                                kind,
+                                start_index + offset - 1,
+                                now,
+                                payload_json,
+                            ),
+                        )
+                    await self._context.queue_bound_sandbox_cleanup(
+                        cur, dict(row), now=now
+                    )
         return LeaseFence(owner=owner, generation=int(row["lease_generation"]))
 
     async def is_terminal(self, run_id: str) -> bool:

@@ -50,6 +50,10 @@ from kokoro_agent.worker.supervisor_context import (
 LOGGER = logging.getLogger(__name__)
 
 
+class DeliveryBarrierPending(RuntimeError):
+    """Keep a durable cancel command persisted until owner delivery resolves."""
+
+
 class SupervisorControlMixin(SupervisorContext):
     async def _control_request(self, run_id: str) -> RunRequest | None:
         return await self._run_repository.get_request(run_id)
@@ -199,12 +203,38 @@ class SupervisorControlMixin(SupervisorContext):
                 msg.run_id, msg.command_id, "run_scope_forbidden"
             )
             return
-        # cancel 是受信 control command：无论哪一个 consumer 收到，都原子提升 generation、
-        # fence 当前执行者并认领唯一终态；不能依赖本进程恰好持有 active lease。
-        terminal_lease = await self._run_repository.fence_and_mark_terminal(
-            msg.run_id, self._consumer
+        # Snapshot before projection, then compare under the claims row lock in
+        # the atomic cancel commit. A newly started/finished tool must force a
+        # retry rather than disappear behind the terminal generation fence.
+        snapshot = tuple(await self._run_repository.list_delivery_journal(msg.run_id))
+        if any(status == "started" for _, status, _ in snapshot):
+            raise DeliveryBarrierPending("delivery journal is still in progress")
+        current_fence = await self._run_repository.get_fence(msg.run_id)
+        if current_fence is None:
+            raise DeliveryBarrierPending("run has no claim fence yet")
+        emitter = await self._emitter(bus, msg.run_id, current_fence)
+        await emitter.ensure_delivery_events()
+        terminal_lease = await self._run_repository.cancel_with_delivery_barrier(
+            msg.run_id,
+            self._consumer,
+            msg.command_id,
+            snapshot,
+            RunControlReceiptPayload(
+                command_id=msg.command_id, control_status="applied"
+            ).model_dump_json(exclude_none=True),
+            RunCompletedPayload(status="cancelled", token_usage=None).model_dump_json(
+                exclude_none=True
+            ),
         )
         if terminal_lease is None:
+            if not await self._run_repository.is_terminal(msg.run_id):
+                raise DeliveryBarrierPending("delivery journal changed before cancel")
+            await self._run_repository.mark_control_superseded(
+                msg.run_id, msg.command_id
+            )
+            await self._run_repository.mark_control_failed(
+                msg.run_id, msg.command_id, "control_superseded"
+            )
             return
         self._leases[msg.run_id] = terminal_lease
         task = self._tasks.get(msg.run_id)
@@ -214,10 +244,9 @@ class SupervisorControlMixin(SupervisorContext):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         try:
-            emitter = await self._emitter(bus, msg.run_id, terminal_lease)
-            await emitter.emit(
-                RunCompletedPayload(status="cancelled", token_usage=None)
-            )
+            # The command and both critical frames were committed atomically.
+            # A process crash here leaves queued rows for startup/heartbeat.
+            await self._republish_outbox(bus)
             self._emitters.pop(msg.run_id, None)
         finally:
             await self._teardown_control(bus, msg.run_id)
@@ -361,19 +390,18 @@ class SupervisorControlMixin(SupervisorContext):
     ) -> None:
         # persisted 已发；此处 apply + applied 时点回执。restart 续办亦经此路（不重发 persisted）。
         if isinstance(msg, RunCancel):
-            # cancel：apply 即终态，applied 回执须先于 run.completed——session relayRun 遇终态即
-            # 收束，其后帧不再消费；且 _on_cancel 的 teardown 会 cancel 本 control 任务，后置回执会被吞。
-            await self._run_repository.mark_control_applied(run_id, msg.command_id)
+            try:
+                await self._on_cancel(bus, msg)
+            except DeliveryBarrierPending:
+                # Do not mark applied/failed or issue a terminal event. The
+                # persisted command is retried by the heartbeat scanner.
+                return
+            except Exception:
+                # Before CAS: persisted command remains retryable. After CAS:
+                # command succeeded + queued outbox are already durable.
+                LOGGER.exception("cancel apply deferred run_id=%s", run_id)
+                return
             metrics.record_control_delivery("applied")
-            await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
-            if await self._guarded_control_apply(bus, run_id, msg):
-                await self._run_repository.mark_control_succeeded(
-                    run_id, msg.command_id
-                )
-            else:
-                await self._run_repository.mark_control_failed(
-                    run_id, msg.command_id, "control_apply_failed"
-                )
             return
         # resume/steer：apply 后再写 applied，随后把 HTTP receipt 收口为 succeeded。
         if await self._guarded_control_apply(bus, run_id, msg):

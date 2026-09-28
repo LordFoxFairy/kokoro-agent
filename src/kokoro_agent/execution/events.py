@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import time
 import asyncio
@@ -63,7 +64,13 @@ LOGGER = logging.getLogger(__name__)
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
 # 其余 live 帧（delta/tool 过程帧）不占 seq、丢了由 checkpoint 重建。
 CRITICAL_KINDS: frozenset[str] = frozenset(
-    {"run.started", "run.control.receipt", "run.completed", "run.failed"}
+    {
+        "run.started",
+        "run.control.receipt",
+        "delivery.created",
+        "run.completed",
+        "run.failed",
+    }
 )
 # 终态帧：分配时 CAS 设 local fence（first-terminal），其后更大 seq 一律 superseded。
 TERMINAL_KINDS: frozenset[str] = frozenset({"run.completed", "run.failed"})
@@ -184,6 +191,30 @@ class RunEmitter:
     def lease(self) -> LeaseFence | None:
         return self._lease
 
+    async def ensure_delivery_events(self) -> None:
+        """Recover durable delivery projection before a Run may become terminal.
+
+        A successful Storage receipt is already in Agent's tool journal; the live
+        LangGraph projection can be lost independently. The stable event_id makes
+        this reconciliation safe to repeat after any crash window.
+        """
+        if self._outbox is None:
+            return
+        for tool_call_id, status, result in await self._outbox.list_delivery_journal(
+            self._run_id
+        ):
+            if status == "started":
+                raise RuntimeError("delivery intent has no final journal result")
+            if status != "succeeded":
+                continue
+            try:
+                parsed = _DELIVER_RESULT_ADAPTER.validate_json(result)
+            except ValidationError as exc:
+                raise RuntimeError(
+                    "successful delivery journal has no valid final receipt"
+                ) from exc
+            await self.emit(_delivery_payload(tool_call_id, parsed))
+
     @classmethod
     async def attach(
         cls,
@@ -270,12 +301,26 @@ class RunEmitter:
                 timestamp,
                 payload_json,
                 terminal=kind in TERMINAL_KINDS,
+                event_id=(
+                    "evt_"
+                    + hashlib.sha256(
+                        f"delivery\0{self._run_id}\0{payload.tool_call_id}".encode()
+                    ).hexdigest()
+                    if isinstance(payload, DeliveryCreatedPayload)
+                    else None
+                ),
             )
             if staged is None:
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
                 return
+            if staged.published:
+                # A previous attempt already projected and published this exact
+                # immutable frame. Terminal reconciliation must not resend it.
+                self._next_index = max(self._next_index, staged.index + 1)
+                return
             metrics.record_outbox("queued")
             index = staged.index
+            timestamp = staged.timestamp
             base: dict[str, object] = {
                 "kind": kind,
                 "run_id": self._run_id,
@@ -287,9 +332,23 @@ class RunEmitter:
                 {**base, "durable_seq": staged.durable_seq, "event_id": staged.event_id}
             )
             if not await self._persist_chat(payload, index, timestamp, mode=None):
+                if kind == "delivery.created":
+                    raise RuntimeError("delivery chat projection was not confirmed")
                 return
             self._next_index = max(self._next_index, index + 1)
-            await self._publish_event(event.model_dump(exclude_none=True))
+            if not staged.newly_staged:
+                # Another emitter owns the immediate send. An existing queued
+                # row is recovered by outbox replay, never by a second live send.
+                return
+            try:
+                await self._publish_event(event.model_dump(exclude_none=True))
+            except Exception:
+                if kind != "delivery.created":
+                    raise
+                # Delivery is already durable in outbox and projected to Chat.
+                # Redis is only the live transport; queued replay owns recovery.
+                LOGGER.warning("delivery live publish deferred to outbox replay")
+                return
             await self._outbox.mark_critical_published(self._run_id, staged.durable_seq)
             metrics.record_outbox("published")
             return
@@ -329,7 +388,10 @@ class RunEmitter:
             return True
         lease = self._lease
         assert lease is not None
-        if kind in TERMINAL_KINDS or kind == "run.control.receipt":
+        if kind in TERMINAL_KINDS or kind in {
+            "run.control.receipt",
+            "delivery.created",
+        }:
             return await self._outbox.is_fence_current(self._run_id, lease)
         return await self._outbox.is_lease_current(self._run_id, lease)
 
@@ -667,7 +729,16 @@ def delivery_created_payload(tc: ToolCallInfo) -> DeliveryCreatedPayload | None:
         result = _DELIVER_RESULT_ADAPTER.validate_json(_raw_result_text(tc))
     except ValidationError:
         return None
+    return _delivery_payload(tc.tool_call_id, result)
+
+
+def _delivery_payload(
+    tool_call_id: str, result: DeliverResult
+) -> DeliveryCreatedPayload:
     return DeliveryCreatedPayload(
+        tool_call_id=tool_call_id,
+        artifact_id=result.artifact_id,
+        asset_id=result.asset_id,
         path=result.path,
         title=result.title,
         mime=result.mime,

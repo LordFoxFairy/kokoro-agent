@@ -40,7 +40,10 @@ class SupervisorRecoveryMixin(SupervisorContext):
         except Exception:  # noqa: BLE001 — 补发扫描降级不阻断 serve 启动
             LOGGER.exception("critical outbox scan failed")
             return
+        blocked_runs: set[str] = set()
         for frame in frames:
+            if frame.run_id in blocked_runs:
+                continue
             try:
                 await self._persist_outbox_chat(frame)
                 await bus.publish(
@@ -53,6 +56,7 @@ class SupervisorRecoveryMixin(SupervisorContext):
                 )
                 metrics.record_outbox("republished")
             except Exception:  # noqa: BLE001 — 单帧补发失败留 queued，下一拍再试，不阻断其余
+                blocked_runs.add(frame.run_id)
                 LOGGER.exception(
                     "outbox republish failed run_id=%s seq=%s",
                     frame.run_id,
@@ -116,6 +120,9 @@ class SupervisorRecoveryMixin(SupervisorContext):
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
         for run_id in await self._run_repository.list_paused():
             self._ensure_control_listener(bus, run_id)
+        # Persisted control commands include cancellation deferred behind an
+        # in-flight delivery journal. Revisit them without requiring restart.
+        await self._reapply_pending_control(bus)
         # 存活期间同样补发 queued critical outbox；不是只有启动时才扫描。
         await self._republish_pending_dispatches(bus)
         await self._republish_outbox(bus)

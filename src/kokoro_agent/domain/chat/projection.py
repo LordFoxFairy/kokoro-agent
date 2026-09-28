@@ -78,6 +78,9 @@ class _Interaction(_Payload):
 
 
 class _Delivery(_Payload):
+    tool_call_id: str
+    artifact_id: str
+    asset_id: str
     path: str
     title: str
     mime: str

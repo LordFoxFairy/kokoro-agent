@@ -13,10 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kokoro_agent.clients.storage import (
     DeliveryClient,
+    DeliveryRecoveryRequest,
     DeliveryRequest,
     StorageClientError,
 )
+from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.protocol import ExecutionIdentity
+from kokoro_agent.tools.middleware import current_delivery_tool_call_id
 
 DELIVER_TOOL_NAME = "deliver"
 
@@ -35,6 +38,8 @@ class DeliverResult(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     status: Literal["delivered"]
+    artifact_id: str
+    asset_id: str
     path: str
     title: str
     mime: str
@@ -50,6 +55,7 @@ def make_deliver_tool(
     namespace: str,
     run_id: str,
     identity: ExecutionIdentity,
+    lease: LeaseFence | None = None,
 ) -> StructuredTool:
     """Bind one run's workspace and Storage facade to the delivery tool."""
 
@@ -57,6 +63,40 @@ def make_deliver_tool(
         normalized = _workspace_path(path)
         if normalized is None:
             return f"error: 路径 {path!r} 不是合法的工作区绝对路径。"
+
+        tool_call_id = current_delivery_tool_call_id(run_id)
+        if tool_call_id is not None:
+            try:
+                recovered = await delivery.recover(
+                    DeliveryRecoveryRequest(
+                        request_id=hashlib.sha256(
+                            f"{run_id}\0{tool_call_id}".encode()
+                        ).hexdigest(),
+                        run_id=run_id,
+                        identity=identity,
+                        path=normalized,
+                        title=title,
+                        note=note,
+                        lease=lease,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+            except StorageClientError as exc:
+                if exc.retryable:
+                    raise
+                return f"error: 交付存储暂不可用（{exc}）。"
+            if recovered is not None:
+                return DeliverResult(
+                    status="delivered",
+                    artifact_id=recovered.artifact_id,
+                    asset_id=recovered.asset_id,
+                    path=normalized,
+                    title=title,
+                    mime=recovered.mime_type,
+                    size=recovered.size_bytes,
+                    content_hash=recovered.content_sha256,
+                    note=note,
+                ).model_dump_json()
 
         downloaded = await backend.adownload_files([normalized])
         if len(downloaded) != 1:
@@ -86,9 +126,13 @@ def make_deliver_tool(
                     mime_type=mime,
                     content_sha256=content_hash,
                     content=file.content,
+                    lease=lease,
+                    tool_call_id=current_delivery_tool_call_id(run_id),
                 )
             )
         except StorageClientError as exc:
+            if exc.retryable:
+                raise
             return f"error: 交付存储暂不可用（{exc}）。"
 
         if (
@@ -100,6 +144,8 @@ def make_deliver_tool(
 
         return DeliverResult(
             status="delivered",
+            artifact_id=receipt.artifact_id,
+            asset_id=receipt.asset_id,
             path=normalized,
             title=title,
             mime=mime,

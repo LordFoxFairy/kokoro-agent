@@ -30,5 +30,81 @@
   "runtime": {
     "connectrpc": "0.12.1",
     "protobuf_py": ">=0.3.0,<0.4.0"
+  },
+  "execution_operations": {
+    "owner_commit": "ee25c1f4d6df08be183ca10f7f5e852e0b21f641",
+    "aggregate_sha256": "afca9369c4aedd7a68aea02af834265efc6f480a07668ae0f8dbcad9bd7e545e",
+    "sources": [
+      {
+        "path": "contract/platform/v1/execution-operations/v1/command-identities.json",
+        "owner_path": "contract/execution-operations/v1/command-identities.json",
+        "sha256": "4e25844843b46f86826aba3f2f250cdba6b78d81867288a6414dc333a10091dd"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/identities.json",
+        "owner_path": "contract/execution-operations/v1/identities.json",
+        "sha256": "ba2064c1e720e41a326e0c88c2a53f26f1727565f24a955f55490816351282e0"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/manifest.json",
+        "owner_path": "contract/execution-operations/v1/manifest.json",
+        "sha256": "187bbeeceb1e082c15a8df3fc1451f89322575fa13276abe161a2c72fedad9c9"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/operation-catalog.json",
+        "owner_path": "contract/execution-operations/v1/operation-catalog.json",
+        "sha256": "9da9568ddd37622a9e3b4ccfdb8984705a35b525aa7bd8d5c27c8cb625b8a6cc"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/provenance.json",
+        "owner_path": "contract/execution-operations/v1/provenance.json",
+        "sha256": "eaf58dafe6d8730d6cf371357136e6ed59532922d19beb97067db8a666b1183d"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/request-bindings.json",
+        "owner_path": "contract/execution-operations/v1/request-bindings.json",
+        "sha256": "050291cf6f56052453ddb841f1e7cc624b2d3da28e5d9afd6abb9108349371fd"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/schemas/command-identities.schema.json",
+        "owner_path": "contract/execution-operations/v1/schemas/command-identities.schema.json",
+        "sha256": "1ee71ebd279724fe19602535d74fda241debf81da68e0431643185500a28814f"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/schemas/identities.schema.json",
+        "owner_path": "contract/execution-operations/v1/schemas/identities.schema.json",
+        "sha256": "5ed33481630923d2d237f16a08819627a3826dbe557f3884329066189edbe0c9"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/schemas/manifest.schema.json",
+        "owner_path": "contract/execution-operations/v1/schemas/manifest.schema.json",
+        "sha256": "911e63385a799add2e592dcb90ae2c8af556968e2cb53a168e70101f68a9ee09"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/schemas/operation-catalog.schema.json",
+        "owner_path": "contract/execution-operations/v1/schemas/operation-catalog.schema.json",
+        "sha256": "bb7d7e0e37bb9d6d8a696b7704b9c13263e95b5705607c6ed159cf5e01d56161"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/schemas/request-bindings.schema.json",
+        "owner_path": "contract/execution-operations/v1/schemas/request-bindings.schema.json",
+        "sha256": "a4ce34e858ab4850b6429407b52e6b5ead86d0d629ecc7033d15487a38166b13"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/schemas/vector-inventory.schema.json",
+        "owner_path": "contract/execution-operations/v1/schemas/vector-inventory.schema.json",
+        "sha256": "a6815f865e8d39610623288b939047367f5a0840ee1f6c8112db5582463d507d"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/vectors/negative.json",
+        "owner_path": "contract/execution-operations/v1/vectors/negative.json",
+        "sha256": "34b44925718d03715f8c493d5c8afe58b0037aab6886618a536911f38983d121"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v1/vectors/positive.json",
+        "owner_path": "contract/execution-operations/v1/vectors/positive.json",
+        "sha256": "ffb38f37dc7a103d48f99b5fe19fd9cc3c1145f86c5fb13424cf6dd3d42fffca"
+      }
+    ]
   }
 }

@@ -18,7 +18,8 @@
 - Skill/MCP/Storage 目前只有窄 client port；Agent 不读取 Platform/Storage 私库。Platform owner 已在
   `apps/kokoro-capability` 物理仓 main `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 发布 inactive
   `kokoro.platform.v1`。本仓现已 pin 两份只读 Proto 输入并生成 Python Protobuf/Connect async client，
-  但尚未 pin execution-operation projector、实现业务 adapter 或接入 worker Connect transport。
+  并已固定 Platform 原始 execution-operation artifact、生成 24 tenant request 的 offline typed projector；
+  owner manifest 仍是 inactive/routable=false，且尚未实现业务 adapter、proof supplier call 或 worker Connect transport。
 - 生产发行包不包含本地 MCP/Skill fixture；缺少可选 Capability 时使用显式 `None`/unavailable
   状态，不组装伪 client。LangGraph checkpoint locator 使用受信 identity 派生 namespace 加 session
   id；本地 profile 默认复用 `127.0.0.1:55433/kokoro_worker_agent` 和 Redis
@@ -71,6 +72,14 @@ acceptance；真实依赖验收留给 Root 隔离组合切片。
 `uv build --wheel --sdist` 均通过。复用本地一个 PostgreSQL/Redis 实例、各次独立 schema 与
 Redis DB 14 的 3 个针对性真实 acceptance 通过；测试后 DB 14 key 数及临时 schema 数均为 0。
 这只证明 Agent owner 的空完成与持久 replay；BFF 对该事件的最终文本消费仍须由其 owner 验收。
+
+2026-09-27 Platform binding projector 切片：首轮 TDD RED 为 7 failed/1 passed；审查加固的
+exact message class、independent trust anchor 及 ECMAScript trim 用例 RED 为 71 failed/17 passed，
+runtime artifact literal 架构门 RED 为 2 failed/24 deselected；GREEN 综合聚焦门为 119 passed。
+`uv lock --check`、frozen sync、Ruff format/check、Pyright、完整 pytest（1197 passed、6 skipped、
+165 deselected）、contract check、隔离再生成 drift、wheel/sdist 与 fresh Python 3.11 wheel projector
+import 均通过。此证据仅覆盖 pinned inactive artifact 与离线 projector；未运行 PostgreSQL/Redis，
+也未接 proof supplier、RPC transport、worker 或 current authorization。
 
 ## 仍需收敛的工程项
 

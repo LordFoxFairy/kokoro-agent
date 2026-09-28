@@ -1,0 +1,697 @@
+{
+  "artifactVersion": "1.0.0",
+  "packageName": "kokoro.platform.v1",
+  "wrapperWire": {
+    "syntax": "proto3",
+    "field": "value",
+    "tag": 1,
+    "type": "string"
+  },
+  "wrappers": [
+    {
+      "name": "SkillSeriesId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "SkillId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "SkillInstallationId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "SkillSourceRef",
+      "kind": "derived-reference",
+      "minBytes": 7,
+      "maxBytes": 197,
+      "pattern": "^skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "McpConnectorId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "McpServerId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "McpConnectionId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "McpAuthorizationId",
+      "kind": "persistent",
+      "minBytes": 1,
+      "maxBytes": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    {
+      "name": "McpInvocationGrant",
+      "kind": "ephemeral-decision",
+      "minBytes": 46,
+      "maxBytes": 46,
+      "pattern": "^mcp-grant:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  ],
+  "legacyFieldMappings": [
+    {
+      "message": "SkillSource",
+      "field": "source_ref",
+      "tag": 1,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "CreateSkillDraftResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "ValidateSkillDraftRequest",
+      "field": "skill_id",
+      "tag": 3,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "ValidateSkillDraftResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "PublishSkillRequest",
+      "field": "skill_id",
+      "tag": 3,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "PublishSkillResponse",
+      "field": "source_ref",
+      "tag": 1,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "WithdrawSkillRequest",
+      "field": "source_ref",
+      "tag": 3,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "WithdrawSkillResponse",
+      "field": "source_ref",
+      "tag": 1,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "GetApprovedSkillPackageReferenceRequest",
+      "field": "source_ref",
+      "tag": 3,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "CreateSkillVersionRequest",
+      "field": "base_skill_id",
+      "tag": 4,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "CreateSkillVersionResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "SetSkillStatusRequest",
+      "field": "skill_id",
+      "tag": 3,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "SetSkillStatusResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "SkillInstallation",
+      "field": "installation_id",
+      "tag": 1,
+      "targetType": "SkillInstallationId"
+    },
+    {
+      "message": "SkillInstallation",
+      "field": "source_ref",
+      "tag": 2,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "InstallSkillRequest",
+      "field": "source_ref",
+      "tag": 4,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "SetSkillInstallationEnabledRequest",
+      "field": "installation_id",
+      "tag": 4,
+      "targetType": "SkillInstallationId"
+    },
+    {
+      "message": "RemoveSkillInstallationRequest",
+      "field": "installation_id",
+      "tag": 4,
+      "targetType": "SkillInstallationId"
+    },
+    {
+      "message": "GetSkillInstallationRequest",
+      "field": "installation_id",
+      "tag": 3,
+      "targetType": "SkillInstallationId"
+    },
+    {
+      "message": "McpConnector",
+      "field": "connector_id",
+      "tag": 1,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "CreateMcpConnectorResponse",
+      "field": "connector_id",
+      "tag": 1,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "CreateMcpConnectorResponse",
+      "field": "authorization_id",
+      "tag": 3,
+      "targetType": "McpAuthorizationId"
+    },
+    {
+      "message": "BeginMcpConnectorAuthorizationRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "BeginMcpConnectorAuthorizationResponse",
+      "field": "authorization_id",
+      "tag": 1,
+      "targetType": "McpAuthorizationId"
+    },
+    {
+      "message": "CompleteMcpConnectorAuthorizationRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "CompleteMcpConnectorAuthorizationRequest",
+      "field": "authorization_id",
+      "tag": 4,
+      "targetType": "McpAuthorizationId"
+    },
+    {
+      "message": "CompleteMcpConnectorAuthorizationResponse",
+      "field": "connector_id",
+      "tag": 1,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "GetMcpConnectorRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "RevokeMcpConnectorRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "RevokeMcpConnectorResponse",
+      "field": "connector_id",
+      "tag": 1,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "McpServer",
+      "field": "server_id",
+      "tag": 1,
+      "targetType": "McpServerId"
+    },
+    {
+      "message": "RegisterMcpServerResponse",
+      "field": "server_id",
+      "tag": 1,
+      "targetType": "McpServerId"
+    },
+    {
+      "message": "GetMcpServerRequest",
+      "field": "server_id",
+      "tag": 3,
+      "targetType": "McpServerId"
+    },
+    {
+      "message": "CreateMcpConnectionRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "CreateMcpConnectionRequest",
+      "field": "server_id",
+      "tag": 4,
+      "targetType": "McpServerId"
+    },
+    {
+      "message": "CreateMcpConnectionResponse",
+      "field": "connection_id",
+      "tag": 1,
+      "targetType": "McpConnectionId"
+    },
+    {
+      "message": "McpConnection",
+      "field": "connection_id",
+      "tag": 1,
+      "targetType": "McpConnectionId"
+    },
+    {
+      "message": "McpConnection",
+      "field": "connector_id",
+      "tag": 2,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "McpConnection",
+      "field": "server_id",
+      "tag": 3,
+      "targetType": "McpServerId"
+    },
+    {
+      "message": "GetMcpConnectionRequest",
+      "field": "connection_id",
+      "tag": 3,
+      "targetType": "McpConnectionId"
+    },
+    {
+      "message": "ListMcpConnectionsRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "RevokeMcpConnectionRequest",
+      "field": "connection_id",
+      "tag": 3,
+      "targetType": "McpConnectionId"
+    },
+    {
+      "message": "RevokeMcpConnectionResponse",
+      "field": "connection_id",
+      "tag": 1,
+      "targetType": "McpConnectionId"
+    },
+    {
+      "message": "ListMcpServerDeclarationsRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "ListMcpConnectorCapabilitiesRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "ListMcpConnectorCapabilitiesResponse",
+      "field": "connector_id",
+      "tag": 1,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "AuthorizeMcpToolRequest",
+      "field": "connector_id",
+      "tag": 3,
+      "targetType": "McpConnectorId"
+    },
+    {
+      "message": "AuthorizeMcpToolResponse",
+      "field": "invocation_grant",
+      "tag": 1,
+      "targetType": "McpInvocationGrant"
+    },
+    {
+      "message": "AuthorizeMcpToolResponse",
+      "field": "connector_id",
+      "tag": 2,
+      "targetType": "McpConnectorId"
+    }
+  ],
+  "addedIdentityFields": [
+    {
+      "message": "SkillSummary",
+      "field": "source_ref",
+      "tag": 9,
+      "targetType": "SkillSourceRef"
+    },
+    {
+      "message": "SkillSummary",
+      "field": "series_id",
+      "tag": 10,
+      "targetType": "SkillSeriesId"
+    },
+    {
+      "message": "SkillSummary",
+      "field": "skill_id",
+      "tag": 11,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "SkillSource",
+      "field": "series_id",
+      "tag": 8,
+      "targetType": "SkillSeriesId"
+    },
+    {
+      "message": "SkillSource",
+      "field": "skill_id",
+      "tag": 9,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "CreateSkillDraftResponse",
+      "field": "series_id",
+      "tag": 5,
+      "targetType": "SkillSeriesId"
+    },
+    {
+      "message": "ValidateSkillDraftResponse",
+      "field": "series_id",
+      "tag": 6,
+      "targetType": "SkillSeriesId"
+    },
+    {
+      "message": "CreateSkillVersionResponse",
+      "field": "series_id",
+      "tag": 5,
+      "targetType": "SkillSeriesId"
+    },
+    {
+      "message": "SkillInstallation",
+      "field": "series_id",
+      "tag": 12,
+      "targetType": "SkillSeriesId"
+    }
+  ],
+  "reservations": [
+    {
+      "message": "SkillSummary",
+      "reservedNumbers": [1],
+      "reservedNames": ["source_selector"]
+    },
+    {
+      "message": "SkillSource",
+      "reservedNumbers": [2],
+      "reservedNames": ["source_selector"]
+    },
+    {
+      "message": "DiscoverVisibleSkillsRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ResolveVisibleSkillRequest",
+      "reservedNumbers": [2, 3],
+      "reservedNames": ["attestation", "source_selector"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "GetApprovedSkillPackageReferenceRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "InstallSkillRequest",
+      "reservedNumbers": [3],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "SetSkillInstallationEnabledRequest",
+      "reservedNumbers": [3],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "RemoveSkillInstallationRequest",
+      "reservedNumbers": [3],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "GetSkillInstallationRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListSkillInstallationsRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListMcpConnectorProvidersRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "CreateMcpConnectorRequest",
+      "reservedNumbers": [7],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "BeginMcpConnectorAuthorizationRequest",
+      "reservedNumbers": [4],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "CompleteMcpConnectorAuthorizationRequest",
+      "reservedNumbers": [6],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListMcpConnectorsRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "GetMcpConnectorRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "RevokeMcpConnectorRequest",
+      "reservedNumbers": [5],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "GetMcpServerRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListMcpServersRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "CreateMcpConnectionRequest",
+      "reservedNumbers": [6],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListMcpServerDeclarationsRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "GetMcpConnectionRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListMcpConnectionsRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "RevokeMcpConnectionRequest",
+      "reservedNumbers": [5],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "ListMcpConnectorCapabilitiesRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "AuthorizeMcpToolRequest",
+      "reservedNumbers": [2],
+      "reservedNames": ["attestation"],
+      "executionProof": {
+        "field": "execution_proof",
+        "tag": 100,
+        "cardinality": "required"
+      }
+    },
+    {
+      "message": "RegisterMcpServerRequest",
+      "reservedNumbers": [2, 3, 4, 5, 6, 7],
+      "reservedNames": [
+        "command",
+        "provider_key",
+        "server_identity",
+        "transport",
+        "declaration_digest",
+        "attestation"
+      ],
+      "onlyField": {
+        "field": "request_id",
+        "tag": 1,
+        "type": "string"
+      }
+    }
+  ],
+  "singleSkillRuntimeReference": "source_ref"
+}

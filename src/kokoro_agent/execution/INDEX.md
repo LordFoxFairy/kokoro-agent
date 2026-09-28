@@ -39,6 +39,10 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   production issue caller 只允许 run-scoped `execution_proof_supplier.py`；当前 standalone supplier 尚未接入真实 Platform call。
 - `execution_proof_keys.py`：worker-only strict immutable descriptor 与 private PKCS#8 Ed25519 loader；以 nofollow/nonblock fd snapshot、RFC 7638 thumbprint和challenge核对后构造唯一 signer。worker root 尚未装配它。
 - `execution_proof_supplier.py`：从 exact `LeasedRun` 原子复制 request/fence，逐 call 读取 statement-time lease、执行 exact integer epoch/lifetime policy、生成 fresh 128-bit JTI并调用 signer；无网络或 worker composition。
+- `platform_request_binding.py` / `platform_request_binding_values.py`：消费同一生成入口产生的 24-message
+  typed projector，严格处理 protobuf presence/default scalar、exact ID/message class、ECMAScript-trim
+  set、array/raw bytes，再复用 proof profile
+  的唯一 RFC 8785 encoder 输出 canonical bytes 与 SHA-256；不签 proof、不发 RPC、不读取运行配置。
 
 ## 关键协作者
 

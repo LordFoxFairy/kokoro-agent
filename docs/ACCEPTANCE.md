@@ -1,24 +1,28 @@
 # kokoro-agent 验收矩阵
 
-## W1E Platform consumer 文档门与后续实现门
+## W1E Platform consumer 生成/projector 门与后续 runtime 门
 
-本片只验文档一致性与 `git diff --check`，不是 Agent→Platform transport 验收。实现前先固定
+当前切片固定 owner artifact、生成 client/projector 与离线 contract；它不是 Agent→Platform transport 验收。已固定
 Platform main `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 原始 Proto/manifest/
 schema/vector/provenance、IAM main `a4c2b61467f1fc1772d6b6d8e98f081c090289fb` 当前
 verifier/ingress，以及 Agent 当前 `SkillClient`/`McpClient` 调用点；声明 typed ref 和 MCP
 connector/connection/credential 映射缺口必须 owner-first 关闭。不得以文档或 fake-client 证据
 声称可激活。
 
-实现片的独立门禁：
+独立门禁：
 
-1. Provenance：固定 repository/commit/path/direct SHA、`kokoro.platform.v1` descriptor 与
-   31/24/15 manifest 的生成 drift；Python typed projector 跑 owner 全量 positive/negative vectors，
-   对 method、字段、presence、request ID、raw bytes、Unicode、整数/set tamper 逐项拒绝。
+1. Provenance：代码内固定 repository/commit 及 exact 14 条
+   consumer path/owner path/direct SHA（含 owner provenance raw SHA），再校验 13-payload
+   aggregate、`kokoro.platform.v1` descriptor 与 31/24/15 manifest 生成 drift。build-time artifact
+   checker 验证 owner 24 positive、134 projected-JSON binding negative 与 7 raw-parser negative
+   vectors；runtime typed projector 另以 constructor/setattr permissive matrix 拒绝错 scalar、错
+   protobuf message class 及六类实际 ID wrapper 交叉注入，不把两层证据混称。
    官方 Beta 候选 `connectrpc==0.12.1`、`protoc-gen-connectrpc==0.11.1`（Apache-2.0、
    Python ≥3.10）须先做固定 Proto SHA、隔离生成/wheel 与真实 Platform Express Connect/gRPC-Web
    互操作 spike；验证 async/per-call headers/timeout_ms/typed ConnectError、取消恢复、1 MiB/错误语义。
    Express 当前不支持原生 grpcio；Beta 候选验过再 pin lockfile，失败才另 ADR 比较限定
-   Protobuf+HTTPX unary adapter。现有 `httpx` 不等于 Connect 实现，不手写未经验证的 framing。
+   Protobuf+HTTPX unary adapter。现有 `httpx` 不等于 Connect 实现，不手写未经验证的 framing。此项
+   的固定生成、wheel import 和 owned Express loopback 已通过；正式 worker adapter/cancel 仍属后续门。
 2. Skill：typed source ref 正常解析与包引用/Storage digest；name-only/错 typed ID、停用/移除/
    跨 tenant、owner 不可用、包扫描变化均在包读取前拒绝，不以空 Skill 列表继续已声明能力。
 3. MCP：typed connector/connection 与 server/selector 边界；每次 `mcp_call` 新 proof，

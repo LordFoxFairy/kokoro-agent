@@ -1,15 +1,27 @@
 # kokoro-agent API 契约
 
-## W1E Agent 消费 Platform owner RPC（2026-09-27；generated consumer 已固定、runtime 尚未接线）
+## W1E Agent 消费 Platform owner RPC（2026-09-27；generated consumer/projector 已固定、runtime 尚未接线）
 
 物理仓 `apps/kokoro-capability` 的 Platform owner main
 `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 已发布唯一 Proto package
 `kokoro.platform.v1` 与 inactive `platform-execution-operations` artifact `1.0.0`：31 exact RPC、
 24 tenant-execution request binding、15 command digest。本仓现于 `contract/platform/v1/` 固定该提交的
 两份只读 Proto 输入及 direct SHA，并在 `src/kokoro_agent/generated/` 保存 Python Protobuf/Connect
-async client；隔离再生成 drift、31 RPC 与 wheel import 由本仓测试锁定。execution-operation
-manifest/schema/vectors 与 projector 仍待下一 owner-first 切片固定，因此 generated consumer 尚无业务
-adapter、proof binding 或 worker transport，不能把本仓文档表当机器事实源或宣称 Agent→Platform 可用。
+async client；同时逐字固定 execution-operation 原始 13 payload + provenance、14 个 direct SHA 与
+aggregate，并在同一生成入口产生 24 个 tenant request 的 typed projector。代码内 trust anchor
+固定 owner repository/commit 与 exact 14 条 consumer path/owner path/direct SHA（含 provenance
+raw SHA）。隔离再生成 drift、31 RPC、24 双向 operation/method 描述及 wheel import 由本仓门
+锁定；24 positive/134 projected-JSON binding negative/7 raw-parser negative 是 build-time artifact
+checker 证据，不是 runtime Proto constructability 证据。`AuthorizeMcpTool` owner vector 没有 typed
+arguments 的原始 preimage，因此只有 23/24
+可从 owner typed preimage 重建；第 24 项使用派生 raw-byte 测试证明 SHA-256 取原始 Proto bytes，未虚报
+owner preimage parity。generated consumer 仍无业务 adapter、proof supplier call、worker transport 或
+current authorization，不能宣称 Agent→Platform 可用。
+
+Set 值域精确使用 ECMAScript `trim()` 的 WhiteSpace + LineTerminator 码点集拒绝空串与
+全空白（包含 U+FEFF，不包含 U+001C），再按 UTF-8 bytes 排序；owner artifact checker
+的静态描述只写 `length>0`，因此这是已记录的 runtime consumer 收紧，不冒充 artifact
+projected-JSON validator 有同样空白规则。
 
 生成器 `buf-bin==1.73.0`（使用其内置 WKT）、`protoc-gen-py==0.1.1`、
 `protoc-gen-connectrpc==0.11.1` 位于临时 Python 3.11 环境；应用环境只固定
@@ -23,8 +35,8 @@ adapter、proof binding 或 worker transport，不能把本仓文档表当机器
 `187bbeeceb1e082c15a8df3fc1451f89322575fa13276abe161a2c72fedad9c9`；
 `request-bindings.json` SHA-256
 `050291cf6f56052453ddb841f1e7cc624b2d3da28e5d9afd6abb9108349371fd`。
-完整文件/aggregate provenance 由 owner `provenance.json` 定义，后续生成还需 pin
-`kokoro.common.v1` dependency Proto；上述三个 digest 本身不足以声明生成链通过。
+完整文件/aggregate provenance 由 owner `provenance.json` 定义，本仓同时 pin
+`kokoro.common.v1` dependency Proto；上述机器门只声明离线生成/投影一致，不声明运行 transport。
 
 | Agent 真实调用点                                  | Platform exact method / operation                                                                                                                                                                                            | 当前 shape 与目标                                                                                                                                          |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/1.0.0/operation-catalog.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactVersion",
+    "catalogVersion",
+    "packageName",
+    "operations"
+  ],
+  "properties": {
+    "artifactVersion": {
+      "const": "1.0.0"
+    },
+    "catalogVersion": {
+      "const": "1.0.0"
+    },
+    "packageName": {
+      "const": "kokoro.platform.v1"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 31,
+      "maxItems": 31,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "class",
+          "fqMethod",
+          "operation",
+          "proof",
+          "permission",
+          "idempotency"
+        ],
+        "properties": {
+          "class": {
+            "enum": ["tenant-execution", "workload-only", "global-reserved"]
+          },
+          "fqMethod": {
+            "type": "string",
+            "pattern": "^kokoro\\.platform\\.v1\\.[A-Za-z]+Service/[A-Za-z]+$"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "proof": {
+            "enum": ["required", "forbidden"]
+          },
+          "permission": {
+            "type": "string"
+          },
+          "idempotency": {
+            "enum": [
+              "none",
+              "command_identity",
+              "idempotency_key",
+              "unsupported"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -165,6 +165,7 @@ def test_pinned_platform_proto_matches_the_exact_owner_rpc_shapes() -> None:
 
 
 def test_platform_generated_messages_and_async_client_are_importable() -> None:
+    from kokoro_agent.generated import platform_request_projector
     from kokoro_agent.generated.kokoro.common.v1 import common_pb
     from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_connect
     from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb
@@ -172,3 +173,4 @@ def test_platform_generated_messages_and_async_client_are_importable() -> None:
     assert common_pb.ExecutionIdentity
     assert platform_runtime_pb.AuthorizeMcpToolRequest
     assert platform_runtime_connect.McpAuthorizationServiceClient
+    assert len(platform_request_projector.FQ_METHOD_BY_OPERATION) == 24

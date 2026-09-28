@@ -1,0 +1,485 @@
+{
+  "artifactVersion": "1.0.0",
+  "bindingVersion": "1.0.0",
+  "packageName": "kokoro.platform.v1",
+  "root": {
+    "binding_version": "1.0.0",
+    "members": [
+      "binding_version",
+      "fq_method",
+      "tenant_ref",
+      "request_id",
+      "request"
+    ],
+    "additionalProperties": false
+  },
+  "semantics": {
+    "requestId": "same logical retry keeps request_id; changing it changes binding",
+    "proof": "fresh proof for every real send and excluded from request projection",
+    "proto3Scalar": "decoded default is included",
+    "presence": "optional and message fields use explicit {present,value}",
+    "typedArgumentsSha256": "lowercase SHA-256 of raw typed_arguments_json Proto bytes without JSON parsing",
+    "set": "reject blank and duplicate values, then sort by UTF-8 bytes",
+    "array": "preserve wire order",
+    "completedReceiptReplay": "fresh IAM decision is required before completed receipt replay",
+    "currentState": "revalidate current resource and installation before replay or execution"
+  },
+  "projectionRegistry": {
+    "OwnerScope": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "additionalProperties": false,
+      "members": {
+        "kind": "nonblank-string",
+        "id": "nonblank-string"
+      }
+    },
+    "Metadata": {
+      "type": "object",
+      "required": ["display_name", "summary", "tags", "metadata_json"],
+      "additionalProperties": false,
+      "members": {
+        "display_name": "string",
+        "summary": "string",
+        "tags": "array<string>",
+        "metadata_json": "base64url-no-pad"
+      }
+    },
+    "Page": {
+      "type": "object",
+      "required": ["limit", "cursor"],
+      "additionalProperties": false,
+      "members": {
+        "limit": "safe-integer",
+        "cursor": "opt<string>"
+      }
+    },
+    "CommandIdentity": {
+      "type": "object",
+      "required": ["command_id", "request_digest"],
+      "additionalProperties": false,
+      "members": {
+        "command_id": "nonblank-string",
+        "request_digest": "lowercase-64hex"
+      }
+    },
+    "presence": {
+      "type": "tagged-object",
+      "discriminant": "present:boolean",
+      "absentMembers": ["present"],
+      "presentMembers": ["present", "value"],
+      "additionalProperties": false
+    },
+    "idWrapper": {
+      "type": "presence",
+      "value": "exact named wrapper scalar domain"
+    },
+    "message": {
+      "type": "presence",
+      "value": "exact named object shape"
+    },
+    "optional": {
+      "type": "presence",
+      "value": "exact scalar shape"
+    },
+    "page": {
+      "type": "presence",
+      "value": "Page"
+    },
+    "command": {
+      "type": "presence",
+      "value": "CommandIdentity"
+    },
+    "executionProof": {
+      "type": "object",
+      "required": [
+        "field",
+        "tag",
+        "wireType",
+        "projection",
+        "minBytes",
+        "maxBytes",
+        "encoding"
+      ],
+      "additionalProperties": false,
+      "members": {
+        "field": "execution_proof",
+        "tag": 100,
+        "wireType": "string",
+        "projection": "excluded",
+        "minBytes": 1,
+        "maxBytes": 16384,
+        "encoding": "ASCII compact JWS/JWT"
+      }
+    }
+  },
+  "bindings": [
+    {
+      "fqMethod": "kokoro.platform.v1.SkillSourceService/DiscoverVisibleSkills",
+      "operation": "skill.discover_visible_skills",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "query:string",
+        "tags:array<string>",
+        "scope_kind:enum",
+        "page:page"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillSourceService/ResolveVisibleSkill",
+      "operation": "skill.resolve_visible_skill",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["source_ref:id<SkillSourceRef>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillSourceService/GetApprovedSkillPackageReference",
+      "operation": "skill.get_approved_package_reference",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["source_ref:id<SkillSourceRef>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/InstallSkill",
+      "operation": "skill.install",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "source_ref:id<SkillSourceRef>",
+        "target_owner_scope:msg<OwnerScope>"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/SetSkillInstallationEnabled",
+      "operation": "skill.set_installation_enabled",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "installation_id:id<SkillInstallationId>",
+        "enabled:boolean"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/RemoveSkillInstallation",
+      "operation": "skill.remove_installation",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "installation_id:id<SkillInstallationId>"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/GetSkillInstallation",
+      "operation": "skill.get_installation",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["installation_id:id<SkillInstallationId>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/ListSkillInstallations",
+      "operation": "skill.list_installations",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "target_owner_scope:msg<OwnerScope>",
+        "enabled:opt<boolean>",
+        "installed:opt<boolean>",
+        "page:page"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorProviderService/ListMcpConnectorProviders",
+      "operation": "mcp.list_connector_providers",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["page:page"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/CreateMcpConnector",
+      "operation": "mcp.create_connector",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "owner_scope:msg<OwnerScope>",
+        "connector_type:enum",
+        "provider_key:string",
+        "requested_scopes:set<string>"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/BeginMcpConnectorAuthorization",
+      "operation": "mcp.begin_connector_authorization",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["command:command", "connector_id:id<McpConnectorId>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/CompleteMcpConnectorAuthorization",
+      "operation": "mcp.complete_connector_authorization",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "connector_id:id<McpConnectorId>",
+        "authorization_id:id<McpAuthorizationId>",
+        "authorization_handle_ref:string"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/ListMcpConnectors",
+      "operation": "mcp.list_connectors",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "owner_scope:msg<OwnerScope>",
+        "status_filter:enum",
+        "page:page"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/GetMcpConnector",
+      "operation": "mcp.get_connector",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["connector_id:id<McpConnectorId>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/RevokeMcpConnector",
+      "operation": "mcp.revoke_connector",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "connector_id:id<McpConnectorId>",
+        "reason:string"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpServerService/GetMcpServer",
+      "operation": "mcp.get_server",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["server_id:id<McpServerId>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpServerService/ListMcpServers",
+      "operation": "mcp.list_servers",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["provider_key:opt<string>", "page:page"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/CreateMcpConnection",
+      "operation": "mcp.create_connection",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "connector_id:id<McpConnectorId>",
+        "server_id:id<McpServerId>",
+        "allowed_selectors:set<string>"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/ListMcpServerDeclarations",
+      "operation": "mcp.list_server_declarations",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["connector_id:id<McpConnectorId>", "page:page"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/GetMcpConnection",
+      "operation": "mcp.get_connection",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["connection_id:id<McpConnectionId>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/ListMcpConnections",
+      "operation": "mcp.list_connections",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["connector_id:id<McpConnectorId>", "page:page"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/RevokeMcpConnection",
+      "operation": "mcp.revoke_connection",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "command:command",
+        "connection_id:id<McpConnectionId>",
+        "reason:string"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpAuthorizationService/ListMcpConnectorCapabilities",
+      "operation": "mcp.list_connector_capabilities",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": ["connector_id:id<McpConnectorId>"],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    },
+    {
+      "fqMethod": "kokoro.platform.v1.McpAuthorizationService/AuthorizeMcpTool",
+      "operation": "mcp.authorize_tool",
+      "rootMembers": [
+        "binding_version",
+        "fq_method",
+        "tenant_ref",
+        "request_id",
+        "request"
+      ],
+      "requestMembers": [
+        "connector_id:id<McpConnectorId>",
+        "tool_selector:string",
+        "typed_arguments_sha256:lowercase-64hex",
+        "approval_ref:opt<string>",
+        "idempotency_key:string"
+      ],
+      "excludedRequestMembers": ["execution_proof", "request_id"]
+    }
+  ]
+}

@@ -1,14 +1,14 @@
 # kokoro-agent 技术设计
 
-## W1E Agent→Platform consumer 文档门（2026-09-27；仅目标设计，尚未接线）
+## W1E Agent→Platform consumer（2026-09-27；生成与离线 projector 已落地，runtime 尚未接线）
 
 | 放置项     | 当前事实与裁决                                                                                                                                                                                                                                                                                     |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Owner      | Agent 唯一写 Run/lease、worker proof 签发与本仓 consumer；Platform 唯一写 Skills/MCP Proto、typed ID、operation/binding/receipt；IAM 唯一写 token/current authorization；Storage 唯一写包体/Artifact。                                                                                             |
-| 当前事实   | `clients/{skills,mcp}.py` 仅是 Protocol，`WorkerClients` 默认 `None`；`Agent.skills/mcp` 为名称 tuple；A2c supplier 独立存在，worker 不装 private signer，也没有 Platform generated/Connect client。`agent_factory.resolve_declared_skills` 和 `tools/toolset.py` 仍有静默降级/部署定义 fallback。 |
+| 当前事实   | 本仓已固定 Platform Proto/operation artifact，并生成 Connect client 与 24-request offline projector；`clients/{skills,mcp}.py` 仍仅是 Protocol，`WorkerClients` 默认 `None`；`Agent.skills/mcp` 为名称 tuple；A2c supplier 独立存在，worker 不装 private signer。`agent_factory.resolve_declared_skills` 和 `tools/toolset.py` 仍有静默降级/部署定义 fallback。 |
 | 目标职责   | worker 用受信 canonical Run+lease 与 typed 声明调用固定 Platform RPC；每次真实 send 先计算该请求 exact binding，再让 run-scoped supplier 以数据库时钟即时签 proof。Skill package 仍只读渐进获取，MCP 每次真实工具执行前重新授权。                                                                  |
-| 目录方案   | 采用既有 `clients/` 作为 generated wire/transport 终止与业务 port adapter、`execution/` 现有 supplier、`worker/` 私有启动装配及 `skills/`/`mcp/`/`tools/` 现有调用点；拒绝新增空 `platform/ports` 层、第二 runtime 或跨 owner DTO/SQL 副本。实际生成路径由后续代码片按本仓 `generated/` 惯例固定。 |
-| 粒度与依赖 | 本片只扩既有文档。后续代码片拆为 artifact pin/生成、worker token+signer 生命周期、Skill/MCP adapter 与真实边界测试；业务层只见窄本仓对象，不导入 generated Proto、Connect response 或 Platform 数据模型。                                                                                          |
+| 目录方案   | 采用既有 `generated/` 保存可再生 Proto/Connect/projector，`execution/platform_request_binding*.py` 终止严格值域与复用唯一 JCS；未来 `clients/` 终止 transport。拒绝新增空 `platform/ports` 层、第二 runtime 或跨 owner DTO/SQL 副本。 |
+| 粒度与依赖 | 当前切片只做 owner artifact pin、离线 typed projector 与 contract gate；后续代码片再做 worker token+signer 生命周期、Skill/MCP adapter 与真实边界测试。业务层只见窄本仓对象，不导入 generated Proto、Connect response 或 Platform 数据模型。 |
 | 数据/API   | Agent `database/schema.sql`、本仓 HTTP/Redis contract 不变；proof/nonce/Platform receipt 不落 Agent 库。Platform `kokoro.platform.v1` 是唯一 RPC 事实；IAM/Platform 各自保持 owner schema 与事务。                                                                                                 |
 | 删除项     | 名称即 Skill/MCP 身份、已声明 Skill 空列表继续执行、MCP 部署 YAML 作 Platform 授权 fallback、旧 Capability wire/shared-token/active env 引用；不删除 Agent HTTP ingress 仍使用的 `KOKORO_INTERNAL_SECRET_AGENT`。                                                                                  |
 | 验证       | 本片三设计一致、Markdown 与 `git diff --check`；实现片须 owner artifact drift、Ruff/Pyright/pytest/build、真 PostgreSQL/Redis+IAM/Platform/Storage HTTP、取消/超时/重放/撤权及拒绝时零下游副作用。                                                                                                 |
@@ -41,16 +41,19 @@ bytes 的 SHA-256、approval ref presence 与 idempotency key，取得短期 `Mc
 `DiscoverVisibleSkills`/列表类 RPC 属浏览/选择面，不是已声明能力的精确解析；Agent 不调用
 Skill catalog workload 六操作或 global `RegisterMcpServer`。
 
-**固定 artifact 与传输。** 后续 consumer 只从 Platform commit
+**固定 artifact 与传输。** 当前 consumer 从 Platform commit
 `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` pin `contract/proto/kokoro/platform/v1/platform_runtime.proto`
 及 `contract/execution-operations/v1/` manifest/provenance/vector 原始字节，记录 repo、commit、path、
-direct SHA、版本；用固定 Buf/Protobuf 生成 Python message/Connect stub 与 typed binding projector，
+direct SHA、版本。build-time checker 不从可编辑 pin 自证：代码内固定 owner
+repository/commit、exact 14 条 consumer path/owner path/SHA 及 provenance raw SHA，先验原始
+provenance 再用其 13 条记录验 payload/aggregate。已用固定 Buf/Protobuf 生成 Python
+message/Connect stub 与 typed binding projector，
 运行时 Connect over HTTP（固定 `KOKORO_PLATFORM_BASE_URL`），不手写 JSON/gRPC wire 或复制可编辑 Proto。
 Python 候选先核验官方 `connectrpc==0.12.1`（Beta）与 `protoc-gen-connectrpc==0.11.1`
 生成的 async client：固定 Proto SHA、生成 wheel、对当前 Platform Express 的 Connect/gRPC-Web
 真实互操作、per-call header/deadline/error/cancellation 行为；当前 server 不支持原生 grpcio。
 官方 `ConnectError(CANCELED)` 包装后须在 Agent client boundary 恢复 Python 取消语义。
-此为待验选型门，不把 Beta 候选写成已集成；若 spike 不通过，另以 ADR 比较限定 unary
+隔离生成与 Express loopback spike 已通过，但正式 adapter 的取消恢复仍未实现；若后续正式互操作不通过，另以 ADR 比较限定 unary
 Protobuf+HTTPX adapter 的成本/故障语义，不直接手写未验证的 framing。一个经完整 Platform vectors 验证的 Python
 RFC8785 JCS encoder 服务 generated projector；现有 proof JCS 仅复用候选，不另建第二 canonicalizer。
 

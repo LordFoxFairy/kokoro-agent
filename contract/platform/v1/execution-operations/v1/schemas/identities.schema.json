@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/1.0.0/identities.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactVersion",
+    "packageName",
+    "wrapperWire",
+    "wrappers",
+    "legacyFieldMappings",
+    "addedIdentityFields",
+    "reservations",
+    "singleSkillRuntimeReference"
+  ],
+  "properties": {
+    "artifactVersion": {
+      "const": "1.0.0"
+    },
+    "packageName": {
+      "const": "kokoro.platform.v1"
+    },
+    "wrapperWire": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntax", "field", "tag", "type"],
+      "properties": {
+        "syntax": {
+          "const": "proto3"
+        },
+        "field": {
+          "const": "value"
+        },
+        "tag": {
+          "const": 1
+        },
+        "type": {
+          "const": "string"
+        }
+      }
+    },
+    "wrappers": {
+      "type": "array",
+      "minItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "minBytes", "maxBytes", "pattern"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["persistent", "derived-reference", "ephemeral-decision"]
+          },
+          "minBytes": {
+            "type": "integer"
+          },
+          "maxBytes": {
+            "type": "integer"
+          },
+          "pattern": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "legacyFieldMappings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message", "field", "tag", "targetType"],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "integer"
+          },
+          "targetType": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "addedIdentityFields": {
+      "type": "array",
+      "minItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message", "field", "tag", "targetType"],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "integer"
+          },
+          "targetType": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "reservations": {
+      "type": "array",
+      "minItems": 27,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message", "reservedNumbers", "reservedNames"],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "reservedNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "reservedNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "executionProof": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "tag", "cardinality"],
+            "properties": {
+              "field": {
+                "const": "execution_proof"
+              },
+              "tag": {
+                "const": 100
+              },
+              "cardinality": {
+                "const": "required"
+              }
+            }
+          },
+          "onlyField": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "tag", "type"],
+            "properties": {
+              "field": {
+                "const": "request_id"
+              },
+              "tag": {
+                "const": 1
+              },
+              "type": {
+                "const": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "singleSkillRuntimeReference": {
+      "const": "source_ref"
+    }
+  }
+}

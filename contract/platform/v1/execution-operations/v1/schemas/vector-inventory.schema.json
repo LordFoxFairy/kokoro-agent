@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/1.0.0/vector-inventory.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactVersion", "kind", "vectors"],
+  "properties": {
+    "artifactVersion": {
+      "const": "1.0.0"
+    },
+    "kind": {
+      "enum": ["positive", "negative"]
+    },
+    "vectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "target",
+          "stage",
+          "baselineName",
+          "fqMethod",
+          "expectedError",
+          "pointer",
+          "token",
+          "difference",
+          "rawBase64"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "target": {
+            "enum": [
+              "identity",
+              "binding",
+              "canonical",
+              "command",
+              "raw-bytes-sha256",
+              "raw-json",
+              "canonical-mismatch"
+            ]
+          },
+          "stage": {
+            "enum": [
+              "identity-projection",
+              "binding-projection",
+              "canonicalization",
+              "command-projection",
+              "raw-bytes",
+              "raw-parser",
+              "binding-method",
+              "binding-field",
+              "binding-presence",
+              "binding-bytes",
+              "binding-root",
+              "binding-request"
+            ]
+          },
+          "fqMethod": {
+            "type": "string"
+          },
+          "baselineName": {
+            "type": "string"
+          },
+          "expectedError": {
+            "enum": [
+              "none",
+              "duplicate-key",
+              "number-token",
+              "unsafe-integer",
+              "invalid-utf8",
+              "lone-surrogate",
+              "method",
+              "field",
+              "presence",
+              "bytes",
+              "bool-as-int",
+              "duplicate-set",
+              "blank-set",
+              "missing",
+              "extra",
+              "unknown",
+              "normalization-substitution"
+            ]
+          },
+          "pointer": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "difference": {
+            "type": "string"
+          },
+          "rawBase64": {
+            "type": "string"
+          },
+          "canonicalBase64": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "forbiddenSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

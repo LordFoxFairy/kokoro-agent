@@ -1,0 +1,255 @@
+{
+  "artifactVersion": "1.0.0",
+  "catalogVersion": "1.0.0",
+  "packageName": "kokoro.platform.v1",
+  "operations": [
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillSourceService/DiscoverVisibleSkills",
+      "operation": "skill.discover_visible_skills",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillSourceService/ResolveVisibleSkill",
+      "operation": "skill.resolve_visible_skill",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillSourceService/GetApprovedSkillPackageReference",
+      "operation": "skill.get_approved_package_reference",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/InstallSkill",
+      "operation": "skill.install",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/SetSkillInstallationEnabled",
+      "operation": "skill.set_installation_enabled",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/RemoveSkillInstallation",
+      "operation": "skill.remove_installation",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/GetSkillInstallation",
+      "operation": "skill.get_installation",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/ListSkillInstallations",
+      "operation": "skill.list_installations",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/CreateSkillDraft",
+      "operation": "skill.create_draft",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/CreateSkillVersion",
+      "operation": "skill.create_version",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/ValidateSkillDraft",
+      "operation": "skill.validate_draft",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/PublishSkill",
+      "operation": "skill.publish",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/WithdrawSkill",
+      "operation": "skill.withdraw",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/SetSkillStatus",
+      "operation": "skill.set_status",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorProviderService/ListMcpConnectorProviders",
+      "operation": "mcp.list_connector_providers",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/CreateMcpConnector",
+      "operation": "mcp.create_connector",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/BeginMcpConnectorAuthorization",
+      "operation": "mcp.begin_connector_authorization",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/CompleteMcpConnectorAuthorization",
+      "operation": "mcp.complete_connector_authorization",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/ListMcpConnectors",
+      "operation": "mcp.list_connectors",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/GetMcpConnector",
+      "operation": "mcp.get_connector",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/RevokeMcpConnector",
+      "operation": "mcp.revoke_connector",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "global-reserved",
+      "fqMethod": "kokoro.platform.v1.McpServerService/RegisterMcpServer",
+      "operation": "mcp.admin.register_server",
+      "proof": "forbidden",
+      "permission": "platform:mcp-server.register",
+      "idempotency": "unsupported"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpServerService/GetMcpServer",
+      "operation": "mcp.get_server",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpServerService/ListMcpServers",
+      "operation": "mcp.list_servers",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/CreateMcpConnection",
+      "operation": "mcp.create_connection",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/ListMcpServerDeclarations",
+      "operation": "mcp.list_server_declarations",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/GetMcpConnection",
+      "operation": "mcp.get_connection",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/ListMcpConnections",
+      "operation": "mcp.list_connections",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/RevokeMcpConnection",
+      "operation": "mcp.revoke_connection",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpAuthorizationService/ListMcpConnectorCapabilities",
+      "operation": "mcp.list_connector_capabilities",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "none"
+    },
+    {
+      "class": "tenant-execution",
+      "fqMethod": "kokoro.platform.v1.McpAuthorizationService/AuthorizeMcpTool",
+      "operation": "mcp.authorize_tool",
+      "proof": "required",
+      "permission": "platform:execute",
+      "idempotency": "idempotency_key"
+    }
+  ]
+}

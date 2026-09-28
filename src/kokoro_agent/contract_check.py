@@ -1,4 +1,4 @@
-"""Validate Agent-owned OpenAPI and execution-proof machine contracts."""
+"""Validate Agent-owned contracts and pinned consumer artifacts."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from kokoro_agent.chat_contract_check import validate_chat_response_contract
 from kokoro_agent.execution_proof_contract import validate_execution_proof_contract
-
+from kokoro_agent.platform_binding_contract import validate_platform_binding_artifact
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
@@ -186,6 +186,7 @@ def validate(root: Path = ROOT) -> None:
     validate_openapi_document(_read_openapi(root / OPENAPI_RELATIVE))
     validate_http_provenance(root, _read_openapi(root / "contract/provenance.json"))
     validate_execution_proof_contract(root)
+    validate_platform_binding_artifact(root)
 
 
 def main() -> int:

@@ -1,0 +1,72 @@
+{
+  "algorithm": "sha256",
+  "aggregateRecord": "path + NUL + length + NUL + sha256 + LF",
+  "files": [
+    {
+      "path": "command-identities.json",
+      "bytes": 8917,
+      "sha256": "4e25844843b46f86826aba3f2f250cdba6b78d81867288a6414dc333a10091dd"
+    },
+    {
+      "path": "identities.json",
+      "bytes": 16846,
+      "sha256": "ba2064c1e720e41a326e0c88c2a53f26f1727565f24a955f55490816351282e0"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 13348,
+      "sha256": "187bbeeceb1e082c15a8df3fc1451f89322575fa13276abe161a2c72fedad9c9"
+    },
+    {
+      "path": "operation-catalog.json",
+      "bytes": 8769,
+      "sha256": "9da9568ddd37622a9e3b4ccfdb8984705a35b525aa7bd8d5c27c8cb625b8a6cc"
+    },
+    {
+      "path": "request-bindings.json",
+      "bytes": 14322,
+      "sha256": "050291cf6f56052453ddb841f1e7cc624b2d3da28e5d9afd6abb9108349371fd"
+    },
+    {
+      "path": "schemas/command-identities.schema.json",
+      "bytes": 2139,
+      "sha256": "1ee71ebd279724fe19602535d74fda241debf81da68e0431643185500a28814f"
+    },
+    {
+      "path": "schemas/identities.schema.json",
+      "bytes": 4203,
+      "sha256": "5ed33481630923d2d237f16a08819627a3826dbe557f3884329066189edbe0c9"
+    },
+    {
+      "path": "schemas/manifest.schema.json",
+      "bytes": 14958,
+      "sha256": "911e63385a799add2e592dcb90ae2c8af556968e2cb53a168e70101f68a9ee09"
+    },
+    {
+      "path": "schemas/operation-catalog.schema.json",
+      "bytes": 1567,
+      "sha256": "bb7d7e0e37bb9d6d8a696b7704b9c13263e95b5705607c6ed159cf5e01d56161"
+    },
+    {
+      "path": "schemas/request-bindings.schema.json",
+      "bytes": 10977,
+      "sha256": "a4ce34e858ab4850b6429407b52e6b5ead86d0d629ecc7033d15487a38166b13"
+    },
+    {
+      "path": "schemas/vector-inventory.schema.json",
+      "bytes": 2890,
+      "sha256": "a6815f865e8d39610623288b939047367f5a0840ee1f6c8112db5582463d507d"
+    },
+    {
+      "path": "vectors/negative.json",
+      "bytes": 126591,
+      "sha256": "34b44925718d03715f8c493d5c8afe58b0037aab6886618a536911f38983d121"
+    },
+    {
+      "path": "vectors/positive.json",
+      "bytes": 56357,
+      "sha256": "ffb38f37dc7a103d48f99b5fe19fd9cc3c1145f86c5fb13424cf6dd3d42fffca"
+    }
+  ],
+  "aggregateSha256": "afca9369c4aedd7a68aea02af834265efc6f480a07668ae0f8dbcad9bd7e545e"
+}

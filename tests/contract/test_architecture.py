@@ -38,6 +38,18 @@ def _rel(path: Path) -> str:
     return str(path.relative_to(_SRC))
 
 
+def _platform_artifact_literals(source: str) -> set[str]:
+    markers = ("contract/platform/v1", "execution-operations")
+    tree = ast.parse(source)
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and any(marker in node.value for marker in markers)
+    }
+
+
 def test_protocol_has_zero_inward_dependencies() -> None:
     for path in _py_files():
         if not _rel(path).startswith("protocol"):
@@ -87,6 +99,40 @@ def test_agent_core_does_not_import_worker() -> None:
             continue
         offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.worker")}
         assert not offenders, f"{_rel(path)} must not import kokoro_agent.worker"
+
+
+def test_runtime_does_not_import_platform_artifact_checker() -> None:
+    """Vendored artifact parsing is a build gate, never a runtime dependency."""
+
+    allowed = {"contract_check.py", "platform_binding_contract.py"}
+    forbidden = "kokoro_agent.platform_binding_contract"
+    for path in _py_files():
+        if _rel(path) in allowed:
+            continue
+        assert forbidden not in _imports(path), (
+            f"{_rel(path)} imports the build-time Platform artifact checker"
+        )
+
+
+def test_platform_artifact_literal_scanner_has_a_negative_fixture() -> None:
+    source = 'Path("contract/platform/v1/execution-operations/v1").read_bytes()'
+    assert _platform_artifact_literals(source) == {
+        "contract/platform/v1/execution-operations/v1"
+    }
+
+
+def test_runtime_does_not_read_vendored_platform_artifacts_by_literal_path() -> None:
+    """Only the build-time checker/generator may read the vendored artifact tree."""
+
+    allowed = {"platform_binding_contract.py"}
+    for path in _py_files():
+        if _rel(path) in allowed:
+            continue
+        offenders = _platform_artifact_literals(path.read_text(encoding="utf-8"))
+        assert not offenders, (
+            f"{_rel(path)} contains vendored Platform artifact path literals: "
+            f"{sorted(offenders)}"
+        )
 
 
 def test_deepagents_construction_has_one_ga_adapter() -> None:

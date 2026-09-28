@@ -2,7 +2,7 @@
 
 ## W1E Agent→Platform private consumer 安全门（2026-09-27，目标，尚未装配）
 
-`kokoro.platform.v1` owner artifact 已发布但 inactive；Agent 仍无 generated client/transport，
+`kokoro.platform.v1` owner artifact 已发布但 inactive；Agent 已有 generated client 与 offline typed projector、仍无 production transport，
 worker private signer 未装配。目标只有 worker 可读取受控 Ed25519 private key 与 tenant-indexed
 `KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE`；HTTP ingress 仍只持 public JWKS ring，
 也仍保留其 BFF→Agent `KOKORO_INTERNAL_SECRET_AGENT` service bearer。Platform 出站不得复用
@@ -17,6 +17,12 @@ package 或复用 MCP snapshot。请求期间取消/超时、lease 失效、key 
 binding 漂移一律 fail closed；已有 Skill/MCP 声明不能因 owner 故障静默变成“未声明”，
 不能回退部署 YAML、旧 Capability shared token 或模糊 Discover 查询。无外部声明的基础 Run
 可以不调用 Platform，不把这解释为已声明能力授权通过。
+
+当前 projector 在 proof supplier、RPC 和 worker 之外离线运行；它拒绝 workload/global/unknown
+request type、Proto 构造时仍可能混入的 float/bool/wrong scalar、孤立 surrogate、非法 ID、重复或空白
+set。ID wrapper、`CommandIdentity`、`PageRequest`、`OwnerScope` 均要求 exact protobuf class，
+不接受同形对象或交叉 wrapper；protobuf-py `has_field` 只用于保留已通过类型门的
+optional/message presence。它不读取 token/key/lease，也不写日志。
 
 MCP `AuthorizeMcpTool` 必须在每个真实远端工具调用前执行，绑定 connector/tool selector、
 raw typed-argument SHA-256、approval presence、idempotency key；短期 `McpInvocationGrant` 只用于

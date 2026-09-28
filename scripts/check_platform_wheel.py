@@ -42,6 +42,8 @@ def main() -> None:
                 str(python),
                 "connectrpc==0.12.1",
                 "protobuf-py>=0.3.0,<0.4.0",
+                "pydantic>=2",
+                "rfc8785>=0.1.4",
             ]
         )
         _run(
@@ -57,11 +59,19 @@ def main() -> None:
         )
         script = """
 from pathlib import Path
+from kokoro_agent.execution import platform_request_binding
+from kokoro_agent.generated import platform_request_projector
 from kokoro_agent.generated.kokoro.common.v1 import common_pb
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_connect
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb
 
-modules = (common_pb, platform_runtime_connect, platform_runtime_pb)
+modules = (
+    common_pb,
+    platform_runtime_connect,
+    platform_runtime_pb,
+    platform_request_projector,
+    platform_request_binding,
+)
 for module in modules:
     origin = Path(module.__file__).resolve()
     if "site-packages" not in origin.parts:
@@ -69,6 +79,15 @@ for module in modules:
 assert common_pb.ExecutionIdentity
 assert platform_runtime_pb.AuthorizeMcpToolRequest
 assert platform_runtime_connect.McpAuthorizationServiceClient
+request = platform_runtime_pb.GetMcpConnectorRequest(
+    request_id="wheel-smoke",
+    connector_id=platform_runtime_pb.McpConnectorId(value="connector-1"),
+)
+binding = platform_request_binding.project_request_binding(
+    tenant_ref="tenant-1", request=request
+)
+assert binding.operation == "mcp.get_connector"
+assert len(binding.sha256) == 64
 """
         _run([str(python), "-I", "-c", script])
 

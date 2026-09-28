@@ -1,0 +1,438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/1.0.0/request-bindings.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactVersion",
+    "bindingVersion",
+    "packageName",
+    "root",
+    "semantics",
+    "projectionRegistry",
+    "bindings"
+  ],
+  "properties": {
+    "artifactVersion": {
+      "const": "1.0.0"
+    },
+    "bindingVersion": {
+      "const": "1.0.0"
+    },
+    "packageName": {
+      "const": "kokoro.platform.v1"
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_version", "members", "additionalProperties"],
+      "properties": {
+        "binding_version": {
+          "const": "1.0.0"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {
+          "const": false
+        }
+      }
+    },
+    "semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "proof",
+        "proto3Scalar",
+        "presence",
+        "typedArgumentsSha256",
+        "set",
+        "array",
+        "completedReceiptReplay",
+        "currentState"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "proof": {
+          "type": "string"
+        },
+        "proto3Scalar": {
+          "type": "string"
+        },
+        "presence": {
+          "type": "string"
+        },
+        "typedArgumentsSha256": {
+          "type": "string"
+        },
+        "set": {
+          "type": "string"
+        },
+        "array": {
+          "type": "string"
+        },
+        "completedReceiptReplay": {
+          "type": "string"
+        },
+        "currentState": {
+          "type": "string"
+        }
+      }
+    },
+    "bindings": {
+      "type": "array",
+      "minItems": 24,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fqMethod",
+          "operation",
+          "rootMembers",
+          "requestMembers",
+          "excludedRequestMembers"
+        ],
+        "properties": {
+          "fqMethod": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "rootMembers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requestMembers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludedRequestMembers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "projectionRegistry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "OwnerScope",
+        "Metadata",
+        "Page",
+        "CommandIdentity",
+        "presence",
+        "idWrapper",
+        "message",
+        "optional",
+        "page",
+        "command",
+        "executionProof"
+      ],
+      "properties": {
+        "OwnerScope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "required", "additionalProperties", "members"],
+          "properties": {
+            "type": {
+              "const": "object"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            },
+            "members": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "id"],
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "Metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "required", "additionalProperties", "members"],
+          "properties": {
+            "type": {
+              "const": "object"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            },
+            "members": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["display_name", "summary", "tags", "metadata_json"],
+              "properties": {
+                "display_name": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tags": {
+                  "type": "string"
+                },
+                "metadata_json": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "Page": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "required", "additionalProperties", "members"],
+          "properties": {
+            "type": {
+              "const": "object"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            },
+            "members": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit", "cursor"],
+              "properties": {
+                "limit": {
+                  "type": "string"
+                },
+                "cursor": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "CommandIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "required", "additionalProperties", "members"],
+          "properties": {
+            "type": {
+              "const": "object"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            },
+            "members": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["command_id", "request_digest"],
+              "properties": {
+                "command_id": {
+                  "type": "string"
+                },
+                "request_digest": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "presence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "discriminant",
+            "absentMembers",
+            "presentMembers",
+            "additionalProperties"
+          ],
+          "properties": {
+            "type": {
+              "const": "tagged-object"
+            },
+            "discriminant": {
+              "type": "string"
+            },
+            "absentMembers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "presentMembers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            }
+          }
+        },
+        "idWrapper": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {
+              "const": "presence"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "message": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {
+              "const": "presence"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "optional": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {
+              "const": "presence"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "page": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {
+              "const": "presence"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {
+              "const": "presence"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "executionProof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "required", "additionalProperties", "members"],
+          "properties": {
+            "type": {
+              "const": "object"
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "const": false
+            },
+            "members": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "field",
+                "tag",
+                "wireType",
+                "projection",
+                "minBytes",
+                "maxBytes",
+                "encoding"
+              ],
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "tag": {
+                  "type": "integer"
+                },
+                "wireType": {
+                  "type": "string"
+                },
+                "projection": {
+                  "type": "string"
+                },
+                "minBytes": {
+                  "type": "integer"
+                },
+                "maxBytes": {
+                  "type": "integer"
+                },
+                "encoding": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

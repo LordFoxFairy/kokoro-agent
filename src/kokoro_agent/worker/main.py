@@ -23,6 +23,7 @@ from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agent_factory import AgentFactory
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
+from kokoro_agent.worker.platform import worker_platform_runtime
 from kokoro_agent.domain.run.repository import SandboxBackendKind
 from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
@@ -135,6 +136,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
     )
     # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
     async with (
+        worker_platform_runtime(config) as platform,
         worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
         make_checkpointer(config.checkpoint) as saver,
         make_run_repository(config.run_repository) as run_repository,
@@ -147,6 +149,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         ) as chat_repository,
     ):
         dependencies = WorkerDependencies(
+            platform=platform,
             model=config.model,
             sandbox=config.sandbox,
             run_token_budget=config.run_token_budget,
@@ -157,8 +160,8 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             memory_store=memory_store,
             skill_client=owner_clients.skill_client,
             skill_reader=owner_clients.skill_reader,
-            # MCP server 定义双源：部署 yaml 启动即加载校验（含 ${ENV} 凭据展开，fail-loud）
-            # 为部署基线；注册表在装配期按本次 Run 快照合并覆盖。
+            # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
+            # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
             mcp_client=owner_clients.mcp,
             delivery=owner_clients.delivery,

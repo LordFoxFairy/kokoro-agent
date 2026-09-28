@@ -28,7 +28,8 @@ from deepagents.backends.state import StateBackend
 
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
-from kokoro_agent.tools.toolset import build_toolset
+from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
+from kokoro_agent.mcp.config import McpServerEntry
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import RunRequest
@@ -64,6 +65,24 @@ class AgentHandle:
         return self.tool_descriptions.get(name)
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedCapabilities:
+    skills: tuple[ResolvedSkill, ...]
+    mcp: Mapping[str, McpServerEntry]
+
+
+async def _preflight(
+    agent: Agent, dependencies: WorkerDependencies, request: RunRequest
+) -> _ResolvedCapabilities:
+    skills = await resolve_declared_skills(agent, dependencies.skill_client, request)
+    if agent.skills and dependencies.skill_reader is None:
+        raise SkillClientError("declared skill reader unavailable")
+    mcp = await resolve_declared_mcp(
+        request, agent, dependencies.mcp_client, dependencies.mcp_servers
+    )
+    return _ResolvedCapabilities(skills=skills, mcp=mcp)
+
+
 async def build_deep_agent(
     agent: Agent,
     dependencies: WorkerDependencies,
@@ -72,7 +91,9 @@ async def build_deep_agent(
     *,
     additional_tools: Sequence[BaseTool] = (),
     name: str | None = None,
+    capabilities: _ResolvedCapabilities | None = None,
 ) -> AgentHandle:
+    capabilities = capabilities or await _preflight(agent, dependencies, request)
     started = monotonic()
     resolver = dependencies.model_resolver
     if resolver is None:
@@ -114,9 +135,7 @@ async def build_deep_agent(
         lease=lease,
         sandbox_store=dependencies.run_repository,
     )
-    resolved_skills = await resolve_declared_skills(
-        agent, dependencies.skill_client, request
-    )
+    resolved_skills = capabilities.skills
     skill_backend = CapabilitySkillBackend(resolved_skills, dependencies.skill_reader)
     native_backend = _with_native_skills(backend, skill_backend)
     toolset = await build_toolset(
@@ -127,6 +146,7 @@ async def build_deep_agent(
         mcp_client=dependencies.mcp_client,
         backend=native_backend,
         delivery=dependencies.delivery,
+        resolved_mcp=capabilities.mcp,
     )
     if additional_tools:
         toolset = toolset.with_tools(additional_tools)
@@ -194,21 +214,19 @@ async def resolve_declared_skills(
     skills are
     transient assembly data and never become Agent or Session state.
     """
-    if not agent.skills or skill_client is None:
+    if not agent.skills:
         return ()
+    if skill_client is None:
+        raise SkillClientError("declared skill client unavailable")
     scope = RunScope.of(request)
-    try:
-        return await skill_client.resolve(
-            agent.skills, request.execution_identity, scope.namespace
-        )
-    except SkillClientError:
-        # Skills enhance an Agent; Capability unavailability must not remove the
-        # Agent's base chat/tool loop. Do not include identity or client details in logs.
-        LOGGER.warning(
-            "declared skills unavailable for agent=%s; continuing without them",
-            agent.key,
-        )
-        return ()
+    resolved = await skill_client.resolve(
+        agent.skills, request.execution_identity, scope.namespace
+    )
+    if {skill.name for skill in resolved} != set(agent.skills) or len(resolved) != len(
+        set(agent.skills)
+    ):
+        raise SkillClientError("declared skill resolution incomplete")
+    return resolved
 
 
 def _with_native_skills(
@@ -252,9 +270,17 @@ class AgentFactory:
         self, feature: Feature, request: RunRequest, lease: LeaseFence
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
+        capabilities = {
+            agent.key: await _preflight(agent, self._dependencies, request)
+            for agent in feature.agents
+        }
         if len(feature.agents) == 1:
             return await build_deep_agent(
-                feature.agents[0], self._dependencies, request, lease
+                feature.agents[0],
+                self._dependencies,
+                request,
+                lease,
+                capabilities=capabilities[feature.agents[0].key],
             )
         if not feature.handoffs:
             raise ValueError(
@@ -274,6 +300,7 @@ class AgentFactory:
                     lease,
                     additional_tools=handoffs,
                     name=agent.key,
+                    capabilities=capabilities[agent.key],
                 )
             )
         native = create_swarm(

@@ -76,7 +76,7 @@ def test_agent_does_not_carry_resolved_skills() -> None:
     assert not hasattr(agent, "resolved_skills")
 
 
-async def test_declared_skill_outage_does_not_remove_agent_core() -> None:
+async def test_declared_skill_outage_fails_closed() -> None:
     class _Unavailable(_FakeSkillClient):
         async def resolve(
             self,
@@ -103,4 +103,7 @@ async def test_declared_skill_outage_does_not_remove_agent_core() -> None:
         input=RunInput(message_id="message", content="hello"),
     )
 
-    assert await resolve_declared_skills(agent, _Unavailable(), request) == ()
+    with pytest.raises(SkillClientError):
+        await resolve_declared_skills(agent, _Unavailable(), request)
+    with pytest.raises(SkillClientError):
+        await resolve_declared_skills(agent, None, request)

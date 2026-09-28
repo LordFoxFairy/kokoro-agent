@@ -36,9 +36,9 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   operation/binding/JTI/TTL 校验，以及不做 Unicode normalization 的 RFC 8785 UTF-8 和 canonical unpadded base64url。
 - `execution_proof_signer.py`：immutable issuer/kid/Ed25519 private-key config 与 `ExecutionProofSigner`；使用 PyJWT
   public `jwt.encode(..., json_encoder=...)`，并在返回前逐段核对预计算 JCS bytes、64-byte signature、16 KiB 上限和派生公钥自验。
-  production issue caller 只允许 run-scoped `execution_proof_supplier.py`；当前 standalone supplier 尚未接入真实 Platform call。
-- `execution_proof_keys.py`：worker-only strict immutable descriptor 与 private PKCS#8 Ed25519 loader；以 nofollow/nonblock fd snapshot、RFC 7638 thumbprint和challenge核对后构造唯一 signer。worker root 尚未装配它。
-- `execution_proof_supplier.py`：从 exact `LeasedRun` 原子复制 request/fence，逐 call 读取 statement-time lease、执行 exact integer epoch/lifetime policy、生成 fresh 128-bit JTI并调用 signer；无网络或 worker composition。
+  production issue caller 只允许 run-scoped `execution_proof_supplier.py`；worker/platform.py 已装配 supplier，clients/platform_transport.py 逐 send 取 fresh proof；typed 产品声明仍未接通。
+- `execution_proof_keys.py`：worker-only strict immutable descriptor 与 private PKCS#8 Ed25519 loader；以 nofollow/nonblock fd snapshot、RFC 7638 thumbprint和challenge核对后构造唯一 signer。worker/platform.py 已在进程 context 中装配它，HTTP root 不导入。
+- `execution_proof_supplier.py`：从 exact `LeasedRun` 原子复制 request/fence，逐 call 读取 statement-time lease、执行 exact integer epoch/lifetime policy、生成 fresh 128-bit JTI并调用 signer；本模块仍无网络；worker/platform.py 持有 composition，client sender 在调用前使用 supplier。
 - `platform_request_binding.py` / `platform_request_binding_values.py`：消费同一生成入口产生的 24-message
   typed projector，严格处理 protobuf presence/default scalar、exact ID/message class、ECMAScript-trim
   set、array/raw bytes，再复用 proof profile

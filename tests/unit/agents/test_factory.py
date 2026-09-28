@@ -14,6 +14,7 @@ from langgraph.store.memory import InMemoryStore
 
 import kokoro_agent.agent_factory as agent_factory_module
 from kokoro_agent.agent_factory import AgentFactory
+from kokoro_agent.features.catalog import FeatureCatalog, FEATURE_CATALOG
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.config import AppConfig
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
@@ -77,6 +78,7 @@ def _request(feature_key: str) -> RunRequest:
 def _factory(
     monkeypatch: pytest.MonkeyPatch,
     resolver: ModelResolver | None,
+    catalog: FeatureCatalog = FEATURE_CATALOG,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
@@ -104,11 +106,12 @@ def _factory(
             mcp_client=clients.mcp,
             delivery=clients.delivery,
             model_resolver=resolver,
-        )
+        ),
+        catalog,
     ), repository
 
 
-@pytest.mark.parametrize("feature_key", ["chat", "music", "music_chat"])
+@pytest.mark.parametrize("feature_key", ["chat"])
 async def test_builds_native_agent_without_external_clients(
     feature_key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -224,3 +227,54 @@ async def test_owner_failure_is_not_replaced_by_a_local_model(
 async def _drain(values: AsyncIterable[object]) -> None:
     async for _ in values:
         pass
+
+
+async def test_all_peers_preflight_before_any_backend_or_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.features.catalog import FeatureCatalog
+    from kokoro_agent.clients.skills import SkillClientError
+
+    feature = Feature(
+        key="peer_gate",
+        agents=(
+            Agent(key="first", prompt="first"),
+            Agent(key="second", prompt="second", skills=("required",)),
+        ),
+        entry_agent="first",
+        handoffs=(("first", "second"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    calls: list[str] = []
+
+    async def forbidden(*args: object, **kwargs: object) -> None:
+        calls.append("backend")
+        raise AssertionError("sandbox called before all peers passed")
+
+    monkeypatch.setattr(agent_factory_module, "make_backend_for_run", forbidden)
+    request = _request("peer_gate")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    with pytest.raises(SkillClientError):
+        await factory.build(request, lease)
+    assert calls == []
+
+
+@pytest.mark.parametrize("feature_key", ["music", "music_chat"])
+async def test_declared_features_require_external_clients(
+    feature_key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kokoro_agent.clients.skills import SkillClientError
+
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver)
+    request = _request(feature_key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    with pytest.raises(SkillClientError):
+        await factory.build(request, lease)
+    assert resolver.calls == []

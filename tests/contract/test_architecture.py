@@ -70,6 +70,7 @@ def test_config_imports_are_limited_to_process_entrypoints() -> None:
         if _rel(path) in {
             "config.py",
             "worker/main.py",
+            "worker/platform.py",  # worker-only resource composition, never HTTP
             "interfaces/http/main.py",
             "application/schema.py",
         }:

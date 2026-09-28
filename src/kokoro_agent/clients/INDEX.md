@@ -11,11 +11,15 @@ Model owner 的领域模型。
   logical path 由 Capability public contract 负责。
 - `mcp.py`：`McpClient`，接收名称、`ExecutionIdentity` 与 GA 派生 namespace，只暴露本次运行
   需要的 MCP 配置读取面；注册、启停、凭据和路径由 Capability public contract 负责。MCP grant
-  细节留在 client 内部。适配器用 `McpClientError` 表达 Capability 读取不可用；GA 保留部署定义并
-  将仅存在于 Capability 的名称标成 unavailable，不中断 Agent 基础循环。
+  细节留在 client 内部。适配器用 `McpClientError` 表达 Capability 读取不可用；已声明 MCP 直接失败，不回退部署定义；无声明时不调用 client。
 - `storage.py`：`DeliveryClient.publish()` 是 GA 发布产物的唯一 Storage Artifact
   facade。GA 不组装 bucket key，不持有 upload/asset/artifact 生命周期。
 
 后续新增 client 时，按 owner contract 拆文件；Agent/Feature 只能依赖协议，具体 HTTP、Connect
 或 SDK 实现由部署通过 `WorkerClients` 注入。标准 CLI 不直读 owner 私库；本地内存实现仅是测试
 fixture。
+
+- `platform_credentials.py`：worker-only exact owner-file snapshot、tenant/generation 高水位与安全读取。
+- `platform_tokens.py`：IAM Basic/form token exchange、generation cache/singleflight/rotation/cancel 生命周期。
+- `platform_transport.py`：六个首批 generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
+  产品 typed selection 尚未接入，不能把这些传输能力视为 Skill/MCP 产品已激活。

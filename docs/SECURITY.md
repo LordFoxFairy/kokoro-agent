@@ -126,3 +126,19 @@ The worker-only loader accepts only an euid-owned exact `0400/0600` regular fina
 The HTTP-only reader anchors at `/`, retains nofollow directory fds, rejects unsafe owners/write bits and symlinks, reads a bounded regular public file, verifies full pre/post/path identity, strict UTF-8/duplicate-free exact Ed25519 JWKs, active descriptor, UTF-8 kid ordering, and immutable JCS output. FIFO and all failures close every fd and publish only an unavailable state. Safe startup logs contain only allowlisted booleans/numerics—never URLs, bearer, path, kid, thumbprint, key/proof bytes, or underlying exception text.
 
 A2b does not wire the private loader into worker startup. A2c supplies standalone statement-time lease proof minting. IAM verification and inactive Platform policy/binding have since shipped in their owner repositories, while Agent worker composition and real transport remain absent.
+
+## W1E worker authenticated transport（2026-09-28 候选）
+
+Platform 凭据仅由 worker 从 owner-only regular JSON 文件读取（0400/0600、effective UID、nofollow/nonblock、
+1 MiB、同 fd 与 pathname 的读取前后 stat）；父目录为部署受信 mount 边界。exact keys、duplicate key、
+tenant/client 唯一性、generation 正 safe integer、固定 resource/scope、同代变更/回退/读中变化均 fail closed。
+所有私有 descriptor/credential repr 脱敏，异常在捕获块之外抛出稳定错误，避免 validation/upstream error context 留存秘密。
+Token singleflight 的取消只影响当前 waiter；最后 waiter 或 worker shutdown 取消并等待自有 exchange。失效/轮换不使用旧 cache。
+
+Connect 0.12.1 unary read_max_bytes 在聚合后检查，所以 consumer 另用公开 pyqwest Transport/Response wrapper
+在所有 HTTP response 聚合前执行 1 MiB 字节上限；不是第二套 Connect codec 或 wire。HTTP redirect 禁止，TLS 验证开启，
+非 loopback 禁止 HTTP，overall deadline 同时涵盖 token、lease/proof 与 RPC。私钥/HTTPX/pyqwest 池只活在 worker context。
+
+当前零副作用门是声明缺依赖或预检失败时不建 sandbox/模型/provider，lease 失效不发送 Platform RPC；这不证明
+真实 IAM/Platform 当前授权矩阵。旧 name Skill/MCP Protocol 与部署定义尚待 typed selection/credential contract 切片删除，
+但静默 Skill 空能力与 MCP YAML outage fallback 已删除。

@@ -45,6 +45,7 @@ LEASE_READER_PATH = (
 PROFILE_PATH = (
     ROOT / "src" / "kokoro_agent" / "execution" / "execution_proof_profile.py"
 )
+WORKER_PLATFORM_PATH = ROOT / "src" / "kokoro_agent" / "worker" / "platform.py"
 PRODUCTION_ROOT = ROOT / "src"
 SIGNER_MODULE = "kokoro_agent.execution.execution_proof_signer"
 SUPPLIER_MODULE = "kokoro_agent.execution.execution_proof_supplier"
@@ -186,8 +187,18 @@ def _production_source_violations(path: Path, source: str) -> tuple[list[str], i
                 SIGNER_PATH,
                 KEYS_PATH,
                 SUPPLIER_PATH,
+                WORKER_PLATFORM_PATH,
             }:
                 violations.append("signer import outside approved modules")
+            if path == WORKER_PLATFORM_PATH and SIGNER_MODULE in resolved:
+                if {alias.name for alias in node.names} != {"ExecutionProofSigner"}:
+                    violations.append("worker signer import shape is invalid")
+            if path == WORKER_PLATFORM_PATH and SUPPLIER_MODULE in resolved:
+                if {alias.name for alias in node.names} != {
+                    "ExecutionProofLeaseReadPort",
+                    "create_execution_proof_supplier",
+                }:
+                    violations.append("worker supplier import shape is invalid")
             if path == KEYS_PATH and SIGNER_MODULE in resolved:
                 if {alias.name for alias in node.names} != {
                     "ExecutionProofSigner",
@@ -197,6 +208,7 @@ def _production_source_violations(path: Path, source: str) -> tuple[list[str], i
             if SUPPLIER_MODULE in resolved and path not in {
                 SUPPLIER_PATH,
                 LEASE_READER_PATH,
+                WORKER_PLATFORM_PATH,
             }:
                 violations.append("supplier import outside approved modules")
             if path == LEASE_READER_PATH and SUPPLIER_MODULE in resolved:
@@ -743,3 +755,18 @@ def _statement(schema_name: str) -> str:
         WHERE run.lease_generation BETWEEN 1 AND %s'''
 """
     assert _lease_sql_policy_violations(legal_control) == []
+
+
+def test_worker_composition_is_narrow_and_cannot_sign_directly() -> None:
+    violations, _ = _production_source_violations(
+        WORKER_PLATFORM_PATH, WORKER_PLATFORM_PATH.read_text()
+    )
+    assert violations == []
+    for source in (
+        "from kokoro_agent.execution.execution_proof_signer import ExecutionProofSignerConfig",
+        "from kokoro_agent.execution.execution_proof_supplier import ExecutionProofSupplier",
+        "signer.issue_execution_proof(value)",
+        "ExecutionProofSigner(config)",
+    ):
+        violations, _ = _production_source_violations(WORKER_PLATFORM_PATH, source)
+        assert violations

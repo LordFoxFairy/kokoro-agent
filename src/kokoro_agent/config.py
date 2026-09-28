@@ -15,7 +15,14 @@ import logging
 from collections.abc import Mapping
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    model_validator,
+)
 
 from kokoro_agent.config_file import load_config_file
 from kokoro_agent.model.factory import ChatModelSettings
@@ -172,6 +179,36 @@ class AppConfig(BaseModel):
         default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE"
     )
 
+    iam_base_url: OptStr = Field(
+        default=None, repr=False, validation_alias="KOKORO_AGENT_IAM_BASE_URL"
+    )
+    platform_base_url: OptStr = Field(
+        default=None, repr=False, validation_alias="KOKORO_PLATFORM_BASE_URL"
+    )
+    platform_credentials_file: OptStr = Field(
+        default=None,
+        repr=False,
+        validation_alias="KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE",
+    )
+    execution_proof_issuer: OptStr = Field(
+        default=None, repr=False, validation_alias="KOKORO_AGENT_EXECUTION_PROOF_ISSUER"
+    )
+    execution_proof_private_key_file: OptStr = Field(
+        default=None,
+        repr=False,
+        validation_alias="KOKORO_AGENT_EXECUTION_PROOF_PRIVATE_KEY_FILE",
+    )
+    execution_proof_active_kid: OptStr = Field(
+        default=None,
+        repr=False,
+        validation_alias="KOKORO_AGENT_EXECUTION_PROOF_WORKER_ACTIVE_KID",
+    )
+    execution_proof_thumbprint: OptStr = Field(
+        default=None,
+        repr=False,
+        validation_alias="KOKORO_AGENT_EXECUTION_PROOF_WORKER_ACTIVE_JWK_THUMBPRINT_SHA256",
+    )
+
     # --- web_tools 域 ---
     fetch_allow_private: bool = Field(
         default=False, validation_alias="KOKORO_WEB_FETCH_ALLOW_PRIVATE"
@@ -225,6 +262,25 @@ class AppConfig(BaseModel):
     retention_run_ttl_s: int = Field(
         default=0, ge=0, validation_alias="KOKORO_RETENTION_RUN_TTL_S"
     )
+
+    @model_validator(mode="after")
+    def platform_configuration_complete(self) -> AppConfig:
+        values = (
+            self.iam_base_url,
+            self.platform_base_url,
+            self.platform_credentials_file,
+            self.execution_proof_issuer,
+            self.execution_proof_private_key_file,
+            self.execution_proof_active_kid,
+            self.execution_proof_thumbprint,
+        )
+        if any(value is not None for value in values) and not all(
+            value is not None for value in values
+        ):
+            raise ValueError(
+                "Platform transport requires all worker credential and signing descriptors"
+            )
+        return self
 
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:

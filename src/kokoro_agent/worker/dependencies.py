@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from kokoro_agent.worker.platform import WorkerPlatformRuntime
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
@@ -53,11 +54,12 @@ class WorkerDependencies:
     # Skill public contract 的名称解析面与内容读取面分开；缺少 Capability 时显式为 None。
     skill_client: SkillClient | None
     skill_reader: SkillReader | None
+    platform: WorkerPlatformRuntime | None = None
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
     mcp_servers: Mapping[str, McpServerConfig] = field(
         default_factory=dict[str, McpServerConfig]
     )
-    # MCP public client：per-run 快照与部署 yaml 合并；None=仅 yaml（无外部 client）。
+    # MCP public client：声明存在而 client 缺席时 fail closed；部署 YAML 不作授权 fallback。
     mcp_client: McpClient | None = None
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。
     delivery: DeliveryClient | None = None

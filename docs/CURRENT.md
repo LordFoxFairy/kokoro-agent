@@ -1,7 +1,25 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-27。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+状态日期：2026-09-28。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
+
+## W1E authenticated transport 候选（基线 `cf3d9ef`，待 Root 审查/提交）
+
+- `worker/main.py` 在进程 context 内启动/关闭 `worker/platform.py` 资源，私钥只在 worker 加载。
+  `WorkerPlatformRuntime.for_run(LeasedRun)` 提供固定 tenant/fence 的 sender；六个技术设计批准 RPC
+  经 generated Connect client 真正发送，不手写 wire。无声明基础 Run 不取 IAM token、不签 proof、不发 Platform RPC。
+- `clients/platform_credentials.py` 严格读取 owner-only regular JSON；`platform_tokens.py` 按 tenant/generation
+  singleflight，轮换前后核对、无 stale-on-error、最后 waiter/关闭时收割任务；`platform_transport.py`
+  每次 snapshot→token→唯一 projector→fresh lease/proof→tag100/Bearer，禁止重定向，限制响应 1 MiB。
+- 已声明 Skill 无 client/reader 或 resolve 失败直接失败；MCP 不再 fallback 到部署 YAML；所有 Feature peers
+  在任何 sandbox/model/provider 之前完成能力预检。`music`/`music_chat` 在缺 Skill client 时不再静默基础降级。
+- owned loopback OAuth/Connect 网络门验证真实 binary send、签名/binding/fresh JTI、取消/deadline/302/1 MiB；
+  另以自建临时 PostgreSQL 数据库完成真实 claim→worker signer/lease reader→两次 send→pause 拒绝，临时库已清理。
+  Loopback 的 OAuth/Connect 服务是测试 fixture，**不是 IAM/Platform production authorization 的互操作证据**。
+- 尚未闭环：真正 IAM→Platform 当前授权组合；typed Skill/MCP selection 的持久 Run fence 与业务 adapter；
+  Storage v2 package bytes；MCP credential delivery；BFF/Web 选择传递。旧 name ports 未冒充 typed adapter，
+  因此 worker 虽持有 transport factory，现有产品声明尚不调用它，Agent→Platform inventory 继续 broken。
+  Platform downstream IAM 429 仍折叠为 Unavailable；caller-client-id rotation readback 仍是 owner gap。
 
 ## 已落地
 
@@ -19,7 +37,7 @@
   `apps/kokoro-capability` 物理仓 main `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 发布 inactive
   `kokoro.platform.v1`。本仓现已 pin 两份只读 Proto 输入并生成 Python Protobuf/Connect async client，
   并已固定 Platform 原始 execution-operation artifact、生成 24 tenant request 的 offline typed projector；
-  owner manifest 仍是 inactive/routable=false，且尚未实现业务 adapter、proof supplier call 或 worker Connect transport。
+  owner manifest 仍是 inactive/routable=false，业务 adapter 尚未实现；worker Connect transport 与逐 call proof 已由上节候选接线，库存未激活。
 - 生产发行包不包含本地 MCP/Skill fixture；缺少可选 Capability 时使用显式 `None`/unavailable
   状态，不组装伪 client。LangGraph checkpoint locator 使用受信 identity 派生 namespace 加 session
   id；本地 profile 默认复用 `127.0.0.1:55433/kokoro_worker_agent` 和 Redis

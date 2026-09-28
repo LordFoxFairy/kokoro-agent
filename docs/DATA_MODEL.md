@@ -105,3 +105,10 @@ Skill 的 `series_id/skill_id/installation_id` 与 MCP 的
 `connector_id/server_id/connection_id/authorization_id/invocation_grant` 继续只属于 Platform。Agent proof 不复制这些字段、不建立
 跨 owner JOIN；Platform 只在自己的 canonical request-binding digest 中覆盖它们。`identity_assertion_ref` 继续是 Run ingress 的受信关联，
 不是 execution proof claim，也不复制进 IAM audit payload。
+
+## W1E authenticated transport（2026-09-28）
+
+本片不改 canonical schema、不新增数据库事实。worker sender 只读既有 Run/lease statement-time observation，
+所有 bearer、credential snapshot、proof/JTI 为进程/调用生命周期对象，不落库、不写 Redis。验证用独立随机数据库
+安装同一 canonical schema，经真实 repository claim/pause 检验 send/拒绝，并清理自有库；它不替代真实 IAM/Platform
+数据库当前授权矩阵。typed Skill/MCP 选择冻结尚未进入 Run 持久 fence，库存仍 broken。

@@ -1,17 +1,42 @@
 # kokoro-agent 技术设计
 
+## W1E authenticated transport 当前切片（2026-09-28）
+
+本节覆盖下文历史阶段的“worker 尚未装配/静默 fallback”描述。保留 owner、六个首批 RPC、typed selection
+与 Storage/MCP 凭据缺口决定；不扩展产品面或 owner schema。
+
+| 放置项     | 当前决定                                                                                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Owner/基线 | Agent worker credential/proof/client owner；`cf3d9ef` clean 起点，Root 独占 index/commit。                                                                                     |
+| 目录       | 复用 `clients/` 放独立 credential-file、OAuth token、generated Connect I/O；`worker/platform.py` 是 worker-only resource composition，淘汰新协议层/全局 token 单例。           |
+| 资源       | main context 创建 signer、direct bounded PG lease reader、HTTPX OAuth pool、pyqwest Connect pool；关闭先收割 token tasks，再关闭自有网络池。                                   |
+| Run 边界   | `for_run(LeasedRun)` 原子固定受信 tenant 与 fence；`RunPlatformClient.send` 复制 Proto，固定 logical request_id，逐次取 token/project binding/读 lease/sign/fill tag100/send。 |
+| API/SQL    | 只消费六个既定 owner generated RPC；Agent HTTP/Redis/canonical SQL 无变更，不保存 bearer/proof/credential。                                                                    |
+| 删除       | 删除 declared Skill 静默空能力、MCP outage→YAML fallback；保留旧 name Protocol 仅作为未迁移的显式注入边界，不假称 typed consumer。                                             |
+| 失败       | credentials/token/lease/projection/Connect 各自稳定错误；取消传播；无自动重试、无 stale token；Feature 全 peer 预检在所有 sandbox 前。                                         |
+| 验证       | unit/architecture/contract/full pytest，owned OAuth/Connect HTTP + 真 Ed25519 + 独立 PG lease；真实 IAM/Platform production 组合仍未验。                                       |
+
+配置七项 all-or-none：`KOKORO_AGENT_IAM_BASE_URL`、`KOKORO_PLATFORM_BASE_URL`、
+`KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE` 和四项 worker signer descriptor。无任何配置时保持基础 chat；
+只配置部分项启动失败。凭据 JSON 数组逐项 exact 字段 `tenant_id,generation,credential_ref_version,client_id,client_secret,resource,scope`。
+`generation` 是正 safe integer，version 非空字符串，resource/scope 固定；拒绝重复 member、重复 tenant/client、符号链接/FIFO、
+非 owner/0400/0600、超限和读中修改。父目录仍是部署受信 secret-mount 边界。
+
+当前尚无 source_ref/connector/connection 的产品选择到 Run 持久快照；因此标准 CLI 创建 factory，但 name-only 产品路径
+不会猜 ID 发 RPC。六 RPC sender 在 worker composition 的网络/PG 测试中实发；与真实 owner 授权激活是两个不同门。
+
 ## W1E Agent→Platform consumer（2026-09-27；生成与离线 projector 已落地，runtime 尚未接线）
 
-| 放置项     | 当前事实与裁决                                                                                                                                                                                                                                                                                     |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Owner      | Agent 唯一写 Run/lease、worker proof 签发与本仓 consumer；Platform 唯一写 Skills/MCP Proto、typed ID、operation/binding/receipt；IAM 唯一写 token/current authorization；Storage 唯一写包体/Artifact。                                                                                             |
+| 放置项     | 当前事实与裁决                                                                                                                                                                                                                                                                                                                                                  |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Owner      | Agent 唯一写 Run/lease、worker proof 签发与本仓 consumer；Platform 唯一写 Skills/MCP Proto、typed ID、operation/binding/receipt；IAM 唯一写 token/current authorization；Storage 唯一写包体/Artifact。                                                                                                                                                          |
 | 当前事实   | 本仓已固定 Platform Proto/operation artifact，并生成 Connect client 与 24-request offline projector；`clients/{skills,mcp}.py` 仍仅是 Protocol，`WorkerClients` 默认 `None`；`Agent.skills/mcp` 为名称 tuple；A2c supplier 独立存在，worker 不装 private signer。`agent_factory.resolve_declared_skills` 和 `tools/toolset.py` 仍有静默降级/部署定义 fallback。 |
-| 目标职责   | worker 用受信 canonical Run+lease 与 typed 声明调用固定 Platform RPC；每次真实 send 先计算该请求 exact binding，再让 run-scoped supplier 以数据库时钟即时签 proof。Skill package 仍只读渐进获取，MCP 每次真实工具执行前重新授权。                                                                  |
-| 目录方案   | 采用既有 `generated/` 保存可再生 Proto/Connect/projector，`execution/platform_request_binding*.py` 终止严格值域与复用唯一 JCS；未来 `clients/` 终止 transport。拒绝新增空 `platform/ports` 层、第二 runtime 或跨 owner DTO/SQL 副本。 |
-| 粒度与依赖 | 当前切片只做 owner artifact pin、离线 typed projector 与 contract gate；后续代码片再做 worker token+signer 生命周期、Skill/MCP adapter 与真实边界测试。业务层只见窄本仓对象，不导入 generated Proto、Connect response 或 Platform 数据模型。 |
-| 数据/API   | Agent `database/schema.sql`、本仓 HTTP/Redis contract 不变；proof/nonce/Platform receipt 不落 Agent 库。Platform `kokoro.platform.v1` 是唯一 RPC 事实；IAM/Platform 各自保持 owner schema 与事务。                                                                                                 |
-| 删除项     | 名称即 Skill/MCP 身份、已声明 Skill 空列表继续执行、MCP 部署 YAML 作 Platform 授权 fallback、旧 Capability wire/shared-token/active env 引用；不删除 Agent HTTP ingress 仍使用的 `KOKORO_INTERNAL_SECRET_AGENT`。                                                                                  |
-| 验证       | 本片三设计一致、Markdown 与 `git diff --check`；实现片须 owner artifact drift、Ruff/Pyright/pytest/build、真 PostgreSQL/Redis+IAM/Platform/Storage HTTP、取消/超时/重放/撤权及拒绝时零下游副作用。                                                                                                 |
+| 目标职责   | worker 用受信 canonical Run+lease 与 typed 声明调用固定 Platform RPC；每次真实 send 先计算该请求 exact binding，再让 run-scoped supplier 以数据库时钟即时签 proof。Skill package 仍只读渐进获取，MCP 每次真实工具执行前重新授权。                                                                                                                               |
+| 目录方案   | 采用既有 `generated/` 保存可再生 Proto/Connect/projector，`execution/platform_request_binding*.py` 终止严格值域与复用唯一 JCS；未来 `clients/` 终止 transport。拒绝新增空 `platform/ports` 层、第二 runtime 或跨 owner DTO/SQL 副本。                                                                                                                           |
+| 粒度与依赖 | 当前切片只做 owner artifact pin、离线 typed projector 与 contract gate；后续代码片再做 worker token+signer 生命周期、Skill/MCP adapter 与真实边界测试。业务层只见窄本仓对象，不导入 generated Proto、Connect response 或 Platform 数据模型。                                                                                                                    |
+| 数据/API   | Agent `database/schema.sql`、本仓 HTTP/Redis contract 不变；proof/nonce/Platform receipt 不落 Agent 库。Platform `kokoro.platform.v1` 是唯一 RPC 事实；IAM/Platform 各自保持 owner schema 与事务。                                                                                                                                                              |
+| 删除项     | 名称即 Skill/MCP 身份、已声明 Skill 空列表继续执行、MCP 部署 YAML 作 Platform 授权 fallback、旧 Capability wire/shared-token/active env 引用；不删除 Agent HTTP ingress 仍使用的 `KOKORO_INTERNAL_SECRET_AGENT`。                                                                                                                                               |
+| 验证       | 本片三设计一致、Markdown 与 `git diff --check`；实现片须 owner artifact drift、Ruff/Pyright/pytest/build、真 PostgreSQL/Redis+IAM/Platform/Storage HTTP、取消/超时/重放/撤权及拒绝时零下游副作用。                                                                                                                                                              |
 
 **源与 shape 前置。** Platform ADR-002 §3.3/§13 已裁决 Agent 的 Skill 声明保存 typed
 `SkillSourceRef`，而不是由 Platform 新增 name→ref RPC。当前 `Agent.skills` 和

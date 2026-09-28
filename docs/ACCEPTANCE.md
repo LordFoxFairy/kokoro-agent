@@ -105,3 +105,22 @@ live System / LiteLLM smoke 随 System G5/G6 验收；不会把 HTTPX MockTransp
 ### A2b execution-proof acceptance
 
 Acceptance requires strict private/public file matrices (including nonblocking FIFO and fd closure), RFC 7638 A1 KAT, immutable/degraded snapshots, raw-socket JWKS method/framing/header precedence, no auth/dependency calls for JWKS, readiness-before-dependencies, health continuity, OpenAPI/provenance mutation gates, separated installed entrypoint smoke, full default tests, and existing real PostgreSQL/Redis ingress regression. SIGINT/SIGTERM must stop new business admission, report readiness as draining, let each active handler drain within the fixed bound, preserve any declared response that completes inside it, and release the port; active handler 在固定 2 秒 deadline 内 drain，但 Python threads are not claimed to be forcibly cancellable after timeout. A2b does not count A2c supplier, IAM/Platform verification, or real proof transport as complete. A2c acceptance separately requires exact pair snapshots, integer-only time math, per-call fresh read/JTI/sign, controlled cancellation/deadline gates, and a real PostgreSQL ACCESS EXCLUSIVE cross-expiry race; it still does not count production composition or transport as complete.
+
+## W1E authenticated transport 候选验收（2026-09-28）
+
+基线 `cf3d9ef103b5f1c3c005ad8fb45862ba83f9a0f8`，工作树候选，Root 审查与提交仍待完成。
+
+- RED→GREEN：credential 文件/singleflight/rotation/cancel；declared Skill outage；多 peer sandbox-before-preflight；
+  sender fresh proof/headers；聚合前 1 MiB streaming limit；secret exception context。
+- `uv lock --check`、`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、
+  `uv run kokoro-agent-contract-check`、`uv run python scripts/generate_platform_consumer.py --check`、
+  `uv build --wheel --sdist`、既有 fresh Python 3.11 generated-wheel gate 已执行通过；最终全 pytest **1230 passed / 6 skipped / 166 deselected**。
+- `tests/contract/test_platform_transport_http.py`：5 个 owned loopback HTTP 测试通过，验证实际 OAuth Basic/form、
+  Connect protobuf/tag100/Bearer、真实签名/binding、fresh JTI、302/1 MiB/deadline/cancel。服务为 fixture，非真 owner。
+- 同文件 `test_real_postgres_lease_with_worker_owned_http`：设置独立测试 admin URL，以随机数据库安装 canonical schema，
+  真 repository claim→worker原样 signer/lease reader→重复 send→pause 拒绝；1 passed，自有数据库清理完成。
+- fresh Python 3.11 wheel 按 frozen runtime requirements 安装，credential/token/Connect/worker 模块从 wheel import 通过。
+
+未验且阻断激活：production IAM token HTTP→production Platform Connect 的当前授权/rotation/revoke 矩阵；typed Skill/MCP
+产品选择与持久 Run fence、Storage v2 包体、认证 MCP 执行凭据、BFF/Web 传递。库存在此片保持 broken；
+不启动用户 3310，不用本地测试 fixture 冒充 production owner，也不把生成 artifact inactive 状态改为 active。

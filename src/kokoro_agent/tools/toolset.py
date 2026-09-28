@@ -10,18 +10,15 @@ from langchain_core.tools import BaseTool, StructuredTool
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.domain.run.scope import RunScope
-from kokoro_agent.mcp.config import McpServerEntry, McpServerUnavailable, select_servers
+from kokoro_agent.mcp.config import McpServerEntry, McpServerUnavailable
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.clients.mcp import McpClientError
 from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.clients.storage import DeliveryClient
-import logging
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.toolbox import ProcessToolbox
 from kokoro_agent.mcp.config import McpServerConfig
-
-LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +77,7 @@ async def build_toolset(
     mcp_client: McpClient | None,
     backend: BackendProtocol,
     delivery: DeliveryClient | None,
+    resolved_mcp: Mapping[str, McpServerEntry] | None = None,
 ) -> Toolset:
     """五路工具来源合流（顺序即挂载序）：
     ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user）
@@ -91,45 +89,40 @@ async def build_toolset(
     scope = RunScope.of(request)
     tools: list[BaseTool] = list(resolve_tools([], core=agent.tools))
     tools.extend(toolbox.tools_for(scope.namespace))
-    # Agent/Feature 只声明 MCP 名称；Capability client 在本次装配中解析可见配置。没有
-    # 外部 client 时，仅使用已校验的部署配置，不组装本地 fixture 或伪 client。
     mcp_names = list(agent.mcp)
-    if mcp_client is None:
-        mcp_definitions: Mapping[str, McpServerEntry] = select_servers(
-            mcp_servers, mcp_names
-        )
-    else:
-        try:
-            mcp_definitions = await mcp_client.resolve(
-                mcp_names,
-                request.execution_identity,
-                scope.namespace,
-                mcp_servers,
-            )
-        except McpClientError:
-            # Capability discovery is optional for the base Agent. Deployment
-            # definitions remain usable; individual MCP calls still fail closed.
-            LOGGER.warning(
-                "MCP capability lookup unavailable for agent=%s; using deployment definitions",
-                agent.key,
-            )
-            mcp_definitions = mcp_outage_definitions(mcp_servers, mcp_names)
+    mcp_definitions = (
+        resolved_mcp
+        if resolved_mcp is not None
+        else await resolve_declared_mcp(request, agent, mcp_client, mcp_servers)
+    )
     tools.extend(make_mcp_tools(mcp_names, mcp_definitions))
     if agent.delivery and delivery is not None:
         tools.append(_deliver_tool(request, backend, delivery))
     return Toolset.from_tools(tools)
 
 
-def mcp_outage_definitions(
-    deployment: Mapping[str, McpServerEntry], names: Sequence[str]
+async def resolve_declared_mcp(
+    request: RunRequest,
+    agent: Agent,
+    client: McpClient | None,
+    deployment: Mapping[str, McpServerConfig],
 ) -> Mapping[str, McpServerEntry]:
-    """Preserve deployment entries and mark Capability-only names unavailable."""
-
-    return {
-        name: deployment.get(name)
-        or McpServerUnavailable(reason="Capability MCP 配置暂不可用")
-        for name in dict.fromkeys(names)
-    }
+    """No declaration means no discovery; declarations never fall back to YAML."""
+    if not agent.mcp:
+        return {}
+    if client is None:
+        raise McpClientError("declared MCP client unavailable")
+    resolved = await client.resolve(
+        agent.mcp,
+        request.execution_identity,
+        RunScope.of(request).namespace,
+        deployment,
+    )
+    if set(resolved) != set(agent.mcp) or any(
+        isinstance(entry, McpServerUnavailable) for entry in resolved.values()
+    ):
+        raise McpClientError("declared MCP resolution incomplete")
+    return resolved
 
 
 def _deliver_tool(

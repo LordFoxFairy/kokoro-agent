@@ -7,8 +7,7 @@ from dataclasses import replace
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict
 
-from kokoro_agent.mcp.config import McpServerConfig, McpServerUnavailable
-from kokoro_agent.tools.toolset import Toolset, mcp_outage_definitions
+from kokoro_agent.tools.toolset import Toolset
 from kokoro_agent.agents.music import MUSIC_AGENT
 from kokoro_agent.agents.general import GENERAL_AGENT
 
@@ -41,16 +40,49 @@ def test_toolset_extension_rejects_handoff_collision() -> None:
         toolset.with_tools((_tool("transfer_to_music"),))
 
 
-def test_mcp_client_outage_keeps_deployment_and_marks_dynamic_names() -> None:
-    local = McpServerConfig(url="https://mcp.example.test", allowed_tools=["search"])
-
-    resolved = mcp_outage_definitions({"local": local}, ("local", "capability-only"))
-
-    assert resolved["local"] == local
-    assert isinstance(resolved["capability-only"], McpServerUnavailable)
-
-
 def test_delivery_is_an_explicit_agent_capability() -> None:
     assert MUSIC_AGENT.delivery is True
     assert GENERAL_AGENT.delivery is False
     assert replace(MUSIC_AGENT, delivery=False).delivery is False
+
+
+async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
+    from kokoro_agent.tools.toolset import resolve_declared_mcp
+    from kokoro_agent.clients.mcp import McpClientError
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.mcp.config import McpServerConfig
+    from kokoro_agent.protocol import (
+        RunRequest,
+        RunInput,
+        ExecutionIdentity,
+        IdentityRef,
+    )
+
+    request = RunRequest(
+        kind="run.request",
+        run_id="run",
+        session_id="session",
+        feature_key="chat",
+        execution_identity=ExecutionIdentity(
+            tenant_ref="tenant",
+            actor=IdentityRef(kind="user", opaque_ref="actor"),
+            subject=IdentityRef(kind="user", opaque_ref="subject"),
+            identity_assertion_ref="assertion",
+        ),
+        input=RunInput(message_id="message", content="hello"),
+    )
+    assert (
+        await resolve_declared_mcp(request, Agent(key="base", prompt="base"), None, {})
+        == {}
+    )
+    with pytest.raises(McpClientError):
+        await resolve_declared_mcp(
+            request,
+            Agent(key="mcp", prompt="mcp", mcp=("local",)),
+            None,
+            {
+                "local": McpServerConfig(
+                    url="https://mcp.test", allowed_tools=["search"]
+                )
+            },
+        )

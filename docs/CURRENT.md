@@ -1,6 +1,6 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-24。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+状态日期：2026-09-27。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
 ## 已落地
@@ -15,7 +15,9 @@
   chat 查询只接受同一 identity 派生的 namespace。
 - worker 具备 dispatch CAS、lease generation fencing、终态 claim、outbox republish、control reapply、
   sandbox cleanup retry 和 graceful drain。
-- Skill/MCP/Storage 通过窄 client port 接入；Agent 不读取 Capability/Storage 私库。
+- Skill/MCP/Storage 目前只有窄 client port；Agent 不读取 Platform/Storage 私库。Platform owner 已在
+  `apps/kokoro-capability` 物理仓 main `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 发布 inactive
+  `kokoro.platform.v1`，但本仓未 pin 该 Proto/operation artifact、未生成 Python client/projector、未接 Connect transport。
 - 生产发行包不包含本地 MCP/Skill fixture；缺少可选 Capability 时使用显式 `None`/unavailable
   状态，不组装伪 client。LangGraph checkpoint locator 使用受信 identity 派生 namespace 加 session
   id；本地 profile 默认复用 `127.0.0.1:55433/kokoro_worker_agent` 和 Redis
@@ -37,7 +39,7 @@
   有序 owner inventory、逐 artifact digest、aggregate digest、strict duplicate/token parser、expected schema pointer/keyword、RFC 8785、
   canonical unpadded base64url/JTI、16 KiB 上限和单差异负向语义校验防止漂移。A2a 独立 runtime exact profile 与
   Ed25519 signer 已通过 SPEC/QUALITY 与 Root 验证，并以 A1 positive vector 和第二个 RFC 8032 KAT
-  固定数学签名；A2b 已实现 HTTP route、private loader 与 JWKS snapshot。A2c 已实现 standalone proof 专用 statement-time lease reader 与 immutable run-scoped supplier，但 worker gate、IAM verifier、Platform client 与真实传输仍未实现。
+  固定数学签名；A2b 已实现 HTTP route、private loader 与 JWKS snapshot。A2c 已实现 standalone proof 专用 statement-time lease reader 与 immutable run-scoped supplier；IAM owner verifier 已另仓发布，但本仓 worker gate、Platform client 与真实传输仍未实现。
 
 ## 当前证据
 
@@ -75,14 +77,24 @@ Redis DB 14 的 3 个针对性真实 acceptance 通过；测试后 DB 14 key 数
    语义拆分，不能按行号机械切割。
 2. `domain/`、`application/`、`infrastructure/`、`interfaces/` 是当前目标架构边界；叶子运行模块按真实职责保留，
    新代码不得恢复顶层 `repositories/`、`services/` 或 `http/` 重复入口。
-3. Capability/Storage 真实 HTTP/RPC client 的生产装配需在部署配置中显式启用；未配置可选能力时应返回
-   明确 unavailable，而不是创建伪实现。
+3. Platform/Storage 真实 client 的生产装配仍需落地；已声明 Platform 能力缺配置或 owner 不可用时
+   必须 fail closed，不创建伪实现或以空列表/部署 YAML 作为授权。无外部声明的基础 Run 不要求
+   Platform 调用。Storage 自身仍按其 owner contract 决定可选路径。
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。
 6. Agent execution proof A2a 与 A2b 已通过既定门；A2c 已包含 proof 专用 direct PostgreSQL statement-time reader 和 run-scoped supplier。
-   private loader 仍未装配进 worker，生产 Skills/MCP client 也没有 supplier；production signer call site 仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。因此 standalone reader/supplier
-   通过不等于 proof 已传输，不得跳过 IAM verifier、Platform owner contract 与真实 client 接线门。
+   private loader 仍未装配进 worker，生产 Skills/MCP client 也没有 supplier；production signer call site
+   仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。因此 standalone
+   reader/supplier 通过不等于 proof 已传输，不得跳过真实 client 接线门。
+7. IAM owner main `a4c2b61467f1fc1772d6b6d8e98f081c090289fb` 已发布 execution verifier 与 Platform
+   workload token ingress/OpenAPI SDK `0.6.0`；上文 2026-09-12 的“IAM verifier 待实现”只作历史阶段记录。
+   Agent 代码仍未消费它们。`Agent.skills`/`Agent.mcp`、`SkillClient.resolve`/`McpClient.resolve` 当前只传字符串名称；
+   Platform `ResolveVisibleSkill` 只接受 typed `SkillSourceRef`，MCP 资源按 typed connector/connection ID。
+   声明来源尚不能供给这些 ID；`DiscoverVisibleSkills.query` 不是名称到精确 ref 的替代解析器。
+8. `agent_factory.resolve_declared_skills` 在已声明 Skill 的 owner 读取失败时静默回空列表；
+   `tools/toolset.py` 在 MCP client 缺失/失败时保留部署配置路径。这是待删除的旧 Capability 行为，
+   不算 Platform current authorization。没有声明外部能力的基础 Run 不受此缺口影响；已声明能力在目标态必须 fail closed。
 
 这些条目是代码工作的清单，不以文档声明替代实现或验证。
 
@@ -130,6 +142,6 @@ The former label `A2b current candidate` is retained here only as a historical t
 
 The working implementation now contains the isolated private Ed25519 loader, anchored strict public-ring/JWKS snapshot, HTTP-only configuration root, anonymous exact JWKS GET/HEAD handling, OpenAPI `1.1.0`, and direct HTTP provenance pin. `kokoro-agent-http` points only to `interfaces.http.main:main`; the legacy worker HTTP entry is removed. Invalid or missing public material degrades JWKS and authenticated readiness before dependencies while health stays 200.
 
-A2a remains the accepted pure signer, and A2c now provides the standalone statement-time reader and run-scoped supplier. Worker private-loader composition, IAM verifier, Platform owner contract/call site, and real Agent→IAM→Platform transport remain incomplete.
+A2a remains the accepted pure signer, and A2c provides the standalone statement-time reader and run-scoped supplier. IAM verifier and the inactive Platform owner contract have since been released in their owner repositories; worker private-loader composition, Agent Platform call sites, and real Agent→Platform→IAM transport remain incomplete.
 
 production signer call site 仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。

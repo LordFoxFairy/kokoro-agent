@@ -1,5 +1,31 @@
 # kokoro-agent 安全设计
 
+## W1E Agent→Platform private consumer 安全门（2026-09-27，目标，尚未装配）
+
+`kokoro.platform.v1` owner artifact 已发布但 inactive；Agent 仍无 generated client/transport，
+worker private signer 未装配。目标只有 worker 可读取受控 Ed25519 private key 与 tenant-indexed
+`KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE`；HTTP ingress 仍只持 public JWKS ring，
+也仍保留其 BFF→Agent `KOKORO_INTERNAL_SECRET_AGENT` service bearer。Platform 出站不得复用
+这个 shared secret。IAM token provider 只为 canonical Run tenant 选 `kokoro-agent` tenant-machine
+client、exact Platform audience/scope，凭据文件遵循 owner-only regular-file/startup readback；
+token/secret/proof/完整 binding 不写日志、checkpoint、event 或异常。
+
+每次真实 Connect send 的业务 request、固定 logical request ID 与受信 tenant 先由 Platform
+artifact typed projector 生成 exact binding；再以当前数据库 clock/lease 签 fresh proof，并与
+**同一份** request 一起发出。proof tag 100 不在 binding 内，不能预签于 build、缓存于 Skill
+package 或复用 MCP snapshot。请求期间取消/超时、lease 失效、key mismatch、token 轮换/撤销、
+binding 漂移一律 fail closed；已有 Skill/MCP 声明不能因 owner 故障静默变成“未声明”，
+不能回退部署 YAML、旧 Capability shared token 或模糊 Discover 查询。无外部声明的基础 Run
+可以不调用 Platform，不把这解释为已声明能力授权通过。
+
+MCP `AuthorizeMcpTool` 必须在每个真实远端工具调用前执行，绑定 connector/tool selector、
+raw typed-argument SHA-256、approval presence、idempotency key；短期 `McpInvocationGrant` 只用于
+对应调用，不作为长期 resource ID。Platform 拒绝、IAM current permission/source/connector
+禁用、completed replay 再鉴权失败时，Storage、MCP provider 与本地工具副作用为零。
+credential cache 必须随单调 generation/client/resource/scope 变化驱逐，不 stale-on-error；
+轮换与多副本 readback/barrier 按 Platform ADR-002 §10 验证。Transport authentication、authorization、
+dependency unavailable、deadline/cancellation 分开记录稳定结果码，日志仅含非敏感关联字段。
+
 ## Trust boundary
 
 浏览器只能访问 Web/BFF；Agent HTTP 只接受部署注入的 service bearer。BFF/IAM 负责认证与授权断言，Agent
@@ -35,7 +61,7 @@ A1 已有 Agent-owned strict schema、canonical/negative/one-bit-tampered vector
 profile 与 Ed25519 signer 已通过 SPEC/QUALITY 与 Root 验证：owner-controlled immutable config 只持有
 issuer/kid/private key，caller input 不能覆盖 header/version/
 issuer/audience/kid；签发前预计算 exact JCS bytes，PyJWT 签发后逐段核对、限制 16 KiB、验证64-byte signature并用派生公钥自验。
-A2c 新增的唯一 production signer caller 位于 standalone run-scoped supplier；它没有 worker/client composition。A2b 已实现隔离 private loader、public-ring snapshot 与 JWKS route；worker 装配、IAM verifier 与 Platform consumer 仍不存在，不能据此接受端到端授权。
+A2c 新增的唯一 production signer caller 位于 standalone run-scoped supplier；它没有 worker/client composition。A2b 已实现隔离 private loader、public-ring snapshot 与 JWKS route；IAM verifier 与 inactive Platform owner contract 已另仓发布，本仓 worker 装配/Platform consumer 仍不存在，不能据此接受端到端授权。
 
 Agent 独占 execution proof 私钥与 canonical signing bytes。worker private-key 配置和 HTTP public-ring 配置必须是不同类型、不同对象图：
 worker 进程不加载 public JWKS ring，HTTP 进程不读取或持有 private key/path/provider。worker 与 HTTP 各有独立、非 secret 的
@@ -93,4 +119,4 @@ The worker-only loader accepts only an euid-owned exact `0400/0600` regular fina
 
 The HTTP-only reader anchors at `/`, retains nofollow directory fds, rejects unsafe owners/write bits and symlinks, reads a bounded regular public file, verifies full pre/post/path identity, strict UTF-8/duplicate-free exact Ed25519 JWKs, active descriptor, UTF-8 kid ordering, and immutable JCS output. FIFO and all failures close every fd and publish only an unavailable state. Safe startup logs contain only allowlisted booleans/numerics—never URLs, bearer, path, kid, thumbprint, key/proof bytes, or underlying exception text.
 
-A2b does not wire the private loader into worker startup. A2c now supplies standalone statement-time lease proof minting, while worker composition, IAM verification, Platform policy/binding, and real transport remain absent.
+A2b does not wire the private loader into worker startup. A2c supplies standalone statement-time lease proof minting. IAM verification and inactive Platform policy/binding have since shipped in their owner repositories, while Agent worker composition and real transport remain absent.

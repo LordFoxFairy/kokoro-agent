@@ -1,5 +1,56 @@
 # kokoro-agent API 契约
 
+## W1E Agent 消费 Platform owner RPC（2026-09-27；owner 已发布、本仓尚未接线）
+
+物理仓 `apps/kokoro-capability` 的 Platform owner main
+`ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 已发布唯一 Proto package
+`kokoro.platform.v1` 与 inactive `platform-execution-operations` artifact `1.0.0`：31 exact RPC、
+24 tenant-execution request binding、15 command digest。此提交**不是本仓 consumer pin**；
+`contract/provenance.json` 当前只有 System consumer dependency，本仓 `pyproject.toml`/生成物也没有
+Platform Python Connect client。实现片必须记录 owner repository/commit/path/direct SHA 并把 owner
+原始 Proto、manifest、schema、vectors 固定为只读输入，再生成 Python Proto/Connect 类型及 projector，
+通过 drift/跨语言 positive+negative vectors 验证；不能把本仓文档表当机器事实源。
+
+已核原始字节：`contract/proto/kokoro/platform/v1/platform_runtime.proto` SHA-256
+`7c55fcadf5ba0753ca5d1bb304ccb96bf0318a4fb5c37aae4f96781c4ea53466`；
+`contract/execution-operations/v1/manifest.json` SHA-256
+`187bbeeceb1e082c15a8df3fc1451f89322575fa13276abe161a2c72fedad9c9`；
+`request-bindings.json` SHA-256
+`050291cf6f56052453ddb841f1e7cc624b2d3da28e5d9afd6abb9108349371fd`。
+完整文件/aggregate provenance 由 owner `provenance.json` 定义，后续生成还需 pin
+`kokoro.common.v1` dependency Proto；上述三个 digest 本身不足以声明生成链通过。
+
+| Agent 真实调用点                                  | Platform exact method / operation                                                                                                                                                                                            | 当前 shape 与目标                                                                                                                                          |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent_factory.resolve_declared_skills`           | `SkillSourceService/ResolveVisibleSkill` / `skill.resolve_visible_skill`                                                                                                                                                     | 当前 name selector；目标必须是 `SkillSourceRef`，source 当前可见且 active。                                                                                |
+| `skills/backend.py` 的 `SkillReader.load_package` | `SkillSourceService/GetApprovedSkillPackageReference` / `skill.get_approved_package_reference`                                                                                                                               | 当前 `(scope,name,content_hash)`；目标以同一 typed source ref 取经 Platform/Storage gate 的 asset/read reference，并核内容摘要。                           |
+| `tools/toolset.py` 的 MCP 组装                    | `McpConnectorService/GetMcpConnector` / `mcp.get_connector`；`McpConnectionService/GetMcpConnection` / `mcp.get_connection`；按需 `McpAuthorizationService/ListMcpConnectorCapabilities` / `mcp.list_connector_capabilities` | 当前 name+deployment；目标需 typed connector/connection ID 与 owner-current 可见性。                                                                       |
+| `mcp/tools.py` 的 `mcp_call`                      | `McpAuthorizationService/AuthorizeMcpTool` / `mcp.authorize_tool`                                                                                                                                                            | 每次执行前以 typed connector、tool selector、原始 typed arguments bytes、approval ref presence、idempotency key 获取短期 grant；不把启动期快照当实时授权。 |
+
+上述四组均属 `tenant-execution`、`proof=required`、`platform:execute`；request 的
+`execution_proof` 是 tag 100 的 1..16384-byte ASCII compact JWS，不是 bearer。Connect HTTP
+transport bearer 另由 IAM 的 `kokoro-agent` tenant-machine client 取得（audience
+`https://kokoro.dev/resources/platform-internal`，scope `platform:execution.invoke`），
+tenant 从 canonical Run 的 trusted identity 选择。`request_id` 在 logical retry 中固定，
+但每次真实 send 用 owner typed projector 重新计算 binding、数据库时钟检查 lease 并 fresh sign。
+Platform ingress 先校验 bearer；execution verifier 再按 operation/binding/当前 IAM 决策验 proof；
+拒绝时 owner 数据库/Storage/provider 零副作用，completed receipt replay 也重新验当前权限/资源。
+
+**形状缺口及上游顺序：** Platform `ResolveVisibleSkillRequest.source_ref` 已删除旧
+`source_selector`，没有 name→ref 精确 RPC；`DiscoverVisibleSkills.query` 是查询而非解析。
+按 owner ADR-002 §3.3/§13，Agent 声明必须保存 typed `SkillSourceRef`，由 BFF/Agent
+声明来源先完成精确 ref 选择/传递。MCP task 使用 active `McpConnectorId`，policy 用
+`McpConnectionId`，`McpServerId`/tool selector/URL/name 均不得互换。当前
+`McpClient.resolve(selectors, identity, namespace, deployment)` 不携带这些 ID，也没有已证明
+的 server/credential 映射，须先由声明与 Platform owner 精确字段闭环；不足时提出 owner-first
+具名 gap 并拒绝该调用，不增临时 RPC 或兼容 wire。本仓不消费六个 BFF catalog
+workload-only 或 System global-reserved 方法，亦不把 Agent HTTP/Redis wire 改为 Platform Proto。
+
+IAM owner main `a4c2b61467f1fc1772d6b6d8e98f081c090289fb` 已发布 OpenAPI/SDK
+`0.6.0` 的 Platform workload token introspection 与 execution verifier；这是 Platform server 的
+下游，不是 Agent 直接调用的替代验证器。原文后面 2026-09-12 的“verifier 未实现”是历史阶段，
+对当前 owner release 已过期；Agent 自己的 runtime transport/worker composition 仍未实现。
+
 ## 机器事实
 
 - HTTP：[`contract/openapi/v1/openapi.json`](../contract/openapi/v1/openapi.json)
@@ -68,7 +119,7 @@ worker 既有单 Run 失败路径收口，不泄漏上游 message/secret。
 Agent A1 artifact 与 A2a signer 已提交，A2b 已提交：owner machine fact `contract/execution-proof/v1/schema.json` version=`1.0.0`、
 canonical/negative/tampered-signature vectors、immutable Ed25519 signer、隔离 key loader、public-ring snapshot 与 HTTP JWKS projection
 已分别验收。A2c standalone owner-internal component 现提供 statement-time lease reader 与 run-scoped supplier；A2c 不新增 wire，也未装入 worker
-或真实 client。IAM verifier、Platform proof wire 与 production transport 仍待实现。后续仍按 TECHNICAL_DESIGN §7.5 串行发布；supplier
+或真实 client。IAM verifier 与 inactive Platform proof wire 已由各自 owner 发布；本仓 production transport 仍待实现。后续仍按 TECHNICAL_DESIGN §7.5 串行消费；supplier
 独立测试、Platform 最终 contract、Agent 真实 client 接线与 Platform server cutover 是不同验收门，不能互相冒充。
 旧陈述“A2b 当前是待复审候选；A2c/consumer、IAM verifier、Platform proof wire 均待实现”不再描述 current fact。
 
@@ -77,10 +128,10 @@ IAM `bf160be173ef473bebe8e4a93b74ec52c230f180` 是当前 owner/方向基线，�
 测试中消费 Agent 固定 artifact 和同一拒绝向量；不得由 IAM 复制一份可独立漂移的 claims schema。
 
 1. Agent A1 machine artifact、A2a signer、A2b key/JWKS 与 A2c standalone supplier 已在 owner 内实现；production consumer 尚待实现；
-2. IAM ADR/API/安全设计对齐后实现 verifier/OpenAPI/generated SDK，并消费同一 strict profile、数字矩阵与 canonical vectors；
-3. Platform owner 发布最终 compact-proof wire、request-binding 与 generated helper；
+2. IAM 已发布 verifier/OpenAPI/generated SDK，并消费同一 strict profile、数字矩阵与 canonical vectors；
+3. Platform owner 已发布 inactive compact-proof wire、request-binding 与 generated helper；
 4. Agent 真实 Platform client 逐 call 接入 supplier；
-5. Platform consumer 删除旧 wire并完成 fresh/completed-replay receipt；
+5. Platform server 已删除旧 wire并实现 fresh/completed-replay receipt gate；代码发布不等于跨仓 activation；
 6. Root 真实 Agent -> IAM -> Platform -> PostgreSQL receipt sandbox。
 
 该顺序不产生临时 wire、fallback、alias 或双协议；第 1 步的 supplier unit/fake-client 证据不称为第 4 步的真实接线。

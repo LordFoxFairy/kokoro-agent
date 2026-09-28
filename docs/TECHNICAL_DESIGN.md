@@ -1,5 +1,79 @@
 # kokoro-agent 技术设计
 
+## W1E Agent→Platform consumer 文档门（2026-09-27；仅目标设计，尚未接线）
+
+| 放置项     | 当前事实与裁决                                                                                                                                                                                                                                                                                     |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Owner      | Agent 唯一写 Run/lease、worker proof 签发与本仓 consumer；Platform 唯一写 Skills/MCP Proto、typed ID、operation/binding/receipt；IAM 唯一写 token/current authorization；Storage 唯一写包体/Artifact。                                                                                             |
+| 当前事实   | `clients/{skills,mcp}.py` 仅是 Protocol，`WorkerClients` 默认 `None`；`Agent.skills/mcp` 为名称 tuple；A2c supplier 独立存在，worker 不装 private signer，也没有 Platform generated/Connect client。`agent_factory.resolve_declared_skills` 和 `tools/toolset.py` 仍有静默降级/部署定义 fallback。 |
+| 目标职责   | worker 用受信 canonical Run+lease 与 typed 声明调用固定 Platform RPC；每次真实 send 先计算该请求 exact binding，再让 run-scoped supplier 以数据库时钟即时签 proof。Skill package 仍只读渐进获取，MCP 每次真实工具执行前重新授权。                                                                  |
+| 目录方案   | 采用既有 `clients/` 作为 generated wire/transport 终止与业务 port adapter、`execution/` 现有 supplier、`worker/` 私有启动装配及 `skills/`/`mcp/`/`tools/` 现有调用点；拒绝新增空 `platform/ports` 层、第二 runtime 或跨 owner DTO/SQL 副本。实际生成路径由后续代码片按本仓 `generated/` 惯例固定。 |
+| 粒度与依赖 | 本片只扩既有文档。后续代码片拆为 artifact pin/生成、worker token+signer 生命周期、Skill/MCP adapter 与真实边界测试；业务层只见窄本仓对象，不导入 generated Proto、Connect response 或 Platform 数据模型。                                                                                          |
+| 数据/API   | Agent `database/schema.sql`、本仓 HTTP/Redis contract 不变；proof/nonce/Platform receipt 不落 Agent 库。Platform `kokoro.platform.v1` 是唯一 RPC 事实；IAM/Platform 各自保持 owner schema 与事务。                                                                                                 |
+| 删除项     | 名称即 Skill/MCP 身份、已声明 Skill 空列表继续执行、MCP 部署 YAML 作 Platform 授权 fallback、旧 Capability wire/shared-token/active env 引用；不删除 Agent HTTP ingress 仍使用的 `KOKORO_INTERNAL_SECRET_AGENT`。                                                                                  |
+| 验证       | 本片三设计一致、Markdown 与 `git diff --check`；实现片须 owner artifact drift、Ruff/Pyright/pytest/build、真 PostgreSQL/Redis+IAM/Platform/Storage HTTP、取消/超时/重放/撤权及拒绝时零下游副作用。                                                                                                 |
+
+**源与 shape 前置。** Platform ADR-002 §3.3/§13 已裁决 Agent 的 Skill 声明保存 typed
+`SkillSourceRef`，而不是由 Platform 新增 name→ref RPC。当前 `Agent.skills` 和
+`SkillClient.resolve(selectors: Sequence[str])` 只有 name，无法组成
+`ResolveVisibleSkillRequest.source_ref` 或 `GetApprovedSkillPackageReferenceRequest.source_ref`。
+声明来源（含 BFF→Agent launch 上游）须先供应经 owner 列表/安装选择的 typed source ref，并在本仓
+静态 Agent/Feature 声明与 Run admission 边界保持类型；不得把 `DiscoverVisibleSkills.query` 的模糊结果
+当作精确解析，也不把 display name、series/skill/installation ID 当作 source ref。此上游形状未闭环前，
+已声明 Skill 的 Platform consumer 不放行。
+
+MCP 同样需 owner 可见的 active `McpConnectorId`，并在适用时明确 `McpConnectionId`/
+`McpServerId` 与 tool selector 的不同身份；当前 `Agent.mcp`、`McpClient.resolve(selectors,
+identity, namespace, deployment)` 只有名称/部署配置，无法组成精确 `GetMcpConnector`、
+`GetMcpConnection`、`ListMcpConnectorCapabilities` 或 `AuthorizeMcpTool` 请求。
+声明来源及受信执行策略须先固定 typed connector/connection 选择与每次工具调用参数映射；
+不从 URL/provider/display name 猜 ID，不把本地 YAML 或既有 MCP egress allowlist 当作 Platform 授权。
+
+**首批出站面。** Skill 装配先按 typed ref 调 `SkillSourceService/ResolveVisibleSkill`，懒读包时
+调 `SkillSourceService/GetApprovedSkillPackageReference`，再按 owner 授权 read reference 由 Storage
+读取内容并核 digest；本仓不负责安装/发布 mutation。MCP 在 typed connector 已可用后，装配阶段
+按需读取 `McpConnectorService/GetMcpConnector`、`McpConnectionService/GetMcpConnection`、
+`McpAuthorizationService/ListMcpConnectorCapabilities`；`mcp_call` 每次实际远端调用前必须
+`McpAuthorizationService/AuthorizeMcpTool`，绑定 exact connector/tool selector、原始 typed arguments
+bytes 的 SHA-256、approval ref presence 与 idempotency key，取得短期 `McpInvocationGrant` 后才连接/执行。
+具体 MCP server/connection/credential 映射仍需在当前声明 shape 与 Platform response 中逐字段证明；
+若当前 RPC 无足够受信数据，向 Platform owner 提交具名 gap 并在此边界 fail closed，不发明临时 wire。
+`DiscoverVisibleSkills`/列表类 RPC 属浏览/选择面，不是已声明能力的精确解析；Agent 不调用
+Skill catalog workload 六操作或 global `RegisterMcpServer`。
+
+**固定 artifact 与传输。** 后续 consumer 只从 Platform commit
+`ee25c1f4d6df08be183ca10f7f5e852e0b21f641` pin `contract/proto/kokoro/platform/v1/platform_runtime.proto`
+及 `contract/execution-operations/v1/` manifest/provenance/vector 原始字节，记录 repo、commit、path、
+direct SHA、版本；用固定 Buf/Protobuf 生成 Python message/Connect stub 与 typed binding projector，
+运行时 Connect over HTTP（固定 `KOKORO_PLATFORM_BASE_URL`），不手写 JSON/gRPC wire 或复制可编辑 Proto。
+Python 候选先核验官方 `connectrpc==0.12.1`（Beta）与 `protoc-gen-connectrpc==0.11.1`
+生成的 async client：固定 Proto SHA、生成 wheel、对当前 Platform Express 的 Connect/gRPC-Web
+真实互操作、per-call header/deadline/error/cancellation 行为；当前 server 不支持原生 grpcio。
+官方 `ConnectError(CANCELED)` 包装后须在 Agent client boundary 恢复 Python 取消语义。
+此为待验选型门，不把 Beta 候选写成已集成；若 spike 不通过，另以 ADR 比较限定 unary
+Protobuf+HTTPX adapter 的成本/故障语义，不直接手写未验证的 framing。一个经完整 Platform vectors 验证的 Python
+RFC8785 JCS encoder 服务 generated projector；现有 proof JCS 仅复用候选，不另建第二 canonicalizer。
+
+每次 send：先验证 typed request/operation，固定本次 logical `request_id` 与 IAM 已验证的 tenant token
+选择，按 owner `request-bindings.json` 投影 `{binding_version,fq_method,tenant_ref,request_id,request}`；
+排除 proof 与 request 内重复 request_id，保留 Proto optional/message presence、数组顺序和 set UTF-8 排序，
+拒绝非 safe integer/重复/空 set 值。lowercase SHA-256 交给现有 run-scoped supplier；supplier 每次
+重新读 PostgreSQL clock/lease、生成新 JTI/sign，填 request `execution_proof=100` 后立即发送。相同
+logical retry 保留 request_id 但重验 lease 并重新签 proof；改 request_id 必重算 binding。所有 24 个
+tenant-execution RPC 都需 proof，但 Agent 只消费本段所列 subset；proof 不代替 transport bearer。
+
+worker 专用 tenant-indexed `KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE` 供 IAM
+`tenant_machine` client-credentials token provider 使用，audience 精确
+`https://kokoro.dev/resources/platform-internal`、scope `platform:execution.invoke`、caller
+`kokoro-agent`；tenant 只来自持久 Run 的受信 ExecutionIdentity，绝不由 body/selector/env 默认租户挑选。
+token cache key 包含 tenant、不可复用 credential generation/client/resource/scope；仅余期 >5 秒复用，
+同 key single-flight，轮换即 evict，exchange 完成前复核 generation，错误不 stale-on-error。
+worker 加载/核验 private key 后才消费；HTTP 进程只持 public ring。Transport 认证失败、权限拒绝、
+IAM/Platform 503/限流/网络超时分别归类，不将依赖故障降格为“没有能力”；取消直接传播，设置
+connect/read/overall deadline、1 MiB 响应边界、不跟随重定向，只对 owner 明确安全的请求有限重试。
+拒绝/过期/撤权/当前 source 或 connector 禁用、proof/binding 漂移时，在 Storage/MCP/provider
+副作用前终止；completed receipt replay 由 Platform 仍重新执行 IAM/current-state gate。
+
 ## 1. Owner 与依赖
 
 ```text
@@ -104,7 +178,7 @@ owner；IAM 只验证 proof 并重验当前 IAM 事实，Platform 只拥有 Skil
 固定交付顺序见 §7.5；任何阶段都不创建临时 wire、手写兼容 DTO、fallback 或双读。
 
 A1 当前已发布 strict decoded-profile schema、canonical/negative/one-bit-tampered vectors、provenance pins 和薄 OpenAPI+
-proof-checker 编排；proof 专项校验集中在 `src/kokoro_agent/execution_proof_contract.py`。A2a 已实现 pure runtime profile/signer；A2b 已实现 private loader、anchored public-ring snapshot、JWKS HTTP projection 与独立 HTTP root。A2c 已实现 owner-internal database-clock lease reader 与 run-scoped supplier。worker 尚未装配 private loader，IAM verifier 与 Platform adapter 接线仍未实现，不能作为端到端授权能力。
+proof-checker 编排；proof 专项校验集中在 `src/kokoro_agent/execution_proof_contract.py`。A2a 已实现 pure runtime profile/signer；A2b 已实现 private loader、anchored public-ring snapshot、JWKS HTTP projection 与独立 HTTP root。A2c 已实现 owner-internal database-clock lease reader 与 run-scoped supplier。IAM verifier 与 inactive Platform owner contract 已另仓发布；本仓 worker 尚未装配 private loader 或 Platform adapter，不能作为端到端授权能力。
 
 该 IAM 固定提交目前只把 `lease_generation` 描述为正整数，尚未固定本节的 JSON safe-integer 上界、原始 integer-token/
 `1.0` 拒绝规则；其 ADR-005 的交付段也尚未拆出 Agent 真实 Platform client 接线与 Platform fresh/completed-replay receipt 两个门。
@@ -221,6 +295,10 @@ key；IAM 仍可能在既有 fresh snapshot 内接受旧 key，上界由 IAM 固
 
 ### 7.5 串行交付与验收边界
 
+下列编号保留原设计的交付顺序；截至 2026-09-27，第 1–3 项的 owner artifact 已分别发布，
+第 4 项 Agent consumer 是当前未完成门，第 5 项 Platform server 的代码已发布但仍 inactive，
+第 6 项 Root 真实组合仍待验，不能把历史未来时态读成当前 owner 缺口。
+
 1. Agent 独立验收 machine artifact、canonical vector、signer/key/JWKS 与 run-scoped supplier；supplier fake-client/unit test 只证明
    supplier 本身，不称为真实 Platform call 接线。
 2. IAM 在固定 Agent artifact 后先对齐 ADR/API/安全设计，再实现 verifier、OpenAPI 与 generated SDK；验签端必须消费同一 strict
@@ -242,4 +320,4 @@ crypto 前拒绝，且不截断或转成 string。
 
 A2b separates three lifetimes: `execution_proof_keys.py` owns worker-only private PKCS#8 loading and signer construction; `interfaces/http/execution_proof_jwks.py` owns an anchored immutable public-ring snapshot; `interfaces/http/main.py` owns only HTTP business configuration and the public descriptor. The HTTP process never imports worker, private loader, signer, provider, model, sandbox, or MCP configuration. The OpenAPI `1.1.0` JWKS route is dispatched before body/auth/identity/dependency creation. Private parent directories remain a deployment-trusted secret-mount boundary; the public ring performs the stricter anchored parent walk.
 
-A2c adds exactly one production `issue_execution_proof` caller inside the standalone supplier. Worker signer gating, Platform transport/call sites, IAM verification, and the real cross-owner transport remain later work.
+A2c adds exactly one production `issue_execution_proof` caller inside the standalone supplier. IAM verification and the inactive Platform owner contract have since shipped in their owner repositories; worker signer gating, Agent Platform transport/call sites, and the real cross-owner transport remain later work.

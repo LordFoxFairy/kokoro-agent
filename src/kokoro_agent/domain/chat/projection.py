@@ -14,6 +14,7 @@ from kokoro_agent.domain.chat.models import (
     assistant_message_id,
 )
 from kokoro_agent.protocol import (
+    ArtifactKind,
     DeliveryCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
@@ -81,6 +82,7 @@ class _Delivery(_Payload):
     tool_call_id: str
     artifact_id: str
     asset_id: str
+    artifact_kind: ArtifactKind
     path: str
     title: str
     mime: str

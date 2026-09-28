@@ -739,6 +739,7 @@ def _delivery_payload(
         tool_call_id=tool_call_id,
         artifact_id=result.artifact_id,
         asset_id=result.asset_id,
+        artifact_kind=result.artifact_kind,
         path=result.path,
         title=result.title,
         mime=result.mime,

@@ -28,10 +28,20 @@ from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
 from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
 from kokoro_agent.generated.kokoro.storage.v2 import storage_pb as pb
 from kokoro_agent.clients.storage_transport import DeliveryTransport
-from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol import ArtifactKind, RunRequest
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _Response = TypeVar("_Response")
+_ARTIFACT_KIND_FROM_OWNER: dict[int, ArtifactKind] = {
+    int(pb.ArtifactKind.DOCUMENT): "document",
+    int(pb.ArtifactKind.CODE): "code",
+    int(pb.ArtifactKind.IMAGE): "image",
+    int(pb.ArtifactKind.AUDIO): "audio",
+    int(pb.ArtifactKind.VIDEO): "video",
+    int(pb.ArtifactKind.DATA): "data",
+    int(pb.ArtifactKind.ARCHIVE): "archive",
+    int(pb.ArtifactKind.OTHER): "other",
+}
 
 
 def _expect(value: object, expected: type[_Response]) -> _Response:
@@ -84,7 +94,17 @@ def _artifact_kind(mime: str) -> pb.ArtifactKind:
         "application/javascript",
     }:
         return pb.ArtifactKind.CODE
-    return pb.ArtifactKind.DOCUMENT
+    if top == "text" or mime in {
+        "application/pdf",
+        "application/rtf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.oasis.opendocument.text",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }:
+        return pb.ArtifactKind.DOCUMENT
+    return pb.ArtifactKind.OTHER
 
 
 class StorageDeliveryClient:
@@ -504,11 +524,13 @@ class StorageDeliveryClient:
             ),
             pb.CreateArtifactResponse,
         )
+        artifact_kind = _ARTIFACT_KIND_FROM_OWNER.get(int(artifact.kind))
         if (
             not artifact.artifact_id
             or artifact.asset_id != asset_id
             or artifact.content_sha256 != request.content_sha256
             or artifact.kind != kind
+            or artifact_kind is None
             or artifact.title != request.title
             or artifact.source_run_id != run.run_id
         ):
@@ -540,6 +562,7 @@ class StorageDeliveryClient:
         return DeliveryReceipt(
             artifact_id=finalized.artifact_id,
             asset_id=finalized.asset_id,
+            artifact_kind=artifact_kind,
             content_sha256=finalized.content_sha256,
             size_bytes=size_bytes,
             mime_type=request.mime_type,

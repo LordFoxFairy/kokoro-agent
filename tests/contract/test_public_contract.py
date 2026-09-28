@@ -13,6 +13,7 @@ from kokoro_agent.protocol import (
     REQUESTS_STREAM,
     RUN_EVENTS_MAXLEN,
     MessageCompletedPayload,
+    DeliveryCreatedPayload,
     agent_event_adapter,
     event_id,
     inbound_adapter,
@@ -101,6 +102,7 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
             "tool_call_id": "t1",
             "artifact_id": "artifact-1",
             "asset_id": "asset-1",
+            "artifact_kind": "document",
             "path": "/report.pdf",
             "title": "Report",
             "mime": "application/pdf",
@@ -128,6 +130,29 @@ def test_all_wire_kinds_round_trip(kind: str, payload: dict[str, JsonValue]) -> 
     assert event.run_id == "r1"
     dumped = event.model_dump()
     assert agent_event_adapter.validate_python(dumped).model_dump() == dumped
+
+
+@pytest.mark.parametrize("value", [None, "", "unknown", "DOCUMENT", 0, 8, "document "])
+def test_delivery_kind_rejects_missing_or_unknown(value: JsonValue | None) -> None:
+    payload = next(p for kind, p in _ALL_KINDS if kind == "delivery.created").copy()
+    if value is None:
+        payload.pop("artifact_kind")
+    else:
+        payload["artifact_kind"] = value
+    with pytest.raises(ValidationError):
+        agent_event_adapter.validate_python(_envelope("delivery.created", payload))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["document", "code", "image", "audio", "video", "data", "archive", "other"],
+)
+def test_delivery_kind_accepts_exact_owner_values(value: str) -> None:
+    payload = next(p for kind, p in _ALL_KINDS if kind == "delivery.created").copy()
+    payload["artifact_kind"] = value
+    event = agent_event_adapter.validate_python(_envelope("delivery.created", payload))
+    assert isinstance(event.payload, DeliveryCreatedPayload)
+    assert event.payload.artifact_kind == value
 
 
 @pytest.mark.parametrize(

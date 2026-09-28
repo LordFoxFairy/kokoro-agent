@@ -30,6 +30,9 @@ RunErrorCode = Literal[
     "contract_incompatible",
     "internal_error",
 ]
+ArtifactKind = Literal[
+    "document", "code", "image", "audio", "video", "data", "archive", "other"
+]
 
 
 class StrictModel(BaseModel):
@@ -185,6 +188,7 @@ class DeliveryCreatedPayload(StrictModel):
     tool_call_id: NonEmptyStr
     artifact_id: NonEmptyStr
     asset_id: NonEmptyStr
+    artifact_kind: ArtifactKind
     path: NonEmptyStr
     title: NonEmptyStr
     mime: NonEmptyStr

@@ -18,7 +18,7 @@ from kokoro_agent.clients.storage import (
     StorageClientError,
 )
 from kokoro_agent.domain.run.models import LeaseFence
-from kokoro_agent.protocol import ExecutionIdentity
+from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
 from kokoro_agent.tools.middleware import current_delivery_tool_call_id
 
 DELIVER_TOOL_NAME = "deliver"
@@ -40,6 +40,7 @@ class DeliverResult(BaseModel):
     status: Literal["delivered"]
     artifact_id: str
     asset_id: str
+    artifact_kind: ArtifactKind
     path: str
     title: str
     mime: str
@@ -90,6 +91,7 @@ def make_deliver_tool(
                     status="delivered",
                     artifact_id=recovered.artifact_id,
                     asset_id=recovered.asset_id,
+                    artifact_kind=recovered.artifact_kind,
                     path=normalized,
                     title=title,
                     mime=recovered.mime_type,
@@ -146,6 +148,7 @@ def make_deliver_tool(
             status="delivered",
             artifact_id=receipt.artifact_id,
             asset_id=receipt.asset_id,
+            artifact_kind=receipt.artifact_kind,
             path=normalized,
             title=title,
             mime=mime,

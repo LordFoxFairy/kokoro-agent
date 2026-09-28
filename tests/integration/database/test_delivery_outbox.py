@@ -41,6 +41,7 @@ def _payload() -> DeliveryCreatedPayload:
         tool_call_id="tool-1",
         artifact_id="artifact-1",
         asset_id="asset-1",
+        artifact_kind="document",
         path="/report.pdf",
         title="Report",
         mime="application/pdf",
@@ -103,6 +104,8 @@ async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_fram
     assert await run_repository.next_event_index(run.run_id) == before
     events = bus.run_events(run.run_id)
     assert len(events) == 1
+    assert isinstance(events[0].payload, DeliveryCreatedPayload)
+    assert events[0].payload.artifact_kind == "document"
     assert (
         events[0].event_id,
         events[0].durable_seq,
@@ -228,6 +231,7 @@ async def test_cancel_snapshot_rejects_new_started_and_new_success(
         status="delivered",
         artifact_id="artifact-1",
         asset_id="asset-1",
+        artifact_kind="document",
         path="/report.pdf",
         title="Report",
         mime="application/pdf",
@@ -354,6 +358,7 @@ async def test_completed_journal_rebuilds_delivery_before_terminal_fence(
         status="delivered",
         artifact_id="artifact-1",
         asset_id="asset-1",
+        artifact_kind="document",
         path="/report.pdf",
         title="Report",
         mime="application/pdf",

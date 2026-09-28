@@ -3,10 +3,10 @@
 状态日期：2026-09-28。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
-## W2-F2-S4 Agent→Storage 作品链：真纵切已验，种类字段待代码门
+## W2-F2-S4 Agent→Storage 作品种类：单仓代码门已验，增强真纵切待验
 
 Storage `main` `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 已发布 v2 机器源与
-final+CLEAN Artifact owner 代码。Agent `main` `96dafec038ab6a0397ce58bc638bb576c59f1328`
+final+CLEAN Artifact owner 代码。Agent S2 运行基线 `96dafec038ab6a0397ce58bc638bb576c59f1328`
 已固定 Proto/生成 Python Connect client，正式 worker 装配独立 Storage secret、RPC URL 与受控对象源；
 默认 Chat Agent 声明 `deliver`。工具按可信 Run/lease 与 conversation `session_id` 调用 Storage，
 冻结 tool journal 意图和稳定命令。Storage FINAL 而 workspace 已消失时可按原 owner 命令/回执恢复；
@@ -21,12 +21,16 @@ checker、默认 pytest（1267 passed、6 skipped）、自建临时 PostgreSQL/R
 重放不双发及本人签名 GET 原字节；另验证过期 lease 无出站、EICAR 不 Finalize、跨 conversation/tenant
 不签发引用。该纵切**未**运行完整 worker/LLM，也未证明 BFF 当前用户私有授权、Product Library 或 Web 展示。
 
-当前 `StorageDeliveryClient` 虽已验证 `CreateArtifactResponse.kind` 与出站请求一致，却在
-`DeliveryReceipt`、`DeliverResult`、`DeliveryCreatedPayload` 和 Chat 投影中丢失该权威值。
-下一代码门须以严格必填 `artifact_kind`（document/code/image/audio/video/data/archive/other）贯通上述链路
-和崩溃恢复，未知/缺失/不一致值失败关闭，不由 BFF 按 MIME 猜。**这是目标，不是当前运行事实**；
-S3 纵切也尚未验证种类字段。Agent event-protocol 源码变更时须同步本仓
-`contract/provenance.json` 的组合摘要，并让 `kokoro-agent-contract-check` 通过。
+本仓 S4 代码把 `CreateArtifactResponse.kind` 的经校验值转换为严格必填
+`artifact_kind`（document/code/image/audio/video/data/archive/other），传至 `DeliveryReceipt`、
+`DeliverResult`/journal、critical `delivery.created` 与 Chat 投影；同命令恢复保留同值。
+未知/0/缺失/不一致值失败关闭，`other` 只对应 Storage 显式 OTHER，不由 BFF 按 MIME 猜。
+Agent event-protocol 源变更已同步本仓 `contract/provenance.json` 的组合摘要。
+Root 独立 `uv lock --check`、Ruff format/check、Pyright 0 error、contract checker、
+默认 pytest（1299 passed、6 skipped、172 deselected）、真实 PostgreSQL/Redis integration（130 passed、
+1 skipped）与 wheel/sdist build 均通过；测试自有数据库和 Redis keys 已清理。
+增强的真 S3 纵切仍须断言 kind 贯通；旧 S3 证据
+尚未覆盖该字段，亦不证明 BFF/Web 已消费。
 
 ## W1E authenticated transport 候选（基线 `cf3d9ef`，待 Root 审查/提交）
 

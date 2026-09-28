@@ -49,6 +49,7 @@ class FakeDeliveryClient:
             content_sha256=request.content_sha256,
             size_bytes=len(request.content),
             mime_type=request.mime_type,
+            artifact_kind="document",
             replayed=len(self.requests) > 1,
         )
 
@@ -84,6 +85,7 @@ async def test_recovered_final_receipt_does_not_read_missing_workspace_file(
         content_sha256="a" * 64,
         size_bytes=6,
         mime_type="application/pdf",
+        artifact_kind="document",
         replayed=True,
     )
     result = DeliverResult.model_validate_json(
@@ -93,6 +95,7 @@ async def test_recovered_final_receipt_does_not_read_missing_workspace_file(
     )
     assert result.artifact_id == "artifact-1"
     assert result.asset_id == "asset-1"
+    assert result.artifact_kind == "document"
     assert client.requests == []
 
 
@@ -112,6 +115,7 @@ async def test_deliver_publishes_workspace_bytes_through_public_client(
     assert result.content_hash == hashlib.sha256(b"final report").hexdigest()
     assert result.artifact_id == f"artifact-{result.content_hash}"
     assert result.asset_id == f"asset-{result.content_hash}"
+    assert result.artifact_kind == "document"
     assert request.namespace == _NS
     assert request.run_id == _RUN
     assert request.identity == _IDENTITY

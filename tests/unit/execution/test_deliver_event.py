@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timezone
+import json
 from typing import cast
 
 from pydantic import JsonValue
@@ -16,8 +18,15 @@ from support.fakes import (
     request,
     usage_recorder,
 )
+from support.chat import FakeChatRepository
 
-from kokoro_agent.protocol import DeliveryCreated, SubagentSource
+from kokoro_agent.protocol import (
+    ArtifactKind,
+    DeliveryCreated,
+    DeliveryCreatedPayload,
+    SubagentSource,
+)
+from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.streams.protocol import StreamItem
 from kokoro_agent.execution.events import RunEmitter, delivery_created_payload
 from kokoro_agent.execution.run_agent import invoke_once
@@ -46,11 +55,12 @@ async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
     )
 
 
-def _delivered_json(*, note: str = "") -> str:
+def _delivered_json(*, note: str = "", artifact_kind: ArtifactKind = "document") -> str:
     return DeliverResult(
         status="delivered",
         artifact_id="artifact-abc123",
         asset_id="asset-abc123",
+        artifact_kind=artifact_kind,
         path="/report.pdf",
         title="Report",
         mime="application/pdf",
@@ -78,9 +88,26 @@ def test_payload_built_from_delivered_result() -> None:
     assert payload.path == "/report.pdf"
     assert payload.tool_call_id == "t1"
     assert payload.content_hash == "abc123"
+    assert payload.artifact_kind == "document"
     assert payload.mime == "application/pdf"
     assert payload.size == 12
     assert payload.note == "v1"
+
+
+def test_delivery_chat_projection_keeps_owner_kind() -> None:
+    payload = delivery_created_payload(_deliver_call(_delivered_json()))
+    assert payload is not None
+    projected = project_chat_fact(
+        tenant_id="tenant-1",
+        namespace="namespace-1",
+        session_id="conversation-1",
+        run_id="r1",
+        source_index=1,
+        created_at=datetime.now(timezone.utc),
+        payload=payload,
+    )
+    assert projected is not None
+    assert json.loads(projected.event.payload_json)["artifact_kind"] == "document"
 
 
 def test_empty_note_omitted() -> None:
@@ -123,6 +150,7 @@ async def test_delivery_follows_tool_returned_via_same_emitter() -> None:
     assert delivery.payload.content_hash == "abc123"
     assert delivery.payload.artifact_id == "artifact-abc123"
     assert delivery.payload.asset_id == "asset-abc123"
+    assert delivery.payload.artifact_kind == "document"
     assert delivery.payload.tool_call_id == "t1"
 
 
@@ -152,18 +180,33 @@ async def test_delivery_is_critical_and_deduplicates_same_tool_call() -> None:
 
 async def test_terminal_barrier_recovers_journal_success_after_stream_loss() -> None:
     bus, store = FakeBus(), FakeRunRepository()
+    chat = FakeChatRepository()
     lease = await store.try_claim(request("r1"))
     assert lease is not None
     store.tool_journal[("r1", "t1")] = {
         "name": "deliver",
         "status": "succeeded",
-        "result": _delivered_json(),
+        "result": _delivered_json(artifact_kind="code"),
         "is_error": False,
     }
-    emitter = await RunEmitter.attach(bus, "r1", outbox=store, lease=lease)
+    emitter = await RunEmitter.attach(
+        bus,
+        "r1",
+        outbox=store,
+        lease=lease,
+        tenant_id="tenant-1",
+        namespace="namespace-1",
+        session_id="conversation-1",
+        chat_repository=chat,
+    )
     await emitter.ensure_delivery_events()
     await emitter.ensure_delivery_events()
     assert bus.kinds("r1").count("delivery.created") == 1  # published is not sent twice
+    published = bus.run_events("r1")[0]
+    assert isinstance(published.payload, DeliveryCreatedPayload)
+    assert published.payload.artifact_kind == "code"
+    assert len(chat.records) == 1
+    assert json.loads(chat.records[0].payload_json)["artifact_kind"] == "code"
     assert (
         len([row for row in store.outbox["r1"] if row["kind"] == "delivery.created"])
         == 1
@@ -198,6 +241,27 @@ async def test_terminal_barrier_rejects_corrupt_successful_delivery_result() -> 
         "name": "deliver",
         "status": "succeeded",
         "result": "not-a-final-receipt",
+        "is_error": False,
+    }
+    emitter = await RunEmitter.attach(bus, "r1", outbox=store, lease=lease)
+    with pytest.raises(RuntimeError, match="valid final receipt"):
+        await emitter.ensure_delivery_events()
+    assert store.outbox.get("r1") is None
+
+
+async def test_terminal_barrier_rejects_success_without_owner_kind() -> None:
+    import json
+    import pytest
+
+    bus, store = FakeBus(), FakeRunRepository()
+    lease = await store.try_claim(request("r1"))
+    assert lease is not None
+    old_result = json.loads(_delivered_json())
+    del old_result["artifact_kind"]
+    store.tool_journal[("r1", "t1")] = {
+        "name": "deliver",
+        "status": "succeeded",
+        "result": json.dumps(old_result),
         "is_error": False,
     }
     emitter = await RunEmitter.attach(bus, "r1", outbox=store, lease=lease)

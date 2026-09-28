@@ -7,7 +7,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.domain.run.models import LeaseFence
-from kokoro_agent.protocol import ExecutionIdentity
+from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
 
 
 class StorageClientError(RuntimeError):
@@ -61,6 +61,7 @@ class DeliveryReceipt(BaseModel):
 
     artifact_id: str
     asset_id: str
+    artifact_kind: ArtifactKind
     content_sha256: str
     size_bytes: int
     mime_type: str

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import asyncio
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 from connectrpc.code import Code
@@ -86,6 +87,7 @@ class FakeTransport:
         self.invalid_reference_on_put = False
         self.connect_error: Code | None = None
         self.finalize_reply_lost = False
+        self.artifact_kind_override: pb.ArtifactKind | None = None
 
     async def call(self, method: str, request: object, headers: dict[str, str]):
         self.calls.append((method, request, headers))
@@ -126,6 +128,7 @@ class FakeTransport:
                 upload_id="upload-1", state=pb.UploadState.ABORTED
             )
         if method == "create_artifact":
+            assert isinstance(request, pb.CreateArtifactRequest)
             if self.fail_artifact_once:
                 self.fail_artifact_once = False
                 raise StorageClientError("network", retryable=True)
@@ -134,7 +137,9 @@ class FakeTransport:
                 asset_id="asset-1",
                 content_sha256=_HASH,
                 state=pb.ArtifactState.DRAFT,
-                kind=pb.ArtifactKind.DOCUMENT,
+                kind=request.kind
+                if self.artifact_kind_override is None
+                else self.artifact_kind_override,
                 title="Report",
                 source_run_id="run-1",
             )
@@ -180,6 +185,7 @@ async def test_publish_uses_canonical_conversation_scope_and_stable_commands() -
 
     assert receipt.artifact_id == "artifact-1"
     assert receipt.asset_id == "asset-1"
+    assert receipt.artifact_kind == "document"
     assert transport.puts == [_CONTENT]
     assert runs.intents and runs.intents[0][:2] == ("run-1", "tool-1")
     assert [name for name, _, _ in transport.calls] == [
@@ -323,6 +329,7 @@ async def test_final_owner_reply_lost_recovers_without_workspace_bytes() -> None
     before_puts = list(transport.puts)
     receipt = await client.recover(_recovery())
     assert receipt is not None
+    assert receipt.artifact_kind == "document"
     assert (receipt.artifact_id, receipt.asset_id, receipt.content_sha256) == (
         "artifact-1",
         "asset-1",
@@ -330,6 +337,63 @@ async def test_final_owner_reply_lost_recovers_without_workspace_bytes() -> None
     )
     assert transport.puts == before_puts
     assert [name for name, _, _ in transport.calls].count("create_upload") == 1
+
+
+async def test_recovery_rejects_changed_owner_kind_without_new_upload() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.finalize_reply_lost = True
+    client = StorageDeliveryClient(runs, transport)
+    with pytest.raises(StorageClientError):
+        await client.publish(_request())
+    transport.artifact_kind_override = pb.ArtifactKind.OTHER
+    with pytest.raises(StorageClientError, match="ARTIFACT_MISMATCH"):
+        await client.recover(_recovery())
+    assert [name for name, _, _ in transport.calls].count("create_upload") == 1
+
+
+@pytest.mark.parametrize(
+    ("mime", "expected"),
+    [
+        ("application/pdf", "document"),
+        ("text/x-python", "code"),
+        ("image/png", "image"),
+        ("audio/mpeg", "audio"),
+        ("video/mp4", "video"),
+        ("application/json", "data"),
+        ("application/zip", "archive"),
+        ("text/plain", "document"),
+        ("application/octet-stream", "other"),
+        ("application/x-kokoro-unknown", "other"),
+    ],
+)
+async def test_owner_kind_round_trips_to_receipt(mime: str, expected: str) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    receipt = await StorageDeliveryClient(runs, transport).publish(
+        _request().model_copy(update={"mime_type": mime})
+    )
+    assert receipt.artifact_kind == expected
+
+
+@pytest.mark.parametrize("kind", [0, 999, pb.ArtifactKind.OTHER])
+async def test_owner_kind_must_be_known_and_match_request(kind: int) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.artifact_kind_override = cast(pb.ArtifactKind, kind)
+    with pytest.raises(StorageClientError, match="ARTIFACT_MISMATCH"):
+        await StorageDeliveryClient(runs, transport).publish(_request())
+    assert "finalize_artifact" not in [name for name, _, _ in transport.calls]
+
+
+async def test_unknown_mime_reaches_explicit_owner_other_kind() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    receipt = await StorageDeliveryClient(runs, transport).publish(
+        _request().model_copy(update={"mime_type": "application/octet-stream"})
+    )
+    assert receipt.artifact_kind == "other"
+    create = next(
+        request for name, request, _ in transport.calls if name == "create_artifact"
+    )
+    assert isinstance(create, pb.CreateArtifactRequest)
+    assert create.kind == pb.ArtifactKind.OTHER
 
 
 async def test_recovery_rejects_changed_tool_arguments_before_owner_io() -> None:

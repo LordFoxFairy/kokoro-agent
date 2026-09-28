@@ -1,49 +1,44 @@
 # kokoro-agent API 契约
 
-## W2-F2-S2 Storage consumer 与交付事件（2026-09-28；目标，未实现）
+## W2-F2-S4 Storage consumer 与 `artifact_kind` 事件契约（2026-09-28）
 
-唯一 owner 机器源是 Storage `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 的
-[`storage.proto`](../../kokoro-storage/contract/proto/kokoro/storage/v2/storage.proto) 与
-[`common.proto`](../../kokoro-storage/contract/proto/kokoro/common/v1/common.proto)：十四 RPC；
-两文件原字节 SHA-256 分别为 `5a5dcaec2e1fd0d5eed369b8f79477fd0f8f653b32f9ebe14a8c339f4eb713ac`、
-`4604725ec7d5896c9d74b53c6f06d19b20ee758d5ab9e1cb90177ede95bba9fd`，owner provenance
+Storage `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 的
+[`storage.proto`](../../kokoro-storage/contract/proto/kokoro/storage/v2/storage.proto) 和
+[`common.proto`](../../kokoro-storage/contract/proto/kokoro/common/v1/common.proto) 是唯一 owner
+机器源；Agent 已将其只读 pin 于 `contract/storage/v2/` 并生成 Python Connect client。
+两份 owner Proto 原字节 SHA-256 分别为
+`5a5dcaec2e1fd0d5eed369b8f79477fd0f8f653b32f9ebe14a8c339f4eb713ac`、
+`4604725ec7d5896c9d74b53c6f06d19b20ee758d5ab9e1cb90177ede95bba9fd`；owner provenance
 combined SHA-256 为 `8317e644d45c8db310b44f114afa22892a6a40d6ee7d0c1c4a37a8203e79f427`。
-本仓目前**未 pin/generate/调用** Storage v2；上述路径是审查来源，不是运行时 sibling import。
-Storage 旧文档中“十一 RPC/仅设计”是历史基线，以此固定提交的机器源和代码为准。
-
 Agent 只消费 `CreateUpload`、`CompleteUpload`、`AbortUpload`、`GetUploadStatus`、`GetScanStatus`、
-`CreateArtifact`、`FinalizeArtifact` 七个具名 RPC；不以 `GetAsset`、`ListAssets`、通用下载或
-`ListFinalArtifacts` 扩大 Agent 资格。Connect metadata 的 `x-kokoro-service=kokoro-agent`、独立
-`x-kokoro-internal-secret`、tenant/subject/request ID、`scope-kind=conversation` 与
-`scope-id=RunRequest.session_id` 均由认证后的 worker 从持久 Run 与有效 lease 装配，不进入消息 body；
-`subject_id` 对应受信 `subject.kind=user` 的 opaque_ref。Storage 自己再执行 caller×operation×scope/purpose
-矩阵，service credential 不是用户可见范围的独立授权。`CreateUpload.upload_purpose=ARTIFACT`；
-`CreateArtifact` 必填受控 `kind/title/source_run_id=RunRequest.run_id`，Finalize 固定
-`artifact_id + asset_id + content_sha256`。CreateArtifact 可选的 `artifact_id` 在首次和同命令重试
-都留空，由 Storage 按该稳定 command ID 派生；Agent 用回执 ID 调 Finalize，不从 digest/run/path 自造。
-上传 PUT 仅使用 Storage 返回的短期 TransferReference，
-不复制 internal secret 到对象请求，不把 URL 写入事件/持久回执。
+`CreateArtifact`、`FinalizeArtifact`；不因作品种类字段增加 Asset/List/下载资格。受信
+`tenant/subject/conversation scope` 来自已认领 Run/lease，而非工具参数；Storage 继续验证
+caller×operation×scope/purpose。`CreateArtifactResponse.kind` 是种类的权威返回值，
+`FinalizeArtifactResponse` 不包含种类字段。
 
-每个写 RPC 的 `CommandIdentity(command_id,request_digest)` 对应同一逻辑交付的**不同阶段**，同阶段重试
-保留原 ID、digest、tenant/subject/scope 与不可变业务字段；网络超时不能改用新 ID 猜测成功。
-`CreateUpload` 重放可重新签短期 PUT；`GetUploadStatus` 与 `CompleteUpload` 的稳定 Asset 回执用于未知结果恢复；
-`GetScanStatus`/完成响应不为 CLEAN、感染、未知或依赖不可用时均不调用 Create/Finalize，不发成功事件。
-AbortUpload 只在已确认仍可中止的 pending Upload 且取消或确定失败时以稳定 command 调用；
-PUT/Complete 网络结果未知先查 Upload 状态或重放原 Complete command，不盲中止已完成或状态不明的资源。
-若 Blob/bytes SHA、size、MIME 或 Create/Finalize 的 artifact/asset/digest 回执与冻结请求不一致，失败关闭。
+**当前 Agent 事件（`96dafec`）。** 生产 client 已验证 CreateArtifact 返回的 kind 与出站请求相同，
+但 `DeliveryReceipt`、`DeliverResult`、`DeliveryCreatedPayload` 和 Chat `event_type=delivery`
+均不含 kind。`delivery.created` 已是稳定 ID 的 critical outbox 事件，按序投影并在终态前落账；
+不是旧设计中的 best-effort 普通帧。Root S3 已用真 Storage/PG/Redis/MinIO/ClamAV 验证此链的
+资源 ID、原字节、顺序及重放，但**未**验证 kind 贯通，也未运行完整 worker/LLM 或 BFF/Web。
 
-现有 `DeliverResult` 与 `DeliveryCreatedPayload` 只有 path/title/MIME/size/content_hash/note，
-没有作品资源 ID；目标必须加入 `artifact_id`、`asset_id`，并保留 digest 作为校验字段而非路由 ID。
-当前 `delivery.created` 虽在成功 `tool.returned` 后由同一 emitter 追发并尝试 Chat 投影，却不在
-`CRITICAL_KINDS`，没有可补发的 critical outbox 行；`publish_agent_events._drain` 会吞掉单帧异常，
-故现有路径不构成可靠交付。目标顺序：Storage final 稳定回执→Agent tool journal 保存含作品 ID 的
-成功结果或可恢复事件意图→以 `(run_id,tool_call_id)` 稳定标识只 stage 一条 `delivery.created` critical
-frame→确认 Agent Chat 的 `event_type=delivery` 投影，才允许同一 Run 的 `run.completed` terminal frame。
-queued frame 用同一 event ID、durable_seq 与 source index 补发；BFF 随后把它映射为
-`kokoro.delivery.created` AG-UI custom event。BFF 当前映射仍只认旧 hash-only payload，消费者更新属后续仓。
-final 后任一 Agent 阶段崩溃均按原 Storage command/Agent journal 恢复或补投影，不重复发布第二件作品。
-错误文本、draft、非 CLEAN、未知结果或 lease 失效不得冒充成功事件。BFF Product 列表、按作品 ID 下载
-及 AG-UI/Web 显示另由 BFF/Web owner 按 Storage final 读契约发布；本仓不发布浏览器直连 Storage API。
+**下一代码门的 Agent-owned event-protocol。** 在 `DeliveryReceipt`、`DeliverResult`、
+`DeliveryCreatedPayload` 与 Chat `delivery` payload 增加同名必填字段 `artifact_kind`，精确字符串集合：
+`document | code | image | audio | video | data | archive | other`。映射固定为 Storage owner
+`DOCUMENT=1`、`CODE=2`、`IMAGE=3`、`AUDIO=4`、`VIDEO=5`、`DATA=6`、`ARCHIVE=7`、
+`OTHER=8`；`UNSPECIFIED=0`、未知数值、缺失/非集合字符串、与冻结请求不一致均失败关闭。
+`OTHER` 不是未知值 fallback。MIME 只决定 CreateArtifact 出站请求，不是下游推断来源。
+成功回执必须把**经校验的 owner response kind** 传到工具结果、journal 成功 JSON、critical
+`delivery.created`、Agent Chat；同 tool-call 恢复仍使用原 Storage command/回执和同一字段值。
+已存的缺种类/损坏成功 journal 不得静默补猜后发布成功事件；无兼容双字段或旧事件 fallback。
+
+新增必填事件字段是 Agent→BFF consumer 的有意契约变化；BFF 后续以此构建自己的 Product/AG-UI
+投影，不能在 Agent 文档门宣称已消费或已完成用户私有授权。Agent 的
+`src/kokoro_agent/protocol/events.py` 变更时，现有 `contract/provenance.json` 的
+`source_files` 必须继续包含该文件，`combined_sha256` 必须重算，并通过
+`kokoro-agent-contract-check`；文档门不改机器源。
+代码门以严格解析、八枚举映射、未知失败、恢复同值、stable critical event/Chat 顺序及 Root 真纵切
+复验为验收条件。无 Agent HTTP/Redis launch wire、Storage Proto、canonical SQL 或浏览器 API 变更。
 
 ## W1E authenticated transport 更新（2026-09-28）
 

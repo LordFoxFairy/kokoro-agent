@@ -3,24 +3,30 @@
 状态日期：2026-09-28。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
-## W2-F2-S2 Agent→Storage 作品链：本仓代码已接线，跨仓纵切待验
+## W2-F2-S4 Agent→Storage 作品链：真纵切已验，种类字段待代码门
 
-Storage `main` `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 已发布十四 RPC 的 v2 机器源与
-final+CLEAN Artifact owner 代码。本仓当前候选固定该 owner Proto、生成 Python Connect client，
-正式 worker 装配独立 Storage secret、RPC URL 与受控对象源；默认 Chat Agent 声明 `deliver`。
-工具按可信 Run/lease 与 conversation `session_id` 调用 Storage，冻结 tool journal 意图和稳定命令，
-完成扫描后保留 `artifact_id`/`asset_id` 回执；Storage FINAL 而工作区已消失的窗口可从 owner
-Upload 状态恢复，不凭本地文件再造作品。`delivery.created` 由同 tool call 稳定 ID 的 critical
-outbox 和 Chat 投影恢复；普通完成、失败及取消均须经过作品屏障。取消路径在 Agent 同库事务内
-原子写入 control ledger、applied receipt、cancelled terminal、终态 fence 和 cleanup intent，
-queued 帧由现有 outbox 按序补发。
+Storage `main` `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 已发布 v2 机器源与
+final+CLEAN Artifact owner 代码。Agent `main` `96dafec038ab6a0397ce58bc638bb576c59f1328`
+已固定 Proto/生成 Python Connect client，正式 worker 装配独立 Storage secret、RPC URL 与受控对象源；
+默认 Chat Agent 声明 `deliver`。工具按可信 Run/lease 与 conversation `session_id` 调用 Storage，
+冻结 tool journal 意图和稳定命令。Storage FINAL 而 workspace 已消失时可按原 owner 命令/回执恢复；
+`delivery.created` 使用稳定 ID 的 critical outbox、Chat 投影和终态屏障。取消路径在 Agent 同库事务内
+原子写 control ledger、applied receipt、cancelled terminal、fence 与 cleanup intent；queued 帧按序补发。
 
-Root 已在此工作树独立执行 `uv lock --check`、Ruff format/check、Pyright（0 error）、contract
-checker、默认 pytest（1267 passed、6 skipped）、真实临时 PostgreSQL/Redis integration（130 passed、
-1 skipped）及 wheel/sdist build；临时库和测试生成的 Redis DB14 八个具名 key 已精确清理。
-以上证明本仓静态、默认与真实数据库门，**不证明** Agent→真实 Storage RPC/ObjectStore/ClamAV、
-BFF Product 投影或 Web Library。Root 真实 Storage 纵切尚待执行；该结果及 Agent 最终 commit
-须在 Root `docs/progress.md` 记录，不得把本候选称为 W2-F2 全链完成。
+Agent 单仓门：Root 独立执行 `uv lock --check`、Ruff format/check、Pyright（0 error）、contract
+checker、默认 pytest（1267 passed、6 skipped）、自建临时 PostgreSQL/Redis integration（130 passed、
+1 skipped）及 wheel/sdist build；测试资源已清理。Root W2-F2-S3 真纵切
+`5d3b29c0f66aef366820f0eb` 使用生产 Storage client、已 claim Run、真实 PostgreSQL/Redis/MinIO/ClamAV，
+验证 FINAL 作品、生产 `DeliverResult` journal、critical `delivery.created`/Chat/terminal 顺序、
+重放不双发及本人签名 GET 原字节；另验证过期 lease 无出站、EICAR 不 Finalize、跨 conversation/tenant
+不签发引用。该纵切**未**运行完整 worker/LLM，也未证明 BFF 当前用户私有授权、Product Library 或 Web 展示。
+
+当前 `StorageDeliveryClient` 虽已验证 `CreateArtifactResponse.kind` 与出站请求一致，却在
+`DeliveryReceipt`、`DeliverResult`、`DeliveryCreatedPayload` 和 Chat 投影中丢失该权威值。
+下一代码门须以严格必填 `artifact_kind`（document/code/image/audio/video/data/archive/other）贯通上述链路
+和崩溃恢复，未知/缺失/不一致值失败关闭，不由 BFF 按 MIME 猜。**这是目标，不是当前运行事实**；
+S3 纵切也尚未验证种类字段。Agent event-protocol 源码变更时须同步本仓
+`contract/provenance.json` 的组合摘要，并让 `kokoro-agent-contract-check` 通过。
 
 ## W1E authenticated transport 候选（基线 `cf3d9ef`，待 Root 审查/提交）
 
@@ -52,7 +58,7 @@ BFF Product 投影或 Web Library。Root 真实 Storage 纵切尚待执行；该
   chat 查询只接受同一 identity 派生的 namespace。
 - worker 具备 dispatch CAS、lease generation fencing、终态 claim、outbox republish、control reapply、
   sandbox cleanup retry 和 graceful drain。
-- Skill/MCP/Storage 目前只有窄 client port；Agent 不读取 Platform/Storage 私库。Platform owner 已在
+- Skill/MCP 业务选择目前仍有窄 client port；Storage 真作品客户端已接线。Agent 不读取 Platform/Storage 私库。Platform owner 已在
   `apps/kokoro-capability` 物理仓 main `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 发布 inactive
   `kokoro.platform.v1`。本仓现已 pin 两份只读 Proto 输入并生成 Python Protobuf/Connect async client，
   并已固定 Platform 原始 execution-operation artifact、生成 24 tenant request 的 offline typed projector；
@@ -124,9 +130,9 @@ import 均通过。此证据仅覆盖 pinned inactive artifact 与离线 project
    语义拆分，不能按行号机械切割。
 2. `domain/`、`application/`、`infrastructure/`、`interfaces/` 是当前目标架构边界；叶子运行模块按真实职责保留，
    新代码不得恢复顶层 `repositories/`、`services/` 或 `http/` 重复入口。
-3. Platform/Storage 真实 client 的生产装配仍需落地；已声明 Platform 能力缺配置或 owner 不可用时
+3. Platform typed Skill/MCP 业务 adapter 与真实 owner 授权组合仍需落地；已声明 Platform 能力缺配置或 owner 不可用时
    必须 fail closed，不创建伪实现或以空列表/部署 YAML 作为授权。无外部声明的基础 Run 不要求
-   Platform 调用。Storage 自身仍按其 owner contract 决定可选路径。
+   Platform 调用。Storage 作品客户端已装配，但 `artifact_kind` 贯通和 BFF/Web 消费仍待后续切片。
 4. CI/release 的 action SHA、镜像 digest、SBOM、provenance、签名和候选镜像 health gate 需要全部落地。
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。

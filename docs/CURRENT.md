@@ -3,6 +3,24 @@
 状态日期：2026-09-28。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
+## W2-F2-S2 Agent→Storage 作品链：当前未接线（文档门）
+
+Storage `main` `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 已发布十四 RPC 的 v2 机器源与
+final+CLEAN Artifact owner 代码；这不是 Agent/BFF/Web 已通过的作品纵切。Agent 当前没有 Storage
+Proto pin、generated Connect client 或标准 worker 交付适配器；`clients/storage.py` 只定义
+`DeliveryClient` Protocol，`WorkerClients.delivery` 默认 `None`。BFF 的 `chat` 派发虽把
+Conversation ID 放入 Agent `session_id`，默认 `GENERAL_AGENT` 未声明 delivery；目前仅 Music Agent
+声明。测试中的注入 fake 不证明正式 worker 能上传、扫描或完成 Artifact。
+
+现 `deliver` 读取 workspace 并按 run/path/hash 形成 request ID，缺必填 kind、当前 lease 与 conversation
+scope；Storage 回执虽有 `artifact_id`，tool result/`delivery.created` 未保留，用户无法凭稳定作品 ID
+走后续 Product 路由。现有 tool journal 对 `started` 的未知结果保守拒绝重放，尚无分阶段 Storage
+receipt 恢复；`delivery.created` 不在 `CRITICAL_KINDS`，当前只尝试普通 active/live 发送和 Chat 投影，
+`_drain` 可吞掉单帧异常，终态后也没有同 tool_call_id 的 outbox 补发。目标是先持久保存 Storage
+final 回执与可恢复事件意图，再按 tool_call_id 去重 stage critical frame、确认 Chat 投影，最后才发
+`run.completed`；这些代码路径和终态门**尚未实现**。上述差距的唯一目标路线见三份设计文档；本次只更新文档，
+**未改 Agent Proto、Schema、worker、工具、事件或 3310 服务，也未运行代码/真跨仓验收**。
+
 ## W1E authenticated transport 候选（基线 `cf3d9ef`，待 Root 审查/提交）
 
 - `worker/main.py` 在进程 context 内启动/关闭 `worker/platform.py` 资源，私钥只在 worker 加载。

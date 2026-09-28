@@ -1,5 +1,50 @@
 # kokoro-agent 数据模型
 
+## W2-F2-S2 交付意图与恢复边界（2026-09-28；设计门，canonical SQL 未改）
+
+Storage `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 是 Upload、Blob、Asset、Artifact、Scan
+及交付阶段命令 receipt 的唯一 writer；Agent 只拥有 Run/lease、现有 tool journal、执行事件/outbox 和 chat 投影。
+不在 Agent 存 Storage Asset/Artifact 镜像、预签 URL、对象 key/字节或扫描报告，不跨 schema JOIN、双写或
+新建交付总表。`source_run_id` 是 Storage 的来源关联，不可替代授权、conversation scope 或作品 ID。
+
+已存在的 `kokoro_agent_run.request_json` 保留受信 `tenant_ref`、`subject.kind/opaque_ref`、`actor`、
+`run_id`、`session_id`；worker 从数据库 pending dispatch 回读后取得 owner/generation lease。BFF 正式
+`chat` launch 的 `session_id` 等于 Conversation ID；Agent 的 `runtime_namespace(tenant,subject)` 是私有
+workspace/checkpoint locator，不是 Storage scope ID。每次外部阶段发送前，使用本仓 canonical Run 行的
+当前 owner、generation、数据库时间下未过期、非暂停/非终态条件核 lease；不得把 `is_fence_current`
+（仅 owner/generation）当作有效性检查。Storage 只看到已认证代言 metadata，不查询 Agent 表。
+
+同一 `(run_id,tool_call_id)` 的交付在现有 `kokoro_agent_tool_journal` 留一个不可变意图：
+path、内容 SHA/size/MIME、kind/title、tenant/subject/conversation、各阶段 command ID 与 request digest；
+不存内容 bytes 或 secret。首次外部写之前先冻结；后续重入必须逐项比较，变更则失败关闭。
+`started` 不是“肯定未写”：网络结果未知时按原 command 和 Storage owner 状态/receipt 恢复，不能创建新
+Upload/Artifact；已 `succeeded` 的完整结果可重放稳定 `artifact_id + asset_id + digest`，已失败只返回
+明确失败。当前 middleware 对所有非豁免工具的 `started` 直接给 unknown-outcome error，且表内
+`result` 仅用作终态文本，**尚无上述意图或恢复实现**；代码门应只为 deliver 增加具名重入/意图保存，
+保留其他工具的 fail-closed 语义。若 `result` 复用会破坏已存结果语义，应先提交本仓唯一 canonical SQL
+变化、事务/索引/测试；本次文档门不预写第二 Schema。
+
+阶段状态由 Storage 的 Upload/Asset/Artifact/receipt 权威事实核对，不在 Agent 再造一套可漂移状态机。
+CreateArtifact 请求的可选 `artifact_id` 始终留空，由 Storage 按稳定 create command ID 派生；
+Agent 仅保存其回执 ID，Finalize 用同一 ID。AbortUpload 只在已确认 pending 且取消/确定失败时用
+自身稳定 command；PUT/Complete 未知时先查状态或重放原命令，不盲中止。
+
+Agent 只在 final+CLEAN 的 Storage 稳定三元组校验后，先把 `artifact_id + asset_id + digest` 保存进
+现有 journal 成功结果/可恢复事件意图，再以 `(run_id,tool_call_id)` 为逻辑唯一键 stage 一条
+`delivery.created` critical outbox 帧；queued 帧以同一 event ID/durable_seq/source index 重放，
+确认 Agent Chat `event_type=delivery` 投影后，才允许同 Run 的 `run.completed`。当前 outbox 仅有
+`(run_id,durable_seq)`/`event_id` 唯一约束，critical 集不含 `delivery.created`，不能声称已经按
+tool_call_id 去重；代码门须核可否复用现有 event ID 唯一约束与 journal 事务，若不够则仅对本仓
+canonical 增加必要的窄约束/列，不建第二总表。Chat append 的
+`(tenant,namespace,run_id,source_index)` 去重只保证同一 outbox frame 的投影幂等，不能替代
+工具级 frame 唯一性。
+
+Storage final 后、Agent journal 前的崩溃靠原 owner command/receipt 恢复；journal 后、outbox 前靠
+冻结的事件意图补 stage；outbox 后、Chat 投影前靠 queued frame 补投影。不能仅靠当前普通 live emit：
+它可能在 `_drain` 异常路径被丢弃，且终态 fence 后再追加会被 supersede。Agent 与 Storage 之间不存在
+跨 owner 原子事务；通过稳定身份、owner receipt、Agent 去重/outbox 与终态顺序收敛，测试覆盖
+各 crash window。单独 tool 结果或短期 URL 不是最终用户可见交付的完成证明。
+
 ## W1E Platform consumer 数据/事务边界（2026-09-27，目标，尚未接线）
 
 本片不改变唯一 `database/schema.sql`：Agent 仍只拥有 Run、lease、journal、chat/evidence 与恢复事实；

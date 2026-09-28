@@ -31,6 +31,7 @@ src/kokoro_agent/
 ├── tools/           GA 固定工具、每次运行的工具集合与 middleware
 ├── skills/          Capability Skill 只读 backend adapter
 ├── clients/         Capability/Storage 窄 client（Skill、MCP、Artifact 交付）
+├── generated/       固定 owner Proto 派生的只读 Python Protobuf/Connect 客户端
 ├── sandbox/         Workbench 与 S3-compatible Workspace adapter
 ├── mcp/             MCP 连接、工具与部署配置适配
 ├── model/           模型选择与 provider adapter

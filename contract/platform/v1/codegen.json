@@ -1,0 +1,11 @@
+{
+  "version": "v1",
+  "buf_bin": "1.73.0",
+  "protoc_gen_py": "0.1.1",
+  "protoc_gen_connectrpc": "0.11.1",
+  "connectrpc_parameter": "io=async",
+  "inputs": [
+    "proto/kokoro/common/v1/common.proto",
+    "proto/kokoro/platform/v1/platform_runtime.proto"
+  ]
+}

@@ -28,6 +28,8 @@ jobs:
           exit-code: "1"
       - name: Check owned contract and provenance
         run: uv run kokoro-agent-contract-check
+      - name: Check generated Platform consumer drift
+        run: uv run python scripts/generate_platform_consumer.py --check
       - name: Ruff
         run: uv run ruff check src tests scripts
       - name: Pyright
@@ -36,6 +38,8 @@ jobs:
         run: uv run pytest -q -m "not integration and not e2e and not acceptance" tests/unit tests/contract
       - name: Build wheel and source distribution
         run: uv build --wheel --sdist
+      - name: Smoke installed wheel generated imports
+        run: uv run python scripts/check_platform_wheel.py dist/*.whl
 
   service-acceptance:
     runs-on: ubuntu-latest

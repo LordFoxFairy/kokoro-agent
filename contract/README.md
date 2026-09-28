@@ -11,6 +11,17 @@ identity-scoped session history/replay，以及本仓 Redis control/event envelo
 - Redis 命令和事件的运行时模型：[`src/kokoro_agent/protocol/`](../src/kokoro_agent/protocol/)。
 - PostgreSQL 事实：[`database/schema.sql`](../database/schema.sql)，不属于 API contract。
 
+## Pinned Platform consumer input
+
+`platform/v1/provenance.json` pins two read-only Proto inputs copied from Platform commit
+`ee25c1f4d6df08be183ca10f7f5e852e0b21f641`. Platform remains their only editable owner.
+`scripts/generate_platform_consumer.py --check` regenerates the Python Protobuf and async Connect
+client in a temporary Python 3.11 environment and byte-compares it with
+`src/kokoro_agent/generated/`. The isolated generator uses `buf-bin==1.73.0` (including its WKT),
+`protoc-gen-py==0.1.1` and `protoc-gen-connectrpc==0.11.1`; those packages stay out of the application environment because
+the Connect generator pins `protobuf-py==0.1.1`, while runtime `connectrpc==0.12.1` requires
+`protobuf-py>=0.3.0`.
+
 BFF 是浏览器 Product API 和 AG-UI projection 的 owner；Capability、Storage、IAM、Model 等仓库的
 业务模型不复制到本目录。Agent 只通过各 owner 的版本化 public contract 接入外部能力。
 

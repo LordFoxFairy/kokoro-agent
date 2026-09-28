@@ -1,0 +1,34 @@
+{
+  "owner": "kokoro-platform",
+  "owner_repository": "apps/kokoro-capability",
+  "owner_commit": "ee25c1f4d6df08be183ca10f7f5e852e0b21f641",
+  "sources": [
+    {
+      "owner_path": "contract/proto/kokoro/common/v1/common.proto",
+      "path": "contract/platform/v1/proto/kokoro/common/v1/common.proto",
+      "sha256": "65025b86a89119954bfbc7ad8eb89d59109ae7f390db5ee1a68f016eefa7da08"
+    },
+    {
+      "owner_path": "contract/proto/kokoro/platform/v1/platform_runtime.proto",
+      "path": "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
+      "sha256": "7c55fcadf5ba0753ca5d1bb304ccb96bf0318a4fb5c37aae4f96781c4ea53466"
+    }
+  ],
+  "generation_inputs": [
+    {
+      "path": "contract/platform/v1/codegen.json",
+      "sha256": "8e9cdbc3dc9affd47a6729392422c0a8a556e0564b2e9050783a9dba36400d20"
+    }
+  ],
+  "codegen": {
+    "python": "3.11",
+    "buf_bin": "1.73.0",
+    "protoc_gen_py": "0.1.1",
+    "protoc_gen_connectrpc": "0.11.1",
+    "connectrpc_parameter": "io=async"
+  },
+  "runtime": {
+    "connectrpc": "0.12.1",
+    "protobuf_py": ">=0.3.0,<0.4.0"
+  }
+}

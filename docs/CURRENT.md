@@ -17,7 +17,8 @@
   sandbox cleanup retry 和 graceful drain。
 - Skill/MCP/Storage 目前只有窄 client port；Agent 不读取 Platform/Storage 私库。Platform owner 已在
   `apps/kokoro-capability` 物理仓 main `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 发布 inactive
-  `kokoro.platform.v1`，但本仓未 pin 该 Proto/operation artifact、未生成 Python client/projector、未接 Connect transport。
+  `kokoro.platform.v1`。本仓现已 pin 两份只读 Proto 输入并生成 Python Protobuf/Connect async client，
+  但尚未 pin execution-operation projector、实现业务 adapter 或接入 worker Connect transport。
 - 生产发行包不包含本地 MCP/Skill fixture；缺少可选 Capability 时使用显式 `None`/unavailable
   状态，不组装伪 client。LangGraph checkpoint locator 使用受信 identity 派生 namespace 加 session
   id；本地 profile 默认复用 `127.0.0.1:55433/kokoro_worker_agent` 和 Redis
@@ -84,9 +85,11 @@ Redis DB 14 的 3 个针对性真实 acceptance 通过；测试后 DB 14 key 数
 5. 内部 HTTP DTO 的时间字段仍是 epoch milliseconds；对外 BFF/AG-UI 投影必须转换为 RFC 3339 UTC，
    并在协议升级切片中删除重复时间语义。
 6. Agent execution proof A2a 与 A2b 已通过既定门；A2c 已包含 proof 专用 direct PostgreSQL statement-time reader 和 run-scoped supplier。
-   private loader 仍未装配进 worker，生产 Skills/MCP client 也没有 supplier；production signer call site
-   仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。因此 standalone
-   reader/supplier 通过不等于 proof 已传输，不得跳过真实 client 接线门。
+   private loader 仍未装配进 worker，生产 Skills/MCP client 也没有 supplier；
+   production signer call site 仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。
+   因此 standalone reader/supplier 通过不等于 proof 已传输，不得跳过真实 client 接线门。官方 Connect Beta 在取消时把
+   `CancelledError` 包成 `ConnectError(canceled)`；下一片正式 adapter 必须恢复 asyncio 取消语义并以测试锁定，
+   本 generated-only 切片不宣称已满足该运行时约束。
 7. IAM owner main `a4c2b61467f1fc1772d6b6d8e98f081c090289fb` 已发布 execution verifier 与 Platform
    workload token ingress/OpenAPI SDK `0.6.0`；上文 2026-09-12 的“IAM verifier 待实现”只作历史阶段记录。
    Agent 代码仍未消费它们。`Agent.skills`/`Agent.mcp`、`SkillClient.resolve`/`McpClient.resolve` 当前只传字符串名称；

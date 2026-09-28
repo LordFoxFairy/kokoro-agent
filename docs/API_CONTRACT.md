@@ -1,15 +1,21 @@
 # kokoro-agent API 契约
 
-## W1E Agent 消费 Platform owner RPC（2026-09-27；owner 已发布、本仓尚未接线）
+## W1E Agent 消费 Platform owner RPC（2026-09-27；generated consumer 已固定、runtime 尚未接线）
 
 物理仓 `apps/kokoro-capability` 的 Platform owner main
 `ee25c1f4d6df08be183ca10f7f5e852e0b21f641` 已发布唯一 Proto package
 `kokoro.platform.v1` 与 inactive `platform-execution-operations` artifact `1.0.0`：31 exact RPC、
-24 tenant-execution request binding、15 command digest。此提交**不是本仓 consumer pin**；
-`contract/provenance.json` 当前只有 System consumer dependency，本仓 `pyproject.toml`/生成物也没有
-Platform Python Connect client。实现片必须记录 owner repository/commit/path/direct SHA 并把 owner
-原始 Proto、manifest、schema、vectors 固定为只读输入，再生成 Python Proto/Connect 类型及 projector，
-通过 drift/跨语言 positive+negative vectors 验证；不能把本仓文档表当机器事实源。
+24 tenant-execution request binding、15 command digest。本仓现于 `contract/platform/v1/` 固定该提交的
+两份只读 Proto 输入及 direct SHA，并在 `src/kokoro_agent/generated/` 保存 Python Protobuf/Connect
+async client；隔离再生成 drift、31 RPC 与 wheel import 由本仓测试锁定。execution-operation
+manifest/schema/vectors 与 projector 仍待下一 owner-first 切片固定，因此 generated consumer 尚无业务
+adapter、proof binding 或 worker transport，不能把本仓文档表当机器事实源或宣称 Agent→Platform 可用。
+
+生成器 `buf-bin==1.73.0`（使用其内置 WKT）、`protoc-gen-py==0.1.1`、
+`protoc-gen-connectrpc==0.11.1` 位于临时 Python 3.11 环境；应用环境只固定
+`connectrpc==0.12.1` 与 `protobuf-py>=0.3.0,<0.4.0`。这是必要隔离：Connect generator 的依赖锁死
+`protobuf-py==0.1.1`，与 runtime 要求冲突。官方 Beta 的取消包装也尚未在 adapter 恢复；下一片必须将
+`ConnectError(canceled)` 还原为 asyncio 取消语义并覆盖 deadline 与 caller cancellation。
 
 已核原始字节：`contract/proto/kokoro/platform/v1/platform_runtime.proto` SHA-256
 `7c55fcadf5ba0753ca5d1bb304ccb96bf0318a4fb5c37aae4f96781c4ea53466`；

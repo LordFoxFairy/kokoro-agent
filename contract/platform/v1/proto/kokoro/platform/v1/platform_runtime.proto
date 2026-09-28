@@ -1,0 +1,726 @@
+// Canonical Platform contract owned by kokoro-platform; generated clients derive from this file.
+syntax = "proto3";
+
+package kokoro.platform.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kokoro/common/v1/common.proto";
+
+enum SkillScopeKind {
+  SKILL_SCOPE_KIND_UNSPECIFIED = 0;
+  SKILL_SCOPE_KIND_PERSONAL = 1;
+  SKILL_SCOPE_KIND_PROJECT = 2;
+  SKILL_SCOPE_KIND_ORGANIZATION = 3;
+  SKILL_SCOPE_KIND_SESSION = 4;
+}
+
+enum SkillStatus {
+  SKILL_STATUS_UNSPECIFIED = 0;
+  SKILL_STATUS_DRAFT = 1;
+  SKILL_STATUS_ACTIVE = 2;
+  SKILL_STATUS_WITHDRAWN = 3;
+  SKILL_STATUS_QUARANTINED = 4;
+  SKILL_STATUS_DISABLED = 5;
+}
+
+enum McpConnectorType {
+  MCP_CONNECTOR_TYPE_UNSPECIFIED = 0;
+  MCP_CONNECTOR_TYPE_BUILTIN = 1;
+  MCP_CONNECTOR_TYPE_BYOK = 2;
+  MCP_CONNECTOR_TYPE_MCP = 3;
+}
+
+enum McpConnectorStatus {
+  MCP_CONNECTOR_STATUS_UNSPECIFIED = 0;
+  MCP_CONNECTOR_STATUS_PENDING = 1;
+  MCP_CONNECTOR_STATUS_ACTIVE = 2;
+  MCP_CONNECTOR_STATUS_ERROR = 3;
+  MCP_CONNECTOR_STATUS_REVOKED = 4;
+}
+
+enum McpTransport {
+  MCP_TRANSPORT_UNSPECIFIED = 0;
+  MCP_TRANSPORT_STDIO = 1;
+  MCP_TRANSPORT_STREAMABLE_HTTP = 2;
+  MCP_TRANSPORT_SSE_COMPAT = 3;
+}
+
+enum McpServerStatus {
+  MCP_SERVER_STATUS_UNSPECIFIED = 0;
+  MCP_SERVER_STATUS_REGISTERED = 1;
+  MCP_SERVER_STATUS_DISABLED = 2;
+}
+
+enum McpPrimitiveKind {
+  MCP_PRIMITIVE_KIND_UNSPECIFIED = 0;
+  MCP_PRIMITIVE_KIND_TOOL = 1;
+  MCP_PRIMITIVE_KIND_RESOURCE = 2;
+  MCP_PRIMITIVE_KIND_PROMPT = 3;
+}
+
+message SkillSeriesId {
+  string value = 1;
+}
+message SkillId {
+  string value = 1;
+}
+message SkillInstallationId {
+  string value = 1;
+}
+message SkillSourceRef {
+  string value = 1;
+}
+message McpConnectorId {
+  string value = 1;
+}
+message McpServerId {
+  string value = 1;
+}
+message McpConnectionId {
+  string value = 1;
+}
+message McpAuthorizationId {
+  string value = 1;
+}
+message McpInvocationGrant {
+  string value = 1;
+}
+
+message OwnerScope {
+  string kind = 1;
+  string id = 2;
+}
+
+message SkillMetadata {
+  string display_name = 1;
+  string summary = 2;
+  repeated string tags = 3;
+  bytes metadata_json = 4;
+}
+
+message SkillSummary {
+  reserved 1;
+  reserved "source_selector";
+  kokoro.platform.v1.SkillScopeKind scope_kind = 2;
+  string display_name = 3;
+  string summary = 4;
+  repeated string tags = 5;
+  uint64 revision = 6;
+  string content_digest = 7;
+  kokoro.platform.v1.SkillStatus status = 8;
+  kokoro.platform.v1.SkillSourceRef source_ref = 9;
+  kokoro.platform.v1.SkillSeriesId series_id = 10;
+  kokoro.platform.v1.SkillId skill_id = 11;
+}
+
+message SkillSource {
+  reserved 2;
+  reserved "source_selector";
+  kokoro.platform.v1.SkillSourceRef source_ref = 1;
+  kokoro.platform.v1.SkillScopeKind scope_kind = 3;
+  uint64 revision = 4;
+  string package_asset_ref = 5;
+  string content_digest = 6;
+  string manifest_identity = 7;
+  kokoro.platform.v1.SkillSeriesId series_id = 8;
+  kokoro.platform.v1.SkillId skill_id = 9;
+}
+
+message CreateSkillDraftRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.OwnerScope owner_scope = 3;
+  kokoro.platform.v1.SkillMetadata metadata = 4;
+}
+
+message CreateSkillDraftResponse {
+  kokoro.platform.v1.SkillId skill_id = 1;
+  uint64 revision = 2;
+  kokoro.platform.v1.SkillStatus status = 3;
+  bool replayed = 4;
+  kokoro.platform.v1.SkillSeriesId series_id = 5;
+}
+
+message ValidateSkillDraftRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  string package_asset_ref = 4;
+  string content_digest = 5;
+}
+
+message ValidateSkillDraftResponse {
+  kokoro.platform.v1.SkillId skill_id = 1;
+  bool valid = 2;
+  string content_digest = 3;
+  string manifest_identity = 4;
+  bool replayed = 5;
+  kokoro.platform.v1.SkillSeriesId series_id = 6;
+}
+
+message PublishSkillRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  kokoro.platform.v1.SkillScopeKind visibility = 4;
+}
+
+message PublishSkillResponse {
+  kokoro.platform.v1.SkillSourceRef source_ref = 1;
+  uint64 revision = 2;
+  kokoro.platform.v1.SkillStatus status = 3;
+  string event_id = 4;
+  bool replayed = 5;
+}
+
+message WithdrawSkillRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillSourceRef source_ref = 3;
+  string reason = 4;
+}
+
+message WithdrawSkillResponse {
+  kokoro.platform.v1.SkillSourceRef source_ref = 1;
+  kokoro.platform.v1.SkillStatus status = 2;
+  string event_id = 3;
+  bool replayed = 4;
+}
+
+message DiscoverVisibleSkillsRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  string query = 3;
+  repeated string tags = 4;
+  kokoro.platform.v1.SkillScopeKind scope_kind = 5;
+  kokoro.common.v1.PageRequest page = 6;
+  string execution_proof = 100;
+}
+
+message DiscoverVisibleSkillsResponse {
+  repeated kokoro.platform.v1.SkillSummary skills = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+message ResolveVisibleSkillRequest {
+  reserved 2, 3;
+  reserved "attestation", "source_selector";
+  string request_id = 1;
+  string execution_proof = 100;
+  kokoro.platform.v1.SkillSourceRef source_ref = 4;
+}
+
+message ResolveVisibleSkillResponse {
+  kokoro.platform.v1.SkillSource source = 1;
+}
+
+message GetApprovedSkillPackageReferenceRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.SkillSourceRef source_ref = 3;
+  string execution_proof = 100;
+}
+
+message GetApprovedSkillPackageReferenceResponse {
+  string asset_ref = 1;
+  string content_digest = 2;
+  string manifest_identity = 3;
+  string read_reference = 4;
+}
+
+message CreateSkillVersionRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.OwnerScope owner_scope = 3;
+  kokoro.platform.v1.SkillId base_skill_id = 4;
+  kokoro.platform.v1.SkillMetadata metadata = 5;
+}
+
+message CreateSkillVersionResponse {
+  kokoro.platform.v1.SkillId skill_id = 1;
+  uint64 revision = 2;
+  kokoro.platform.v1.SkillStatus status = 3;
+  bool replayed = 4;
+  kokoro.platform.v1.SkillSeriesId series_id = 5;
+}
+
+message SetSkillStatusRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  kokoro.platform.v1.SkillStatus status = 4;
+}
+
+message SetSkillStatusResponse {
+  kokoro.platform.v1.SkillId skill_id = 1;
+  uint64 revision = 2;
+  kokoro.platform.v1.SkillStatus status = 3;
+  bool replayed = 4;
+}
+
+enum SkillInstallationChange {
+  SKILL_INSTALLATION_CHANGE_UNSPECIFIED = 0;
+  SKILL_INSTALLATION_CHANGE_INSTALLED = 1;
+  SKILL_INSTALLATION_CHANGE_UPGRADED = 2;
+  SKILL_INSTALLATION_CHANGE_REINSTALLED = 3;
+  SKILL_INSTALLATION_CHANGE_ENABLED = 4;
+  SKILL_INSTALLATION_CHANGE_DISABLED = 5;
+  SKILL_INSTALLATION_CHANGE_REMOVED = 6;
+  SKILL_INSTALLATION_CHANGE_UNCHANGED = 7;
+}
+
+message SkillInstallation {
+  kokoro.platform.v1.SkillInstallationId installation_id = 1;
+  kokoro.platform.v1.SkillSourceRef source_ref = 2;
+  kokoro.platform.v1.OwnerScope target_owner_scope = 3;
+  uint64 revision = 4;
+  string package_asset_ref = 5;
+  string content_digest = 6;
+  bool installed = 7;
+  bool enabled = 8;
+  google.protobuf.Timestamp installed_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  google.protobuf.Timestamp removed_at = 11;
+  kokoro.platform.v1.SkillSeriesId series_id = 12;
+}
+
+message InstallSkillRequest {
+  reserved 3;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillSourceRef source_ref = 4;
+  kokoro.platform.v1.OwnerScope target_owner_scope = 5;
+  string execution_proof = 100;
+}
+
+message SetSkillInstallationEnabledRequest {
+  reserved 3;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillInstallationId installation_id = 4;
+  bool enabled = 5;
+  string execution_proof = 100;
+}
+
+message RemoveSkillInstallationRequest {
+  reserved 3;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillInstallationId installation_id = 4;
+  string execution_proof = 100;
+}
+
+message GetSkillInstallationRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.SkillInstallationId installation_id = 3;
+  string execution_proof = 100;
+}
+
+message GetSkillInstallationResponse {
+  kokoro.platform.v1.SkillInstallation installation = 1;
+}
+
+message ListSkillInstallationsRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.OwnerScope target_owner_scope = 3;
+  optional bool enabled = 4;
+  optional bool installed = 5;
+  kokoro.common.v1.PageRequest page = 6;
+  string execution_proof = 100;
+}
+
+message ListSkillInstallationsResponse {
+  repeated kokoro.platform.v1.SkillInstallation installations = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+message InstallSkillResponse {
+  kokoro.platform.v1.SkillInstallation installation = 1;
+  kokoro.platform.v1.SkillInstallationChange change = 2;
+  optional string event_id = 3;
+  bool replayed = 4;
+}
+
+message McpConnector {
+  kokoro.platform.v1.McpConnectorId connector_id = 1;
+  kokoro.platform.v1.McpConnectorType connector_type = 2;
+  string provider_key = 3;
+  kokoro.platform.v1.OwnerScope owner_scope = 4;
+  kokoro.platform.v1.McpConnectorStatus status = 5;
+  repeated string approved_scopes = 6;
+  string external_account_ref = 7;
+}
+
+message CreateMcpConnectorRequest {
+  reserved 7;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.OwnerScope owner_scope = 3;
+  kokoro.platform.v1.McpConnectorType connector_type = 4;
+  string provider_key = 5;
+  repeated string requested_scopes = 6;
+  string execution_proof = 100;
+}
+
+message CreateMcpConnectorResponse {
+  kokoro.platform.v1.McpConnectorId connector_id = 1;
+  kokoro.platform.v1.McpConnectorStatus status = 2;
+  kokoro.platform.v1.McpAuthorizationId authorization_id = 3;
+  bool replayed = 4;
+}
+
+message BeginMcpConnectorAuthorizationRequest {
+  reserved 4;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  string execution_proof = 100;
+}
+
+message BeginMcpConnectorAuthorizationResponse {
+  kokoro.platform.v1.McpAuthorizationId authorization_id = 1;
+  string provider_display = 2;
+  repeated string consent_scopes = 3;
+  int64 expires_at_unix_seconds = 4;
+  string authorization_url = 5;
+}
+
+message CompleteMcpConnectorAuthorizationRequest {
+  reserved 6;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  kokoro.platform.v1.McpAuthorizationId authorization_id = 4;
+  string authorization_handle_ref = 5;
+  string execution_proof = 100;
+}
+
+message CompleteMcpConnectorAuthorizationResponse {
+  kokoro.platform.v1.McpConnectorId connector_id = 1;
+  kokoro.platform.v1.McpConnectorStatus status = 2;
+  repeated string approved_scopes = 3;
+  string external_account_ref = 4;
+  bool replayed = 5;
+}
+
+message ListMcpConnectorsRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.OwnerScope owner_scope = 3;
+  kokoro.platform.v1.McpConnectorStatus status_filter = 4;
+  kokoro.common.v1.PageRequest page = 5;
+  string execution_proof = 100;
+}
+
+message ListMcpConnectorsResponse {
+  repeated kokoro.platform.v1.McpConnector mcp_connectors = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+message GetMcpConnectorRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  string execution_proof = 100;
+}
+
+message GetMcpConnectorResponse {
+  kokoro.platform.v1.McpConnector mcp_connector = 1;
+}
+
+message RevokeMcpConnectorRequest {
+  reserved 5;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  string reason = 4;
+  string execution_proof = 100;
+}
+
+message RevokeMcpConnectorResponse {
+  kokoro.platform.v1.McpConnectorId connector_id = 1;
+  kokoro.platform.v1.McpConnectorStatus status = 2;
+  string event_id = 3;
+  bool replayed = 4;
+}
+
+message McpServer {
+  kokoro.platform.v1.McpServerId server_id = 1;
+  string provider_key = 2;
+  string server_identity = 3;
+  kokoro.platform.v1.McpTransport transport = 4;
+  string declaration_digest = 5;
+  kokoro.platform.v1.McpServerStatus status = 6;
+}
+
+message RegisterMcpServerRequest {
+  reserved 2, 3, 4, 5, 6, 7;
+  reserved "command", "provider_key", "server_identity", "transport", "declaration_digest", "attestation";
+  string request_id = 1;
+}
+
+message RegisterMcpServerResponse {
+  kokoro.platform.v1.McpServerId server_id = 1;
+  kokoro.platform.v1.McpServerStatus status = 2;
+  bool replayed = 3;
+}
+
+message GetMcpServerRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpServerId server_id = 3;
+  string execution_proof = 100;
+}
+
+message GetMcpServerResponse {
+  kokoro.platform.v1.McpServer server = 1;
+}
+
+message ListMcpServersRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  optional string provider_key = 3;
+  kokoro.common.v1.PageRequest page = 4;
+  string execution_proof = 100;
+}
+
+message ListMcpServersResponse {
+  repeated kokoro.platform.v1.McpServer servers = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+message CreateMcpConnectionRequest {
+  reserved 6;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  kokoro.platform.v1.McpServerId server_id = 4;
+  repeated string allowed_selectors = 5;
+  string execution_proof = 100;
+}
+
+message CreateMcpConnectionResponse {
+  kokoro.platform.v1.McpConnectionId connection_id = 1;
+  string policy_digest = 2;
+  string status = 3;
+  bool replayed = 4;
+}
+
+message McpConnection {
+  kokoro.platform.v1.McpConnectionId connection_id = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 2;
+  kokoro.platform.v1.McpServerId server_id = 3;
+  repeated string allowed_selectors = 4;
+  string policy_digest = 5;
+  string status = 6;
+}
+
+message GetMcpConnectionRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpConnectionId connection_id = 3;
+  string execution_proof = 100;
+}
+
+message GetMcpConnectionResponse {
+  kokoro.platform.v1.McpConnection connection = 1;
+}
+
+message ListMcpConnectionsRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  kokoro.common.v1.PageRequest page = 4;
+  string execution_proof = 100;
+}
+
+message ListMcpConnectionsResponse {
+  repeated kokoro.platform.v1.McpConnection connections = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+message RevokeMcpConnectionRequest {
+  reserved 5;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpConnectionId connection_id = 3;
+  string reason = 4;
+  string execution_proof = 100;
+}
+
+message RevokeMcpConnectionResponse {
+  kokoro.platform.v1.McpConnectionId connection_id = 1;
+  string status = 2;
+  string event_id = 3;
+  bool replayed = 4;
+}
+
+message McpCapabilitySummary {
+  string selector = 1;
+  kokoro.platform.v1.McpPrimitiveKind kind = 2;
+  string display_name = 3;
+  string input_schema_digest = 4;
+  string output_schema_digest = 5;
+  repeated string required_scopes = 6;
+}
+
+message ListMcpServerDeclarationsRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  kokoro.common.v1.PageRequest page = 4;
+  string execution_proof = 100;
+}
+
+message ListMcpServerDeclarationsResponse {
+  repeated kokoro.platform.v1.McpServer servers = 1;
+  repeated kokoro.platform.v1.McpCapabilitySummary capabilities = 2;
+  kokoro.common.v1.PageResult page = 3;
+}
+
+message ListMcpConnectorCapabilitiesRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  string execution_proof = 100;
+}
+
+message ListMcpConnectorCapabilitiesResponse {
+  kokoro.platform.v1.McpConnectorId connector_id = 1;
+  repeated kokoro.platform.v1.McpCapabilitySummary capabilities = 2;
+  int64 expires_at_unix_seconds = 3;
+}
+
+message AuthorizeMcpToolRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 3;
+  string tool_selector = 4;
+  bytes typed_arguments_json = 5;
+  string approval_ref = 6;
+  string idempotency_key = 7;
+  string execution_proof = 100;
+}
+
+message AuthorizeMcpToolResponse {
+  kokoro.platform.v1.McpInvocationGrant invocation_grant = 1;
+  kokoro.platform.v1.McpConnectorId connector_id = 2;
+  string tool_ref = 3;
+  string typed_arguments_digest = 4;
+  int64 expires_at_unix_seconds = 5;
+  string audit_ref = 6;
+}
+
+service SkillCatalogService {
+  rpc CreateSkillDraft(kokoro.platform.v1.CreateSkillDraftRequest) returns (kokoro.platform.v1.CreateSkillDraftResponse);
+  rpc CreateSkillVersion(kokoro.platform.v1.CreateSkillVersionRequest) returns (kokoro.platform.v1.CreateSkillVersionResponse);
+  rpc ValidateSkillDraft(kokoro.platform.v1.ValidateSkillDraftRequest) returns (kokoro.platform.v1.ValidateSkillDraftResponse);
+  rpc PublishSkill(kokoro.platform.v1.PublishSkillRequest) returns (kokoro.platform.v1.PublishSkillResponse);
+  rpc WithdrawSkill(kokoro.platform.v1.WithdrawSkillRequest) returns (kokoro.platform.v1.WithdrawSkillResponse);
+  rpc SetSkillStatus(kokoro.platform.v1.SetSkillStatusRequest) returns (kokoro.platform.v1.SetSkillStatusResponse);
+}
+
+service SkillSourceService {
+  rpc DiscoverVisibleSkills(kokoro.platform.v1.DiscoverVisibleSkillsRequest) returns (kokoro.platform.v1.DiscoverVisibleSkillsResponse);
+  rpc ResolveVisibleSkill(kokoro.platform.v1.ResolveVisibleSkillRequest) returns (kokoro.platform.v1.ResolveVisibleSkillResponse);
+  rpc GetApprovedSkillPackageReference(kokoro.platform.v1.GetApprovedSkillPackageReferenceRequest) returns (kokoro.platform.v1.GetApprovedSkillPackageReferenceResponse);
+}
+
+message SetSkillInstallationEnabledResponse {
+  kokoro.platform.v1.SkillInstallation installation = 1;
+  kokoro.platform.v1.SkillInstallationChange change = 2;
+  optional string event_id = 3;
+  bool replayed = 4;
+}
+
+message RemoveSkillInstallationResponse {
+  kokoro.platform.v1.SkillInstallation installation = 1;
+  kokoro.platform.v1.SkillInstallationChange change = 2;
+  optional string event_id = 3;
+  bool replayed = 4;
+}
+
+service SkillInstallationService {
+  rpc InstallSkill(kokoro.platform.v1.InstallSkillRequest) returns (kokoro.platform.v1.InstallSkillResponse);
+  rpc SetSkillInstallationEnabled(kokoro.platform.v1.SetSkillInstallationEnabledRequest) returns (kokoro.platform.v1.SetSkillInstallationEnabledResponse);
+  rpc RemoveSkillInstallation(kokoro.platform.v1.RemoveSkillInstallationRequest) returns (kokoro.platform.v1.RemoveSkillInstallationResponse);
+  rpc GetSkillInstallation(kokoro.platform.v1.GetSkillInstallationRequest) returns (kokoro.platform.v1.GetSkillInstallationResponse);
+  rpc ListSkillInstallations(kokoro.platform.v1.ListSkillInstallationsRequest) returns (kokoro.platform.v1.ListSkillInstallationsResponse);
+}
+
+service McpConnectorService {
+  rpc CreateMcpConnector(kokoro.platform.v1.CreateMcpConnectorRequest) returns (kokoro.platform.v1.CreateMcpConnectorResponse);
+  rpc BeginMcpConnectorAuthorization(kokoro.platform.v1.BeginMcpConnectorAuthorizationRequest) returns (kokoro.platform.v1.BeginMcpConnectorAuthorizationResponse);
+  rpc CompleteMcpConnectorAuthorization(kokoro.platform.v1.CompleteMcpConnectorAuthorizationRequest) returns (kokoro.platform.v1.CompleteMcpConnectorAuthorizationResponse);
+  rpc ListMcpConnectors(kokoro.platform.v1.ListMcpConnectorsRequest) returns (kokoro.platform.v1.ListMcpConnectorsResponse);
+  rpc GetMcpConnector(kokoro.platform.v1.GetMcpConnectorRequest) returns (kokoro.platform.v1.GetMcpConnectorResponse);
+  rpc RevokeMcpConnector(kokoro.platform.v1.RevokeMcpConnectorRequest) returns (kokoro.platform.v1.RevokeMcpConnectorResponse);
+}
+
+service McpServerService {
+  rpc RegisterMcpServer(kokoro.platform.v1.RegisterMcpServerRequest) returns (kokoro.platform.v1.RegisterMcpServerResponse);
+  rpc GetMcpServer(kokoro.platform.v1.GetMcpServerRequest) returns (kokoro.platform.v1.GetMcpServerResponse);
+  rpc ListMcpServers(kokoro.platform.v1.ListMcpServersRequest) returns (kokoro.platform.v1.ListMcpServersResponse);
+}
+
+service McpConnectionService {
+  rpc CreateMcpConnection(kokoro.platform.v1.CreateMcpConnectionRequest) returns (kokoro.platform.v1.CreateMcpConnectionResponse);
+  rpc ListMcpServerDeclarations(kokoro.platform.v1.ListMcpServerDeclarationsRequest) returns (kokoro.platform.v1.ListMcpServerDeclarationsResponse);
+  rpc GetMcpConnection(kokoro.platform.v1.GetMcpConnectionRequest) returns (kokoro.platform.v1.GetMcpConnectionResponse);
+  rpc ListMcpConnections(kokoro.platform.v1.ListMcpConnectionsRequest) returns (kokoro.platform.v1.ListMcpConnectionsResponse);
+  rpc RevokeMcpConnection(kokoro.platform.v1.RevokeMcpConnectionRequest) returns (kokoro.platform.v1.RevokeMcpConnectionResponse);
+}
+
+service McpAuthorizationService {
+  rpc ListMcpConnectorCapabilities(kokoro.platform.v1.ListMcpConnectorCapabilitiesRequest) returns (kokoro.platform.v1.ListMcpConnectorCapabilitiesResponse);
+  rpc AuthorizeMcpTool(kokoro.platform.v1.AuthorizeMcpToolRequest) returns (kokoro.platform.v1.AuthorizeMcpToolResponse);
+}
+
+message McpConnectorProvider {
+  string provider_key = 1;
+  string display_name = 2;
+  repeated kokoro.platform.v1.McpConnectorType connector_types = 3;
+  repeated string default_scopes = 4;
+  bool authorization_required = 5;
+}
+
+message ListMcpConnectorProvidersRequest {
+  reserved 2;
+  reserved "attestation";
+  string request_id = 1;
+  kokoro.common.v1.PageRequest page = 3;
+  string execution_proof = 100;
+}
+
+message ListMcpConnectorProvidersResponse {
+  repeated kokoro.platform.v1.McpConnectorProvider providers = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+service McpConnectorProviderService {
+  rpc ListMcpConnectorProviders(kokoro.platform.v1.ListMcpConnectorProvidersRequest) returns (kokoro.platform.v1.ListMcpConnectorProvidersResponse);
+}

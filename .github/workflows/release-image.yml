@@ -64,6 +64,7 @@ jobs:
       - name: Check contract and run complete verification
         run: |
           uv run kokoro-agent-contract-check
+          uv run python scripts/generate_platform_consumer.py --check
           uv run ruff check src tests scripts
           uv run pyright
           uv run pytest -q -o addopts='' tests/unit tests/contract tests/integration tests/e2e tests/acceptance
@@ -71,6 +72,8 @@ jobs:
         run: uv run kokoro-agent-db-apply-schema
       - name: Build wheel and source distribution
         run: uv build --wheel --sdist
+      - name: Smoke installed wheel generated imports
+        run: uv run python scripts/check_platform_wheel.py dist/*.whl
 
   publish:
     needs: verify

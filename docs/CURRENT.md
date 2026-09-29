@@ -1,5 +1,20 @@
 # kokoro-agent 当前实现
 
+## W3-AGENT-PLATFORM-V3-PIN（2026-09-29；本仓候选已通过直接门，待 Root 验收）
+
+旧 Agent `cbb2719` 曾固定 Platform `ee25c1f` 的 Proto 与 execution-operations v1、
+`binding_version=1.0.0`；当前本仓候选已固定 Platform owner `5b6eb2c` 唯一运行时 v3/3.0.0，
+Proto SHA-256 为 `282bf886ea9648f7ce5208abd36ab47d879b2002a036d90aada2af59e74b4020`，
+v3 aggregate 为 `324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d`。
+已用 owner 原字节替换 Agent 的 v1 vendor，固定完整 17 文件 v3 artifact/provenance，
+重新生成唯一 Python Proto/Connect client 与 24-request projector，验证六个 Agent RPC 的正反向量。
+本仓 `ruff format/check`、Pyright、contract check、生成 drift、聚焦 pytest 132 pass/1 deselected、
+默认 pytest 1310 pass/6 skip/172 deselected、wheel/sdist build 均已在候选工作树通过；
+Root 独立审查和提交尚未发生。六 RPC sender 尚未被 Skill/MCP 产品 adapter 调用。
+manifest 仍为 inactive/routable=false；typed Skill/MCP 选择、Storage 包读取、MCP 凭据和真实 IAM→Platform
+互操作仍为后续门，本片不提升 `EDGE-AGENT-CAPABILITY` 为 active。
+
+
 ## W2-REAL-MODEL-AGENT-WRITE 候选（2026-09-29，待 Root 提交/真组合）
 
 `GENERAL_AGENT` 已显式启用隔离 state 工作区写入，全局 Permissions 和 Music 仍为只读，

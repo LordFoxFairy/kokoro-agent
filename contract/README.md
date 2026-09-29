@@ -13,23 +13,23 @@ identity-scoped session history/replay，以及本仓 Redis control/event envelo
 
 ## Pinned Platform consumer input
 
-`platform/v1/provenance.json` pins two read-only Proto inputs plus the original 13-file
-`platform-execution-operations` payload and its provenance copied from Platform commit
-`ee25c1f4d6df08be183ca10f7f5e852e0b21f641`. Platform remains their only editable owner.
+`platform/v1/provenance.json` pins two read-only Proto inputs plus the complete 17-file
+`platform-execution-operations/v3` artifact (including its provenance) copied from Platform commit
+`5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0`. Platform remains their only editable owner.
 `scripts/generate_platform_consumer.py --check` regenerates the Python Protobuf and async Connect
 client plus the explicit 24-message tenant request projector in a temporary Python 3.11 environment and byte-compares it with
-`src/kokoro_agent/generated/`. The isolated generator uses `buf-bin==1.73.0` (including its WKT),
+`src/kokoro_agent/generated/`, rejecting stale Platform outputs while preserving the unrelated Storage generated tree. The isolated generator uses `buf-bin==1.73.0` (including its WKT),
 `protoc-gen-py==0.1.1` and `protoc-gen-connectrpc==0.11.1`; those packages stay out of the application environment because
 the Connect generator pins `protobuf-py==0.1.1`, while runtime `connectrpc==0.12.1` requires
 `protobuf-py>=0.3.0`.
 
 The owner execution-operation manifest remains `inactive` and `routable=false`. The build-time
-artifact checker hard-codes the owner repository/commit, the exact 14-path owner/path/digest
-inventory (including the owner provenance raw digest), the 13-payload aggregate, 24 positive
-binding vectors, 134 projected-JSON negatives and seven raw-parser negatives. Separately, the
+artifact checker hard-codes the owner repository/commit, the exact 17-path v3 owner/path/digest
+inventory (including the owner provenance raw digest), the v3 aggregate, 24 request bindings,
+31 operations, 53 positive vectors, 142 negative vectors and 139 command-projection vectors. Separately, the
 offline typed projector rejects protobuf-py's permissive scalar and message construction,
-including cross-wrapper ID messages. It is not a Platform adapter, proof supplier call site,
-transport, or activation claim.
+including cross-wrapper ID messages. The pinned artifact and generated files alone are not a
+Platform business adapter, proof supplier call site, or activation claim.
 
 BFF 是浏览器 Product API 和 AG-UI projection 的 owner；Capability、Storage、IAM、Model 等仓库的
 业务模型不复制到本目录。Agent 只通过各 owner 的版本化 public contract 接入外部能力。

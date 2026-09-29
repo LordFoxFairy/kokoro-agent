@@ -1,7 +1,7 @@
 {
   "owner": "kokoro-platform",
   "owner_repository": "apps/kokoro-capability",
-  "owner_commit": "ee25c1f4d6df08be183ca10f7f5e852e0b21f641",
+  "owner_commit": "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0",
   "sources": [
     {
       "owner_path": "contract/proto/kokoro/common/v1/common.proto",
@@ -11,7 +11,7 @@
     {
       "owner_path": "contract/proto/kokoro/platform/v1/platform_runtime.proto",
       "path": "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
-      "sha256": "7c55fcadf5ba0753ca5d1bb304ccb96bf0318a4fb5c37aae4f96781c4ea53466"
+      "sha256": "282bf886ea9648f7ce5208abd36ab47d879b2002a036d90aada2af59e74b4020"
     }
   ],
   "generation_inputs": [
@@ -32,78 +32,93 @@
     "protobuf_py": ">=0.3.0,<0.4.0"
   },
   "execution_operations": {
-    "owner_commit": "ee25c1f4d6df08be183ca10f7f5e852e0b21f641",
-    "aggregate_sha256": "afca9369c4aedd7a68aea02af834265efc6f480a07668ae0f8dbcad9bd7e545e",
+    "owner_commit": "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0",
+    "aggregate_sha256": "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d",
     "sources": [
       {
-        "path": "contract/platform/v1/execution-operations/v1/command-identities.json",
-        "owner_path": "contract/execution-operations/v1/command-identities.json",
-        "sha256": "4e25844843b46f86826aba3f2f250cdba6b78d81867288a6414dc333a10091dd"
+        "path": "contract/platform/v1/execution-operations/v3/command-identities.json",
+        "owner_path": "contract/execution-operations/v3/command-identities.json",
+        "sha256": "e9d38c5bfa47b083dc66435b6e21b3cfdfe1762e29ebab3a6bd86c8b86729e28"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/identities.json",
-        "owner_path": "contract/execution-operations/v1/identities.json",
-        "sha256": "ba2064c1e720e41a326e0c88c2a53f26f1727565f24a955f55490816351282e0"
+        "path": "contract/platform/v1/execution-operations/v3/command-schemas.json",
+        "owner_path": "contract/execution-operations/v3/command-schemas.json",
+        "sha256": "30cda8f01b6fd8246826c1a7a909fffee4795766ab5328d8d653ae2003ee71b3"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/manifest.json",
-        "owner_path": "contract/execution-operations/v1/manifest.json",
-        "sha256": "187bbeeceb1e082c15a8df3fc1451f89322575fa13276abe161a2c72fedad9c9"
+        "path": "contract/platform/v1/execution-operations/v3/identities.json",
+        "owner_path": "contract/execution-operations/v3/identities.json",
+        "sha256": "60e6fb68ad040860983f333839196c872e29c81965bdc89de422c8a67b5b5359"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/operation-catalog.json",
-        "owner_path": "contract/execution-operations/v1/operation-catalog.json",
-        "sha256": "9da9568ddd37622a9e3b4ccfdb8984705a35b525aa7bd8d5c27c8cb625b8a6cc"
+        "path": "contract/platform/v1/execution-operations/v3/manifest.json",
+        "owner_path": "contract/execution-operations/v3/manifest.json",
+        "sha256": "b8b33095b02ac51cfcbfef7ee4cc8a7e5e0dca9025a87a2b2d31885b41dac4a3"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/provenance.json",
-        "owner_path": "contract/execution-operations/v1/provenance.json",
-        "sha256": "eaf58dafe6d8730d6cf371357136e6ed59532922d19beb97067db8a666b1183d"
+        "path": "contract/platform/v1/execution-operations/v3/operation-catalog.json",
+        "owner_path": "contract/execution-operations/v3/operation-catalog.json",
+        "sha256": "9a8b7eebb11157d08bf299a33c44a0d975376d238b3827e4de5a48e917d7dc49"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/request-bindings.json",
-        "owner_path": "contract/execution-operations/v1/request-bindings.json",
-        "sha256": "050291cf6f56052453ddb841f1e7cc624b2d3da28e5d9afd6abb9108349371fd"
+        "path": "contract/platform/v1/execution-operations/v3/projection-registry.json",
+        "owner_path": "contract/execution-operations/v3/projection-registry.json",
+        "sha256": "fccdcbc9161ca3f0ab1e5b094675be699463338df3bd1b65290fd998322f50f5"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/schemas/command-identities.schema.json",
-        "owner_path": "contract/execution-operations/v1/schemas/command-identities.schema.json",
-        "sha256": "1ee71ebd279724fe19602535d74fda241debf81da68e0431643185500a28814f"
+        "path": "contract/platform/v1/execution-operations/v3/provenance.json",
+        "owner_path": "contract/execution-operations/v3/provenance.json",
+        "sha256": "952cb00840fba598479e95eb3bcfa1a8ffe326a47167325f9edfd15d0f87c2e2"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/schemas/identities.schema.json",
-        "owner_path": "contract/execution-operations/v1/schemas/identities.schema.json",
-        "sha256": "5ed33481630923d2d237f16a08819627a3826dbe557f3884329066189edbe0c9"
+        "path": "contract/platform/v1/execution-operations/v3/request-bindings.json",
+        "owner_path": "contract/execution-operations/v3/request-bindings.json",
+        "sha256": "2572ec3a0357c02ac0d2291db3d4b9e53588ce8bb8f63742a013cebb6c4c401d"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/schemas/manifest.schema.json",
-        "owner_path": "contract/execution-operations/v1/schemas/manifest.schema.json",
-        "sha256": "911e63385a799add2e592dcb90ae2c8af556968e2cb53a168e70101f68a9ee09"
+        "path": "contract/platform/v1/execution-operations/v3/schemas/command-identities.schema.json",
+        "owner_path": "contract/execution-operations/v3/schemas/command-identities.schema.json",
+        "sha256": "523562734e01f7c529c80abcf3a11ae5874dd9ce4fa36f5b2ed0f896c2bd66ab"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/schemas/operation-catalog.schema.json",
-        "owner_path": "contract/execution-operations/v1/schemas/operation-catalog.schema.json",
-        "sha256": "bb7d7e0e37bb9d6d8a696b7704b9c13263e95b5705607c6ed159cf5e01d56161"
+        "path": "contract/platform/v1/execution-operations/v3/schemas/identities.schema.json",
+        "owner_path": "contract/execution-operations/v3/schemas/identities.schema.json",
+        "sha256": "faadbbc5984fbabe1bb68703c2e2213b9598342eae073dd557fb2573b427ef87"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/schemas/request-bindings.schema.json",
-        "owner_path": "contract/execution-operations/v1/schemas/request-bindings.schema.json",
-        "sha256": "a4ce34e858ab4850b6429407b52e6b5ead86d0d629ecc7033d15487a38166b13"
+        "path": "contract/platform/v1/execution-operations/v3/schemas/manifest.schema.json",
+        "owner_path": "contract/execution-operations/v3/schemas/manifest.schema.json",
+        "sha256": "5b4274edc000ceb064adf549259064486e757c4621805e9a424b55697217f158"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/schemas/vector-inventory.schema.json",
-        "owner_path": "contract/execution-operations/v1/schemas/vector-inventory.schema.json",
-        "sha256": "a6815f865e8d39610623288b939047367f5a0840ee1f6c8112db5582463d507d"
+        "path": "contract/platform/v1/execution-operations/v3/schemas/operation-catalog.schema.json",
+        "owner_path": "contract/execution-operations/v3/schemas/operation-catalog.schema.json",
+        "sha256": "5698936d0c36139088fa2f141c67cf6b8ec5319c7adcc38faeaa0681ffd55d99"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/vectors/negative.json",
-        "owner_path": "contract/execution-operations/v1/vectors/negative.json",
-        "sha256": "34b44925718d03715f8c493d5c8afe58b0037aab6886618a536911f38983d121"
+        "path": "contract/platform/v1/execution-operations/v3/schemas/request-bindings.schema.json",
+        "owner_path": "contract/execution-operations/v3/schemas/request-bindings.schema.json",
+        "sha256": "6febac6d74bf6777252feebc606ff185e400cded9822f5a29633fa07f12881e4"
       },
       {
-        "path": "contract/platform/v1/execution-operations/v1/vectors/positive.json",
-        "owner_path": "contract/execution-operations/v1/vectors/positive.json",
-        "sha256": "ffb38f37dc7a103d48f99b5fe19fd9cc3c1145f86c5fb13424cf6dd3d42fffca"
+        "path": "contract/platform/v1/execution-operations/v3/schemas/vector-inventory.schema.json",
+        "owner_path": "contract/execution-operations/v3/schemas/vector-inventory.schema.json",
+        "sha256": "ce812f46d0332254be61af0a54bfff3761dce7ab127f825fde0ac012bbf8b204"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v3/vectors/command-projection.json",
+        "owner_path": "contract/execution-operations/v3/vectors/command-projection.json",
+        "sha256": "05b6d51ea424ba50473a44cfadee0606e42e628affd8ac28f85f31cd9c10083b"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v3/vectors/negative.json",
+        "owner_path": "contract/execution-operations/v3/vectors/negative.json",
+        "sha256": "c674f7add6eeea1ccc93ce42862a2902e5f5e7adfb0edce53c6b00616ef11a1a"
+      },
+      {
+        "path": "contract/platform/v1/execution-operations/v3/vectors/positive.json",
+        "owner_path": "contract/execution-operations/v3/vectors/positive.json",
+        "sha256": "8d5434d356415e1990b2f0b7dd9e2f30b53817d718343d579b784e3ca67da313"
       }
     ]
   }

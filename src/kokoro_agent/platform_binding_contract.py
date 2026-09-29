@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +12,9 @@ from collections.abc import Mapping
 from typing import TypeAlias
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from jsonschema import validate as validate_json_schema
 
 from kokoro_agent.execution.execution_proof_profile import MAX_SAFE_INTEGER
 from kokoro_agent.execution.platform_request_binding_values import (
@@ -20,84 +24,100 @@ from kokoro_agent.execution.platform_request_binding_values import (
 
 
 JsonObject: TypeAlias = dict[str, object]
-EXPECTED_OWNER_COMMIT = "ee25c1f4d6df08be183ca10f7f5e852e0b21f641"
+EXPECTED_OWNER_COMMIT = "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0"
 EXPECTED_OWNER_REPOSITORY = "apps/kokoro-capability"
-EXPECTED_AGGREGATE = "afca9369c4aedd7a68aea02af834265efc6f480a07668ae0f8dbcad9bd7e545e"
+EXPECTED_AGGREGATE = "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
 EXPECTED_OWNER_PROVENANCE_SHA256 = (
-    "eaf58dafe6d8730d6cf371357136e6ed59532922d19beb97067db8a666b1183d"
+    "952cb00840fba598479e95eb3bcfa1a8ffe326a47167325f9edfd15d0f87c2e2"
 )
 EXPECTED_EXECUTION_SOURCES = (
     (
-        "contract/platform/v1/execution-operations/v1/command-identities.json",
-        "contract/execution-operations/v1/command-identities.json",
-        "4e25844843b46f86826aba3f2f250cdba6b78d81867288a6414dc333a10091dd",
+        "contract/platform/v1/execution-operations/v3/command-identities.json",
+        "contract/execution-operations/v3/command-identities.json",
+        "e9d38c5bfa47b083dc66435b6e21b3cfdfe1762e29ebab3a6bd86c8b86729e28",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/identities.json",
-        "contract/execution-operations/v1/identities.json",
-        "ba2064c1e720e41a326e0c88c2a53f26f1727565f24a955f55490816351282e0",
+        "contract/platform/v1/execution-operations/v3/command-schemas.json",
+        "contract/execution-operations/v3/command-schemas.json",
+        "30cda8f01b6fd8246826c1a7a909fffee4795766ab5328d8d653ae2003ee71b3",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/manifest.json",
-        "contract/execution-operations/v1/manifest.json",
-        "187bbeeceb1e082c15a8df3fc1451f89322575fa13276abe161a2c72fedad9c9",
+        "contract/platform/v1/execution-operations/v3/identities.json",
+        "contract/execution-operations/v3/identities.json",
+        "60e6fb68ad040860983f333839196c872e29c81965bdc89de422c8a67b5b5359",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/operation-catalog.json",
-        "contract/execution-operations/v1/operation-catalog.json",
-        "9da9568ddd37622a9e3b4ccfdb8984705a35b525aa7bd8d5c27c8cb625b8a6cc",
+        "contract/platform/v1/execution-operations/v3/manifest.json",
+        "contract/execution-operations/v3/manifest.json",
+        "b8b33095b02ac51cfcbfef7ee4cc8a7e5e0dca9025a87a2b2d31885b41dac4a3",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/provenance.json",
-        "contract/execution-operations/v1/provenance.json",
-        EXPECTED_OWNER_PROVENANCE_SHA256,
+        "contract/platform/v1/execution-operations/v3/operation-catalog.json",
+        "contract/execution-operations/v3/operation-catalog.json",
+        "9a8b7eebb11157d08bf299a33c44a0d975376d238b3827e4de5a48e917d7dc49",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/request-bindings.json",
-        "contract/execution-operations/v1/request-bindings.json",
-        "050291cf6f56052453ddb841f1e7cc624b2d3da28e5d9afd6abb9108349371fd",
+        "contract/platform/v1/execution-operations/v3/projection-registry.json",
+        "contract/execution-operations/v3/projection-registry.json",
+        "fccdcbc9161ca3f0ab1e5b094675be699463338df3bd1b65290fd998322f50f5",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/schemas/command-identities.schema.json",
-        "contract/execution-operations/v1/schemas/command-identities.schema.json",
-        "1ee71ebd279724fe19602535d74fda241debf81da68e0431643185500a28814f",
+        "contract/platform/v1/execution-operations/v3/provenance.json",
+        "contract/execution-operations/v3/provenance.json",
+        "952cb00840fba598479e95eb3bcfa1a8ffe326a47167325f9edfd15d0f87c2e2",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/schemas/identities.schema.json",
-        "contract/execution-operations/v1/schemas/identities.schema.json",
-        "5ed33481630923d2d237f16a08819627a3826dbe557f3884329066189edbe0c9",
+        "contract/platform/v1/execution-operations/v3/request-bindings.json",
+        "contract/execution-operations/v3/request-bindings.json",
+        "2572ec3a0357c02ac0d2291db3d4b9e53588ce8bb8f63742a013cebb6c4c401d",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/schemas/manifest.schema.json",
-        "contract/execution-operations/v1/schemas/manifest.schema.json",
-        "911e63385a799add2e592dcb90ae2c8af556968e2cb53a168e70101f68a9ee09",
+        "contract/platform/v1/execution-operations/v3/schemas/command-identities.schema.json",
+        "contract/execution-operations/v3/schemas/command-identities.schema.json",
+        "523562734e01f7c529c80abcf3a11ae5874dd9ce4fa36f5b2ed0f896c2bd66ab",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/schemas/operation-catalog.schema.json",
-        "contract/execution-operations/v1/schemas/operation-catalog.schema.json",
-        "bb7d7e0e37bb9d6d8a696b7704b9c13263e95b5705607c6ed159cf5e01d56161",
+        "contract/platform/v1/execution-operations/v3/schemas/identities.schema.json",
+        "contract/execution-operations/v3/schemas/identities.schema.json",
+        "faadbbc5984fbabe1bb68703c2e2213b9598342eae073dd557fb2573b427ef87",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/schemas/request-bindings.schema.json",
-        "contract/execution-operations/v1/schemas/request-bindings.schema.json",
-        "a4ce34e858ab4850b6429407b52e6b5ead86d0d629ecc7033d15487a38166b13",
+        "contract/platform/v1/execution-operations/v3/schemas/manifest.schema.json",
+        "contract/execution-operations/v3/schemas/manifest.schema.json",
+        "5b4274edc000ceb064adf549259064486e757c4621805e9a424b55697217f158",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/schemas/vector-inventory.schema.json",
-        "contract/execution-operations/v1/schemas/vector-inventory.schema.json",
-        "a6815f865e8d39610623288b939047367f5a0840ee1f6c8112db5582463d507d",
+        "contract/platform/v1/execution-operations/v3/schemas/operation-catalog.schema.json",
+        "contract/execution-operations/v3/schemas/operation-catalog.schema.json",
+        "5698936d0c36139088fa2f141c67cf6b8ec5319c7adcc38faeaa0681ffd55d99",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/vectors/negative.json",
-        "contract/execution-operations/v1/vectors/negative.json",
-        "34b44925718d03715f8c493d5c8afe58b0037aab6886618a536911f38983d121",
+        "contract/platform/v1/execution-operations/v3/schemas/request-bindings.schema.json",
+        "contract/execution-operations/v3/schemas/request-bindings.schema.json",
+        "6febac6d74bf6777252feebc606ff185e400cded9822f5a29633fa07f12881e4",
     ),
     (
-        "contract/platform/v1/execution-operations/v1/vectors/positive.json",
-        "contract/execution-operations/v1/vectors/positive.json",
-        "ffb38f37dc7a103d48f99b5fe19fd9cc3c1145f86c5fb13424cf6dd3d42fffca",
+        "contract/platform/v1/execution-operations/v3/schemas/vector-inventory.schema.json",
+        "contract/execution-operations/v3/schemas/vector-inventory.schema.json",
+        "ce812f46d0332254be61af0a54bfff3761dce7ab127f825fde0ac012bbf8b204",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v3/vectors/command-projection.json",
+        "contract/execution-operations/v3/vectors/command-projection.json",
+        "05b6d51ea424ba50473a44cfadee0606e42e628affd8ac28f85f31cd9c10083b",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v3/vectors/negative.json",
+        "contract/execution-operations/v3/vectors/negative.json",
+        "c674f7add6eeea1ccc93ce42862a2902e5f5e7adfb0edce53c6b00616ef11a1a",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v3/vectors/positive.json",
+        "contract/execution-operations/v3/vectors/positive.json",
+        "8d5434d356415e1990b2f0b7dd9e2f30b53817d718343d579b784e3ca67da313",
     ),
 )
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _OBJECT = TypeAdapter(dict[str, object])
 _OBJECT_LIST = TypeAdapter(list[object])
@@ -327,7 +347,7 @@ def validate_projected_binding(value: object, *, binding: Mapping[str, object]) 
         label="binding root",
     )
     if (
-        root["binding_version"] != "1.0.0"
+        root["binding_version"] != "3.0.0"
         or root["fq_method"] != binding["fqMethod"]
         or type(root["tenant_ref"]) is not str
         or not root["tenant_ref"]
@@ -349,8 +369,62 @@ def validate_projected_binding(value: object, *, binding: Mapping[str, object]) 
         _member(request[name], kind=kind, label=f"binding request {name}")
 
 
+def _validate_command_extensions(schema: Mapping[str, object], value: object) -> None:
+    raw_value: object = value
+    if type(value) is str:
+        limit = schema.get("x-maxUtf16")
+        if type(limit) is int and len(value.encode("utf-16-le")) // 2 > limit:
+            raise PlatformRequestBindingError("command UTF-16 limit exceeded")
+        byte_limit = schema.get("x-maxDecodedBytes")
+        if type(byte_limit) is int:
+            try:
+                decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+            except (ValueError, binascii.Error):
+                raise PlatformRequestBindingError("command base64url invalid") from None
+            if (
+                len(decoded) > byte_limit
+                or base64.urlsafe_b64encode(decoded).rstrip(b"=").decode() != value
+            ):
+                raise PlatformRequestBindingError("command base64url invalid")
+    if isinstance(value, dict):
+        properties = schema.get("properties")
+        if type(properties) is dict:
+            schema_properties = _object(
+                schema.get("properties"), label="command schema properties"
+            )
+            for key, child in _object(raw_value, label="command object").items():
+                child_schema = schema_properties.get(key)
+                if type(child_schema) is dict:
+                    _validate_command_extensions(
+                        _object(schema_properties[key], label="command child schema"),
+                        child,
+                    )
+    if isinstance(value, list):
+        item_schema = schema.get("items")
+        if type(item_schema) is dict:
+            for item in _list(raw_value, label="command items"):
+                _validate_command_extensions(
+                    _object(schema.get("items"), label="command item schema"),
+                    item,
+                )
+
+
+def _validate_command_admission(projection: Mapping[str, object]) -> None:
+    command = _object(projection.get("command"), label="catalog command")
+    owner = _object(command.get("owner_scope"), label="catalog owner")
+    context = _object(command.get("product_context"), label="product context")
+    product_owner = _object(context.get("owner_scope"), label="product owner")
+    if (
+        owner.get("kind") == "session"
+        or owner != product_owner
+        or owner.get("kind") == "user"
+        and owner.get("id") != context.get("subject_id")
+    ):
+        raise PlatformRequestBindingError("catalog admission invalid")
+
+
 def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
-    """Validate direct/aggregate pin plus 24 positive, 134 binding and 7 raw negatives."""
+    """Validate the exact v3 owner tree, registry closure, and published vectors."""
 
     pin_path = root / "contract/platform/v1/provenance.json"
     pin = _object(strict_parse_raw_json(pin_path.read_bytes()), label="Platform pin")
@@ -391,7 +465,26 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         if hashlib.sha256((root / path).read_bytes()).hexdigest() != digest:
             raise PlatformRequestBindingError(f"execution source digest drift: {path}")
 
-    artifact = root / "contract/platform/v1/execution-operations/v1"
+    artifact = root / "contract/platform/v1/execution-operations/v3"
+    expected_files = {
+        Path(path)
+        .relative_to("contract/platform/v1/execution-operations/v3")
+        .as_posix()
+        for path, _owner_path, _digest in EXPECTED_EXECUTION_SOURCES
+    }
+    actual_entries = {
+        entry.relative_to(artifact).as_posix() for entry in artifact.rglob("*")
+    }
+    expected_directories = {
+        parent.as_posix()
+        for relative in expected_files
+        for parent in Path(relative).parents
+        if parent != Path(".")
+    }
+    if actual_entries != expected_files | expected_directories or any(
+        entry.is_symlink() for entry in artifact.rglob("*")
+    ):
+        raise PlatformRequestBindingError("Platform execution artifact tree drift")
     provenance_raw = (artifact / "provenance.json").read_bytes()
     if hashlib.sha256(provenance_raw).hexdigest() != EXPECTED_OWNER_PROVENANCE_SHA256:
         raise PlatformRequestBindingError("owner provenance digest drift")
@@ -403,8 +496,25 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         raise PlatformRequestBindingError("owner aggregate pin is invalid")
     records_value = provenance.get("files")
     records = _list(records_value, label="owner records")
-    if len(records) != 13:
+    if len(records) != 16:
         raise PlatformRequestBindingError("owner payload inventory is invalid")
+    manifest = _object(
+        strict_parse_raw_json((artifact / "manifest.json").read_bytes()),
+        label="owner manifest",
+    )
+    payload_files = _list(manifest.get("payloadFiles"), label="manifest payload files")
+    record_files = {
+        _object(value, label="owner record").get("path") for value in records
+    }
+    if (
+        set(payload_files) != record_files
+        or set(payload_files) != expected_files - {"provenance.json"}
+        or manifest.get("artifactVersion") != "3.0.0"
+        or manifest.get("bindingVersion") != "3.0.0"
+        or manifest.get("status") != "inactive"
+        or manifest.get("routable") is not False
+    ):
+        raise PlatformRequestBindingError("owner manifest inventory drift")
     aggregate = hashlib.sha256()
     for record_value in sorted(
         records,
@@ -429,6 +539,37 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
     if aggregate.hexdigest() != EXPECTED_AGGREGATE:
         raise PlatformRequestBindingError("owner aggregate digest is invalid")
 
+    schemas = _object(manifest.get("schemas"), label="manifest schemas")
+    for payload_name, schema_name in schemas.items():
+        if type(schema_name) is not str or payload_name not in payload_files:
+            raise PlatformRequestBindingError("owner schema path drift")
+        schema = _object(
+            strict_parse_raw_json((artifact / schema_name).read_bytes()),
+            label="owner schema",
+        )
+        Draft202012Validator.check_schema(schema)
+        document = strict_parse_raw_json((artifact / payload_name).read_bytes())
+        try:
+            validate_json_schema(
+                instance=document, schema=schema, cls=Draft202012Validator
+            )
+        except JsonSchemaValidationError:
+            raise PlatformRequestBindingError(
+                f"owner schema mismatch: {payload_name}"
+            ) from None
+
+    catalog = _object(
+        strict_parse_raw_json((artifact / "operation-catalog.json").read_bytes()),
+        label="operation catalog",
+    )
+    operations = [
+        _object(row, label="operation")
+        for row in _list(catalog.get("operations"), label="operations")
+    ]
+    operation_by_name = {row.get("operation"): row for row in operations}
+    if len(operations) != 31 or len(operation_by_name) != 31:
+        raise PlatformRequestBindingError("operation catalog count drift")
+
     binding_document = _object(
         strict_parse_raw_json((artifact / "request-bindings.json").read_bytes()),
         label="binding artifact",
@@ -439,6 +580,64 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         raise PlatformRequestBindingError("binding inventory is invalid")
     bindings = [_object(value, label="binding descriptor") for value in raw_bindings]
     by_method = {str(binding["fqMethod"]): binding for binding in bindings}
+    tenant_operations = {
+        row.get("fqMethod"): row.get("operation")
+        for row in operations
+        if row.get("class") == "tenant-execution"
+    }
+    if (
+        len(by_method) != 24
+        or {method: row.get("operation") for method, row in by_method.items()}
+        != tenant_operations
+    ):
+        raise PlatformRequestBindingError("tenant binding/operation registry drift")
+
+    command_document = _object(
+        strict_parse_raw_json((artifact / "command-identities.json").read_bytes()),
+        label="command identities",
+    )
+    command_rows = [
+        _object(row, label="command")
+        for row in _list(command_document.get("commands"), label="commands")
+    ]
+    command_schemas = _object(
+        _object(
+            strict_parse_raw_json((artifact / "command-schemas.json").read_bytes()),
+            label="command schemas",
+        ).get("schemas"),
+        label="command schemas",
+    )
+    registry = _object(
+        strict_parse_raw_json((artifact / "projection-registry.json").read_bytes()),
+        label="projection registry",
+    )
+    messages = _object(registry.get("messages"), label="projection messages")
+    primitives = _object(registry.get("primitives"), label="projection primitives")
+    command_operations = {row.get("operation") for row in command_rows}
+    if len(command_rows) != 15 or command_operations != set(command_schemas):
+        raise PlatformRequestBindingError("command registry/schema count drift")
+    for row in command_rows:
+        operation = row.get("operation")
+        if type(operation) is not str or operation not in command_schemas:
+            raise PlatformRequestBindingError("command operation identity drift")
+        if operation_by_name.get(operation, {}).get("fqMethod") != row.get("fqMethod"):
+            raise PlatformRequestBindingError("command operation/method drift")
+        members = [
+            _object(value, label="command member")
+            for value in _list(row.get("commandMembers"), label="command members")
+        ]
+        for member in members:
+            projector = member.get("projector")
+            if type(projector) is not str or not (
+                projector in messages
+                or projector in primitives
+                or projector.startswith("wrapper:")
+                and projector.removeprefix("wrapper:") in primitives
+            ):
+                raise PlatformRequestBindingError("command projector registry drift")
+        Draft202012Validator.check_schema(
+            _object(command_schemas[operation], label="command schema")
+        )
 
     positive_document = _object(
         strict_parse_raw_json((artifact / "vectors/positive.json").read_bytes()),
@@ -446,6 +645,8 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
     )
     positives_value = positive_document["vectors"]
     positives = _list(positives_value, label="positive vector inventory")
+    if len(positives) != 53:
+        raise PlatformRequestBindingError("positive vector count drift")
     positive_bindings = 0
     for vector_value in positives:
         vector = _object(vector_value, label="positive vector")
@@ -480,6 +681,8 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
     )
     negatives_value = negative_document["vectors"]
     negatives = _list(negatives_value, label="negative vector inventory")
+    if len(negatives) != 142:
+        raise PlatformRequestBindingError("negative vector count drift")
     raw_negative = 0
     binding_negative = 0
     for vector_value in negatives:
@@ -513,4 +716,73 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         raise PlatformRequestBindingError(f"negative vector accepted: {vector['name']}")
     if (positive_bindings, binding_negative, raw_negative) != (24, 134, 7):
         raise PlatformRequestBindingError("Platform vector coverage is not exact")
-    return positive_bindings, binding_negative, raw_negative
+
+    command_vectors = _object(
+        strict_parse_raw_json(
+            (artifact / "vectors/command-projection.json").read_bytes()
+        ),
+        label="command vectors",
+    )
+    vectors = [
+        _object(value, label="command vector")
+        for value in _list(command_vectors.get("vectors"), label="command vectors")
+    ]
+    if len(vectors) != 139:
+        raise PlatformRequestBindingError("command vector count drift")
+    for vector in vectors:
+        operation = vector.get("operation")
+        if operation not in command_operations and operation != "raw":
+            raise PlatformRequestBindingError("command vector operation drift")
+        raw = base64.b64decode(str(vector.get("rawBase64")), validate=True)
+        expected_error = vector.get("expectedError")
+        if vector.get("stage") == "raw-parser" and expected_error != "none":
+            try:
+                strict_parse_raw_json(raw)
+            except PlatformRequestBindingError:
+                continue
+            raise PlatformRequestBindingError("raw command negative vector accepted")
+        if expected_error == "none":
+            projection = _object(vector.get("projection"), label="command projection")
+            if type(operation) is not str or operation not in command_schemas:
+                raise PlatformRequestBindingError("command positive operation drift")
+            schema = _object(command_schemas[operation], label="command schema")
+            try:
+                validate_json_schema(
+                    instance=projection, schema=schema, cls=Draft202012Validator
+                )
+            except JsonSchemaValidationError:
+                raise PlatformRequestBindingError(
+                    "command positive schema drift"
+                ) from None
+            _validate_command_extensions(schema, projection)
+            canonical = canonical_binding_bytes(
+                _JSON_OBJECT.validate_python(projection, strict=True)
+            )
+            if canonical != base64.b64decode(
+                str(vector.get("canonicalBase64")), validate=True
+            ) or hashlib.sha256(canonical).hexdigest() != vector.get("sha256"):
+                raise PlatformRequestBindingError(
+                    "command positive canonical digest drift"
+                )
+            continue
+        if type(operation) is not str or operation not in command_schemas:
+            raise PlatformRequestBindingError("command negative operation drift")
+        schema = _object(command_schemas[operation], label="command schema")
+        try:
+            decoded = _object(strict_parse_raw_json(raw), label="command negative wire")
+            request = _object(
+                decoded.pop("request", None), label="command negative request"
+            )
+            decoded["command"] = request
+            validate_json_schema(
+                instance=decoded, schema=schema, cls=Draft202012Validator
+            )
+            _validate_command_extensions(schema, decoded)
+            if vector.get("stage") == "admission":
+                _validate_command_admission(decoded)
+        except (PlatformRequestBindingError, JsonSchemaValidationError):
+            continue
+        raise PlatformRequestBindingError(
+            f"command negative vector accepted: {vector.get('name')}"
+        )
+    return len(positives), len(negatives), len(vectors)

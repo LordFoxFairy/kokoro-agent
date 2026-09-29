@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import filecmp
 import hashlib
 import json
 import shutil
@@ -17,7 +16,7 @@ PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 PROTO_ROOT = PIN_PATH.parent / "proto"
 OUTPUT = ROOT / "src" / "kokoro_agent" / "generated"
 CODEGEN_PATH = PIN_PATH.parent / "codegen.json"
-EXECUTION_OPERATIONS_ROOT = PIN_PATH.parent / "execution-operations" / "v1"
+EXECUTION_OPERATIONS_ROOT = PIN_PATH.parent / "execution-operations" / "v3"
 
 
 def _run(command: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -275,37 +274,75 @@ def _projection_expression(name: str, kind: str) -> str:
     raise SystemExit(f"unsupported generated Platform binding member: {name}:{kind}")
 
 
-def _assert_equal(expected: Path, actual: Path) -> None:
-    comparison = filecmp.dircmp(expected, actual)
-    if (
-        comparison.left_only
-        or comparison.right_only
-        or comparison.diff_files
-        or comparison.funny_files
-    ):
-        raise SystemExit(
-            "generated Platform consumer drift: "
-            f"missing={comparison.left_only}, extra={comparison.right_only}, changed={comparison.diff_files}"
-        )
-    for directory in comparison.common_dirs:
-        _assert_equal(expected / directory, actual / directory)
+_PLATFORM_OUTPUTS = (
+    Path("kokoro/platform/v1/platform_runtime_pb.py"),
+    Path("kokoro/platform/v1/platform_runtime_connect.py"),
+    Path("platform_request_projector.py"),
+)
+_SHARED_OUTPUTS = (
+    Path("__init__.py"),
+    Path("kokoro/__init__.py"),
+    Path("kokoro/common/__init__.py"),
+    Path("kokoro/common/v1/__init__.py"),
+    Path("kokoro/common/v1/common_pb.py"),
+    Path("kokoro/platform/__init__.py"),
+    Path("kokoro/platform/v1/__init__.py"),
+)
+
+
+def _check_platform_outputs(candidate: Path) -> None:
+    expected = set(_PLATFORM_OUTPUTS + _SHARED_OUTPUTS)
+    actual = {
+        file.relative_to(candidate) for file in candidate.rglob("*") if file.is_file()
+    }
+    if actual != expected:
+        raise SystemExit("generated Platform output inventory drift")
+    platform_root = OUTPUT / "kokoro/platform"
+    expected_platform = {
+        relative
+        for relative in expected
+        if relative.parts[:2] == ("kokoro", "platform")
+    }
+    actual_platform = {
+        entry.relative_to(OUTPUT)
+        for entry in platform_root.rglob("*")
+        if "__pycache__" not in entry.relative_to(platform_root).parts
+        and (entry.is_file() or entry.is_symlink())
+    }
+    actual_root = {
+        entry.relative_to(OUTPUT)
+        for entry in OUTPUT.glob("platform_*")
+        if entry.is_file() or entry.is_dir() or entry.is_symlink()
+    }
+    if actual_platform != expected_platform or actual_root != {
+        Path("platform_request_projector.py")
+    }:
+        raise SystemExit("generated Platform output inventory drift")
+    for relative in _SHARED_OUTPUTS:
+        if (OUTPUT / relative).read_bytes() != (candidate / relative).read_bytes():
+            raise SystemExit(f"shared generated input drift: {relative}")
+    for relative in _PLATFORM_OUTPUTS:
+        if (OUTPUT / relative).read_bytes() != (candidate / relative).read_bytes():
+            raise SystemExit(f"generated Platform consumer drift: {relative}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    if args.check:
-        with tempfile.TemporaryDirectory(
-            prefix="kokoro-agent-platform-check-"
-        ) as temporary:
-            candidate = Path(temporary) / "generated"
-            _generate(candidate)
-            _assert_equal(OUTPUT, candidate)
-        return
-    if OUTPUT.exists():
-        shutil.rmtree(OUTPUT)
-    _generate(OUTPUT)
+    with tempfile.TemporaryDirectory(
+        prefix="kokoro-agent-platform-check-"
+    ) as temporary:
+        candidate = Path(temporary) / "generated"
+        _generate(candidate)
+        if args.check:
+            _check_platform_outputs(candidate)
+            return
+        for relative in _SHARED_OUTPUTS:
+            if (OUTPUT / relative).read_bytes() != (candidate / relative).read_bytes():
+                raise SystemExit(f"shared generated input drift: {relative}")
+        for relative in _PLATFORM_OUTPUTS:
+            shutil.copyfile(candidate / relative, OUTPUT / relative)
 
 
 if __name__ == "__main__":

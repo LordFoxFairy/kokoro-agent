@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kokoro.dev/contracts/platform-execution-operations/1.0.0/request-bindings.schema.json",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/3.0.0/request-bindings.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,10 +14,10 @@
   ],
   "properties": {
     "artifactVersion": {
-      "const": "1.0.0"
+      "const": "3.0.0"
     },
     "bindingVersion": {
-      "const": "1.0.0"
+      "const": "3.0.0"
     },
     "packageName": {
       "const": "kokoro.platform.v1"
@@ -28,7 +28,7 @@
       "required": ["binding_version", "members", "additionalProperties"],
       "properties": {
         "binding_version": {
-          "const": "1.0.0"
+          "const": "3.0.0"
         },
         "members": {
           "type": "array",

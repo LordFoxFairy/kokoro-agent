@@ -18,7 +18,7 @@ from kokoro_agent.generated.kokoro.common.v1 import common_pb
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as platform_pb
 
 
-BINDING_VERSION = "1.0.0"
+BINDING_VERSION = "3.0.0"
 _LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTITY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$")
 _SOURCE_REF_PATTERN = re.compile(r"^skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$")

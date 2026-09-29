@@ -1,0 +1,761 @@
+{
+  "artifactVersion": "3.0.0",
+  "commandDigestVersion": "3.0.0",
+  "packageName": "kokoro.platform.v1",
+  "commands": [
+    {
+      "operation": "skill.create_draft",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/CreateSkillDraft",
+      "requestMessage": "kokoro.platform.v1.CreateSkillDraftRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "owner_scope",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.OwnerScope",
+          "cardinality": "explicit",
+          "outputKey": "owner_scope",
+          "projector": "CatalogOwnerScope",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 5,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "metadata",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillMetadata",
+          "cardinality": "explicit",
+          "outputKey": "metadata",
+          "projector": "SkillMetadata",
+          "presence": "required",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "request-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.create_version",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/CreateSkillVersion",
+      "requestMessage": "kokoro.platform.v1.CreateSkillVersionRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "owner_scope",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.OwnerScope",
+          "cardinality": "explicit",
+          "outputKey": "owner_scope",
+          "projector": "CatalogOwnerScope",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 6,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "base_skill_id",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillId",
+          "cardinality": "explicit",
+          "outputKey": "base_skill_id",
+          "projector": "wrapper:SkillId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "metadata",
+          "tag": 5,
+          "wireType": ".kokoro.platform.v1.SkillMetadata",
+          "cardinality": "explicit",
+          "outputKey": "metadata",
+          "projector": "SkillMetadata",
+          "presence": "required",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "request-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.validate_draft",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/ValidateSkillDraft",
+      "requestMessage": "kokoro.platform.v1.ValidateSkillDraftRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "skill_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.SkillId",
+          "cardinality": "explicit",
+          "outputKey": "skill_id",
+          "projector": "wrapper:SkillId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 6,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "current-resource-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.publish",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/PublishSkill",
+      "requestMessage": "kokoro.platform.v1.PublishSkillRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "skill_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.SkillId",
+          "cardinality": "explicit",
+          "outputKey": "skill_id",
+          "projector": "wrapper:SkillId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 5,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "visibility",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillScopeKind",
+          "cardinality": "implicit",
+          "outputKey": "visibility",
+          "projector": "enum",
+          "presence": "default",
+          "defaultValue": 0
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "current-resource-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.withdraw",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/WithdrawSkill",
+      "requestMessage": "kokoro.platform.v1.WithdrawSkillRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "source_ref",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.SkillSourceRef",
+          "cardinality": "explicit",
+          "outputKey": "source_ref",
+          "projector": "wrapper:SkillSourceRef",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 5,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "reason",
+          "tag": 4,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "reason",
+          "projector": "string",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "current-resource-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.set_status",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/SetSkillStatus",
+      "requestMessage": "kokoro.platform.v1.SetSkillStatusRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "skill_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.SkillId",
+          "cardinality": "explicit",
+          "outputKey": "skill_id",
+          "projector": "wrapper:SkillId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 5,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "status",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillStatus",
+          "cardinality": "implicit",
+          "outputKey": "status",
+          "projector": "enum",
+          "presence": "default",
+          "defaultValue": 0
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "current-resource-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.install",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/InstallSkill",
+      "requestMessage": "kokoro.platform.v1.InstallSkillRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "source_ref",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillSourceRef",
+          "cardinality": "explicit",
+          "outputKey": "source_ref",
+          "projector": "wrapper:SkillSourceRef",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "target_owner_scope",
+          "tag": 5,
+          "wireType": ".kokoro.platform.v1.OwnerScope",
+          "cardinality": "explicit",
+          "outputKey": "target_owner_scope",
+          "projector": "OwnerScope",
+          "presence": "tagged",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.set_installation_enabled",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/SetSkillInstallationEnabled",
+      "requestMessage": "kokoro.platform.v1.SetSkillInstallationEnabledRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "installation_id",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillInstallationId",
+          "cardinality": "explicit",
+          "outputKey": "installation_id",
+          "projector": "wrapper:SkillInstallationId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "enabled",
+          "tag": 5,
+          "wireType": "8",
+          "cardinality": "implicit",
+          "outputKey": "enabled",
+          "projector": "boolean",
+          "presence": "default",
+          "defaultValue": false
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.remove_installation",
+      "fqMethod": "kokoro.platform.v1.SkillInstallationService/RemoveSkillInstallation",
+      "requestMessage": "kokoro.platform.v1.RemoveSkillInstallationRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "installation_id",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.SkillInstallationId",
+          "cardinality": "explicit",
+          "outputKey": "installation_id",
+          "projector": "wrapper:SkillInstallationId",
+          "presence": "tagged",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "mcp.create_connector",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/CreateMcpConnector",
+      "requestMessage": "kokoro.platform.v1.CreateMcpConnectorRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "owner_scope",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.OwnerScope",
+          "cardinality": "explicit",
+          "outputKey": "owner_scope",
+          "projector": "OwnerScope",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "connector_type",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.McpConnectorType",
+          "cardinality": "implicit",
+          "outputKey": "connector_type",
+          "projector": "enum",
+          "presence": "default",
+          "defaultValue": 0
+        },
+        {
+          "wireField": "provider_key",
+          "tag": 5,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "provider_key",
+          "projector": "string",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "requested_scopes",
+          "tag": 6,
+          "wireType": "9",
+          "cardinality": "repeated",
+          "outputKey": "requested_scopes",
+          "projector": "set<string>",
+          "presence": "default",
+          "defaultValue": []
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "mcp.begin_connector_authorization",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/BeginMcpConnectorAuthorization",
+      "requestMessage": "kokoro.platform.v1.BeginMcpConnectorAuthorizationRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "connector_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.McpConnectorId",
+          "cardinality": "explicit",
+          "outputKey": "connector_id",
+          "projector": "wrapper:McpConnectorId",
+          "presence": "tagged",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "mcp.complete_connector_authorization",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/CompleteMcpConnectorAuthorization",
+      "requestMessage": "kokoro.platform.v1.CompleteMcpConnectorAuthorizationRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "connector_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.McpConnectorId",
+          "cardinality": "explicit",
+          "outputKey": "connector_id",
+          "projector": "wrapper:McpConnectorId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "authorization_id",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.McpAuthorizationId",
+          "cardinality": "explicit",
+          "outputKey": "authorization_id",
+          "projector": "wrapper:McpAuthorizationId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "authorization_handle_ref",
+          "tag": 5,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "authorization_handle_ref",
+          "projector": "string",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "mcp.revoke_connector",
+      "fqMethod": "kokoro.platform.v1.McpConnectorService/RevokeMcpConnector",
+      "requestMessage": "kokoro.platform.v1.RevokeMcpConnectorRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "connector_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.McpConnectorId",
+          "cardinality": "explicit",
+          "outputKey": "connector_id",
+          "projector": "wrapper:McpConnectorId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "reason",
+          "tag": 4,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "reason",
+          "projector": "string",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "mcp.create_connection",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/CreateMcpConnection",
+      "requestMessage": "kokoro.platform.v1.CreateMcpConnectionRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "connector_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.McpConnectorId",
+          "cardinality": "explicit",
+          "outputKey": "connector_id",
+          "projector": "wrapper:McpConnectorId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "server_id",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.McpServerId",
+          "cardinality": "explicit",
+          "outputKey": "server_id",
+          "projector": "wrapper:McpServerId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "allowed_selectors",
+          "tag": 5,
+          "wireType": "9",
+          "cardinality": "repeated",
+          "outputKey": "allowed_selectors",
+          "projector": "set<string>",
+          "presence": "default",
+          "defaultValue": []
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "mcp.revoke_connection",
+      "fqMethod": "kokoro.platform.v1.McpConnectionService/RevokeMcpConnection",
+      "requestMessage": "kokoro.platform.v1.RevokeMcpConnectionRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "connection_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.McpConnectionId",
+          "cardinality": "explicit",
+          "outputKey": "connection_id",
+          "projector": "wrapper:McpConnectionId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "reason",
+          "tag": 4,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "reason",
+          "projector": "string",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-tenant-execution-ingress",
+        "fresh-E2-operation-and-binding",
+        "fresh-current-state-before-receipt"
+      ]
+    }
+  ],
+  "authorizeMcpToolIdempotency": "idempotency_key",
+  "globalCommandIdentity": "forbidden"
+}

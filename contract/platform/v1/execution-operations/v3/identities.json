@@ -1,5 +1,5 @@
 {
-  "artifactVersion": "1.0.0",
+  "artifactVersion": "3.0.0",
   "packageName": "kokoro.platform.v1",
   "wrapperWire": {
     "syntax": "proto3",
@@ -422,6 +422,42 @@
       "field": "series_id",
       "tag": 12,
       "targetType": "SkillSeriesId"
+    },
+    {
+      "message": "CreateSkillDraftRequest",
+      "field": "product_context",
+      "tag": 5,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "CreateSkillVersionRequest",
+      "field": "product_context",
+      "tag": 6,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "ValidateSkillDraftRequest",
+      "field": "product_context",
+      "tag": 6,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "PublishSkillRequest",
+      "field": "product_context",
+      "tag": 5,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "WithdrawSkillRequest",
+      "field": "product_context",
+      "tag": 5,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "SetSkillStatusRequest",
+      "field": "product_context",
+      "tag": 5,
+      "targetType": "ProductCatalogContext"
     }
   ],
   "reservations": [
@@ -674,6 +710,11 @@
         "tag": 100,
         "cardinality": "required"
       }
+    },
+    {
+      "message": "ValidateSkillDraftRequest",
+      "reservedNumbers": [4, 5],
+      "reservedNames": ["content_digest", "package_asset_ref"]
     },
     {
       "message": "RegisterMcpServerRequest",

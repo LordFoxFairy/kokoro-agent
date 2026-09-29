@@ -1,6 +1,6 @@
 {
-  "artifactVersion": "1.0.0",
-  "catalogVersion": "1.0.0",
+  "artifactVersion": "3.0.0",
+  "catalogVersion": "3.0.0",
   "packageName": "kokoro.platform.v1",
   "operations": [
     {

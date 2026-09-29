@@ -1,0 +1,1284 @@
+{
+  "artifactVersion": "3.0.0",
+  "schemas": {
+    "skill.create_draft": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/CreateSkillDraft"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner_scope", "product_context", "metadata"],
+          "properties": {
+            "owner_scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "id"],
+              "properties": {
+                "kind": {
+                  "enum": ["user", "organization", "project", "session"]
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              }
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["display_name", "summary", "tags", "metadata_json"],
+              "properties": {
+                "display_name": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "x-maxUtf16": 255
+                },
+                "summary": {
+                  "type": "string",
+                  "x-maxUtf16": 65535
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "x-maxUtf16": 128
+                  },
+                  "maxItems": 100
+                },
+                "metadata_json": {
+                  "type": "string",
+                  "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$",
+                  "x-maxDecodedBytes": 65536
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "skill.create_version": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/CreateSkillVersion"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner_scope",
+            "product_context",
+            "base_skill_id",
+            "metadata"
+          ],
+          "properties": {
+            "owner_scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "id"],
+              "properties": {
+                "kind": {
+                  "enum": ["user", "organization", "project", "session"]
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              }
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "base_skill_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["display_name", "summary", "tags", "metadata_json"],
+              "properties": {
+                "display_name": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "x-maxUtf16": 255
+                },
+                "summary": {
+                  "type": "string",
+                  "x-maxUtf16": 65535
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "x-maxUtf16": 128
+                  },
+                  "maxItems": 100
+                },
+                "metadata_json": {
+                  "type": "string",
+                  "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$",
+                  "x-maxDecodedBytes": 65536
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "skill.validate_draft": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/ValidateSkillDraft"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skill_id", "product_context"],
+          "properties": {
+            "skill_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "skill.publish": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/PublishSkill"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skill_id", "product_context", "visibility"],
+          "properties": {
+            "skill_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "visibility": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    "skill.withdraw": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/WithdrawSkill"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_ref", "product_context", "reason"],
+          "properties": {
+            "source_ref": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 7,
+                      "maxLength": 197,
+                      "pattern": "^skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "skill.set_status": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/SetSkillStatus"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skill_id", "product_context", "status"],
+          "properties": {
+            "skill_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "status": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    "skill.install": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillInstallationService/InstallSkill"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_ref", "target_owner_scope"],
+          "properties": {
+            "source_ref": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 7,
+                      "maxLength": 197,
+                      "pattern": "^skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "target_owner_scope": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "id"],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        },
+                        "id": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "skill.set_installation_enabled": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillInstallationService/SetSkillInstallationEnabled"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["installation_id", "enabled"],
+          "properties": {
+            "installation_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "skill.remove_installation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillInstallationService/RemoveSkillInstallation"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["installation_id"],
+          "properties": {
+            "installation_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "mcp.create_connector": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.McpConnectorService/CreateMcpConnector"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner_scope",
+            "connector_type",
+            "provider_key",
+            "requested_scopes"
+          ],
+          "properties": {
+            "owner_scope": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "id"],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        },
+                        "id": {
+                          "type": "string",
+                          "pattern": "\\S"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "connector_type": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "provider_key": {
+              "type": "string"
+            },
+            "requested_scopes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "uniqueItems": true,
+              "x-order": "utf8-bytes"
+            }
+          }
+        }
+      }
+    },
+    "mcp.begin_connector_authorization": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.McpConnectorService/BeginMcpConnectorAuthorization"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connector_id"],
+          "properties": {
+            "connector_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "mcp.complete_connector_authorization": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.McpConnectorService/CompleteMcpConnectorAuthorization"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "connector_id",
+            "authorization_id",
+            "authorization_handle_ref"
+          ],
+          "properties": {
+            "connector_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "authorization_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "authorization_handle_ref": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "mcp.revoke_connector": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.McpConnectorService/RevokeMcpConnector"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connector_id", "reason"],
+          "properties": {
+            "connector_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "mcp.create_connection": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.McpConnectionService/CreateMcpConnection"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connector_id", "server_id", "allowed_selectors"],
+          "properties": {
+            "connector_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "server_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "allowed_selectors": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "uniqueItems": true,
+              "x-order": "utf8-bytes"
+            }
+          }
+        }
+      }
+    },
+    "mcp.revoke_connection": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.McpConnectionService/RevokeMcpConnection"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connection_id", "reason"],
+          "properties": {
+            "connection_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

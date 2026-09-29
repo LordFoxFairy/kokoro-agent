@@ -1,5 +1,15 @@
 # kokoro-agent 数据模型
 
+## W3-AGENT-PLATFORM-V3-PIN：数据边界（2026-09-29）
+
+本片仅替换 Agent 的 Platform Proto/v1 execution vendor 为 owner v3 原字节，并更新无状态
+Python request-binding projector；`database/schema.sql`、Run/lease/checkpoint/journal/Chat 表、
+Redis key、事务与持久化 `RunRequest` 均不变化。Platform 独占 Skill/MCP 与业务 receipt，IAM 独占
+token/current permission，Storage 独占 package bytes/scan；Agent 不保存 v3 proof、bearer、
+package、授权缓存或跨 owner 表副本。六 RPC 的调用前置仍需后续 typed 选择与当前 lease proof；
+本切片只有机器契约和离线投影证据，不作真实授权、撤权或跨 owner 恢复声明。
+
+
 ## W2-F2-S4 作品种类的持久事实与恢复（2026-09-28）
 
 Storage `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 唯一写 Upload、Asset、Artifact、Scan

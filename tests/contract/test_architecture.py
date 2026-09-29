@@ -116,9 +116,9 @@ def test_runtime_does_not_import_platform_artifact_checker() -> None:
 
 
 def test_platform_artifact_literal_scanner_has_a_negative_fixture() -> None:
-    source = 'Path("contract/platform/v1/execution-operations/v1").read_bytes()'
+    source = 'Path("contract/platform/v1/execution-operations/v3").read_bytes()'
     assert _platform_artifact_literals(source) == {
-        "contract/platform/v1/execution-operations/v1"
+        "contract/platform/v1/execution-operations/v3"
     }
 
 

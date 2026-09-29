@@ -91,6 +91,11 @@ message OwnerScope {
   string id = 2;
 }
 
+message ProductCatalogContext {
+  string subject_id = 1;
+  kokoro.platform.v1.OwnerScope owner_scope = 2;
+}
+
 message SkillMetadata {
   string display_name = 1;
   string summary = 2;
@@ -131,6 +136,7 @@ message CreateSkillDraftRequest {
   kokoro.common.v1.CommandIdentity command = 2;
   kokoro.platform.v1.OwnerScope owner_scope = 3;
   kokoro.platform.v1.SkillMetadata metadata = 4;
+  kokoro.platform.v1.ProductCatalogContext product_context = 5;
 }
 
 message CreateSkillDraftResponse {
@@ -145,8 +151,9 @@ message ValidateSkillDraftRequest {
   string request_id = 1;
   kokoro.common.v1.CommandIdentity command = 2;
   kokoro.platform.v1.SkillId skill_id = 3;
-  string package_asset_ref = 4;
-  string content_digest = 5;
+  reserved 4, 5;
+  reserved "package_asset_ref", "content_digest";
+  kokoro.platform.v1.ProductCatalogContext product_context = 6;
 }
 
 message ValidateSkillDraftResponse {
@@ -163,6 +170,7 @@ message PublishSkillRequest {
   kokoro.common.v1.CommandIdentity command = 2;
   kokoro.platform.v1.SkillId skill_id = 3;
   kokoro.platform.v1.SkillScopeKind visibility = 4;
+  kokoro.platform.v1.ProductCatalogContext product_context = 5;
 }
 
 message PublishSkillResponse {
@@ -178,6 +186,7 @@ message WithdrawSkillRequest {
   kokoro.common.v1.CommandIdentity command = 2;
   kokoro.platform.v1.SkillSourceRef source_ref = 3;
   string reason = 4;
+  kokoro.platform.v1.ProductCatalogContext product_context = 5;
 }
 
 message WithdrawSkillResponse {
@@ -236,6 +245,7 @@ message CreateSkillVersionRequest {
   kokoro.platform.v1.OwnerScope owner_scope = 3;
   kokoro.platform.v1.SkillId base_skill_id = 4;
   kokoro.platform.v1.SkillMetadata metadata = 5;
+  kokoro.platform.v1.ProductCatalogContext product_context = 6;
 }
 
 message CreateSkillVersionResponse {
@@ -251,6 +261,7 @@ message SetSkillStatusRequest {
   kokoro.common.v1.CommandIdentity command = 2;
   kokoro.platform.v1.SkillId skill_id = 3;
   kokoro.platform.v1.SkillStatus status = 4;
+  kokoro.platform.v1.ProductCatalogContext product_context = 5;
 }
 
 message SetSkillStatusResponse {

@@ -1,0 +1,87 @@
+{
+  "algorithm": "sha256",
+  "aggregateRecord": "path + NUL + length + NUL + sha256 + LF",
+  "files": [
+    {
+      "path": "command-identities.json",
+      "bytes": 23630,
+      "sha256": "e9d38c5bfa47b083dc66435b6e21b3cfdfe1762e29ebab3a6bd86c8b86729e28"
+    },
+    {
+      "path": "command-schemas.json",
+      "bytes": 38903,
+      "sha256": "30cda8f01b6fd8246826c1a7a909fffee4795766ab5328d8d653ae2003ee71b3"
+    },
+    {
+      "path": "identities.json",
+      "bytes": 17902,
+      "sha256": "60e6fb68ad040860983f333839196c872e29c81965bdc89de422c8a67b5b5359"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 13447,
+      "sha256": "b8b33095b02ac51cfcbfef7ee4cc8a7e5e0dca9025a87a2b2d31885b41dac4a3"
+    },
+    {
+      "path": "operation-catalog.json",
+      "bytes": 8769,
+      "sha256": "9a8b7eebb11157d08bf299a33c44a0d975376d238b3827e4de5a48e917d7dc49"
+    },
+    {
+      "path": "projection-registry.json",
+      "bytes": 6866,
+      "sha256": "fccdcbc9161ca3f0ab1e5b094675be699463338df3bd1b65290fd998322f50f5"
+    },
+    {
+      "path": "request-bindings.json",
+      "bytes": 14322,
+      "sha256": "2572ec3a0357c02ac0d2291db3d4b9e53588ce8bb8f63742a013cebb6c4c401d"
+    },
+    {
+      "path": "schemas/command-identities.schema.json",
+      "bytes": 12213,
+      "sha256": "523562734e01f7c529c80abcf3a11ae5874dd9ce4fa36f5b2ed0f896c2bd66ab"
+    },
+    {
+      "path": "schemas/identities.schema.json",
+      "bytes": 4203,
+      "sha256": "faadbbc5984fbabe1bb68703c2e2213b9598342eae073dd557fb2573b427ef87"
+    },
+    {
+      "path": "schemas/manifest.schema.json",
+      "bytes": 14958,
+      "sha256": "5b4274edc000ceb064adf549259064486e757c4621805e9a424b55697217f158"
+    },
+    {
+      "path": "schemas/operation-catalog.schema.json",
+      "bytes": 1567,
+      "sha256": "5698936d0c36139088fa2f141c67cf6b8ec5319c7adcc38faeaa0681ffd55d99"
+    },
+    {
+      "path": "schemas/request-bindings.schema.json",
+      "bytes": 10977,
+      "sha256": "6febac6d74bf6777252feebc606ff185e400cded9822f5a29633fa07f12881e4"
+    },
+    {
+      "path": "schemas/vector-inventory.schema.json",
+      "bytes": 2890,
+      "sha256": "ce812f46d0332254be61af0a54bfff3761dce7ab127f825fde0ac012bbf8b204"
+    },
+    {
+      "path": "vectors/command-projection.json",
+      "bytes": 959230,
+      "sha256": "05b6d51ea424ba50473a44cfadee0606e42e628affd8ac28f85f31cd9c10083b"
+    },
+    {
+      "path": "vectors/negative.json",
+      "bytes": 126591,
+      "sha256": "c674f7add6eeea1ccc93ce42862a2902e5f5e7adfb0edce53c6b00616ef11a1a"
+    },
+    {
+      "path": "vectors/positive.json",
+      "bytes": 57437,
+      "sha256": "8d5434d356415e1990b2f0b7dd9e2f30b53817d718343d579b784e3ca67da313"
+    }
+  ],
+  "aggregateSha256": "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
+}

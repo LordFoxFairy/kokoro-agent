@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/3.0.0/command-identities.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactVersion",
+    "commandDigestVersion",
+    "packageName",
+    "commands",
+    "authorizeMcpToolIdempotency",
+    "globalCommandIdentity"
+  ],
+  "properties": {
+    "artifactVersion": {
+      "const": "3.0.0"
+    },
+    "commandDigestVersion": {
+      "const": "3.0.0"
+    },
+    "packageName": {
+      "const": "kokoro.platform.v1"
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "fqMethod",
+          "commandField",
+          "rootMembers",
+          "commandMembers",
+          "excludedMembers",
+          "requestMessage",
+          "admission"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string"
+          },
+          "fqMethod": {
+            "type": "string"
+          },
+          "commandField": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "tag", "type"],
+            "properties": {
+              "field": {
+                "const": "command"
+              },
+              "tag": {
+                "const": 2
+              },
+              "type": {
+                "const": "kokoro.common.v1.CommandIdentity"
+              }
+            }
+          },
+          "rootMembers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commandMembers": {
+            "type": "array",
+            "items": {
+              "enum": [
+                {
+                  "wireField": "owner_scope",
+                  "tag": 3,
+                  "wireType": ".kokoro.platform.v1.OwnerScope",
+                  "cardinality": "explicit",
+                  "outputKey": "owner_scope",
+                  "projector": "CatalogOwnerScope",
+                  "presence": "required",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "product_context",
+                  "tag": 5,
+                  "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+                  "cardinality": "explicit",
+                  "outputKey": "product_context",
+                  "projector": "ProductCatalogContext",
+                  "presence": "required",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "metadata",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.SkillMetadata",
+                  "cardinality": "explicit",
+                  "outputKey": "metadata",
+                  "projector": "SkillMetadata",
+                  "presence": "required",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "product_context",
+                  "tag": 6,
+                  "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+                  "cardinality": "explicit",
+                  "outputKey": "product_context",
+                  "projector": "ProductCatalogContext",
+                  "presence": "required",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "base_skill_id",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.SkillId",
+                  "cardinality": "explicit",
+                  "outputKey": "base_skill_id",
+                  "projector": "wrapper:SkillId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "metadata",
+                  "tag": 5,
+                  "wireType": ".kokoro.platform.v1.SkillMetadata",
+                  "cardinality": "explicit",
+                  "outputKey": "metadata",
+                  "projector": "SkillMetadata",
+                  "presence": "required",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "skill_id",
+                  "tag": 3,
+                  "wireType": ".kokoro.platform.v1.SkillId",
+                  "cardinality": "explicit",
+                  "outputKey": "skill_id",
+                  "projector": "wrapper:SkillId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "visibility",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.SkillScopeKind",
+                  "cardinality": "implicit",
+                  "outputKey": "visibility",
+                  "projector": "enum",
+                  "presence": "default",
+                  "defaultValue": 0
+                },
+                {
+                  "wireField": "source_ref",
+                  "tag": 3,
+                  "wireType": ".kokoro.platform.v1.SkillSourceRef",
+                  "cardinality": "explicit",
+                  "outputKey": "source_ref",
+                  "projector": "wrapper:SkillSourceRef",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "reason",
+                  "tag": 4,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "reason",
+                  "projector": "string",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "status",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.SkillStatus",
+                  "cardinality": "implicit",
+                  "outputKey": "status",
+                  "projector": "enum",
+                  "presence": "default",
+                  "defaultValue": 0
+                },
+                {
+                  "wireField": "source_ref",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.SkillSourceRef",
+                  "cardinality": "explicit",
+                  "outputKey": "source_ref",
+                  "projector": "wrapper:SkillSourceRef",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "target_owner_scope",
+                  "tag": 5,
+                  "wireType": ".kokoro.platform.v1.OwnerScope",
+                  "cardinality": "explicit",
+                  "outputKey": "target_owner_scope",
+                  "projector": "OwnerScope",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "installation_id",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.SkillInstallationId",
+                  "cardinality": "explicit",
+                  "outputKey": "installation_id",
+                  "projector": "wrapper:SkillInstallationId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "enabled",
+                  "tag": 5,
+                  "wireType": "8",
+                  "cardinality": "implicit",
+                  "outputKey": "enabled",
+                  "projector": "boolean",
+                  "presence": "default",
+                  "defaultValue": false
+                },
+                {
+                  "wireField": "owner_scope",
+                  "tag": 3,
+                  "wireType": ".kokoro.platform.v1.OwnerScope",
+                  "cardinality": "explicit",
+                  "outputKey": "owner_scope",
+                  "projector": "OwnerScope",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "connector_type",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.McpConnectorType",
+                  "cardinality": "implicit",
+                  "outputKey": "connector_type",
+                  "projector": "enum",
+                  "presence": "default",
+                  "defaultValue": 0
+                },
+                {
+                  "wireField": "provider_key",
+                  "tag": 5,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "provider_key",
+                  "projector": "string",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "requested_scopes",
+                  "tag": 6,
+                  "wireType": "9",
+                  "cardinality": "repeated",
+                  "outputKey": "requested_scopes",
+                  "projector": "set<string>",
+                  "presence": "default",
+                  "defaultValue": []
+                },
+                {
+                  "wireField": "connector_id",
+                  "tag": 3,
+                  "wireType": ".kokoro.platform.v1.McpConnectorId",
+                  "cardinality": "explicit",
+                  "outputKey": "connector_id",
+                  "projector": "wrapper:McpConnectorId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "authorization_id",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.McpAuthorizationId",
+                  "cardinality": "explicit",
+                  "outputKey": "authorization_id",
+                  "projector": "wrapper:McpAuthorizationId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "authorization_handle_ref",
+                  "tag": 5,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "authorization_handle_ref",
+                  "projector": "string",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "server_id",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.McpServerId",
+                  "cardinality": "explicit",
+                  "outputKey": "server_id",
+                  "projector": "wrapper:McpServerId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "allowed_selectors",
+                  "tag": 5,
+                  "wireType": "9",
+                  "cardinality": "repeated",
+                  "outputKey": "allowed_selectors",
+                  "projector": "set<string>",
+                  "presence": "default",
+                  "defaultValue": []
+                },
+                {
+                  "wireField": "connection_id",
+                  "tag": 3,
+                  "wireType": ".kokoro.platform.v1.McpConnectionId",
+                  "cardinality": "explicit",
+                  "outputKey": "connection_id",
+                  "projector": "wrapper:McpConnectionId",
+                  "presence": "tagged",
+                  "defaultValue": null
+                }
+              ]
+            }
+          },
+          "excludedMembers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requestMessage": {
+            "type": "string"
+          },
+          "admission": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "authorizeMcpToolIdempotency": {
+      "const": "idempotency_key"
+    },
+    "globalCommandIdentity": {
+      "const": "forbidden"
+    }
+  }
+}

@@ -15,9 +15,23 @@ from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pla
 
 
 ROOT = Path(__file__).parents[2]
-ARTIFACT_ROOT = ROOT / "contract/platform/v1/execution-operations/v1"
+ARTIFACT_ROOT = ROOT / "contract/platform/v1/execution-operations/v3"
 PIN_PATH = ROOT / "contract/platform/v1/provenance.json"
-EXPECTED_AGGREGATE = "afca9369c4aedd7a68aea02af834265efc6f480a07668ae0f8dbcad9bd7e545e"
+EXPECTED_AGGREGATE = "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
+
+
+def test_runtime_binding_uses_current_platform_v3_owner_release() -> None:
+    from kokoro_agent.execution.platform_request_binding_values import BINDING_VERSION
+
+    pin = _json(PIN_PATH)
+    execution = _object(pin["execution_operations"])
+    assert pin["owner_commit"] == "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0"
+    assert execution["aggregate_sha256"] == (
+        "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
+    )
+    assert BINDING_VERSION == "3.0.0"
+
+
 _OBJECT = TypeAdapter(dict[str, object])
 _OBJECT_LIST = TypeAdapter(list[object])
 
@@ -130,7 +144,7 @@ def test_vendored_execution_operation_artifact_matches_owner_provenance() -> Non
     assert execution["owner_commit"] == pin["owner_commit"]
     assert execution["aggregate_sha256"] == EXPECTED_AGGREGATE
     sources = [_object(source) for source in _list(execution["sources"])]
-    assert len(sources) == 14
+    assert len(sources) == 17
     for source in sources:
         path = _string(source["path"])
         assert (
@@ -138,7 +152,7 @@ def test_vendored_execution_operation_artifact_matches_owner_provenance() -> Non
         )
     owner_provenance = _json(ARTIFACT_ROOT / "provenance.json")
     assert owner_provenance["aggregateSha256"] == EXPECTED_AGGREGATE
-    assert len(_list(owner_provenance["files"])) == 13
+    assert len(_list(owner_provenance["files"])) == 16
 
 
 def test_owner_vector_inventory_is_enforced_by_the_contract_checker() -> None:
@@ -146,7 +160,24 @@ def test_owner_vector_inventory_is_enforced_by_the_contract_checker() -> None:
         validate_platform_binding_artifact,
     )
 
-    assert validate_platform_binding_artifact(ROOT) == (24, 134, 7)
+    assert validate_platform_binding_artifact(ROOT) == (53, 142, 139)
+
+
+def test_v3_vendor_rejects_extra_file_even_with_unchanged_provenance(
+    tmp_path: Path,
+) -> None:
+    from kokoro_agent.execution.platform_request_binding import (
+        PlatformRequestBindingError,
+    )
+    from kokoro_agent.platform_binding_contract import (
+        validate_platform_binding_artifact,
+    )
+
+    repository = _artifact_fixture(tmp_path)
+    extra = repository / "contract/platform/v1/execution-operations/v3/extra.json"
+    extra.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(PlatformRequestBindingError):
+        validate_platform_binding_artifact(repository)
 
 
 @pytest.mark.parametrize(
@@ -191,7 +222,7 @@ def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
         sources.append(
             {
                 "path": sources[0]["path"],
-                "owner_path": "contract/execution-operations/v1/extra.json",
+                "owner_path": "contract/execution-operations/v3/extra.json",
                 "sha256": sources[0]["sha256"],
             }
         )
@@ -220,7 +251,7 @@ def test_execution_pin_rejects_changed_owner_provenance_with_synced_pin_digest(
 
     repository = _artifact_fixture(tmp_path)
     provenance_path = (
-        repository / "contract/platform/v1/execution-operations/v1/provenance.json"
+        repository / "contract/platform/v1/execution-operations/v3/provenance.json"
     )
     provenance_path.write_bytes(provenance_path.read_bytes() + b"\n")
     pin_path = repository / "contract/platform/v1/provenance.json"
@@ -229,7 +260,7 @@ def test_execution_pin_rejects_changed_owner_provenance_with_synced_pin_digest(
     sources = [_object(source) for source in _list(execution["sources"])]
     for source in sources:
         if source["path"] == (
-            "contract/platform/v1/execution-operations/v1/provenance.json"
+            "contract/platform/v1/execution-operations/v3/provenance.json"
         ):
             source["sha256"] = hashlib.sha256(provenance_path.read_bytes()).hexdigest()
     execution["sources"] = sources
@@ -279,23 +310,103 @@ def test_typed_projector_matches_23_owner_preimages_and_canonical_sha256() -> No
     assert checked == 23
 
 
+_AGENT_OPERATIONS = {
+    "skill.resolve_visible_skill",
+    "skill.get_approved_package_reference",
+    "mcp.get_connector",
+    "mcp.get_connection",
+    "mcp.list_connector_capabilities",
+    "mcp.authorize_tool",
+}
+
+
+def test_six_agent_rpc_v3_positive_and_negative_owner_binding_vectors() -> None:
+    from kokoro_agent.execution.platform_request_binding import (
+        PlatformRequestBindingError,
+        project_request_binding,
+    )
+    from kokoro_agent.platform_binding_contract import (
+        strict_parse_raw_json,
+        validate_projected_binding,
+    )
+
+    bindings = [
+        _object(row)
+        for row in _list(_json(ARTIFACT_ROOT / "request-bindings.json")["bindings"])
+    ]
+    selected = {
+        _string(row["operation"]): row
+        for row in bindings
+        if row["operation"] in _AGENT_OPERATIONS
+    }
+    assert set(selected) == _AGENT_OPERATIONS
+    positives = _positive_vectors()
+    for operation, binding in selected.items():
+        vector = positives[f"binding.{operation}.valid"]
+        raw = strict_parse_raw_json(_decode(vector["rawBase64"]))
+        validate_projected_binding(raw, binding=binding)
+        if operation != "mcp.authorize_tool":
+            request = _request_from_owner_vector(binding, vector)
+            actual = project_request_binding(tenant_ref="tenant-1", request=request)
+            assert actual.canonical_bytes == _decode(vector["canonicalBase64"])
+            assert actual.sha256 == vector["sha256"]
+
+    negatives = [
+        _object(row)
+        for row in _list(_json(ARTIFACT_ROOT / "vectors/negative.json")["vectors"])
+    ]
+    rejected = 0
+    for vector in negatives:
+        method = vector.get("fqMethod")
+        matching = next(
+            (row for row in selected.values() if row["fqMethod"] == method), None
+        )
+        if vector.get("target") != "binding" or matching is None:
+            continue
+        with pytest.raises(PlatformRequestBindingError):
+            validate_projected_binding(
+                strict_parse_raw_json(_decode(vector["rawBase64"])), binding=matching
+            )
+        rejected += 1
+    assert rejected == 24
+
+
 def test_authorize_tool_hashes_the_actual_raw_typed_argument_bytes() -> None:
     from kokoro_agent.execution.platform_request_binding import project_request_binding
 
-    raw = b'{"z":2, "a":1}'
+    vectors = _positive_vectors()
+    owner_binding = vectors["binding.mcp.authorize_tool.valid"]
+    owner_bytes = vectors["bytes.typed-arguments.raw-sha256"]
+    raw = _decode(owner_bytes["rawBase64"])
+    assert hashlib.sha256(raw).hexdigest() == owner_bytes["sha256"]
+    expected = _OBJECT.validate_json(_decode(owner_binding["rawBase64"]))
+    owner_canonical = _decode(owner_binding["canonicalBase64"])
+    assert hashlib.sha256(owner_canonical).hexdigest() == owner_binding["sha256"]
+    expected_request = _object(expected["request"])
+    connector = _object(expected_request["connector_id"])
+    assert connector["present"] is True
+    assert expected_request["typed_arguments_sha256"] == "a" * 64
+    digest_member = b'"typed_arguments_sha256":"' + b"a" * 64 + b'"'
+    assert owner_canonical.count(b"a" * 64) == 1
+    assert owner_canonical.count(digest_member) == 1
+    digest = _string(owner_bytes["sha256"]).encode("ascii")
+    assert len(digest) == 64
+    expected_canonical = owner_canonical.replace(
+        digest_member, b'"typed_arguments_sha256":"' + digest + b'"', 1
+    )
+
     request = platform_pb.AuthorizeMcpToolRequest(
-        request_id="request-1",
-        connector_id=platform_pb.McpConnectorId(value="id-1"),
-        tool_selector="value",
+        request_id=_string(expected["request_id"]),
+        connector_id=platform_pb.McpConnectorId(value=_string(connector["value"])),
+        tool_selector=_string(expected_request["tool_selector"]),
         typed_arguments_json=raw,
-        idempotency_key="value",
+        idempotency_key=_string(expected_request["idempotency_key"]),
     )
-    result = project_request_binding(tenant_ref="tenant-1", request=request)
-    decoded = json.loads(result.canonical_bytes)
-    assert (
-        decoded["request"]["typed_arguments_sha256"] == hashlib.sha256(raw).hexdigest()
+    result = project_request_binding(
+        tenant_ref=_string(expected["tenant_ref"]), request=request
     )
-    assert result.sha256 == hashlib.sha256(result.canonical_bytes).hexdigest()
+    assert result.canonical_bytes == expected_canonical
+    assert result.sha256 == hashlib.sha256(expected_canonical).hexdigest()
 
 
 def test_binding_uses_utf16_key_order_and_rejects_lone_surrogates() -> None:

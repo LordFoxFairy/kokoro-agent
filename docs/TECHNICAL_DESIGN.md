@@ -1,5 +1,20 @@
 # kokoro-agent 技术设计
 
+## W3-AGENT-PLATFORM-V3-PIN：机器消费前置（2026-09-29）
+
+Agent 当前候选只消费 Platform owner `5b6eb2c` 的 `kokoro.platform.v1` Proto 和完整
+`contract/execution-operations/v3/`；owner 独占 RPC/operation/binding 事实，Agent 独占 Run、
+lease、proof 签发与 Python consumer。旧 Agent v1 投影与 owner 唯一 v3 runtime 不同版，
+故已在既有 `contract/platform/v1/` 替换只读 vendor，在既有 `generated/` 再生客户端与
+24-request projector，并在既有 `execution/` 只保留一个 request-binding 算法。
+与在 `clients/skills.py` 复制投影或建立第二 contract 根相比，此位置保持来源、生成物、调用计算三种变化原因分离。
+删 Agent v1 vendor 和运行 alias；Platform owner 冻结的历史 v1/v2 不动。六个已批准出站 RPC 的
+请求字段未因 Proto 的 Catalog Product context 增补而改变，但必须逐项用 v3 raw vectors 证明同值。
+本片不接产品 adapter，不改 SQL/HTTP/Redis/RunRequest，不获取 bearer 或执行真实 owner RPC；
+typed source/connector 选择、Storage 包体、MCP credential 与真实 IAM/Platform 组合随后独立闭环。
+下文 W1E 的 v1 pin、worker 尚未装 signer、静默 fallback 等段落记录历史阶段，不覆盖本节当前态。
+
+
 ## W2-REAL-MODEL-AGENT-WRITE：General state 工作区写入（2026-09-29）
 
 General Chat 的静态 `GENERAL_AGENT` 显式选择 `Permissions(filesystem="workspace_write")`，

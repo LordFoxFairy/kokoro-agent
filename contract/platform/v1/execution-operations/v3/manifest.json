@@ -1,11 +1,11 @@
 {
   "artifact": "platform-execution-operations",
-  "artifactVersion": "1.0.0",
+  "artifactVersion": "3.0.0",
   "status": "inactive",
   "routable": false,
   "packageName": "kokoro.platform.v1",
-  "catalogVersion": "1.0.0",
-  "bindingVersion": "1.0.0",
+  "catalogVersion": "3.0.0",
+  "bindingVersion": "3.0.0",
   "payloadFiles": [
     "manifest.json",
     "identities.json",
@@ -19,7 +19,10 @@
     "schemas/command-identities.schema.json",
     "schemas/vector-inventory.schema.json",
     "vectors/positive.json",
-    "vectors/negative.json"
+    "vectors/negative.json",
+    "projection-registry.json",
+    "command-schemas.json",
+    "vectors/command-projection.json"
   ],
   "schemas": {
     "manifest.json": "schemas/manifest.schema.json",

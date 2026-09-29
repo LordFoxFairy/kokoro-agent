@@ -1,0 +1,266 @@
+{
+  "artifactVersion": "3.0.0",
+  "wireEncoding": "strict UTF-8 JSON; snake_case Proto field names; wrappers {value}; bytes canonical base64url-no-pad; absent messages omitted; implicit scalars defaulted; no protobuf JSON aliases",
+  "primitives": {
+    "string": {
+      "type": "string"
+    },
+    "boolean": {
+      "type": "boolean"
+    },
+    "enum": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "owner-kind": {
+      "enum": ["user", "organization", "project", "session"]
+    },
+    "nonblank-string": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "product-id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "display-name": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-maxUtf16": 255
+    },
+    "summary": {
+      "type": "string",
+      "x-maxUtf16": 65535
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "x-maxUtf16": 128
+      },
+      "maxItems": 100
+    },
+    "array<string>": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "set<string>": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "\\S"
+      },
+      "uniqueItems": true,
+      "x-order": "utf8-bytes"
+    },
+    "base64url-no-pad": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$",
+      "x-maxDecodedBytes": 65536
+    },
+    "SkillSeriesId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "SkillId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "SkillInstallationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "SkillSourceRef": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 197,
+      "pattern": "^skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "McpConnectorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "McpServerId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "McpConnectionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "McpAuthorizationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "McpInvocationGrant": {
+      "type": "string",
+      "minLength": 46,
+      "maxLength": 46,
+      "pattern": "^mcp-grant:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  },
+  "messages": {
+    "OwnerScope": {
+      "wireMessage": "kokoro.platform.v1.OwnerScope",
+      "fields": [
+        {
+          "wireField": "kind",
+          "tag": 1,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "kind",
+          "projector": "nonblank-string",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "id",
+          "tag": 2,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "id",
+          "projector": "nonblank-string",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ]
+    },
+    "CatalogOwnerScope": {
+      "wireMessage": "kokoro.platform.v1.OwnerScope",
+      "fields": [
+        {
+          "wireField": "kind",
+          "tag": 1,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "kind",
+          "projector": "owner-kind",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "id",
+          "tag": 2,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "id",
+          "projector": "nonblank-string",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ]
+    },
+    "ProductOwnerScope": {
+      "wireMessage": "kokoro.platform.v1.OwnerScope",
+      "fields": [
+        {
+          "wireField": "kind",
+          "tag": 1,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "kind",
+          "projector": "owner-kind",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "id",
+          "tag": 2,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "id",
+          "projector": "product-id",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ]
+    },
+    "ProductCatalogContext": {
+      "wireMessage": "kokoro.platform.v1.ProductCatalogContext",
+      "fields": [
+        {
+          "wireField": "subject_id",
+          "tag": 1,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "subject_id",
+          "projector": "product-id",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "owner_scope",
+          "tag": 2,
+          "wireType": ".kokoro.platform.v1.OwnerScope",
+          "cardinality": "explicit",
+          "outputKey": "owner_scope",
+          "projector": "ProductOwnerScope",
+          "presence": "required",
+          "defaultValue": null
+        }
+      ]
+    },
+    "SkillMetadata": {
+      "wireMessage": "kokoro.platform.v1.SkillMetadata",
+      "fields": [
+        {
+          "wireField": "display_name",
+          "tag": 1,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "display_name",
+          "projector": "display-name",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "summary",
+          "tag": 2,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "summary",
+          "projector": "summary",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "tags",
+          "tag": 3,
+          "wireType": "9",
+          "cardinality": "repeated",
+          "outputKey": "tags",
+          "projector": "tags",
+          "presence": "default",
+          "defaultValue": []
+        },
+        {
+          "wireField": "metadata_json",
+          "tag": 4,
+          "wireType": "12",
+          "cardinality": "implicit",
+          "outputKey": "metadata_json",
+          "projector": "base64url-no-pad",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ]
+    }
+  }
+}

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
+import shutil
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).parents[2]
 PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 EXPECTED_SOURCE_DIGESTS = {
     "contract/platform/v1/proto/kokoro/common/v1/common.proto": "65025b86a89119954bfbc7ad8eb89d59109ae7f390db5ee1a68f016eefa7da08",
-    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "7c55fcadf5ba0753ca5d1bb304ccb96bf0318a4fb5c37aae4f96781c4ea53466",
+    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "282bf886ea9648f7ce5208abd36ab47d879b2002a036d90aada2af59e74b4020",
 }
 EXPECTED_RPC_SHAPES = {
     "SkillCatalogService": {
@@ -122,7 +126,7 @@ EXPECTED_RPC_SHAPES = {
 
 def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
     pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "ee25c1f4d6df08be183ca10f7f5e852e0b21f641"
+    assert pin["owner_commit"] == "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == EXPECTED_SOURCE_DIGESTS
@@ -174,3 +178,39 @@ def test_platform_generated_messages_and_async_client_are_importable() -> None:
     assert platform_runtime_pb.AuthorizeMcpToolRequest
     assert platform_runtime_connect.McpAuthorizationServiceClient
     assert len(platform_request_projector.FQ_METHOD_BY_OPERATION) == 24
+
+
+@pytest.mark.parametrize(
+    "stale_path",
+    ["kokoro/platform/v1/legacy_platform_pb.py", "platform_request_projector_v1.py"],
+)
+def test_platform_codegen_check_rejects_stale_platform_output_but_keeps_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stale_path: str
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "generate_platform_consumer", ROOT / "scripts/generate_platform_consumer.py"
+    )
+    assert spec is not None and spec.loader is not None
+    generate_platform_consumer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generate_platform_consumer)
+    generated = ROOT / "src/kokoro_agent/generated"
+    output = tmp_path / "output"
+    candidate = tmp_path / "candidate"
+    shutil.copytree(generated, output)
+    for relative in (
+        *generate_platform_consumer._PLATFORM_OUTPUTS,
+        *generate_platform_consumer._SHARED_OUTPUTS,
+    ):
+        destination = candidate / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(generated / relative, destination)
+    monkeypatch.setattr(generate_platform_consumer, "OUTPUT", output)
+
+    # The shared generated tree also contains Storage; it is not Platform drift.
+    assert (output / "kokoro/storage").is_dir()
+    generate_platform_consumer._check_platform_outputs(candidate)
+
+    stale = output / stale_path
+    stale.write_text("# obsolete Platform output\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="generated Platform output inventory drift"):
+        generate_platform_consumer._check_platform_outputs(candidate)

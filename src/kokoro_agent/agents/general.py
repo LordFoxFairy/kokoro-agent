@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.prompts import GENERAL_PROMPT
+from kokoro_agent.policy import Permissions
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL, ASK_USER_TOOL_NAME
 
 GENERAL_AGENT = Agent(
@@ -14,5 +15,6 @@ GENERAL_AGENT = Agent(
     prompt=GENERAL_PROMPT,
     tools=(ASK_USER_TOOL,),
     delivery=True,
+    permissions=Permissions(filesystem="workspace_write"),
     pause_tools=frozenset({ASK_USER_TOOL_NAME}),
 )

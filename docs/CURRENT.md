@@ -1,6 +1,21 @@
 # kokoro-agent 当前实现
 
-状态日期：2026-09-28。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
+## W2-REAL-MODEL-AGENT-WRITE 候选（2026-09-29，待 Root 提交/真组合）
+
+`GENERAL_AGENT` 已显式启用隔离 state 工作区写入，全局 Permissions 和 Music 仍为只读，
+`/.skills/` 仍由只读能力包 backend 拒写。只改静态声明，未增加请求放权参数或 host backend。
+真实 AgentFactory/DeepAgents v3 组件测试先 RED：原生 write_file permission denied，随后
+read_file/deliver 均 file_not_found、Storage facade 调用 0；修正声明后同一 write→read→deliver
+链 GREEN，原字节/hash/Run identity/lease/tool_call_id 均一致。默认 Agent 写拒、Skill 写拒和
+Run wire 额外权限字段拒绝亦通过。该测试的模型、System/Storage/Run/checkpoint 为明确测试
+替身，真实 System+Ollama+IAM/浏览器/PG/Redis/Storage 组合仍待 Root 独立执行。
+
+候选工作树已执行 `uv lock --check`、Ruff format/check（245 files）、Pyright（0 errors）、
+contract checker、默认 pytest（1307 passed、6 skipped、172 deselected）及 wheel/sdist build；
+默认测试保留上游 v3 beta/asyncio deprecation 警告。构建临时 `build/` 清理后重跑格式/检查通过，
+不把生成临时副本格式差异混入源代码切片。真实依赖门未运行；本候选尚无交付 commit。
+
+状态日期：2026-09-29。本文件只记录当前代码、canonical schema、contract 和已执行证据；目标值与未来
 设计分别见 `SLO.md`、`TECHNICAL_DESIGN.md` 和 ADR。
 
 ## W2-F2-S4 Agent→Storage 作品种类：单仓代码门已验，增强真纵切待验

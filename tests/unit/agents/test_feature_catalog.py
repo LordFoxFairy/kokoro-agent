@@ -87,3 +87,14 @@ def test_multi_agent_feature_rejects_members_unreachable_from_entry() -> None:
             entry_agent="general",
             handoffs=(("music", "general"),),
         )
+
+
+def test_only_general_declaration_opts_into_workspace_writes() -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.policy import Permissions
+
+    assert GENERAL_AGENT.permissions.filesystem == "workspace_write"
+    assert GENERAL_AGENT.backend == "state"
+    assert MUSIC_AGENT.permissions.filesystem == "read_only"
+    assert Agent(key="plain", prompt="Read only.").permissions.filesystem == "read_only"
+    assert Permissions().filesystem == "read_only"

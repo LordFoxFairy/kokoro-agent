@@ -1,5 +1,24 @@
 # kokoro-agent 技术设计
 
+## W2-REAL-MODEL-AGENT-WRITE：General state 工作区写入（2026-09-29）
+
+General Chat 的静态 `GENERAL_AGENT` 显式选择 `Permissions(filesystem="workspace_write")`，
+承接已经声明的 `delivery=True`。此前它继承全局 `read_only`，原生 `write_file` 在创建作品前
+即返回 permission denied；本片仅修正此静态能力声明，不改变 `Permissions` 全局默认。
+其他 Agent（包括 Music）保持原默认只读；复用 General 的 Feature 沿用其明确声明。
+Run wire 不接受 permissions/filesystem/agent/backend 参数，用户或模型不拥有放权入口。
+
+仍使用原生 DeepAgents `state` backend，未切换宿主 shell，也未新建 workspace adapter。
+`agent_factory._with_native_skills` 创建同一个 `CompositeBackend`：默认 StateBackend 承载
+会话工作区，`/.skills/` 继续路由只读 `CapabilitySkillBackend`；同一实例交给原生文件工具和
+正式 `deliver`。工作区写权限不授予 Skill package mutation、外部主机访问或 BFF 用户授权。
+
+组件证据使用真实 AgentFactory/DeepAgents v3 loop、原生 write_file/read_file 和正式 deliver，
+仅模型、System resolver、Storage facade、RunRepository/checkpoint 使用测试替身。它证明同一
+state 文件视图、字节/hash 和可信 Run/lease/tool_call_id 传递，以及 Skill 写拒/默认只读/wire
+不可放权；不等于真实 PG/Redis/System/provider/Storage/Product 浏览器集成已通过。
+本片不改变 API_CONTRACT、DATA_MODEL、HTTP/Proto/SQL、生成物或依赖。
+
 ## W2-F2-S4 Agent→Storage 作品种类（2026-09-28；当前运行态与下一代码门）
 
 **当前运行态。** Agent `96dafec038ab6a0397ce58bc638bb576c59f1328` 已固定 Storage

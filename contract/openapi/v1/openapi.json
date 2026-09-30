@@ -313,7 +313,7 @@
               "type": "string",
               "minLength": 7,
               "maxLength": 197,
-              "pattern": "^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+              "pattern": "^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
             }
           },
           "message_id": {

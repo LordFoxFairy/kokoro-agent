@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from jsonschema import Draft202012Validator
 from pydantic import TypeAdapter
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,8 +45,18 @@ def test_launch_requires_exact_typed_skill_selection_schema() -> None:
     assert refs["uniqueItems"] is True
     assert refs["x-kokoro-json-byte-limit"] == 4096
     assert _object(refs["items"])["pattern"] == (
-        r"^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+        r"^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\s\S])"
     )
+
+
+@pytest.mark.parametrize("suffix", ["\n", "\r", "\r\n", "\u2028", "\u2029"])
+def test_skill_selection_schema_rejects_trailing_line_terminators(suffix: str) -> None:
+    document = _document()
+    schema = _object(_object(document["components"])["schemas"])["LaunchRequest"]
+    refs = _object(_object(_object(schema)["properties"])["selected_skill_source_refs"])
+    validator = Draft202012Validator(refs)
+    assert validator.is_valid(["skill:valid"])
+    assert not validator.is_valid([f"skill:valid{suffix}"])
 
 
 def test_every_operation_declares_governance_metadata() -> None:

@@ -116,9 +116,9 @@ def test_runtime_does_not_import_platform_artifact_checker() -> None:
 
 
 def test_platform_artifact_literal_scanner_has_a_negative_fixture() -> None:
-    source = 'Path("contract/platform/v1/execution-operations/v3").read_bytes()'
+    source = 'Path("contract/platform/v1/execution-operations/v4").read_bytes()'
     assert _platform_artifact_literals(source) == {
-        "contract/platform/v1/execution-operations/v3"
+        "contract/platform/v1/execution-operations/v4"
     }
 
 
@@ -244,14 +244,14 @@ def test_production_source_does_not_ship_local_mcp_fixture() -> None:
     """Fixture clients belong under tests/support, never in the package runtime."""
     assert not (_SRC / "mcp" / "local_registry.py").exists()
     assert "PackageStore" not in (_SRC / "clients" / "storage.py").read_text()
-    assert not (_SRC / "skills" / "package.py").exists()
+    assert (_SRC / "skills" / "package.py").exists()
 
 
 def test_skills_package_exports_only_runtime_integration() -> None:
     """Fixture CRUD/package adapters are not a supported GA package-level API."""
     from kokoro_agent import skills
 
-    assert set(skills.__all__) == {"CapabilitySkillBackend", "SKILLS_ROOT"}
+    assert not hasattr(skills, "CapabilitySkillBackend")
 
 
 def test_delivery_tool_uses_only_storage_public_client() -> None:

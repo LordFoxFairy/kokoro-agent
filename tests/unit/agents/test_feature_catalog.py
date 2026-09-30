@@ -56,13 +56,11 @@ def test_feature_rejects_mixed_backends() -> None:
 
 
 def test_feature_can_narrow_agent_capabilities_without_a_new_role_type() -> None:
-    configured = MUSIC_AGENT.configured(
-        skills=("music", "lyrics"), mcp=("music_provider",)
-    )
+    configured = MUSIC_AGENT.configured(mcp=("music_provider",))
     assert configured.key == MUSIC_AGENT.key
-    assert configured.skills == ("music", "lyrics")
+    assert not hasattr(configured, "skills")
     assert configured.mcp == ("music_provider",)
-    assert MUSIC_AGENT.skills == ("music",)
+    assert not hasattr(MUSIC_AGENT, "skills")
     assert MUSIC_AGENT.mcp == ()
 
 

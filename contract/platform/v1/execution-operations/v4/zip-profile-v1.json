@@ -1,0 +1,42 @@
+{
+  "profileVersion": 1,
+  "mimeType": "application/zip",
+  "compressedBytesMax": 33554432,
+  "entryCountMax": 128,
+  "entryBytesMax": 16777216,
+  "totalExpandedBytesMax": 134217728,
+  "filenameUtf8BytesMax": 256,
+  "manifestBytesMax": 16384,
+  "methods": [0, 8],
+  "zip64": false,
+  "multidisk": false,
+  "encrypted": false,
+  "localCentralConsistency": true,
+  "crc32": "all entries; IEEE CRC-32",
+  "paths": "fatal UTF-8 NFC relative POSIX; bit11 absent ASCII only; reject BOM prefix/empty/dot/dotdot/backslash/drive/duplicates/file prefixes",
+  "structure": "EOCD closes at EOF; contiguous local records from offset0 to central; no gaps/overlaps; ZIP32 descriptor exact, ambiguity rejected; strict extra TLV, reject ZIP64 and Unicode path override",
+  "entryTypes": ["regular", "directory-zero-data"],
+  "requiredRootFiles": ["manifest.json", "SKILL.md"],
+  "manifestKeys": ["schema_version", "skill_id", "revision", "entry"],
+  "manifestSchemaVersion": 1,
+  "manifestEntry": "SKILL.md",
+  "manifestIdentity": "zip-v1:sha256:<64 lowercase hex SHA256 of raw decompressed manifest bytes>",
+  "manifestJson": "fatal UTF-8; no BOM/duplicate/unknown keys; safe positive integer tokens only; skill/revision canonical identity",
+  "errors": {
+    "terminal": [
+      "package_zip_invalid",
+      "package_zip_unsafe",
+      "package_limit_exceeded",
+      "package_manifest_invalid",
+      "package_identity_mismatch",
+      "package_scan_infected"
+    ],
+    "recoverable": [
+      "package_scan_pending",
+      "package_scan_unknown",
+      "package_dependency_unavailable"
+    ],
+    "conflict": ["package_attempt_conflict"]
+  },
+  "errorMetadata": "x-kokoro-error-code"
+}

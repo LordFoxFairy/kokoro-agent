@@ -3,7 +3,7 @@
 构造顺序：
   route      ⓪ 向 System 解析受信租户模型路由，失败时不创建外部资源
   backend    ① 创建本次运行的 DeepAgents backend
-  skills     ② 将声明的 Skill 名称解析为 ``/.skills/`` 原生 backend 路由
+  skills     ② 将冻结的 Skill exact refs 解析为 ``/.skills/`` 原生 backend 路由
   tools      ③ 合并 Agent、worker 内置工具及可选 MCP/Storage 工具
   middleware ④ 组装授权、审批和运行守卫
   subagents  ⑤ 注入 Agent 明确声明的 DeepAgents native subagents
@@ -40,7 +40,7 @@ from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnab
 from kokoro_agent.model.factory import make_chat_model, model_from_route
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
-from kokoro_agent.skills.backend import CapabilitySkillBackend, SKILLS_ROOT
+from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.domain.run.scope import RunScope
@@ -50,6 +50,7 @@ from kokoro_agent.swarm import create_swarm
 from langgraph_swarm import create_handoff_tool
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.domain.run.models import LeasedRun
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,20 +70,30 @@ class AgentHandle:
 class _ResolvedCapabilities:
     skills: tuple[ResolvedSkill, ...]
     mcp: Mapping[str, McpServerEntry]
+    skill_reader: SkillClient | None
 
 
 async def _preflight(
-    agent: Agent, dependencies: WorkerDependencies, request: RunRequest
+    agent: Agent,
+    dependencies: WorkerDependencies,
+    request: RunRequest,
+    lease: LeaseFence,
 ) -> _ResolvedCapabilities:
+    skills: tuple[ResolvedSkill, ...] = ()
+    reader: SkillClient | None = None
     if request.selected_skill_source_refs:
-        raise SkillClientError("typed skill source reader unavailable")
-    skills = await resolve_declared_skills(agent, dependencies.skill_client, request)
-    if agent.skills and dependencies.skill_reader is None:
-        raise SkillClientError("declared skill reader unavailable")
+        if dependencies.platform is None:
+            raise SkillClientError("typed skill source reader unavailable")
+        reader = dependencies.platform.skills_for_run(
+            LeasedRun(request=request, lease=lease)
+        )
+        skills = await reader.resolve(request.selected_skill_source_refs)
+        for skill in skills:
+            await reader.load_package(skill)
     mcp = await resolve_declared_mcp(
         request, agent, dependencies.mcp_client, dependencies.mcp_servers
     )
-    return _ResolvedCapabilities(skills=skills, mcp=mcp)
+    return _ResolvedCapabilities(skills=skills, mcp=mcp, skill_reader=reader)
 
 
 async def build_deep_agent(
@@ -95,7 +106,7 @@ async def build_deep_agent(
     name: str | None = None,
     capabilities: _ResolvedCapabilities | None = None,
 ) -> AgentHandle:
-    capabilities = capabilities or await _preflight(agent, dependencies, request)
+    capabilities = capabilities or await _preflight(agent, dependencies, request, lease)
     started = monotonic()
     resolver = dependencies.model_resolver
     if resolver is None:
@@ -138,7 +149,7 @@ async def build_deep_agent(
         sandbox_store=dependencies.run_repository,
     )
     resolved_skills = capabilities.skills
-    skill_backend = CapabilitySkillBackend(resolved_skills, dependencies.skill_reader)
+    skill_backend = TypedSkillBackend(resolved_skills, capabilities.skill_reader)
     native_backend = _with_native_skills(backend, skill_backend)
     toolset = await build_toolset(
         request,
@@ -207,33 +218,8 @@ async def build_deep_agent(
     )
 
 
-async def resolve_declared_skills(
-    agent: Agent, skill_client: SkillClient | None, request: RunRequest
-) -> tuple[ResolvedSkill, ...]:
-    """Resolve declared Skill selectors at the GA boundary.
-
-    Feature/Agent declarations carry names only; Capability resolves those names through the
-    worker-owned client immediately before DeepAgents is constructed. The resulting resolved
-    skills are
-    transient assembly data and never become Agent or Session state.
-    """
-    if not agent.skills:
-        return ()
-    if skill_client is None:
-        raise SkillClientError("declared skill client unavailable")
-    scope = RunScope.of(request)
-    resolved = await skill_client.resolve(
-        agent.skills, request.execution_identity, scope.namespace
-    )
-    if {skill.name for skill in resolved} != set(agent.skills) or len(resolved) != len(
-        set(agent.skills)
-    ):
-        raise SkillClientError("declared skill resolution incomplete")
-    return resolved
-
-
 def _with_native_skills(
-    backend: BackendProtocol | None, skill_backend: CapabilitySkillBackend
+    backend: BackendProtocol | None, skill_backend: TypedSkillBackend
 ) -> CompositeBackend:
     """Route ``/.skills/`` into DeepAgents without copying Skill packages."""
 
@@ -274,7 +260,7 @@ class AgentFactory:
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
         capabilities = {
-            agent.key: await _preflight(agent, self._dependencies, request)
+            agent.key: await _preflight(agent, self._dependencies, request, lease)
             for agent in feature.agents
         }
         if len(feature.agents) == 1:

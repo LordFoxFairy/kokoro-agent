@@ -371,3 +371,103 @@ async def test_real_postgres_lease_with_worker_owned_http(
                 )
             )
         await admin.close()
+
+
+async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
+    loopback: Loopback, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real signer/worker/OAuth; Platform and object responses are named fixtures."""
+    import httpx
+    from protobuf.wkt import Timestamp
+    from kokoro_agent.clients.platform_transport import (
+        PlatformRequest,
+        PlatformResponse,
+    )
+    from kokoro_agent.clients.skill_package_transport import SkillPackageTransport
+
+    vector = json.loads(
+        (
+            Path(__file__).parents[2]
+            / "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json"
+        ).read_bytes()
+    )["vectors"][0]
+    claims: list[dict[str, Any]] = []
+    gets = 0
+
+    async def signed_send(
+        request: PlatformRequest, token: str, timeout_ms: int
+    ) -> PlatformResponse:
+        assert token == "TOKEN" and timeout_ms > 0
+        proof: dict[str, Any] = jwt.decode(
+            request.execution_proof,
+            loopback.private.public_key(),
+            algorithms=["EdDSA"],
+            audience="https://kokoro.dev/resources/iam-execution-authorization",
+            issuer="urn:test:agent",
+        )
+        assert proof["lease_generation"] == 7
+        assert (
+            proof["request_binding_sha256"]
+            == project_request_binding(tenant_ref="tenant", request=request).sha256
+        )
+        claims.append(proof)
+        if isinstance(request, pb.ResolveVisibleSkillRequest):
+            return pb.ResolveVisibleSkillResponse(
+                source=pb.SkillSource(
+                    source_ref=pb.SkillSourceRef(value="skill:skill-1"),
+                    skill_id=pb.SkillId(value="skill-1"),
+                    series_id=pb.SkillSeriesId(value="series"),
+                    revision=1,
+                    scope_kind=pb.SkillScopeKind.PERSONAL,
+                    package_asset_ref="asset",
+                    content_digest=vector["zipSha256"],
+                    manifest_identity=vector["manifestIdentity"],
+                )
+            )
+        assert isinstance(request, pb.GetApprovedSkillPackageReferenceRequest)
+        return pb.GetApprovedSkillPackageReferenceResponse(
+            asset_ref="asset",
+            content_digest=vector["zipSha256"],
+            manifest_identity=vector["manifestIdentity"],
+            transfer_reference=pb.PackageTransferReference(
+                method="GET",
+                url="https://objects.test/pkg",
+                expires_at=Timestamp.from_datetime(
+                    datetime.now(UTC) + timedelta(seconds=30)
+                ),
+            ),
+        )
+
+    async def get(request: httpx.Request) -> httpx.Response:
+        nonlocal gets
+        gets += 1
+        assert "authorization" not in request.headers
+        return httpx.Response(
+            200, stream=httpx.ByteStream(base64.b64decode(vector["zipBase64"]))
+        )
+
+    async with (
+        worker_platform_runtime(loopback.config(tmp_path)) as runtime,
+        SkillPackageTransport(
+            "https://objects.test", transport=httpx.MockTransport(get)
+        ) as packages,
+    ):
+        assert runtime is not None
+        reader = LeaseReader()
+        monkeypatch.setattr(runtime.transport, "send", signed_send)
+        current = replace(runtime, lease_reader=reader, packages=packages)
+        client = current.skills_for_run(leased_run())
+        skills = await client.resolve(("skill:skill-1",))
+        assert (await client.load_package(skills[0]))["SKILL.md"] == b"# Skill"
+        await client.load_package(skills[0])
+        assert gets == 2 and len(claims) == 3
+        assert len({c["jti"] for c in claims}) == 3
+        assert [c["operation"] for c in claims] == [
+            "skill.resolve_visible_skill",
+            "skill.get_approved_package_reference",
+            "skill.get_approved_package_reference",
+        ]
+        reader.active = False
+        with pytest.raises(ExecutionProofUnavailableError):
+            await client.load_package(skills[0])
+        assert gets == 2 and len(claims) == 3

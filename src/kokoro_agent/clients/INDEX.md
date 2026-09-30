@@ -5,10 +5,8 @@ Model owner 的领域模型。
 
 ## 当前协议
 
-- `skills.py`：`SkillClient` 负责把 Agent/Feature 的 Skill 名称解析为本次装配的读取 grant；
-  `SkillReader` 只负责按 grant 读取包体。未配置 Capability 时由 worker 注入 `None`，不会组装
-  一个伪 client。Grant 是 client 返回的临时结果，不进入 Agent/Feature/Session。查询、可见性、CRUD 与
-  logical path 由 Capability public contract 负责。
+- `skills.py`：`PlatformSkillClient`按已冻结exact ref调用Run-bound Resolve/Approved，每次读取重新授权并校验完整包，无名称grant与bytes授权缓存。
+- `skill_package_transport.py`：固定ObjectStore origin的GET transport，空owner headers、无cookie/bearer、期限/32MiB/hash验证，不复用Artifact PUT凭据。
 - `mcp.py`：`McpClient`，接收名称、`ExecutionIdentity` 与 GA 派生 namespace，只暴露本次运行
   需要的 MCP 配置读取面；注册、启停、凭据和路径由 Capability public contract 负责。MCP grant
   细节留在 client 内部。适配器用 `McpClientError` 表达 Capability 读取不可用；已声明 MCP 直接失败，不回退部署定义；无声明时不调用 client。
@@ -22,4 +20,4 @@ fixture。
 - `platform_credentials.py`：worker-only exact owner-file snapshot、tenant/generation 高水位与安全读取。
 - `platform_tokens.py`：IAM Basic/form token exchange、generation cache/singleflight/rotation/cancel 生命周期。
 - `platform_transport.py`：六个首批 generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
-  产品 typed selection 尚未接入，不能把这些传输能力视为 Skill/MCP 产品已激活。
+  Skill typed reader已接入；MCP后续切片、Platform v4激活与安装产品链仍待验。

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/4.0.0/zip-profile-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profileVersion",
+    "mimeType",
+    "compressedBytesMax",
+    "entryCountMax",
+    "entryBytesMax",
+    "totalExpandedBytesMax",
+    "filenameUtf8BytesMax",
+    "manifestBytesMax",
+    "methods",
+    "zip64",
+    "multidisk",
+    "encrypted",
+    "localCentralConsistency",
+    "crc32",
+    "paths",
+    "structure",
+    "entryTypes",
+    "requiredRootFiles",
+    "manifestKeys",
+    "manifestSchemaVersion",
+    "manifestEntry",
+    "manifestIdentity",
+    "manifestJson",
+    "errors",
+    "errorMetadata"
+  ],
+  "properties": {
+    "profileVersion": {
+      "const": 1
+    },
+    "mimeType": {
+      "const": "application/zip"
+    },
+    "compressedBytesMax": {
+      "const": 33554432
+    },
+    "entryCountMax": {
+      "const": 128
+    },
+    "entryBytesMax": {
+      "const": 16777216
+    },
+    "totalExpandedBytesMax": {
+      "const": 134217728
+    },
+    "filenameUtf8BytesMax": {
+      "const": 256
+    },
+    "manifestBytesMax": {
+      "const": 16384
+    },
+    "methods": {
+      "const": [0, 8]
+    },
+    "zip64": {
+      "const": false
+    },
+    "multidisk": {
+      "const": false
+    },
+    "encrypted": {
+      "const": false
+    },
+    "localCentralConsistency": {
+      "const": true
+    },
+    "crc32": {
+      "const": "all entries; IEEE CRC-32"
+    },
+    "paths": {
+      "const": "fatal UTF-8 NFC relative POSIX; bit11 absent ASCII only; reject BOM prefix/empty/dot/dotdot/backslash/drive/duplicates/file prefixes"
+    },
+    "structure": {
+      "const": "EOCD closes at EOF; contiguous local records from offset0 to central; no gaps/overlaps; ZIP32 descriptor exact, ambiguity rejected; strict extra TLV, reject ZIP64 and Unicode path override"
+    },
+    "entryTypes": {
+      "const": ["regular", "directory-zero-data"]
+    },
+    "requiredRootFiles": {
+      "const": ["manifest.json", "SKILL.md"]
+    },
+    "manifestKeys": {
+      "const": ["schema_version", "skill_id", "revision", "entry"]
+    },
+    "manifestSchemaVersion": {
+      "const": 1
+    },
+    "manifestEntry": {
+      "const": "SKILL.md"
+    },
+    "manifestIdentity": {
+      "const": "zip-v1:sha256:<64 lowercase hex SHA256 of raw decompressed manifest bytes>"
+    },
+    "manifestJson": {
+      "const": "fatal UTF-8; no BOM/duplicate/unknown keys; safe positive integer tokens only; skill/revision canonical identity"
+    },
+    "errors": {
+      "const": {
+        "terminal": [
+          "package_zip_invalid",
+          "package_zip_unsafe",
+          "package_limit_exceeded",
+          "package_manifest_invalid",
+          "package_identity_mismatch",
+          "package_scan_infected"
+        ],
+        "recoverable": [
+          "package_scan_pending",
+          "package_scan_unknown",
+          "package_dependency_unavailable"
+        ],
+        "conflict": ["package_attempt_conflict"]
+      }
+    },
+    "errorMetadata": {
+      "const": "x-kokoro-error-code"
+    }
+  }
+}

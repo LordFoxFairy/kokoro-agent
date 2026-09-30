@@ -643,7 +643,379 @@ class CreateSkillDraftResponse(Message[_CreateSkillDraftResponseFields]):
         replayed: bool
         series_id: SkillSeriesId | None
 
-_ValidateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context"]
+_GetSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "skill_id", "product_context"]
+
+class GetSkillPackageUploadRequest(Message[_GetSkillPackageUploadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillPackageUploadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "skill_id", "product_context")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+
+_GetSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id"]
+
+class GetSkillPackageUploadResponse(Message[_GetSkillPackageUploadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillPackageUploadResponse
+    ```
+
+    Attributes:
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 1;
+            ```
+        attempt_id:
+            ```proto
+            optional string attempt_id = 2;
+            ```
+        attempt_epoch:
+            ```proto
+            uint64 attempt_epoch = 3;
+            ```
+        phase:
+            ```proto
+            kokoro.platform.v1.SkillPackagePhase phase = 4;
+            ```
+        upload_id:
+            ```proto
+            optional string upload_id = 5;
+            ```
+    """
+
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill_id: SkillId | None = None,
+            attempt_id: str | None = None,
+            attempt_epoch: int = 0,
+            phase: SkillPackagePhase | None = None,
+            upload_id: str | None = None,
+        ) -> None:
+            pass
+
+        skill_id: SkillId | None
+        attempt_id: str
+        attempt_epoch: int
+        phase: SkillPackagePhase
+        upload_id: str
+
+_BeginSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id"]
+
+class BeginSkillPackageUploadRequest(Message[_BeginSkillPackageUploadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginSkillPackageUploadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        filename:
+            ```proto
+            string filename = 5;
+            ```
+        mime_type:
+            ```proto
+            string mime_type = 6;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 7;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 8;
+            ```
+        replaces_attempt_id:
+            ```proto
+            optional string replaces_attempt_id = 9;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            filename: str = "",
+            mime_type: str = "",
+            size_bytes: int = 0,
+            content_sha256: str = "",
+            replaces_attempt_id: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        filename: str
+        mime_type: str
+        size_bytes: int
+        content_sha256: str
+        replaces_attempt_id: str
+
+_BeginSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed"]
+
+class BeginSkillPackageUploadResponse(Message[_BeginSkillPackageUploadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginSkillPackageUploadResponse
+    ```
+
+    Attributes:
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 1;
+            ```
+        attempt_id:
+            ```proto
+            string attempt_id = 2;
+            ```
+        attempt_epoch:
+            ```proto
+            uint64 attempt_epoch = 3;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 4;
+            ```
+        transfer_reference:
+            ```proto
+            optional kokoro.platform.v1.PackageTransferReference transfer_reference = 5;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 6;
+            ```
+    """
+
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill_id: SkillId | None = None,
+            attempt_id: str = "",
+            attempt_epoch: int = 0,
+            upload_id: str = "",
+            transfer_reference: PackageTransferReference | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill_id: SkillId | None
+        attempt_id: str
+        attempt_epoch: int
+        upload_id: str
+        transfer_reference: PackageTransferReference | None
+        replayed: bool
+
+_CompleteSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "attempt_id", "upload_id", "content_sha256", "size_bytes"]
+
+class CompleteSkillPackageUploadRequest(Message[_CompleteSkillPackageUploadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompleteSkillPackageUploadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        attempt_id:
+            ```proto
+            string attempt_id = 5;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 6;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 7;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 8;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "attempt_id", "upload_id", "content_sha256", "size_bytes")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            attempt_id: str = "",
+            upload_id: str = "",
+            content_sha256: str = "",
+            size_bytes: int = 0,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        attempt_id: str
+        upload_id: str
+        content_sha256: str
+        size_bytes: int
+
+_CompleteSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "asset_id", "phase", "replayed", "content_sha256", "scan_state"]
+
+class CompleteSkillPackageUploadResponse(Message[_CompleteSkillPackageUploadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompleteSkillPackageUploadResponse
+    ```
+
+    Attributes:
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 1;
+            ```
+        attempt_id:
+            ```proto
+            string attempt_id = 2;
+            ```
+        attempt_epoch:
+            ```proto
+            uint64 attempt_epoch = 3;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 4;
+            ```
+        asset_id:
+            ```proto
+            string asset_id = 5;
+            ```
+        phase:
+            ```proto
+            kokoro.platform.v1.SkillPackagePhase phase = 6;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 7;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 8;
+            ```
+        scan_state:
+            ```proto
+            kokoro.platform.v1.SkillPackageScanState scan_state = 9;
+            ```
+    """
+
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "asset_id", "phase", "replayed", "content_sha256", "scan_state")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill_id: SkillId | None = None,
+            attempt_id: str = "",
+            attempt_epoch: int = 0,
+            upload_id: str = "",
+            asset_id: str = "",
+            phase: SkillPackagePhase | None = None,
+            replayed: bool = False,
+            content_sha256: str = "",
+            scan_state: SkillPackageScanState | None = None,
+        ) -> None:
+            pass
+
+        skill_id: SkillId | None
+        attempt_id: str
+        attempt_epoch: int
+        upload_id: str
+        asset_id: str
+        phase: SkillPackagePhase
+        replayed: bool
+        content_sha256: str
+        scan_state: SkillPackageScanState
+
+_ValidateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "attempt_id"]
 
 class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
     """
@@ -668,9 +1040,13 @@ class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
             ```proto
             optional kokoro.platform.v1.ProductCatalogContext product_context = 6;
             ```
+        attempt_id:
+            ```proto
+            string attempt_id = 7;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "skill_id", "product_context")
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "attempt_id")
 
     if TYPE_CHECKING:
 
@@ -681,6 +1057,7 @@ class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
             command: CommandIdentity | None = None,
             skill_id: SkillId | None = None,
             product_context: ProductCatalogContext | None = None,
+            attempt_id: str = "",
         ) -> None:
             pass
 
@@ -688,6 +1065,7 @@ class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
         command: CommandIdentity | None
         skill_id: SkillId | None
         product_context: ProductCatalogContext | None
+        attempt_id: str
 
 _ValidateSkillDraftResponseFields: TypeAlias = Literal["skill_id", "valid", "content_digest", "manifest_identity", "replayed", "series_id"]
 
@@ -1149,7 +1527,7 @@ class GetApprovedSkillPackageReferenceRequest(Message[_GetApprovedSkillPackageRe
         source_ref: SkillSourceRef | None
         execution_proof: str
 
-_GetApprovedSkillPackageReferenceResponseFields: TypeAlias = Literal["asset_ref", "content_digest", "manifest_identity", "read_reference"]
+_GetApprovedSkillPackageReferenceResponseFields: TypeAlias = Literal["asset_ref", "content_digest", "manifest_identity", "transfer_reference"]
 
 class GetApprovedSkillPackageReferenceResponse(Message[_GetApprovedSkillPackageReferenceResponseFields]):
     """
@@ -1170,13 +1548,13 @@ class GetApprovedSkillPackageReferenceResponse(Message[_GetApprovedSkillPackageR
             ```proto
             string manifest_identity = 3;
             ```
-        read_reference:
+        transfer_reference:
             ```proto
-            string read_reference = 4;
+            optional kokoro.platform.v1.PackageTransferReference transfer_reference = 5;
             ```
     """
 
-    __slots__ = ("asset_ref", "content_digest", "manifest_identity", "read_reference")
+    __slots__ = ("asset_ref", "content_digest", "manifest_identity", "transfer_reference")
 
     if TYPE_CHECKING:
 
@@ -1186,14 +1564,62 @@ class GetApprovedSkillPackageReferenceResponse(Message[_GetApprovedSkillPackageR
             asset_ref: str = "",
             content_digest: str = "",
             manifest_identity: str = "",
-            read_reference: str = "",
+            transfer_reference: PackageTransferReference | None = None,
         ) -> None:
             pass
 
         asset_ref: str
         content_digest: str
         manifest_identity: str
-        read_reference: str
+        transfer_reference: PackageTransferReference | None
+
+_PackageTransferReferenceFields: TypeAlias = Literal["url", "method", "required_headers", "expires_at"]
+
+class PackageTransferReference(Message[_PackageTransferReferenceFields]):
+    """
+    Ephemeral Storage-signed GET result; never stored in Skill or command receipts.
+
+    ```proto
+    message kokoro.platform.v1.PackageTransferReference
+    ```
+
+    Attributes:
+        url:
+            ```proto
+            string url = 1;
+            ```
+        method:
+            ```proto
+            string method = 2;
+            ```
+        required_headers:
+            ```proto
+            map<string, string> required_headers = 3;
+            ```
+        expires_at:
+            ```proto
+            optional google.protobuf.Timestamp expires_at = 4;
+            ```
+    """
+
+    __slots__ = ("url", "method", "required_headers", "expires_at")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            url: str = "",
+            method: str = "",
+            required_headers: dict[str, str] | None = None,
+            expires_at: Timestamp | None = None,
+        ) -> None:
+            pass
+
+        url: str
+        method: str
+        required_headers: dict[str, str]
+        expires_at: Timestamp | None
 
 _CreateSkillVersionRequestFields: TypeAlias = Literal["request_id", "command", "owner_scope", "base_skill_id", "metadata", "product_context"]
 
@@ -3958,6 +4384,86 @@ class McpPrimitiveKind(Enum):
     RESOURCE = 2
     PROMPT = 3
 
+class SkillPackagePhase(Enum):
+    """
+    ```proto
+    enum kokoro.platform.v1.SkillPackagePhase
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            SKILL_PACKAGE_PHASE_UNSPECIFIED = 0
+            ```
+        NONE:
+            ```proto
+            SKILL_PACKAGE_PHASE_NONE = 1
+            ```
+        INTENT:
+            ```proto
+            SKILL_PACKAGE_PHASE_INTENT = 2
+            ```
+        UPLOAD_PENDING:
+            ```proto
+            SKILL_PACKAGE_PHASE_UPLOAD_PENDING = 3
+            ```
+        UPLOADED:
+            ```proto
+            SKILL_PACKAGE_PHASE_UPLOADED = 4
+            ```
+        VALIDATED:
+            ```proto
+            SKILL_PACKAGE_PHASE_VALIDATED = 5
+            ```
+        ABORTED:
+            ```proto
+            SKILL_PACKAGE_PHASE_ABORTED = 6
+            ```
+    """
+
+    UNSPECIFIED = 0
+    NONE = 1
+    INTENT = 2
+    UPLOAD_PENDING = 3
+    UPLOADED = 4
+    VALIDATED = 5
+    ABORTED = 6
+
+class SkillPackageScanState(Enum):
+    """
+    ```proto
+    enum kokoro.platform.v1.SkillPackageScanState
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            SKILL_PACKAGE_SCAN_STATE_UNSPECIFIED = 0
+            ```
+        PENDING:
+            ```proto
+            SKILL_PACKAGE_SCAN_STATE_PENDING = 1
+            ```
+        CLEAN:
+            ```proto
+            SKILL_PACKAGE_SCAN_STATE_CLEAN = 2
+            ```
+        INFECTED:
+            ```proto
+            SKILL_PACKAGE_SCAN_STATE_INFECTED = 3
+            ```
+        UNKNOWN:
+            ```proto
+            SKILL_PACKAGE_SCAN_STATE_UNKNOWN = 4
+            ```
+    """
+
+    UNSPECIFIED = 0
+    PENDING = 1
+    CLEAN = 2
+    INFECTED = 3
+    UNKNOWN = 4
+
 class SkillInstallationChange(Enum):
     """
     ```proto
@@ -4010,7 +4516,7 @@ class SkillInstallationChange(Enum):
 
 
 _DESC = file_desc(
-    b'\n)kokoro/platform/v1/platform_runtime.proto\x12\x12kokoro.platform.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dkokoro/common/v1/common.proto"%\n\rSkillSeriesId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\x1f\n\x07SkillId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"+\n\x13SkillInstallationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eSkillSourceRef\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eMcpConnectorId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"#\n\x0bMcpServerId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\'\n\x0fMcpConnectionId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpAuthorizationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpInvocationGrant\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"0\n\nOwnerScope\x12\x12\n\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id"w\n\x15ProductCatalogContext\x12\x1d\n\nsubject_id\x18\x01 \x01(\tR\tsubjectId\x12?\n\x0bowner_scope\x18\x02 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope"\x85\x01\n\rSkillMetadata\x12!\n\x0cdisplay_name\x18\x01 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x02 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x03 \x03(\tR\x04tags\x12#\n\rmetadata_json\x18\x04 \x01(\x0cR\x0cmetadataJson"\xf0\x03\n\x0cSkillSummary\x12A\n\nscope_kind\x18\x02 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x04 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x05 \x03(\tR\x04tags\x12\x1a\n\x08revision\x18\x06 \x01(\x04R\x08revision\x12%\n\x0econtent_digest\x18\x07 \x01(\tR\rcontentDigest\x127\n\x06status\x18\x08 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12A\n\nsource_ref\x18\t \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12>\n\tseries_id\x18\n \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\x0b \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x01\x10\x02R\x0fsource_selector"\xbe\x03\n\x0bSkillSource\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12A\n\nscope_kind\x18\x03 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x07 \x01(\tR\x10manifestIdentity\x12>\n\tseries_id\x18\x08 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\t \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x02\x10\x03R\x0fsource_selector"\xc9\x02\n\x17CreateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12=\n\x08metadata\x18\x04 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x83\x02\n\x18CreateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xb2\x02\n\x19ValidateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContextJ\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06R\x11package_asset_refR\x0econtent_digest"\x9a\x02\n\x1aValidateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x14\n\x05valid\x18\x02 \x01(\x08R\x05valid\x12%\n\x0econtent_digest\x18\x03 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x04 \x01(\tR\x10manifestIdentity\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x06 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xc1\x02\n\x13PublishSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12B\n\nvisibility\x18\x04 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\nvisibility\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xe5\x01\n\x14PublishSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x04 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xa1\x02\n\x14WithdrawSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xca\x01\n\x15WithdrawSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x127\n\x06status\x18\x02 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x99\x02\n\x1cDiscoverVisibleSkillsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x14\n\x05query\x18\x03 \x01(\tR\x05query\x12\x12\n\x04tags\x18\x04 \x03(\tR\x04tags\x12A\n\nscope_kind\x18\x05 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8b\x01\n\x1dDiscoverVisibleSkillsResponse\x128\n\x06skills\x18\x01 \x03(\x0b2 .kokoro.platform.v1.SkillSummaryR\x06skills\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xd1\x01\n\x1aResolveVisibleSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProof\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x0battestationR\x0fsource_selector"V\n\x1bResolveVisibleSkillResponse\x127\n\x06source\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.SkillSourceR\x06source"\xc7\x01\n\'GetApprovedSkillPackageReferenceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xc2\x01\n(GetApprovedSkillPackageReferenceResponse\x12\x1b\n\tasset_ref\x18\x01 \x01(\tR\x08assetRef\x12%\n\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x03 \x01(\tR\x10manifestIdentity\x12%\n\x0eread_reference\x18\x04 \x01(\tR\rreadReference"\x8c\x03\n\x19CreateSkillVersionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12?\n\rbase_skill_id\x18\x04 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x0bbaseSkillId\x12=\n\x08metadata\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x85\x02\n\x1aCreateSkillVersionResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xb8\x02\n\x15SetSkillStatusRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x127\n\x06status\x18\x04 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xc1\x01\n\x16SetSkillStatusResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x92\x05\n\x11SkillInstallation\x12P\n\x0finstallation_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12\x1c\n\tinstalled\x18\x07 \x01(\x08R\tinstalled\x12\x18\n\x07enabled\x18\x08 \x01(\x08R\x07enabled\x12=\n\x0cinstalled_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\x0binstalledAt\x129\n\nupdated_at\x18\n \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n\nremoved_at\x18\x0b \x01(\x0b2\x1a.google.protobuf.TimestampR\tremovedAt\x12>\n\tseries_id\x18\x0c \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xbe\x02\n\x13InstallSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x05 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xa8\x02\n"SetSkillInstallationEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\x18\n\x07enabled\x18\x05 \x01(\x08R\x07enabled\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\x8a\x02\n\x1eRemoveSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xca\x01\n\x1bGetSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"i\n\x1cGetSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation"\xd7\x02\n\x1dListSkillInstallationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01\x12!\n\tinstalled\x18\x05 \x01(\x08H\x01R\tinstalled\x88\x01\x01\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\n\n\x08_enabledB\x0c\n\n_installedJ\x04\x08\x02\x10\x03R\x0battestation"\x9f\x01\n\x1eListSkillInstallationsResponse\x12K\n\rinstallations\x18\x01 \x03(\x0b2%.kokoro.platform.v1.SkillInstallationR\rinstallations\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xef\x01\n\x14InstallSkillResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xa1\x03\n\x0cMcpConnector\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12K\n\x0econnector_type\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x12?\n\x0bowner_scope\x18\x04 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12>\n\x06status\x18\x05 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x06 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x07 \x01(\tR\x12externalAccountRef"\x8f\x03\n\x19CreateMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\x0econnector_type\x18\x04 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x05 \x01(\tR\x0bproviderKey\x12)\n\x10requested_scopes\x18\x06 \x03(\tR\x0frequestedScopes\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x07\x10\x08R\x0battestation"\x92\x02\n\x1aCreateMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12Q\n\x10authorization_id\x18\x03 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x86\x02\n%BeginMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x04\x10\x05R\x0battestation"\xb1\x02\n&BeginMcpConnectorAuthorizationResponse\x12Q\n\x10authorization_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12)\n\x10provider_display\x18\x02 \x01(\tR\x0fproviderDisplay\x12%\n\x0econsent_scopes\x18\x03 \x03(\tR\rconsentScopes\x125\n\x17expires_at_unix_seconds\x18\x04 \x01(\x03R\x14expiresAtUnixSeconds\x12+\n\x11authorization_url\x18\x05 \x01(\tR\x10authorizationUrl"\x96\x03\n(CompleteMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12Q\n\x10authorization_id\x18\x04 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x128\n\x18authorization_handle_ref\x18\x05 \x01(\tR\x16authorizationHandleRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xa9\x02\n)CompleteMcpConnectorAuthorizationResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x03 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x04 \x01(\tR\x12externalAccountRef\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xb6\x02\n\x18ListMcpConnectorsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\rstatus_filter\x18\x04 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x0cstatusFilter\x121\n\x04page\x18\x05 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x96\x01\n\x19ListMcpConnectorsResponse\x12G\n\x0emcp_connectors\x18\x01 \x03(\x0b2 .kokoro.platform.v1.McpConnectorR\rmcpConnectors\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xba\x01\n\x16GetMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"`\n\x17GetMcpConnectorResponse\x12E\n\rmcp_connector\x18\x01 \x01(\x0b2 .kokoro.platform.v1.McpConnectorR\x0cmcpConnector"\x92\x02\n\x19RevokeMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xda\x01\n\x1aRevokeMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc1\x02\n\tMcpServer\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12!\n\x0cprovider_key\x18\x02 \x01(\tR\x0bproviderKey\x12\'\n\x0fserver_identity\x18\x03 \x01(\tR\x0eserverIdentity\x12>\n\ttransport\x18\x04 \x01(\x0e2 .kokoro.platform.v1.McpTransportR\ttransport\x12-\n\x12declaration_digest\x18\x05 \x01(\tR\x11declarationDigest\x12;\n\x06status\x18\x06 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status"\xb1\x01\n\x18RegisterMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestIdJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06J\x04\x08\x06\x10\x07J\x04\x08\x07\x10\x08R\x07commandR\x0cprovider_keyR\x0fserver_identityR\ttransportR\x12declaration_digestR\x0battestation"\xb2\x01\n\x19RegisterMcpServerResponse\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12;\n\x06status\x18\x02 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xae\x01\n\x13GetMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"M\n\x14GetMcpServerResponse\x125\n\x06server\x18\x01 \x01(\x0b2\x1d.kokoro.platform.v1.McpServerR\x06server"\xde\x01\n\x15ListMcpServersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12&\n\x0cprovider_key\x18\x03 \x01(\tH\x00R\x0bproviderKey\x88\x01\x01\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\x0f\n\r_provider_keyJ\x04\x08\x02\x10\x03R\x0battestation"\x83\x01\n\x16ListMcpServersResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xe6\x02\n\x1aCreateMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x05 \x03(\tR\x10allowedSelectors\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xc0\x01\n\x1bCreateMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12#\n\rpolicy_digest\x18\x02 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x03 \x01(\tR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc8\x02\n\rMcpConnection\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x04 \x03(\tR\x10allowedSelectors\x12#\n\rpolicy_digest\x18\x05 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x06 \x01(\tR\x06status"\xbe\x01\n\x17GetMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"]\n\x18GetMcpConnectionResponse\x12A\n\nconnection\x18\x01 \x01(\x0b2!.kokoro.platform.v1.McpConnectionR\nconnection"\xf0\x01\n\x19ListMcpConnectionsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x93\x01\n\x1aListMcpConnectionsResponse\x12C\n\x0bconnections\x18\x01 \x03(\x0b2!.kokoro.platform.v1.McpConnectionR\x0bconnections\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\x96\x02\n\x1aRevokeMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xb6\x01\n\x1bRevokeMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06status\x18\x02 \x01(\tR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x9a\x02\n\x14McpCapabilitySummary\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x128\n\x04kind\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpPrimitiveKindR\x04kind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12.\n\x13input_schema_digest\x18\x04 \x01(\tR\x11inputSchemaDigest\x120\n\x14output_schema_digest\x18\x05 \x01(\tR\x12outputSchemaDigest\x12\'\n\x0frequired_scopes\x18\x06 \x03(\tR\x0erequiredScopes"\xf7\x01\n ListMcpServerDeclarationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xdc\x01\n!ListMcpServerDeclarationsResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x120\n\x04page\x18\x03 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xc7\x01\n#ListMcpConnectorCapabilitiesRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xf2\x01\n$ListMcpConnectorCapabilitiesResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x125\n\x17expires_at_unix_seconds\x18\x03 \x01(\x03R\x14expiresAtUnixSeconds"\xde\x02\n\x17AuthorizeMcpToolRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12#\n\rtool_selector\x18\x04 \x01(\tR\x0ctoolSelector\x120\n\x14typed_arguments_json\x18\x05 \x01(\x0cR\x12typedArgumentsJson\x12!\n\x0capproval_ref\x18\x06 \x01(\tR\x0bapprovalRef\x12\'\n\x0fidempotency_key\x18\x07 \x01(\tR\x0eidempotencyKey\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xd9\x02\n\x18AuthorizeMcpToolResponse\x12Q\n\x10invocation_grant\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpInvocationGrantR\x0finvocationGrant\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x19\n\x08tool_ref\x18\x03 \x01(\tR\x07toolRef\x124\n\x16typed_arguments_digest\x18\x04 \x01(\tR\x14typedArgumentsDigest\x125\n\x17expires_at_unix_seconds\x18\x05 \x01(\x03R\x14expiresAtUnixSeconds\x12\x1b\n\taudit_ref\x18\x06 \x01(\tR\x08auditRef"\xfe\x01\n#SetSkillInstallationEnabledResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xfa\x01\n\x1fRemoveSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\x89\x02\n\x14McpConnectorProvider\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12M\n\x0fconnector_types\x18\x03 \x03(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\x0econnectorTypes\x12%\n\x0edefault_scopes\x18\x04 \x03(\tR\rdefaultScopes\x125\n\x16authorization_required\x18\x05 \x01(\x08R\x15authorizationRequired"\xb0\x01\n ListMcpConnectorProvidersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x121\n\x04page\x18\x03 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x9d\x01\n!ListMcpConnectorProvidersResponse\x12F\n\tproviders\x18\x01 \x03(\x0b2(.kokoro.platform.v1.McpConnectorProviderR\tproviders\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page*\xb0\x01\n\x0eSkillScopeKind\x12 \n\x1cSKILL_SCOPE_KIND_UNSPECIFIED\x10\x00\x12\x1d\n\x19SKILL_SCOPE_KIND_PERSONAL\x10\x01\x12\x1c\n\x18SKILL_SCOPE_KIND_PROJECT\x10\x02\x12!\n\x1dSKILL_SCOPE_KIND_ORGANIZATION\x10\x03\x12\x1c\n\x18SKILL_SCOPE_KIND_SESSION\x10\x04*\xb1\x01\n\x0bSkillStatus\x12\x1c\n\x18SKILL_STATUS_UNSPECIFIED\x10\x00\x12\x16\n\x12SKILL_STATUS_DRAFT\x10\x01\x12\x17\n\x13SKILL_STATUS_ACTIVE\x10\x02\x12\x1a\n\x16SKILL_STATUS_WITHDRAWN\x10\x03\x12\x1c\n\x18SKILL_STATUS_QUARANTINED\x10\x04\x12\x19\n\x15SKILL_STATUS_DISABLED\x10\x05*\x8f\x01\n\x10McpConnectorType\x12"\n\x1eMCP_CONNECTOR_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n\x1aMCP_CONNECTOR_TYPE_BUILTIN\x10\x01\x12\x1b\n\x17MCP_CONNECTOR_TYPE_BYOK\x10\x02\x12\x1a\n\x16MCP_CONNECTOR_TYPE_MCP\x10\x03*\xbf\x01\n\x12McpConnectorStatus\x12$\n MCP_CONNECTOR_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_CONNECTOR_STATUS_PENDING\x10\x01\x12\x1f\n\x1bMCP_CONNECTOR_STATUS_ACTIVE\x10\x02\x12\x1e\n\x1aMCP_CONNECTOR_STATUS_ERROR\x10\x03\x12 \n\x1cMCP_CONNECTOR_STATUS_REVOKED\x10\x04*\x87\x01\n\x0cMcpTransport\x12\x1d\n\x19MCP_TRANSPORT_UNSPECIFIED\x10\x00\x12\x17\n\x13MCP_TRANSPORT_STDIO\x10\x01\x12!\n\x1dMCP_TRANSPORT_STREAMABLE_HTTP\x10\x02\x12\x1c\n\x18MCP_TRANSPORT_SSE_COMPAT\x10\x03*v\n\x0fMcpServerStatus\x12!\n\x1dMCP_SERVER_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_SERVER_STATUS_REGISTERED\x10\x01\x12\x1e\n\x1aMCP_SERVER_STATUS_DISABLED\x10\x02*\x93\x01\n\x10McpPrimitiveKind\x12"\n\x1eMCP_PRIMITIVE_KIND_UNSPECIFIED\x10\x00\x12\x1b\n\x17MCP_PRIMITIVE_KIND_TOOL\x10\x01\x12\x1f\n\x1bMCP_PRIMITIVE_KIND_RESOURCE\x10\x02\x12\x1d\n\x19MCP_PRIMITIVE_KIND_PROMPT\x10\x03*\xdf\x02\n\x17SkillInstallationChange\x12)\n%SKILL_INSTALLATION_CHANGE_UNSPECIFIED\x10\x00\x12\'\n#SKILL_INSTALLATION_CHANGE_INSTALLED\x10\x01\x12&\n"SKILL_INSTALLATION_CHANGE_UPGRADED\x10\x02\x12)\n%SKILL_INSTALLATION_CHANGE_REINSTALLED\x10\x03\x12%\n!SKILL_INSTALLATION_CHANGE_ENABLED\x10\x04\x12&\n"SKILL_INSTALLATION_CHANGE_DISABLED\x10\x05\x12%\n!SKILL_INSTALLATION_CHANGE_REMOVED\x10\x06\x12\'\n#SKILL_INSTALLATION_CHANGE_UNCHANGED\x10\x072\xa0\x05\n\x13SkillCatalogService\x12m\n\x10CreateSkillDraft\x12+.kokoro.platform.v1.CreateSkillDraftRequest\x1a,.kokoro.platform.v1.CreateSkillDraftResponse\x12s\n\x12CreateSkillVersion\x12-.kokoro.platform.v1.CreateSkillVersionRequest\x1a..kokoro.platform.v1.CreateSkillVersionResponse\x12s\n\x12ValidateSkillDraft\x12-.kokoro.platform.v1.ValidateSkillDraftRequest\x1a..kokoro.platform.v1.ValidateSkillDraftResponse\x12a\n\x0cPublishSkill\x12\'.kokoro.platform.v1.PublishSkillRequest\x1a(.kokoro.platform.v1.PublishSkillResponse\x12d\n\rWithdrawSkill\x12(.kokoro.platform.v1.WithdrawSkillRequest\x1a).kokoro.platform.v1.WithdrawSkillResponse\x12g\n\x0eSetSkillStatus\x12).kokoro.platform.v1.SetSkillStatusRequest\x1a*.kokoro.platform.v1.SetSkillStatusResponse2\xaa\x03\n\x12SkillSourceService\x12|\n\x15DiscoverVisibleSkills\x120.kokoro.platform.v1.DiscoverVisibleSkillsRequest\x1a1.kokoro.platform.v1.DiscoverVisibleSkillsResponse\x12v\n\x13ResolveVisibleSkill\x12..kokoro.platform.v1.ResolveVisibleSkillRequest\x1a/.kokoro.platform.v1.ResolveVisibleSkillResponse\x12\x9d\x01\n GetApprovedSkillPackageReference\x12;.kokoro.platform.v1.GetApprovedSkillPackageReferenceRequest\x1a<.kokoro.platform.v1.GetApprovedSkillPackageReferenceResponse2\x8f\x05\n\x18SkillInstallationService\x12a\n\x0cInstallSkill\x12\'.kokoro.platform.v1.InstallSkillRequest\x1a(.kokoro.platform.v1.InstallSkillResponse\x12\x8e\x01\n\x1bSetSkillInstallationEnabled\x126.kokoro.platform.v1.SetSkillInstallationEnabledRequest\x1a7.kokoro.platform.v1.SetSkillInstallationEnabledResponse\x12\x82\x01\n\x17RemoveSkillInstallation\x122.kokoro.platform.v1.RemoveSkillInstallationRequest\x1a3.kokoro.platform.v1.RemoveSkillInstallationResponse\x12y\n\x14GetSkillInstallation\x12/.kokoro.platform.v1.GetSkillInstallationRequest\x1a0.kokoro.platform.v1.GetSkillInstallationResponse\x12\x7f\n\x16ListSkillInstallations\x121.kokoro.platform.v1.ListSkillInstallationsRequest\x1a2.kokoro.platform.v1.ListSkillInstallationsResponse2\x9a\x06\n\x13McpConnectorService\x12s\n\x12CreateMcpConnector\x12-.kokoro.platform.v1.CreateMcpConnectorRequest\x1a..kokoro.platform.v1.CreateMcpConnectorResponse\x12\x97\x01\n\x1eBeginMcpConnectorAuthorization\x129.kokoro.platform.v1.BeginMcpConnectorAuthorizationRequest\x1a:.kokoro.platform.v1.BeginMcpConnectorAuthorizationResponse\x12\xa0\x01\n!CompleteMcpConnectorAuthorization\x12<.kokoro.platform.v1.CompleteMcpConnectorAuthorizationRequest\x1a=.kokoro.platform.v1.CompleteMcpConnectorAuthorizationResponse\x12p\n\x11ListMcpConnectors\x12,.kokoro.platform.v1.ListMcpConnectorsRequest\x1a-.kokoro.platform.v1.ListMcpConnectorsResponse\x12j\n\x0fGetMcpConnector\x12*.kokoro.platform.v1.GetMcpConnectorRequest\x1a+.kokoro.platform.v1.GetMcpConnectorResponse\x12s\n\x12RevokeMcpConnector\x12-.kokoro.platform.v1.RevokeMcpConnectorRequest\x1a..kokoro.platform.v1.RevokeMcpConnectorResponse2\xd0\x02\n\x10McpServerService\x12p\n\x11RegisterMcpServer\x12,.kokoro.platform.v1.RegisterMcpServerRequest\x1a-.kokoro.platform.v1.RegisterMcpServerResponse\x12a\n\x0cGetMcpServer\x12\'.kokoro.platform.v1.GetMcpServerRequest\x1a(.kokoro.platform.v1.GetMcpServerResponse\x12g\n\x0eListMcpServers\x12).kokoro.platform.v1.ListMcpServersRequest\x1a*.kokoro.platform.v1.ListMcpServersResponse2\xf5\x04\n\x14McpConnectionService\x12v\n\x13CreateMcpConnection\x12..kokoro.platform.v1.CreateMcpConnectionRequest\x1a/.kokoro.platform.v1.CreateMcpConnectionResponse\x12\x88\x01\n\x19ListMcpServerDeclarations\x124.kokoro.platform.v1.ListMcpServerDeclarationsRequest\x1a5.kokoro.platform.v1.ListMcpServerDeclarationsResponse\x12m\n\x10GetMcpConnection\x12+.kokoro.platform.v1.GetMcpConnectionRequest\x1a,.kokoro.platform.v1.GetMcpConnectionResponse\x12s\n\x12ListMcpConnections\x12-.kokoro.platform.v1.ListMcpConnectionsRequest\x1a..kokoro.platform.v1.ListMcpConnectionsResponse\x12v\n\x13RevokeMcpConnection\x12..kokoro.platform.v1.RevokeMcpConnectionRequest\x1a/.kokoro.platform.v1.RevokeMcpConnectionResponse2\x9c\x02\n\x17McpAuthorizationService\x12\x91\x01\n\x1cListMcpConnectorCapabilities\x127.kokoro.platform.v1.ListMcpConnectorCapabilitiesRequest\x1a8.kokoro.platform.v1.ListMcpConnectorCapabilitiesResponse\x12m\n\x10AuthorizeMcpTool\x12+.kokoro.platform.v1.AuthorizeMcpToolRequest\x1a,.kokoro.platform.v1.AuthorizeMcpToolResponse2\xa8\x01\n\x1bMcpConnectorProviderService\x12\x88\x01\n\x19ListMcpConnectorProviders\x124.kokoro.platform.v1.ListMcpConnectorProvidersRequest\x1a5.kokoro.platform.v1.ListMcpConnectorProvidersResponseb\x06proto3',
+    b'\n)kokoro/platform/v1/platform_runtime.proto\x12\x12kokoro.platform.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dkokoro/common/v1/common.proto"%\n\rSkillSeriesId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\x1f\n\x07SkillId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"+\n\x13SkillInstallationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eSkillSourceRef\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eMcpConnectorId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"#\n\x0bMcpServerId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\'\n\x0fMcpConnectionId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpAuthorizationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpInvocationGrant\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"0\n\nOwnerScope\x12\x12\n\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id"w\n\x15ProductCatalogContext\x12\x1d\n\nsubject_id\x18\x01 \x01(\tR\tsubjectId\x12?\n\x0bowner_scope\x18\x02 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope"\x85\x01\n\rSkillMetadata\x12!\n\x0cdisplay_name\x18\x01 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x02 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x03 \x03(\tR\x04tags\x12#\n\rmetadata_json\x18\x04 \x01(\x0cR\x0cmetadataJson"\xf0\x03\n\x0cSkillSummary\x12A\n\nscope_kind\x18\x02 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x04 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x05 \x03(\tR\x04tags\x12\x1a\n\x08revision\x18\x06 \x01(\x04R\x08revision\x12%\n\x0econtent_digest\x18\x07 \x01(\tR\rcontentDigest\x127\n\x06status\x18\x08 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12A\n\nsource_ref\x18\t \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12>\n\tseries_id\x18\n \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\x0b \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x01\x10\x02R\x0fsource_selector"\xbe\x03\n\x0bSkillSource\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12A\n\nscope_kind\x18\x03 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x07 \x01(\tR\x10manifestIdentity\x12>\n\tseries_id\x18\x08 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\t \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x02\x10\x03R\x0fsource_selector"\xc9\x02\n\x17CreateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12=\n\x08metadata\x18\x04 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x83\x02\n\x18CreateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xc9\x01\n\x1cGetSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x9c\x02\n\x1dGetSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12"\n\nattempt_id\x18\x02 \x01(\tH\x00R\tattemptId\x88\x01\x01\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12;\n\x05phase\x18\x04 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x05phase\x12 \n\tupload_id\x18\x05 \x01(\tH\x01R\x08uploadId\x88\x01\x01B\r\n\x0b_attempt_idB\x0c\n\n_upload_id"\xd4\x03\n\x1eBeginSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1a\n\x08filename\x18\x05 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x123\n\x13replaces_attempt_id\x18\t \x01(\tH\x00R\x11replacesAttemptId\x88\x01\x01B\x16\n\x14_replaces_attempt_id"\xb3\x02\n\x1fBeginSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference\x12\x1a\n\x08replayed\x18\x06 \x01(\x08R\x08replayed"\x8d\x03\n!CompleteSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1d\n\nattempt_id\x18\x05 \x01(\tR\tattemptId\x12\x1b\n\tupload_id\x18\x06 \x01(\tR\x08uploadId\x12%\n\x0econtent_sha256\x18\x07 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x08 \x01(\x04R\tsizeBytes"\xa2\x03\n"CompleteSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12\x19\n\x08asset_id\x18\x05 \x01(\tR\x07assetId\x12;\n\x05phase\x18\x06 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x05phase\x12\x1a\n\x08replayed\x18\x07 \x01(\x08R\x08replayed\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x12H\n\nscan_state\x18\t \x01(\x0e2).kokoro.platform.v1.SkillPackageScanStateR\tscanState"\xd1\x02\n\x19ValidateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1d\n\nattempt_id\x18\x07 \x01(\tR\tattemptIdJ\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06R\x11package_asset_refR\x0econtent_digest"\x9a\x02\n\x1aValidateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x14\n\x05valid\x18\x02 \x01(\x08R\x05valid\x12%\n\x0econtent_digest\x18\x03 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x04 \x01(\tR\x10manifestIdentity\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x06 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xc1\x02\n\x13PublishSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12B\n\nvisibility\x18\x04 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\nvisibility\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xe5\x01\n\x14PublishSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x04 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xa1\x02\n\x14WithdrawSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xca\x01\n\x15WithdrawSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x127\n\x06status\x18\x02 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x99\x02\n\x1cDiscoverVisibleSkillsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x14\n\x05query\x18\x03 \x01(\tR\x05query\x12\x12\n\x04tags\x18\x04 \x03(\tR\x04tags\x12A\n\nscope_kind\x18\x05 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8b\x01\n\x1dDiscoverVisibleSkillsResponse\x128\n\x06skills\x18\x01 \x03(\x0b2 .kokoro.platform.v1.SkillSummaryR\x06skills\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xd1\x01\n\x1aResolveVisibleSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProof\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x0battestationR\x0fsource_selector"V\n\x1bResolveVisibleSkillResponse\x127\n\x06source\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.SkillSourceR\x06source"\xc7\x01\n\'GetApprovedSkillPackageReferenceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8e\x02\n(GetApprovedSkillPackageReferenceResponse\x12\x1b\n\tasset_ref\x18\x01 \x01(\tR\x08assetRef\x12%\n\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x03 \x01(\tR\x10manifestIdentity\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReferenceJ\x04\x08\x04\x10\x05R\x0eread_reference"\xb1\x02\n\x18PackageTransferReference\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n\x06method\x18\x02 \x01(\tR\x06method\x12l\n\x10required_headers\x18\x03 \x03(\x0b2A.kokoro.platform.v1.PackageTransferReference.RequiredHeadersEntryR\x0frequiredHeaders\x129\n\nexpires_at\x18\x04 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x1aB\n\x14RequiredHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x028\x01"\x8c\x03\n\x19CreateSkillVersionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12?\n\rbase_skill_id\x18\x04 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x0bbaseSkillId\x12=\n\x08metadata\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x85\x02\n\x1aCreateSkillVersionResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xb8\x02\n\x15SetSkillStatusRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x127\n\x06status\x18\x04 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xc1\x01\n\x16SetSkillStatusResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x92\x05\n\x11SkillInstallation\x12P\n\x0finstallation_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12\x1c\n\tinstalled\x18\x07 \x01(\x08R\tinstalled\x12\x18\n\x07enabled\x18\x08 \x01(\x08R\x07enabled\x12=\n\x0cinstalled_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\x0binstalledAt\x129\n\nupdated_at\x18\n \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n\nremoved_at\x18\x0b \x01(\x0b2\x1a.google.protobuf.TimestampR\tremovedAt\x12>\n\tseries_id\x18\x0c \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xbe\x02\n\x13InstallSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x05 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xa8\x02\n"SetSkillInstallationEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\x18\n\x07enabled\x18\x05 \x01(\x08R\x07enabled\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\x8a\x02\n\x1eRemoveSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xca\x01\n\x1bGetSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"i\n\x1cGetSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation"\xd7\x02\n\x1dListSkillInstallationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01\x12!\n\tinstalled\x18\x05 \x01(\x08H\x01R\tinstalled\x88\x01\x01\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\n\n\x08_enabledB\x0c\n\n_installedJ\x04\x08\x02\x10\x03R\x0battestation"\x9f\x01\n\x1eListSkillInstallationsResponse\x12K\n\rinstallations\x18\x01 \x03(\x0b2%.kokoro.platform.v1.SkillInstallationR\rinstallations\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xef\x01\n\x14InstallSkillResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xa1\x03\n\x0cMcpConnector\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12K\n\x0econnector_type\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x12?\n\x0bowner_scope\x18\x04 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12>\n\x06status\x18\x05 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x06 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x07 \x01(\tR\x12externalAccountRef"\x8f\x03\n\x19CreateMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\x0econnector_type\x18\x04 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x05 \x01(\tR\x0bproviderKey\x12)\n\x10requested_scopes\x18\x06 \x03(\tR\x0frequestedScopes\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x07\x10\x08R\x0battestation"\x92\x02\n\x1aCreateMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12Q\n\x10authorization_id\x18\x03 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x86\x02\n%BeginMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x04\x10\x05R\x0battestation"\xb1\x02\n&BeginMcpConnectorAuthorizationResponse\x12Q\n\x10authorization_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12)\n\x10provider_display\x18\x02 \x01(\tR\x0fproviderDisplay\x12%\n\x0econsent_scopes\x18\x03 \x03(\tR\rconsentScopes\x125\n\x17expires_at_unix_seconds\x18\x04 \x01(\x03R\x14expiresAtUnixSeconds\x12+\n\x11authorization_url\x18\x05 \x01(\tR\x10authorizationUrl"\x96\x03\n(CompleteMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12Q\n\x10authorization_id\x18\x04 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x128\n\x18authorization_handle_ref\x18\x05 \x01(\tR\x16authorizationHandleRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xa9\x02\n)CompleteMcpConnectorAuthorizationResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x03 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x04 \x01(\tR\x12externalAccountRef\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xb6\x02\n\x18ListMcpConnectorsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\rstatus_filter\x18\x04 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x0cstatusFilter\x121\n\x04page\x18\x05 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x96\x01\n\x19ListMcpConnectorsResponse\x12G\n\x0emcp_connectors\x18\x01 \x03(\x0b2 .kokoro.platform.v1.McpConnectorR\rmcpConnectors\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xba\x01\n\x16GetMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"`\n\x17GetMcpConnectorResponse\x12E\n\rmcp_connector\x18\x01 \x01(\x0b2 .kokoro.platform.v1.McpConnectorR\x0cmcpConnector"\x92\x02\n\x19RevokeMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xda\x01\n\x1aRevokeMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc1\x02\n\tMcpServer\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12!\n\x0cprovider_key\x18\x02 \x01(\tR\x0bproviderKey\x12\'\n\x0fserver_identity\x18\x03 \x01(\tR\x0eserverIdentity\x12>\n\ttransport\x18\x04 \x01(\x0e2 .kokoro.platform.v1.McpTransportR\ttransport\x12-\n\x12declaration_digest\x18\x05 \x01(\tR\x11declarationDigest\x12;\n\x06status\x18\x06 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status"\xb1\x01\n\x18RegisterMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestIdJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06J\x04\x08\x06\x10\x07J\x04\x08\x07\x10\x08R\x07commandR\x0cprovider_keyR\x0fserver_identityR\ttransportR\x12declaration_digestR\x0battestation"\xb2\x01\n\x19RegisterMcpServerResponse\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12;\n\x06status\x18\x02 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xae\x01\n\x13GetMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"M\n\x14GetMcpServerResponse\x125\n\x06server\x18\x01 \x01(\x0b2\x1d.kokoro.platform.v1.McpServerR\x06server"\xde\x01\n\x15ListMcpServersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12&\n\x0cprovider_key\x18\x03 \x01(\tH\x00R\x0bproviderKey\x88\x01\x01\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\x0f\n\r_provider_keyJ\x04\x08\x02\x10\x03R\x0battestation"\x83\x01\n\x16ListMcpServersResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xe6\x02\n\x1aCreateMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x05 \x03(\tR\x10allowedSelectors\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xc0\x01\n\x1bCreateMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12#\n\rpolicy_digest\x18\x02 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x03 \x01(\tR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc8\x02\n\rMcpConnection\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x04 \x03(\tR\x10allowedSelectors\x12#\n\rpolicy_digest\x18\x05 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x06 \x01(\tR\x06status"\xbe\x01\n\x17GetMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"]\n\x18GetMcpConnectionResponse\x12A\n\nconnection\x18\x01 \x01(\x0b2!.kokoro.platform.v1.McpConnectionR\nconnection"\xf0\x01\n\x19ListMcpConnectionsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x93\x01\n\x1aListMcpConnectionsResponse\x12C\n\x0bconnections\x18\x01 \x03(\x0b2!.kokoro.platform.v1.McpConnectionR\x0bconnections\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\x96\x02\n\x1aRevokeMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xb6\x01\n\x1bRevokeMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06status\x18\x02 \x01(\tR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x9a\x02\n\x14McpCapabilitySummary\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x128\n\x04kind\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpPrimitiveKindR\x04kind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12.\n\x13input_schema_digest\x18\x04 \x01(\tR\x11inputSchemaDigest\x120\n\x14output_schema_digest\x18\x05 \x01(\tR\x12outputSchemaDigest\x12\'\n\x0frequired_scopes\x18\x06 \x03(\tR\x0erequiredScopes"\xf7\x01\n ListMcpServerDeclarationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xdc\x01\n!ListMcpServerDeclarationsResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x120\n\x04page\x18\x03 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xc7\x01\n#ListMcpConnectorCapabilitiesRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xf2\x01\n$ListMcpConnectorCapabilitiesResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x125\n\x17expires_at_unix_seconds\x18\x03 \x01(\x03R\x14expiresAtUnixSeconds"\xde\x02\n\x17AuthorizeMcpToolRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12#\n\rtool_selector\x18\x04 \x01(\tR\x0ctoolSelector\x120\n\x14typed_arguments_json\x18\x05 \x01(\x0cR\x12typedArgumentsJson\x12!\n\x0capproval_ref\x18\x06 \x01(\tR\x0bapprovalRef\x12\'\n\x0fidempotency_key\x18\x07 \x01(\tR\x0eidempotencyKey\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xd9\x02\n\x18AuthorizeMcpToolResponse\x12Q\n\x10invocation_grant\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpInvocationGrantR\x0finvocationGrant\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x19\n\x08tool_ref\x18\x03 \x01(\tR\x07toolRef\x124\n\x16typed_arguments_digest\x18\x04 \x01(\tR\x14typedArgumentsDigest\x125\n\x17expires_at_unix_seconds\x18\x05 \x01(\x03R\x14expiresAtUnixSeconds\x12\x1b\n\taudit_ref\x18\x06 \x01(\tR\x08auditRef"\xfe\x01\n#SetSkillInstallationEnabledResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xfa\x01\n\x1fRemoveSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\x89\x02\n\x14McpConnectorProvider\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12M\n\x0fconnector_types\x18\x03 \x03(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\x0econnectorTypes\x12%\n\x0edefault_scopes\x18\x04 \x03(\tR\rdefaultScopes\x125\n\x16authorization_required\x18\x05 \x01(\x08R\x15authorizationRequired"\xb0\x01\n ListMcpConnectorProvidersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x121\n\x04page\x18\x03 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x9d\x01\n!ListMcpConnectorProvidersResponse\x12F\n\tproviders\x18\x01 \x03(\x0b2(.kokoro.platform.v1.McpConnectorProviderR\tproviders\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page*\xb0\x01\n\x0eSkillScopeKind\x12 \n\x1cSKILL_SCOPE_KIND_UNSPECIFIED\x10\x00\x12\x1d\n\x19SKILL_SCOPE_KIND_PERSONAL\x10\x01\x12\x1c\n\x18SKILL_SCOPE_KIND_PROJECT\x10\x02\x12!\n\x1dSKILL_SCOPE_KIND_ORGANIZATION\x10\x03\x12\x1c\n\x18SKILL_SCOPE_KIND_SESSION\x10\x04*\xb1\x01\n\x0bSkillStatus\x12\x1c\n\x18SKILL_STATUS_UNSPECIFIED\x10\x00\x12\x16\n\x12SKILL_STATUS_DRAFT\x10\x01\x12\x17\n\x13SKILL_STATUS_ACTIVE\x10\x02\x12\x1a\n\x16SKILL_STATUS_WITHDRAWN\x10\x03\x12\x1c\n\x18SKILL_STATUS_QUARANTINED\x10\x04\x12\x19\n\x15SKILL_STATUS_DISABLED\x10\x05*\x8f\x01\n\x10McpConnectorType\x12"\n\x1eMCP_CONNECTOR_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n\x1aMCP_CONNECTOR_TYPE_BUILTIN\x10\x01\x12\x1b\n\x17MCP_CONNECTOR_TYPE_BYOK\x10\x02\x12\x1a\n\x16MCP_CONNECTOR_TYPE_MCP\x10\x03*\xbf\x01\n\x12McpConnectorStatus\x12$\n MCP_CONNECTOR_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_CONNECTOR_STATUS_PENDING\x10\x01\x12\x1f\n\x1bMCP_CONNECTOR_STATUS_ACTIVE\x10\x02\x12\x1e\n\x1aMCP_CONNECTOR_STATUS_ERROR\x10\x03\x12 \n\x1cMCP_CONNECTOR_STATUS_REVOKED\x10\x04*\x87\x01\n\x0cMcpTransport\x12\x1d\n\x19MCP_TRANSPORT_UNSPECIFIED\x10\x00\x12\x17\n\x13MCP_TRANSPORT_STDIO\x10\x01\x12!\n\x1dMCP_TRANSPORT_STREAMABLE_HTTP\x10\x02\x12\x1c\n\x18MCP_TRANSPORT_SSE_COMPAT\x10\x03*v\n\x0fMcpServerStatus\x12!\n\x1dMCP_SERVER_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_SERVER_STATUS_REGISTERED\x10\x01\x12\x1e\n\x1aMCP_SERVER_STATUS_DISABLED\x10\x02*\x93\x01\n\x10McpPrimitiveKind\x12"\n\x1eMCP_PRIMITIVE_KIND_UNSPECIFIED\x10\x00\x12\x1b\n\x17MCP_PRIMITIVE_KIND_TOOL\x10\x01\x12\x1f\n\x1bMCP_PRIMITIVE_KIND_RESOURCE\x10\x02\x12\x1d\n\x19MCP_PRIMITIVE_KIND_PROMPT\x10\x03*\x84\x02\n\x11SkillPackagePhase\x12#\n\x1fSKILL_PACKAGE_PHASE_UNSPECIFIED\x10\x00\x12\x1c\n\x18SKILL_PACKAGE_PHASE_NONE\x10\x01\x12\x1e\n\x1aSKILL_PACKAGE_PHASE_INTENT\x10\x02\x12&\n"SKILL_PACKAGE_PHASE_UPLOAD_PENDING\x10\x03\x12 \n\x1cSKILL_PACKAGE_PHASE_UPLOADED\x10\x04\x12!\n\x1dSKILL_PACKAGE_PHASE_VALIDATED\x10\x05\x12\x1f\n\x1bSKILL_PACKAGE_PHASE_ABORTED\x10\x06*\xd8\x01\n\x15SkillPackageScanState\x12(\n$SKILL_PACKAGE_SCAN_STATE_UNSPECIFIED\x10\x00\x12$\n SKILL_PACKAGE_SCAN_STATE_PENDING\x10\x01\x12"\n\x1eSKILL_PACKAGE_SCAN_STATE_CLEAN\x10\x02\x12%\n!SKILL_PACKAGE_SCAN_STATE_INFECTED\x10\x03\x12$\n SKILL_PACKAGE_SCAN_STATE_UNKNOWN\x10\x04*\xdf\x02\n\x17SkillInstallationChange\x12)\n%SKILL_INSTALLATION_CHANGE_UNSPECIFIED\x10\x00\x12\'\n#SKILL_INSTALLATION_CHANGE_INSTALLED\x10\x01\x12&\n"SKILL_INSTALLATION_CHANGE_UPGRADED\x10\x02\x12)\n%SKILL_INSTALLATION_CHANGE_REINSTALLED\x10\x03\x12%\n!SKILL_INSTALLATION_CHANGE_ENABLED\x10\x04\x12&\n"SKILL_INSTALLATION_CHANGE_DISABLED\x10\x05\x12%\n!SKILL_INSTALLATION_CHANGE_REMOVED\x10\x06\x12\'\n#SKILL_INSTALLATION_CHANGE_UNCHANGED\x10\x072\xb1\x08\n\x13SkillCatalogService\x12|\n\x15GetSkillPackageUpload\x120.kokoro.platform.v1.GetSkillPackageUploadRequest\x1a1.kokoro.platform.v1.GetSkillPackageUploadResponse\x12\x8b\x01\n\x1aCompleteSkillPackageUpload\x125.kokoro.platform.v1.CompleteSkillPackageUploadRequest\x1a6.kokoro.platform.v1.CompleteSkillPackageUploadResponse\x12\x82\x01\n\x17BeginSkillPackageUpload\x122.kokoro.platform.v1.BeginSkillPackageUploadRequest\x1a3.kokoro.platform.v1.BeginSkillPackageUploadResponse\x12m\n\x10CreateSkillDraft\x12+.kokoro.platform.v1.CreateSkillDraftRequest\x1a,.kokoro.platform.v1.CreateSkillDraftResponse\x12s\n\x12CreateSkillVersion\x12-.kokoro.platform.v1.CreateSkillVersionRequest\x1a..kokoro.platform.v1.CreateSkillVersionResponse\x12s\n\x12ValidateSkillDraft\x12-.kokoro.platform.v1.ValidateSkillDraftRequest\x1a..kokoro.platform.v1.ValidateSkillDraftResponse\x12a\n\x0cPublishSkill\x12\'.kokoro.platform.v1.PublishSkillRequest\x1a(.kokoro.platform.v1.PublishSkillResponse\x12d\n\rWithdrawSkill\x12(.kokoro.platform.v1.WithdrawSkillRequest\x1a).kokoro.platform.v1.WithdrawSkillResponse\x12g\n\x0eSetSkillStatus\x12).kokoro.platform.v1.SetSkillStatusRequest\x1a*.kokoro.platform.v1.SetSkillStatusResponse2\xaa\x03\n\x12SkillSourceService\x12|\n\x15DiscoverVisibleSkills\x120.kokoro.platform.v1.DiscoverVisibleSkillsRequest\x1a1.kokoro.platform.v1.DiscoverVisibleSkillsResponse\x12v\n\x13ResolveVisibleSkill\x12..kokoro.platform.v1.ResolveVisibleSkillRequest\x1a/.kokoro.platform.v1.ResolveVisibleSkillResponse\x12\x9d\x01\n GetApprovedSkillPackageReference\x12;.kokoro.platform.v1.GetApprovedSkillPackageReferenceRequest\x1a<.kokoro.platform.v1.GetApprovedSkillPackageReferenceResponse2\x8f\x05\n\x18SkillInstallationService\x12a\n\x0cInstallSkill\x12\'.kokoro.platform.v1.InstallSkillRequest\x1a(.kokoro.platform.v1.InstallSkillResponse\x12\x8e\x01\n\x1bSetSkillInstallationEnabled\x126.kokoro.platform.v1.SetSkillInstallationEnabledRequest\x1a7.kokoro.platform.v1.SetSkillInstallationEnabledResponse\x12\x82\x01\n\x17RemoveSkillInstallation\x122.kokoro.platform.v1.RemoveSkillInstallationRequest\x1a3.kokoro.platform.v1.RemoveSkillInstallationResponse\x12y\n\x14GetSkillInstallation\x12/.kokoro.platform.v1.GetSkillInstallationRequest\x1a0.kokoro.platform.v1.GetSkillInstallationResponse\x12\x7f\n\x16ListSkillInstallations\x121.kokoro.platform.v1.ListSkillInstallationsRequest\x1a2.kokoro.platform.v1.ListSkillInstallationsResponse2\x9a\x06\n\x13McpConnectorService\x12s\n\x12CreateMcpConnector\x12-.kokoro.platform.v1.CreateMcpConnectorRequest\x1a..kokoro.platform.v1.CreateMcpConnectorResponse\x12\x97\x01\n\x1eBeginMcpConnectorAuthorization\x129.kokoro.platform.v1.BeginMcpConnectorAuthorizationRequest\x1a:.kokoro.platform.v1.BeginMcpConnectorAuthorizationResponse\x12\xa0\x01\n!CompleteMcpConnectorAuthorization\x12<.kokoro.platform.v1.CompleteMcpConnectorAuthorizationRequest\x1a=.kokoro.platform.v1.CompleteMcpConnectorAuthorizationResponse\x12p\n\x11ListMcpConnectors\x12,.kokoro.platform.v1.ListMcpConnectorsRequest\x1a-.kokoro.platform.v1.ListMcpConnectorsResponse\x12j\n\x0fGetMcpConnector\x12*.kokoro.platform.v1.GetMcpConnectorRequest\x1a+.kokoro.platform.v1.GetMcpConnectorResponse\x12s\n\x12RevokeMcpConnector\x12-.kokoro.platform.v1.RevokeMcpConnectorRequest\x1a..kokoro.platform.v1.RevokeMcpConnectorResponse2\xd0\x02\n\x10McpServerService\x12p\n\x11RegisterMcpServer\x12,.kokoro.platform.v1.RegisterMcpServerRequest\x1a-.kokoro.platform.v1.RegisterMcpServerResponse\x12a\n\x0cGetMcpServer\x12\'.kokoro.platform.v1.GetMcpServerRequest\x1a(.kokoro.platform.v1.GetMcpServerResponse\x12g\n\x0eListMcpServers\x12).kokoro.platform.v1.ListMcpServersRequest\x1a*.kokoro.platform.v1.ListMcpServersResponse2\xf5\x04\n\x14McpConnectionService\x12v\n\x13CreateMcpConnection\x12..kokoro.platform.v1.CreateMcpConnectionRequest\x1a/.kokoro.platform.v1.CreateMcpConnectionResponse\x12\x88\x01\n\x19ListMcpServerDeclarations\x124.kokoro.platform.v1.ListMcpServerDeclarationsRequest\x1a5.kokoro.platform.v1.ListMcpServerDeclarationsResponse\x12m\n\x10GetMcpConnection\x12+.kokoro.platform.v1.GetMcpConnectionRequest\x1a,.kokoro.platform.v1.GetMcpConnectionResponse\x12s\n\x12ListMcpConnections\x12-.kokoro.platform.v1.ListMcpConnectionsRequest\x1a..kokoro.platform.v1.ListMcpConnectionsResponse\x12v\n\x13RevokeMcpConnection\x12..kokoro.platform.v1.RevokeMcpConnectionRequest\x1a/.kokoro.platform.v1.RevokeMcpConnectionResponse2\x9c\x02\n\x17McpAuthorizationService\x12\x91\x01\n\x1cListMcpConnectorCapabilities\x127.kokoro.platform.v1.ListMcpConnectorCapabilitiesRequest\x1a8.kokoro.platform.v1.ListMcpConnectorCapabilitiesResponse\x12m\n\x10AuthorizeMcpTool\x12+.kokoro.platform.v1.AuthorizeMcpToolRequest\x1a,.kokoro.platform.v1.AuthorizeMcpToolResponse2\xa8\x01\n\x1bMcpConnectorProviderService\x12\x88\x01\n\x19ListMcpConnectorProviders\x124.kokoro.platform.v1.ListMcpConnectorProvidersRequest\x1a5.kokoro.platform.v1.ListMcpConnectorProvidersResponseb\x06proto3',
     [
         timestamp_pb.desc(),
         common_pb.desc(),
@@ -4032,6 +4538,12 @@ _DESC = file_desc(
         "SkillSource": SkillSource,
         "CreateSkillDraftRequest": CreateSkillDraftRequest,
         "CreateSkillDraftResponse": CreateSkillDraftResponse,
+        "GetSkillPackageUploadRequest": GetSkillPackageUploadRequest,
+        "GetSkillPackageUploadResponse": GetSkillPackageUploadResponse,
+        "BeginSkillPackageUploadRequest": BeginSkillPackageUploadRequest,
+        "BeginSkillPackageUploadResponse": BeginSkillPackageUploadResponse,
+        "CompleteSkillPackageUploadRequest": CompleteSkillPackageUploadRequest,
+        "CompleteSkillPackageUploadResponse": CompleteSkillPackageUploadResponse,
         "ValidateSkillDraftRequest": ValidateSkillDraftRequest,
         "ValidateSkillDraftResponse": ValidateSkillDraftResponse,
         "PublishSkillRequest": PublishSkillRequest,
@@ -4044,6 +4556,7 @@ _DESC = file_desc(
         "ResolveVisibleSkillResponse": ResolveVisibleSkillResponse,
         "GetApprovedSkillPackageReferenceRequest": GetApprovedSkillPackageReferenceRequest,
         "GetApprovedSkillPackageReferenceResponse": GetApprovedSkillPackageReferenceResponse,
+        "PackageTransferReference": PackageTransferReference,
         "CreateSkillVersionRequest": CreateSkillVersionRequest,
         "CreateSkillVersionResponse": CreateSkillVersionResponse,
         "SetSkillStatusRequest": SetSkillStatusRequest,
@@ -4105,6 +4618,8 @@ _DESC = file_desc(
         "McpTransport": McpTransport,
         "McpServerStatus": McpServerStatus,
         "McpPrimitiveKind": McpPrimitiveKind,
+        "SkillPackagePhase": SkillPackagePhase,
+        "SkillPackageScanState": SkillPackageScanState,
         "SkillInstallationChange": SkillInstallationChange,
     },
 )

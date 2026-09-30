@@ -23,6 +23,7 @@ from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.tools.toolbox import ProcessToolbox
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
+from kokoro_agent.worker.platform import WorkerPlatformRuntime
 from support.fakes import FakeRunRepository
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.clients.storage import (
@@ -90,6 +91,7 @@ def _factory(
     catalog: FeatureCatalog = FEATURE_CATALOG,
     *,
     delivery: DeliveryClient | None = None,
+    platform: WorkerPlatformRuntime | None = None,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
@@ -112,10 +114,9 @@ def _factory(
             checkpointer=InMemorySaver(),
             run_repository=repository,
             memory_store=InMemoryStore(),
-            skill_client=clients.skill_client,
-            skill_reader=clients.skill_reader,
             mcp_client=clients.mcp,
             delivery=delivery or clients.delivery,
+            platform=platform,
             model_resolver=resolver,
         ),
         catalog,
@@ -276,7 +277,7 @@ async def test_all_peers_preflight_before_any_backend_or_model(
         key="peer_gate",
         agents=(
             Agent(key="first", prompt="first"),
-            Agent(key="second", prompt="second", skills=("required",)),
+            Agent(key="second", prompt="second"),
         ),
         entry_agent="first",
         handoffs=(("first", "second"),),
@@ -291,7 +292,9 @@ async def test_all_peers_preflight_before_any_backend_or_model(
         raise AssertionError("sandbox called before all peers passed")
 
     monkeypatch.setattr(agent_factory_module, "make_backend_for_run", forbidden)
-    request = _request("peer_gate")
+    request = _request("peer_gate").model_copy(
+        update={"selected_skill_source_refs": ("skill:required",)}
+    )
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(SkillClientError):
@@ -300,14 +303,16 @@ async def test_all_peers_preflight_before_any_backend_or_model(
 
 
 @pytest.mark.parametrize("feature_key", ["music", "music_chat"])
-async def test_declared_features_require_external_clients(
+async def test_selected_features_require_external_clients(
     feature_key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from kokoro_agent.clients.skills import SkillClientError
 
     resolver = RouteResolver()
     factory, repository = _factory(monkeypatch, resolver)
-    request = _request(feature_key)
+    request = _request(feature_key).model_copy(
+        update={"selected_skill_source_refs": ("skill:required",)}
+    )
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(SkillClientError):
@@ -523,3 +528,108 @@ def test_run_wire_cannot_override_workspace_policy(field: str) -> None:
     payload[field] = {"filesystem": "workspace_write"}
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         RunRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("selected", [False, True])
+async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
+    selected: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    import json
+    from pathlib import Path
+    from kokoro_agent.clients.skills import PlatformSkillClient
+    from kokoro_agent.clients.platform_transport import (
+        PlatformRequest,
+        PlatformResponse,
+    )
+    from kokoro_agent.domain.run.models import LeasedRun
+    from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
+
+    vector = json.loads(
+        (
+            Path(__file__).parents[3]
+            / "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json"
+        ).read_bytes()
+    )["vectors"][0]
+    calls: list[str] = []
+
+    class Sender:
+        async def send(
+            self, request: PlatformRequest, *, timeout_s: float = 10
+        ) -> PlatformResponse:
+            calls.append(type(request).__name__)
+            if isinstance(request, pb.ResolveVisibleSkillRequest):
+                assert (
+                    request.source_ref is not None
+                    and request.source_ref.value == "skill:skill-1"
+                )
+                return pb.ResolveVisibleSkillResponse(
+                    source=pb.SkillSource(
+                        source_ref=pb.SkillSourceRef(value="skill:skill-1"),
+                        skill_id=pb.SkillId(value="skill-1"),
+                        series_id=pb.SkillSeriesId(value="series"),
+                        revision=1,
+                        scope_kind=pb.SkillScopeKind.PERSONAL,
+                        package_asset_ref="asset",
+                        content_digest=vector["zipSha256"],
+                        manifest_identity=vector["manifestIdentity"],
+                    )
+                )
+            return pb.GetApprovedSkillPackageReferenceResponse(
+                asset_ref="asset",
+                content_digest=vector["zipSha256"],
+                manifest_identity=vector["manifestIdentity"],
+                transfer_reference=pb.PackageTransferReference(method="GET"),
+            )
+
+    class Transfer:
+        async def get(
+            self, reference: pb.PackageTransferReference, content_digest: str
+        ) -> bytes:
+            calls.append("GET")
+            return base64.b64decode(vector["zipBase64"])
+
+    class Platform(WorkerPlatformRuntime):
+        def __init__(self) -> None:
+            pass
+
+        def skills_for_run(self, leased_run: LeasedRun) -> PlatformSkillClient:
+            assert leased_run.request.selected_skill_source_refs == ("skill:skill-1",)
+            assert leased_run.lease.generation > 0
+            calls.append("for_run")
+            return PlatformSkillClient(Sender(), Transfer())
+
+    class Resolver(RouteResolver):
+        async def resolve(
+            self,
+            *,
+            tenant_id: str,
+            feature_key: str,
+            label: str | None,
+            request_id: str | None,
+        ) -> ResolvedModel:
+            assert calls == (
+                [
+                    "for_run",
+                    "ResolveVisibleSkillRequest",
+                    "GetApprovedSkillPackageReferenceRequest",
+                    "GET",
+                ]
+                if selected
+                else []
+            )
+            return await super().resolve(
+                tenant_id=tenant_id,
+                feature_key=feature_key,
+                label=label,
+                request_id=request_id,
+            )
+
+    factory, repository = _factory(monkeypatch, Resolver(), platform=Platform())
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:skill-1",) if selected else ()}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(request, lease)
+    assert handle.runnable is not None

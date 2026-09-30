@@ -190,8 +190,6 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             checkpointer=saver,
             run_repository=run_repository,
             memory_store=memory_store,
-            skill_client=owner_clients.skill_client,
-            skill_reader=owner_clients.skill_reader,
             # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
             # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。
             mcp_servers=load_mcp_servers(config.mcp_config, os.environ),

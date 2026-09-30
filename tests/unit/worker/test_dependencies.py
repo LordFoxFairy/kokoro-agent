@@ -27,8 +27,8 @@ def test_storage_worker_configuration_is_all_or_none() -> None:
 
 async def test_default_worker_clients_leave_agent_core_available() -> None:
     clients = WorkerClients()
-    assert clients.skill_client is None
-    assert clients.skill_reader is None
+    assert not hasattr(clients, "skill_client")
+    assert not hasattr(clients, "skill_reader")
     assert clients.mcp is None
     assert clients.delivery is None
     assert clients.model_resolver is None
@@ -70,3 +70,11 @@ async def test_worker_constructs_real_system_resolver() -> None:
     assert config.system_timeout_s == 2
     async with worker_model_resolver(config, None) as resolver:
         assert isinstance(resolver, SystemModelClient)
+
+
+def test_skill_object_origin_does_not_require_storage_write_credentials() -> None:
+    config = AppConfig.from_env(
+        {"KOKORO_STORAGE_OBJECT_ORIGIN": "https://objects.test"}
+    )
+    assert config.storage_object_origin == "https://objects.test"
+    assert config.storage_base_url is None

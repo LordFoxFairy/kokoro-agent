@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kokoro.dev/contracts/platform-execution-operations/3.0.0/manifest.schema.json",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/4.0.0/manifest.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,7 +23,7 @@
       "const": "platform-execution-operations"
     },
     "artifactVersion": {
-      "const": "3.0.0"
+      "const": "4.0.0"
     },
     "status": {
       "const": "inactive"
@@ -35,7 +35,7 @@
       "const": "kokoro.platform.v1"
     },
     "catalogVersion": {
-      "const": "3.0.0"
+      "const": "4.0.0"
     },
     "bindingVersion": {
       "const": "3.0.0"
@@ -63,11 +63,11 @@
         "wrappers": 9,
         "operations": {
           "tenantExecution": 24,
-          "workloadOnly": 6,
+          "workloadOnly": 9,
           "globalReserved": 1
         },
         "bindings": 24,
-        "commandIdentities": 15,
+        "commandIdentities": 17,
         "positiveVectors": [
           "identity.SkillSeriesId.valid",
           "identity.SkillId.valid",
@@ -109,6 +109,8 @@
           "command.skill.create_draft.valid",
           "command.skill.create_version.valid",
           "command.skill.validate_draft.valid",
+          "command.skill.begin_package_upload.valid",
+          "command.skill.complete_package_upload.valid",
           "command.skill.publish.valid",
           "command.skill.withdraw.valid",
           "command.skill.set_status.valid",
@@ -266,7 +268,8 @@
           "binding.root.extra",
           "binding.request.unknown",
           "canonical.normalization-substitution"
-        ]
+        ],
+        "readBindings": 1
       }
     },
     "canonicalization": {

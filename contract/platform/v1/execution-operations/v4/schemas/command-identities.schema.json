@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kokoro.dev/contracts/platform-execution-operations/3.0.0/command-identities.schema.json",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/4.0.0/command-identities.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactVersion": {
-      "const": "3.0.0"
+      "const": "4.0.0"
     },
     "commandDigestVersion": {
       "const": "3.0.0"
@@ -23,8 +23,8 @@
     },
     "commands": {
       "type": "array",
-      "minItems": 15,
-      "maxItems": 15,
+      "minItems": 17,
+      "maxItems": 17,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -320,6 +320,116 @@
                   "projector": "wrapper:McpConnectionId",
                   "presence": "tagged",
                   "defaultValue": null
+                },
+                {
+                  "wireField": "product_context",
+                  "tag": 4,
+                  "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+                  "cardinality": "explicit",
+                  "outputKey": "product_context",
+                  "projector": "ProductCatalogContext",
+                  "presence": "required",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "filename",
+                  "tag": 5,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "filename",
+                  "projector": "package-filename",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "mime_type",
+                  "tag": 6,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "mime_type",
+                  "projector": "zip-mime",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "size_bytes",
+                  "tag": 7,
+                  "wireType": "4",
+                  "cardinality": "implicit",
+                  "outputKey": "size_bytes",
+                  "projector": "package-size",
+                  "presence": "default",
+                  "defaultValue": 0
+                },
+                {
+                  "wireField": "content_sha256",
+                  "tag": 8,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "content_sha256",
+                  "projector": "lowercase-64hex",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "replaces_attempt_id",
+                  "tag": 9,
+                  "wireType": "9",
+                  "cardinality": "explicit",
+                  "outputKey": "replaces_attempt_id",
+                  "projector": "attempt-id",
+                  "presence": "tagged",
+                  "defaultValue": null
+                },
+                {
+                  "wireField": "attempt_id",
+                  "tag": 5,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "attempt_id",
+                  "projector": "attempt-id",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "upload_id",
+                  "tag": 6,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "upload_id",
+                  "projector": "attempt-id",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "content_sha256",
+                  "tag": 7,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "content_sha256",
+                  "projector": "lowercase-64hex",
+                  "presence": "default",
+                  "defaultValue": ""
+                },
+                {
+                  "wireField": "size_bytes",
+                  "tag": 8,
+                  "wireType": "4",
+                  "cardinality": "implicit",
+                  "outputKey": "size_bytes",
+                  "projector": "package-size",
+                  "presence": "default",
+                  "defaultValue": 0
+                },
+                {
+                  "wireField": "attempt_id",
+                  "tag": 7,
+                  "wireType": "9",
+                  "cardinality": "implicit",
+                  "outputKey": "attempt_id",
+                  "projector": "validate-attempt-id",
+                  "presence": "default",
+                  "defaultValue": ""
                 }
               ]
             }

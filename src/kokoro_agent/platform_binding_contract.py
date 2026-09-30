@@ -17,6 +17,7 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_json_schema
 
 from kokoro_agent.execution.execution_proof_profile import MAX_SAFE_INTEGER
+from kokoro_agent.skills.package import SkillPackageError, validate_package
 from kokoro_agent.execution.platform_request_binding_values import (
     PlatformRequestBindingError,
     canonical_binding_bytes,
@@ -24,97 +25,117 @@ from kokoro_agent.execution.platform_request_binding_values import (
 
 
 JsonObject: TypeAlias = dict[str, object]
-EXPECTED_OWNER_COMMIT = "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0"
+EXPECTED_OWNER_COMMIT = "6a09913a96c686b316bfe707b823d039e625607a"
 EXPECTED_OWNER_REPOSITORY = "apps/kokoro-capability"
-EXPECTED_AGGREGATE = "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
+EXPECTED_AGGREGATE = "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
 EXPECTED_OWNER_PROVENANCE_SHA256 = (
-    "952cb00840fba598479e95eb3bcfa1a8ffe326a47167325f9edfd15d0f87c2e2"
+    "c84b87e36206de1b6aa8ef8b5bf5f52649f00afe7a0bcf3bacaa72017c4d4809"
 )
 EXPECTED_EXECUTION_SOURCES = (
     (
-        "contract/platform/v1/execution-operations/v3/command-identities.json",
-        "contract/execution-operations/v3/command-identities.json",
-        "e9d38c5bfa47b083dc66435b6e21b3cfdfe1762e29ebab3a6bd86c8b86729e28",
+        "contract/platform/v1/execution-operations/v4/command-identities.json",
+        "contract/execution-operations/v4/command-identities.json",
+        "63e3a355f277c1ffefed82f4716fd91bc4a4c64e8a5b183b4eaa8d0a92a6e6bd",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/command-schemas.json",
-        "contract/execution-operations/v3/command-schemas.json",
-        "30cda8f01b6fd8246826c1a7a909fffee4795766ab5328d8d653ae2003ee71b3",
+        "contract/platform/v1/execution-operations/v4/command-schemas.json",
+        "contract/execution-operations/v4/command-schemas.json",
+        "20a48aaa2e591f6e3941b7695cccd2719b34c3eeaefc984ec13c1bfa43d4b1cc",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/identities.json",
-        "contract/execution-operations/v3/identities.json",
-        "60e6fb68ad040860983f333839196c872e29c81965bdc89de422c8a67b5b5359",
+        "contract/platform/v1/execution-operations/v4/identities.json",
+        "contract/execution-operations/v4/identities.json",
+        "d52564167b932153c8434015df5cb7c3b53e7e1d5c4e059264479fb47323ea01",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/manifest.json",
-        "contract/execution-operations/v3/manifest.json",
-        "b8b33095b02ac51cfcbfef7ee4cc8a7e5e0dca9025a87a2b2d31885b41dac4a3",
+        "contract/platform/v1/execution-operations/v4/manifest.json",
+        "contract/execution-operations/v4/manifest.json",
+        "7058e2d2e11c885765ceb4e813e1f4f208e170c97a9b27e8d5f0178fcffc8d5d",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/operation-catalog.json",
-        "contract/execution-operations/v3/operation-catalog.json",
-        "9a8b7eebb11157d08bf299a33c44a0d975376d238b3827e4de5a48e917d7dc49",
+        "contract/platform/v1/execution-operations/v4/operation-catalog.json",
+        "contract/execution-operations/v4/operation-catalog.json",
+        "ae4708cd4a9c05d90904222859e93a4ea3d7ec384e419416bb3c61a5ae2cd6d0",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/projection-registry.json",
-        "contract/execution-operations/v3/projection-registry.json",
-        "fccdcbc9161ca3f0ab1e5b094675be699463338df3bd1b65290fd998322f50f5",
+        "contract/platform/v1/execution-operations/v4/projection-registry.json",
+        "contract/execution-operations/v4/projection-registry.json",
+        "6101ee717c1c313de294cfa25b99e631153480bf27daaccedae98178e8ac1fcb",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/provenance.json",
-        "contract/execution-operations/v3/provenance.json",
-        "952cb00840fba598479e95eb3bcfa1a8ffe326a47167325f9edfd15d0f87c2e2",
+        "contract/platform/v1/execution-operations/v4/provenance.json",
+        "contract/execution-operations/v4/provenance.json",
+        "c84b87e36206de1b6aa8ef8b5bf5f52649f00afe7a0bcf3bacaa72017c4d4809",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/request-bindings.json",
-        "contract/execution-operations/v3/request-bindings.json",
-        "2572ec3a0357c02ac0d2291db3d4b9e53588ce8bb8f63742a013cebb6c4c401d",
+        "contract/platform/v1/execution-operations/v4/publish-v1.json",
+        "contract/execution-operations/v4/publish-v1.json",
+        "14c76f1793ea0a8c8d430095481912cad45b17d72345c213a82fe6e58e026ae9",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/schemas/command-identities.schema.json",
-        "contract/execution-operations/v3/schemas/command-identities.schema.json",
-        "523562734e01f7c529c80abcf3a11ae5874dd9ce4fa36f5b2ed0f896c2bd66ab",
+        "contract/platform/v1/execution-operations/v4/request-bindings.json",
+        "contract/execution-operations/v4/request-bindings.json",
+        "9c8d3c3005f688172c664a12fbd25555504f2817cb488b68a5e0d821d47b1da2",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/schemas/identities.schema.json",
-        "contract/execution-operations/v3/schemas/identities.schema.json",
-        "faadbbc5984fbabe1bb68703c2e2213b9598342eae073dd557fb2573b427ef87",
+        "contract/platform/v1/execution-operations/v4/schemas/command-identities.schema.json",
+        "contract/execution-operations/v4/schemas/command-identities.schema.json",
+        "601eb6c170bda98f4635f05451ab7a3bb534b8c4bef0d6cfd6f31e33a48c8d20",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/schemas/manifest.schema.json",
-        "contract/execution-operations/v3/schemas/manifest.schema.json",
-        "5b4274edc000ceb064adf549259064486e757c4621805e9a424b55697217f158",
+        "contract/platform/v1/execution-operations/v4/schemas/identities.schema.json",
+        "contract/execution-operations/v4/schemas/identities.schema.json",
+        "693b4134154516133a1494115a8e10cb37702d1b1210d6417497954f7d7e468d",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/schemas/operation-catalog.schema.json",
-        "contract/execution-operations/v3/schemas/operation-catalog.schema.json",
-        "5698936d0c36139088fa2f141c67cf6b8ec5319c7adcc38faeaa0681ffd55d99",
+        "contract/platform/v1/execution-operations/v4/schemas/manifest.schema.json",
+        "contract/execution-operations/v4/schemas/manifest.schema.json",
+        "cd638c946a2073a35397dd44fa3b5ca9cfbcb9a80a522a54d042bb2d61bd3481",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/schemas/request-bindings.schema.json",
-        "contract/execution-operations/v3/schemas/request-bindings.schema.json",
-        "6febac6d74bf6777252feebc606ff185e400cded9822f5a29633fa07f12881e4",
+        "contract/platform/v1/execution-operations/v4/schemas/operation-catalog.schema.json",
+        "contract/execution-operations/v4/schemas/operation-catalog.schema.json",
+        "4fecc7f29be0c05812665d787fd6471f86ea0d85f6fcd6664c44685f1fde720e",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/schemas/vector-inventory.schema.json",
-        "contract/execution-operations/v3/schemas/vector-inventory.schema.json",
-        "ce812f46d0332254be61af0a54bfff3761dce7ab127f825fde0ac012bbf8b204",
+        "contract/platform/v1/execution-operations/v4/schemas/request-bindings.schema.json",
+        "contract/execution-operations/v4/schemas/request-bindings.schema.json",
+        "7e39cc320dbdb929ad47e448262aff5ea5a43368987ffe1a38e39de90b446aa0",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/vectors/command-projection.json",
-        "contract/execution-operations/v3/vectors/command-projection.json",
-        "05b6d51ea424ba50473a44cfadee0606e42e628affd8ac28f85f31cd9c10083b",
+        "contract/platform/v1/execution-operations/v4/schemas/vector-inventory.schema.json",
+        "contract/execution-operations/v4/schemas/vector-inventory.schema.json",
+        "5afa2f259245348f4ad76ceb4356632b7084ab0da3382cc77168fec71e3f71ba",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/vectors/negative.json",
-        "contract/execution-operations/v3/vectors/negative.json",
-        "c674f7add6eeea1ccc93ce42862a2902e5f5e7adfb0edce53c6b00616ef11a1a",
+        "contract/platform/v1/execution-operations/v4/schemas/zip-profile-v1.schema.json",
+        "contract/execution-operations/v4/schemas/zip-profile-v1.schema.json",
+        "97928b92dac7dabf6b51662af2b19741474377c564aaff9411a9ad8ab58d6712",
     ),
     (
-        "contract/platform/v1/execution-operations/v3/vectors/positive.json",
-        "contract/execution-operations/v3/vectors/positive.json",
-        "8d5434d356415e1990b2f0b7dd9e2f30b53817d718343d579b784e3ca67da313",
+        "contract/platform/v1/execution-operations/v4/vectors/command-projection.json",
+        "contract/execution-operations/v4/vectors/command-projection.json",
+        "2dc336ff4da132ebf0551dc6c74fb4b8a286adb52f4831fa98379a9436af612c",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v4/vectors/negative.json",
+        "contract/execution-operations/v4/vectors/negative.json",
+        "20e0823dedb82449789cf3ff698705fc9d59e1dad52a54f3518a59ea7514432a",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v4/vectors/positive.json",
+        "contract/execution-operations/v4/vectors/positive.json",
+        "33941b076d6588e80aa13cd339b3eb2b439617ba05c28a50549377c09f2ce909",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json",
+        "contract/execution-operations/v4/vectors/zip-v1.json",
+        "d0d37e7b1ef8b88daede645c4d826f95fac38c25f374fdf2d41d090231d6f943",
+    ),
+    (
+        "contract/platform/v1/execution-operations/v4/zip-profile-v1.json",
+        "contract/execution-operations/v4/zip-profile-v1.json",
+        "18ef03a3d7ea84f0e2a38c6e625146f607b96689957210052116b557008024fc",
     ),
 )
 
@@ -465,10 +486,10 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         if hashlib.sha256((root / path).read_bytes()).hexdigest() != digest:
             raise PlatformRequestBindingError(f"execution source digest drift: {path}")
 
-    artifact = root / "contract/platform/v1/execution-operations/v3"
+    artifact = root / "contract/platform/v1/execution-operations/v4"
     expected_files = {
         Path(path)
-        .relative_to("contract/platform/v1/execution-operations/v3")
+        .relative_to("contract/platform/v1/execution-operations/v4")
         .as_posix()
         for path, _owner_path, _digest in EXPECTED_EXECUTION_SOURCES
     }
@@ -496,7 +517,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         raise PlatformRequestBindingError("owner aggregate pin is invalid")
     records_value = provenance.get("files")
     records = _list(records_value, label="owner records")
-    if len(records) != 16:
+    if len(records) != 20:
         raise PlatformRequestBindingError("owner payload inventory is invalid")
     manifest = _object(
         strict_parse_raw_json((artifact / "manifest.json").read_bytes()),
@@ -509,7 +530,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
     if (
         set(payload_files) != record_files
         or set(payload_files) != expected_files - {"provenance.json"}
-        or manifest.get("artifactVersion") != "3.0.0"
+        or manifest.get("artifactVersion") != "4.0.0"
         or manifest.get("bindingVersion") != "3.0.0"
         or manifest.get("status") != "inactive"
         or manifest.get("routable") is not False
@@ -567,7 +588,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         for row in _list(catalog.get("operations"), label="operations")
     ]
     operation_by_name = {row.get("operation"): row for row in operations}
-    if len(operations) != 31 or len(operation_by_name) != 31:
+    if len(operations) != 34 or len(operation_by_name) != 34:
         raise PlatformRequestBindingError("operation catalog count drift")
 
     binding_document = _object(
@@ -614,7 +635,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
     messages = _object(registry.get("messages"), label="projection messages")
     primitives = _object(registry.get("primitives"), label="projection primitives")
     command_operations = {row.get("operation") for row in command_rows}
-    if len(command_rows) != 15 or command_operations != set(command_schemas):
+    if len(command_rows) != 17 or command_operations != set(command_schemas):
         raise PlatformRequestBindingError("command registry/schema count drift")
     for row in command_rows:
         operation = row.get("operation")
@@ -639,13 +660,46 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
             _object(command_schemas[operation], label="command schema")
         )
 
+    zip_document = _object(
+        strict_parse_raw_json((artifact / "vectors/zip-v1.json").read_bytes()),
+        label="ZIP vectors",
+    )
+    zip_vectors = [
+        _object(value, label="ZIP vector")
+        for value in _list(zip_document.get("vectors"), label="ZIP inventory")
+    ]
+    if len(zip_vectors) != 29 or len({v.get("name") for v in zip_vectors}) != 29:
+        raise PlatformRequestBindingError("ZIP vector inventory drift")
+    for vector in zip_vectors:
+        raw_zip = base64.b64decode(str(vector["zipBase64"]), validate=True)
+        if hashlib.sha256(raw_zip).hexdigest() != vector["zipSha256"]:
+            raise PlatformRequestBindingError("ZIP vector digest drift")
+        identity = vector.get("manifestIdentity")
+        if identity is not None and not isinstance(identity, str):
+            raise PlatformRequestBindingError("ZIP vector identity drift")
+        try:
+            validate_package(
+                raw_zip,
+                skill_id=str(vector["skillId"]),
+                revision=int(str(vector["revision"])),
+                manifest_identity=identity,
+            )
+        except SkillPackageError as error:
+            if str(error) != vector["expectedReason"]:
+                raise PlatformRequestBindingError(
+                    "ZIP negative vector reason drift"
+                ) from None
+        else:
+            if vector["expectedReason"] != "none":
+                raise PlatformRequestBindingError("ZIP negative vector accepted")
+
     positive_document = _object(
         strict_parse_raw_json((artifact / "vectors/positive.json").read_bytes()),
         label="positive vectors",
     )
     positives_value = positive_document["vectors"]
     positives = _list(positives_value, label="positive vector inventory")
-    if len(positives) != 53:
+    if len(positives) != 55:
         raise PlatformRequestBindingError("positive vector count drift")
     positive_bindings = 0
     for vector_value in positives:
@@ -727,7 +781,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         _object(value, label="command vector")
         for value in _list(command_vectors.get("vectors"), label="command vectors")
     ]
-    if len(vectors) != 139:
+    if len(vectors) != 165:
         raise PlatformRequestBindingError("command vector count drift")
     for vector in vectors:
         operation = vector.get("operation")

@@ -1,6 +1,15 @@
 # kokoro-agent 数据模型
 
-## W3 typed Skill source Run fence 当前态（2026-09-29）
+## W3 typed Skill reader 数据当前态（2026-09-29）
+
+本片不修改`database/schema.sql`、Run/dispatch request_json、事务、索引或Redis键；Agent仍仅拥有既有冻结refs与执行事实。
+BFF571b51de/Web1dc211bb已消费选择；Root已验证真实Run roundtrip与基础worker/浏览器恢复，详见Root任务表。
+Platform6a09913 v4是exact revision、安装/当前授权与包引用owner；Storage16a6c1c是bytes/scan/签名owner。
+当前reader每次访问从当前lease发送fresh proof并重新获取Approved/GET，不保存包bytes或授权缓存，不持久asset/URL/header/token/proof。
+ResolvedSkill只有本次Run的精确身份元数据；resume/takeover重新创建client，旧lease仍由statement-time reader拒绝。
+本片未运行新的真实owner数据库组合；安装产品链/v4激活/退役仍待各owner，见[当前实现](CURRENT.md)。
+
+## 历史：W3 typed Skill source Run fence 代码片（2026-09-29）
 
 Agent 已将必填 `selected_skill_source_refs` 纳入唯一 `RunRequest` canonical JSON；HTTP、Redis 与既有 dispatch/Run `request_json` 机制使用该对象，重复 `run_id` 的选择变化由原 fence 409 拒绝。未增表/列/Redis key。单测验证顺序、空数组及漂移；真实 PostgreSQL/Redis roundtrip 尚未验收，不把代码路径等同数据库证据。Platform 当前授权、包资产、Storage GET/ZIP 等仍未接。下文是设计起点和其余目标，所述“当前无字段”仅指 `7dfcfa9` 基线。
 

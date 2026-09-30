@@ -15,19 +15,19 @@ from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pla
 
 
 ROOT = Path(__file__).parents[2]
-ARTIFACT_ROOT = ROOT / "contract/platform/v1/execution-operations/v3"
+ARTIFACT_ROOT = ROOT / "contract/platform/v1/execution-operations/v4"
 PIN_PATH = ROOT / "contract/platform/v1/provenance.json"
-EXPECTED_AGGREGATE = "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
+EXPECTED_AGGREGATE = "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
 
 
-def test_runtime_binding_uses_current_platform_v3_owner_release() -> None:
+def test_runtime_binding_uses_current_platform_v4_owner_release() -> None:
     from kokoro_agent.execution.platform_request_binding_values import BINDING_VERSION
 
     pin = _json(PIN_PATH)
     execution = _object(pin["execution_operations"])
-    assert pin["owner_commit"] == "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0"
+    assert pin["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
     assert execution["aggregate_sha256"] == (
-        "324e749da1bc66c1ff03de74e7299716f798f5f5bb5fa19556033b79fa09ff8d"
+        "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
     )
     assert BINDING_VERSION == "3.0.0"
 
@@ -144,7 +144,7 @@ def test_vendored_execution_operation_artifact_matches_owner_provenance() -> Non
     assert execution["owner_commit"] == pin["owner_commit"]
     assert execution["aggregate_sha256"] == EXPECTED_AGGREGATE
     sources = [_object(source) for source in _list(execution["sources"])]
-    assert len(sources) == 17
+    assert len(sources) == 21
     for source in sources:
         path = _string(source["path"])
         assert (
@@ -152,7 +152,7 @@ def test_vendored_execution_operation_artifact_matches_owner_provenance() -> Non
         )
     owner_provenance = _json(ARTIFACT_ROOT / "provenance.json")
     assert owner_provenance["aggregateSha256"] == EXPECTED_AGGREGATE
-    assert len(_list(owner_provenance["files"])) == 16
+    assert len(_list(owner_provenance["files"])) == 20
 
 
 def test_owner_vector_inventory_is_enforced_by_the_contract_checker() -> None:
@@ -160,7 +160,7 @@ def test_owner_vector_inventory_is_enforced_by_the_contract_checker() -> None:
         validate_platform_binding_artifact,
     )
 
-    assert validate_platform_binding_artifact(ROOT) == (53, 142, 139)
+    assert validate_platform_binding_artifact(ROOT) == (55, 142, 165)
 
 
 def test_v3_vendor_rejects_extra_file_even_with_unchanged_provenance(
@@ -174,7 +174,7 @@ def test_v3_vendor_rejects_extra_file_even_with_unchanged_provenance(
     )
 
     repository = _artifact_fixture(tmp_path)
-    extra = repository / "contract/platform/v1/execution-operations/v3/extra.json"
+    extra = repository / "contract/platform/v1/execution-operations/v4/extra.json"
     extra.write_text("{}\n", encoding="utf-8")
     with pytest.raises(PlatformRequestBindingError):
         validate_platform_binding_artifact(repository)
@@ -222,7 +222,7 @@ def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
         sources.append(
             {
                 "path": sources[0]["path"],
-                "owner_path": "contract/execution-operations/v3/extra.json",
+                "owner_path": "contract/execution-operations/v4/extra.json",
                 "sha256": sources[0]["sha256"],
             }
         )
@@ -251,7 +251,7 @@ def test_execution_pin_rejects_changed_owner_provenance_with_synced_pin_digest(
 
     repository = _artifact_fixture(tmp_path)
     provenance_path = (
-        repository / "contract/platform/v1/execution-operations/v3/provenance.json"
+        repository / "contract/platform/v1/execution-operations/v4/provenance.json"
     )
     provenance_path.write_bytes(provenance_path.read_bytes() + b"\n")
     pin_path = repository / "contract/platform/v1/provenance.json"
@@ -260,7 +260,7 @@ def test_execution_pin_rejects_changed_owner_provenance_with_synced_pin_digest(
     sources = [_object(source) for source in _list(execution["sources"])]
     for source in sources:
         if source["path"] == (
-            "contract/platform/v1/execution-operations/v3/provenance.json"
+            "contract/platform/v1/execution-operations/v4/provenance.json"
         ):
             source["sha256"] = hashlib.sha256(provenance_path.read_bytes()).hexdigest()
     execution["sources"] = sources

@@ -1,22 +1,11 @@
 # skills — DeepAgents 原生 Skill 接线
 
-本目录不实现第二套 Skill runtime。Agent 只声明 Skill 名称；Factory 通过 Capability
-`SkillClient.resolve(...)` 得到当前 Run 可见引用，再把 `CapabilitySkillBackend` 作为
-`/.skills/` 的只读逻辑 route 交给 `create_deep_agent(skills=["/.skills/"])`。Skill 元数据注入、
-`SKILL.md` 渐进读取和附件访问均由 DeepAgents 原生 `SkillsMiddleware` / `read_file` 完成。
+本目录不实现第二套runtime；Run冻结的exact refs由Platform current authorization裁决。
+- `package.py`：固定v4 ZIP32/profile/manifest的纯内存校验，返回原始文件bytes；不写宿主/不执行脚本。
+- `backend.py`：`TypedSkillBackend`、`SKILLS_ROOT`；路径为exact SkillId无填充base64url，只读、无别名。
+- `__init__.py`：空导入边界，避免client/package/backend循环依赖。
 
-## 公开 API
-
-- `backend.py`：`CapabilitySkillBackend` 与 `SKILLS_ROOT`；按获准引用懒读包体，拒绝所有写入。
-- `__init__.py`：只公开导出 DeepAgents runtime 所需的 backend/root；测试 fixture
-  不属于包级 public API。
-
-Skill 包 frontmatter 的本地样本校验位于 `tests/support/skill_package.py`，不进入生产发行包。
-
-## 边界与约束
-
-- Capability 拥有 Skill CRUD、可见性、用户/项目/session path 与名称解析。
-- Storage 拥有包体 bytes 和对象生命周期；MinIO、AWS S3、R2 等只替换 Storage adapter。
-- GA 不创建 `find_skills`、`load_skill`、mount run_repository、物化/GC 或自定义 Skill prompt manifest。
-- `/.skills/` 是 `CompositeBackend` 的逻辑路由，不是 GA 向 sandbox 复制文件的物理目录。
-- Capability 不可用时声明 Skill 解析为空，基础 DeepAgents 对话循环继续。
+每次ls/read/glob/grep/download均通过run-bound client重新取得当前批准并校验GET/ZIP；任何授权/包失败向上抛出，
+不把已声明Skill转为空列表继续。无bytes缓存，glob/grep逐包处理，批下载128MiB/128路径，grep1MiB/1000条明确上限。
+`SKILL.md`元数据与渐进披露仍由原生DeepAgents消费，二进制download保持原字节，非UTF8 read显式报错。
+所有write/edit/upload拒绝；`/.skills/`仅虚拟内存路由，无物化路径或跨owner SQL。

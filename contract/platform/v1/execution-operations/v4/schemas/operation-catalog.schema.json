@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kokoro.dev/contracts/platform-execution-operations/3.0.0/operation-catalog.schema.json",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/4.0.0/operation-catalog.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,18 +11,18 @@
   ],
   "properties": {
     "artifactVersion": {
-      "const": "3.0.0"
+      "const": "4.0.0"
     },
     "catalogVersion": {
-      "const": "3.0.0"
+      "const": "4.0.0"
     },
     "packageName": {
       "const": "kokoro.platform.v1"
     },
     "operations": {
       "type": "array",
-      "minItems": 31,
-      "maxItems": 31,
+      "minItems": 34,
+      "maxItems": 34,
       "items": {
         "type": "object",
         "additionalProperties": false,

@@ -9,7 +9,6 @@ from kokoro_agent.clients.skills import (
     ResolvedSkill,
     SkillClient,
     SkillClientError,
-    SkillReader,
 )
 from kokoro_agent.clients.storage import (
     DeliveryClient,
@@ -28,5 +27,4 @@ __all__ = [
     "SkillClient",
     "SkillClientError",
     "ResolvedSkill",
-    "SkillReader",
 ]

@@ -1,6 +1,31 @@
 # kokoro-agent 验收矩阵
 
-## W3 typed Skill source：launch 代码片与剩余 RED→GREEN 门（2026-09-29）
+## W3 typed Skill reader 当前候选验收（2026-09-29）
+
+基线`dd34a4800b4ce0cc61eb80dd715e528b9d4517da`，完整reader已实施，待Root独立审查/固定SHA复验。
+RED→GREEN包括v4 owner pin、29ZIP profile向量、GET边界/日志/显式:0与timeout、只读路径与批输出预算；
+typed reader重新授权/撤权、binary/nonUTF8、exact path、空选择零依赖、factory模型前preflight已覆盖。
+新owned loopback验证真实GET/取消；真实worker signer/OAuth+fake Platform/object响应证明fresh JTI/lease拒绝，非真实owner授权组合。
+全门的最终实测数量由本节收尾记录；下文旧候选数量只是历史，不代替当前SHA。共享PG/Redis与3310未操作，
+v4激活、安装/启用产品链、Storage退役仍后续owner，不能将本片单仓门称完整产品闭环。
+
+### 本候选实际门禁（基线dd34a48，2026-09-29）
+
+- `uv lock --check` / `uv sync --frozen`：132 resolved / 128 audited，通过；锁文件未变。
+- `uv run ruff format --check .`：248 files already formatted；`uv run ruff check .`：通过。
+- `uv run pyright`：0 errors / 0 warnings；`uv run kokoro-agent-contract-check`：通过，含29个owner ZIP向量。
+- `uv run python scripts/generate_platform_consumer.py --check`：隔离Python3.11生成无漂移。
+- `uv run pytest -q -rs`：**1399 passed / 6 skipped / 172 deselected**，56.36s，364条上游beta/deprecation警告。
+  1 skip为parent-repo examples缺失，5 skip为MinIO9100未配置；172为默认排除的外部integration/acceptance/e2e，未放宽门禁。
+- `uv run pytest -q tests/integration/skills/test_backend.py -o addopts=''`：3 passed；此文件是本地DeepAgents组件测试，非真实owner集成。
+- `uv build --wheel --sdist`：两种产物通过；`uv run python scripts/check_platform_wheel.py dist/kokoro_agent-2.0.0-py3-none-any.whl`：隔离Python3.11生成消费smoke通过；wheel含两个新增reader模块。
+- `git diff --check`：通过；构建产生的本次`build/`副本已清理，无锁/SQL/其他仓修改。
+
+日志：`/tmp/agent-reader-final-pytest.log`、`/tmp/agent-reader-final-pyright.log`、`/tmp/agent-reader-final-contract.log`、
+`/tmp/agent-reader-generation-check.log`、`/tmp/agent-reader-build.log`、`/tmp/agent-reader-wheel.log`。
+独立审查、Root固定SHA复跑与真实IAM/Platform/Storage组合仍待Root负责；未启动/重置共享PG/Redis或3310。
+
+## 历史设计验收矩阵：W3 typed Skill source（2026-09-29）
 
 Agent launch 契约/Run fence 的 RED→GREEN 单元/契约片已完成，真实 PostgreSQL/Redis roundtrip 待验；下表 Platform/包读取/正式产品链各项仍是目标，不是通过记录。
 

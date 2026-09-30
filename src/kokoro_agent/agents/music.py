@@ -10,7 +10,6 @@ MUSIC_AGENT = Agent(
     key="music",
     prompt=MUSIC_PROMPT,
     tools=(ASK_USER_TOOL,),
-    skills=("music",),
     delivery=True,
     pause_tools=frozenset({ASK_USER_TOOL_NAME}),
 )

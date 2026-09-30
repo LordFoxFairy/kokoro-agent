@@ -256,7 +256,7 @@
         "command": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["skill_id", "product_context"],
+          "required": ["skill_id", "product_context", "attempt_id"],
           "properties": {
             "skill_id": {
               "oneOf": [
@@ -312,6 +312,261 @@
                   }
                 }
               }
+            },
+            "attempt_id": {
+              "type": "string",
+              "pattern": "^[\\x21-\\x7e]{1,191}$"
+            }
+          }
+        }
+      }
+    },
+    "skill.begin_package_upload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/BeginSkillPackageUpload"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "skill_id",
+            "product_context",
+            "filename",
+            "mime_type",
+            "size_bytes",
+            "content_sha256",
+            "replaces_attempt_id"
+          ],
+          "properties": {
+            "skill_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "filename": {
+              "type": "string",
+              "minLength": 1,
+              "x-maxUtf8": 255,
+              "pattern": "^(?!\\.{1,2}$)[^/\\\\\\u0000-\\u001f\\u007f]+$"
+            },
+            "mime_type": {
+              "const": "application/zip"
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 33554432
+            },
+            "content_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "replaces_attempt_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "skill.complete_package_upload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "properties": {
+        "command_digest_version": {
+          "const": "3.0.0"
+        },
+        "fq_method": {
+          "const": "kokoro.platform.v1.SkillCatalogService/CompleteSkillPackageUpload"
+        },
+        "tenant_ref": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "skill_id",
+            "product_context",
+            "attempt_id",
+            "upload_id",
+            "content_sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "skill_id": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present"],
+                  "properties": {
+                    "present": {
+                      "const": false
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["present", "value"],
+                  "properties": {
+                    "present": {
+                      "const": true
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "product_context": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_id", "owner_scope"],
+              "properties": {
+                "subject_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                },
+                "owner_scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "id"],
+                  "properties": {
+                    "kind": {
+                      "enum": ["user", "organization", "project", "session"]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+                    }
+                  }
+                }
+              }
+            },
+            "attempt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 191
+            },
+            "upload_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 191
+            },
+            "content_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 33554432
             }
           }
         }

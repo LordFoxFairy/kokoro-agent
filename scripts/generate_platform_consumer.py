@@ -16,7 +16,7 @@ PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 PROTO_ROOT = PIN_PATH.parent / "proto"
 OUTPUT = ROOT / "src" / "kokoro_agent" / "generated"
 CODEGEN_PATH = PIN_PATH.parent / "codegen.json"
-EXECUTION_OPERATIONS_ROOT = PIN_PATH.parent / "execution-operations" / "v3"
+EXECUTION_OPERATIONS_ROOT = PIN_PATH.parent / "execution-operations" / "v4"
 
 
 def _run(command: list[str], *, env: dict[str, str] | None = None) -> None:

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
 
+from kokoro_agent.clients.skills import PlatformSkillClient, SkillClientError
+from kokoro_agent.clients.skill_package_transport import SkillPackageTransport
 from kokoro_agent.clients.platform_credentials import CredentialFile
 from kokoro_agent.clients.platform_tokens import PlatformTokenProvider
 from kokoro_agent.clients.platform_transport import PlatformTransport, RunPlatformClient
@@ -34,6 +36,13 @@ class WorkerPlatformRuntime:
     transport: PlatformTransport
     signer: ExecutionProofSigner
     lease_reader: ExecutionProofLeaseReadPort
+
+    packages: SkillPackageTransport | None = None
+
+    def skills_for_run(self, leased_run: LeasedRun) -> PlatformSkillClient:
+        if self.packages is None:
+            raise SkillClientError("SKILL_PACKAGE_TRANSPORT_UNAVAILABLE")
+        return PlatformSkillClient(self.for_run(leased_run), self.packages)
 
     def for_run(self, leased_run: LeasedRun) -> RunPlatformClient:
         supplier = create_execution_proof_supplier(
@@ -80,6 +89,7 @@ async def worker_platform_runtime(
         )
     )
     async with (
+        AsyncExitStack() as stack,
         httpx.AsyncClient(
             follow_redirects=False,
             trust_env=False,
@@ -88,10 +98,19 @@ async def worker_platform_runtime(
         ) as http,
         PlatformTransport(config.platform_base_url) as transport,
     ):
+        packages = None
+        if config.storage_object_origin is not None:
+            packages = await stack.enter_async_context(
+                SkillPackageTransport(config.storage_object_origin)
+            )
         tokens = PlatformTokenProvider(config.iam_base_url, credentials, http=http)
         try:
             yield WorkerPlatformRuntime(
-                tokens=tokens, transport=transport, signer=signer, lease_reader=reader
+                tokens=tokens,
+                transport=transport,
+                signer=signer,
+                lease_reader=reader,
+                packages=packages,
             )
         finally:
             await tokens.aclose()

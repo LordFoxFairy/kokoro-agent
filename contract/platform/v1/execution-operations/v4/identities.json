@@ -1,5 +1,5 @@
 {
-  "artifactVersion": "3.0.0",
+  "artifactVersion": "4.0.0",
   "packageName": "kokoro.platform.v1",
   "wrapperWire": {
     "syntax": "proto3",
@@ -458,6 +458,60 @@
       "field": "product_context",
       "tag": 5,
       "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "GetSkillPackageUploadRequest",
+      "field": "skill_id",
+      "tag": 2,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "GetSkillPackageUploadRequest",
+      "field": "product_context",
+      "tag": 3,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "GetSkillPackageUploadResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "BeginSkillPackageUploadRequest",
+      "field": "skill_id",
+      "tag": 3,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "BeginSkillPackageUploadRequest",
+      "field": "product_context",
+      "tag": 4,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "BeginSkillPackageUploadResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "CompleteSkillPackageUploadRequest",
+      "field": "skill_id",
+      "tag": 3,
+      "targetType": "SkillId"
+    },
+    {
+      "message": "CompleteSkillPackageUploadRequest",
+      "field": "product_context",
+      "tag": 4,
+      "targetType": "ProductCatalogContext"
+    },
+    {
+      "message": "CompleteSkillPackageUploadResponse",
+      "field": "skill_id",
+      "tag": 1,
+      "targetType": "SkillId"
     }
   ],
   "reservations": [
@@ -470,6 +524,11 @@
       "message": "SkillSource",
       "reservedNumbers": [2],
       "reservedNames": ["source_selector"]
+    },
+    {
+      "message": "GetApprovedSkillPackageReferenceResponse",
+      "reservedNumbers": [4],
+      "reservedNames": ["read_reference"]
     },
     {
       "message": "DiscoverVisibleSkillsRequest",

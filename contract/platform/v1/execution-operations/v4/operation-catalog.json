@@ -1,6 +1,6 @@
 {
-  "artifactVersion": "3.0.0",
-  "catalogVersion": "3.0.0",
+  "artifactVersion": "4.0.0",
+  "catalogVersion": "4.0.0",
   "packageName": "kokoro.platform.v1",
   "operations": [
     {
@@ -79,6 +79,30 @@
       "class": "workload-only",
       "fqMethod": "kokoro.platform.v1.SkillCatalogService/CreateSkillVersion",
       "operation": "skill.create_version",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/GetSkillPackageUpload",
+      "operation": "skill.get_package_upload",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "none"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/BeginSkillPackageUpload",
+      "operation": "skill.begin_package_upload",
+      "proof": "forbidden",
+      "permission": "platform:skill-catalog.manage",
+      "idempotency": "command_identity"
+    },
+    {
+      "class": "workload-only",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/CompleteSkillPackageUpload",
+      "operation": "skill.complete_package_upload",
       "proof": "forbidden",
       "permission": "platform:skill-catalog.manage",
       "idempotency": "command_identity"

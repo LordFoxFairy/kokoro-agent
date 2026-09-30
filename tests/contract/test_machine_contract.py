@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, validate
+from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import TypeAdapter
 import pytest
 
@@ -54,9 +55,9 @@ def test_skill_selection_schema_rejects_trailing_line_terminators(suffix: str) -
     document = _document()
     schema = _object(_object(document["components"])["schemas"])["LaunchRequest"]
     refs = _object(_object(_object(schema)["properties"])["selected_skill_source_refs"])
-    validator = Draft202012Validator(refs)
-    assert validator.is_valid(["skill:valid"])
-    assert not validator.is_valid([f"skill:valid{suffix}"])
+    validate(["skill:valid"], refs, cls=Draft202012Validator)
+    with pytest.raises(SchemaValidationError):
+        validate([f"skill:valid{suffix}"], refs, cls=Draft202012Validator)
 
 
 def test_every_operation_declares_governance_metadata() -> None:

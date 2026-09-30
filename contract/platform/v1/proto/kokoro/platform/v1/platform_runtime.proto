@@ -147,6 +147,80 @@ message CreateSkillDraftResponse {
   kokoro.platform.v1.SkillSeriesId series_id = 5;
 }
 
+enum SkillPackagePhase {
+  SKILL_PACKAGE_PHASE_UNSPECIFIED = 0;
+  SKILL_PACKAGE_PHASE_NONE = 1;
+  SKILL_PACKAGE_PHASE_INTENT = 2;
+  SKILL_PACKAGE_PHASE_UPLOAD_PENDING = 3;
+  SKILL_PACKAGE_PHASE_UPLOADED = 4;
+  SKILL_PACKAGE_PHASE_VALIDATED = 5;
+  SKILL_PACKAGE_PHASE_ABORTED = 6;
+}
+
+message GetSkillPackageUploadRequest {
+  string request_id = 1;
+  kokoro.platform.v1.SkillId skill_id = 2;
+  kokoro.platform.v1.ProductCatalogContext product_context = 3;
+}
+
+message GetSkillPackageUploadResponse {
+  kokoro.platform.v1.SkillId skill_id = 1;
+  optional string attempt_id = 2;
+  uint64 attempt_epoch = 3;
+  kokoro.platform.v1.SkillPackagePhase phase = 4;
+  optional string upload_id = 5;
+}
+
+message BeginSkillPackageUploadRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  kokoro.platform.v1.ProductCatalogContext product_context = 4;
+  string filename = 5;
+  string mime_type = 6;
+  uint64 size_bytes = 7;
+  string content_sha256 = 8;
+  optional string replaces_attempt_id = 9;
+}
+
+message BeginSkillPackageUploadResponse {
+  kokoro.platform.v1.SkillId skill_id = 1;
+  string attempt_id = 2;
+  uint64 attempt_epoch = 3;
+  string upload_id = 4;
+  kokoro.platform.v1.PackageTransferReference transfer_reference = 5;
+  bool replayed = 6;
+}
+
+message CompleteSkillPackageUploadRequest {
+ string request_id = 1;
+ kokoro.common.v1.CommandIdentity command = 2;
+ kokoro.platform.v1.SkillId skill_id = 3;
+ kokoro.platform.v1.ProductCatalogContext product_context = 4;
+ string attempt_id = 5;
+ string upload_id = 6;
+ string content_sha256 = 7;
+ uint64 size_bytes = 8;
+}
+enum SkillPackageScanState {
+ SKILL_PACKAGE_SCAN_STATE_UNSPECIFIED = 0;
+ SKILL_PACKAGE_SCAN_STATE_PENDING = 1;
+ SKILL_PACKAGE_SCAN_STATE_CLEAN = 2;
+ SKILL_PACKAGE_SCAN_STATE_INFECTED = 3;
+ SKILL_PACKAGE_SCAN_STATE_UNKNOWN = 4;
+}
+message CompleteSkillPackageUploadResponse {
+ kokoro.platform.v1.SkillId skill_id = 1;
+ string attempt_id = 2;
+ uint64 attempt_epoch = 3;
+ string upload_id = 4;
+ string asset_id = 5;
+ kokoro.platform.v1.SkillPackagePhase phase = 6;
+ bool replayed = 7;
+ string content_sha256 = 8;
+ kokoro.platform.v1.SkillPackageScanState scan_state = 9;
+}
+
 message ValidateSkillDraftRequest {
   string request_id = 1;
   kokoro.common.v1.CommandIdentity command = 2;
@@ -154,6 +228,7 @@ message ValidateSkillDraftRequest {
   reserved 4, 5;
   reserved "package_asset_ref", "content_digest";
   kokoro.platform.v1.ProductCatalogContext product_context = 6;
+  string attempt_id = 7;
 }
 
 message ValidateSkillDraftResponse {
@@ -236,7 +311,17 @@ message GetApprovedSkillPackageReferenceResponse {
   string asset_ref = 1;
   string content_digest = 2;
   string manifest_identity = 3;
-  string read_reference = 4;
+  reserved 4;
+  reserved "read_reference";
+  kokoro.platform.v1.PackageTransferReference transfer_reference = 5;
+}
+
+// Ephemeral Storage-signed GET result; never stored in Skill or command receipts.
+message PackageTransferReference {
+  string url = 1;
+  string method = 2;
+  map<string, string> required_headers = 3;
+  google.protobuf.Timestamp expires_at = 4;
 }
 
 message CreateSkillVersionRequest {
@@ -647,6 +732,9 @@ message AuthorizeMcpToolResponse {
 }
 
 service SkillCatalogService {
+  rpc GetSkillPackageUpload(kokoro.platform.v1.GetSkillPackageUploadRequest) returns (kokoro.platform.v1.GetSkillPackageUploadResponse);
+  rpc CompleteSkillPackageUpload(kokoro.platform.v1.CompleteSkillPackageUploadRequest) returns (kokoro.platform.v1.CompleteSkillPackageUploadResponse);
+  rpc BeginSkillPackageUpload(kokoro.platform.v1.BeginSkillPackageUploadRequest) returns (kokoro.platform.v1.BeginSkillPackageUploadResponse);
   rpc CreateSkillDraft(kokoro.platform.v1.CreateSkillDraftRequest) returns (kokoro.platform.v1.CreateSkillDraftResponse);
   rpc CreateSkillVersion(kokoro.platform.v1.CreateSkillVersionRequest) returns (kokoro.platform.v1.CreateSkillVersionResponse);
   rpc ValidateSkillDraft(kokoro.platform.v1.ValidateSkillDraftRequest) returns (kokoro.platform.v1.ValidateSkillDraftResponse);

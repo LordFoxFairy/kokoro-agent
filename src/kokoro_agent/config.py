@@ -274,18 +274,11 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def platform_configuration_complete(self) -> AppConfig:
-        if (
-            len(
-                {
-                    self.storage_base_url is None,
-                    self.storage_object_origin is None,
-                    self.storage_service_secret is None,
-                }
-            )
-            != 1
+        if (self.storage_base_url is None) != (self.storage_service_secret is None) or (
+            self.storage_base_url is not None and self.storage_object_origin is None
         ):
             raise ValueError(
-                "Storage URL, object origin and service credential must be configured together"
+                "Storage writes require URL, service credential and object origin"
             )
         values = (
             self.iam_base_url,

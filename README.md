@@ -52,9 +52,9 @@ Redis LaunchRunRequest
   -> Agent Chat HTTP query boundary -> kokoro-bff Chat API/AG-UI
 ```
 
-- 外部请求携带 `ExecutionIdentity`，不携带 caller namespace、thread、Agent、Skill、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
+- 外部请求携带 `ExecutionIdentity`，只通过 selected_skill_source_refs 携带冻结 exact Skill 选择，不携带 caller namespace、thread、Agent、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
 - DeepAgents 的 native state 与 official `SwarmState` 都由框架拥有；GA 不定义自己的 State 包装。
-- Agent 声明的 Skill 由 Capability public contract 解析；GA 仅把获准包体暴露为当前 Run 的只读 backend route，用户/项目/会话 Skill CRUD 仍属于 Capability。
+- Run 显式选择的 Skill exact refs 由 Platform current authorization 解析；每次文件读取重验批准引用与 Storage signed GET/ZIP，再暴露只读 backend。Agent 不声明静态Skill名称，空选择无Skill依赖；安装/启用仍由Platform拥有。
 - `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的
   browser-live stream，因为两者的 generated envelope 和 seq owner 不同。不创建
   `conversation_messages`、持久 `run_events` 或独立 `event_outbox`。
@@ -193,3 +193,9 @@ HTTP owner 的接口、fixture 要求和验收证据见 [`ACCEPTANCE.md`](ACCEPT
 ### Execution-proof public keys
 
 `kokoro-agent-http` now uses the independent `kokoro_agent.interfaces.http.main:main` root. It can publish the anonymous internal-owner `GET|HEAD /v1/execution-proof/jwks` from an env-only public ring; an absent or invalid ring degrades JWKS/readiness while `/healthz` remains live. The worker does not load this public ring, and its private-key loader is not wired until the A2c statement-time supplier exists.
+
+## Typed Skill package读取
+
+固定Platform v4机器合同，`selected_skill_source_refs=[]`继续基础Chat；非空必须有worker Platform七项配置与
+`KOKORO_STORAGE_OBJECT_ORIGIN`。此origin可单独用于GET，不要求Storage写secret；产物写入另需原URL+secret+origin。
+当前包GET严格不带owner/用户凭据、不缓存包或授权。v4激活及用户安装/启用完整产品链仍待后续owner，见[当前实现](docs/CURRENT.md)。

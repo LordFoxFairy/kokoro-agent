@@ -2,6 +2,10 @@
   "artifactVersion": "3.0.0",
   "wireEncoding": "strict UTF-8 JSON; snake_case Proto field names; wrappers {value}; bytes canonical base64url-no-pad; absent messages omitted; implicit scalars defaulted; no protobuf JSON aliases",
   "primitives": {
+    "validate-attempt-id": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x7e]{1,191}$"
+    },
     "string": {
       "type": "string"
     },
@@ -23,6 +27,29 @@
     "product-id": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    },
+    "package-filename": {
+      "type": "string",
+      "minLength": 1,
+      "x-maxUtf8": 255,
+      "pattern": "^(?!\\.{1,2}$)[^/\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "zip-mime": {
+      "const": "application/zip"
+    },
+    "package-size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 33554432
+    },
+    "attempt-id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 191
+    },
+    "lowercase-64hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     },
     "display-name": {
       "type": "string",

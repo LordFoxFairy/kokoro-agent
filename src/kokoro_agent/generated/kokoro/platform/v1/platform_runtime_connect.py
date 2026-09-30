@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpServerRequest, GetMcpServerResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, InstallSkillRequest, InstallSkillResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PublishSkillRequest, PublishSkillResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillStatusRequest, SetSkillStatusResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawSkillRequest, WithdrawSkillResponse
+from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpServerRequest, GetMcpServerResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, InstallSkillRequest, InstallSkillResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PublishSkillRequest, PublishSkillResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillStatusRequest, SetSkillStatusResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawSkillRequest, WithdrawSkillResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -26,6 +26,15 @@ if TYPE_CHECKING:
 
 
 class SkillCatalogService(Protocol):
+    async def get_skill_package_upload(self, request: GetSkillPackageUploadRequest, ctx: RequestContext[GetSkillPackageUploadRequest, GetSkillPackageUploadResponse]) -> GetSkillPackageUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def complete_skill_package_upload(self, request: CompleteSkillPackageUploadRequest, ctx: RequestContext[CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse]) -> CompleteSkillPackageUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def begin_skill_package_upload(self, request: BeginSkillPackageUploadRequest, ctx: RequestContext[BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse]) -> BeginSkillPackageUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def create_skill_draft(self, request: CreateSkillDraftRequest, ctx: RequestContext[CreateSkillDraftRequest, CreateSkillDraftResponse]) -> CreateSkillDraftResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -58,6 +67,36 @@ class SkillCatalogServiceASGIApplication(ConnectASGIApplication[SkillCatalogServ
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/kokoro.platform.v1.SkillCatalogService/GetSkillPackageUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetSkillPackageUpload",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=GetSkillPackageUploadRequest,
+                        output=GetSkillPackageUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_skill_package_upload,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/CompleteSkillPackageUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CompleteSkillPackageUpload",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=CompleteSkillPackageUploadRequest,
+                        output=CompleteSkillPackageUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.complete_skill_package_upload,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/BeginSkillPackageUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="BeginSkillPackageUpload",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=BeginSkillPackageUploadRequest,
+                        output=BeginSkillPackageUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.begin_skill_package_upload,
+                ),
                 "/kokoro.platform.v1.SkillCatalogService/CreateSkillDraft": Endpoint.unary(
                     method=MethodInfo(
                         name="CreateSkillDraft",
@@ -132,6 +171,66 @@ class SkillCatalogServiceASGIApplication(ConnectASGIApplication[SkillCatalogServ
 
 
 class SkillCatalogServiceClient(ConnectClient):
+    async def get_skill_package_upload(
+        self,
+        request: GetSkillPackageUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetSkillPackageUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetSkillPackageUpload",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=GetSkillPackageUploadRequest,
+                output=GetSkillPackageUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def complete_skill_package_upload(
+        self,
+        request: CompleteSkillPackageUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CompleteSkillPackageUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CompleteSkillPackageUpload",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=CompleteSkillPackageUploadRequest,
+                output=CompleteSkillPackageUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def begin_skill_package_upload(
+        self,
+        request: BeginSkillPackageUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BeginSkillPackageUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="BeginSkillPackageUpload",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=BeginSkillPackageUploadRequest,
+                output=BeginSkillPackageUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def create_skill_draft(
         self,
         request: CreateSkillDraftRequest,

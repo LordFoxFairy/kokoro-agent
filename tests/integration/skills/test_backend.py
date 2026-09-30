@@ -10,57 +10,59 @@ from deepagents.middleware.skills import SkillsMiddleware, SkillsState
 from langgraph.runtime import Runtime
 
 from kokoro_agent.clients.skills import ResolvedSkill
-from kokoro_agent.skills.backend import CapabilitySkillBackend, SKILLS_ROOT
+from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
 
 
 class _Reader:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[ResolvedSkill] = []
 
-    async def load_package(
-        self, scope: str, name: str, content_hash: str
-    ) -> Mapping[str, str]:
-        self.calls.append((scope, name, content_hash))
+    async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+        self.calls.append(skill)
         return {
             "SKILL.md": (
-                "---\nname: style\ndescription: Writing style guide\n---\n"
-                "Lead with the conclusion."
+                b"---\nname: style\ndescription: Writing style guide\n---\n"
+                b"Lead with the conclusion."
             ),
-            "references/examples.md": "A concise example.",
+            "references/examples.md": b"A concise example.",
         }
 
 
 def _skill() -> ResolvedSkill:
     return ResolvedSkill(
-        name="style",
-        content_hash="hash-style",
-        description="Writing style guide",
-        scope="project:docs",
+        source_ref="skill:style",
+        skill_id="style",
+        revision=1,
+        asset_ref="asset-1",
+        content_digest="a" * 64,
+        manifest_identity="zip-v1:sha256:" + "b" * 64,
     )
 
 
 async def test_native_route_lists_and_lazily_reads_authorized_skill() -> None:
     reader = _Reader()
-    route = CapabilitySkillBackend((_skill(),), reader)
+    route = TypedSkillBackend((_skill(),), reader)
     backend = CompositeBackend(default=StateBackend(), routes={SKILLS_ROOT: route})
 
     listed = await backend.als(SKILLS_ROOT)
-    downloaded = await backend.adownload_files([f"{SKILLS_ROOT}style/SKILL.md"])
-    nested = await backend.als(f"{SKILLS_ROOT}style/references")
+    downloaded = await backend.adownload_files([f"{SKILLS_ROOT}c3R5bGU/SKILL.md"])
+    nested = await backend.als(f"{SKILLS_ROOT}c3R5bGU/references")
 
-    assert [entry["path"] for entry in listed.entries or []] == [f"{SKILLS_ROOT}style/"]
+    assert [entry["path"] for entry in listed.entries or []] == [
+        f"{SKILLS_ROOT}c3R5bGU/"
+    ]
     assert downloaded[0].content is not None
     assert b"Lead with the conclusion" in downloaded[0].content
     assert [entry["path"] for entry in nested.entries or []] == [
-        f"{SKILLS_ROOT}style/references/examples.md"
+        f"{SKILLS_ROOT}c3R5bGU/references/examples.md"
     ]
-    assert reader.calls == [("project:docs", "style", "hash-style")]
+    assert reader.calls == [_skill()] * 3
 
 
 async def test_native_skills_middleware_loads_metadata_from_route() -> None:
     backend = CompositeBackend(
         default=StateBackend(),
-        routes={SKILLS_ROOT: CapabilitySkillBackend((_skill(),), _Reader())},
+        routes={SKILLS_ROOT: TypedSkillBackend((_skill(),), _Reader())},
     )
     middleware = SkillsMiddleware(backend=backend, sources=[SKILLS_ROOT])
 
@@ -72,7 +74,7 @@ async def test_native_skills_middleware_loads_metadata_from_route() -> None:
         {
             "name": "style",
             "description": "Writing style guide",
-            "path": f"{SKILLS_ROOT}style/SKILL.md",
+            "path": f"{SKILLS_ROOT}c3R5bGU/SKILL.md",
             "license": None,
             "compatibility": None,
             "metadata": {},
@@ -82,7 +84,7 @@ async def test_native_skills_middleware_loads_metadata_from_route() -> None:
 
 
 async def test_route_is_read_only_and_unknown_skills_are_hidden() -> None:
-    backend = CapabilitySkillBackend((_skill(),), _Reader())
+    backend = TypedSkillBackend((_skill(),), _Reader())
 
     unknown = await backend.adownload_files(["/other/SKILL.md"])
     write = await backend.awrite("/style/SKILL.md", "replacement")

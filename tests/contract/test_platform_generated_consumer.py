@@ -14,10 +14,22 @@ ROOT = Path(__file__).parents[2]
 PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 EXPECTED_SOURCE_DIGESTS = {
     "contract/platform/v1/proto/kokoro/common/v1/common.proto": "65025b86a89119954bfbc7ad8eb89d59109ae7f390db5ee1a68f016eefa7da08",
-    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "282bf886ea9648f7ce5208abd36ab47d879b2002a036d90aada2af59e74b4020",
+    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "8ccab4aee4efdfd8210f2e5f02ae8ec85c2c470e90451915209406e16621289a",
 }
 EXPECTED_RPC_SHAPES = {
     "SkillCatalogService": {
+        "GetSkillPackageUpload": (
+            "GetSkillPackageUploadRequest",
+            "GetSkillPackageUploadResponse",
+        ),
+        "BeginSkillPackageUpload": (
+            "BeginSkillPackageUploadRequest",
+            "BeginSkillPackageUploadResponse",
+        ),
+        "CompleteSkillPackageUpload": (
+            "CompleteSkillPackageUploadRequest",
+            "CompleteSkillPackageUploadResponse",
+        ),
         "CreateSkillDraft": ("CreateSkillDraftRequest", "CreateSkillDraftResponse"),
         "CreateSkillVersion": (
             "CreateSkillVersionRequest",
@@ -126,7 +138,7 @@ EXPECTED_RPC_SHAPES = {
 
 def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
     pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "5b6eb2c1532b23b9747bc4bf6ac99f69ad453de0"
+    assert pin["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == EXPECTED_SOURCE_DIGESTS
@@ -144,7 +156,7 @@ def test_platform_generated_async_client_contains_all_owner_rpcs() -> None:
         for name, value in vars(value).items()
         if callable(value) and not name.startswith("_") and name != "close"
     }
-    assert len(methods) == 31
+    assert len(methods) == 34
 
 
 def test_pinned_platform_proto_matches_the_exact_owner_rpc_shapes() -> None:
@@ -214,3 +226,38 @@ def test_platform_codegen_check_rejects_stale_platform_output_but_keeps_storage(
     stale.write_text("# obsolete Platform output\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="generated Platform output inventory drift"):
         generate_platform_consumer._check_platform_outputs(candidate)
+
+
+def test_package_reference_reserves_legacy_tag_and_has_complete_transfer_tag5() -> None:
+    from protobuf.wkt import Timestamp
+    from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
+
+    source = (
+        ROOT / "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto"
+    ).read_text()
+    body = source.split("message GetApprovedSkillPackageReferenceResponse {", 1)[
+        1
+    ].split("}", 1)[0]
+    assert "reserved 4;" in body and 'reserved "read_reference";' in body
+    assert "kokoro.platform.v1.PackageTransferReference transfer_reference = 5;" in body
+    assert pb.GetApprovedSkillPackageReferenceResponse(
+        transfer_reference=pb.PackageTransferReference(method="GET")
+    ).to_binary() == bytes.fromhex("2a051203474554")
+    transfer = pb.PackageTransferReference(
+        url="https://objects.test/pkg",
+        method="GET",
+        required_headers={},
+        expires_at=Timestamp(seconds=2000000000),
+    )
+    result = pb.GetApprovedSkillPackageReferenceResponse.from_binary(
+        pb.GetApprovedSkillPackageReferenceResponse(
+            transfer_reference=transfer
+        ).to_binary()
+    )
+    assert result.transfer_reference == transfer
+    assert (
+        pb.GetApprovedSkillPackageReferenceResponse.from_binary(
+            b"\x22\x03url"
+        ).transfer_reference
+        is None
+    )

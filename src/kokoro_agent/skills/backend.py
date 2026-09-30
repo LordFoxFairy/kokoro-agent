@@ -1,10 +1,11 @@
-"""Read-only DeepAgents backend route for Capability-resolved Skills."""
+"""Read-only DeepAgents backend route for typed exact Skills."""
 
 from __future__ import annotations
 
 import fnmatch
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
+from typing import Protocol
 
 from deepagents.backends.protocol import (
     FILE_NOT_FOUND,
@@ -23,53 +24,65 @@ from deepagents.backends.protocol import (
 )
 from deepagents.backends.utils import create_file_data, slice_read_response
 
-from kokoro_agent.clients.skills import ResolvedSkill, SkillClientError, SkillReader
+from kokoro_agent.clients.skills import ResolvedSkill, SkillClientError
 
 SKILLS_ROOT = "/.skills/"
 
 
-class CapabilitySkillBackend(BackendProtocol):
+class PackageReader(Protocol):
+    async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]: ...
+
+
+class TypedSkillBackend(BackendProtocol):
     """Expose authorized Skill references as a native read-only backend.
 
     The enclosing ``CompositeBackend`` maps ``/.skills/`` to this backend, so
     paths received here are rooted at ``/``. Packages stay behind the public
-    ``SkillReader`` contract and are fetched lazily; GA never copies them into a
+    ``PackageReader`` contract and are fetched lazily; GA never copies them into a
     sandbox or creates a second Skill loader.
     """
 
     def __init__(
-        self, initial: Sequence[ResolvedSkill], reader: SkillReader | None
+        self, initial: Sequence[ResolvedSkill], reader: PackageReader | None
     ) -> None:
-        self._skills = {skill.name: skill for skill in initial}
+        self._skills = {skill.path_segment: skill for skill in initial}
         self._reader = reader
-        self._packages: dict[str, Mapping[str, str]] = {}
 
-    async def _package(self, name: str) -> Mapping[str, str] | None:
+    async def _package(self, name: str) -> Mapping[str, bytes] | None:
         skill = self._skills.get(name)
-        if skill is None or self._reader is None:
+        if skill is None:
             return None
-        cached = self._packages.get(name)
-        if cached is not None:
-            return cached
-        try:
-            package = await self._reader.load_package(
-                skill.scope, skill.name, skill.content_hash
-            )
-        except SkillClientError:
-            return None
-        self._packages[name] = package
-        return package
+        if self._reader is None:
+            raise SkillClientError("SKILL_READER_UNAVAILABLE")
+        return await self._reader.load_package(skill)
 
     @staticmethod
-    def _parts(path: str) -> tuple[str, str] | None:
-        parts = PurePosixPath(path).parts
-        if len(parts) < 3 or parts[0] != "/" or ".." in parts:
+    def _valid_path(path: str) -> bool:
+        return path == "/" or (
+            path.startswith("/")
+            and "\\" not in path
+            and all(
+                part not in {"", ".", ".."}
+                for part in path.removesuffix("/")[1:].split("/")
+            )
+        )
+
+    @classmethod
+    def _parts(cls, path: str) -> tuple[str, str] | None:
+        if not cls._valid_path(path) or path.endswith("/"):
             return None
-        return parts[1], "/".join(parts[2:])
+        parts = path[1:].split("/")
+        if len(parts) < 2:
+            return None
+        return parts[0], "/".join(parts[1:])
 
     async def als(self, path: str) -> LsResult:
-        normalized = str(PurePosixPath(path))
+        if not self._valid_path(path):
+            return LsResult(error=FILE_NOT_FOUND)
+        normalized = path.removesuffix("/") or "/"
         if normalized == "/":
+            for name in self._skills:
+                await self._package(name)
             return LsResult(
                 entries=[
                     FileInfo(path=f"/{name}/", is_dir=True)
@@ -100,7 +113,7 @@ class CapabilitySkillBackend(BackendProtocol):
                 children[child] = FileInfo(
                     path=child_path,
                     is_dir=False,
-                    size=len(content.encode("utf-8")),
+                    size=len(content),
                 )
         package_directories = {
             str(PurePosixPath(relative).parent).removeprefix("./")
@@ -111,6 +124,9 @@ class CapabilitySkillBackend(BackendProtocol):
         return LsResult(entries=list(children.values()))
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if len(paths) > 128:
+            raise SkillClientError("SKILL_READ_LIMIT")
+        total = 0
         responses: list[FileDownloadResponse] = []
         for path in paths:
             parsed = self._parts(path)
@@ -120,10 +136,14 @@ class CapabilitySkillBackend(BackendProtocol):
             name, relative = parsed
             package = await self._package(name)
             content = package.get(relative) if package is not None else None
+            total += len(content) if content is not None else 0
+            if total > 134217728:
+                raise SkillClientError("SKILL_READ_LIMIT")
+            del package
             responses.append(
                 FileDownloadResponse(
                     path=path,
-                    content=content.encode("utf-8") if content is not None else None,
+                    content=content,
                     error=None if content is not None else FILE_NOT_FOUND,
                 )
             )
@@ -146,50 +166,57 @@ class CapabilitySkillBackend(BackendProtocol):
         return ReadResult(file_data=create_file_data(sliced))
 
     async def aglob(self, pattern: str, path: str = "/") -> GlobResult:
-        files = await self._all_files()
-        prefix = str(PurePosixPath(path)).rstrip("/") + "/"
-        return GlobResult(
-            matches=[
-                FileInfo(path=name, is_dir=False, size=len(content.encode("utf-8")))
-                for name, content in sorted(files.items())
-                if name.startswith(prefix)
-                and fnmatch.fnmatch(name.lstrip("/"), pattern)
-            ]
-        )
-
-    async def agrep(
-        self, pattern: str, path: str | None = None, glob: str | None = None
-    ) -> GrepResult:
-        files = await self._all_files()
-        prefix = (path or "/").rstrip("/") + "/"
-        matches: list[GrepMatch] = []
-        for file_path, content in sorted(files.items()):
-            if not file_path.startswith(prefix):
-                continue
-            if glob is not None and not fnmatch.fnmatch(file_path, glob):
-                continue
-            for line_number, line in enumerate(content.splitlines(), start=1):
-                if pattern in line:
-                    matches.append(
-                        GrepMatch(
-                            path=file_path,
-                            line=line_number,
-                            text=line,
-                        )
-                    )
-        return GrepResult(matches=matches)
-
-    async def _all_files(self) -> dict[str, str]:
-        files: dict[str, str] = {}
+        if not self._valid_path(path):
+            return GlobResult(error=FILE_NOT_FOUND)
+        prefix = path.rstrip("/") + "/"
+        matches: list[FileInfo] = []
         for name in self._skills:
             package = await self._package(name)
             if package is None:
                 continue
-            files.update(
-                (f"/{name}/{relative}", content)
-                for relative, content in package.items()
-            )
-        return files
+            for relative, content in sorted(package.items()):
+                file_path = f"/{name}/{relative}"
+                if file_path.startswith(prefix) and fnmatch.fnmatch(
+                    file_path.lstrip("/"), pattern
+                ):
+                    matches.append(
+                        FileInfo(path=file_path, is_dir=False, size=len(content))
+                    )
+            del package
+        return GlobResult(matches=matches)
+
+    async def agrep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if not self._valid_path(path or "/"):
+            return GrepResult(error=FILE_NOT_FOUND)
+        prefix = (path or "/").rstrip("/") + "/"
+        matches: list[GrepMatch] = []
+        output_bytes = 0
+        for name in self._skills:
+            package = await self._package(name)
+            if package is None:
+                continue
+            for relative, content in sorted(package.items()):
+                file_path = f"/{name}/{relative}"
+                if not file_path.startswith(prefix) or (
+                    glob is not None and not fnmatch.fnmatch(file_path, glob)
+                ):
+                    continue
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                for line_number, line in enumerate(text.splitlines(), start=1):
+                    if pattern in line:
+                        output_bytes += len(line.encode("utf-8"))
+                        if len(matches) >= 1000 or output_bytes > 1048576:
+                            return GrepResult(error="SKILL_READ_LIMIT")
+                        matches.append(
+                            GrepMatch(path=file_path, line=line_number, text=line)
+                        )
+            del package
+        return GrepResult(matches=matches)
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
         del file_path, content
@@ -213,4 +240,4 @@ class CapabilitySkillBackend(BackendProtocol):
         ]
 
 
-__all__ = ["CapabilitySkillBackend", "SKILLS_ROOT"]
+__all__ = ["TypedSkillBackend", "SKILLS_ROOT"]

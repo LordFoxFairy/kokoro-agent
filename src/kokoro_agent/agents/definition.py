@@ -24,7 +24,6 @@ class Agent:
     key: str
     prompt: str
     tools: tuple[StructuredTool, ...] = ()
-    skills: tuple[str, ...] = ()
     mcp: tuple[str, ...] = ()
     subagents: tuple[str, ...] = ()
     delivery: bool = False
@@ -37,7 +36,6 @@ class Agent:
     def configured(
         self,
         *,
-        skills: Iterable[str] | None = None,
         mcp: Iterable[str] | None = None,
         prompt: str | None = None,
     ) -> Agent:
@@ -50,7 +48,6 @@ class Agent:
         """
         return replace(
             self,
-            skills=self.skills if skills is None else tuple(skills),
             mcp=self.mcp if mcp is None else tuple(mcp),
             prompt=self.prompt if prompt is None else prompt,
         )
@@ -61,7 +58,6 @@ class Agent:
         if not self.prompt.strip():
             raise ValueError(f"agent {self.key!r} needs a prompt")
         for label, values in (
-            ("skills", self.skills),
             ("mcp", self.mcp),
             ("subagents", self.subagents),
         ):

@@ -1,6 +1,33 @@
 # kokoro-agent 当前实现
 
-## W3 Agent launch 契约代码片（2026-09-29；待 Root 验收）
+## W3 typed Skill reader 当前候选（2026-09-29）
+
+基线 `dd34a4800b4ce0cc61eb80dd715e528b9d4517da`；本片已实现完整 typed reader，待独立审查与 Root 固定 SHA 验收。
+Agent 固定 Platform `6a09913a96c686b316bfe707b823d039e625607a` v4 原始 21 JSON、Proto 与再生客户端；
+保留 bindingVersion 3.0.0、24 bindings/六个允许出站 RPC，ZIP profile 29 向量进入 contract checker。
+BFF `571b51de` 与 Web `1dc211bb` 已消费 exact refs/[]；Root `772208ba` 已验基础真实 worker/Chromium 恢复
+（System/model 为 fixture）。下文旧阶段的“BFF未接/launch未发布/仍有静态music”仅为历史，不代表当前代码。
+
+非空 Run refs 经 `WorkerPlatformRuntime.skills_for_run(LeasedRun)` → 当前 lease/token/fresh proof sender →
+Resolve/每次 Approved → Storage signed GET → 完整 ZIP/manifest验证，先于模型、sandbox和工具创建。
+空 refs 不创建 Skill client、不调用 IAM/Platform/Storage。旧 name/scope/hash、静态 Agent.skills、旧读取注入全部删除。
+只读根段是 exact SkillId ASCII 的无填充 base64url；原文件 bytes 不重写、不落盘、所有写操作拒绝。
+
+GET 仅当前固定 Storage v2 所允许的空 `required_headers`；这是 owner `transfer-reference-headers.ts` 与两种 GET signer
+的精确约束，不是自创非空 header 支持。ObjectStore origin 可单独配置；Storage 写入继续需要 URL+secret+origin。
+HTTPX 公开 transport 不保留 cookie jar、不产生 AsyncClient 的带签名 URL INFO日志；不跟随 redirect，显式
+connect/pool 3s、idle/write 10s、总 30s（且不超过签名期限），32MiB压缩硬限与SHA-256，取消传播。
+
+不缓存包 bytes 或授权；每次访问重新取 Approved 并完整验证 GET/ZIP。glob/grep 逐包处理，下载每次最多128条、累计128MiB；
+grep最多1000条/1MiB文本，超限明确失败不输出部分结果。单包展开128MiB/单文件16MiB/128条/manifest16KiB保持owner边界。
+未新增SQL、Redis键、服务、依赖或锁文件。纯解析/边界/loopback及fake owner组件证据不是生产IAM/Platform/Storage真组合。
+Platform v4激活、用户安装启用产品链、Storage退役仍由后续owner关闭，ACTIVE发布列表不替代installed+enabled授权。
+
+本候选最终默认门：1399 pass / 6 skip / 172 deselected；Ruff248文件、Pyright0错误、contract含29ZIP、
+生成drift、wheel/sdist与隔离Python3.11生成消费smoke通过。skip/资源边界/日志详见[验收](ACCEPTANCE.md)。
+交付commit由Root任务表记录，独立审查与真owner组合尚待验收，不以单仓成功更改激活状态。
+
+## 历史：W3 Agent launch 契约代码片（已由 Root 验收）
 
 已在本仓 OpenAPI `2.0.0`（URL 仍 `/v1`）、HTTP ingress、Redis `RunRequest` 加入必填 `selected_skill_source_refs`，严格检查 exact ref/16 项/4 KiB/重复/顺序；`[]` 承载基础 Chat，旧 payload/旧 trace fallback 不接受。现有 dispatch 与 Run JSON/fence 接收同一请求，同 `run_id` 改选择为 409。非空 refs 在 AgentFactory preflight 明确失败，先于模型解析、backend/工具和旧 name Skill 访问，待真正 Source reader 切片替换此 guard；不能把 202 当运行成功。单元/契约聚焦验证已过；真实 PostgreSQL/Redis roundtrip 未验，不声称两表实测。Platform v4、Source adapter、Storage signed GET/ZIP、只读 backend 与旧 name 删除均未接；BFF 普通 Chat durable outbox 和 Scheduler launch 未发送字段，旧 BFF 后台派送会得到 400，须紧接 owner-first 更新 BFF。
 

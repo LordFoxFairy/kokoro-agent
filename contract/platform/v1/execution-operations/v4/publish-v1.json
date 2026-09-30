@@ -1,0 +1,79 @@
+{
+  "profileVersion": 1,
+  "operation": "skill.publish",
+  "active": false,
+  "ownerKind": "user",
+  "visibility": 1,
+  "receipt": "local",
+  "initialState": {
+    "status": "draft",
+    "packagePhase": "validated"
+  },
+  "successState": {
+    "status": "active",
+    "packagePhase": "validated"
+  },
+  "freshBefore": [
+    "first_commit",
+    "completed_receipt",
+    "transaction_replay",
+    "commit_unknown_readback"
+  ],
+  "storageChecks": [
+    "completed_descriptor",
+    "current_scan_clean",
+    "authorized_healthy_reference"
+  ],
+  "freshMaxMs": 5000,
+  "deadlineMaxMs": 20000,
+  "newCommandOnActive": "reject",
+  "immutableEnvelope": [
+    "tenantId",
+    "eventId",
+    "eventType",
+    "aggregateType",
+    "aggregateId",
+    "occurredAt"
+  ],
+  "mutableDelivery": ["status", "publishedAt"],
+  "eventType": "skill.published",
+  "payloadSchemaVersion": 1,
+  "errors": {
+    "publish_request_invalid": "INVALID_ARGUMENT",
+    "publish_visibility_mismatch": "FAILED_PRECONDITION",
+    "publish_state_invalid": "FAILED_PRECONDITION",
+    "publish_scan_infected": "FAILED_PRECONDITION",
+    "publish_scan_pending": "FAILED_PRECONDITION",
+    "publish_scan_unknown": "FAILED_PRECONDITION",
+    "publish_dependency_unavailable": "UNAVAILABLE",
+    "publish_snapshot_conflict": "ABORTED"
+  },
+  "eventFixture": {
+    "schema_version": 1,
+    "source_ref": "skill:skill",
+    "series_id": "series",
+    "revision": "1",
+    "effective_scope": {
+      "kind": "user",
+      "id": "owner",
+      "visibility": 1
+    },
+    "package": {
+      "attempt_id": "attempt",
+      "attempt_epoch": "1",
+      "upload_id": "upload",
+      "asset_id": "asset",
+      "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size_bytes": "128",
+      "manifest_identity": "zip-v1:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "receiptFixture": {
+    "kind": "skill_publish_v1",
+    "sourceRef": "skill:skill",
+    "revision": "1",
+    "status": 2,
+    "eventId": "event",
+    "binding": "[\"tenant\",\"skill\",\"owner\",1,\"user\",\"owner\",\"series\",1,\"validated\",\"attempt\",\"1\",\"4\",\"owner\",\"128\",\"skill.zip\",\"application/zip\",\"begin\",\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"upload\",\"asset\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"zip-v1:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"]"
+  }
+}

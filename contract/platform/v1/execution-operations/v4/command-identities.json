@@ -1,5 +1,5 @@
 {
-  "artifactVersion": "3.0.0",
+  "artifactVersion": "4.0.0",
   "commandDigestVersion": "3.0.0",
   "packageName": "kokoro.platform.v1",
   "commands": [
@@ -160,6 +160,198 @@
           "projector": "ProductCatalogContext",
           "presence": "required",
           "defaultValue": null
+        },
+        {
+          "wireField": "attempt_id",
+          "tag": 7,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "attempt_id",
+          "projector": "validate-attempt-id",
+          "presence": "default",
+          "defaultValue": ""
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "current-resource-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.begin_package_upload",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/BeginSkillPackageUpload",
+      "requestMessage": "kokoro.platform.v1.BeginSkillPackageUploadRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "skill_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.SkillId",
+          "cardinality": "explicit",
+          "outputKey": "skill_id",
+          "projector": "wrapper:SkillId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "filename",
+          "tag": 5,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "filename",
+          "projector": "package-filename",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "mime_type",
+          "tag": 6,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "mime_type",
+          "projector": "zip-mime",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "size_bytes",
+          "tag": 7,
+          "wireType": "4",
+          "cardinality": "implicit",
+          "outputKey": "size_bytes",
+          "projector": "package-size",
+          "presence": "default",
+          "defaultValue": 0
+        },
+        {
+          "wireField": "content_sha256",
+          "tag": 8,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "content_sha256",
+          "projector": "lowercase-64hex",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "replaces_attempt_id",
+          "tag": 9,
+          "wireType": "9",
+          "cardinality": "explicit",
+          "outputKey": "replaces_attempt_id",
+          "projector": "attempt-id",
+          "presence": "tagged",
+          "defaultValue": null
+        }
+      ],
+      "excludedMembers": ["request_id", "command", "execution_proof"],
+      "admission": [
+        "fresh-catalog-workload-tenant",
+        "user-owner-equals-subject",
+        "session-unsupported",
+        "current-resource-owner-equals-product-owner",
+        "fresh-current-state-before-receipt"
+      ]
+    },
+    {
+      "operation": "skill.complete_package_upload",
+      "fqMethod": "kokoro.platform.v1.SkillCatalogService/CompleteSkillPackageUpload",
+      "requestMessage": "kokoro.platform.v1.CompleteSkillPackageUploadRequest",
+      "commandField": {
+        "field": "command",
+        "tag": 2,
+        "type": "kokoro.common.v1.CommandIdentity"
+      },
+      "rootMembers": [
+        "command_digest_version",
+        "fq_method",
+        "tenant_ref",
+        "command"
+      ],
+      "commandMembers": [
+        {
+          "wireField": "skill_id",
+          "tag": 3,
+          "wireType": ".kokoro.platform.v1.SkillId",
+          "cardinality": "explicit",
+          "outputKey": "skill_id",
+          "projector": "wrapper:SkillId",
+          "presence": "tagged",
+          "defaultValue": null
+        },
+        {
+          "wireField": "product_context",
+          "tag": 4,
+          "wireType": ".kokoro.platform.v1.ProductCatalogContext",
+          "cardinality": "explicit",
+          "outputKey": "product_context",
+          "projector": "ProductCatalogContext",
+          "presence": "required",
+          "defaultValue": null
+        },
+        {
+          "wireField": "attempt_id",
+          "tag": 5,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "attempt_id",
+          "projector": "attempt-id",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "upload_id",
+          "tag": 6,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "upload_id",
+          "projector": "attempt-id",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "content_sha256",
+          "tag": 7,
+          "wireType": "9",
+          "cardinality": "implicit",
+          "outputKey": "content_sha256",
+          "projector": "lowercase-64hex",
+          "presence": "default",
+          "defaultValue": ""
+        },
+        {
+          "wireField": "size_bytes",
+          "tag": 8,
+          "wireType": "4",
+          "cardinality": "implicit",
+          "outputKey": "size_bytes",
+          "projector": "package-size",
+          "presence": "default",
+          "defaultValue": 0
         }
       ],
       "excludedMembers": ["request_id", "command", "execution_proof"],

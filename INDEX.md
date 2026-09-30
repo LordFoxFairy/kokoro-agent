@@ -39,3 +39,11 @@ src/kokoro_agent/
 本地 profile 复用共享 PostgreSQL `127.0.0.1:55433` 中的独立 database `kokoro_worker_agent`，以及共享
 Redis `127.0.0.1:56380` 的 logical DB `9`；运行入口不负责创建重复的基础设施容器。CI 使用 workflow
 显式配置的 service 地址，不依赖本地默认值。
+
+## Typed Skill读取切片
+
+- `clients/skills.py`：run-bound Resolve/Approved与身份边界。
+- `clients/skill_package_transport.py`：隔离、有限、无凭据signed GET。
+- `skills/package.py`：ZIP32/profile/manifest纯解析，返回原始bytes。
+- `skills/backend.py`：base64url exact SkillId虚拟只读路径；每次访问current gate。
+- `worker/platform.py`：进程HTTP资源与`skills_for_run(LeasedRun)`装配。

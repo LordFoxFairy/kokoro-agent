@@ -1,6 +1,15 @@
 # kokoro-agent 技术设计
 
-## W3-AGENT-TYPED-SKILL-SOURCE-DESIGN：执行选择与包读取（2026-09-29；launch 已落地，其余仍为目标）
+## W3 typed Skill reader 实施当前态（2026-09-29）
+
+本片基于`dd34a48`，沿下文已批架构完成v4固定消费、run-bound typed source、signed GET与ZIP、只读backend，删除旧name双轨。
+本节与新增文件放置补充覆盖下文历史实现描述；详见[当前事实/边界](CURRENT.md)与[实际验收](ACCEPTANCE.md)。
+`clients/skills.py`不保留任何包bytes缓存，所有访问重新Approved/GET/ZIP。backend逐包glob/grep，不聚合所有展开包；
+批download最多128路径/累计128MiB，grep最多1000条/1MiB输出，超限明确失败且不返回部分结果。
+当前Storage v2 GET只允许空required_headers，HTTPX公开transport避免AsyncClient签名URL INFO日志/cookie jar；
+显式connect/pool3s、idle/write10s、总30s且受签名expiry限制。Platform v4激活和安装产品链仍是独立owner门。
+
+## 已批准设计：W3 typed Skill source 执行选择与包读取（历史起点与目标）
 
 本节区分已落地的 launch 输入片与其余目标，不把下文 W1E 历史叙述当当前实现。设计起点 `7dfcfa936d0b51244683ffd66d16ea937fe510a6` 原无 Skill 选择；现在 Agent-owned HTTP OpenAPI `2.0.0` 和 `LaunchBody`/`RunRequest` 要求显式 `selected_skill_source_refs`，现有 dispatch/Run canonical JSON 与 run_id fence 承接顺序和空数组，错形状 400、漂移 409。真实 PostgreSQL/Redis roundtrip 尚待隔离验收。worker 已有按已认领 Run 固定 tenant/lease 的 IAM token、fresh execution proof 和六个具名 Platform Connect sender；但 `agents/definition.py` 的 `Agent.skills: tuple[str]`、`agents/music.py` 的 `"music"`、`clients/skills.py` 的 name/scope/hash 协议与 `skills/backend.py` 的按 name 缓存仍是旧 Capability 模型。标准产品路径未调用 Skill RPC、未读 Storage 包；新字段不等于 Skill 执行已闭环。无声明的基础 Chat 由显式空数组运行，不能将已声明 Skill 的空列表/404 当成功。BFF 普通 Chat durable outbox 与 Scheduler 发送方尚未提供必填字段，旧 payload 会在 Agent 入口 400，必须由 BFF 紧接消费修复。
 
@@ -26,6 +35,21 @@ GET 只按 Platform `GetApprovedSkillPackageReferenceResponse.transfer_reference
 签名 URL/headers/proof/token/ZIP bytes 只在短期进程内存在，不写 Run/Chat/tool journal/日志或跨 Run 缓存。未知 Platform ACK/超时、GET 中断或签名过期：无副作用读取可保留同一 frozen ref 和 logical request_id 有界重试；每次新 Platform send 取新 token/lease/proof/JTI、GET 取新授权 reference，绝不重复用过期签名。失败在模型/工具继续执行前关闭该 Skill 能力，并由既有 Run 失败/恢复机制记录稳定错误；取消传播，不伪造成功/空包。外部签后 lease takeover 的短时在途窗口由 IAM/Platform 合同限制，不将进程内锁冒充跨 owner 原子撤销。
 
 **未决 owner-first 门。** Platform `6a09913a96c686b316bfe707b823d039e625607a` 的 v4 machine artifact 为 `inactive/routable=false`，Agent 当前仅 pin v3 `5b6eb2c`，新 GET transfer/ZIP profile 尚未被 Agent 固定。Agent 已发布 launch 字段，BFF 当前 public Chat→Agent launch 尚无选择字段；先 Agent owner 契约，再 BFF consumer。Platform Source 目前要求 installed+enabled，BFF 的个人 Publish/个人列表不自动安装；必须由 Platform/BFF owner 发布真正安装/选择产品链，不把 ACTIVE 列表当可执行授权。Storage 包退役、Platform v4 激活及六 owner 真组合另有 Root 阶段门。以上任一缺口未过，不标 Skill runtime active。
+
+### W3 reader 实施放置补充（2026-09-29）
+
+新增 `clients/skill_package_transport.py` 仅负责 `get(PackageTransferReference, content_digest) -> bytes`：
+独立无身份 HTTPX pool、固定 ObjectStore origin、GET/期限/header/大小/摘要校验。与现有 Artifact PUT 生命周期不同，
+不复用 Storage service secret；`storage_object_origin` 可单独配置给读取，写入仍要求 Storage URL+secret+origin 齐全。
+新增 `skills/package.py` 仅负责 `validate_package(bytes, skill_id, revision, manifest_identity) -> Mapping[str, bytes]`：
+纯内存 ZIP32/profile/manifest 验证，无 socket/host 写入。继续采用现有 package，不新建目录；淘汰在 factory 内解析 ZIP
+或把 GET 混入 Artifact PUT。`clients/skills.py` 负责 run-bound Resolve/Approved、响应身份核验和每次访问授权；
+`skills/backend.py` 只负责 canonical 路径及 DeepAgents 只读接口。两新文件各有独立网络边界/纯解析变化原因。
+
+文档核验基线 Agent `dd34a4800b4ce0cc61eb80dd715e528b9d4517da`。BFF `571b51de`、Web `1dc211bb`
+已消费 frozen refs/[]，Root `772208ba` 已验证真实普通 Chat worker 与浏览器恢复（System/model fixture）；
+上文“BFF 尚未提供字段/真实 Run roundtrip 未验”为旧阶段描述。当前本片开始时非空仍明确失败，
+Platform v4 inactive/安装启用产品链与 Storage 退役仍独立 owner 门，不用本片代码门代替产品真组合。
 
 ## W3-AGENT-PLATFORM-V3-PIN：机器消费前置（2026-09-29）
 

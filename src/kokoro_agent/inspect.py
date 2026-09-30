@@ -17,7 +17,6 @@ class AgentDescription(_Description):
     key: str
     features: tuple[str, ...]
     tools: tuple[str, ...]
-    skills: tuple[str, ...]
     mcp: tuple[str, ...]
     subagents: tuple[str, ...]
     backend: str
@@ -63,7 +62,6 @@ def describe_catalog(catalog: FeatureCatalog) -> CatalogDescription:
                 if key in {agent.key for agent in feature.agents}
             ),
             tools=tuple(tool.name for tool in agents_by_key[key].tools),
-            skills=agents_by_key[key].skills,
             mcp=agents_by_key[key].mcp,
             subagents=agents_by_key[key].subagents,
             backend=agents_by_key[key].backend,
@@ -91,7 +89,7 @@ def render_catalog(
     for agent in description.agents:
         lines.append(
             f"- {agent.key}: features={','.join(agent.features)} "
-            f"tools={','.join(agent.tools) or '-'} skills={','.join(agent.skills) or '-'} "
+            f"tools={','.join(agent.tools) or '-'} "
             f"mcp={','.join(agent.mcp) or '-'} backend={agent.backend}"
         )
     return "\n".join(lines)

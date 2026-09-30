@@ -16,7 +16,6 @@ from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
-from kokoro_agent.clients.skills import SkillClient, SkillReader
 from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.domain.run.repository import RunRepository
@@ -28,8 +27,6 @@ from kokoro_agent.tools.toolbox import ProcessToolbox
 class WorkerClients:
     """Optional owner clients selected once by the deployment entrypoint."""
 
-    skill_client: SkillClient | None = None
-    skill_reader: SkillReader | None = None
     mcp: McpClient | None = None
     delivery: DeliveryClient | None = None
     model_resolver: ModelResolver | None = None
@@ -51,9 +48,6 @@ class WorkerDependencies:
     checkpointer: BaseCheckpointSaver[str]
     run_repository: RunRepository
     memory_store: BaseStore
-    # Skill public contract 的名称解析面与内容读取面分开；缺少 Capability 时显式为 None。
-    skill_client: SkillClient | None
-    skill_reader: SkillReader | None
     platform: WorkerPlatformRuntime | None = None
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
     mcp_servers: Mapping[str, McpServerConfig] = field(

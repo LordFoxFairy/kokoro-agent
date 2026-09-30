@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kokoro.dev/contracts/platform-execution-operations/3.0.0/identities.schema.json",
+  "$id": "https://kokoro.dev/contracts/platform-execution-operations/4.0.0/identities.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,7 @@
   ],
   "properties": {
     "artifactVersion": {
-      "const": "3.0.0"
+      "const": "4.0.0"
     },
     "packageName": {
       "const": "kokoro.platform.v1"
@@ -90,7 +90,7 @@
     },
     "addedIdentityFields": {
       "type": "array",
-      "minItems": 9,
+      "minItems": 12,
       "items": {
         "type": "object",
         "additionalProperties": false,

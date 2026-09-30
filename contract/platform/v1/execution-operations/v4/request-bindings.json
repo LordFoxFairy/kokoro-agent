@@ -1,5 +1,5 @@
 {
-  "artifactVersion": "3.0.0",
+  "artifactVersion": "4.0.0",
   "bindingVersion": "3.0.0",
   "packageName": "kokoro.platform.v1",
   "root": {
@@ -481,5 +481,101 @@
       ],
       "excludedRequestMembers": ["execution_proof", "request_id"]
     }
-  ]
+  ],
+  "readBinding": {
+    "version": "1.0.0",
+    "fqMethod": "kokoro.platform.v1.SkillCatalogService/GetSkillPackageUpload",
+    "operation": "skill.get_package_upload",
+    "proof": "forbidden",
+    "command": "forbidden",
+    "requestFields": [
+      {
+        "name": "request_id",
+        "tag": 1,
+        "type": "string"
+      },
+      {
+        "name": "skill_id",
+        "tag": 2,
+        "type": "SkillId"
+      },
+      {
+        "name": "product_context",
+        "tag": 3,
+        "type": "ProductCatalogContext"
+      }
+    ],
+    "responseFields": [
+      {
+        "name": "skill_id",
+        "tag": 1,
+        "type": "SkillId"
+      },
+      {
+        "name": "attempt_id",
+        "tag": 2,
+        "type": "optional string"
+      },
+      {
+        "name": "attempt_epoch",
+        "tag": 3,
+        "type": "uint64"
+      },
+      {
+        "name": "phase",
+        "tag": 4,
+        "type": "SkillPackagePhase"
+      },
+      {
+        "name": "upload_id",
+        "tag": 5,
+        "type": "optional string"
+      }
+    ],
+    "admission": [
+      "fresh-catalog-workload-tenant",
+      "product-user-owner-equals-subject",
+      "current-tenant-skill-user-owner",
+      "current-draft-only",
+      "fresh-canonical-skill-read",
+      "no-storage-receipt-outbox"
+    ],
+    "vectors": [
+      {
+        "name": "valid",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiJza2lsbC0xIn0sInByb2R1Y3RfY29udGV4dCI6eyJzdWJqZWN0X2lkIjoidXNlci0xIiwib3duZXJfc2NvcGUiOnsia2luZCI6InVzZXIiLCJpZCI6InVzZXItMSJ9fX0=",
+        "expectedError": "none"
+      },
+      {
+        "name": "unknown-request",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiJza2lsbC0xIn0sInByb2R1Y3RfY29udGV4dCI6eyJzdWJqZWN0X2lkIjoidXNlci0xIiwib3duZXJfc2NvcGUiOnsia2luZCI6InVzZXIiLCJpZCI6InVzZXItMSJ9fSwiZXh0cmEiOnRydWV9",
+        "expectedError": "request fields drift"
+      },
+      {
+        "name": "unknown-context",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiJza2lsbC0xIn0sInByb2R1Y3RfY29udGV4dCI6eyJzdWJqZWN0X2lkIjoidXNlci0xIiwib3duZXJfc2NvcGUiOnsia2luZCI6InVzZXIiLCJpZCI6InVzZXItMSJ9LCJleHRyYSI6dHJ1ZX19",
+        "expectedError": "product context fields drift"
+      },
+      {
+        "name": "missing-context",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiJza2lsbC0xIn19",
+        "expectedError": "product context required"
+      },
+      {
+        "name": "invalid-skill-id",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiIuLi9iYWQifSwicHJvZHVjdF9jb250ZXh0Ijp7InN1YmplY3RfaWQiOiJ1c2VyLTEiLCJvd25lcl9zY29wZSI6eyJraW5kIjoidXNlciIsImlkIjoidXNlci0xIn19fQ==",
+        "expectedError": "skill id domain"
+      },
+      {
+        "name": "owner-kind",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiJza2lsbC0xIn0sInByb2R1Y3RfY29udGV4dCI6eyJzdWJqZWN0X2lkIjoidXNlci0xIiwib3duZXJfc2NvcGUiOnsia2luZCI6InByb2plY3QiLCJpZCI6InVzZXItMSJ9fX0=",
+        "expectedError": "user owner required"
+      },
+      {
+        "name": "subject-mismatch",
+        "rawBase64": "eyJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwic2tpbGxfaWQiOnsidmFsdWUiOiJza2lsbC0xIn0sInByb2R1Y3RfY29udGV4dCI6eyJzdWJqZWN0X2lkIjoidXNlci0xIiwib3duZXJfc2NvcGUiOnsia2luZCI6InVzZXIiLCJpZCI6InVzZXItMiJ9fX0=",
+        "expectedError": "owner/subject mismatch"
+      }
+    ]
+  }
 }

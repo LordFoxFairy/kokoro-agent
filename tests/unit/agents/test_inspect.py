@@ -20,7 +20,7 @@ def test_catalog_description_is_stable_and_does_not_expose_prompt_text() -> None
     )
     music = next(item for item in description.agents if item.key == "music")
     assert music.features == ("music", "music_chat")
-    assert music.skills == ("music",)
+    assert not hasattr(music, "skills")
     assert not hasattr(music, "prompt")
 
 

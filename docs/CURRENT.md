@@ -1,5 +1,13 @@
 # kokoro-agent 当前实现
 
+## W3 OAuth 响应扩展返修候选（2026-09-30）
+
+基线 `e728fe24d9528efe02a53282f1dfd8328a122f9a`。Root 正常 Source 组合在安装阶段确认 IAM 成功响应
+含整数 `expires_at`，旧 strict/extra=forbid 解析误报 `PLATFORM_TOKEN_INVALID_RESPONSE`。
+本片仅在 OAuth 成功响应边界忽略未知成员，保留已知字段及传输/缓存安全检查；不剪裁 IAM fixture 或伪造 token。
+无 SQL/Proto/generated/锁文件变化；聚焦42/default1431通过，锁/格式/静态类型/契约/build通过，
+6 skip/172 deselected原因见 [ACCEPTANCE.md](ACCEPTANCE.md)。真实 owner 组合仍由 Root 在固定候选验收后重跑，尚未宣称通过。
+
 ## W3 Run Skill metadata 返修候选（2026-09-30）
 
 基线 `534d3f80efb158910fde73e2a8ecf5390f874bba` 尚未由 Root 放行：同 session checkpoint

@@ -1,5 +1,15 @@
 # kokoro-agent 技术设计
 
+## W3 OAuth 成功响应扩展边界（2026-09-30）
+
+既有 `clients/platform_tokens.py` 是 IAM OAuth consumer 的唯一解析/缓存边界；本片不新增模块或契约。
+按 [RFC 6749 §5.1](https://www.rfc-editor.org/rfc/rfc6749#section-5.1) 忽略未知成功响应成员，
+包括 IAM 返回的 `expires_at`；Pydantic 丢弃扩展，不保存、不加入 repr，也不用于授权或缓存有效期。
+已知 `access_token`、`token_type`、`expires_in` 与可选 `scope` 仍严格校验；Bearer、token 语法、
+整数 TTL >5、提供 scope 时精确相等不变。缓存只按 exchange 开始的 monotonic + expires_in 计算。
+1 MiB 响应预算、deadline、拒重定向、secret-free 错误、单飞取消、credential 代际均保持。
+此例外只属于 OAuth 成功响应，不放宽 credential 文件、Platform Proto、Skill/ZIP 或执行 proof。
+
 ## W3 Run-bound Skill metadata 生命周期返修（2026-09-30）
 
 文档门基线 `534d3f80`：API_CONTRACT/DATA_MODEL 的 frozen Run refs、同 session checkpoint、SQL owner 不变。

@@ -1,5 +1,22 @@
 # kokoro-agent 验收矩阵
 
+## W3 OAuth 响应扩展返修（2026-09-30）
+
+基线 `e728fe24d9528efe02a53282f1dfd8328a122f9a`。验收覆盖实际 IAM 五字段 shape、任意未知成员丢弃、
+扩展不决定缓存 TTL、不暴露 repr/log，及已知字段错型/缺失、TTL/scope/token 的严格失败和 secret-free 错误。
+默认单飞/取消/代际与传输预算门继续运行；真实组合由 Root 负责，本片不启动共享服务。
+
+- actual-shape/扩展缓存用例先 RED 4，再聚焦 **42 passed**（新增 21 项）。
+- `uv lock --check`、`uv sync --frozen`：132 resolved / 128 audited，锁未变。
+- `uv run ruff format --check .`：249 files；`uv run ruff check .`、Pyright 0 errors / 0 warnings、
+  `uv run kokoro-agent-contract-check` 均通过。
+- `uv run pytest -q -rs`：**1431 passed / 6 skipped / 172 deselected**；1 skip 为 parent examples 缺失，
+  5 skip 为 MinIO9100 不可用；172 项是默认排除的外部 integration/acceptance/e2e，未放宽门禁。
+- `uv build --wheel --sdist`：wheel/sdist 成功；本次 `build/` 副本已清理；`git diff --check` 通过。
+- 日志：`/tmp/agent-oauth-extensions-{red,green,static,pytest,build}.log`。
+
+未运行真实 IAM→Platform→Storage 组合，Root 独立复验、提交与 pin 后重跑；代码门不代表产品执行链通过。
+
 ## W3 Run Skill metadata 返修验收（2026-09-30）
 
 基线 `534d3f80efb158910fde73e2a8ecf5390f874bba`。先以生产 Factory、真实 DeepAgents 与同一 InMemorySaver

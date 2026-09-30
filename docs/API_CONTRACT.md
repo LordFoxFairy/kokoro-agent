@@ -1,5 +1,13 @@
 # kokoro-agent API 契约
 
+## W3 OAuth consumer 扩展规则（2026-09-30）
+
+IAM `POST /iam/oauth2/token` 成功响应遵循
+[RFC 6749 §5.1](https://www.rfc-editor.org/rfc/rfc6749#section-5.1)：未知成员忽略且丢弃（包含 `expires_at`）。
+已知字段类型、Bearer/token 语法、`expires_in` 整数且 >5、返回 scope 的精确匹配保持严格；
+省略 scope 仍沿既有请求 scope 语义。缓存仅采用请求开始时刻 + expires_in，不读取扩展有效期。
+错误脱敏、1 MiB、timeout、拒重定向、取消与凭据轮换契约不变；本片不修改机器契约或 SQL。
+
 ## W3 typed Skill reader 消费当前态（2026-09-29）
 
 Agent launch仍为既有OpenAPI2.0.0，不改HTTP/Redis字段。BFF571b51de/Web1dc211bb已消费exact refs/[]，旧“未同步”属于历史。

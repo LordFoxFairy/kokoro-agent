@@ -293,3 +293,145 @@ async def test_malformed_token_response_has_no_secret_exception_chain(
             await provider.token("tenant")
         assert error.value.__context__ is None
         await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "extensions",
+    [
+        {"expires_at": 1_799_999_999},
+        {"expires_at": 0},
+        {"expires_at": 10**15},
+        {
+            "expires_at": "ignored",
+            "extension": {"secret": ["EXTENSION_SENTINEL", None]},
+        },
+    ],
+)
+async def test_oauth_success_extensions_use_only_expires_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    extensions: dict[str, object],
+) -> None:
+    from kokoro_agent.clients import platform_tokens
+
+    path = tmp_path / "credentials.json"
+    write_credentials(path)
+    now = [100.0]
+    monkeypatch.setattr(platform_tokens, "monotonic", lambda: now[0])
+    calls = 0
+
+    def exchange(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "access_token": f"TOKEN-{calls}",
+                "token_type": "Bearer",
+                "expires_in": 60,
+                "scope": "platform:execution.invoke",
+                **extensions,
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(exchange)) as http:
+        provider = PlatformTokenProvider(
+            "https://iam.test", CredentialFile(str(path)), http=http
+        )
+        try:
+            assert await provider.token("tenant") == "TOKEN-1"
+            now[0] = 154.0
+            assert await provider.token("tenant") == "TOKEN-1"
+            assert calls == 1
+            now[0] = 155.0
+            assert await provider.token("tenant") == "TOKEN-2"
+            assert calls == 2
+            assert "EXTENSION_SENTINEL" not in repr(vars(provider)) + caplog.text
+        finally:
+            await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("access_token", 1),
+        ("access_token", ""),
+        ("access_token", "bad token"),
+        ("token_type", "MAC"),
+        ("token_type", 1),
+        ("expires_in", "60"),
+        ("expires_in", 60.0),
+        ("expires_in", True),
+        ("expires_in", 5),
+        ("expires_in", 0),
+        ("expires_in", -1),
+        ("scope", 1),
+        ("scope", "other"),
+        ("scope", "platform:execution.invoke other"),
+    ],
+)
+async def test_extensions_do_not_relax_known_token_fields(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    from kokoro_agent.clients.platform_tokens import PlatformTokenError
+
+    path = tmp_path / "credentials.json"
+    write_credentials(path)
+    payload = {
+        "access_token": "TOKEN",
+        "token_type": "Bearer",
+        "expires_in": 60,
+        "scope": "platform:execution.invoke",
+        "expires_at": 10**15,
+        "unknown": "EXTENSION_SENTINEL",
+        field: value,
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as http:
+        provider = PlatformTokenProvider(
+            "https://iam.test", CredentialFile(str(path)), http=http
+        )
+        try:
+            with pytest.raises(PlatformTokenError) as captured:
+                await provider.token("tenant")
+            assert str(captured.value) == "PLATFORM_TOKEN_INVALID_RESPONSE"
+            assert captured.value.__context__ is None
+            assert "EXTENSION_SENTINEL" not in repr(captured.value)
+        finally:
+            await provider.aclose()
+
+
+@pytest.mark.parametrize("missing", ["access_token", "token_type", "expires_in"])
+async def test_extensions_never_substitute_required_token_fields(
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    from kokoro_agent.clients.platform_tokens import PlatformTokenError
+
+    path = tmp_path / "credentials.json"
+    write_credentials(path)
+    payload: dict[str, object] = {
+        "access_token": "TOKEN",
+        "token_type": "Bearer",
+        "expires_in": 60,
+        "expires_at": 10**15,
+        "unknown": "EXTENSION_SENTINEL",
+    }
+    del payload[missing]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as http:
+        provider = PlatformTokenProvider(
+            "https://iam.test", CredentialFile(str(path)), http=http
+        )
+        try:
+            with pytest.raises(
+                PlatformTokenError, match="^PLATFORM_TOKEN_INVALID_RESPONSE$"
+            ):
+                await provider.token("tenant")
+        finally:
+            await provider.aclose()

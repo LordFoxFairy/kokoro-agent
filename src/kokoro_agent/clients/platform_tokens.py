@@ -26,7 +26,8 @@ class PlatformTokenError(RuntimeError):
 
 
 class _TokenResponse(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    # RFC 6749 §5.1: discard unknown success members, retaining strict known fields.
+    model_config = ConfigDict(strict=True, extra="ignore")
     access_token: SecretStr
     token_type: Literal["Bearer", "bearer"]
     expires_in: int = Field(gt=5)

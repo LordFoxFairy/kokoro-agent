@@ -55,8 +55,8 @@ from kokoro_agent.execution.events import (
     RunEmitter,
     message_completed_payload,
     message_delta_payload,
-    run_failed_payload,
 )
+from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.interfaces.http.execution_proof_jwks import ExecutionProofJwksState
 from kokoro_agent.interfaces.http.server import create_http_server

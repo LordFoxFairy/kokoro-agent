@@ -1,8 +1,46 @@
 # kokoro-agent 当前实现
 
-## AGENT-FAILURE-3.0 与 Run 首事件：Root 验收通过、待固定提交（2026-09-30）
+## AGENT-FAILURE3-GRANULARITY Root验收（2026-09-30）
 
-验收基线为 main `58b59cf7cdc4132042d25460b4928d71a66ae7ec` 上的 29 文件冻结候选；
+Root逐15候选与7保护hash独立核对、最终只读审查P0/P1/P2=0/0/0。fresh完整离线门实际exit0：lock/frozen sync、Ruff252/Pyright0、generator/checker、1520 passed/6既有skip/174deselect/364warnings（74.09s）、wheel/sdist；日志 `/tmp/kokoro-agent-granularity-root-final-gates.log`。同现PG/Redis的自有fixture完整HTTP acceptance22 passed/100warnings/7.20s、无skip/deselect，System/model为doubles；数据库及Redis15残留均0、cleanup_errors[]，不触活跃DB10/共享schema，日志 `/tmp/kokoro-agent-granularity-root-real-acceptance{.log,-result.json}`。Root标准实际FAIL137/0unverified，相比本片前139仅移除events/proof两项粒度，无新增项；日志 `/tmp/kokoro-agent-granularity-root-standard.json`。本片不声称全工程标准清零、BFF/Web3.0已消费或真正外部模型全链。
+
+当前 main 为 `da056b0103cced10188cdc1f5baef841d8333889` 且本门开始时 clean；该提交已包含
+Root 验收的 Agent HTTP 3.0 与 Run 初始 evidence cursor。Root 实测默认 pytest 1518 passed /
+6 skipped / 174 deselected，真实 PostgreSQL/Redis/HTTP acceptance 22 passed，资源残留 0。
+当前受管 3310 仍为旧 2.0，BFF/Web 3.0 消费未完成，不把已提交 owner artifact 写成产品已切换。
+
+新 Root 标准 139 项实际新增两项失败：`execution/events.py` 806 行、
+`execution_proof_contract.py` 804 行。已裁决后继把完整 failure 归码移到新
+`execution/failures.py`，把具名 negative metadata exact validator 移到现
+`execution_proof_negative_specs.py`，并把唯一公开 `json_exact` comparator 同移、由 checker 无别名
+直接调用；无 alias、System client 归码、通用 utils、重复 comparator、压缩凑行或门禁豁免。
+第一阶段仅四文档与两个现测试，生产源码当时未修改；OpenAPI/provenance/generated、proof artifact、
+SQL、lock 至今均未修改。现行为聚焦 baseline 为 97 passed / 4 deselected；目标归属 RED 证据如下。
+新增两项归属断言后，返修后完整定点实际 2 failed / 97 passed / 4 deselected（2.77s，exit 1）：
+一项仅因 `execution/failures.py` 尚不存在，另一项仅因 negative specs 尚未发布目标 validator；
+没有 collection/import error。排除这两项目标断言后，既有行为仍为 97 passed / 6 deselected
+（2.67s，exit 0）。两个测试文件 Ruff format/check 均通过；源码门、默认 suite、Root 标准和真实
+HTTP 当时尚未运行；该第一门未创建目标模块或接触运行基础设施。
+独立 review 的两项 P2 已由 AST import-binding（含 `as`）门及 comparator 单 owner/direct-call/
+bool-int 精确门覆盖。
+
+源码候选新增 `execution/failures.py`，从 events 完整移出归码表、`failure_code` 与
+`run_failed_payload`；初次执行、supervisor 恢复及三个直接测试消费者均改为新 owner import，
+events 没有 alias/re-export。唯一 `json_exact` 与 `validate_named_negative_metadata` 已移入现
+negative-spec policy，proof checker 无别名直接导入调用并删除旧实现；无循环或新 helper 层。
+`events.py` 806→752 行，proof contract 804→769 行，negative specs 393 行，新 failure owner 56 行。
+
+两项目标 RED 已转为 2 passed；相关 unit/contract 为 108 passed / 4 deselected。完整离线候选门：
+Ruff format 252 文件与 check、Pyright 0、failure generator --check、contract checker、wheel/sdist
+均 exit 0；默认 pytest 1520 passed / 6 skipped / 174 deselected / 364 warnings（58.41s）。
+未运行 Root standard 或真实 PostgreSQL/Redis/HTTP acceptance，未访问服务、数据库、Redis、模型或
+浏览器；这些仍由 Root 在冻结 hash 上独立验收。本片未改机器 contract、provenance、proof artifact、
+SQL、lock 或外部行为，当前受管 3310 仍保持旧 2.0。
+
+## AGENT-FAILURE-3.0 与 Run 首事件：Root 验收通过并已提交（2026-09-30）
+
+验收候选基于 main `58b59cf7cdc4132042d25460b4928d71a66ae7ec`，最终 29 文件已由 Root
+提交为 `da056b0103cced10188cdc1f5baef841d8333889`；
 Root 与独立只读审查员逐项核对 manifest
 `a517ac70a57777b534a3da7db7ac2e1158d406cc1e22970defac735c6d5f023e`，源码审查 P0/P1/P2 均为 0。
 Root 在主工作树重新执行完整离线门：`uv lock --offline --check`、`uv sync --frozen --offline`、

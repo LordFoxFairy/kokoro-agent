@@ -1,5 +1,38 @@
 # kokoro-agent 技术设计
 
+## AGENT-FAILURE3-GRANULARITY 实现候选（2026-09-30）
+
+当前提交 `da056b0103cced10188cdc1f5baef841d8333889` 已由 Root 验收 Agent HTTP 3.0：
+默认纯门 1518 passed / 6 skipped / 174 deselected，真实 PostgreSQL/Redis/HTTP acceptance
+22 passed。当前受管 3310 仍运行旧 2.0，BFF/Web 尚未协调消费 3.0；单仓 owner 验收不等于
+产品切换完成。新 Python 标准门发现 `execution/events.py` 806 行与
+`execution_proof_contract.py` 804 行两个超过 800 行的职责粒度违例；当前候选已按下表完成职责拆分。
+
+| 放置项 | 已裁决目标 |
+| --- | --- |
+| Owner | Agent execution 能力继续唯一拥有执行失败归码；Agent execution-proof checker 继续唯一验证本仓 proof artifact。没有新业务 owner、进程或传输边界。 |
+| 当前事实 | `execution/events.py:658-703` 同时保存失败归码表、`failure_code`、`run_failed_payload` 与事件发射/映射；`execution_proof_contract.py:487-500` 同时保存具名 negative metadata 的 exact 校验与其余 schema/vector 编排。 |
+| 目标职责 | 新 `execution/failures.py` 只拥有完整失败分类与 payload 构造；现 `execution_proof_negative_specs.py` 在 immutable named-negative policy 旁唯一拥有公开给 checker 的 `json_exact` 与 `validate_named_negative_metadata`。调用方行为与异常保持不变。 |
+| 目录方案 | 失败归码采用 execution 包内同级模块，淘汰继续挤入 events.py 或下沉 System client：前者混合变化原因，后者会让外部 owner client 决定 Agent Run 语义。negative metadata 扩现 negative specs，淘汰新建通用 helper/第三模块，因为它只服务具名 spec policy。 |
+| 粒度 | `failures.py` 有三个共同变化的对象且被初次执行、恢复、Chat/acceptance 测试复用，值得独立文件；negative metadata 只有一个紧邻 spec 的校验函数，默认扩现文件，不再建目录。 |
+| 依赖 | `failures.py` 仅依赖已生成 `RunErrorCode`/`RunFailedPayload`、typed `ModelResolutionError`、预算/递归异常；`events.py` 不直接、相对、延迟或 `as` 别名导入/re-export failure owner。`run_agent.py`、`supervisor_execution.py` 与直接测试从新 owner 导入。proof contract 无别名直接导入并调用 `json_exact` 与 metadata validator；negative specs 不导入 contract，避免循环。 |
+| 数据/API | OpenAPI 3.0、failure code/retryable 合法 tuple、proof schema/vector/metadata、SQL、Redis、outbox、Chat JSON、lease/CAS/单终态 fence 全部原字节/语义不变。当前 provenance owner inventory 不列两个被拆模块，因此不改摘要掩盖移动。 |
+| 删除项 | 源码门必须从 events.py 删除完整失败归码块，从 proof contract 删除原 metadata helper 与 `_json_exact` 实现；不保留 import alias、fallback、双实现或重复 comparator，也不以压缩 tuple/空行凑低行数。 |
+| 验证 | 本门先运行现行为 baseline，再用文件归属与 callable/exact-bool-int 断言产生非 collection RED。源码门后需相关行为、Ruff、Pyright、generator/checker、默认 pytest、build、Root 标准 139→137 且无新增项，以及 Root 自有完整 22 HTTP acceptance。 |
+
+失败分类保留 typed owner error 优先：`ModelResolutionError` 的已验证 code/retryable 先于调用方普通
+assembly default，未知 owner code 仍为 `internal_error/false`，非法 bool/tuple 仍为
+`contract_incompatible/false`；TokenBudget、GraphRecursion、普通错误和显式 assembly 默认不变。
+初次执行、恢复、取消竞争、lease、终态 CAS、safe sentinel 与唯一 publish 断言均不改。
+
+唯一 `json_exact(actual, expected)` 随 negative metadata 移入现 policy 模块，并作为 checker 的
+具名窄协作者公开；checker 直接导入调用，不复制 comparator。它必须使用 JSON **类型精确**比较，
+不能用 Python 宽松相等令 `true == 1`。validator 仍只剥离当前 stage 对应的
+`raw_json_base64url` 或 `encoded_segment`，
+精确核对 name/stage/component/error_kind/optional metadata/difference 后返回 stage；未知名字、错误
+payload key、额外/缺失字段和 bool/int 漂移继续失败关闭。当前 `events.py` 为 752 行、proof contract
+为 769 行；这来自完整职责移动而非压缩。Root 标准与真实 HTTP 仍待主控独立复验。
+
 ## AGENT-RUN-EVIDENCE-INITIAL-CURSOR 实现候选（2026-09-30）
 
 Run wire index 从 0 开始；原 ingress/server 默认 after_seq=0 且 exclusive 过滤，
@@ -20,7 +53,7 @@ PG/Redis 两例 terminal=True 仍是验收门，消费者只在固定 owner comm
 ## AGENT-FAILURE-CONTRACT 实现候选（2026-09-30，待协调发布）
 
 基线 `main 58b59cf7`；文档门和 RED 已经 Root 放行，工作树现实现 HTTP artifact `3.0.0`。
-System client 验证 HTTP/code/retryable 而不作 status 掩码；现有初次/恢复入口共用 execution/events.py
+System client 验证 HTTP/code/retryable 而不作 status 掩码；现有初次/恢复入口共用 execution/failures.py
 归码，typed 模型错误优先于普通装配默认。Run payload 仅 code/retryable，Chat 投影持久保存
 status/code/retryable；没有 raw异常类名/原文。当前受管组未加载候选，BFF/Web 尚未切换。
 
@@ -29,7 +62,7 @@ status/code/retryable；没有 raw异常类名/原文。当前受管组未加载
 | Owner | Agent 唯一拥有执行失败事实；System 拥有模型路由/可用性；BFF 拥有 Product/AG-UI 安全投影，Web 固定消费 BFF。 |
 | 唯一机器源 | 既有 `contract/openapi/v1/openapi.json` 手审 schema-first：基础 Failure 唯一定义 code、retryable 和合法 tuple；RunFailure 引用基础，ChatFailure 组合基础及 status=failed。不导出所有内部事件。 |
 | 新文件/两案 | 新 `scripts/generate_failure_models.py` 为薄 CLI，委托既有 chat_contract_check.py 的唯一 profile 编译/生成校验；新 `src/kokoro_agent/protocol/run_failure_generated.py` 是只读纯 wire，带生成 header/source digest。采用既有 protocol 目录，淘汰 generated/agent_run_failure.py 所需向内依赖例外及单失败 sidecar 新目录。 |
-| 依赖 | 生成物仅依赖 stdlib/Pydantic；protocol 零向内依赖门原样保留。events.py 使用生成模型，protocol/__init__.py 窄导出；其余事件仍由现 Pydantic 定义。业务归码在 execution/events.py，不进入生成物。 |
+| 依赖 | 生成物仅依赖 stdlib/Pydantic；protocol 零向内依赖门原样保留。events.py 使用生成模型，protocol/__init__.py 窄导出；其余事件仍由现 Pydantic 定义。业务归码在 execution/failures.py，不进入生成物。 |
 | 调用 | clients/system.py 先严格验证 owner HTTP/code/retryable tuple，删除 status 掩码；初次 supervisor_execution 与恢复 supervisor_control 共用唯一 typed 归码。domain/chat/projection.py 持久序列化生成 ChatFailure，不丢 retryable。 |
 | 删除 | 旧手写 failure enum/model、原异常类名/原文 wire、已知模型错误被 catch-all 覆盖、失败 _Terminal 的失效诊断字段；不删除 AG-UI 标准 RUN_ERROR.message。 |
 | 状态/数据 | 单终态 CAS、lease generation、取消传播、outbox 顺序/幂等与清理不变；无 DDL、无新进程/目录/owner/依赖。旧 JSON 与切换边界见 DATA_MODEL。 |
@@ -40,7 +73,7 @@ status/code/retryable；没有 raw异常类名/原文。当前受管组未加载
 RunFailure 只含 code/retryable；ChatFailure 只含 status/code/retryable。BFF 后继按固定 code 生成脱敏
 AG-UI 标准 message，Web 按 code 本地化，不解析 message，不接收 Agent 私有异常诊断。
 
-本片生产触点：clients/system.py、protocol/events.py、protocol/__init__.py、execution/events.py、
+本片生产触点：clients/system.py、protocol/events.py、protocol/__init__.py、execution/failures.py、
 domain/chat/projection.py（均在 src/kokoro_agent）。worker/supervisor_execution.py 与 supervisor_control.py
 保持现调用、取消/lease/CAS；安全归码在共享 payload 构造中完成，无需复制两份分类。
 机器/检查涉及 contract/openapi/v1/openapi.json、contract/provenance.json、contract/README.md、contract_check.py、

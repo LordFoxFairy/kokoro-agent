@@ -11,8 +11,6 @@ from collections.abc import Callable, Mapping
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
-from kokoro_agent.clients.system import ModelResolutionError
-
 from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
     DeliveryCreatedPayload,
@@ -20,7 +18,6 @@ from kokoro_agent.protocol import (
     MessageDeltaPayload,
     RunCompletedPayload,
     RunControlReceiptPayload,
-    RunErrorCode,
     RunFailedPayload,
     RunStartedPayload,
     SubagentFinishedPayload,
@@ -41,10 +38,7 @@ from kokoro_agent.protocol import (
     agent_event_adapter,
     run_events_stream,
 )
-from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt.tool_node import ToolRuntime
-
-from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
 from kokoro_agent import metrics
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
@@ -653,54 +647,6 @@ def subagent_finished_payload(
         failed=True if failed else None,
         error="subagent failed" if failed else None,
     )
-
-
-_MODEL_FAILURE_CODES: dict[str, RunErrorCode] = {
-    "MODEL_UNAVAILABLE": "model_unavailable",
-    "SYSTEM_UNAVAILABLE": "dependency_unavailable",
-    "MODEL_RESOLUTION_UNAVAILABLE": "dependency_unavailable",
-    "POLICY_DENIED": "model_access_denied",
-    "FORBIDDEN": "model_access_denied",
-    "ROUTE_NOT_FOUND": "assembly_failed",
-    "INVALID_ARGUMENT": "assembly_failed",
-    "service_auth_failed": "assembly_failed",
-    "MODEL_RESOLVER_NOT_CONFIGURED": "assembly_failed",
-    "MODEL_REQUEST_INVALID": "assembly_failed",
-    "MODEL_RESPONSE_INVALID": "contract_incompatible",
-    "MODEL_RESPONSE_TOO_LARGE": "contract_incompatible",
-    "MODEL_RESOLUTION_FAILED": "internal_error",
-}
-
-
-def failure_code(error: BaseException) -> RunErrorCode:
-    """Classify typed execution failures without rendering exception diagnostics."""
-    if isinstance(error, ModelResolutionError):
-        return _MODEL_FAILURE_CODES.get(error.code, "internal_error")
-    if isinstance(error, TokenBudgetExceeded):
-        return "token_budget_exceeded"
-    if isinstance(error, GraphRecursionError):
-        return "recursion_limit_exceeded"
-    return "internal_error"
-
-
-def run_failed_payload(
-    error: BaseException, *, code: RunErrorCode | None = None
-) -> RunFailedPayload:
-    # Assembly callers supply their ordinary-error default; typed owner failures
-    # retain their verified classification on both initial build and resume.
-    typed = isinstance(error, ModelResolutionError)
-    classified = failure_code(error) if typed else code or failure_code(error)
-    retryable = False
-    if typed:
-        if type(error.retryable) is not bool or (
-            error.retryable
-            and classified
-            not in {"model_unavailable", "dependency_unavailable", "internal_error"}
-        ):
-            return RunFailedPayload(code="contract_incompatible", retryable=False)
-        if classified in {"model_unavailable", "dependency_unavailable"}:
-            retryable = error.retryable
-    return RunFailedPayload(code=classified, retryable=retryable)
 
 
 _ARGS_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])

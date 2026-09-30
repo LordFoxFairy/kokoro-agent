@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, TypeAlias
 
+from pydantic import TypeAdapter, ValidationError
+
 
 Stage: TypeAlias = Literal[
     "json_parse",
@@ -27,6 +29,36 @@ ErrorKind: TypeAlias = Literal[
     "claim_pair",
 ]
 JsonScalar: TypeAlias = None | bool | int | float | str
+_EXACT_OBJECT: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+_EXACT_OBJECTS: TypeAdapter[list[object]] = TypeAdapter(list[object])
+
+
+def _exact_object(value: object) -> dict[str, object]:
+    try:
+        return _EXACT_OBJECT.validate_python(value)
+    except ValidationError as error:
+        raise ValueError("expected exact JSON object must be an object") from error
+
+
+def json_exact(actual: object, expected: object) -> bool:
+    """Compare JSON values without allowing Python bool/int equivalence."""
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual, dict):
+        actual_object = _EXACT_OBJECT.validate_python(actual)
+        expected_object = _exact_object(expected)
+        return actual_object.keys() == expected_object.keys() and all(
+            json_exact(value, expected_object[name])
+            for name, value in actual_object.items()
+        )
+    if isinstance(actual, list):
+        actual_array = _EXACT_OBJECTS.validate_python(actual)
+        expected_array = _EXACT_OBJECTS.validate_python(expected)
+        return len(actual_array) == len(expected_array) and all(
+            json_exact(left, right)
+            for left, right in zip(actual_array, expected_array, strict=True)
+        )
+    return actual == expected
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,9 +365,29 @@ def build_negative_spec_index(
 
 NEGATIVE_SPEC_INDEX = build_negative_spec_index(NEGATIVE_SPECS)
 
+
+def validate_named_negative_metadata(item: dict[str, object], name: str) -> Stage:
+    """Validate one vector's exact named-spec metadata and return its stage."""
+    spec = NEGATIVE_SPEC_INDEX.get(name)
+    if spec is None:
+        raise ValueError(f"unknown named negative: {name}")
+    expected = spec.metadata()
+    expected["name"] = name
+    stage = spec.stage
+    payload_key = "encoded_segment" if stage == "base64url" else "raw_json_base64url"
+    actual = dict(item)
+    if not isinstance(actual.pop(payload_key, None), str) or not json_exact(
+        actual, expected
+    ):
+        raise ValueError(f"named negative metadata is not exact for {name}")
+    return stage
+
+
 __all__ = [
     "NEGATIVE_SPECS",
     "NEGATIVE_SPEC_INDEX",
     "NegativeSpec",
     "build_negative_spec_index",
+    "json_exact",
+    "validate_named_negative_metadata",
 ]

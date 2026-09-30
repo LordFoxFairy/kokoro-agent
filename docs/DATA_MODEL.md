@@ -1,5 +1,17 @@
 # kokoro-agent 数据模型
 
+## AGENT-FAILURE3-GRANULARITY 数据不变门（2026-09-30）
+
+基线 `da056b0103cced10188cdc1f5baef841d8333889` 的 canonical `database/schema.sql`、
+Redis stream/key、outbox、Chat projection 与 proof artifact 均不变。本次目标只重分配 Python 代码
+职责，不新增或迁移表、列、索引、JSON 字段、receipt、事务、缓存、retention 或跨 owner 数据。
+
+`run_failed_payload` 移入 execution 内专用模块后仍在写入前产生同一 strict safe payload；
+`run_id`、index、durable_seq、event_id、terminal CAS、lease generation、重放及 superseded audit row
+不变。旧 retained JSON 继续遵守 3.0 已裁决的无兼容切换，不借内部移动补字段或重写历史数据。
+negative-spec metadata 只用于离线验证 immutable proof vectors，不是持久事实；移动其校验函数不会写
+proof、JTI、数据库或 Redis。Root 后继真实 22 HTTP 重跑是行为回归证据，不代表本片有 schema 变更。
+
 ## Run evidence cursor 数据不变量（2026-09-30，实现候选）
 
 Run 对外 index 从 0 起，durable_seq 与 wire index 不混用：重复终态可保留 superseded、

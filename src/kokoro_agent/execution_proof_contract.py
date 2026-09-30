@@ -17,8 +17,9 @@ from pydantic import TypeAdapter, ValidationError
 import rfc8785
 
 from kokoro_agent.execution_proof_negative_specs import (
-    NEGATIVE_SPEC_INDEX,
     NEGATIVE_SPECS,
+    json_exact,
+    validate_named_negative_metadata,
 )
 
 
@@ -143,28 +144,8 @@ def _json_value(value: object, *, source: str) -> JsonValue:
     raise ValueError(f"{source} contains a non-JSON value")
 
 
-def _json_exact(actual: object, expected: object) -> bool:
-    if type(actual) is not type(expected):
-        return False
-    if isinstance(actual, dict):
-        actual_object = _OBJECT.validate_python(actual)
-        expected_object = _object(expected, source="expected exact JSON object")
-        return actual_object.keys() == expected_object.keys() and all(
-            _json_exact(value, expected_object[name])
-            for name, value in actual_object.items()
-        )
-    if isinstance(actual, list):
-        actual_array = _OBJECTS.validate_python(actual)
-        expected_array = _OBJECTS.validate_python(expected)
-        return len(actual_array) == len(expected_array) and all(
-            _json_exact(left, right)
-            for left, right in zip(actual_array, expected_array, strict=True)
-        )
-    return actual == expected
-
-
 def _expect_json(actual: object, expected: object, *, source: str) -> None:
-    if not _json_exact(actual, expected):
+    if not json_exact(actual, expected):
         raise ValueError(f"{source} is not JSON type-exact")
 
 
@@ -237,7 +218,7 @@ def _validate_schema_metadata(schema: dict[str, object]) -> None:
     for name in ("title", "description"):
         _string(schema.get(name), source=f"execution proof {name}")
     for name, value in expected.items():
-        if not _json_exact(schema.get(name), value):
+        if not json_exact(schema.get(name), value):
             if name == "x-kokoro-contract-version":
                 raise ValueError("execution proof version must be 1.0.0")
             label = name.removeprefix("x-kokoro-").replace("-", " ")
@@ -356,7 +337,7 @@ def _validate_canonical_record(
     )
     if raw != canonical:
         raise ValueError(f"{source} raw bytes must be the fixed canonical bytes")
-    if not _json_exact(
+    if not json_exact(
         _parse_proof_json(raw.encode(), source=f"{source} raw bytes"), decoded
     ):
         raise ValueError(f"{source} decoded object does not match raw bytes")
@@ -435,7 +416,7 @@ def _validate_jwk(positive: dict[str, object], header: dict[str, object]) -> Non
 
 
 def _validate_tamper(tampered: dict[str, object], positive: dict[str, object]) -> None:
-    if set(tampered) != TAMPER_FIELDS or not _json_exact(
+    if set(tampered) != TAMPER_FIELDS or not json_exact(
         tampered.get("name"), "signature_one_bit_tamper"
     ):
         raise ValueError("tampered signature identity and field set are not exact")
@@ -472,7 +453,7 @@ def _validate_tamper(tampered: dict[str, object], positive: dict[str, object]) -
         raise ValueError("tampered signature does not equal its declared mutation")
     if tampered.get("compact_jws") != f"{signing_input}.{signature_text}":
         raise ValueError("tampered compact JWS does not recompose all three segments")
-    if not _json_exact(difference, {"signature_byte_index": 0, "bit_mask": 1}):
+    if not json_exact(difference, {"signature_byte_index": 0, "bit_mask": 1}):
         raise ValueError("tampered signature difference metadata is not exact")
 
 
@@ -482,22 +463,6 @@ def _pointer(error: JsonSchemaError) -> str:
         for token in error.absolute_path
     ]
     return "" if not tokens else "/" + "/".join(tokens)
-
-
-def _validate_named_negative_metadata(item: dict[str, object], name: str) -> str:
-    spec = NEGATIVE_SPEC_INDEX.get(name)
-    if spec is None:
-        raise ValueError(f"unknown named negative: {name}")
-    expected = spec.metadata()
-    expected["name"] = name
-    stage = spec.stage
-    payload_key = "encoded_segment" if stage == "base64url" else "raw_json_base64url"
-    actual = dict(item)
-    if not isinstance(actual.pop(payload_key, None), str) or not _json_exact(
-        actual, expected
-    ):
-        raise ValueError(f"named negative metadata is not exact for {name}")
-    return stage
 
 
 def _validate_schema_negative(
@@ -517,7 +482,7 @@ def _validate_schema_negative(
         raise ValueError("negative difference pointer is invalid")
     base = positive_header if tokens[0] == "protected_header" else positive_claims
     expected = {**base, tokens[1]: difference.get("value")}
-    if not _json_exact(decoded, expected):
+    if not json_exact(decoded, expected):
         raise ValueError(f"{name}: expected schema rejection difference mismatch")
     keyword = _string(item.get("expected_keyword"), source=f"{name} keyword")
     if keyword == "maximum":
@@ -581,9 +546,9 @@ def _validate_duplicate_negative(
                 first[key] = value
         if (
             error.member != expected_member
-            or not _json_exact(first, base)
+            or not json_exact(first, base)
             or len(error.pairs) != len(base) + 1
-            or not _json_exact(
+            or not json_exact(
                 duplicate_values, [base[expected_member], base[expected_member]]
             )
         ):
@@ -642,9 +607,9 @@ def _validate_pair_negative(
     actual = {
         f"/claims/{member}": decoded.get(member)
         for member in claims.keys() | decoded.keys()
-        if not _json_exact(claims.get(member), decoded.get(member))
+        if not json_exact(claims.get(member), decoded.get(member))
     }
-    if not _json_exact(declared, actual):
+    if not json_exact(declared, actual):
         raise ValueError(f"negative vector {name} pair difference is not exact")
     if raw != _canonicalize(decoded, source=f"negative vector {name} pair raw bytes"):
         raise ValueError(f"negative vector {name} pair raw bytes are not canonical")
@@ -722,7 +687,7 @@ def _validate_negative_vectors(
     items = [_object(value, source="negative vector") for value in vectors]
     names = [_string(item.get("name"), source="negative vector name") for item in items]
     expected_names = [spec.name for spec in NEGATIVE_SPECS]
-    if not _json_exact(names, expected_names):
+    if not json_exact(names, expected_names):
         raise ValueError("negative vector inventory is not exact and ordered")
     claims_raw = _string(
         _object(positive["claims"], source="positive claims").get(
@@ -731,7 +696,7 @@ def _validate_negative_vectors(
         source="positive claims canonical bytes",
     )
     for item, name in zip(items, names):
-        stage = _validate_named_negative_metadata(item, name)
+        stage = validate_named_negative_metadata(item, name)
         if stage == "base64url":
             _validate_base64_negative(item, positive=positive, claims=claims)
             continue
@@ -752,7 +717,7 @@ def _validate_negative_vectors(
             if (
                 item.get("error_kind") != "noncanonical_json"
                 or item.get("expected_decoded") != "positive_claims"
-                or not _json_exact(decoded, claims)
+                or not json_exact(decoded, claims)
                 or _canonicalize(decoded, source=name) == raw
             ):
                 raise ValueError(f"{name}: noncanonical semantics are not exact")
@@ -764,7 +729,7 @@ def _validate_provenance(root: Path, provenance: dict[str, object]) -> None:
     if provenance.get("owner") != "kokoro-agent":
         raise ValueError("contract provenance owner must be kokoro-agent")
     sources = _STRINGS.validate_python(provenance.get("source_files"))
-    if not _json_exact(sources, list(OWNER_SOURCE_FILES)):
+    if not json_exact(sources, list(OWNER_SOURCE_FILES)):
         raise ValueError("source_files must equal ordered owner inventory")
     proof = _object(provenance.get("execution_proof"), source="proof provenance")
     if proof.get("version") != "1.0.0":

@@ -15,8 +15,8 @@ from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.execution.events import (
     RunEmitter,
     persist_outbox_chat_event,
-    run_failed_payload,
 )
+from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.protocol import (
     RunErrorCode,

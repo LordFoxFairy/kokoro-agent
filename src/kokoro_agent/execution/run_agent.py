@@ -17,7 +17,8 @@ from kokoro_agent.protocol import (
     TokenUsage,
 )
 from kokoro_agent.execution.approvals import awaiting_payloads
-from kokoro_agent.execution.events import RunEmitter, SourceResolver, run_failed_payload
+from kokoro_agent.execution.events import RunEmitter, SourceResolver
+from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
 

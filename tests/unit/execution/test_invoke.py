@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -938,7 +940,7 @@ def test_failure_code_classification_matrix() -> None:
     # 归码闭集：预算/熔断各归其码，其余兜底 internal_error；装配码由调用点显式指定。
     from langgraph.errors import GraphRecursionError
 
-    from kokoro_agent.execution.events import failure_code, run_failed_payload
+    from kokoro_agent.execution.failures import failure_code, run_failed_payload
     from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
     assert failure_code(TokenBudgetExceeded("over budget")) == "token_budget_exceeded"
@@ -948,3 +950,53 @@ def test_failure_code_classification_matrix() -> None:
         run_failed_payload(ValueError("x"), code="assembly_failed").code
         == "assembly_failed"
     )
+
+
+def test_failure_classification_has_a_dedicated_execution_module_owner() -> None:
+    root = Path(__file__).resolve().parents[3]
+    failures_path = root / "src" / "kokoro_agent" / "execution" / "failures.py"
+    events_path = root / "src" / "kokoro_agent" / "execution" / "events.py"
+    assert failures_path.is_file(), "failure classification must move out of events.py"
+
+    def module_structure(
+        path: Path,
+    ) -> tuple[set[str], set[tuple[str, str, str]]]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+            elif isinstance(node, ast.Assign):
+                names.update(
+                    target.id for target in node.targets if isinstance(target, ast.Name)
+                )
+        imports: set[tuple[str, str, str]] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = "." * node.level + (node.module or "")
+                imports.update(
+                    (module, alias.name, alias.asname or alias.name)
+                    for alias in node.names
+                )
+            elif isinstance(node, ast.Import):
+                imports.update(
+                    (
+                        alias.name,
+                        alias.name.rsplit(".", 1)[-1],
+                        alias.asname or alias.name.split(".", 1)[0],
+                    )
+                    for alias in node.names
+                )
+        return names, imports
+
+    owned = {"_MODEL_FAILURE_CODES", "failure_code", "run_failed_payload"}
+    failure_definitions, _ = module_structure(failures_path)
+    event_definitions, event_imports = module_structure(events_path)
+    assert owned <= failure_definitions
+    assert owned.isdisjoint(event_definitions)
+    assert not any(
+        module.endswith("failures") or source in owned or binding in owned
+        for module, source, binding in event_imports
+    ), "events.py must not retain compatibility aliases or a second failure owner"

@@ -1,5 +1,22 @@
 # kokoro-agent API 契约
 
+## AGENT-FAILURE3-GRANULARITY API 不变门（2026-09-30）
+
+当前 owner HTTP artifact 3.0 已提交于 `da056b0103cced10188cdc1f5baef841d8333889`，Root
+真实 HTTP acceptance 22/22 通过；BFF/Web 尚未固定 3.0，当前受管 3310 仍是旧 2.0。该发布状态
+与本次内部 Python 职责拆分必须分开记录。
+
+目标拆分不编辑 OpenAPI、provenance、生成 failure model、proof schema 或 vectors。Run failure 仍是
+严格 `{code,retryable}`，Chat failure 仍是严格 `{status:"failed",code,retryable}`；闭集、合法
+retryable tuple、未知 owner code、初次/恢复一致性及 Run-only evidence cursor 全部不变。不新增 URL、
+字段、alias、默认值、兼容读取或第二枚举。
+
+execution-proof 的 31 个具名 negative 名称、顺序、stage、component、error_kind、optional metadata、
+difference、payload bytes 和期望错误均不变。`validate_named_negative_metadata` 是本仓 checker 的内部
+Python 协作者，不是 wire API；唯一公开给 checker 的 `json_exact` 同移至 existing negative-spec
+policy，checker 无别名直接导入调用而不复制实现。两者继续类型精确比较 JSON，尤其拒绝以整数 `1`
+替代布尔 `true`。机器 artifact 任何字节变化均超出本片。
+
 ## Run evidence 初始 cursor 实现候选（2026-09-30）
 
 原 `/v1/runs/{run_id}/events` 错误复用默认/下限 0 的 AfterSeq，exclusive index 过滤

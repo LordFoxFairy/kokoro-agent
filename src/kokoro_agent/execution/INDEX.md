@@ -14,14 +14,16 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   否则 claim_terminal 原子认领后发 run.completed/failed 返 True。recursion_limit 熔断失控循环。
 - `events.py`：`RunEmitter`（一次 run 的唯一发射口；`attach()` 从流重建 index 续段与
   tool_id→segment 归属；审核工具 raw returned 按名抑制）；`AgentEventPayload` 联合；
-  投影→payload 映射函数族（`tool_returned_payload` 等）；`failure_code`/`run_failed_payload`
-  （三层错误语义）；`clip_result`/`TOOL_RESULT_MAX_CHARS`（wire 4000 字截断护栏）。
+  投影→payload 映射函数族（`tool_returned_payload` 等）；`clip_result`/
+  `TOOL_RESULT_MAX_CHARS`（wire 4000 字截断护栏）。
   R4：`CRITICAL_KINDS`/`TERMINAL_KINDS` + emitter 注入 outbox（RunRepository）——critical 帧经
   `stage_critical_frame` 分配 durable_seq/event_id、落 queued 行、发布后 published；live 序（index）
   不动、durable_seq 独立并行（浏览器面透明）；post-fence superseded 不发布、index 不前进。
   `outbox_wire_event(frame)`：queued 行→补发 wire 帧（复用固定身份，幂等不漂移）。
   安全产品投影另经 `chat/projection.py` 写入 `chat_events`；thinking、
   tool args/results、subagent 内文与内部错误不会进入聊天事实。
+- `failures.py`：唯一执行失败归码与 safe `RunFailedPayload` 构造；typed System owner 错误优先，
+  预算/递归错误保持专用 code，普通错误由调用点显式 assembly default 或 internal fallback 收口。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布。
 - `approvals.py`：HITL 权威唯一实现。`awaiting_payloads`（review/input/approval 三分支）、

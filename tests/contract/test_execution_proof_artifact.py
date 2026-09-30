@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import hashlib
 import base64
@@ -15,6 +16,7 @@ from pydantic import TypeAdapter
 import pytest
 
 from kokoro_agent import contract_check
+import kokoro_agent.execution_proof_negative_specs as negative_specs
 from kokoro_agent.execution_proof_negative_specs import (
     NEGATIVE_SPEC_INDEX,
     NEGATIVE_SPECS,
@@ -656,6 +658,67 @@ def test_negative_spec_module_is_typed_ordered_unique_and_immutable() -> None:
     for reviewable_path in (source_path, contract_path):
         reviewable_source = reviewable_path.read_text(encoding="utf-8")
         assert max(map(len, reviewable_source.splitlines())) <= 100
+
+
+def test_named_negative_metadata_validation_is_owned_by_negative_specs() -> None:
+    comparator: Any = getattr(negative_specs, "json_exact", None)
+    validator: Any = getattr(negative_specs, "validate_named_negative_metadata", None)
+    assert callable(comparator), "the exact JSON comparator must have one spec owner"
+    assert callable(validator), (
+        "negative metadata validation must move beside its specs"
+    )
+    assert comparator({"value": True}, {"value": True}) is True
+    assert comparator({"value": True}, {"value": 1}) is False
+
+    vectors = _load(VECTORS)
+    item = next(
+        _object(candidate)
+        for candidate in _array(vectors["negative"])
+        if _object(candidate)["name"] == "lease_generation_bool"
+    )
+    assert validator(item, "lease_generation_bool") == "schema"
+
+    integer_drift = json.loads(json.dumps(item))
+    difference = _object(integer_drift["difference"])
+    difference["value"] = 1
+    integer_drift["difference"] = difference
+    with pytest.raises(ValueError, match="metadata is not exact"):
+        validator(integer_drift, "lease_generation_bool")
+
+    contract_path = ROOT / "src" / "kokoro_agent" / "execution_proof_contract.py"
+    negative_path = ROOT / "src" / "kokoro_agent" / "execution_proof_negative_specs.py"
+    contract_tree = ast.parse(contract_path.read_text(encoding="utf-8"))
+    negative_tree = ast.parse(negative_path.read_text(encoding="utf-8"))
+    contract_definitions = {
+        node.name
+        for node in contract_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    assert {"_json_exact", "_validate_named_negative_metadata"}.isdisjoint(
+        contract_definitions
+    )
+    direct_imports = {
+        (alias.name, alias.asname)
+        for node in contract_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "kokoro_agent.execution_proof_negative_specs"
+        for alias in node.names
+    }
+    assert {("json_exact", None), ("validate_named_negative_metadata", None)} <= (
+        direct_imports
+    )
+    called_names = {
+        node.func.id
+        for node in ast.walk(contract_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert {"json_exact", "validate_named_negative_metadata"} <= called_names
+    negative_imports = {
+        node.module
+        for node in ast.walk(negative_tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    assert "kokoro_agent.execution_proof_contract" not in negative_imports
 
 
 @pytest.mark.parametrize(

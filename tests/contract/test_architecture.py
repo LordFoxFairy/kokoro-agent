@@ -422,3 +422,31 @@ def test_execution_proof_supplier_is_standalone_without_dead_composition() -> No
         source = path.read_text(encoding="utf-8")
         assert "execution_proof_supplier" not in source
         assert "ExecutionProofSupplier" not in source
+
+
+def test_run_skill_lifecycle_reuses_only_public_native_loader_and_prompt() -> None:
+    from deepagents.middleware.skills import SkillsMiddleware
+    from kokoro_agent.skills.middleware import RunSkillsMiddleware
+
+    assert issubclass(RunSkillsMiddleware, SkillsMiddleware)
+    assert RunSkillsMiddleware.state_schema is SkillsMiddleware.state_schema
+    assert RunSkillsMiddleware.modify_request is SkillsMiddleware.modify_request
+    assert _from_imported_names(
+        _SRC / "skills/middleware.py", "deepagents.middleware.skills"
+    ) == {"SkillsMiddleware", "SkillsState", "SkillsStateUpdate"}
+    tree = ast.parse((_SRC / "agent_factory.py").read_text())
+    constructors = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "native_constructor"
+    ]
+    assert len(constructors) == 1
+    keywords = {item.arg: item.value for item in constructors[0].keywords}
+    assert (
+        isinstance(keywords["skills"], ast.Constant)
+        and keywords["skills"].value is None
+    )
+    assert isinstance(keywords["checkpointer"], ast.Attribute)
+    assert keywords["checkpointer"].attr == "checkpointer"

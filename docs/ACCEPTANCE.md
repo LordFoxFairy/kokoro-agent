@@ -1,6 +1,30 @@
 # kokoro-agent 验收矩阵
 
-## W3 typed Skill reader 当前候选验收（2026-09-29）
+## W3 Run Skill metadata 返修验收（2026-09-30）
+
+基线 `534d3f80efb158910fde73e2a8ecf5390f874bba`。先以生产 Factory、真实 DeepAgents 与同一 InMemorySaver
+复现四项 RED：[]→A、A→B、A→[]、连续同 refs（旧 load_errors 未清）。修复后逐项检查模型 system prompt、
+checkpoint 私有 skills_metadata/load_errors、reader 调用与零 Skill 依赖，不把 graph 返回值当私有 state 证据。
+另覆盖同 Run HITL interrupt→重建 graph→Command resume（preflight 重验、原节点续跑）、terminal lease guard，
+加载失败/取消不调用模型及 checkpoint 恢复重试当前 refs；同步/异步公开 hook 均保持原生 warning 且不修改输入 state。
+
+- 聚焦生产 factory＋架构：55 passed；新增 10 个行为用例及 1 个架构约束。
+- `uv lock --check` / `uv sync --frozen`：132 resolved / 128 audited，锁未变。
+- Ruff format：249 files；Ruff check 通过；Pyright 0 errors / 0 warnings；contract checker 通过。
+- `uv run pytest -q tests/integration/skills/test_backend.py -o addopts=''`：3 passed，0.43s；纯本地 SDK 组件，非真实 owner 集成。
+
+日志：`/tmp/agent-metadata-red.log`、`/tmp/agent-metadata-green.log`、`/tmp/agent-metadata-focused.log`、
+`/tmp/agent-metadata-final-static.log`、`/tmp/agent-metadata-component.log`。
+- `uv run pytest -q -rs`：**1410 passed / 6 skipped / 172 deselected**，58.73s，364 条上游警告；
+  1 skip 为 parent examples 缺失、5 skip 为 MinIO9100 不可用；172 为默认排除外部 integration/acceptance/e2e，未放宽门禁。
+- `uv build --wheel --sdist`：两产物通过，wheel 包含 RunSkillsMiddleware；本次 build/ 副本已清理。
+- `uv run python scripts/check_platform_wheel.py dist/kokoro_agent-2.0.0-py3-none-any.whl`：隔离 Python3.11 generated consumer smoke 通过，日志 `/tmp/agent-metadata-wheel.log`。
+- 最终 `git diff --check`、Ruff format/check 复核通过。
+
+全量与构建日志：`/tmp/agent-metadata-final-pytest.log`、`/tmp/agent-metadata-build.log`。
+未启动/重置共享 PG/Redis 或 3310。独立审查/Root 固定 SHA 复验待验。
+
+## 前一候选：W3 typed Skill reader 验收（2026-09-29）
 
 基线`dd34a4800b4ce0cc61eb80dd715e528b9d4517da`，完整reader已实施，待Root独立审查/固定SHA复验。
 RED→GREEN包括v4 owner pin、29ZIP profile向量、GET边界/日志/显式:0与timeout、只读路径与批输出预算；

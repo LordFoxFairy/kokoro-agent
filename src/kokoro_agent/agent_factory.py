@@ -41,6 +41,7 @@ from kokoro_agent.model.factory import make_chat_model, model_from_route
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
+from kokoro_agent.skills.middleware import RunSkillsMiddleware
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.domain.run.scope import RunScope
@@ -197,7 +198,7 @@ async def build_deep_agent(
         model=make_chat_model(dependencies.model, model),
         tools=toolset.tools,
         system_prompt=agent.prompt,
-        skills=[SKILLS_ROOT],
+        skills=None,
         subagents=subagent_bundle.subagents,
         checkpointer=dependencies.checkpointer,
         permissions=build_filesystem_permissions(policy.filesystem),
@@ -206,7 +207,10 @@ async def build_deep_agent(
             subagent_create=policy.subagent_create,
             pause_tools=agent.pause_tools,
         ),
-        middleware=main_chain,
+        middleware=(
+            *main_chain,
+            RunSkillsMiddleware(backend=native_backend, sources=[SKILLS_ROOT]),
+        ),
         backend=native_backend,
         # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
         store=dependencies.memory_store,

@@ -1,5 +1,19 @@
 # kokoro-agent 技术设计
 
+## W3 Run-bound Skill metadata 生命周期返修（2026-09-30）
+
+文档门基线 `534d3f80`：API_CONTRACT/DATA_MODEL 的 frozen Run refs、同 session checkpoint、SQL owner 不变。
+SDK 原生 SkillsMiddleware 将 metadata 缓存在 session checkpoint；新 Run 必须重新加载当前选择，不能复用上一 Run 的能力。
+
+| 放置项 | 决定 |
+| --- | --- |
+| Owner/文件 | Agent 唯一 writer；新增既有 `skills/middleware.py` 的 `RunSkillsMiddleware(SkillsMiddleware)`，factory 负责装配。 |
+| 两案/粒度 | 采用 skills 目录承接 metadata 生命周期；淘汰 tools/middleware（工具授权职责）、backend 内解析或复制原生 loader。一个普通文件，不新增目录/owner。 |
+| 公开接口 | 重写官方 `before_agent`/`abefore_agent`：复制输入 state，移除 skills_metadata/skills_load_errors，委托父类公开 hook；成功更新显式包含 load_errors（无错误时 []）。原生解析、prompt 与私有 state schema 全部继承。 |
+| 生命周期/依赖 | 每次 graph entry 使用本 Run 的 backend 刷新，即使 refs 相同也重验；HITL Command resume 继续原 checkpoint 节点，不换 thread_id/checkpointer，不引入 metadata 第二来源或 Run 标记。失败/取消向上传播，不使用旧 metadata 调模型。 |
+| 装配/删除 | factory 使用公开 middleware 参数装配唯一子类，skills=None 禁用重复默认实例；保留现有 guard 链。空 refs backend 返回空目录且不创建 Skill client。 |
+| 验证 | 真实生产 Factory＋DeepAgents＋同 InMemorySaver：[]→A、A→B、A→[]、同 refs 新 Run、旧错误清理、HITL resume/guard、失败与取消；检查模型 prompt 和 private checkpoint state。无新 API/SQL/generated/依赖。 |
+
 ## W3 typed Skill reader 实施当前态（2026-09-29）
 
 本片基于`dd34a48`，沿下文已批架构完成v4固定消费、run-bound typed source、signed GET与ZIP、只读backend，删除旧name双轨。

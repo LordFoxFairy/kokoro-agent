@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Mapping, Sequence
+from typing import Any
+
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.outputs import ChatResult
+from kokoro_agent.clients.skills import ResolvedSkill, PlatformSkillClient
+from kokoro_agent.domain.run.models import LeasedRun
 
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -38,6 +44,7 @@ from kokoro_agent.clients.system import (
     ResolvedModel,
 )
 from kokoro_agent.clients.skills import SkillClientError
+from kokoro_agent.tools.middleware import RunSupersededError
 
 
 class RouteResolver:
@@ -542,7 +549,6 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
         PlatformRequest,
         PlatformResponse,
     )
-    from kokoro_agent.domain.run.models import LeasedRun
     from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 
     vector = json.loads(
@@ -633,3 +639,294 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
     assert lease is not None
     handle = await factory.build(request, lease)
     assert handle.runnable is not None
+
+
+class CheckpointSkillReader(PlatformSkillClient):
+    """External-owner test double; native backend/loader/parser remain production."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.failure: BaseException | None = None
+
+    async def resolve(self, source_refs: Sequence[str]) -> tuple[ResolvedSkill, ...]:
+        self.calls.append("resolve")
+        return tuple(
+            ResolvedSkill(
+                source_ref=ref,
+                skill_id=ref.removeprefix("skill:"),
+                revision=1,
+                asset_ref="asset",
+                content_digest="a" * 64,
+                manifest_identity="zip-v1:sha256:" + "b" * 64,
+            )
+            for ref in source_refs
+        )
+
+    async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+        self.calls.append(skill.skill_id)
+        if self.failure is not None:
+            raise self.failure
+        return {
+            "SKILL.md": (
+                f"---\nname: {skill.skill_id}\ndescription: capability-{skill.skill_id}\n"
+                "---\nOriginal instructions.\n"
+            ).encode()
+        }
+
+
+class CheckpointSkillPlatform(WorkerPlatformRuntime):
+    reader: CheckpointSkillReader
+    runs: list[str]
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "reader", CheckpointSkillReader())
+        object.__setattr__(self, "runs", [])
+
+    def skills_for_run(self, leased_run: LeasedRun) -> PlatformSkillClient:
+        self.runs.append(leased_run.request.run_id)
+        return self.reader
+
+
+class PromptRecordingModel(LocalFakeChatModel):
+    observed: list[str] = []
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        self.observed.append("\n".join(m.text for m in messages if m.type == "system"))
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ((), ("alpha",)),
+        (("alpha",), ("beta",)),
+        (("alpha",), ()),
+        (("alpha",), ("alpha",)),
+    ],
+)
+async def test_factory_skill_metadata_is_current_run_not_session(
+    monkeypatch: pytest.MonkeyPatch, first: tuple[str, ...], second: tuple[str, ...]
+) -> None:
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    model = PromptRecordingModel()
+
+    def make_model(*_: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
+    config: RunnableConfig = {"configurable": {"thread_id": "shared-session"}}
+    for index, selected in enumerate((first, second)):
+        request = _request("chat").model_copy(
+            update={
+                "run_id": f"metadata-{index}",
+                "selected_skill_source_refs": tuple(
+                    f"skill:{name}" for name in selected
+                ),
+            }
+        )
+        lease = await repository.try_claim(request)
+        assert lease is not None
+        handle = await factory.build(request, lease)
+        native: Any = handle.runnable  # Public LangGraph invocation/update boundary.
+        if index:
+            await native.aupdate_state(
+                config, {"skills_load_errors": ["previous-run-error"]}
+            )
+        platform.reader.calls.clear()
+        await native.ainvoke({"messages": [HumanMessage(content="next")]}, config)
+        snapshot = await handle.runnable.aget_state(config)
+        assert [item["name"] for item in snapshot.values["skills_metadata"]] == list(
+            selected
+        )
+        assert snapshot.values.get("skills_load_errors", []) == []
+        prompt = model.observed[-1]
+        for name in ("alpha", "beta"):
+            assert (f"capability-{name}" in prompt) == (name in selected)
+        assert "previous-run-error" not in prompt
+        assert bool(platform.reader.calls) == bool(selected)
+    assert len(platform.runs) == sum(bool(value) for value in (first, second))
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_factory_skill_metadata_survives_same_run_hitl_with_guard(
+    monkeypatch: pytest.MonkeyPatch, terminal: bool
+) -> None:
+    from langgraph.types import Command
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.policy import Permissions
+
+    agent = Agent(
+        key="skill_hitl",
+        prompt="Test approved write.",
+        permissions=Permissions(
+            filesystem="workspace_write", approval_tools=("write_file",)
+        ),
+    )
+    catalog = FeatureCatalog(
+        (Feature(key="chat", agents=(agent,), entry_agent=agent.key),)
+    )
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), catalog, platform=platform
+    )
+    model = PromptRecordingModel.with_script(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_file",
+                        "id": "approved-write",
+                        "args": {"file_path": "/proof.txt", "content": "approved"},
+                    }
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    assert isinstance(model, PromptRecordingModel)
+
+    def make_model(*_: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:alpha",)}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(request, lease)
+    native: Any = handle.runnable
+    config: RunnableConfig = {"configurable": {"thread_id": "same-run-hitl"}}
+    await native.ainvoke({"messages": [HumanMessage(content="write")]}, config)
+    before = await handle.runnable.aget_state(config)
+    assert before.interrupts
+    assert [item["name"] for item in before.values["skills_metadata"]] == ["alpha"]
+    calls_before = list(platform.reader.calls)
+    model_calls_before = len(model.observed)
+    # Worker reconstructs the production graph for the same Run on resume.
+    resumed = await factory.build(request, lease)
+    assert len(platform.reader.calls) > len(
+        calls_before
+    )  # fresh preflight authorization
+    platform.reader.calls.clear()
+    if terminal:
+        repository.terminals.add(request.run_id)
+    resume_native: Any = resumed.runnable
+    command = Command(resume={"decisions": [{"type": "approve"}]})
+    if terminal:
+        with pytest.raises(RunSupersededError, match="lease"):
+            await resume_native.ainvoke(command, config)
+        assert len(model.observed) == model_calls_before
+    else:
+        await resume_native.ainvoke(command, config)
+        after = await resumed.runnable.aget_state(config)
+        assert not after.interrupts
+        assert after.values["skills_metadata"] == before.values["skills_metadata"]
+        assert "capability-alpha" in model.observed[-1]
+        assert any(
+            isinstance(message, ToolMessage) and message.name == "write_file"
+            for message in after.values["messages"]
+        )
+    assert platform.reader.calls == []  # resume is not a new graph entry
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
+    monkeypatch: pytest.MonkeyPatch, cancel: bool
+) -> None:
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    model = PromptRecordingModel()
+
+    def make_model(*_: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
+    config: RunnableConfig = {"configurable": {"thread_id": "failed-refresh"}}
+    for index, name in enumerate(("alpha", "beta")):
+        request = _request("chat").model_copy(
+            update={
+                "run_id": f"failure-{index}",
+                "selected_skill_source_refs": (f"skill:{name}",),
+            }
+        )
+        lease = await repository.try_claim(request)
+        assert lease is not None
+        handle = await factory.build(request, lease)
+        native: Any = handle.runnable
+        if not index:
+            await native.ainvoke({"messages": [HumanMessage(content="start")]}, config)
+            continue
+        count = len(model.observed)
+        platform.reader.failure = (
+            asyncio.CancelledError()
+            if cancel
+            else SkillClientError("current authorization revoked")
+        )
+        with pytest.raises(asyncio.CancelledError if cancel else SkillClientError):
+            await native.ainvoke(
+                {"messages": [HumanMessage(content="new run")]}, config
+            )
+        assert len(model.observed) == count
+        assert platform.reader.calls[-1] == "beta"
+        # Failed discovery does not commit partial replacement or invoke a model.
+        snapshot = await handle.runnable.aget_state(config)
+        assert [item["name"] for item in snapshot.values["skills_metadata"]] == [
+            "alpha"
+        ]
+        platform.reader.failure = None
+        await native.ainvoke(None, config)
+        recovered = await handle.runnable.aget_state(config)
+        assert [item["name"] for item in recovered.values["skills_metadata"]] == [
+            "beta"
+        ]
+        assert "capability-beta" in model.observed[-1]
+        assert "capability-alpha" not in model.observed[-1]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutating_state(
+    asynchronous: bool,
+) -> None:
+    from deepagents.backends.protocol import BackendProtocol, LsResult
+    from deepagents.middleware.skills import SkillsState
+    from langgraph.runtime import Runtime
+    from kokoro_agent.skills.middleware import RunSkillsMiddleware
+
+    class WarningBackend(BackendProtocol):
+        def ls(self, path: str) -> LsResult:
+            return LsResult(error="current-source-unavailable")
+
+        async def als(self, path: str) -> LsResult:
+            return self.ls(path)
+
+    middleware = RunSkillsMiddleware(backend=WarningBackend(), sources=["/skills/"])
+    state: SkillsState = {
+        "messages": [],
+        "skills_metadata": [],
+        "skills_load_errors": ["old-error"],
+    }
+    runtime = Runtime()
+    result = (
+        await middleware.abefore_agent(state, runtime, {})
+        if asynchronous
+        else middleware.before_agent(state, runtime, {})
+    )
+    assert result["skills_metadata"] == []
+    assert "skills_load_errors" in result
+    assert result["skills_load_errors"]
+    assert "current-source-unavailable" in result["skills_load_errors"][0]
+    assert state == {
+        "messages": [],
+        "skills_metadata": [],
+        "skills_load_errors": ["old-error"],
+    }

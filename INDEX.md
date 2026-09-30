@@ -46,4 +46,5 @@ Redis `127.0.0.1:56380` 的 logical DB `9`；运行入口不负责创建重复�
 - `clients/skill_package_transport.py`：隔离、有限、无凭据signed GET。
 - `skills/package.py`：ZIP32/profile/manifest纯解析，返回原始bytes。
 - `skills/backend.py`：base64url exact SkillId虚拟只读路径；每次访问current gate。
+- `skills/middleware.py`：复用原生 Skill loader/prompt，每次新 Run graph entry 刷新 checkpoint metadata，保持同 Run resume。
 - `worker/platform.py`：进程HTTP资源与`skills_for_run(LeasedRun)`装配。

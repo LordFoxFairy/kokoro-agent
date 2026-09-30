@@ -1,6 +1,20 @@
 # kokoro-agent 当前实现
 
-## W3 typed Skill reader 当前候选（2026-09-29）
+## W3 Run Skill metadata 返修候选（2026-09-30）
+
+基线 `534d3f80efb158910fde73e2a8ecf5390f874bba` 尚未由 Root 放行：同 session checkpoint
+使 SDK 默认 SkillsMiddleware 跳过后续 Run 的 frozen refs。现有 `skills/middleware.py` 子类仅调整公开
+before_agent/abefore_agent 生命周期；复制输入 state 去掉上次 metadata/errors 后委托父类，原生 parser、
+private state schema 与模型 prompt 均保持。factory 通过公开 middleware 参数装配唯一实例，禁用重复默认实例。
+新 Run（含同 refs）重新读当前包；空选择更新为 [] 且零 Skill client/reader 依赖；旧 load_errors 明确清空。
+同 Run HITL 重建 graph 的 preflight 仍重验授权，Command resume 原 checkpoint 节点不重入 discovery；
+模型/工具 lease guard 保留。授权失败与取消阻断模型，恢复时重试当前 Run 加载，不用旧 metadata 继续运行。
+
+生产 Factory＋真实 DeepAgents＋InMemorySaver 已覆盖选择转换、模型 prompt、私有 checkpoint、恢复和 guard；
+外部 Skill owner 与模型为具名测试 double，非真实服务组合。无 clients/ZIP/SQL/契约/generated/锁/服务修改。
+实际门禁见 [ACCEPTANCE.md](ACCEPTANCE.md)；固定提交、独立审查、Root 复跑与真 owner 组合仍待主控验收。
+
+## 前一候选：W3 typed Skill reader（2026-09-29）
 
 基线 `dd34a4800b4ce0cc61eb80dd715e528b9d4517da`；本片已实现完整 typed reader，待独立审查与 Root 固定 SHA 验收。
 Agent 固定 Platform `6a09913a96c686b316bfe707b823d039e625607a` v4 原始 21 JSON、Proto 与再生客户端；

@@ -128,26 +128,30 @@ def _identity(subject: str = "subject") -> ExecutionIdentity:
     )
 
 
-def _launch_body(run_id: str) -> dict[str, JsonValue]:
+def _launch_body(run_id: str, refs: tuple[str, ...] = ()) -> dict[str, JsonValue]:
     return _json_object(
         {
             "request_id": f"request-{run_id}",
             "run_id": run_id,
             "session_id": "session-1",
             "feature_key": "chat",
+            "selected_skill_source_refs": list(refs),
             "message_id": f"message-{run_id}",
             "content": "hello from acceptance",
         }
     )
 
 
-def _request(run_id: str, subject: str = "subject") -> RunRequest:
+def _request(
+    run_id: str, subject: str = "subject", refs: tuple[str, ...] = ()
+) -> RunRequest:
     return RunRequest(
         kind="run.request",
         request_id=f"request-{run_id}",
         run_id=run_id,
         session_id="session-1",
         feature_key="chat",
+        selected_skill_source_refs=refs,
         execution_identity=_identity(subject),
         input=RunInput(message_id=f"message-{run_id}", content="hello from acceptance"),
     )
@@ -361,32 +365,44 @@ async def test_launch_is_durable_and_idempotent_over_http(
     http_client: httpx.AsyncClient,
 ) -> None:
     run_id = f"launch-{uuid.uuid4().hex}"
-    body = _launch_body(run_id)
+    refs = ("skill:revision-a", "skill:revision-b")
+    body = _launch_body(run_id, refs)
 
     first = await http_client.post("/v1/runs", headers=_headers(), json=body)
     assert first.status_code == 202
     first_data = _nested(_json_object(first.json()), "data")
     assert first_data["run_id"] == run_id
     assert first_data["replayed"] is False
+    expected_request = _request(run_id, refs=refs)
 
     # Once the worker has claimed the durable intent, a retry must reuse the
     # receipt without publishing a second worker envelope.
     async with make_run_repository(
         acceptance_state.config.run_repository
     ) as run_repository:
+        assert expected_request in await run_repository.list_pending_dispatches()
         assert (
-            await run_repository.claim_dispatch(_request(run_id), "acceptance-worker")
+            await run_repository.claim_dispatch(expected_request, "acceptance-worker")
             is not None
         )
+        assert await run_repository.get_request(run_id) == expected_request
 
     second = await http_client.post("/v1/runs", headers=_headers(), json=body)
     assert second.status_code == 202
     second_data = _nested(_json_object(second.json()), "data")
     assert second_data["replayed"] is True
 
+    changed = _launch_body(run_id, ("skill:revision-b", "skill:revision-a"))
+    conflict = await http_client.post("/v1/runs", headers=_headers(), json=changed)
+    assert conflict.status_code == 409
+    assert _nested(_json_object(conflict.json()), "error")["code"] == (
+        "run_identity_conflict"
+    )
+
     published = await _read_matching(acceptance_state, REQUESTS_STREAM, run_id)
     assert len(published) == 1
     assert published[0]["kind"] == "run.request"
+    assert published[0]["selected_skill_source_refs"] == list(refs)
 
 
 @pytest.mark.asyncio
@@ -1157,6 +1173,15 @@ async def test_auth_and_invalid_launch_fail_with_stable_http_errors(
     assert invalid.status_code == 400
     invalid_error = _nested(_json_object(invalid.json()), "error")
     assert invalid_error["code"] == "invalid_launch_request"
+
+    old_body = _launch_body(f"old-bff-{uuid.uuid4().hex}")
+    del old_body["selected_skill_source_refs"]
+    old_body["trace"] = {"pinned_skills": ["skill:revision-a"]}
+    old_response = await http_client.post("/v1/runs", headers=_headers(), json=old_body)
+    assert old_response.status_code == 400
+    assert _nested(_json_object(old_response.json()), "error")["code"] == (
+        "invalid_launch_request"
+    )
 
 
 @pytest.mark.asyncio

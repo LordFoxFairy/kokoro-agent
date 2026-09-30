@@ -1,13 +1,15 @@
 """GA control frames.
 
-The public launch frame deliberately contains a product ``feature_key`` and a
-trusted execution identity only. Agent configuration belongs to the
-worker-local Feature catalog; it is never supplied by a caller or persisted as
-request ``runtime`` data.
+The public launch frame carries a product ``feature_key``, a trusted execution
+identity, and an explicit exact skill source selection. Agent configuration
+belongs to the worker-local Feature catalog; it is never supplied by a caller
+or persisted as request ``runtime`` data.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Annotated, Literal, Union
 
 from pydantic import (
@@ -17,6 +19,7 @@ from pydantic import (
     JsonValue,
     StringConstraints,
     TypeAdapter,
+    field_validator,
 )
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
@@ -27,6 +30,12 @@ class StrictModel(BaseModel):
 
 
 IdentityKind = Literal["user", "project", "service"]
+_SKILL_SOURCE_REF = re.compile(r"skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}\Z")
+_MAX_SKILL_SOURCE_REFS = 16
+_MAX_SKILL_SELECTION_BYTES = 4096
+_SKILL_SOURCE_REFS_ADAPTER: TypeAdapter[list[str] | tuple[str, ...]] = TypeAdapter(
+    list[str] | tuple[str, ...]
+)
 
 
 class IdentityRef(StrictModel):
@@ -60,10 +69,32 @@ class RunRequest(StrictModel):
     run_id: NonEmptyStr
     session_id: NonEmptyStr
     feature_key: NonEmptyStr
+    selected_skill_source_refs: tuple[str, ...]
     execution_identity: ExecutionIdentity
     input: RunInput
     requested_model_label: NonEmptyStr | None = None
     trace: dict[str, JsonValue] | None = None
+
+    @field_validator("selected_skill_source_refs", mode="before")
+    @classmethod
+    def _parse_skill_source_refs(cls, value: object) -> tuple[str, ...]:
+        refs = _SKILL_SOURCE_REFS_ADAPTER.validate_python(value, strict=True)
+        return tuple(refs)
+
+    @field_validator("selected_skill_source_refs")
+    @classmethod
+    def _validate_skill_source_refs(cls, refs: tuple[str, ...]) -> tuple[str, ...]:
+        if len(refs) > _MAX_SKILL_SOURCE_REFS:
+            raise ValueError("too many selected_skill_source_refs")
+        if len(set(refs)) != len(refs) or any(
+            _SKILL_SOURCE_REF.fullmatch(ref) is None or ref.startswith("skill:skill:")
+            for ref in refs
+        ):
+            raise ValueError("invalid selected_skill_source_refs")
+        encoded = json.dumps(refs, ensure_ascii=True, separators=(",", ":")).encode()
+        if len(encoded) > _MAX_SKILL_SELECTION_BYTES:
+            raise ValueError("selected_skill_source_refs exceeds byte limit")
+        return refs
 
 
 class ApproveDecision(StrictModel):

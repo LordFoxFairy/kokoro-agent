@@ -36,6 +36,7 @@ def launch_body(run_id: str = "run-1") -> dict[str, object]:
         "run_id": run_id,
         "session_id": "session-1",
         "feature_key": "chat",
+        "selected_skill_source_refs": [],
         "message_id": f"message-{run_id}",
         "content": "hello",
     }
@@ -61,6 +62,7 @@ async def test_launch_durably_admits_before_publishing_worker_envelope() -> None
         "message_id": "message-run-1",
         "content": "hello",
     }
+    assert bus.published[0][1]["selected_skill_source_refs"] == []
     assert run_repository.dispatches["run-1"] == "pending"
 
 
@@ -83,6 +85,34 @@ async def test_launch_rejects_run_id_reuse_with_different_immutable_envelope() -
 
 
 @pytest.mark.asyncio
+async def test_launch_fences_exact_skill_source_refs_and_rejects_drift() -> None:
+    bus = FakeBus()
+    run_repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=run_repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    body["selected_skill_source_refs"] = ["skill:revision-a", "skill:revision-b"]
+    await ingress.launch(body, execution_identity=identity())
+    assert run_repository.dispatch_requests["run-1"].selected_skill_source_refs == (
+        "skill:revision-a",
+        "skill:revision-b",
+    )
+    assert bus.published[0][1]["selected_skill_source_refs"] == [
+        "skill:revision-a",
+        "skill:revision-b",
+    ]
+    changed = dict(body)
+    changed["selected_skill_source_refs"] = ["skill:revision-b", "skill:revision-a"]
+    with pytest.raises(IngressError) as error:
+        await ingress.launch(changed, execution_identity=identity())
+    assert error.value.status == 409
+    assert error.value.code == "run_identity_conflict"
+
+
+@pytest.mark.asyncio
 async def test_launch_rejects_caller_supplied_execution_identity() -> None:
     ingress = AgentIngress(
         bus=FakeBus(),
@@ -100,6 +130,22 @@ async def test_launch_rejects_caller_supplied_execution_identity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_launch_rejects_old_bff_payload_without_skill_selection() -> None:
+    ingress = AgentIngress(
+        bus=FakeBus(),
+        run_repository=FakeRunRepository(),
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    del body["selected_skill_source_refs"]
+    body["trace"] = {"pinned_skills": ["skill:revision-a"]}
+    with pytest.raises(IngressError) as error:
+        await ingress.launch(body, execution_identity=identity())
+    assert error.value.status == 400
+    assert error.value.code == "invalid_launch_request"
+
+
+@pytest.mark.asyncio
 async def test_control_requires_the_run_session_and_publishes_to_isolated_stream() -> (
     None
 ):
@@ -111,6 +157,7 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
     )
@@ -164,6 +211,7 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
     )
@@ -229,6 +277,7 @@ async def test_evidence_hides_run_from_a_different_identity_scope() -> None:
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
     )
@@ -257,6 +306,7 @@ async def test_evidence_hides_run_from_a_different_tenant_with_the_same_subject(
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
     )

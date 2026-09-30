@@ -1,6 +1,10 @@
 # kokoro-agent 当前实现
 
-## W3 typed Skill source 设计门（2026-09-29；本仓文档目标，代码未动）
+## W3 Agent launch 契约代码片（2026-09-29；待 Root 验收）
+
+已在本仓 OpenAPI `2.0.0`（URL 仍 `/v1`）、HTTP ingress、Redis `RunRequest` 加入必填 `selected_skill_source_refs`，严格检查 exact ref/16 项/4 KiB/重复/顺序；`[]` 承载基础 Chat，旧 payload/旧 trace fallback 不接受。现有 dispatch 与 Run JSON/fence 接收同一请求，同 `run_id` 改选择为 409。非空 refs 在 AgentFactory preflight 明确失败，先于模型解析、backend/工具和旧 name Skill 访问，待真正 Source reader 切片替换此 guard；不能把 202 当运行成功。单元/契约聚焦验证已过；真实 PostgreSQL/Redis roundtrip 未验，不声称两表实测。Platform v4、Source adapter、Storage signed GET/ZIP、只读 backend 与旧 name 删除均未接；BFF 普通 Chat durable outbox 和 Scheduler launch 未发送字段，旧 BFF 后台派送会得到 400，须紧接 owner-first 更新 BFF。
+
+## W3 typed Skill source 设计门（历史基线 `7dfcfa9`，仅作目标背景）
 
 基线本仓 `main 7dfcfa936d0b51244683ffd66d16ea937fe510a6`。已落地的是 Run-scoped worker IAM token/fresh proof/六 RPC sender 和 Platform v3 `5b6eb2c` 的固定生成客户端；**未落地**的是 Agent/BFF launch 中的 typed Skill 选择、持久 Run fence、Source 业务 adapter、Storage signed GET 原字节/ZIP 校验与每次 `/.skills/` 访问的当前授权。因此 `EDGE-AGENT-CAPABILITY` 未激活，成功发送测试 RPC 不等于正式 Skill 在 Chat 可执行。现有 `agents/music.py` 仍声明 name `music`，`clients/skills.py` 与 `skills/backend.py` 仍保留旧 Capability name/scope/hash 与包缓存；本设计门不改它们。
 

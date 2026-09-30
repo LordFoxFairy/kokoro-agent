@@ -42,6 +42,7 @@ def _leased_run(
             run_id=run_id,
             session_id=session_id,
             feature_key="music",
+            selected_skill_source_refs=(),
             execution_identity=ExecutionIdentity(
                 tenant_ref=tenant_ref,
                 actor=IdentityRef(kind="user", opaque_ref=f"actor-{run_id}"),

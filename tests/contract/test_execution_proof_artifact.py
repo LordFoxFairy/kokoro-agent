@@ -173,6 +173,7 @@ def test_schema_accepts_current_canonical_run_and_identity_values() -> None:
         run_id="_run",
         session_id="session/会话 with space",
         feature_key="fixture",
+        selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="租户 with space",
             actor=IdentityRef(kind="user", opaque_ref="actor/含 空格"),

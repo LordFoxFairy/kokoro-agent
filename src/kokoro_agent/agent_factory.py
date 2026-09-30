@@ -74,6 +74,8 @@ class _ResolvedCapabilities:
 async def _preflight(
     agent: Agent, dependencies: WorkerDependencies, request: RunRequest
 ) -> _ResolvedCapabilities:
+    if request.selected_skill_source_refs:
+        raise SkillClientError("typed skill source reader unavailable")
     skills = await resolve_declared_skills(agent, dependencies.skill_client, request)
     if agent.skills and dependencies.skill_reader is None:
         raise SkillClientError("declared skill reader unavailable")

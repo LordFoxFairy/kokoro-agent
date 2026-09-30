@@ -34,6 +34,7 @@ _RUN = RunRequest(
     run_id="run-1",
     session_id="conversation-1",
     feature_key="chat",
+    selected_skill_source_refs=(),
     execution_identity=_IDENTITY,
     input=RunInput(message_id="msg-1", content="create a report"),
 )

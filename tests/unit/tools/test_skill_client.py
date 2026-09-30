@@ -59,6 +59,7 @@ async def test_declared_skill_names_resolve_through_client() -> None:
         run_id="run",
         session_id="session",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=identity,
         input=RunInput(message_id="message", content="hello"),
     )
@@ -99,6 +100,7 @@ async def test_declared_skill_outage_fails_closed() -> None:
         run_id="run",
         session_id="session",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=identity,
         input=RunInput(message_id="message", content="hello"),
     )

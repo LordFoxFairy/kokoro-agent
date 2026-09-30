@@ -1,6 +1,8 @@
 # kokoro-agent 验收矩阵
 
-## W3 typed Skill source：下一代码片 RED→GREEN 门（2026-09-29；尚未执行）
+## W3 typed Skill source：launch 代码片与剩余 RED→GREEN 门（2026-09-29）
+
+Agent launch 契约/Run fence 的 RED→GREEN 单元/契约片已完成，真实 PostgreSQL/Redis roundtrip 待验；下表 Platform/包读取/正式产品链各项仍是目标，不是通过记录。
 
 **本次只有设计文档，以下均为待验收条件，不是通过记录。** 实施顺序是 Agent launch 契约/Run fence → Platform v4 owner 原字节 pin/生成与六 RPC 兼容证明 → Skill Resolve/Get adapter → Storage signed GET/ZIP → 只读 backend/删除 name 双轨 → BFF consumer/用户安装选择 → Root 真 owner 组合。Platform `6a09913` v4 inactive，Agent 当前 v3 `5b6eb2c` 不能视为 transfer reference 已可用；Storage 固定 `16a6c1c` v2。Platform `InstallSkill` 具名 RPC 已在 owner Proto，但 BFF 面向用户的安装/启用和个人 Skill 选择未接，个人 ACTIVE 发布列表不等于 installed+enabled。
 

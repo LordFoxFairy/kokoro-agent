@@ -68,6 +68,7 @@ class LaunchBody(BaseModel):
     run_id: str
     session_id: str
     feature_key: str
+    selected_skill_source_refs: list[str]
     message_id: str
     content: str
     requested_model_label: str | None = None
@@ -113,6 +114,7 @@ def _parse_launch(
             run_id=launch.run_id,
             session_id=launch.session_id,
             feature_key=launch.feature_key,
+            selected_skill_source_refs=tuple(launch.selected_skill_source_refs),
             execution_identity=execution_identity,
             input=RunInput(message_id=launch.message_id, content=launch.content),
             requested_model_label=launch.requested_model_label,

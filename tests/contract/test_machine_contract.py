@@ -25,10 +25,26 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "1.1.0"
+    assert _object(document["info"])["version"] == "2.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
+
+
+def test_launch_requires_exact_typed_skill_selection_schema() -> None:
+    document = _document()
+    schema = _object(_object(document["components"])["schemas"])["LaunchRequest"]
+    launch = _object(schema)
+    required = launch["required"]
+    assert isinstance(required, list)
+    assert "selected_skill_source_refs" in required
+    refs = _object(_object(launch["properties"])["selected_skill_source_refs"])
+    assert refs["maxItems"] == 16
+    assert refs["uniqueItems"] is True
+    assert refs["x-kokoro-json-byte-limit"] == 4096
+    assert _object(refs["items"])["pattern"] == (
+        r"^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+    )
 
 
 def test_every_operation_declares_governance_metadata() -> None:

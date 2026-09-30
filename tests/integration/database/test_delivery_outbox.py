@@ -26,6 +26,7 @@ def _request() -> RunRequest:
         run_id="delivery-outbox-run",
         session_id="conversation-1",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant-1",
             actor=IdentityRef(kind="user", opaque_ref="user-1"),

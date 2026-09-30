@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "1.1.0"
+    "version": "2.0.0"
   },
   "servers": [
     {
@@ -282,6 +282,7 @@
           "run_id",
           "session_id",
           "feature_key",
+          "selected_skill_source_refs",
           "message_id",
           "content"
         ],
@@ -301,6 +302,19 @@
           "feature_key": {
             "type": "string",
             "minLength": 1
+          },
+          "selected_skill_source_refs": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "x-kokoro-json-byte-limit": 4096,
+            "description": "Exact Platform SkillSourceRef values for this Run, in caller-selected order; explicit [] means no external Skill. The JSON array must encode to at most 4096 bytes.",
+            "items": {
+              "type": "string",
+              "minLength": 7,
+              "maxLength": 197,
+              "pattern": "^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+            }
           },
           "message_id": {
             "type": "string",

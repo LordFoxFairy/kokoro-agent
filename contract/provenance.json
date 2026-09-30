@@ -9,7 +9,7 @@
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py"
   ],
-  "combined_sha256": "cae30a40d712bce39ef33ef2dc857af4f5b69c6afd1956fda065ec77379ae02e",
+  "combined_sha256": "506a744953a759800ac9c4c7449c5d3a26f4beb76761e686f6c4dd65957cf4e2",
   "generated_artifacts": [],
   "source_revision": "same Git commit as the listed files",
   "consumer_dependencies": [
@@ -34,8 +34,8 @@
     }
   },
   "http_contract": {
-    "version": "1.1.0",
+    "version": "2.0.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "2b9c7aad6f38db3e20200b037e4818ae932209ba3deecabf8fc984db6bcec492"
+    "sha256": "fce03385232ec9fc541476c087ba3a4b7ce591022da0bf18d9835f11d2345b79"
   }
 }

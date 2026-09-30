@@ -1,8 +1,8 @@
 # kokoro-agent 技术设计
 
-## W3-AGENT-TYPED-SKILL-SOURCE-DESIGN：执行选择与包读取设计门（2026-09-29；仅设计，未实施）
+## W3-AGENT-TYPED-SKILL-SOURCE-DESIGN：执行选择与包读取（2026-09-29；launch 已落地，其余仍为目标）
 
-本节是下一代码片的目标裁决，不把下文 W1E 历史叙述当当前实现。当前 `main 7dfcfa936d0b51244683ffd66d16ea937fe510a6`：worker 已有按已认领 Run 固定 tenant/lease 的 IAM token、fresh execution proof 和六个具名 Platform Connect sender；但 `agents/definition.py` 的 `Agent.skills: tuple[str]`、`agents/music.py` 的 `"music"`、`clients/skills.py` 的 name/scope/hash 协议与 `skills/backend.py` 的按 name 缓存仍是旧 Capability 模型。`RunRequest`/Agent HTTP `LaunchBody` 没有 Skill 选择，`kokoro_agent_run_dispatch.request_json` 和 `kokoro_agent_run.request_json` 因而没有选择 fence；标准产品路径未调用 Skill RPC、未读 Storage 包。无声明的基础 Chat 继续可运行，不能将已声明 Skill 的空列表/404 当成功。
+本节区分已落地的 launch 输入片与其余目标，不把下文 W1E 历史叙述当当前实现。设计起点 `7dfcfa936d0b51244683ffd66d16ea937fe510a6` 原无 Skill 选择；现在 Agent-owned HTTP OpenAPI `2.0.0` 和 `LaunchBody`/`RunRequest` 要求显式 `selected_skill_source_refs`，现有 dispatch/Run canonical JSON 与 run_id fence 承接顺序和空数组，错形状 400、漂移 409。真实 PostgreSQL/Redis roundtrip 尚待隔离验收。worker 已有按已认领 Run 固定 tenant/lease 的 IAM token、fresh execution proof 和六个具名 Platform Connect sender；但 `agents/definition.py` 的 `Agent.skills: tuple[str]`、`agents/music.py` 的 `"music"`、`clients/skills.py` 的 name/scope/hash 协议与 `skills/backend.py` 的按 name 缓存仍是旧 Capability 模型。标准产品路径未调用 Skill RPC、未读 Storage 包；新字段不等于 Skill 执行已闭环。无声明的基础 Chat 由显式空数组运行，不能将已声明 Skill 的空列表/404 当成功。BFF 普通 Chat durable outbox 与 Scheduler 发送方尚未提供必填字段，旧 payload 会在 Agent 入口 400，必须由 BFF 紧接消费修复。
 
 | 放置项 | 决定与理由 |
 | --- | --- |
@@ -10,7 +10,7 @@
 | 两案 | 采用 BFF 给 Agent *精确 typed ref*、Agent 在 admission 冻结选择并在每次读取重新向 Platform 验当前授权；淘汰 name/display/`DiscoverVisibleSkills.query` 推导、BFF/Web 直读 Storage、旧 Capability grant 或以一次 Resolve 缓存长期放行。 |
 | 位置/粒度 | 复用 `protocol/control.py` 的 RunRequest、`interfaces/http/ingress.py` 的 LaunchBody、现有 dispatch/Run JSON、`agent_factory.py`、`clients/skills.py`、`skills/backend.py`、`worker/platform.py`；以后由单一 Agent writer 按输入 fence→owner client→ZIP/backend 的业务切片修改。拒绝新顶层 `platform/`/`ports/`、第二组 wire/生成物或把业务规则塞进 worker 入口。 |
 | 依赖 | Agent 只用固定 Platform generated RPC 与由该 RPC 授权的 Storage-signed GET；BFF 的选择不能代替 Platform 当前决策，proof 不能代替 IAM/Storage 检查。禁止读取 Platform/Storage SQL、复制其 ORM/Skill owner 状态。 |
-| 数据/API | 目标复用两张现有 Run 表的 `request_json`；不新增 SQL 表/列、Redis key、签名/包体持久事实。Agent HTTP/Redis Run wire 的 additive 字段须先在本仓唯一 OpenAPI/协议发布，再由 BFF 固定消费；见另两份设计。 |
+| 数据/API | 已用既有两张 Run 表的 `request_json` 机制与 Redis Run wire 承接必填字段，未新增 SQL 表/列、Redis key、签名/包体持久事实；HTTP 机器契约是 pre-launch breaking `2.0.0`，URL 仍 `/v1`。BFF 尚须固定消费；见另两份设计。 |
 | 删除 | 一次 cutover 删除 name selector、scope/name/content_hash grant、按名称回空和隐藏失败、旧 `CapabilitySkillBackend` 的授权性缓存与旧注入/测试路径；`/.skills/` 只读路由可保留但从 typed source 与当前授权重建。MCP 属后续独立片，不借此片造假接线。 |
 
 **唯一选择与持久 fence。** 第一版只接用户对该 Run 显式选择的 `source_ref`，不隐式注入 `Agent.skills` 静态 name；`music` 的旧 name 声明在 cutover 时删除，不从其字符串猜已安装 Skill。BFF public Chat 对话选择是唯一用户选择 owner；BFF 必须在当前 IAM session 中把 Platform 已发布的 exact ref 传到 Agent launch，不能让浏览器自报 tenant/actor/subject。Agent HTTP ingress 对 `selected_skill_source_refs` 做 strict typed 语法、数量/重复/顺序限制后，结合受信 `ExecutionIdentity` 写入同一 canonical `RunRequest`；对授权只做形状预检，真正当前授权在执行时由 Platform 裁决。空数组是明确“本 Run 无外部 Skill”；不能回退为 deployment/default Skill。Agent 静态 Feature/Agent 只决定是否支持这一执行面，不拥有用户所选资源身份；将来如需静态 exact ref，必须先设计由 Agent 在 **admission 前** 合成并冻结完整有效集合的独立版本化配置，不在 worker claim/resume 时按可变 Feature 配置补选。
@@ -25,7 +25,7 @@ GET 只按 Platform `GetApprovedSkillPackageReferenceResponse.transfer_reference
 
 签名 URL/headers/proof/token/ZIP bytes 只在短期进程内存在，不写 Run/Chat/tool journal/日志或跨 Run 缓存。未知 Platform ACK/超时、GET 中断或签名过期：无副作用读取可保留同一 frozen ref 和 logical request_id 有界重试；每次新 Platform send 取新 token/lease/proof/JTI、GET 取新授权 reference，绝不重复用过期签名。失败在模型/工具继续执行前关闭该 Skill 能力，并由既有 Run 失败/恢复机制记录稳定错误；取消传播，不伪造成功/空包。外部签后 lease takeover 的短时在途窗口由 IAM/Platform 合同限制，不将进程内锁冒充跨 owner 原子撤销。
 
-**未决 owner-first 门。** Platform `6a09913a96c686b316bfe707b823d039e625607a` 的 v4 machine artifact 为 `inactive/routable=false`，Agent 当前仅 pin v3 `5b6eb2c`，新 GET transfer/ZIP profile 尚未被 Agent 固定。BFF 当前 public Chat→Agent launch 尚无选择字段，Agent OpenAPI/Redis 也未发布该字段；先 Agent owner 契约，再 BFF consumer。Platform Source 目前要求 installed+enabled，BFF 的个人 Publish/个人列表不自动安装；必须由 Platform/BFF owner 发布真正安装/选择产品链，不把 ACTIVE 列表当可执行授权。Storage 包退役、Platform v4 激活及六 owner 真组合另有 Root 阶段门。以上任一缺口未过，不标 Skill runtime active。
+**未决 owner-first 门。** Platform `6a09913a96c686b316bfe707b823d039e625607a` 的 v4 machine artifact 为 `inactive/routable=false`，Agent 当前仅 pin v3 `5b6eb2c`，新 GET transfer/ZIP profile 尚未被 Agent 固定。Agent 已发布 launch 字段，BFF 当前 public Chat→Agent launch 尚无选择字段；先 Agent owner 契约，再 BFF consumer。Platform Source 目前要求 installed+enabled，BFF 的个人 Publish/个人列表不自动安装；必须由 Platform/BFF owner 发布真正安装/选择产品链，不把 ACTIVE 列表当可执行授权。Storage 包退役、Platform v4 激活及六 owner 真组合另有 Root 阶段门。以上任一缺口未过，不标 Skill runtime active。
 
 ## W3-AGENT-PLATFORM-V3-PIN：机器消费前置（2026-09-29）
 

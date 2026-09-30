@@ -155,7 +155,7 @@ async def test_request_dispatches_initial_invoke() -> None:
 
 async def test_request_consumer_persists_user_message_and_safe_chat_events() -> None:
     chat_repository = FakeChatRepository()
-    item = StreamItem(cursor="1", event=request("chat-1").model_dump())
+    item = StreamItem(cursor="1", event=request("chat-1").model_dump(mode="json"))
     bus = FakeBus(inbound=(item,))
     supervisor, store = _supervisor(
         FakeAgent(run=text_run("answer")), chat_repository=chat_repository
@@ -184,7 +184,7 @@ async def test_chat_message_failure_happens_before_dispatch_claim_and_ack() -> N
         async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
             raise RuntimeError("chat unavailable")
 
-    item = StreamItem(cursor="1", event=request("chat-fail").model_dump())
+    item = StreamItem(cursor="1", event=request("chat-fail").model_dump(mode="json"))
     bus = FakeBus(inbound=(item,))
     agent = FakeAgent(run=text_run("unreachable"))
     supervisor, run_repository = _supervisor(
@@ -741,7 +741,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
         async def is_terminal(self, run_id: str) -> bool:
             raise RuntimeError("store boom")
 
-    good = StreamItem(cursor="1", event=dict(request("sv1").model_dump()))
+    good = StreamItem(cursor="1", event=dict(request("sv1").model_dump(mode="json")))
     malformed = StreamItem(cursor="2", event={"kind": "run.request", "run_id": ""})
     resume_boom = StreamItem(
         cursor="3",
@@ -1472,7 +1472,7 @@ async def test_dispatch_win_executes_and_acks_after_claim() -> None:
     store = FakeRunRepository()
     pending = request("r-go")
     _seed_pending_dispatch(store, pending)
-    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump(mode="json")))
     bus = FakeBus(inbound=(frame,))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(bus)
@@ -1494,7 +1494,7 @@ async def test_stream_dispatch_claim_is_the_only_durable_execution_claim() -> No
     store = _NoSecondClaimRepository()
     pending = request("r-atomic")
     _seed_pending_dispatch(store, pending)
-    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump(mode="json")))
     bus = FakeBus(inbound=(frame,))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
 
@@ -1544,7 +1544,7 @@ async def test_redelivered_dispatch_after_claim_is_discarded_not_double_executed
     store = FakeRunRepository()
     pending = request("r-dup")
     _seed_pending_dispatch(store, pending)
-    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump(mode="json")))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(FakeBus(inbound=(frame,)))
     await _drain(sup)
@@ -1560,7 +1560,7 @@ async def test_expired_dispatch_frame_never_executes() -> None:
     # session reconciler 已转 expired：迟到帧永不执行，仅 ACK 丢弃。
     store = FakeRunRepository()
     store.dispatches["r-exp"] = "expired"
-    frame = StreamItem(cursor="1", event=dict(request("r-exp").model_dump()))
+    frame = StreamItem(cursor="1", event=dict(request("r-exp").model_dump(mode="json")))
     bus = FakeBus(inbound=(frame,))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(bus)
@@ -1581,7 +1581,7 @@ async def test_crash_before_durable_claim_leaves_frame_unacked() -> None:
     store = _CrashClaim()
     pending = request("r-crash")
     _seed_pending_dispatch(store, pending)
-    frame = StreamItem(cursor="1", event=dict(pending.model_dump()))
+    frame = StreamItem(cursor="1", event=dict(pending.model_dump(mode="json")))
     bus = FakeBus(inbound=(frame,))
     sup, _ = _supervisor(FakeAgent(run=text_run("hi")), store=store)
     await sup.serve(bus)  # 不冒泡杀循环

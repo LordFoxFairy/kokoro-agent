@@ -79,7 +79,7 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
             raise RuntimeError("crash before durable claim persists")
 
     pending = request("req-crash")
-    good = StreamItem(cursor="req-1", event=dict(pending.model_dump()))
+    good = StreamItem(cursor="req-1", event=dict(pending.model_dump(mode="json")))
     bus = FakeBus(inbound=(good,))
     store = _CrashBeforeClaimRepository()
     await store.enqueue_dispatch(

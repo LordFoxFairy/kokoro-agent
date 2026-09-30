@@ -1270,6 +1270,7 @@ def request(
         run_id=run_id,
         session_id=session_id,
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="test-tenant",
             actor=IdentityRef(kind="user", opaque_ref="test-actor"),

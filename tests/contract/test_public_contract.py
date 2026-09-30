@@ -245,6 +245,7 @@ def _request(**extra: JsonValue) -> dict[str, JsonValue]:
         "run_id": "r1",
         "session_id": "s1",
         "feature_key": "chat",
+        "selected_skill_source_refs": [],
         "execution_identity": _IDENTITY,
         "input": {"message_id": "m1", "content": "hi"},
         **extra,
@@ -264,6 +265,30 @@ def _control(kind: str, **extra: JsonValue) -> dict[str, JsonValue]:
 def test_run_request_parses() -> None:
     msg = inbound_adapter.validate_python(_request())
     assert msg.kind == "run.request"
+    assert msg.selected_skill_source_refs == ()
+
+
+@pytest.mark.parametrize(
+    "refs",
+    [
+        ["music"],
+        ["skill:"],
+        ["skill:../bad"],
+        ["skill:valid", "skill:valid"],
+        ["skill:valid"] * 17,
+        ["skill:" + "a" * 191] * 16 + ["skill:extra"],
+    ],
+)
+def test_run_request_rejects_invalid_skill_source_refs(refs: list[JsonValue]) -> None:
+    with pytest.raises(ValidationError):
+        inbound_adapter.validate_python(_request(selected_skill_source_refs=refs))
+
+
+def test_run_request_requires_explicit_skill_selection() -> None:
+    request = _request()
+    del request["selected_skill_source_refs"]
+    with pytest.raises(ValidationError):
+        inbound_adapter.validate_python(request)
 
 
 @pytest.mark.parametrize(

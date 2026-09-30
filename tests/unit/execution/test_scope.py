@@ -40,6 +40,7 @@ def test_checkpoint_locator_scopes_same_session_by_trusted_tenant() -> None:
             run_id=f"run-{tenant}",
             session_id="shared-session-id",
             feature_key="chat",
+            selected_skill_source_refs=(),
             execution_identity=_identity(tenant=tenant),
             input=RunInput(message_id=f"message-{tenant}", content="hello"),
         )

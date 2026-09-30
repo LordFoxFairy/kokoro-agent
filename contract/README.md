@@ -42,9 +42,13 @@ assertion headers。浏览器不得直接调用此服务。每个 operation 的 
 
 ## Version
 
-当前 HTTP contract version 为 `1.1.0`，路径版本为 `/v1`。Protobuf/RPC 不在本仓发布；Redis envelope
-的 `kind` 集合由 `protocol/control.py` 和 `protocol/events.py` 的严格模型定义。Breaking change 必须
-新建 `/v2` 或新的消息版本，并在 ADR 中记录，不通过修改文档标题伪装成兼容变更。
+当前 HTTP 机器 contract version 为 `2.0.0`，路径仍为 `/v1`。这次 pre-launch clean-slate
+必填 `selected_skill_source_refs` 是 intentional breaking；`info.version` 标识机器契约大版本，
+`/v1` 是现有内部 URL major，两者不是同一版本计数器。BFF 必须精确 repin `2.0.0` 并让普通
+Chat durable outbox 和 Scheduler launch 都显式发送 `[]` 或真实 typed refs，切换前旧 payload 会
+在 Agent admission 得到 400；不读取 `trace.pinned_skills` 作为兼容来源。Protobuf/RPC 不在本仓发布；
+Redis envelope 的 `kind` 集合由 `protocol/control.py` 和 `protocol/events.py` 的严格模型定义。
+正式对外发布后的 breaking 变更需评审 URL/消息 major、消费者与 ADR，不靠文档标题伪装兼容。
 
 ## Generation
 
@@ -82,7 +86,7 @@ BFF consumer contract test 验证。
 ## Provenance
 
 contract source 与实现属于同一个 Git commit；`contract/provenance.json` 的 `source_files` 必须精确等于
-checker 内置的完整有序 owner inventory，同时记录 HTTP `1.1.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
+checker 内置的完整有序 owner inventory，同时记录 HTTP `2.0.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
 digest。消费者固定 `repository + commit + version + schema path/hash + vectors path/hash`，不把会随无关
 OpenAPI/protocol 变化的 aggregate 当作 proof digest。重新计算 provenance 后，必须把 contract、测试和文档放在同一逻辑 commit 中。运行时
 事件的持久化顺序由 PostgreSQL ledger/receipt owner 保证，Redis 只是可重放传输，不是公开协议事实源。

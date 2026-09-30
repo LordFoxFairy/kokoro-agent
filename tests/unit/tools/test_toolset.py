@@ -63,6 +63,7 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
         run_id="run",
         session_id="session",
         feature_key="chat",
+        selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",
             actor=IdentityRef(kind="user", opaque_ref="actor"),

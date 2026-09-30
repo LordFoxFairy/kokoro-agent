@@ -1,6 +1,10 @@
 # kokoro-agent 数据模型
 
-## W3 typed Skill source Run fence（2026-09-29；设计目标，不是已实施）
+## W3 typed Skill source Run fence 当前态（2026-09-29）
+
+Agent 已将必填 `selected_skill_source_refs` 纳入唯一 `RunRequest` canonical JSON；HTTP、Redis 与既有 dispatch/Run `request_json` 机制使用该对象，重复 `run_id` 的选择变化由原 fence 409 拒绝。未增表/列/Redis key。单测验证顺序、空数组及漂移；真实 PostgreSQL/Redis roundtrip 尚未验收，不把代码路径等同数据库证据。Platform 当前授权、包资产、Storage GET/ZIP 等仍未接。下文是设计起点和其余目标，所述“当前无字段”仅指 `7dfcfa9` 基线。
+
+## W3 typed Skill source Run fence：设计起点与剩余目标
 
 当前唯一 canonical [`database/schema.sql`](../database/schema.sql) 的 `kokoro_agent_run_dispatch.request_json TEXT NOT NULL`、`kokoro_agent_run.request_json TEXT` 保存现有 `RunRequest`；该请求只含 `feature_key`/trusted identity/input/模型等，没有 Skill ref。`Agent.skills` 静态字符串没有进入持久 Run，因此部署变更或 lease 重领后无法证明同一 Run 使用同一 exact revision。现有 `request_json`、dispatch fence、Run claim 机制足以承载**有界**新字段；本目标不创建 Skill 表、安装投影、SQL 列、索引、Redis key 或 owner 联合事务。
 

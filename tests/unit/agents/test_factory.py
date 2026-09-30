@@ -36,6 +36,7 @@ from kokoro_agent.clients.system import (
     ModelResolver,
     ResolvedModel,
 )
+from kokoro_agent.clients.skills import SkillClientError
 
 
 class RouteResolver:
@@ -72,6 +73,7 @@ def _request(feature_key: str) -> RunRequest:
         run_id=f"run-{feature_key}",
         session_id="session",
         feature_key=feature_key,
+        selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",
             actor=IdentityRef(kind="user", opaque_ref="actor"),
@@ -136,6 +138,30 @@ async def test_builds_native_agent_without_external_clients(
     assert "deliver" not in handle.tool_descriptions
     assert resolver.calls
     assert all(call[:3] == ("tenant", feature_key, None) for call in resolver.calls)
+
+
+async def test_selected_skill_source_fails_before_any_external_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver)
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:exact-revision",)}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    called: list[str] = []
+
+    async def forbidden(*args: object, **kwargs: object) -> None:
+        called.append("backend")
+        raise AssertionError("backend must not be built for unreadable Skill selection")
+
+    monkeypatch.setattr(agent_factory_module, "make_backend_for_run", forbidden)
+    monkeypatch.setattr(agent_factory_module, "build_toolset", forbidden)
+    with pytest.raises(SkillClientError, match="typed skill source reader unavailable"):
+        await factory.build(request, lease)
+    assert resolver.calls == []
+    assert called == []
 
 
 async def test_invokes_native_agent_with_model_resolver_without_optional_clients(

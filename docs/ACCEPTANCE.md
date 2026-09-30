@@ -1,5 +1,20 @@
 # kokoro-agent 验收矩阵
 
+## W3 typed Skill source：下一代码片 RED→GREEN 门（2026-09-29；尚未执行）
+
+**本次只有设计文档，以下均为待验收条件，不是通过记录。** 实施顺序是 Agent launch 契约/Run fence → Platform v4 owner 原字节 pin/生成与六 RPC 兼容证明 → Skill Resolve/Get adapter → Storage signed GET/ZIP → 只读 backend/删除 name 双轨 → BFF consumer/用户安装选择 → Root 真 owner 组合。Platform `6a09913` v4 inactive，Agent 当前 v3 `5b6eb2c` 不能视为 transfer reference 已可用；Storage 固定 `16a6c1c` v2。Platform `InstallSkill` 具名 RPC 已在 owner Proto，但 BFF 面向用户的安装/启用和个人 Skill 选择未接，个人 ACTIVE 发布列表不等于 installed+enabled。
+
+| RED 起点（先证旧行为失败） | GREEN 与负例门 |
+| --- | --- |
+| 旧 launch/RunRequest 不接受 typed refs，name `music` 不在持久 fence | 本仓 OpenAPI、Pydantic、Redis roundtrip、两 Run 表 canonical JSON 同值；exact `skill:<id>`，最多 16/4 KiB、空数组，重项/错 wrapper/超限 400；同 `run_id` 换 refs/tenant/subject 409；并发 claim/resume/lease takeover 不从当前 Feature 或另一个请求替换选择。 |
+| Agent v3 generated 没有完整 GET transfer | 固定 Platform v4 Proto/manifest/ZIP profile 原字节与 digest/生成 drift；断言 `read_reference` tag 4 reserved、`transfer_reference` tag 5 全字段；旧 v3/裸 URL 不可在 production client fallback；24 个 proof binding 与 Agent 六操作逐条投影同值。 |
+| name/scope/hash Skill client 和 `/.skills/` 缓存 | 正常 exact ref→Resolve→GetApproved→签名 GET→只读 `SKILL.md`；跨 tenant/subject、非 active、未安装/disabled、withdrawn、错 ref/response asset/digest/manifest、撤权后的二次读取和旧缓存均拒绝；无 declared ref 的基础 Chat 不取 IAM token/Platform/Storage。 |
+| 无真正包体边界 | 签名 GET 只向批准 origin 以 method GET/owner headers 发、无 Cookie/Bearer/redirect/userinfo/fragment；200、未来 expiry、identity encoding、总/idle deadline、32 MiB 压缩、SHA-256，超限/截断/错摘要/坏 header/非允许 host/过期一律拒绝。按 v4 ZIP profile 验 entry/展开/manifest/路径/CRC/ZIP32 与 exact skill_id/revision/manifest identity；拒绝 zip bomb、遍历、符号链接、重复/同名前缀、BOM、未知 manifest 键，不向 backend 暴露部分包。 |
+| ACK/取消/lease/scan 失败会落入旧回空或缓存 | Platform RPC ACK 未知只同 frozen ref/logical request_id 重读且逐次 fresh proof；GET 断线/URL 过期重新向 Platform 取当次签名；pending/unknown/infected scan 或 owner 5xx/429/timeout 与取消 fail closed；取消不重试，旧 lease 不发请求；Tool/模型继续之前必须有完整有效 Skill 或既有 Run failed 事实，零额外外部副作用。 |
+| BFF personal 发布列表只有 ACTIVE 可见 | 真 IAM→BFF 用户安装/enable→Agent launch typed ref→Platform current Source→Storage CLEAN→Agent leased Run 读包；卸载/撤权/感染/跨用户/跨 tenant 与完成 receipt replay 均在再次读包前拒绝；不能用 BFF 列表、假 client 或静态 Playwright 代替。 |
+
+下一片目标文件集：现有 `src/kokoro_agent/protocol/control.py`、`interfaces/http/ingress.py`、`agents/definition.py`/`agents/music.py`、`agent_factory.py`、`clients/skills.py`、`skills/backend.py`、`worker/platform.py`/`worker/dependencies.py` 与已有 Run repository JSON 路径；`contract/openapi/v1/openapi.json`、`contract/platform/v1/`、`generated/`、`contract/provenance.json` 仅在各自 owner 源固定/可再生时更新。测试沿已有 `tests/unit`、`tests/contract`（含 `test_architecture.py`）、`tests/integration` 职责放置，不为此创建第二套 `services/ports`。实现片须 `uv lock --check`、`uv sync --frozen`、Ruff format/check、Pyright、默认 pytest、contract checker、生成 drift、wheel/sdist；真实隔离 PostgreSQL/Redis 与 IAM/Platform/Storage/ObjectStore sandbox 另门验。测试不启动或清理用户 3310/共享服务，不把 CORS 501 当 Agent Python 包读取的完成或失败证据。
+
 ## W1E Platform consumer 生成/projector 门与后续 runtime 门
 
 当前切片固定 owner artifact、生成 client/projector 与离线 contract；它不是 Agent→Platform transport 验收。已固定

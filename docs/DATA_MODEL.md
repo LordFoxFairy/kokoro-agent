@@ -1,5 +1,23 @@
 # kokoro-agent 数据模型
 
+## W3 typed Skill source Run fence（2026-09-29；设计目标，不是已实施）
+
+当前唯一 canonical [`database/schema.sql`](../database/schema.sql) 的 `kokoro_agent_run_dispatch.request_json TEXT NOT NULL`、`kokoro_agent_run.request_json TEXT` 保存现有 `RunRequest`；该请求只含 `feature_key`/trusted identity/input/模型等，没有 Skill ref。`Agent.skills` 静态字符串没有进入持久 Run，因此部署变更或 lease 重领后无法证明同一 Run 使用同一 exact revision。现有 `request_json`、dispatch fence、Run claim 机制足以承载**有界**新字段；本目标不创建 Skill 表、安装投影、SQL 列、索引、Redis key 或 owner 联合事务。
+
+目标 `selected_skill_source_refs` 是 BFF 显式用户选择的 exact typed `SkillSourceRef.value` 列表，不是 Platform 所拥有的 Skill/Installation row，也不是授权缓存；Agent admission 将原顺序、类型、去重结果与 trusted `ExecutionIdentity` 一起冻结到同一 RunRequest canonical JSON。`POST /v1/runs` 的既有 `sha256` fence/相同 `run_id` 冲突必须包含该字段；两张 Agent Run 表写入/claim/checkpoint/resume/replay 均读取同一冻结 JSON，不能用 Feature 当前配置、请求重试的不同 refs 或另一个 tenant/subject替代。空列表是明确的无外部 Skill，不能解释为“沿旧 music 名称自动加载”。单个 ref 的大小遵守 Platform 7..197 ASCII bytes，目标第一版最多 16 个、整个选择 JSON 最多 4 KiB（实现时由 Agent OpenAPI/HTTP/Redis 测试统一锁定）；缺字段与空数组不建立长期双义兼容，新代码/消费者应同片统一显式传空集合。
+
+Platform `6a09913a96c686b316bfe707b823d039e625607a` 是 Skill exact revision、installation installed+enabled、current owner/tenant/subject 决策与包资产绑定的唯一事实源；其 v4 Proto/ZIP profile 当前 inactive，Agent 仍 pin v3。Storage `16a6c1ce95832df6dc839e0d50e957405c5c7005` 是 blob bytes、当前 scan CLEAN、对象健康与 GET 签名的唯一事实源。Agent 不复制 owner 表、不跨 schema JOIN、不持久 `asset_ref`/短期 `transfer_reference`、URL/headers、proof/JTI/bearer 或 ZIP bytes；只在本次 Run 的受控内存里保存已经校验的 exact package identity/bytes，生命周期不得超出 Run。RunRequest 的 refs 只说明“想用哪一个确切 revision”，不证明已发布、已安装、未撤权或仍 CLEAN。
+
+| 时点 | 本仓持久事实 / 跨 owner 失败恢复 |
+| --- | --- |
+| Admission | Agent 的 dispatch `request_json` 与 fence 写入一次，重复 `run_id` 的 ref 漂移按原 `run_identity_conflict` 拒绝；不存在已接纳但在第二个表另选 Skill 的窗口。 |
+| Claim / lease | 当前 Run 行保存相同 request JSON，worker 从该行和同 generation/owner 的租约创建 run-scoped sender；Platform RPC 前现有 statement-time PG clock reader 校验 lease。 |
+| Resolve / Get | 这是只读外部调用，不在 Agent 事务内；每次新 IAM/Platform 当前决策与 fresh proof。RPC ACK 未知只按相同 frozen ref/request_id 有界再读；不能把错误转成“无 Skills”，也不凭旧 Resolve/包缓存越过撤权/感染。 |
+| Signed GET / ZIP | GET URL、required headers 仅瞬时使用；超时/签名过期重新向 Platform 获取 fresh reference。上次已完整校验的 bytes 只有在本次重新获当前授权且 asset/digest/manifest 精确相同后才可用于同 Run 读，任何变化清空缓存/失败关闭；不写 Agent journal/Chat/outbox。 |
+| Resume / takeover | 取原 Run refs 与新 lease generation，重新做 Resolve/Get/current gate；旧 generation 的内存缓存、proof、签名 URL 不跨 worker/lease 传递。取消/终态后不得发新的包读取；在途 proof 的有限窗口按 IAM/Platform 既有合同处理，非数据库原子撤销。 |
+
+原 `kokoro_agent_run`/dispatch 的 tenant predicate、锁/唯一性、幂等、retention 规则不变；没有理由为 `source_ref` 建 SQL 索引，因为执行只按 `run_id` 获取整份请求。跨 owner 删除/撤权不靠 Agent orphan 扫描替代：每次读取重新请求 Platform，当前拒绝即停止此 Run；Root 真组合要覆盖安装移除、Skill 禁用/撤回、Storage 感染/未知与并发 lease takeover。若后续发现 canonical JSON/fence 实际不能覆盖新字段，代码片必须先改本仓 owner 设计/测试再实施，不能另起一份无 fence 的运行时选择表。
+
 ## W3-AGENT-PLATFORM-V3-PIN：数据边界（2026-09-29）
 
 本片仅替换 Agent 的 Platform Proto/v1 execution vendor 为 owner v3 原字节，并更新无状态

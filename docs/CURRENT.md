@@ -1,5 +1,15 @@
 # kokoro-agent 当前实现
 
+## W3 typed Skill source 设计门（2026-09-29；本仓文档目标，代码未动）
+
+基线本仓 `main 7dfcfa936d0b51244683ffd66d16ea937fe510a6`。已落地的是 Run-scoped worker IAM token/fresh proof/六 RPC sender 和 Platform v3 `5b6eb2c` 的固定生成客户端；**未落地**的是 Agent/BFF launch 中的 typed Skill 选择、持久 Run fence、Source 业务 adapter、Storage signed GET 原字节/ZIP 校验与每次 `/.skills/` 访问的当前授权。因此 `EDGE-AGENT-CAPABILITY` 未激活，成功发送测试 RPC 不等于正式 Skill 在 Chat 可执行。现有 `agents/music.py` 仍声明 name `music`，`clients/skills.py` 与 `skills/backend.py` 仍保留旧 Capability name/scope/hash 与包缓存；本设计门不改它们。
+
+目标已在 [TECHNICAL_DESIGN](TECHNICAL_DESIGN.md)、[API_CONTRACT](API_CONTRACT.md)、[DATA_MODEL](DATA_MODEL.md) 与 [ACCEPTANCE](ACCEPTANCE.md) 对齐：由 BFF 当前 IAM 用户选择 exact ref，Agent admission 冻结最多 16 个/4 KiB 到既有两张 Run 表 `request_json`，claim/resume 只读持久集合；已声明 ref 走 fresh Platform Resolve/Get、Storage signed GET 与 v4 ZIP/manifest identity，再由 DeepAgents 只读 backend 渐进读取。撤权、安装移除、感染、未知 scan、过期 URL/lease、owner 不可用均失败关闭；签名/包不落库，不建立跨 owner SQL。`music` name fallback 在后续代码片删除，不能在这份文档门把它标成已切换。
+
+**独立 owner 前置与顺序：** Platform 当前 `main 6a09913a96c686b316bfe707b823d039e625607a` 的 [`platform_runtime.proto`](../../kokoro-capability/contract/proto/kokoro/platform/v1/platform_runtime.proto) 将旧裸 `read_reference` tag 4/name reserve，tag 5 返回完整 `transfer_reference`；v4 `manifest.json` 仍 `inactive/routable=false`。Agent 必须先精确 pin v4 原字节/生成再接 Source/GET，不能在 v3 sender 上臆造签名 URL。Platform `InstallSkill` owner RPC/当前 installed+enabled gate 与 BFF 用户公开安装/启用/选择不是同一个完成项：个人 Publish ACTIVE/本人列表不自动安装，当前 BFF public Chat→Agent launch 也没有 selected ref。先 Agent owner 发布 launch 契约，BFF 再接用户选择与安装产品 API/当前 IAM，Web 后续消费；Platform/Storage 生命周期与最终激活仍由各 owner 单独验收。当前不能凭个人 ACTIVE 列表声称 Resolve 可用。
+
+本片只提交 Agent 四设计文档及验收矩阵；未运行代码构建、数据库、IAM/Platform/Storage 真组合或浏览器。后续代码片由 Root 放行后单一 Agent writer 执行 RED→GREEN，未决项见 [ACCEPTANCE](ACCEPTANCE.md)。下文旧 W1E/候选时间线为历史阶段记录，不覆盖此当前态。
+
 ## W3-AGENT-PLATFORM-V3-PIN（2026-09-29；本仓候选已通过直接门，待 Root 验收）
 
 旧 Agent `cbb2719` 曾固定 Platform `ee25c1f` 的 Proto 与 execution-operations v1、

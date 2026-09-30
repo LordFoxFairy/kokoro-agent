@@ -12,6 +12,8 @@ from pydantic import (
     TypeAdapter,
 )
 
+from kokoro_agent.protocol.run_failure_generated import RunFailedPayload
+
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 NonNegInt = Annotated[int, Field(ge=0)]
 
@@ -21,15 +23,6 @@ AwaitingKind = Literal["tool_approval", "ask_user_question", "result_review", "i
 SubagentSource = Literal["built-in", "config-custom", "runtime-custom"]
 ControlReceiptStatus = Literal["persisted", "applied"]
 RunCompletedStatus = Literal["completed", "cancelled"]
-RunErrorCode = Literal[
-    "token_budget_exceeded",
-    "recursion_limit_exceeded",
-    "assembly_failed",
-    "enqueue_failed",
-    "dispatch_exhausted",
-    "contract_incompatible",
-    "internal_error",
-]
 ArtifactKind = Literal[
     "document", "code", "image", "audio", "video", "data", "archive", "other"
 ]
@@ -208,13 +201,6 @@ class RunCompletedPayload(StrictModel):
     status: RunCompletedStatus
     # agent 认真算的用量全链路贯通；无用量时为 null。
     token_usage: TokenUsage | None = None
-
-
-class RunFailedPayload(StrictModel):
-    # 三层错误语义：code=稳定错误码（web 按码本地化的键，闭集枚举）；error_kind=诊断用异常类名（观测/排障，不作展示）；message=人读原文（未知码/未译码的兜底展示，绝不裸露 key）。
-    code: RunErrorCode
-    error_kind: NonEmptyStr
-    message: NonEmptyStr
 
 
 class RunStarted(StrictModel):

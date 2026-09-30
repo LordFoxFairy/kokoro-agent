@@ -1,6 +1,11 @@
 # Agent-owned protocol exports. Keep changes within this repository.
 from __future__ import annotations
 
+from kokoro_agent.protocol.run_failure_generated import (
+    ChatFailure,
+    RunErrorCode,
+    RunFailedPayload,
+)
 from kokoro_agent.protocol.events import (
     AgentEvent,
     agent_event_adapter,
@@ -10,7 +15,6 @@ from kokoro_agent.protocol.events import (
     SubagentSource,
     ControlReceiptStatus,
     RunCompletedStatus,
-    RunErrorCode,
     ArtifactKind,
     Todo,
     TokenUsage,
@@ -54,7 +58,6 @@ from kokoro_agent.protocol.events import (
     DeliveryCreatedPayload,
     RunControlReceiptPayload,
     RunCompletedPayload,
-    RunFailedPayload,
 )
 from kokoro_agent.protocol.control import (
     InboundMessage,
@@ -97,6 +100,7 @@ __all__ = [
     "SubagentSource",
     "ControlReceiptStatus",
     "RunCompletedStatus",
+    "ChatFailure",
     "RunErrorCode",
     "ArtifactKind",
     "Todo",

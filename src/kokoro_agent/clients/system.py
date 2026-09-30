@@ -30,18 +30,16 @@ _Id = Annotated[str, StringConstraints(pattern=_UUID)]
 _Text = Annotated[str, StringConstraints(min_length=1, max_length=255)]
 _Generation = Annotated[str, StringConstraints(pattern=r"^[1-9][0-9]*$")]
 _MAX_RESPONSE_BYTES = 65_536
-_OWNER_ERRORS = frozenset(
-    {
-        "POLICY_DENIED",
-        "ROUTE_NOT_FOUND",
-        "MODEL_UNAVAILABLE",
-        "SYSTEM_UNAVAILABLE",
-        "INVALID_ARGUMENT",
-        "FORBIDDEN",
-        "service_auth_failed",
-        "service_auth_not_configured",
-    }
-)
+_OWNER_ERROR_STATUS = {
+    "POLICY_DENIED": 403,
+    "ROUTE_NOT_FOUND": 404,
+    "MODEL_UNAVAILABLE": 503,
+    "SYSTEM_UNAVAILABLE": 503,
+    "INVALID_ARGUMENT": 400,
+    "FORBIDDEN": 403,
+    "service_auth_failed": 403,
+}
+_OWNER_RETRYABLE_CODES = frozenset({"MODEL_UNAVAILABLE", "SYSTEM_UNAVAILABLE"})
 
 
 class ModelResolutionError(Exception):
@@ -104,7 +102,7 @@ class _Envelope(BaseModel):
 
 class _OwnerError(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
-    code: str
+    code: Annotated[str, StringConstraints(min_length=1)]
     message: str
     retryable: bool
 
@@ -228,11 +226,17 @@ class SystemModelClient:
 
     @staticmethod
     def _raise_owner_error(status: int, body: bytes) -> None:
-        if 300 <= status < 400:
+        if status not in {400, 403, 404, 503}:
             raise ModelResolutionError("MODEL_RESPONSE_INVALID")
         try:
             error = _ErrorEnvelope.model_validate_json(body).error
         except ValidationError:
             raise ModelResolutionError("MODEL_RESPONSE_INVALID") from None
-        code = error.code if error.code in _OWNER_ERRORS else "MODEL_RESOLUTION_FAILED"
-        raise ModelResolutionError(code, retryable=status >= 500 and error.retryable)
+        expected_status = _OWNER_ERROR_STATUS.get(error.code)
+        if expected_status is None:
+            raise ModelResolutionError("MODEL_RESOLUTION_FAILED")
+        if status != expected_status or (
+            error.retryable and error.code not in _OWNER_RETRYABLE_CODES
+        ):
+            raise ModelResolutionError("MODEL_RESPONSE_INVALID")
+        raise ModelResolutionError(error.code, retryable=error.retryable)

@@ -1,5 +1,87 @@
 # kokoro-agent API 契约
 
+## Run evidence 初始 cursor 实现候选（2026-09-30）
+
+原 `/v1/runs/{run_id}/events` 错误复用默认/下限 0 的 AfterSeq，exclusive index 过滤
+漏掉合法首帧 index=0。当前只该 Run operation 引用具名 EvidenceAfterSeq：query after_seq
+为 integer/int64，minimum=-1、maximum=9223372036854775807、default=-1，省略等同 -1；
+非整数、低于 -1 或高于 int64 上界返回 400。
+它表示最后已见 Run index，事件始终满足 index > after_seq；after_seq=0 仍排除 index=0
+而读取 index=1。EvidencePage.next_seq 范围为 -1..9223372036854775807，有事件返回本页最后 index，
+无事件回显输入 cursor（包括 -1），terminal 仍按本页真实终态事件计算。
+因此只有 index=0 的 run.failed 初始页必须返回该帧且 terminal=True，不伪造 START。
+
+Session/Chat operation 继续引用原 AfterSeq（integer/int64、minimum/default=0），
+Run event index 起点、Chat seq、水位和 wire safe failure profile 不变。本修复纳入尚未发布
+HTTP artifact 3.0.0，不增加 URL 版本或兼容分支；OpenAPI 为唯一机器源，failure header 的
+全文 source digest 和 provenance 已由唯一 generator 再生。纯测试已由既有 RED 转 GREEN；
+真实 owner fixture 仍待 Root 独立复验，BFF/Web 不消费在途。
+
+
+## AGENT-FAILURE-CONTRACT 候选契约（2026-09-30，尚未协调发布）
+
+基线 `58b59cf7` 原机器为 `2.0.0`；当前工作树已实现本节及生成/strict runtime 校验，
+HTTP artifact `3.0.0`（URL 保持 `/v1`）是 pre-launch coordinated breaking：新增 required retryable、
+闭集扩展、删除 RunFailure 的 raw error_kind/message；不接受旧形状或以缺字段默认值兼容。
+
+唯一可编辑事实源为现 `contract/openapi/v1/openapi.json` 的基础 Failure schema：code 闭集和合法
+code/retryable tuple 只定义一次；RunFailure 引用基础，ChatFailure 组合引用基础并加 status const failed。
+两 profile 严格拒绝额外字段；JSON bool 不接受字符串、数字或 null。组合 schema 须正确封闭最终对象，
+不能用错误的 additionalProperties/allOf 组合拒绝合法 status。只允许 model_unavailable、dependency_unavailable
+配 true；其余 code 必须 false。生成模型必须执行同一 tuple 约束，不以静态类型提示代替 runtime 校验。
+
+`RunFailure={code,retryable}` 是 Redis run.failed 的 payload；`ChatFailure={status:"failed",code,retryable}`
+是 HTTP replay 中 event_type=run.failed 的 decoded payload_json。外层 payload_json 仍为 string，
+OpenAPI 通过具名 x-kokoro 映射明确该 discriminator 对应 ChatFailure；不把其他文本/工具事件套上 failure contentSchema。
+脚本单向生成 protocol/run_failure_generated.py；不得在 protocol/events 或消费者另写可编辑枚举。
+
+### System client 与归码矩阵（候选已实现）
+
+先验证 strict error envelope 和正式 HTTP/code/retryable tuple，再分类；删除现
+`status >= 500 and error.retryable` 掩码，不把矛盾响应修成合法 false。下表 HTTP 约束仅适用于 owner 响应，
+本地 typed 错误没有 HTTP status；System 正常 200 route 验证及大小/deadline/取消/拒重定向边界不变。
+
+| 来源/code | 合法 HTTP / retryable | Agent code / retryable |
+| --- | --- | --- |
+| owner MODEL_UNAVAILABLE | 503 / strict true 或 false（现 owner 正常事实为 true） | model_unavailable / 原 bool |
+| owner SYSTEM_UNAVAILABLE | 503 / strict true 或 false | dependency_unavailable / 原 bool |
+| 本地 MODEL_RESOLUTION_UNAVAILABLE | 无 HTTP / client 明确产生 true | dependency_unavailable / true |
+| owner POLICY_DENIED、FORBIDDEN | 403 / false | model_access_denied / false |
+| owner ROUTE_NOT_FOUND | 404 / false | assembly_failed / false |
+| owner INVALID_ARGUMENT | 400 / false | assembly_failed / false |
+| owner service_auth_failed | 403 / false | assembly_failed / false |
+| 本地 MODEL_RESOLVER_NOT_CONFIGURED、MODEL_REQUEST_INVALID | 无 HTTP / false | assembly_failed / false |
+| 本地 MODEL_RESPONSE_INVALID、MODEL_RESPONSE_TOO_LARGE | 无 HTTP / false | contract_incompatible / false |
+| 未知 owner code → MODEL_RESOLUTION_FAILED | 严格 envelope，HTTP 为操作已声明的 400/403/404/503；不信任未知 code 的 retryable 语义 | internal_error / false |
+| 其他装配异常 | 无 owner tuple | assembly_failed / false |
+| 其他执行异常 | 无 owner tuple | internal_error / false |
+
+已知 owner code 的错 HTTP、不可重试 code 携 true、非 bool 或坏 envelope 均产生 MODEL_RESPONSE_INVALID，
+对外 contract_incompatible/false；3xx 不跟随，其他未声明 HTTP status 也归响应合同错误。未知 code 仍须先通过 envelope 严格类型校验。
+本次按 Agent provenance 核固定 System `f5702068d4416ad90b1bd02af57d2825c32be916` / `2.0.0`：
+当前 owner OpenAPI 原 bytes SHA-256 与 pin `f9ea76f107e1ea0fc19df20ee7c59032c0fbac66e640e9a16a1b770ab27c1f37`
+完全相同。该 resolve operation 声明 200/400/403/404/503，OwnerError 是 strict envelope，但 code 为非空 string，
+机器未枚举具体 code；上表是结合本仓既有 System 消费契约与 Root 获批分类的窄 adapter 规则，
+不冒称固定 OpenAPI 已编码全部 code/HTTP 对照。未修改 System pin 或复制 owner schema。
+旧 client allowlist 中的 service_auth_not_configured 在该固定机器 artifact 中没有发布依据，
+不猜其 status；未发布 code 按未知 owner 路径处理，本地 resolver 未配置使用既有本地 typed code。
+
+既有 token_budget_exceeded、recursion_limit_exceeded、enqueue_failed、dispatch_exhausted、
+contract_incompatible、internal_error、assembly_failed 保持 code，retryable 均为 false。
+assembly_failed 表示本轮装配失败，不断言一定是用户空间配置错误。Cancel 继续传播而非生成可重试失败。
+不按 exception message/类名归码，不将 owner message、secret、URL、stack 写入安全 failure wire。
+retryable 不触发自动重试、不恢复旧 Run、不变更计费或幂等，不承诺再次请求免费。
+
+### 生成、版本与消费者门
+
+`uv run python scripts/generate_failure_models.py --check` 核完整再生 bytes/header/source hash；
+`uv run kokoro-agent-contract-check` 核 schema/profile/tuple/decoded 映射、generated direct digest、HTTP direct digest
+与完整 owner inventory/aggregate。当前候选 checker 已通过 3.0.0，本仓纯门记录见 CURRENT；
+这不证明 BFF/Web 已 repin 或当前服务已切换。
+Proof schema/vector/独立 digest 不动。Agent 3.0.0 固定发布后 BFF 才严格 repin，保留 code/retryable 并按
+safe code 生成标准 AG-UI RUN_ERROR.message；Web 固定消费 BFF，不直接消费 Agent 私有 wire。
+旧 retained JSON 的一次性自有 fixture 切换与资源授权见 [DATA_MODEL](DATA_MODEL.md)，无 old fallback。
+
 ## W3 OAuth consumer 扩展规则（2026-09-30）
 
 IAM `POST /iam/oauth2/token` 成功响应遵循
@@ -235,8 +317,9 @@ System 成功仅 `{data}`，错误 `{error:{code,message,retryable}}`，每个�
 这描述新消费边界，不声称上文本仓旧 HTTP envelope 已同步改造。
 
 路由必须匹配请求 feature 和显式 label；只允许 litellm transport，拒绝未知/缺失字段、无效版本/摘要和超限响应。
-404 ROUTE_NOT_FOUND、403 POLICY_DENIED 不重试；503与传输超时标记暂时故障，客户端不自动重试；
-worker 既有单 Run 失败路径收口，不泄漏上游 message/secret。
+当前候选按本文 AGENT-FAILURE-CONTRACT 表验证 HTTP/code/retryable tuple，
+替换了旧 status 掩码与已知模型错误的统一 assembly_failed，
+只保留已验证的可用性 bool；取消与无自动重试保持，Run/Chat 只发布安全字段。
 
 ## Execution proof machine contract 与 JWKS 当前态（2026-09-12）
 

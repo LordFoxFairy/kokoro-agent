@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 import pytest
-from pydantic import JsonValue
+from pydantic import JsonValue, SecretStr, TypeAdapter
+
+from kokoro_agent.config import AppConfig
+import kokoro_agent.interfaces.http.server as http_server
 
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import ChatEventDraft, ChatProjection
@@ -324,3 +330,186 @@ async def test_evidence_hides_run_from_a_different_tenant_with_the_same_subject(
 
     assert error.value.status == 404
     assert error.value.code == "run_not_found"
+
+
+def _run_evidence_fixture() -> tuple[AgentIngress, FakeBus, FakeRunRepository]:
+    bus = FakeBus()
+    runs = FakeRunRepository()
+    runs.requests["run-1"] = RunRequest(
+        kind="run.request",
+        request_id="request-run-1",
+        run_id="run-1",
+        session_id="session-1",
+        feature_key="chat",
+        selected_skill_source_refs=(),
+        execution_identity=identity(),
+        input=RunInput(message_id="message-run-1", content="hello"),
+    )
+    ingress = AgentIngress(
+        bus=bus, run_repository=runs, chat_service=ChatService(FakeChatRepository())
+    )
+    return ingress, bus, runs
+
+
+def _publish_evidence_terminal(bus: FakeBus, index: int = 0) -> dict[str, JsonValue]:
+    event: dict[str, JsonValue] = {
+        "kind": "run.failed",
+        "run_id": "run-1",
+        "index": index,
+        "timestamp": 1,
+        "payload": {"code": "model_unavailable", "retryable": True},
+    }
+    bus.published.append(("kokoro:run:run-1:events", event, 100))
+    return event
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_evidence_initial_cursor_includes_index_zero_terminal(
+    explicit: bool,
+) -> None:
+    ingress, bus, _ = _run_evidence_fixture()
+    terminal = _publish_evidence_terminal(bus)
+    cursor = {"after_seq": -1} if explicit else {}
+    page = await ingress.evidence("run-1", execution_identity=identity(), **cursor)
+    assert page == {
+        "run_id": "run-1",
+        "events": [terminal],
+        "next_seq": 0,
+        "terminal": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_evidence_empty_initial_page_preserves_cursor_for_late_index_zero() -> (
+    None
+):
+    ingress, bus, _ = _run_evidence_fixture()
+    empty = await ingress.evidence("run-1", execution_identity=identity())
+    assert empty == {"run_id": "run-1", "events": [], "next_seq": -1, "terminal": False}
+    cursor = empty["next_seq"]
+    assert isinstance(cursor, int)
+    terminal = _publish_evidence_terminal(bus)
+    page = await ingress.evidence(
+        "run-1", execution_identity=identity(), after_seq=cursor
+    )
+    assert page["events"] == [terminal]
+    assert page["next_seq"] == 0
+    assert page["terminal"] is True
+
+
+async def _dispatch_evidence_query(
+    monkeypatch: pytest.MonkeyPatch,
+    bus: FakeBus,
+    runs: FakeRunRepository,
+    query: dict[str, list[str]],
+) -> tuple[int, dict[str, object]]:
+    @asynccontextmanager
+    async def run_resource(_settings: object) -> AsyncGenerator[FakeRunRepository]:
+        yield runs
+
+    @asynccontextmanager
+    async def chat_resource(_settings: object) -> AsyncGenerator[FakeChatRepository]:
+        yield FakeChatRepository()
+
+    def stream_resource(_settings: object) -> FakeBus:
+        return bus
+
+    monkeypatch.setattr(http_server, "make_stream", stream_resource)
+    monkeypatch.setattr(http_server, "make_run_repository", run_resource)
+    monkeypatch.setattr(http_server, "make_chat_repository", chat_resource)
+    return await http_server.dispatch_request(
+        AppConfig(internal_secret_agent=SecretStr("test-only-secret")),
+        "GET",
+        "/v1/runs/run-1/events",
+        query,
+        {
+            "authorization": "Bearer test-only-secret",
+            "x-kokoro-tenant-ref": "tenant",
+            "x-kokoro-subject-ref": "subject",
+            "x-kokoro-actor-ref": "actor",
+            "x-kokoro-identity-assertion-ref": "assertion",
+        },
+        None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [{}, {"after_seq": ["-1"]}])
+async def test_evidence_http_initial_cursor_includes_index_zero_terminal(
+    monkeypatch: pytest.MonkeyPatch, query: dict[str, list[str]]
+) -> None:
+    _, bus, runs = _run_evidence_fixture()
+    terminal = _publish_evidence_terminal(bus)
+    status, response = await _dispatch_evidence_query(monkeypatch, bus, runs, query)
+    assert status == 200
+    assert response["data"] == {
+        "run_id": "run-1",
+        "events": [terminal],
+        "next_seq": 0,
+        "terminal": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_evidence_http_after_zero_remains_exclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, bus, runs = _run_evidence_fixture()
+    started: dict[str, JsonValue] = {
+        "kind": "run.started",
+        "run_id": "run-1",
+        "index": 0,
+        "timestamp": 0,
+        "payload": {},
+    }
+    bus.published.append(("kokoro:run:run-1:events", started, 100))
+    second = _publish_evidence_terminal(bus, 1)
+    status, response = await _dispatch_evidence_query(
+        monkeypatch, bus, runs, {"after_seq": ["0"]}
+    )
+    assert status == 200
+    assert response["data"] == {
+        "run_id": "run-1",
+        "events": [second],
+        "next_seq": 1,
+        "terminal": True,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cursor", ["-2", "invalid", "0.5", str(2**63)])
+async def test_evidence_http_rejects_invalid_cursor(
+    monkeypatch: pytest.MonkeyPatch, cursor: str
+) -> None:
+    _, bus, runs = _run_evidence_fixture()
+    _publish_evidence_terminal(bus)
+    status, response = await _dispatch_evidence_query(
+        monkeypatch, bus, runs, {"after_seq": [cursor]}
+    )
+    assert status == 400
+    assert "error" in response
+    assert "data" not in response
+
+
+@pytest.mark.asyncio
+async def test_evidence_http_empty_initial_page_then_late_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, bus, runs = _run_evidence_fixture()
+    status, response = await _dispatch_evidence_query(monkeypatch, bus, runs, {})
+    assert status == 200
+    page = TypeAdapter(dict[str, object]).validate_python(response["data"])
+    assert page == {"run_id": "run-1", "events": [], "next_seq": -1, "terminal": False}
+    cursor = page["next_seq"]
+    terminal = _publish_evidence_terminal(bus)
+    status, response = await _dispatch_evidence_query(
+        monkeypatch, bus, runs, {"after_seq": [str(cursor)]}
+    )
+    assert status == 200
+    assert response["data"] == {
+        "run_id": "run-1",
+        "events": [terminal],
+        "next_seq": 0,
+        "terminal": True,
+    }

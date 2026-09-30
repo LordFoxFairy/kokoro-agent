@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import assistant_message_id
 from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.clients.system import ModelResolutionError
+from kokoro_agent.execution.events import run_failed_payload
 from kokoro_agent.protocol import (
     MessageCompletedPayload,
     MessageDeltaPayload,
-    RunFailedPayload,
     ThinkingDeltaPayload,
     ToolInvokedPayload,
     ToolOutputDeltaPayload,
@@ -133,16 +136,45 @@ def test_run_failure_exposes_stable_code_not_internal_error_text() -> None:
         run_id="run-1",
         source_index=1,
         created_at=wire_epoch_millis_to_utc(10),
-        payload=RunFailedPayload(
-            code="internal_error",
-            error_kind="SecretProviderError",
-            message="token sk-secret failed",
-        ),
+        payload=run_failed_payload(ValueError("token sk-secret failed")),
     )
 
     assert projection is not None
     assert json.loads(projection.event.payload_json) == {
         "status": "failed",
         "code": "internal_error",
+        "retryable": False,
     }
     assert "sk-secret" not in projection.event.payload_json
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_failure_contract_chat_keeps_verified_retryable_without_raw_diagnostics(
+    retryable: bool,
+) -> None:
+    error = ModelResolutionError("MODEL_UNAVAILABLE", retryable=retryable)
+    payload = run_failed_payload(error)
+    projection = project_chat_fact(
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session-1",
+        run_id="run-1",
+        source_index=1,
+        created_at=wire_epoch_millis_to_utc(10),
+        payload=payload,
+    )
+    assert projection is not None
+    assert projection.event.event_type == "run.failed"
+    assert json.loads(projection.event.payload_json) == {
+        "status": "failed",
+        "code": "model_unavailable",
+        "retryable": retryable,
+    }
+    assert payload.model_dump() == {"code": "model_unavailable", "retryable": retryable}
+
+
+def test_failure_contract_dynamic_exception_name_and_message_never_enter_wire() -> None:
+    error_type = type("SENTINEL_PRIVATE_EXCEPTION", (Exception,), {})
+    payload = run_failed_payload(error_type("SENTINEL_PASSWORD_TOKEN"))
+    assert payload.model_dump() == {"code": "internal_error", "retryable": False}
+    assert "SENTINEL" not in payload.model_dump_json()

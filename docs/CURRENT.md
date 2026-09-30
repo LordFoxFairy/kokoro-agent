@@ -1,5 +1,80 @@
 # kokoro-agent 当前实现
 
+## AGENT-FAILURE-3.0 与 Run 首事件：Root 验收通过、待固定提交（2026-09-30）
+
+验收基线为 main `58b59cf7cdc4132042d25460b4928d71a66ae7ec` 上的 29 文件冻结候选；
+Root 与独立只读审查员逐项核对 manifest
+`a517ac70a57777b534a3da7db7ac2e1158d406cc1e22970defac735c6d5f023e`，源码审查 P0/P1/P2 均为 0。
+Root 在主工作树重新执行完整离线门：`uv lock --offline --check`、`uv sync --frozen --offline`、
+`uv run --offline ruff format --check .`、`uv run --offline ruff check .`、`uv run --offline pyright`、
+`uv run --offline python scripts/generate_failure_models.py --check`、
+`uv run --offline kokoro-agent-contract-check`、`uv run --offline pytest -q`、`uv build --offline`，
+组合实际 exit 0。默认测试 1518 passed / 6 既有 skipped / 174 deselected / 364 warnings，58.74s；
+Ruff format 251 文件、Pyright 0、wheel/sdist 构建均通过。
+完整日志 `/tmp/kokoro-agent-evidence-cursor-root-final-gates.log`。
+
+Root 另以同一个 PostgreSQL role 复用 5432/6379，在唯一自有随机临时测试库与原子占有的空 Redis15 中
+运行完整 `python3 -m pytest -q -o addopts= tests/acceptance/test_http_ingress.py`：
+22 passed / 100 warnings / 7.31s，actual exit 0，无 skip/deselect。
+这是生产 HTTP handler、真实 PostgreSQL/Redis/outbox/replay 的 owner acceptance；System/model 使用声明的
+test doubles，不是外部模型、跨仓或浏览器 E2E。包括安全失败 retryable true/false、初始 index0 terminal、
+tenant 隔离与重复终态 fence；没有 fake START、重编号或弱化断言。
+fixture 临时数据库及 Redis15 精确回收，残留均 0、cleanup_errors 为空；未触活跃 Redis10 或共享 schema。
+日志 `/tmp/kokoro-agent-evidence-cursor-root-real-acceptance-all.log`，结果
+`/tmp/kokoro-agent-evidence-cursor-root-real-acceptance-all-result.json`。
+
+本片无 SQL、依赖/lock 或 proof schema/vector/direct digest 变化。下面的失败与候选记录为历史，
+其未通过状态已被本次 owner 验收后继；BFF/Web 严格消费及受管运行组协调发布仍未完成，不能据此宣称产品闭环。
+当前受管服务保持旧 2.0 组合，不热加载本候选；提交后按 Agent → BFF → Web 固定来源并验收。
+
+## 历史：AGENT-RUN-EVIDENCE-INITIAL-CURSOR 实现候选（2026-09-30）
+
+Root R2 真实 safe failure 两例实际 2 fail/20 deselected（1.91s），自有 DB/Redis15 清理均 0。
+outbox 两 audit row、Chat/Redis safe payload 与唯一可见帧断言已通过；HTTP evidence
+初始 after_seq=0 排除了真实 terminal index=0，返回 terminal=False。此为现 owner cursor 缺陷，
+不是 safe failure 模型失败或重复终态，亦未以 fake START/索引改号规避。
+
+当前候选实现 Run-only EvidenceAfterSeq integer/int64 minimum/default=-1、maximum=int64 上界、exclusive last-seen
+index；EvidencePage 空页回显 -1，Chat 共享 AfterSeq=0 不变。ingress/server、OpenAPI、
+provenance 与生成 header 已同步，failure 模型内容不变；真实两例 GREEN 仍待 Root 下一门。
+未访问服务/数据库/模型，不改当前受管组；下一发布仍按 Agent→BFF→Web 协调顺序。
+定点纯 RED：两个现测试文件 8 failed/28 passed（1.55s，exit1），均为目标 cursor 断言，
+无 collection error；无效 cursor 400 与 after_seq=0 exclusive 保留门已通过。
+实现后相同两文件先 36 passed；追加 int64 上界门复现 3 failed/34 passed（1.72s），
+实现 maximum 后最终 37 passed（1.43s，exit0）。
+离线完整门：Ruff format 251 文件/check、Pyright 0、generator --check、contract checker、
+uv lock --check、frozen sync、wheel/sdist 均 exit 0；默认 pytest 1518 passed/6 skipped/
+174 deselected（58.25s）。6 skip 与 174 deselect 沿既有默认配置，未新增 skip/xfail。
+本实现会话未启动服务或访问数据库/Redis；Root 仍须独立执行真实两例并审查提交。
+
+
+## 历史：AGENT-FAILURE-CONTRACT 实现候选（2026-09-30，未协调发布）
+
+基线 `main 58b59cf7`；四文档与 R4 RED 经 Root 放行后实现本仓候选。OpenAPI 3.1 的唯一基础
+Failure 定义 code/retryable/合法 tuple；RunFailure、ChatFailure 最终封闭，单向生成 protocol 内只读
+RunErrorCode/RunFailedPayload/ChatFailure。HTTP artifact 为 3.0.0，URL 仍 /v1，payload_json 仍 string
+且 run.failed 有精确 decoded 映射。不是全事件导出或第二 wire。
+
+System client 严格验证 HTTP/code/retryable，取消 status 掩码；共享执行归码保留 typed 失败与合法 bool，
+初次/恢复的 lease/CAS/取消不改。Run wire 删除原异常类名/原文，Chat 安全投影保留 retryable。
+未知 owner code 不猜 message，System unknown 仍不准入，不自动 retry、不承诺重试免费。
+
+实际证据：R4 RED 52 fail/121 pass；新增 runtime/codegen 门 RED 2 fail/13 deselected。
+四测试首 GREEN 175/175；首全量仍有 50 fail/1455 pass（旧字段断言、临时 contract copy inventory及检查器
+粒度/诊断次序），未据此放行。修复保持原门后，contract＋相关 unit 590 pass/5 deselected；
+最终默认 pytest 1505 pass/6 skip/174 deselected（57.67s），Pyright 0，Ruff format 251文件/check通过，
+生成 --check、3.0 contract checker、uv lock --offline --check、uv sync --frozen --offline、
+uv build --offline wheel/sdist 均 exit0。
+6 skip 为既有 1 parent-repo examples 缺失、5 workspace archive 因本地 MinIO 9100 不可达；未新增 skip/xfail。
+默认 suite 对 MinIO 有既有可达性探测，未启动该服务。174 项为默认排除的 integration/e2e/acceptance；
+其中新增两个 safe failure true/false acceptance 用例已由 Root 真实执行；当前失败与资源清理事实见顶部。它们覆盖生产归码/
+RunEmitter、真实 owner outbox/Chat/Redis 与正式 HTTP replay、重复 terminal fence，仅由 Root 在自有资源运行。
+
+本片无 SQL/锁/依赖/proof schema/vector/direct digest 变化。Root 已运行自有 PG/Redis acceptance，
+未通过原因见顶部；未运行真实 System/provider 或浏览器，未改当前受管组。源码/机器仍待 Root 固定提交，之后 BFF strict repin/发布、Web固定消费，
+再由 Root 对明确自有 fixture 一次 fresh 切换及真实持久/跨 owner 验收。旧 JSON 无兼容，未授权数据不动。
+下文为先前阶段记录，不代表这些后继门已过。
+
 ## W3 OAuth 响应扩展返修候选（2026-09-30）
 
 基线 `e728fe24d9528efe02a53282f1dfd8328a122f9a`。Root 正常 Source 组合在安装阶段确认 IAM 成功响应

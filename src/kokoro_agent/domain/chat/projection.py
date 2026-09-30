@@ -15,6 +15,7 @@ from kokoro_agent.domain.chat.models import (
 )
 from kokoro_agent.protocol import (
     ArtifactKind,
+    ChatFailure,
     DeliveryCreatedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
@@ -92,10 +93,7 @@ class _Delivery(_Payload):
 
 
 class _Terminal(_Payload):
-    status: Literal["completed", "cancelled", "failed"]
-    code: str | None = None
-    error_kind: str | None = None
-    message: str | None = None
+    status: Literal["completed", "cancelled"]
     token_usage: dict[str, JsonValue] | None = None
 
 
@@ -129,7 +127,7 @@ def project_chat_fact(
 
     event_type: str
     chat_message_id: str | None = None
-    safe_payload: _Payload
+    safe_payload: _Payload | ChatFailure
     message: ChatMessageDraft | None = None
     if isinstance(payload, RunStartedPayload):
         event_type = "run.started"
@@ -232,10 +230,9 @@ def project_chat_fact(
         )
     elif isinstance(payload, RunFailedPayload):
         event_type = "run.failed"
-        # Keep diagnostics out of the durable chat projection.  The stable
-        # code is enough for the Web error catalogue; detailed exception
-        # fields remain in Agent-owned execution logs.
-        safe_payload = _Terminal(status="failed", code=payload.code)
+        safe_payload = ChatFailure(
+            status="failed", code=payload.code, retryable=payload.retryable
+        )
     else:
         return None
     return ChatProjection(

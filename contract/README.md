@@ -42,18 +42,24 @@ assertion headers。浏览器不得直接调用此服务。每个 operation 的 
 
 ## Version
 
-当前 HTTP 机器 contract version 为 `2.0.0`，路径仍为 `/v1`。这次 pre-launch clean-slate
-必填 `selected_skill_source_refs` 是 intentional breaking；`info.version` 标识机器契约大版本，
-`/v1` 是现有内部 URL major，两者不是同一版本计数器。BFF 必须精确 repin `2.0.0` 并让普通
-Chat durable outbox 和 Scheduler launch 都显式发送 `[]` 或真实 typed refs，切换前旧 payload 会
-在 Agent admission 得到 400；不读取 `trace.pinned_skills` 作为兼容来源。Protobuf/RPC 不在本仓发布；
-Redis envelope 的 `kind` 集合由 `protocol/control.py` 和 `protocol/events.py` 的严格模型定义。
-正式对外发布后的 breaking 变更需评审 URL/消息 major、消费者与 ADR，不靠文档标题伪装兼容。
+当前候选 HTTP 机器 contract version 为 `3.0.0`，路径仍为 `/v1`；尚待 Root 协调发布。
+此次 pre-launch breaking 新增 required retryable、扩展 failure code 并删除原异常 error_kind/message。
+`info.version` 与内部 URL major 分别计数。2.0 已要求的 selected_skill_source_refs/[] 保持不变，
+不接受旧 trace fallback。Agent 固定 commit → BFF strict repin/正式 Product+AG-UI → Web 固定消费 →
+Root 仅对已授权自有 fixture 有序停止/清理/fresh 切换；禁止旧 failure JSON 双读或默认补字段。
+Protobuf/RPC 不在本仓发布；其他 Redis envelope 的 kind 与 payload 继续由现 Pydantic 定义。
+正式对外发布后的 breaking 仍需评审版本、消费者与数据切换，不能沿用本地 fixture 清理作为生产迁移。
 
 ## Generation
 
 OpenAPI 文件是本仓手工审查的 canonical source，不从 Root、BFF 或数据库生成。Pydantic 模型、HTTP
-handler 和 contract tests 必须与它同步；禁止手改任何未来生成的 client。
+handler 和 contract tests 必须与它同步。失败形状例外为已落地的单向生成：基础 Failure 唯一定义
+code/required retryable/合法 tuple，RunFailure 与 ChatFailure 在最终 profile 用 unevaluatedProperties=false
+封闭；ChatEvent.x-kokoro-decoded-payloads 只为 run.failed 标明 payload_json 的解码形状。
+`scripts/generate_failure_models.py` 调用 `chat_contract_check.py` 内唯一失败 profile 编译器，生成
+`src/kokoro_agent/protocol/run_failure_generated.py` 的 RunErrorCode/RunFailedPayload/ChatFailure；
+仅 stdlib/Pydantic，无 protocol 向内依赖。生成物带完整 OpenAPI source hash，不手改；
+`--check` 验证完整 bytes/header/direct provenance，失败不写文件。contract_check 只编排，继续保持既有粒度门。
 
 `createRun` 202 与 `replaySessionEvents` 200 分别以 `LaunchReceiptEnvelope`、
 `ReplayPageEnvelope` 约束既有 `LaunchReceipt`、`ReplayPage`，不以开放的
@@ -63,6 +69,7 @@ handler 和 contract tests 必须与它同步；禁止手改任何未来生成�
 检查命令：
 
 ```bash
+uv run python scripts/generate_failure_models.py --check
 uv run kokoro-agent-contract-check
 uv run pytest -q tests/contract/test_machine_contract.py
 uv run pytest -q tests/contract/test_chat_response_envelopes.py
@@ -79,14 +86,15 @@ tamper 差异，数学验签与 tampered rejection 属于后续 signer/verifier 
 ## Breaking policy
 
 变更顺序固定为：先修改本文件同目录的 OpenAPI source 或 protocol model，运行 JSON/OpenAPI 结构校验和
-contract tests，再更新 handler、client、示例和文档。字段删除、必填化、枚举收窄、错误 code 重命名、
+contract tests，再更新 handler、client、示例和文档。失败字段只编辑 OpenAPI 后再生，不另编辑生成模型。
+字段删除、必填化、消费者闭集枚举扩展或收窄、错误 code 重命名、
 路由语义改变均视为 breaking change。发布前针对上一个固定 release artifact 做 schema diff，并由
 BFF consumer contract test 验证。
 
 ## Provenance
 
 contract source 与实现属于同一个 Git commit；`contract/provenance.json` 的 `source_files` 必须精确等于
-checker 内置的完整有序 owner inventory，同时记录 HTTP `2.0.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
-digest。消费者固定 `repository + commit + version + schema path/hash + vectors path/hash`，不把会随无关
+checker 内置的完整有序 owner inventory，同时记录 HTTP `3.0.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
+digest；generated_artifacts 记录 failure 生成物 direct hash/source hash/generator。消费者固定 `repository + commit + version + schema path/hash + vectors path/hash`，不把会随无关
 OpenAPI/protocol 变化的 aggregate 当作 proof digest。重新计算 provenance 后，必须把 contract、测试和文档放在同一逻辑 commit 中。运行时
 事件的持久化顺序由 PostgreSQL ledger/receipt owner 保证，Redis 只是可重放传输，不是公开协议事实源。

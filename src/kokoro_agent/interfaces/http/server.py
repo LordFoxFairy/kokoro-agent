@@ -322,7 +322,7 @@ async def dispatch_request(
                     await ingress.evidence(
                         match.group(1),
                         execution_identity=execution_identity or _identity(headers),
-                        after_seq=int(query.get("after_seq", ["0"])[0]),
+                        after_seq=int(query.get("after_seq", ["-1"])[0]),
                         limit=int(query.get("limit", ["200"])[0]),
                     ),
                     request_id,

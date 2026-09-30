@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -33,6 +35,7 @@ from kokoro_agent.protocol import (
     inbound_adapter,
     run_control_stream,
 )
+from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem
@@ -507,8 +510,10 @@ async def test_builder_failure_emits_run_failed_once() -> None:
     await sup.dispatch(bus, request("rbf"))
     await _drain(sup)
     failed = find_event(bus.run_events("rbf"), RunFailed)
-    assert failed.payload.error_kind == "ValueError"
-    assert failed.payload.message == "bad model"
+    assert failed.payload.model_dump() == {
+        "code": "assembly_failed",
+        "retryable": False,
+    }
 
     # 构建失败已认领终态：cancel 不补发第二终态。
     await sup.dispatch(
@@ -777,7 +782,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
     # 好请求照常跑完；resume 的存储抛错收口为该 run 的 run.failed。
     assert bus.kinds("sv1")[-1] == "run.completed"
     failed = find_event(bus.run_events("rx"), RunFailed)
-    assert failed.payload.error_kind == "RuntimeError"
+    assert failed.payload.model_dump() == {"code": "internal_error", "retryable": False}
 
 
 def test_parse_inbound_malformed_returns_none() -> None:
@@ -1714,4 +1719,89 @@ async def test_heartbeat_republishes_stale_published_outbox() -> None:
         len(started) == 1
         and started[0].durable_seq == 1
         and started[0].event_id == "e1"
+    )
+
+
+@pytest.mark.parametrize("resuming", [False, True], ids=["initial", "resume"])
+@pytest.mark.parametrize(
+    ("owner_code", "retryable", "safe_code"),
+    [
+        ("MODEL_UNAVAILABLE", True, "model_unavailable"),
+        ("MODEL_UNAVAILABLE", False, "model_unavailable"),
+        ("SYSTEM_UNAVAILABLE", True, "dependency_unavailable"),
+        ("SYSTEM_UNAVAILABLE", False, "dependency_unavailable"),
+        ("MODEL_RESOLUTION_UNAVAILABLE", True, "dependency_unavailable"),
+        ("POLICY_DENIED", False, "model_access_denied"),
+        ("FORBIDDEN", False, "model_access_denied"),
+        ("ROUTE_NOT_FOUND", False, "assembly_failed"),
+        ("MODEL_RESOLVER_NOT_CONFIGURED", False, "assembly_failed"),
+        ("INVALID_ARGUMENT", False, "assembly_failed"),
+        ("service_auth_failed", False, "assembly_failed"),
+        ("MODEL_REQUEST_INVALID", False, "assembly_failed"),
+        ("MODEL_RESPONSE_TOO_LARGE", False, "contract_incompatible"),
+        ("MODEL_RESPONSE_INVALID", False, "contract_incompatible"),
+        ("MODEL_RESOLUTION_FAILED", False, "internal_error"),
+    ],
+)
+async def test_failure_contract_initial_and_resume_preserve_typed_failure(
+    resuming: bool, owner_code: str, retryable: bool, safe_code: str
+) -> None:
+    calls = 0
+
+    async def fail_build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+        nonlocal calls
+        calls += 1
+        raise ModelResolutionError(owner_code, retryable=retryable)
+
+    bus = FakeBus()
+    store = FakeRunRepository()
+    sup = RunSupervisor(
+        agent_builder=fail_build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="failure-contract",
+    )
+    run_id = "failure-contract-run"
+    if resuming:
+        lease = await store.try_claim(request(run_id), "failure-contract")
+        assert lease is not None
+        assert await store.pause(run_id, lease)
+        await sup.dispatch(
+            bus,
+            _inbound(
+                {
+                    "kind": "run.resume",
+                    "command_id": "resume-failure-contract",
+                    "run_id": run_id,
+                    "decisions": [{"type": "approve", "tool_id": _TID}],
+                }
+            ),
+        )
+    else:
+        await sup.dispatch(bus, request(run_id))
+    await _drain(sup)
+    failed = find_event(bus.run_events(run_id), RunFailed)
+    assert calls == 1
+    assert failed.payload.model_dump() == {"code": safe_code, "retryable": retryable}
+    await sup.dispatch(
+        bus,
+        _inbound(
+            {
+                "kind": "run.cancel",
+                "command_id": "cancel-failure-contract",
+                "run_id": run_id,
+            }
+        ),
+    )
+    assert (
+        len(
+            [
+                event
+                for event in bus.run_events(run_id)
+                if event.kind in {"run.failed", "run.completed"}
+            ]
+        )
+        == 1
     )

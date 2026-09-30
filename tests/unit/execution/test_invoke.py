@@ -601,16 +601,16 @@ async def test_exception_emits_run_failed() -> None:
     assert done is True
     assert bus.kinds("r1") == ["run.started", "run.failed"]
     failed = find_event(bus.run_events("r1"), RunFailed)
-    assert failed.payload.error_kind == "ValueError"
-    assert failed.payload.message == "boom"
+    assert failed.payload.model_dump() == {"code": "internal_error", "retryable": False}
+    assert "boom" not in failed.payload.model_dump_json()
     assert failed.payload.code == "internal_error"  # 未归类异常兜底码
 
 
-async def test_empty_exception_message_falls_back_to_kind() -> None:
+async def test_empty_exception_message_still_emits_only_safe_failure() -> None:
     bus = FakeBus()
     await _invoke(bus, FakeAgent(raise_on_stream=RuntimeError()))
     failed = find_event(bus.run_events("r1"), RunFailed)
-    assert failed.payload.message == "RuntimeError"
+    assert failed.payload.model_dump() == {"code": "internal_error", "retryable": False}
 
 
 async def test_claim_denied_suppresses_terminal() -> None:
@@ -802,7 +802,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(
     assert events[-1]["kind"] == "run.failed"
     payload = events[-1]["payload"]
     assert isinstance(payload, dict)
-    assert "Recursion" in str(payload.get("error_kind"))
+    assert payload == {"code": "recursion_limit_exceeded", "retryable": False}
     # 失败码闭集：熔断失败在 wire 上是稳定码（web 本地化键），不是异常类名。
     assert payload.get("code") == "recursion_limit_exceeded"
 

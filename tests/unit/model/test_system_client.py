@@ -218,3 +218,111 @@ async def test_rejects_oversized_response_and_redirect_without_following() -> No
 def test_rejects_unsafe_configuration(url: str) -> None:
     with pytest.raises(ValueError):
         SystemModelClient(url, SecretStr("secret"))
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "retryable", "expected_code", "expected_retryable"),
+    [
+        (503, "MODEL_UNAVAILABLE", True, "MODEL_UNAVAILABLE", True),
+        (503, "MODEL_UNAVAILABLE", False, "MODEL_UNAVAILABLE", False),
+        (503, "SYSTEM_UNAVAILABLE", True, "SYSTEM_UNAVAILABLE", True),
+        (503, "SYSTEM_UNAVAILABLE", False, "SYSTEM_UNAVAILABLE", False),
+        (403, "POLICY_DENIED", False, "POLICY_DENIED", False),
+        (403, "FORBIDDEN", False, "FORBIDDEN", False),
+        (404, "ROUTE_NOT_FOUND", False, "ROUTE_NOT_FOUND", False),
+        (400, "INVALID_ARGUMENT", False, "INVALID_ARGUMENT", False),
+        (403, "service_auth_failed", False, "service_auth_failed", False),
+        (403, "POLICY_DENIED", True, "MODEL_RESPONSE_INVALID", False),
+        (403, "FORBIDDEN", True, "MODEL_RESPONSE_INVALID", False),
+        (404, "ROUTE_NOT_FOUND", True, "MODEL_RESPONSE_INVALID", False),
+        (400, "INVALID_ARGUMENT", True, "MODEL_RESPONSE_INVALID", False),
+        (403, "service_auth_failed", True, "MODEL_RESPONSE_INVALID", False),
+        (400, "MODEL_UNAVAILABLE", True, "MODEL_RESPONSE_INVALID", False),
+        (500, "MODEL_UNAVAILABLE", True, "MODEL_RESPONSE_INVALID", False),
+        (503, "POLICY_DENIED", False, "MODEL_RESPONSE_INVALID", False),
+        (418, "SENTINEL_UNKNOWN_CODE", False, "MODEL_RESPONSE_INVALID", False),
+        (400, "SENTINEL_UNKNOWN_CODE", False, "MODEL_RESOLUTION_FAILED", False),
+        (400, "SENTINEL_UNKNOWN_CODE", True, "MODEL_RESOLUTION_FAILED", False),
+        (403, "SENTINEL_UNKNOWN_CODE", False, "MODEL_RESOLUTION_FAILED", False),
+        (403, "SENTINEL_UNKNOWN_CODE", True, "MODEL_RESOLUTION_FAILED", False),
+        (404, "SENTINEL_UNKNOWN_CODE", False, "MODEL_RESOLUTION_FAILED", False),
+        (404, "SENTINEL_UNKNOWN_CODE", True, "MODEL_RESOLUTION_FAILED", False),
+        (503, "SENTINEL_UNKNOWN_CODE", False, "MODEL_RESOLUTION_FAILED", False),
+        (503, "SENTINEL_UNKNOWN_CODE", True, "MODEL_RESOLUTION_FAILED", False),
+        (403, "service_auth_not_configured", False, "MODEL_RESOLUTION_FAILED", False),
+        (503, "MODEL_UNAVAILABLE", "true", "MODEL_RESPONSE_INVALID", False),
+        (503, "MODEL_UNAVAILABLE", 1, "MODEL_RESPONSE_INVALID", False),
+        (503, "MODEL_UNAVAILABLE", None, "MODEL_RESPONSE_INVALID", False),
+        (302, "MODEL_UNAVAILABLE", True, "MODEL_RESPONSE_INVALID", False),
+    ],
+)
+async def test_failure_contract_owner_tuple_is_validated_without_status_mask(
+    status: int,
+    code: str,
+    retryable: object,
+    expected_code: str,
+    expected_retryable: bool,
+) -> None:
+    calls = 0
+
+    def handle(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            status,
+            json={
+                "error": {
+                    "code": code,
+                    "message": "SENTINEL_KEY_PASSWORD",
+                    "retryable": retryable,
+                }
+            },
+        )
+
+    async with client(httpx.MockTransport(handle)) as resolver:
+        with pytest.raises(ModelResolutionError) as caught:
+            await resolver.resolve(
+                tenant_id="tenant", feature_key="chat", label=None, request_id=None
+            )
+    assert caught.value.code == expected_code
+    assert caught.value.retryable is expected_retryable
+    assert "SENTINEL" not in str(caught.value)
+    assert "SENTINEL" not in repr(caught.value)
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"code": "MODEL_UNAVAILABLE", "message": "SENTINEL_KEY_PASSWORD"}},
+        {
+            "error": {
+                "code": "MODEL_UNAVAILABLE",
+                "message": "SENTINEL_KEY_PASSWORD",
+                "retryable": True,
+                "secret": "SENTINEL_KEY_PASSWORD",
+            }
+        },
+        {"error": {"code": 503, "message": "SENTINEL_KEY_PASSWORD", "retryable": True}},
+        {
+            "error": {
+                "code": "MODEL_UNAVAILABLE",
+                "message": {"key": "SENTINEL_KEY_PASSWORD"},
+                "retryable": True,
+            }
+        },
+    ],
+)
+async def test_failure_contract_invalid_error_envelope_is_secret_free(
+    body: object,
+) -> None:
+    async with client(
+        httpx.MockTransport(lambda _: httpx.Response(503, json=body))
+    ) as resolver:
+        with pytest.raises(ModelResolutionError) as caught:
+            await resolver.resolve(
+                tenant_id="tenant", feature_key="chat", label=None, request_id=None
+            )
+    assert caught.value.code == "MODEL_RESPONSE_INVALID"
+    assert caught.value.retryable is False
+    assert "SENTINEL" not in repr(caught.value)

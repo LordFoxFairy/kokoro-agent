@@ -1,5 +1,56 @@
 # kokoro-agent 技术设计
 
+## AGENT-RUN-EVIDENCE-INITIAL-CURSOR 实现候选（2026-09-30）
+
+Run wire index 从 0 开始；原 ingress/server 默认 after_seq=0 且 exclusive 过滤，
+导致没有 run.started 的首个 index=0 终态在初始 evidence 查询中消失。Root R2 真实两例
+已通过 outbox/Chat/Redis 安全属性断言，但 HTTP terminal=False；这不是重复 terminal。
+
+采用现 Run evidence 独立具名 EvidenceAfterSeq（integer/int64，minimum/default=-1，
+maximum=9223372036854775807），
+省略或 -1 表示尚未看见事件，后续仍使用最后已见 index 的 exclusive cursor。
+空页 next_seq 原样回显输入；-1 空页之后用同 cursor 可读取迟到的 index=0。
+淘汰修改共享 AfterSeq、重编号 Run index 或伪造 START；Chat seq 从 1、AfterSeq=0 不变。
+实现只扩既有 interfaces/http/ingress.py、server.py 与 OpenAPI 参数/EvidencePage；不新建模块。
+未发布 HTTP artifact 3.0.0 的机器源、provenance 与 failure generated source digest 已同步；
+failure 模型内容、proof/SQL/lease/取消语义不变。既有定点 RED 已转为纯测试 GREEN；Root 自有
+PG/Redis 两例 terminal=True 仍是验收门，消费者只在固定 owner commit 后 repin。
+
+
+## AGENT-FAILURE-CONTRACT 实现候选（2026-09-30，待协调发布）
+
+基线 `main 58b59cf7`；文档门和 RED 已经 Root 放行，工作树现实现 HTTP artifact `3.0.0`。
+System client 验证 HTTP/code/retryable 而不作 status 掩码；现有初次/恢复入口共用 execution/events.py
+归码，typed 模型错误优先于普通装配默认。Run payload 仅 code/retryable，Chat 投影持久保存
+status/code/retryable；没有 raw异常类名/原文。当前受管组未加载候选，BFF/Web 尚未切换。
+
+| 放置项 | 已批准并实现的本仓边界 |
+| --- | --- |
+| Owner | Agent 唯一拥有执行失败事实；System 拥有模型路由/可用性；BFF 拥有 Product/AG-UI 安全投影，Web 固定消费 BFF。 |
+| 唯一机器源 | 既有 `contract/openapi/v1/openapi.json` 手审 schema-first：基础 Failure 唯一定义 code、retryable 和合法 tuple；RunFailure 引用基础，ChatFailure 组合基础及 status=failed。不导出所有内部事件。 |
+| 新文件/两案 | 新 `scripts/generate_failure_models.py` 为薄 CLI，委托既有 chat_contract_check.py 的唯一 profile 编译/生成校验；新 `src/kokoro_agent/protocol/run_failure_generated.py` 是只读纯 wire，带生成 header/source digest。采用既有 protocol 目录，淘汰 generated/agent_run_failure.py 所需向内依赖例外及单失败 sidecar 新目录。 |
+| 依赖 | 生成物仅依赖 stdlib/Pydantic；protocol 零向内依赖门原样保留。events.py 使用生成模型，protocol/__init__.py 窄导出；其余事件仍由现 Pydantic 定义。业务归码在 execution/events.py，不进入生成物。 |
+| 调用 | clients/system.py 先严格验证 owner HTTP/code/retryable tuple，删除 status 掩码；初次 supervisor_execution 与恢复 supervisor_control 共用唯一 typed 归码。domain/chat/projection.py 持久序列化生成 ChatFailure，不丢 retryable。 |
+| 删除 | 旧手写 failure enum/model、原异常类名/原文 wire、已知模型错误被 catch-all 覆盖、失败 _Terminal 的失效诊断字段；不删除 AG-UI 标准 RUN_ERROR.message。 |
+| 状态/数据 | 单终态 CAS、lease generation、取消传播、outbox 顺序/幂等与清理不变；无 DDL、无新进程/目录/owner/依赖。旧 JSON 与切换边界见 DATA_MODEL。 |
+| 验证 | schema/runtime 合法 tuple、生成完整 bytes/header/hash、初次/恢复/取消/lease、secret sentinel、真实自有 PG/Redis 持久重放；不以文案或纯 fixture 代替真实跨 owner 结果。 |
+
+分类及严格 HTTP tuple 只按 [API_CONTRACT](API_CONTRACT.md) 本片表实现。模型 unknown 继续不准入，
+不自动 retry、不切 fallback provider；retryable 仅是经验证的失败属性，不保证再次请求成功或免费。
+RunFailure 只含 code/retryable；ChatFailure 只含 status/code/retryable。BFF 后继按固定 code 生成脱敏
+AG-UI 标准 message，Web 按 code 本地化，不解析 message，不接收 Agent 私有异常诊断。
+
+本片生产触点：clients/system.py、protocol/events.py、protocol/__init__.py、execution/events.py、
+domain/chat/projection.py（均在 src/kokoro_agent）。worker/supervisor_execution.py 与 supervisor_control.py
+保持现调用、取消/lease/CAS；安全归码在共享 payload 构造中完成，无需复制两份分类。
+机器/检查涉及 contract/openapi/v1/openapi.json、contract/provenance.json、contract/README.md、contract_check.py、
+chat_contract_check.py 与 execution_proof_contract.py 的 owner inventory；proof schema/vector/direct digest 不变。
+生成 --check 比较全部再生 bytes，checker 验证唯一 decoded 映射、strict models、generated direct digest 与 aggregate。
+
+发布为 HTTP artifact `3.0.0`，URL 仍 `/v1`：Agent 固定机器/实现 commit → BFF 严格 repin 并发布
+Product/AG-UI → Web 固定消费 → Root 自有 fixture fresh/组合验收。无兼容双读；当前本仓实现候选纯门已过，
+固定提交/独立复验、真实持久门和跨 owner 消费者切换仍待 Root。
+
 ## W3 OAuth 成功响应扩展边界（2026-09-30）
 
 既有 `clients/platform_tokens.py` 是 IAM OAuth consumer 的唯一解析/缓存边界；本片不新增模块或契约。
@@ -331,22 +382,23 @@ MCP 或 namespace 配方。native state、checkpoint 和 loop 归上游框架所
 
 worker 启动依次 republish pending dispatch、outbox、未应用 control 和 cleanup intent；心跳续租失败时旧
 任务停止副作用。SIGTERM 停止新消费，drain 超时后交给 lease TTL 恢复。异常单 run 收口为 `run.failed`，
-不杀死长驻调度循环。
+不杀死长驻调度循环。候选按本文 AGENT-FAILURE-CONTRACT 统一 typed 归码并保留安全 retryable；
+普通装配异常仍为 assembly_failed，取消/lease/CAS 不改。
 
 ## 6. System 模型路由接线（2026-09-08，已接线、live smoke待验）
 
-本节是 ADR-031 的窄消费者切片，不把上文当前四层目录当作新增代码模板。Root 为本仓唯一 writer；
-基线 `70a38138f42f29e8a482fde7890fe0e2d0c27e34`，工作树干净。跨仓任务表是 System 的 IMPLEMENTATION_PLAN G6-Agent。
+本节记录 ADR-031 已落地的窄消费者边界；原实施基线为 `70a38138f42f29e8a482fde7890fe0e2d0c27e34`。
+当前已有 System client 与 Factory 接线；新增失败语义按本文顶部设计，不沿用旧阶段的 Run wire 不变假设。
 
 | 放置项   | 决定                                                                                                                   |
 | -------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Owner    | System 拥有 label/policy/availability→route；Agent 拥有执行、模型实例及进程凭据                                        |
-| 当前事实 | `agent_factory.py` 创建 DeepAgents 时调用 `select_model_label`；没有 System client，默认硬编码 anthropic/claude        |
+| 当前事实 | `agent_factory.py` 已经经 ModelResolver 调用 System；候选精确失败语义已贯穿本仓 Run/Chat，跨 owner 消费待验        |
 | 目标职责 | 创建实际模型前以 trusted tenant、feature、可选 label 调用 System；失败关闭，不绕过回本地名称                           |
 | 目录比较 | 采用已有 `clients/system.py`，与现有 owner clients 邻接；拒绝新 `infrastructure/system` 或第二 runtime 层              |
 | 粒度     | 一个单一 HTTP 边界模块含窄 Protocol/内部路由结果；`model/factory.py` 负责路由到模型实例映射                            |
 | 依赖     | worker 入口创建进程级 HTTPX client 并关闭，Factory 依赖窄 ModelResolver；不跨仓 import/SQL，不导出 HTTPX Response      |
-| 数据/API | 本仓 schema/Run wire 不变；System 契约 pin 见 API_CONTRACT；解析不处于数据库事务内                                     |
+| 数据/API | System 路由接线不改 schema；新失败 Run wire 目标见本文顶部，System pin 见 API_CONTRACT；解析不处于事务内                                     |
 | 删除     | 删除 `select_model_label` 与硬编码模型 fallback；显式 Agent model 若与路由冲突则拒绝，不静默覆盖                       |
 | 验证     | HTTP client、真实Factory调用、缺配置/404/403/503/坏响应/超时/取消/限额；Ruff/Pyright/pytest/contract/build和live smoke |
 

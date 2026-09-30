@@ -34,6 +34,10 @@ OWNER_INVENTORY = [
     "src/kokoro_agent/protocol/control.py",
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py",
+    "scripts/generate_failure_models.py",
+    "src/kokoro_agent/contract_check.py",
+    "src/kokoro_agent/chat_contract_check.py",
+    "src/kokoro_agent/protocol/run_failure_generated.py",
 ]
 HEADER_FIELDS = {"typ", "alg", "kid"}
 CLAIMS_OBJECT_PATH = ("properties", "claims")
@@ -70,10 +74,10 @@ def _combined_digest(root: Path, sources: list[str]) -> str:
 def _copy_contract_repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repository"
     shutil.copytree(ROOT / "contract", repository / "contract")
-    protocol = repository / "src" / "kokoro_agent" / "protocol"
-    protocol.mkdir(parents=True)
-    for filename in ("control.py", "events.py", "streams.py"):
-        shutil.copy2(ROOT / "src" / "kokoro_agent" / "protocol" / filename, protocol)
+    for relative in OWNER_INVENTORY:
+        target = repository / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, target)
     return repository
 
 

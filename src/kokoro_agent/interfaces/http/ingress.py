@@ -50,6 +50,8 @@ from kokoro_agent.domain.run.repository import (
 )
 from kokoro_agent.streams.protocol import StreamProtocol
 
+_INT64_MAX = (1 << 63) - 1
+
 
 class IngressError(RuntimeError):
     """An expected business ingress error with stable HTTP semantics."""
@@ -299,12 +301,14 @@ class AgentIngress:
         run_id: str,
         *,
         execution_identity: ExecutionIdentity,
-        after_seq: int = 0,
+        after_seq: int = -1,
         limit: int = 200,
     ) -> dict[str, object]:
-        if after_seq < 0 or limit < 1 or limit > 1000:
+        if after_seq < -1 or after_seq > _INT64_MAX or limit < 1 or limit > 1000:
             raise IngressError(
-                400, "invalid_page", "after_seq must be >= 0 and limit must be 1..1000"
+                400,
+                "invalid_page",
+                "after_seq must be -1..9223372036854775807 and limit must be 1..1000",
             )
         if (
             await self._run_repository.get_request_scoped(

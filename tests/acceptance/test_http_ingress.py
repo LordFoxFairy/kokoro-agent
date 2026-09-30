@@ -25,6 +25,7 @@ from support.fakes import (
 from support.deepagents import create_test_deep_agent
 from support.local_fake import LocalFakeChatModel
 
+from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
@@ -54,6 +55,7 @@ from kokoro_agent.execution.events import (
     RunEmitter,
     message_completed_payload,
     message_delta_payload,
+    run_failed_payload,
 )
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.interfaces.http.execution_proof_jwks import ExecutionProofJwksState
@@ -69,6 +71,7 @@ from kokoro_agent.infrastructure.schema import (
     CHAT_EVENTS_TABLE,
     CHAT_MESSAGES_TABLE,
     CHAT_SEQUENCES_TABLE,
+    RUN_OUTBOX_TABLE,
     RUN_RECEIPT_MANIFESTS_TABLE,
     RUN_RECEIPTS_TABLE,
     apply_agent_schema,
@@ -1545,3 +1548,135 @@ async def test_stale_lease_cannot_publish_or_persist_empty_completion(
     finally:
         await stream.delete(stream_name)
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retryable", [True, False])
+async def test_safe_model_failure_is_durable_and_replayed_over_http(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+    retryable: bool,
+) -> None:
+    run_id = f"safe-failure-{uuid.uuid4().hex}"
+    current_request = _request(run_id)
+    namespace = runtime_namespace(current_request.execution_identity)
+    stream_name = run_events_stream(run_id)
+    stream = RedisStream(acceptance_state.redis_url)
+    settings = PostgresChatRepositorySettings(
+        database_url=acceptance_state.config.database_url,
+        schema_name=acceptance_state.config.database_schema,
+    )
+    expected_run = {"code": "model_unavailable", "retryable": retryable}
+    expected_chat = {"status": "failed", **expected_run}
+    error = ModelResolutionError("MODEL_UNAVAILABLE", retryable=retryable)
+    error.args = ("SENTINEL_PROVIDER_TOKEN_PASSWORD",)
+    try:
+        async with (
+            make_run_repository(acceptance_state.config.run_repository) as runs,
+            make_chat_repository(settings) as chat,
+        ):
+            await runs.enqueue_dispatch(
+                current_request, namespace, f"acceptance:{run_id}"
+            )
+            lease = await runs.claim_dispatch(current_request, "safe-failure-worker")
+            assert lease is not None
+            emitter = await RunEmitter.attach(
+                stream,
+                run_id,
+                outbox=runs,
+                lease=lease,
+                tenant_id="tenant",
+                namespace=namespace,
+                session_id="session-1",
+                chat_repository=chat,
+            )
+            assert await runs.try_mark_terminal(run_id, lease) is True
+            payload = run_failed_payload(error, code="assembly_failed")
+            assert payload.model_dump() == expected_run
+            await emitter.emit(payload)
+            assert await runs.try_mark_terminal(run_id, lease) is False
+            await emitter.emit(
+                payload
+            )  # Existing terminal fence suppresses a duplicate.
+
+        # Read durable owner outbox bytes independently of the emitter instance.
+        async with connect_pg(acceptance_state.config.database_url) as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT durable_seq, status, index_value, kind, payload_json "
+                        "FROM {} WHERE run_id = %s ORDER BY durable_seq"
+                    ).format(
+                        sql.Identifier(
+                            acceptance_state.config.database_schema, RUN_OUTBOX_TABLE
+                        )
+                    ),
+                    (run_id,),
+                )
+                rows = await cursor.fetchall()
+        assert [
+            (row["durable_seq"], row["status"], row["index_value"]) for row in rows
+        ] == [(1, "published", 0), (2, "superseded", None)]
+        outbox_payloads: list[str] = []
+        for row in rows:
+            assert row["kind"] == "run.failed"
+            outbox_payload = row["payload_json"]
+            assert isinstance(outbox_payload, str)
+            assert json.loads(outbox_payload) == expected_run
+            outbox_payloads.append(outbox_payload)
+
+        async with make_chat_repository(settings) as reopened:
+            persisted = await reopened.replay("tenant", namespace, "session-1")
+        assert len(persisted) == 1
+        assert persisted[0].event_type == "run.failed"
+        assert json.loads(persisted[0].payload_json) == expected_chat
+
+        wire = await stream.read_all(stream_name)
+        assert len(wire) == 1
+        assert wire[0].event["kind"] == "run.failed"
+        assert wire[0].event["payload"] == expected_run
+        assert (
+            persisted[0].source_index
+            == wire[0].event["index"]
+            == rows[0]["index_value"]
+        )
+
+        evidence = await http_client.get(
+            f"/v1/runs/{run_id}/events?after_seq=-1&limit=10", headers=_headers()
+        )
+        assert evidence.status_code == 200
+        evidence_data = _nested(_json_object(evidence.json()), "data")
+        assert evidence_data["terminal"] is True
+        events = evidence_data["events"]
+        assert isinstance(events, list) and len(events) == 1
+        assert _json_object(events[0])["payload"] == expected_run
+
+        response = await http_client.get(
+            "/v1/sessions/session-1/events", headers=_headers()
+        )
+        assert response.status_code == 200
+        page = _nested(_json_object(response.json()), "data")
+        records = page["events"]
+        assert isinstance(records, list) and len(records) == 1
+        record = _json_object(records[0])
+        assert record["event_type"] == "run.failed"
+        assert record["run_id"] == run_id
+        assert record["seq"] == persisted[0].seq
+        assert record["source_index"] == wire[0].event["index"]
+        raw = record["payload_json"]
+        assert isinstance(raw, str)
+        assert json.loads(raw) == expected_chat
+        for representation in (
+            *outbox_payloads,
+            persisted[0].payload_json,
+            evidence.text,
+            response.text,
+        ):
+            assert "SENTINEL" not in representation
+            assert "ModelResolutionError" not in representation
+            assert "error_kind" not in representation
+    finally:
+        try:
+            await stream.delete(stream_name)
+        finally:
+            await stream.aclose()

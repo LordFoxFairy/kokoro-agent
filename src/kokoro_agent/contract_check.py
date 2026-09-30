@@ -7,7 +7,12 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
-from kokoro_agent.chat_contract_check import validate_chat_response_contract
+from kokoro_agent.chat_contract_check import (
+    failure_model_bytes,
+    generate_failure_models,
+    read_contract_document,
+    validate_chat_response_contract,
+)
 from kokoro_agent.execution_proof_contract import validate_execution_proof_contract
 from kokoro_agent.platform_binding_contract import validate_platform_binding_artifact
 
@@ -46,22 +51,13 @@ def _object(value: object, *, source: str) -> dict[str, object]:
         ) from error
 
 
-def _read_openapi(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        raise ValueError(f"contract source is missing: {path}")
-    try:
-        return _OBJECT.validate_json(path.read_bytes())
-    except ValidationError as error:
-        raise ValueError(f"{path} must contain a JSON object") from error
-
-
 def validate_openapi_document(document: dict[str, object]) -> None:
     openapi = document.get("openapi")
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "2.0.0":
-        raise ValueError("Agent HTTP contract version must be 2.0.0")
+    if info.get("version") != "3.0.0":
+        raise ValueError("Agent HTTP contract version must be 3.0.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -83,6 +79,7 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     _validate_jwks(paths)
     _validate_jwk_set_component(document)
     validate_chat_response_contract(document, paths)
+    failure_model_bytes(document)
 
 
 def _validate_jwks(paths: dict[str, object]) -> None:
@@ -173,7 +170,7 @@ def _validate_representation_headers(
 
 def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
     record = _object(provenance.get("http_contract"), source="HTTP provenance")
-    if record.get("version") != "2.0.0" or record.get("path") != OPENAPI_RELATIVE:
+    if record.get("version") != "3.0.0" or record.get("path") != OPENAPI_RELATIVE:
         raise ValueError("HTTP direct provenance identity is invalid")
     expected = hashlib.sha256((root / OPENAPI_RELATIVE).read_bytes()).hexdigest()
     if record.get("sha256") != expected:
@@ -183,8 +180,11 @@ def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
 def validate(root: Path = ROOT) -> None:
     """Validate all Agent-owned machine facts rooted at ``root``."""
 
-    validate_openapi_document(_read_openapi(root / OPENAPI_RELATIVE))
-    validate_http_provenance(root, _read_openapi(root / "contract/provenance.json"))
+    validate_openapi_document(read_contract_document(root / OPENAPI_RELATIVE))
+    validate_http_provenance(
+        root, read_contract_document(root / "contract/provenance.json")
+    )
+    generate_failure_models(root, check=True)
     validate_execution_proof_contract(root)
     validate_platform_binding_artifact(root)
 

@@ -7,10 +7,22 @@
     "contract/execution-proof/v1/vectors.json",
     "src/kokoro_agent/protocol/control.py",
     "src/kokoro_agent/protocol/events.py",
-    "src/kokoro_agent/protocol/streams.py"
+    "src/kokoro_agent/protocol/streams.py",
+    "scripts/generate_failure_models.py",
+    "src/kokoro_agent/contract_check.py",
+    "src/kokoro_agent/chat_contract_check.py",
+    "src/kokoro_agent/protocol/run_failure_generated.py"
   ],
-  "combined_sha256": "822f314486b89a84aa67eb43ae9bb2a00a3772f21482f947268584cc1f23c23f",
-  "generated_artifacts": [],
+  "combined_sha256": "d5260b1a013be17d9b3297e942d91fe3d197972e6656ae876d5bba6bb5452a16",
+  "generated_artifacts": [
+    {
+      "path": "src/kokoro_agent/protocol/run_failure_generated.py",
+      "sha256": "f62279cb38d59a0b70cd104ec2f9c55c8aa49922c7f1b2f3ad85025e98131057",
+      "source": "contract/openapi/v1/openapi.json",
+      "source_sha256": "e9f0a543f74dee34212f0ea4fe366d46218268462ac54dce08e41965f34d2d2c",
+      "generator": "scripts/generate_failure_models.py"
+    }
+  ],
   "source_revision": "same Git commit as the listed files",
   "consumer_dependencies": [
     {
@@ -19,7 +31,9 @@
       "version": "2.0.0",
       "source_commit": "f5702068d4416ad90b1bd02af57d2825c32be916",
       "sha256": "f9ea76f107e1ea0fc19df20ee7c59032c0fbac66e640e9a16a1b770ab27c1f37",
-      "operations": ["POST /v1/system/model-catalog/resolve"]
+      "operations": [
+        "POST /v1/system/model-catalog/resolve"
+      ]
     }
   ],
   "execution_proof": {
@@ -34,8 +48,8 @@
     }
   },
   "http_contract": {
-    "version": "2.0.0",
+    "version": "3.0.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "20398c59f42031c1b6ae2e2c3708e63ec8b5645baf741bf831bc67e14625ef99"
+    "sha256": "e9f0a543f74dee34212f0ea4fe366d46218268462ac54dce08e41965f34d2d2c"
   }
 }

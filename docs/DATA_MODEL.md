@@ -1,5 +1,43 @@
 # kokoro-agent 数据模型
 
+## Run evidence cursor 数据不变量（2026-09-30，实现候选）
+
+Run 对外 index 从 0 起，durable_seq 与 wire index 不混用：重复终态可保留 superseded、
+index_value=NULL 的 outbox 审计行，而 published index=0 仍只有一个可见帧。
+Chat source_index 指向同一 Run index，Chat 自有 seq 从 1 起；不改任一持久编号或单终态 fence。
+
+初始 evidence cursor=-1 是只读“尚未见事件”哨兵，不写入事件 index、不新增数据列。
+exclusive 查询空页 next_seq 回显输入，故初始空页仍为 -1，随后迟到 index=0 可被同 cursor
+读取；after_seq=0 继续只读更大 index。Session/Chat AfterSeq 仍为 0。
+本片无 DDL、数据迁移、Redis key/proof/事务/retention 变更；不通过补造 START 或改 index
+避开真实首帧。数据库不动；机器只同步查询参数与响应下限，真实持久验收由 Root 使用自有资源重跑。
+
+
+## AGENT-FAILURE-CONTRACT 数据边界（2026-09-30，候选映射已实现、真实切换未验）
+
+基线 `58b59cf7`；canonical `database/schema.sql` 原样，未迁移或清理任何数据。
+候选实现 safe RunFailure={code,retryable} 经过现 Run outbox/receipt/Redis 路径；Chat 投影持久保存
+ChatFailure={status:failed,code,retryable}，HTTP replay 原样承接该安全事实，不在查询时猜测 retryable。
+机器字段与合法 tuple 唯一来源见 [API_CONTRACT](API_CONTRACT.md)；数据文档不另建 schema。
+
+| 数据/状态边界 | 目标不变量 |
+| --- | --- |
+| Run critical outbox | 同一 lease/terminal CAS、durable_seq/event_id 与重放幂等不变；失败 code/retryable 在写入前严格验证。 |
+| Chat event | 现 payload_json 保存完整安全失败属性；不存原异常 error_kind/message、provider body/secret/URL；不改变 seq、水位或身份范围。 |
+| Run 生命周期 | retryable 是失败事实，不是 queued/retry 状态，不自动创建新 Run/重跑；取消、lease takeover、usage/计费边界不变。 |
+| Schema/owner | 不增删表、列、索引、事务、Redis key 类型；不访问 BFF/System 数据库，不复制路由或健康事实。 |
+| 旧 retained JSON | 旧 Run payload 含被删除字段，旧 Run/Chat payload 缺 retryable；新 strict 模型拒绝旧形状，不默认补 false、不猜旧 assembly_failed 原因、不双读。 |
+
+无 DDL 变化不等于无持久数据切换风险。Agent Redis/outbox/Chat 及 BFF durable 投影均须在 coordinated
+cutover 中考虑；本阶段不声明任何历史迁移完成。仅 Root 明确确认归属的当前自有 fixture，可在消费者
+全部固定新版后有序停止、清理、一次 fresh 重建；未经授权不改用户或共享数据。存在其他保留事实时，
+由对应 owner 先审计并另行裁决切换，不能把隔离新数据验证冒充历史数据转换。
+
+真实验收复用已有 PG/Redis：现 acceptance 创建随机 Agent schema，但 launch 使用固定 REQUESTS_STREAM，
+必须由 Root 分配已确认空的测试 logical DB，不与活跃 Agent DB10 并发；仅清自有 schema/keys，不 flush。
+在正常 PG/Redis 上验证 terminal outbox→安全 Chat→HTTP replay 持久一致后，仍须 BFF/Web owner 切换与
+Root 跨 owner 验收；不存在以本仓 fake provider 结果替代真实 System failure 的放行。
+
 ## W3 typed Skill reader 数据当前态（2026-09-29）
 
 本片不修改`database/schema.sql`、Run/dispatch request_json、事务、索引或Redis键；Agent仍仅拥有既有冻结refs与执行事实。
@@ -146,7 +184,8 @@ checkpoint API，但不得把 Unix 秒写入数据库。金额如未来进入 Ag
 
 2026-09-08 G6-Agent 不改变 canonical schema、Run输入或持久化写边界。模型目录、版本、provider、租户路由表
 只属于System；Agent不复制、不JOIN。每次模型构造的解析revision/digest/generation记结构化日志；这不是持久化模型快照。
-当前 schema/contract 验证命令保持不变；目标失败路径与依赖 pin 见 TECHNICAL_DESIGN §6、API_CONTRACT。
+canonical schema 保持不变；目标 failure JSON 与 3.0.0 切换见本文顶部及 API_CONTRACT，
+不能沿用旧阶段的 Run wire 不变结论；System 依赖 pin 仍见 API_CONTRACT。
 
 ## Execution proof 数据边界（2026-09-12，statement-time reader 已落地、无 schema 变更）
 

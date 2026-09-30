@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "2.0.0"
+    "version": "3.0.0"
   },
   "servers": [
     {
@@ -80,7 +80,11 @@
         "required": false,
         "schema": {
           "type": "string",
-          "enum": ["user", "project", "service"],
+          "enum": [
+            "user",
+            "project",
+            "service"
+          ],
           "default": "user"
         }
       },
@@ -99,7 +103,11 @@
         "required": false,
         "schema": {
           "type": "string",
-          "enum": ["user", "project", "service"],
+          "enum": [
+            "user",
+            "project",
+            "service"
+          ],
           "default": "user"
         }
       },
@@ -132,6 +140,18 @@
           "format": "int64",
           "minimum": 0,
           "default": 0
+        }
+      },
+      "EvidenceAfterSeq": {
+        "name": "after_seq",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": -1,
+          "maximum": 9223372036854775807,
+          "default": -1
         }
       },
       "EvidenceLimit": {
@@ -178,11 +198,17 @@
     "schemas": {
       "Health": {
         "type": "object",
-        "required": ["status", "service"],
+        "required": [
+          "status",
+          "service"
+        ],
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["ok", "ready"]
+            "enum": [
+              "ok",
+              "ready"
+            ]
           },
           "service": {
             "type": "string",
@@ -193,7 +219,9 @@
       },
       "Meta": {
         "type": "object",
-        "required": ["request_id"],
+        "required": [
+          "request_id"
+        ],
         "properties": {
           "request_id": {
             "type": "string",
@@ -204,7 +232,10 @@
       },
       "Error": {
         "type": "object",
-        "required": ["code", "message"],
+        "required": [
+          "code",
+          "message"
+        ],
         "properties": {
           "code": {
             "type": "string",
@@ -223,7 +254,10 @@
       },
       "ErrorEnvelope": {
         "type": "object",
-        "required": ["error", "meta"],
+        "required": [
+          "error",
+          "meta"
+        ],
         "properties": {
           "error": {
             "$ref": "#/components/schemas/Error"
@@ -236,11 +270,18 @@
       },
       "IdentityRef": {
         "type": "object",
-        "required": ["kind", "opaque_ref"],
+        "required": [
+          "kind",
+          "opaque_ref"
+        ],
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["user", "project", "service"]
+            "enum": [
+              "user",
+              "project",
+              "service"
+            ]
           },
           "opaque_ref": {
             "type": "string",
@@ -337,7 +378,11 @@
       },
       "LaunchReceipt": {
         "type": "object",
-        "required": ["run_id", "session_id", "replayed"],
+        "required": [
+          "run_id",
+          "session_id",
+          "replayed"
+        ],
         "properties": {
           "run_id": {
             "type": "string",
@@ -355,7 +400,10 @@
       },
       "LaunchReceiptEnvelope": {
         "type": "object",
-        "required": ["data", "meta"],
+        "required": [
+          "data",
+          "meta"
+        ],
         "properties": {
           "data": {
             "$ref": "#/components/schemas/LaunchReceipt"
@@ -368,7 +416,10 @@
       },
       "CancelControl": {
         "type": "object",
-        "required": ["kind", "session_id"],
+        "required": [
+          "kind",
+          "session_id"
+        ],
         "properties": {
           "kind": {
             "type": "string",
@@ -383,7 +434,12 @@
       },
       "SteerControl": {
         "type": "object",
-        "required": ["kind", "session_id", "message_id", "content"],
+        "required": [
+          "kind",
+          "session_id",
+          "message_id",
+          "content"
+        ],
         "properties": {
           "kind": {
             "type": "string",
@@ -408,7 +464,10 @@
         "oneOf": [
           {
             "type": "object",
-            "required": ["type", "tool_id"],
+            "required": [
+              "type",
+              "tool_id"
+            ],
             "properties": {
               "type": {
                 "const": "approve"
@@ -426,7 +485,11 @@
           },
           {
             "type": "object",
-            "required": ["type", "tool_id", "args"],
+            "required": [
+              "type",
+              "tool_id",
+              "args"
+            ],
             "properties": {
               "type": {
                 "const": "edit"
@@ -444,7 +507,10 @@
           },
           {
             "type": "object",
-            "required": ["type", "tool_id"],
+            "required": [
+              "type",
+              "tool_id"
+            ],
             "properties": {
               "type": {
                 "const": "reject"
@@ -461,7 +527,11 @@
           },
           {
             "type": "object",
-            "required": ["type", "tool_id", "response"],
+            "required": [
+              "type",
+              "tool_id",
+              "response"
+            ],
             "properties": {
               "type": {
                 "const": "respond"
@@ -479,7 +549,11 @@
           },
           {
             "type": "object",
-            "required": ["type", "request_id", "value"],
+            "required": [
+              "type",
+              "request_id",
+              "value"
+            ],
             "properties": {
               "type": {
                 "const": "submit"
@@ -499,7 +573,11 @@
       },
       "ResumeControl": {
         "type": "object",
-        "required": ["kind", "session_id", "decisions"],
+        "required": [
+          "kind",
+          "session_id",
+          "decisions"
+        ],
         "properties": {
           "kind": {
             "type": "string",
@@ -537,7 +615,12 @@
       },
       "ControlReceipt": {
         "type": "object",
-        "required": ["command_id", "request_digest", "status", "replayed"],
+        "required": [
+          "command_id",
+          "request_digest",
+          "status",
+          "replayed"
+        ],
         "properties": {
           "command_id": {
             "type": "string",
@@ -549,7 +632,11 @@
           },
           "status": {
             "type": "string",
-            "enum": ["pending", "succeeded", "failed"]
+            "enum": [
+              "pending",
+              "succeeded",
+              "failed"
+            ]
           },
           "error_code": {
             "type": "string",
@@ -563,7 +650,13 @@
       },
       "AgentEvent": {
         "type": "object",
-        "required": ["kind", "run_id", "index", "timestamp", "payload"],
+        "required": [
+          "kind",
+          "run_id",
+          "index",
+          "timestamp",
+          "payload"
+        ],
         "properties": {
           "kind": {
             "type": "string",
@@ -602,7 +695,12 @@
       },
       "EvidencePage": {
         "type": "object",
-        "required": ["run_id", "events", "next_seq", "terminal"],
+        "required": [
+          "run_id",
+          "events",
+          "next_seq",
+          "terminal"
+        ],
         "properties": {
           "run_id": {
             "type": "string",
@@ -617,7 +715,8 @@
           "next_seq": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": -1,
+            "maximum": 9223372036854775807
           },
           "terminal": {
             "type": "boolean"
@@ -653,14 +752,20 @@
           },
           "role": {
             "type": "string",
-            "enum": ["user", "assistant"]
+            "enum": [
+              "user",
+              "assistant"
+            ]
           },
           "content": {
             "type": "string"
           },
           "status": {
             "type": "string",
-            "enum": ["completed", "failed"]
+            "enum": [
+              "completed",
+              "failed"
+            ]
           },
           "seq": {
             "type": "integer",
@@ -713,7 +818,10 @@
             "minimum": 0
           },
           "chat_message_id": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1
           },
           "event_type": {
@@ -744,11 +852,23 @@
             "description": "Internal Agent UTC epoch milliseconds."
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "x-kokoro-decoded-payloads": {
+          "discriminator": "event_type",
+          "property": "payload_json",
+          "mapping": {
+            "run.failed": "#/components/schemas/ChatFailure"
+          }
+        }
       },
       "Session": {
         "type": "object",
-        "required": ["session_id", "title", "created_at", "updated_at"],
+        "required": [
+          "session_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
         "properties": {
           "session_id": {
             "type": "string",
@@ -779,7 +899,9 @@
       },
       "SessionListPage": {
         "type": "object",
-        "required": ["sessions"],
+        "required": [
+          "sessions"
+        ],
         "properties": {
           "sessions": {
             "type": "array",
@@ -796,7 +918,10 @@
       },
       "HistoryPage": {
         "type": "object",
-        "required": ["messages", "next_seq"],
+        "required": [
+          "messages",
+          "next_seq"
+        ],
         "properties": {
           "messages": {
             "type": "array",
@@ -814,7 +939,11 @@
       },
       "ReplayPage": {
         "type": "object",
-        "required": ["events", "next_seq", "watermark"],
+        "required": [
+          "events",
+          "next_seq",
+          "watermark"
+        ],
         "properties": {
           "events": {
             "type": "array",
@@ -837,7 +966,10 @@
       },
       "ReplayPageEnvelope": {
         "type": "object",
-        "required": ["data", "meta"],
+        "required": [
+          "data",
+          "meta"
+        ],
         "properties": {
           "data": {
             "$ref": "#/components/schemas/ReplayPage"
@@ -850,7 +982,10 @@
       },
       "DataEnvelope": {
         "type": "object",
-        "required": ["data", "meta"],
+        "required": [
+          "data",
+          "meta"
+        ],
         "properties": {
           "data": {},
           "meta": {
@@ -862,7 +997,9 @@
       "ExecutionProofJwkSet": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["keys"],
+        "required": [
+          "keys"
+        ],
         "properties": {
           "keys": {
             "type": "array",
@@ -870,7 +1007,14 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["kty", "crv", "use", "alg", "kid", "x"],
+              "required": [
+                "kty",
+                "crv",
+                "use",
+                "alg",
+                "kid",
+                "x"
+              ],
               "properties": {
                 "kty": {
                   "type": "string",
@@ -900,6 +1044,74 @@
             }
           }
         }
+      },
+      "Failure": {
+        "type": "object",
+        "required": [
+          "code",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "token_budget_exceeded",
+              "recursion_limit_exceeded",
+              "assembly_failed",
+              "enqueue_failed",
+              "dispatch_exhausted",
+              "contract_incompatible",
+              "internal_error",
+              "model_unavailable",
+              "dependency_unavailable",
+              "model_access_denied"
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "if": {
+          "properties": {
+            "retryable": {
+              "const": true
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "code": {
+              "enum": [
+                "model_unavailable",
+                "dependency_unavailable"
+              ]
+            }
+          }
+        }
+      },
+      "RunFailure": {
+        "$ref": "#/components/schemas/Failure",
+        "unevaluatedProperties": false
+      },
+      "ChatFailure": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Failure"
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "failed"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
       }
     },
     "responses": {
@@ -958,7 +1170,9 @@
   "paths": {
     "/healthz": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Process health",
         "operationId": "getHealth",
         "x-kokoro-owner": "kokoro-agent",
@@ -982,7 +1196,9 @@
     },
     "/readyz": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Dependency readiness",
         "operationId": "getReadiness",
         "security": [
@@ -1017,7 +1233,9 @@
     },
     "/v1/runs": {
       "post": {
-        "tags": ["runs"],
+        "tags": [
+          "runs"
+        ],
         "summary": "Durably admit a run",
         "operationId": "createRun",
         "security": [
@@ -1091,7 +1309,9 @@
     },
     "/v1/runs/{run_id}/control": {
       "post": {
-        "tags": ["runs"],
+        "tags": [
+          "runs"
+        ],
         "summary": "Admit an idempotent run control command",
         "operationId": "controlRun",
         "security": [
@@ -1180,7 +1400,9 @@
     },
     "/v1/runs/{run_id}/events": {
       "get": {
-        "tags": ["runs"],
+        "tags": [
+          "runs"
+        ],
         "summary": "Read identity-scoped run evidence",
         "operationId": "listRunEvents",
         "security": [
@@ -1199,7 +1421,7 @@
             }
           },
           {
-            "$ref": "#/components/parameters/AfterSeq"
+            "$ref": "#/components/parameters/EvidenceAfterSeq"
           },
           {
             "$ref": "#/components/parameters/EvidenceLimit"
@@ -1256,7 +1478,9 @@
     },
     "/v1/sessions": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "List identity-scoped sessions",
         "operationId": "listSessions",
         "security": [
@@ -1326,7 +1550,9 @@
     },
     "/v1/sessions/{session_id}/messages": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Read identity-scoped chat history",
         "operationId": "listSessionMessages",
         "security": [
@@ -1399,7 +1625,9 @@
     },
     "/v1/sessions/{session_id}/events": {
       "get": {
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Replay identity-scoped chat events",
         "operationId": "replaySessionEvents",
         "security": [
@@ -1472,7 +1700,9 @@
     },
     "/v1/execution-proof/jwks": {
       "get": {
-        "tags": ["execution-proof"],
+        "tags": [
+          "execution-proof"
+        ],
         "summary": "Read the execution-proof public JWK set",
         "operationId": "getExecutionProofJwks",
         "security": [],
@@ -1607,7 +1837,9 @@
         }
       },
       "head": {
-        "tags": ["execution-proof"],
+        "tags": [
+          "execution-proof"
+        ],
         "summary": "Inspect the execution-proof public JWK set",
         "operationId": "headExecutionProofJwks",
         "security": [],

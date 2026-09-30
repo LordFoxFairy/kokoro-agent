@@ -116,7 +116,7 @@ _ALL_KINDS: list[tuple[str, dict[str, JsonValue]]] = [
     ),
     (
         "run.failed",
-        {"code": "internal_error", "error_kind": "ValueError", "message": "boom"},
+        {"code": "internal_error", "retryable": False},
     ),
 ]
 

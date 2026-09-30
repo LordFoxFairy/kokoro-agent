@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
+from kokoro_agent.clients.system import ModelResolutionError
+
 from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
     DeliveryCreatedPayload,
@@ -653,8 +655,27 @@ def subagent_finished_payload(
     )
 
 
+_MODEL_FAILURE_CODES: dict[str, RunErrorCode] = {
+    "MODEL_UNAVAILABLE": "model_unavailable",
+    "SYSTEM_UNAVAILABLE": "dependency_unavailable",
+    "MODEL_RESOLUTION_UNAVAILABLE": "dependency_unavailable",
+    "POLICY_DENIED": "model_access_denied",
+    "FORBIDDEN": "model_access_denied",
+    "ROUTE_NOT_FOUND": "assembly_failed",
+    "INVALID_ARGUMENT": "assembly_failed",
+    "service_auth_failed": "assembly_failed",
+    "MODEL_RESOLVER_NOT_CONFIGURED": "assembly_failed",
+    "MODEL_REQUEST_INVALID": "assembly_failed",
+    "MODEL_RESPONSE_INVALID": "contract_incompatible",
+    "MODEL_RESPONSE_TOO_LARGE": "contract_incompatible",
+    "MODEL_RESOLUTION_FAILED": "internal_error",
+}
+
+
 def failure_code(error: BaseException) -> RunErrorCode:
-    """执行期失败归码（闭集枚举）；装配期失败由调用点显式传 assembly_failed，不猜类型。"""
+    """Classify typed execution failures without rendering exception diagnostics."""
+    if isinstance(error, ModelResolutionError):
+        return _MODEL_FAILURE_CODES.get(error.code, "internal_error")
     if isinstance(error, TokenBudgetExceeded):
         return "token_budget_exceeded"
     if isinstance(error, GraphRecursionError):
@@ -665,13 +686,21 @@ def failure_code(error: BaseException) -> RunErrorCode:
 def run_failed_payload(
     error: BaseException, *, code: RunErrorCode | None = None
 ) -> RunFailedPayload:
-    # 三层错误语义（契约注记）：code=web 本地化键（缺省自动归码）；error_kind=诊断类名；
-    # message 契约 NonEmptyStr：空 str(error) 回退异常类名，绝不发空错误。
-    return RunFailedPayload(
-        code=code or failure_code(error),
-        error_kind=type(error).__name__,
-        message=str(error) or type(error).__name__,
-    )
+    # Assembly callers supply their ordinary-error default; typed owner failures
+    # retain their verified classification on both initial build and resume.
+    typed = isinstance(error, ModelResolutionError)
+    classified = failure_code(error) if typed else code or failure_code(error)
+    retryable = False
+    if typed:
+        if type(error.retryable) is not bool or (
+            error.retryable
+            and classified
+            not in {"model_unavailable", "dependency_unavailable", "internal_error"}
+        ):
+            return RunFailedPayload(code="contract_incompatible", retryable=False)
+        if classified in {"model_unavailable", "dependency_unavailable"}:
+            retryable = error.retryable
+    return RunFailedPayload(code=classified, retryable=retryable)
 
 
 _ARGS_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])

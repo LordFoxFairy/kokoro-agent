@@ -1,6 +1,43 @@
 # kokoro-agent API 契约
 
-## AGENT-PROFILE-P2-R24：内部装配候选，wire 不变（2026-10-01）
+## AGENT-PROFILE-P3-D0：静态持久子门与正式两阶段协议（2026-10-01）
+
+当前main `7e902c08296cacdacfe810ccbb4a6233d1b2ca7b` 已验P2；唯一HTTP机器源仍3.0.0，SQL尚无profile列。
+本轮只四docs；TECH顶节P3A精确22路径为拟授权，不是实现或4.0发布。
+
+P3A只新增内部 RunProfilePort.freeze_or_verify_static_recipe(request, lease, StaticRecipeBinding)：
+当前factory的同一个PreparedFeaturePlan bytes/fingerprint在任何外部preflight/System前持久freeze/verify；
+不接收caller上传profile、不在HTTP加载worker/private配置，不新增网络字段、状态码、scope busy、Redis envelope或fallback。
+损坏/漂移typed错误在初次build/resume沿已有contract_incompatible/false终态；失效lease不冒权写终态。
+HTTP-only读取其自身业务配置/public JWKS，schema setup只能做schema gate，不为计算recipe导入factory/worker或读private model配置。
+
+唯一请求身份序列化式为 `request.model_dump_json().encode("utf-8")`（不传任何dump参数），
+与现 `postgres_run_dispatch.py:43,76,97` 写入/claim所用 `request.model_dump_json()` 完全同源。
+锁内读取的原 `request_json` TEXT 直接 `.encode("utf-8")` 后逐byte比较；不先parse再dump、
+不使用profile的canonical_json，不按dict/Pydantic对象相等或JSONB等价授权，也不新增helper。
+字段重排、额外whitespace、等价JSON转义/表示、显式默认与省略默认差异、未知字段，即便解析后对象等价仍typed拒绝；
+缺失/非TEXT/非法UTF8同样拒绝。recipe自身的canonical编码与请求原TEXT身份是不同边界，不能混用。
+
+上述六类原TEXT负向变体须各自RED→GREEN：身份不等不持久profile、不触发任何preflight/System/backend/provider。
+首次claim已RUNNING但尚无执行事实仍允许freeze，不把内部phase当外部已执行证据；错误终态仅原build fence。
+
+完整4的profile不是P3A static SHA：pre-System static与post-route effective两个持久阶段共同组成身份。
+所有peer实际main/GP/catalog prompt、工具覆盖/schema/顺序/exclusion、GP选择及middleware source/选项必须一次绑定，
+commit前零sandbox/provider/tool执行。当前native库还缺已验证的实际输出观测接口，P3B先解决该Agent/library边界，
+不复制resolver、用静态集合冒充结果或仅验证第一个peer。动态route revision/health/凭据不纳摘要，授权照常逐次重验。
+
+正式4 retry admission仍required retry_of_run_id，origin两阶段任一缺失/损坏/未知版本→409 run_retry_conflict，
+不从当前路由填原父NULL；合法新attempt复制原origin冻结事实，worker新结果不等→contract_incompatible/false。
+同Run takeover在首次有效bind前崩溃且零执行可完成第二阶段；已有HITL/native执行而缺第二阶段拒绝恢复。
+绑定/比较权威为scope active_run+Run owner/generation+锁后DB clock；旧generation相同摘要亦不可写。
+原failure.retryable不是profile完整资格保证，不为缺profile篡改failure tuple。
+
+P3A不要求BFF/Web repin HTTP4，但canonical schema必须fresh安装，旧schema明拒，禁止隐式升级或旧数据补recipe。
+P3B/完整4发布仍按下方owner machine/runtime/schema→artifact→BFF所有Chat/Scheduled与其他sender→Web→协调激活；
+不得HTTP-only替worker冻结、不让BFF代造digest、不先半激活required字段。proof/Failure3机器值域仍不变。
+Conversation最终引用释放未决只阻最终GC/完整4发布，不阻本独立持久子门。D0实际验证与历史Root证据见CURRENT。
+
+## 历史 AGENT-PROFILE-P2-R24：内部装配候选，wire 不变（2026-10-01）
 
 基线`9dcaa34a3664668c3ad2da6adcc71f271ea96224`。已实现生产manifest与factory/worker共享静态计划；metadata/source/
 policy验证在全peer外部preflight前，当前Skill/MCP与System授权仍照常重验。插件空批准/二次枚举前load拒绝、late registry

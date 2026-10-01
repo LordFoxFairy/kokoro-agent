@@ -1,10 +1,34 @@
+## AGENT-PROFILE-P3-D0：四文档候选、等待Root设计门（2026-10-01）
+
+基线 `main 7e902c08296cacdacfe810ccbb4a6233d1b2ca7b`，P2已正式提交，不再作为当前待验候选。
+本D0仅改TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT；未操作Git、源码、SQL、机器契约、设施或服务。
+已读取Root任务R25/P3-D0、map、SQL03/Python09/API05、Agent三设计与实际factory/plan/Run/schema/control入口及安装native源码。
+
+候选裁决：下一最短P3A为22路径/2新文件/无新目录的Run静态recipe持久freeze/verify；同plan在preflight/System前commit，
+真实Run lease/generation/锁后DB clock事务、fresh schema/新列约束drift、typed failure与所有build入口测试。
+P2源码清单/codec不重写；来源登记只补新adapter。HTTP-only不读worker/private配置、HTTP3机器不变，无3.0临时scope状态机。
+
+正式两阶段目标不降义：P3B仍须在所有peer真实native本地材料化后、任何sandbox/provider执行前一次绑定有效policy，
+retry/resume/takeover相等与scope-first属于后继完整门。当前DeepAgents constructor不返回完整实际policy记录；
+Agent/library owner需建立真实单次材料化输出接口后实现P3B，禁止复制selector、graph闭包inspect或静态假descriptor。
+该技术后继门及Conversation最终GC产品未决均不阻独立P3A SQL/事务实施。具体文件/RED/真PG故障矩阵见TECH顶节。
+
+Root初次四hash/范围及独立复审P0=0/P1=1：请求身份序列化授权歧义。本轮仅四docs定点修订，
+明确唯一 `request.model_dump_json().encode("utf-8")` 与stored原TEXT UTF8逐byte比较，拒解析等价授权；
+补字段重排/空白/等价转义/默认差异/未知字段负向矩阵及正常首次claim RUNNING无执行事实正例。
+原build generation终态authority、两阶段全peer屏障和22路径边界不变；复审关闭由Root决定。
+
+本轮仅文档校验：UTF8、围栏、尾空白、22唯一路径/20现有+2拟新增且父目录存在，四doc hash manifest。
+没有执行contract/pytest/build/真PG；下方1627/6/192及wheel229/115是已提交P2的Root证据，不是P3代码验证。
+本D0待Root四hash/范围/三设计复核后提交，再明确授权P3A代码；不把本节写成实施通过或完整4发布。
+
 ## AGENT-PROFILE-P2：Root 独立验收（2026-10-01）
 
 Root核最终26/26范围/hash，独立只读审查agent_p2_review_r25 P0=0/P1=0。随后在停写主树完整执行 lock-check、frozen sync、Ruff format/check、Pyright、contract、failure generator、默认pytest、wheel/sdist，全链exit0：format260、Pyright0 errors/0 warnings，pytest **1627 passed / 6 skipped / 192 deselected / 364 warnings（83.20s）**。命令输出工具摘录（保留显示截断说明，非完整原始日志）`/tmp/kokoro-agent-p2-r25-root-check-excerpts.log`。
 
 Root另对本次自己构建wheel作离线独立目标安装，在/tmp导入且每个kokoro_agent模块路径受安装目录约束；22来源组、229唯一实际资源、12动态边、115精确runtime distributions，chat/music/music_chat与源码fingerprint逐值一致；删除安装目录memory.py后fail-closed。证据 `/tmp/kokoro-agent-p2-r25-root-wheel-evidence.log`、`/tmp/kokoro-agent-p2-r25-root-source-evidence.json`。本片只完成static recipe/source manifest/真实factory同plan与policy装配；后置effective native policy持久绑定、SQL/lease/scope/retention/HTTP4、真实模型与九owner端到端仍未完成。
 
-## AGENT-PROFILE-P2-R24：实现候选已冻结、待Root审查（2026-10-01）
+## 历史 AGENT-PROFILE-P2-R24：实现候选已冻结、待Root审查（2026-10-01）
 
 基线`main 9dcaa34a3664668c3ad2da6adcc71f271ea96224`，Root已提交P2-D0，writer不操作Git。
 当前精确26路径＝原批准14生产/7tests/4docs＋Root补授权现`tests/contract/test_deepagents.py`隔离fixture；

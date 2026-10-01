@@ -1,6 +1,166 @@
 # kokoro-agent 技术设计
 
-## AGENT-PROFILE-P2-R24：来源 manifest 与同一装配计划候选（2026-10-01）
+## AGENT-PROFILE-P3-D0：持久静态配方与完整两阶段后继门（2026-10-01）
+
+**当前基线 `main 7e902c08296cacdacfe810ccbb4a6233d1b2ca7b`，P2 已由 Root 验收提交。**
+Root 1627 passed/6 skipped/192 deselected（83.20s）、完整离线链与安装 wheel 的229资源/115依赖/12动态边证据见 CURRENT。
+下方 P2 候选/D0/早期4.0各节是历史与目标记录；本节明确当前事实、下一最小片和完整目标，不把计划记作实现。
+本 D0 仅四文档；SQL、Python、机器源未动，源码须 Root 通过本门后另行授权。
+
+### 当前事实与切片裁决
+
+- `execution/runtime_profile_plan.py:161–169,227–387` 已返回唯一 PreparedFeaturePlan/recipe_bytes/fingerprint；
+  `agent_factory.py:275–294` 已在全部 peer preflight 前 prepare，但尚未持久存储或比较。
+- `agent_factory.py:135–180,223–251` 仍逐 peer resolve System → 创建 sandbox → 本地 model/native constructor。
+  因此尚不满足“所有 peer 的实际政策绑定完成后才允许任一 sandbox/provider 执行”。
+- 安装 DeepAgents 0.6.6 `graph.py:538–559,577–650,654–739` 在真实 constructor 内解析 harness、改写工具/提示词、
+  物化 middleware、选择 GP；现返回 graph，不返回完整有效政策记录。P2 native_recipe 明示 post_route，不是最终结果。
+- `database/schema.sql:9–54` 的 Run 没有 profile 列；`infrastructure/schema.py:113–132` 只查缺表，
+  并未验证 profile 列/约束 drift；`worker/supervisor_control.py:453–481` 的 interrupt fingerprint 也会 adopt 后 build。
+  `supervisor_execution.py:67–77`、resume、reclaim 和 fingerprint 必须走同一 factory 持久 gate，不能漏辅助入口。
+
+**下一最短可验收片 P3A：只把已验 static recipe 做真实 Run 持久 freeze/verify。** 它是正式两阶段的第一阶段，
+不是另起3.0 scope/active 状态机，不提前发布4.0，不把 static fingerprint改名成完整runtime_profile_digest。
+采取现 Run 行内两列及窄 repository 方法；所有真实 factory build 在第一次外部 preflight/System 前 commit。
+HTTP admission 只存请求，不读取 worker/private 配置。现有完整4 scope/native/retry门保留，未实现部分明确不激活。
+
+**P3B 是执行前有效政策绑定片，不能和 P3A 的通过相混。** 当前上游没有已验证的完整 observer API；实际材料化边界
+必须先由 Agent owner 确认可行实现（需要库 owner 的显式 observation/materialization 接口时，走独立依赖/source审批）。
+不复制 harness resolver/selector、不运行两遍构造取样、不 monkeypatch 全局 create_agent、不遍历 graph闭包/repr猜描述。
+无需为这个后继技术门拖延 P3A SQL/事务实施。P3B 准入应以所有peer的真实构造输出证明，不是“批准集合”代替实际选择。
+
+### 第8节放置表：P3A
+
+| 项 | 结论 |
+| --- | --- |
+| Owner | Agent Run 持久执行配方，当前唯一 writer；Root 设计放行、Git、独立复验与提交。 |
+| 当前事实 | P2完整source/codec/同plan已验；Run持有tenant/request/lease/terminal，无profile字段，无scope表；HTTP3、SQL-first。Root提供clean基线，writer不操作Git。 |
+| 目标 API | 内部 frozen dataclass StaticRecipeBinding(canonical_bytes, fingerprint) 与 RunProfilePort.freeze_or_verify_static_recipe(request, lease, binding)，返回 frozen/matched；失配/损坏与失去authority是不同typed错误，不返回可忽略bool。 |
+| 两个位置 | 采用现Run行、既有domain/run模型/窄port、新相邻 infrastructure/postgres_run_profiles.py；淘汰新profile表（无独立生命周期/查询）、把SQL塞497行codec或继续膨胀lease协调器。 |
+| 粒度 | 1个职责聚焦生产adapter、1个真实PG测试文件；没有新目录/服务。现fake只实现相同语义，不新增生产内存repo。 |
+| 依赖 | factory消费同PreparedFeaturePlan并向Run窄port写；infra依赖domain。domain不import worker/codec/psycopg；HTTP不import factory/manifest或解析private设置。sources只显式补新模块资源，不重写已验codec/selector。 |
+| SQL/事务 | 唯一canonical DDL添加可空成对recipe bytes/digest；同Run事务校验trusted tenant/canonical request/owner/generation/锁后DB clock；无网络持锁。旧非空schema拒启动，不迁移/补默认。 |
+| 删除项 | 无第二selector、optional gate或“repo没有方法就跳过”；不保留旧schema运行fallback。下方完整scope目标不删减。 |
+| 验证 | tests-only RED；新PG双连接/fault矩阵；原默认全门、HTTP-only导入、source/wheel闭包及Root主树独立复验。D0未运行这些代码门。 |
+
+### P3A 事务、入口与失败语义
+
+1. 每次 build 先调用现 prepare_feature，精确使用其 recipe_bytes/fingerprint，校验canonical/domain tag和大小。
+   调用持久gate且commit成功后，才执行现全peer `_preflight`；不得从持久bytes反序列化出另一套Feature/selector。
+2. 在同连接显式transaction中，以request内受信tenant+run_id取 Run `FOR UPDATE`；锁后重读完整请求原TEXT身份，
+   严格按下述唯一序列化式逐byte比较。取锁后单独 `clock_timestamp()` 验 owner、generation、nonterminal、非NULL且未到期租约。
+   当前片没有scope，只有真实Run fence；将来scope落地时此adapter必须整体改为scope→dispatch→Run，不留Run→scope路径。
+3. 两列均NULL表示本fresh-schema Run尚未到达第一阶段，不表示旧数据兼容。仅无已开始/暂停执行证据的合法首次build可绑定；
+   takeover若崩于首次freeze之前且尚无执行事实，可首次绑定；已有outbox/event/usage/sandbox事实却缺binding则损坏拒绝。
+   检查现Run durable/event counters、usage totals、sandbox binding；正常HITL一定已有执行事实，缺binding不得补写。
+   这只是已执行事实的损坏防线，不凭计数器证明外部没有副作用；“NULL之前零外部调用”由唯一factory顺序测试保证。
+4. 两列已存在时重算保存bytes的SHA256并严格验证domain/canonical/上限，逐byte及digest比较当前binding；完全相同只返回matched，
+   不改updated_at、不重写或重选。部分NULL、未知domain、非canonical、digest错误/政策漂移一律typed incompatibility。
+   同一Run跨新lease generation继承原bytes；不把generation写入配方，不因takeover刷新冻结值。
+5. profile不匹配/损坏归已存在的 `contract_incompatible/false`，由现唯一finalize_terminal收口；typed错误优先于build默认assembly_failed。
+   lease失效不持久任何profile、更不冒旧generation发terminal；`_fail_terminal` 对typed authority loss直接返回，
+   profile mismatch携带原build fence且只用该fence收口，不再从可变_leases/_control_lease借到另一次adopt的authority；错误或取消发生在commit前则rollback，commit ACK丢失时新连接原值verify。
+   fingerprint辅助入口遇失配也不继续读native或执行：返回其既有stale结果/日志，后续真实resume仍经过同gate，不能捕获后绕过。
+6. profile内只留已批准无secret静态配方；错误/日志不dump bytes、request、URL、工具schema或模型对象。
+   事务不延长lease，不持锁做preflight/model/sandbox。commit之后租约再失效仍由现执行/owner效果gate负责；P3A不声称native write fence已实现。
+
+P3A未改变HTTP3请求/返回/strict failure值域，不需要假发HTTP4。它有canonical schema部署变化：必须fresh owner schema，
+runtime旧schema明确拒绝，不热patch现有数据。完整4将复制origin的已冻结两阶段事实，现P3A不新增retry入口/lineage列。
+
+唯一请求身份序列化式为 `request.model_dump_json().encode("utf-8")`（不传任何dump参数），
+与现 `postgres_run_dispatch.py:43,76,97` 写入/claim所用 `request.model_dump_json()` 完全同源。
+锁内读取的原 `request_json` TEXT 直接 `.encode("utf-8")` 后逐byte比较；不先parse再dump、
+不使用profile的canonical_json，不按dict/Pydantic对象相等或JSONB等价授权，也不新增helper。
+字段重排、额外whitespace、等价JSON转义/表示、显式默认与省略默认差异、未知字段，即便解析后对象等价仍typed拒绝；
+缺失/非TEXT/非法UTF8同样拒绝。recipe自身的canonical编码与请求原TEXT身份是不同边界，不能混用。
+
+首次claim后内部执行状态可以已是RUNNING；这不等于已有run.started/outbox/native执行。首次freeze资格以实际Run
+持久字段及执行事实判定，不以phase==RUNNING直接拒绝。正常claim且counters/usage为0、sandbox未绑定必须允许首次freeze；
+已开始/HITL执行而缺binding的损坏场景仍拒绝。所有失配终态保持原build generation，不借新的adopt authority。
+
+### 正式两阶段及重试/恢复裁决（P3B/完整4硬门）
+
+| 时点/入口 | 必须成立 |
+| --- | --- |
+| 第一阶段 | 全peer静态recipe在任何System/Platform/Storage/MCP preflight前，当前Run lease/fence事务freeze/verify；完整4加scope.active_run核对。 |
+| 第二阶段 | 所有peer完成当前System路由和仅本地model构造，采用真实native材料化一次输出；main、每peer及其GP/catalog子agent的实际prompt、实际工具有序schema/description/source、工具覆盖/exclusion、GP enable/override、middleware顺序/source/无secret选项组成effective_native_policy canonical bytes/digest。全部齐备一次commit，不逐peer先提交后启动。 |
+| 执行屏障 | effective绑定commit前任何peer均不得创建/重连外部sandbox、调用provider或执行tool/graph；后置构造所需backend必须为真实延迟绑定且未执行的已登记能力，不用fake实例推断。若实际constructor有I/O则该实现不满足门，先调整owner边界。 |
+| 参数排除 | route revision/health/endpoint/凭据、当前授权、actor/assertion不纳digest；当前System/Platform/Storage/MCP权限每次重验。路由引起的实际有效政策变化必须被第二阶段捕捉，不能因route排除一起漏掉。 |
+| 同Run恢复 | frozen static严格比较；effective已绑定则严格比较且不覆盖。崩溃在首次effective bind前且尚未执行，允许同Run在当前fence首次完成第二阶段；有native head/HITL/已执行事实而effective缺失是损坏，拒恢复。 |
+| 正式新Run retry | admission在scope锁内验证最近父/origin、原输入/精确baseline/窗口与两阶段完整；缺任一阶段即409 run_retry_conflict，不把NULL当相等或从新路由补原父。不会把原failure.retryable改false掩盖资格差异。复制原origin bytes/digests，再在worker重算当前两阶段并严格比较。 |
+| takeover/迟到绑定 | 同scope active_run、sameRun owner/generation、锁后DB clock有效才能写/verify；旧generation即便计算结果相同也零写。读取定位不授权，scope→有序dispatch→有序Run锁后重新核身份，active/HITL不得被新normal/retry覆盖。 |
+
+未来Run字段 `effective_native_policy_bytes BYTEA`/`effective_native_policy_digest TEXT` 成对可空，仅代表尚未首次绑定；
+完整执行身份是static+effective两阶段版本化tuple，不用一个static SHA冒充完整profile。
+保留完整4已有native baseline/head原子写、terminal晋升/active释放及引用感知retention设计；本节不替换为简化执行状态机。
+
+### P3A 精确拟授权文件集（22路径；本D0不修改它们）
+
+以下绝对路径仅是下一代码片范围，2新文件、无新目录；若实现需要额外路径先报Root，不偷扩。
+
+| 绝对路径 | 唯一职责 |
+| --- | --- |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/database/schema.sql` | Run静态bytes/digest成对约束，唯一DDL |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/models.py` | StaticRecipeBinding与typed incompatibility/authority错误 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repositories.py` | RunProfilePort窄方法 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repository.py` | 组合新窄port，不新增wire |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_profiles.py` | 新：同连接Run锁/DBclock/freeze-or-verify |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_repository.py` | 唯一facade装配/委托 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/schema.py` | 新列/约束精确catalog drift gate，无DDL副本 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/agent_factory.py` | prepare后且preflight前必须持久gate |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/failures.py` | typed mismatch优先映射既有contract_incompatible |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_execution.py` | profile authority错误不借新lease发terminal；失配只用原失败build fence收口 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile_sources.py` | 只登记新增生产adapter，延续闭包验证 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/support/fakes.py` | fake相同freeze/verify，不宽松自动忽略 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_factory.py` | 所有feature/peer外部counter0、先commit及漂移 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_supervisor.py` | initial/resume/reclaim/fingerprint均到同gate与错误收口 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/http/test_http_main.py` | HTTP-only仍不加载worker/private配置 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_canonical_database_schema.py` | 成对/长度/无FK与唯一canonical断言 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_schema_installation.py` | fresh+精确profile drift/非空拒绝 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_run_profiles.py` | 新：以下独立真PG故障矩阵 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md` | 本门及实际验收 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md` | 内部API/HTTP3不变与4依赖 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md` | 新列语义/事务/生命周期 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md` | 真实RED/GREEN与Root状态 |
+
+### RED与真实PG故障矩阵
+
+先新增测试看实际失败，不用fake绿色代替PG；PG由Root授权后复用既有实例，用自有随机schema/独立连接、finally只回收自有资源。
+每类独立case，保存连接PID/阻塞barrier/结果计数；不依靠固定sleep猜并发，不放宽timeout/skip/default门。
+
+| 场景 | 必须观察 |
+| --- | --- |
+| unit source/顺序 | 新port缺失RED；所有3 Feature与第二peer坏recipe时preflight/System/backend/provider counter=0；已提交才preflight。source/wheel新增模块缺失failclosed。 |
+| fresh schema/drift | 同库另一owner schema不动；本schema fresh安装；缺列、错类型、错null/default、缺/改变CHECK各自被verify拒绝；非空安装不迁移。 |
+| 首次freeze与新连接 | 真实claim后bind；关闭连接/重建repo严格读回原bytes/digest；same值verify零更新。 |
+| 同值双连接 | 两连接同Run/fence并发，一次frozen一次matched，唯一bytes/updated_at，无重复事实。 |
+| 异值双连接 | 独立连接阻塞barrier后争同Run，恰一胜一incompatible；不能last-write-wins。 |
+| 锁等待后过期 | A锁Run，B等待且租约在等待中到期；释放A后B依据新DB clock拒绝，零写；不注入Python now冒真PG证据。 |
+| generation takeover | A算完计划，B合法reclaim换generation；A晚freeze/verify均authority拒绝；B相同值匹配，漂移值拒绝，不覆盖。 |
+| terminal/cancel竞争 | terminal先commit→freeze拒；freeze先commit→terminal保留binding；取消不回滚已提交profile且无后续旧owner写。 |
+| rollback/cancellation | UPDATE后显式异常/SQL错误/实际task取消分别rollback；其他连接看不到半bytes/半digest。 |
+| commit ACK lost | 已commit后模拟调用方没收到返回，新repo新连接verify matched；不另造一个freeze事件或更新时间。 |
+| tenant/request串用 | 相同run_id但另一tenant/request canonical不一致、owner错/generation错/paused lease均零写，错误不泄漏内容。 |
+| 请求TEXT身份负向矩阵 | 对已claim Run的原request_json分别只改字段顺序、whitespace、等价转义、显式默认/省略默认、未知字段；即使可解析等价也逐例typed拒绝、profile零写及preflight/System/backend/provider计数0；未改原字节正例通过。 |
+| 初始崩溃与缺失 | 正常首次claim/RUNNING但无执行事实必须可freeze；claim后freeze前崩溃合法reclaim可首次bind且外部counter0；已有started/HITL/usage/sandbox事实而NULL、部分NULL/坏digest/未知domain拒绝。 |
+| resume/fingerprint | 真Run暂停/adopt后相同配方通过，变更后preflight/native调用均0；原终态/固定outbox不重复；fingerprint失败不成为绕过入口。 |
+| bounded payload | 超8MiB拒绝且无SQL写；合法最大边界/UTF8/canonical/未知tag拒绝逻辑一致，保存bytes不进日志。 |
+
+下一实施实际命令：现原离线全链（lock/sync/Ruff/Pyright/contract/generated/默认pytest/build）不减；定点
+`uv run --frozen --offline pytest -q tests/unit/agents/test_factory.py tests/unit/execution/test_supervisor.py tests/unit/http/test_http_main.py tests/contract/test_canonical_database_schema.py`；
+Root授真PG环境后 `uv run --frozen --offline pytest -q -o addopts='' tests/integration/database/test_run_profiles.py tests/integration/database/test_schema_installation.py`。
+执行前确认DATABASE_URL为Root指定实例；缺设施明确未验，不以skip算通过。wheel必须真正安装并从/tmp导入新adapter与来源闭包。
+
+### 实施、发布与未决
+
+P3A四doc门→Root精确授权22路径→tests-only RED→代码/真PG/离线/wheel→停写manifest→独立审查/Root复验→提交。
+之后P3B实际native输出接口及全peer本地构造/延迟sandbox/持久effective gate→完整4 scope/native/lineage/terminal事务，
+HTTP4机器、fresh schema/runtime同门→owner artifact先发布→BFF所有normal/retry/Scheduled producer精确repin→Root协调激活。
+P3A没有4.0消费者breaking；未来required retry_of_run_id仍是HTTP4 breaking，禁止缺省/trace fallback。旧schema不得热运行P3A。
+技术未决仅P3B真实材料化输出接口（Agent/上游library owner），不是重开两阶段产品决定。Conversation最终引用释放仍由
+BFF/Agent/产品决定，阻最终GC/完整发布，不阻P3A；本片profile与Run同寿命，没有新孤立表/永久免GC。
+
+## 历史 AGENT-PROFILE-P2-R24：来源 manifest 与同一装配计划候选（2026-10-01）
 
 实现基线为 Root 已提交的 `main 9dcaa34a3664668c3ad2da6adcc71f271ea96224`；本片仍由 Root 独占 Git/提交。
 现在已实现生产来源登记、静态 `PreparedFeaturePlan`、真实 factory 必填计划消费和 worker 同一 runtime policy。
@@ -638,13 +798,13 @@ namespace/config 转换只在 execution/native adapter；`domain/run/repositorie
 | 资源/部署 | 所有 API key/secret、base URL、连接 URL、workspace 路径、容器/session ID、checkpointer/store/client 实例、进程调度并发/heartbeat/日志配置排除。sandbox 的部署凭据/地址/运行实例不作 recipe；backend 实现与策略变化须由稳定实现来源/无 secret 策略标识反映。 |
 
 实现来源采用显式 `ToolImplementationSource` descriptor（内部 dataclass），不是网络发现或运行时 inspect 猜测。
-P2拟由 `execution/runtime_profile_sources.py` 持有版本化本地实现清单，复用P1 codec：tool factory模块限定名/符号及包内批准源码文件
+P2已由 `execution/runtime_profile_sources.py` 持有版本化本地实现清单，复用P1 codec：tool factory模块限定名/符号及包内批准源码文件
 字节 SHA256（含明确列出的本地依赖闭包）；native implicit 工具纳入固定 distribution 版本及相应实现文件摘要。
 从安装包资源读取，缺源/未登记工具失败关闭；开发源码与 wheel 均验，禁止运行时访问 Git 或把 commit 当内容指纹。
 `tools/toolbox.py` 在创建 web/memory 工具时同时产生 descriptor/无 secret 选项；`tools/toolset.py` 复用同一选择规划
 提供实际工具序列，`agents/subagents.py` 复用同一纯选择规则，避免 profile 和 build 两套过滤逻辑。
 `worker/main.py` 显式装配策略与源码 descriptor；sandbox 非默认定制实现也须登记稳定来源和无 secret policy 标识，
-禁止偷偷 hash 任意 custom config。当前已有P1 codec与共享选择plan；生产manifest/worker完整装配仍为P2拟实施，
+禁止偷偷 hash 任意 custom config。当前已有P1 codec与共享选择plan；生产manifest/worker静态装配已由P2提交7e902c0，
 两阶段持久字段及有效native输出绑定属独立后继，均不因本轮文档修订视为落地。
 
 ### 后续精确写入集与验收矩阵

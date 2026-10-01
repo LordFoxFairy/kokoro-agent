@@ -1,6 +1,57 @@
 # kokoro-agent 数据模型
 
-## AGENT-PROFILE-P2-R24：装配候选仍零持久化（2026-10-01）
+## AGENT-PROFILE-P3-D0：下一片Run静态绑定字段与最终两阶段（2026-10-01）
+
+当前main `7e902c08296cacdacfe810ccbb4a6233d1b2ca7b`，P2已验；canonical `database/schema.sql` 仍无profile字段。
+以下为目标，D0没有改SQL。下一最短P3A仅现Run两列，完整scope/dispatch lineage/native字段依下方正式4目标另片实施。
+
+| P3A目标列/约束 | 精确语义 |
+| --- | --- |
+| assembly_recipe_bytes BYTEA NULL | P2同plan的canonical UTF8原bytes，含domain_tag=kokoro-agent:assembly-recipe:1；上限8MiB，拒空；不存对象/secret/URL。NULL仅fresh Run尚未freeze。 |
+| assembly_recipe_fingerprint TEXT NULL | bytes的SHA256小写64hex；两列必须同NULL或同非NULL，首次绑定后不可修改，verify无updated_at变更。不是runtime_profile_digest。 |
+| ck_kokoro_agent_run_static_recipe | 显式约束两个NULL或两个非NULL，后者octet_length 1..8388608且digest符合^[0-9a-f]{64}$；NULL三值逻辑用IS NULL/IS NOT NULL表达。哈希/canonical/domain匹配由typed adapter锁内验证。 |
+
+不新建表/索引/外键/版本号默认值；以现tenant+run_id定位、PK加锁，不为两个不可查询摘要列建索引。
+父表就是Run，无第二生命周期、孤儿reconciliation或跨owner关系。P3A purge随Run现有事务同删，不另设profile TTL；
+完整4的origin/latest/committed/native引用保护与最终release必须后继补齐，现TTL不声称满足未来retention。
+
+内部port与事务以TECH P3A为唯一编排定义：完整trusted request+lease+binding入参；同连接Run行锁，锁后DB clock
+重新验证tenant/canonical请求/owner/generation/nonterminal/active expiry；第一绑定或严格逐byte/摘要比较；零网络持锁。
+初始NULL且无执行事实可以freeze，包含尚未执行即崩溃重claim的Run；已有event/outbox/usage/sandbox事实却NULL拒绝，
+部分NULL/未知tag/坏hash亦拒绝。该检查不从计数器推断外部安全，真正零外部调用由factory先commit的执行顺序保证。
+lease失效/terminal竞争零写，DB取消或statement故障全rollback；ACK丢失重连verify，不重写冻结值。
+当前只Run fence；完整4必须scope→有序dispatch→Run同锁序升级，绝不加advisory scope旁路或冒称P3A已有active/head。
+
+唯一请求身份序列化式为 `request.model_dump_json().encode("utf-8")`（不传任何dump参数），
+与现 `postgres_run_dispatch.py:43,76,97` 写入/claim所用 `request.model_dump_json()` 完全同源。
+锁内读取的原 `request_json` TEXT 直接 `.encode("utf-8")` 后逐byte比较；不先parse再dump、
+不使用profile的canonical_json，不按dict/Pydantic对象相等或JSONB等价授权，也不新增helper。
+字段重排、额外whitespace、等价JSON转义/表示、显式默认与省略默认差异、未知字段，即便解析后对象等价仍typed拒绝；
+缺失/非TEXT/非法UTF8同样拒绝。recipe自身的canonical编码与请求原TEXT身份是不同边界，不能混用。
+
+真PG负向矩阵逐例改stored原TEXT的字段顺序、whitespace、等价转义/表示、显式默认/省略默认、未知字段，
+验证typed拒绝且binding零写；原字节正例通过。正常首次claim的RUNNING不是执行事实，不能因此拒首次freeze；
+以实际durable/event counters、usage、sandbox及执行记录判断，保持原generation错误收口。
+
+fresh install只目标空owner schema；现verify仅缺表不足，P3A必须加这两列的类型/null/default及具名CHECK catalog drift验证，
+缺列或错误DDL的旧schema直接拒绝，不自动ALTER/migrate/default补值。其余既有schema全域drift完善仍属完整4门，不声称本片已完成。
+真实PG两连接/锁等待后expiry/取消/ACK lost/漂移矩阵见TECH，不能只用schema文本匹配或fake Repo通过。
+
+### P3B/完整4的字段和继承语义（不是本P3A提前添加空列）
+
+未来Run再增加effective_native_policy_bytes/digest成对字段，canonical版本含独立domain tag；
+完整profile身份=(static版本/bytes/digest,effective版本/bytes/digest)，两阶段都存实际值并验证，不用静态recipe代替最终policy。
+第二阶段包含所有peer及其GP/catalog的实际prompt、工具覆盖/exclusion/schema/顺序和middleware source/安全选项，
+在route后仅本地构造、所有sandbox/provider执行前一次绑定；字段不包含route revision/health/凭据或运行对象。
+normal首Run可处于static已冻/effective未绑的明确前执行窗口；重claim可以继续首次绑定，已有native/HITL执行而NULL视为损坏。
+retry新Run不能补原父缺失值：scope事务内验两阶段完整，从origin复制原bytes/digest再由worker严格比较。
+后续合法takeover/resume只比较既有值，不重算覆盖；旧generation即便相同bytes仍无写权。
+
+完整4原表格的runtime_profile_digest须理解为完整两阶段组合身份，不把P3A列替换/默认成它。
+完整scope lock、baseline/head/native DAG、terminal committed晋升/active释放与bounded引用GC目标全部保留。
+Conversation最终释放通知/幂等/drain/privacy决定仍待BFF/Agent/产品，不能以永久保留代替GC闭环，也不阻P3A实施。
+
+## 历史 AGENT-PROFILE-P2-R24：装配候选仍零持久化（2026-10-01）
 
 基线`9dcaa34a3664668c3ad2da6adcc71f271ea96224`。生产SourceManifest/RuntimeAssemblyPolicy、单次PreparedFeaturePlan
 及其bytes/fingerprint已接真实factory；显式资源只读，绑定工具实例与native registry身份仅进程内比较，绝不序列化。

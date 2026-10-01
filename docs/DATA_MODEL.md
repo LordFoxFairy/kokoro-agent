@@ -1,5 +1,113 @@
 # kokoro-agent 数据模型
 
+## AGENT-RETRY-DESIGN：目标 lineage 与 native baseline（2026-09-30，未实施）
+
+基线 `f3be3b97dd67df69ed3c6cb88c59f3bc2db97703` 的 `database/schema.sql` 本门原字节不变。
+下表是 SQL-first 后继切片的确切目标；只在 Agent owner schema 内，fresh install，无 FK/migration/跨 owner JOIN。
+`RunScope.scoped_thread_id` 继续由可信 tenant/subject namespace 与 session 派生，native root ns=`""`。
+
+| 存放 | 目标字段/NULL/default 与查询理由 |
+| --- | --- |
+| 新 `kokoro_agent_run_scope` | PK `(tenant_id TEXT, namespace TEXT, session_id TEXT)` 均 NOT NULL；`latest_origin_run_id TEXT`、`latest_attempt_run_id TEXT`、`active_run_id TEXT` 可空，初建 NULL；`committed_checkpoint_id TEXT` 初建 NULL，仅初始化 genesis 期间允许；`committed_user_seq BIGINT NOT NULL DEFAULT 0`；`created_at/updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)`。根 thread/ns 可由 scope 唯一推导不重复存。该行只由 run admission/native/terminal 协调写，不复用展示 chat_session。 |
+| 现 `kokoro_agent_run_dispatch` | 新 `origin_run_id TEXT NOT NULL`（无默认，normal=self）、`retry_of_run_id TEXT NULL`（normal NULL）；`baseline_kind TEXT NOT NULL`（empty/native）、`baseline_checkpoint_id TEXT NOT NULL`（empty 亦是已持久 genesis ID）；`baseline_user_seq BIGINT NOT NULL`、`input_user_seq BIGINT NOT NULL`。两 seq 冻结原 native 缺失 user 的读取窗口，retry 从 origin 原样复制。既有 tenant/namespace/session 确定 root locator；request_json/fence 也承接 typed parent，row 与 canonical 比较一致。 |
+| 现 `kokoro_agent_run` | 新 `native_head_checkpoint_id TEXT NULL`（尚未写本 attempt checkpoint 时 NULL，绝不表示可取 latest）；`runtime_profile_digest TEXT NULL`（只允许 normal 初建 NULL；retry claim/createRun 与 baseline 原子复制 origin 非 NULL digest，缺失回滚拒绝）。Run PK/tenant/lease/terminal/usage 均保留；claim 同事务读 dispatch 固定 baseline，避免第二套 request。 |
+| 原 user/message | 不改 Chat PK `(tenant_id,chat_message_id)` 或 seq 唯一键。`role=user.run_id=origin_run_id`，retry 查回并验证同 tenant/namespace/session/message/content/status，返回原记录，不 UPDATE run_id/seq/time。非 user 的完整 immutable identity 原样保留。 |
+| 原 native 三表 | `checkpoints/checkpoint_blobs/checkpoint_writes` 不复制为 payload 快照表、不更改上游格式。使用完整 native parent/checkpoint/channel versions/namespace，delta/子图/pending writes 不手工剪裁。旧分支只作证据。 |
+
+必要约束/索引：scope PK 已支持唯一串行入口，不叠加等价索引；scope 具名 CHECK 保证
+`committed_user_seq>=0`，latest 两字段同空/同非空（active 可空）；dispatch 具名 CHECK 保证
+baseline_kind 二值、`0<=baseline_user_seq<input_user_seq`、normal 的 origin=self/retry parent 非 self，
+同一 attempt 只一个业务父。新增 partial UNIQUE `(tenant_id,retry_of_run_id) WHERE retry_of_run_id IS NOT NULL`
+保护一个失败 attempt 至多一个直接后继（同 key replay不新行）；不因查询 lineage 预建 origin 单列索引。
+将 Chat 原 `(tenant,namespace,session,seq)` 唯一索引用于缺失 user 范围读取，role 在受限区间过滤，暂不加冗余索引。
+新字段无“修旧数据”默认值；commit 前 schema check 与真实 EXPLAIN/并发测试核验 SQL 名称和必要性。
+
+### 事务与恢复
+
+所有相关写统一锁序：**scope（完整 key 字典序）→ dispatch（run_id 序）→ Run（run_id 序）→
+chat identity/sequence → native → outbox/receipt/control/tool/cleanup 子行**；尾部不需要的组可跳过，
+同组按完整 PK 排序，取得后禁止再取前组。run_id-only 入口先 **无锁预读** canonical locator
+(tenant,namespace,session,run_id)，该结果仅寻锁不授权；scope-first 后在同 transaction 重读 dispatch/Run，
+精确比较 locator、canonical identity、owner/generation、state 与该操作允许的 active/terminal fence；取得全部前置锁后单独读取数据库时钟重验 expiry，
+不复用等待锁前计算的 Python now，也不把只含等待前谓词的 UPDATE 当作锁后到期验证。
+预读后删除、scope不符或 generation变化即失败/无写；不凭预读结果继续。外部网络不放事务。
+
+| 入口锁矩阵（现方法；必须同片统一） | scope-first 后的重验/写边界 |
+| --- | --- |
+| enqueue_dispatch、try_claim/claim_dispatch | 锁相关 origin/parent/new dispatch 与 Run（各按 run_id）；核 frozen identity/baseline/profile，再 admission占位或claim/createRun；不能先 UPDATE dispatch/Run再找scope |
+| adopt、renew、pause | 精确旧 generation及 paused/active 条件重验；scope仍指本attempt才变更租约 |
+| reclaim_expired | 无锁选候选 locator，按 scope key、run_id排序逐scope事务；锁后DB clock重验过期，不保留当前先批量UPDATE Run的路径 |
+| cancel_with_delivery_barrier、try_mark_terminal、fence_and_mark_terminal | scope→dispatch/Run→Chat→native→outbox/usage/receipt/cleanup；typed outcome的最终usage段、delivery Chat barrier、terminal/outbox/Chat身份及session seq/cleanup、成功head晋升与active释放同事务；删除先CAS后emit或release后补Chat路径 |
+| stage_critical_frame、reserve/next_event_index、mark_critical_published | run_id定位后同序重读；emit需当前active lease；terminal重投仅原terminal fence/已持久event身份，不允许新active Run冒领 |
+| reconcile_receipts、control admission/delivery/status | 同序重读后receipt/manifest/control CAS；允许终态补收口不代表跳过scope/原fence或重开Run |
+| Chat save_message/append/append_fenced/ensure_session | 已知scope直接先锁scope；run关联投影先锁dispatch/Run再chat identity/sequence；user只normal创建，retry精确复用origin；纯展示写不反向锁Run |
+| tool journal/result、steer、usage、active effect、sandbox bind/cleanup | 同序进入所属子行，重验相应lease或已持久cleanup身份；scope锁不覆盖外部tool/network，回执写重新验证；现execute_active_effect持锁await Redis淘汰，live在PG提交后发布；GC不能从子行反向寻scope锁 |
+| native aput/aput_writes | 无锁locator→scope→dispatch/Run重读→native保存及head CAS；同连接/同commit；新attempt不得写origin baseline或失败兄弟分支 |
+| purge_terminal/delete_run_rows、native DAG GC | 无锁候选→按scope排序锁→dispatch/Run按ID锁→重验age、cleanup和全部引用后删；不靠候选快照或仅terminal TTL删，生命周期释放未裁决则不可宣称整scope回收已完成 |
+
+两条连接真实 RED→GREEN 矩阵（明确同步 barrier，不靠 sleep）：A 持 scope 后等待Run、B 从 run_id入口写；
+目标 B 先等待scope而非持Run，释放A后两者完成且无deadlock/越权更新。逐组覆盖 claim/adopt/renew/pause/reclaim/
+cancel/terminal/event/receipt/chat/tool/native/GC；另以 A 在 B 预读后推进generation或删除候选，B 锁后必须重读拒绝。
+双scope反向输入必须同排序；GC-vs-retry、terminal-vs-native、reclaim-vs-renew、receipt-vs-terminal 均核胜者唯一、
+失败事务零mutation、无孤儿baseline/Run/outbox，原查询超时/deadlock不得靠增大timeout掩盖。
+
+- Admission 的同一事务创建/锁 scope、读取当前 caller 范围内 parent/origin、验证 receipt/终态/最新性，
+  normal 仅一次持久 user，保存 baseline/input seq、dispatch 并占 active。重复 same fence 原 ACK；不同 key
+  竞争按唯一约束/行锁冲突，无第二 assistant（BFF 自有事务负责）或 Run。launch通知是否已发布不释放active；仅完整terminal原子事务释放，不等待Redis terminal发布。
+- 首 scope 在同事务以公共 native `empty_checkpoint()`/`AsyncPostgresSaver.aput` 建 genesis：
+  metadata source=input/step=-2、channel/pending 空，scope committed locator 与 dispatch baseline 同 commit。
+  native saver 使用相同 connection，失败回滚全部；empty kind 是业务显式标记，不用随机缺失 id触发 native empty fallback。
+- worker claim/createRun 在持 scope、parent/origin/new dispatch/Run 有序锁的同事务中，原子复制 origin
+  非 NULL runtime_profile_digest 及已冻结 baseline/window；origin NULL/字段漂移拒绝并 rollback，replay只读原值。
+  仅 normal claim 初始可 NULL，首次 build 前按相同 scope/lease fence freeze 本地 profile。
+  digest按TECHNICAL_DESIGN版本1白名单、UTF-8有序对象紧凑JSON及SHA256生成，含真实工具/子代理选择、
+  schema/稳定source及无secret业务选项；不复制secret、route或当前token。内部locator/profile/outcome使用dataclass。
+  admission 验请求选择，normal首次在所有可产生retryable失败的外部preflight前freeze；build/resume/takeover
+  在任何外部 effect 前另验当前 catalog profile；漂移不替换原选择，retry不走NULL重新freeze。
+  定点测试包括 origin NULL、漂移、复制后rollback、同key重放、正常首次freeze，不允许retry走NULL→当前catalog重新freeze。
+- 原生 write adapter 用独占同连接 transaction，statement-time DB clock 验租约及 active Run，委托 saver 公共
+  `aput/aput_writes`，root head CAS 同 commit；失效 lease/并发取消/错误 parent 全部 rollback。
+  pending writes 只接受该 attempt 自有 checkpoint，绝不写 immutable baseline；若 installed native 在 delta/input
+  路径必须写 baseline，需先完成原生隔离 fork 的 spike/设计修订，禁止静默放行跨 attempt baseline mutation。
+- native 出错后保留 last attempt head 用于诊断/同 Run 恢复，不晋升 committed head。自然完成必须确认 native
+  tasks/next/interrupt/pending writes 空、精确 head 未变，再随 terminal durable staging 晋升 committed head 和
+  input_user_seq；失败/取消不晋升。typed outcome同连接单事务完成最终usage段幂等写、delivery barrier、
+  terminal、固定outbox、Chat terminal事实（session seq/identity）、cleanup及active释放；barrier要求delivery
+  Chat事实已持久，不仅queued outbox存在。Chat写后outbox/head失败全部rollback，禁止release后补terminal Chat。
+  `postgres_run_leases.py`协调事务，`postgres_run_events.py`提供窄同cursor outbox协作；txn前通过现
+  project_chat_fact构造projection，复用PostgresChatRepository唯一SQL的package-internal append_on_cursor
+  （承接_append_projection/_next_seq/_save_message），不公开cursor port、不复制SQL、不引入新API。
+  terminal Chat取session seq须早于同事务release；outbox durable_seq/index/fence只有per-run语义，不能替代
+  session排序。commit后仅Redis发送；重放核原generation/identity并返回相同Chat seq，不分配新seq。
+  其他nonterminal critical可沿现outbox/Chat恢复；live Redis可丢，按现Chat/native恢复，不另建ledger。
+  保留live reserve index与fenced Chat append两个事务；append锁后核active，terminal先赢拒绝，live先commit则
+  HTTP Chat event seq先live后terminal。真实barrier证明old terminal Chat先commit再允许新user admission，
+  同event流old terminal.seq < new run.started.seq；message/event是不同kind计数器，不跨计数器比较大小。
+  BFF通过HTTP Chat replay消费而非Redis；post-terminal连续source显式block是BFF后继FIFO待实现门，
+  现seq/watermark/去重/gap不证明该门已有。不保证终态后无迟到Redis字节，也不为live强并事务或另建ledger。
+- 下一 normal 在 committed head 上补齐 seq 范围内所有尚未 committed 的稳定 user（含先前失败原问题），
+  同 ID reducer只一次；retry 仍使用 origin 固定窗口，不包含未来 user。原 Chat row 是输入事实，failed native tail
+  的 AI/tool/files/todos 不是可补输入。全 native state 由正确 baseline 还原，外部 workspace/store/artifact 不回滚。
+
+无 FK 完整性由同 scope 事务验证 parent/origin/tenant/seq/locator、读回精确比较及 owner reconciliation 负责。
+现 `purge_terminal` 仅 age/cleanup 判定将误删被 lineage/baseline 引用的 Run，必须按上表加入 active/引用保护；
+origin/dispatch/user/native祖先及 blob/delta/子图仍被 active、latest retry候选或committed head引用时禁止TTL删。
+**Retention 生命周期 P1 未决：** latest/committed 指针不会自行过期，只写“无引用才删”并不闭环。Root 已向用户询问
+“上下文随 Conversation 保留，DELETE 会话由 BFF 可靠通知 Agent 清理，Run TTL 只清无引用数据”的方案；待明确
+owner通知契约、幂等/重放、在途取消/drain、释放引用与privacy删除后才能授权整scope GC，本文不自行新增DELETE API。
+暂时保护引用不是永久跳过purge的完成方案，也不承诺现Run TTL足以清全部数据；该未决阻断完整数据设计门。
+Run purge必须有限batch无锁选候选，再按scope/dispatch/Run顺序锁后重读age、cleanup及引用；保留active、
+latest候选、committed head及其origin/lineage/user依赖。native reachability沿精确root/child parent、channel版本、
+blob/delta/pending writes闭包计算，不把“root不再最新”当垃圾。删除须与并发retry/terminal同锁重验，先证明
+共享依赖无引用；该bounded purge/reachability是正式源码阶段与验收依赖，不宣称已实现或最终整scope GC闭环。
+不新增DELETE API或tombstone字段；生命周期产品决定后再完成释放引用及最终回收。
+本片不新增 Redis key；Redis只通知，不作head/授权事实源；严禁逐Run盲adelete_thread破坏同scope DAG。
+
+**待验：** native saver 同连接 pipeline rollback/cancel、失效 generation 写入、子图/DeltaChannel 分支闭包、
+normal-vs-retry/双 key 并发、ACK lost、首轮 empty、post-start/HITL恢复装配失败、失败后 normal补 Human、
+fresh schema/drift/retention；对应命令和精确允许文件集见 TECHNICAL_DESIGN。旧 3.0 无 baseline 数据不兼容读取；
+仅 Root 明确拥有的 fixture 可按协调发布一次 fresh，未授权共享/用户数据不清理。本门不是 SQL 已验收。
+
 ## AGENT-FAILURE3-GRANULARITY 数据不变门（2026-09-30）
 
 基线 `da056b0103cced10188cdc1f5baef841d8333889` 的 canonical `database/schema.sql`、

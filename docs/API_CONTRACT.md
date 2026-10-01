@@ -1,5 +1,60 @@
 # kokoro-agent API 契约
 
+## AGENT-RETRY-DESIGN：目标 launch 4.0（2026-09-30，文档候选）
+
+当前基线 `f3be3b97dd67df69ed3c6cb88c59f3bc2db97703` 的机器 artifact 仍为 **3.0.0**，
+本门未修改机器源或 generated。目标是同一 internal-owner `POST /v1/runs` 的 coordinated clean-slate
+**4.0.0**，不新建 retry URL/service；本文并非已发布字段。唯一机器事实仍是
+`contract/openapi/v1/openapi.json`，实现放行前须与运行时、DATA_MODEL 一起验证。
+
+- `LaunchRequest`、`LaunchBody`、`RunRequest` 增 **required** `retry_of_run_id: null | non-empty string`。
+  normal 明确 null；retry 指向最近失败 attempt；缺失、空串、错类型、自引用为
+  400 `invalid_launch_request`。不提供省略 default、trace lineage 或旧 envelope fallback。
+- canonical dispatch fence 包含该字段和当前 ExecutionIdentity；null 的 canonical 表达固定由唯一实现产生，
+  HTTP→dispatch→Redis→Run 使用同对象，不靠 `exclude_none` 丢掉其语义；首次publish与supervisor_recovery
+  republish均保留显式null，不能只修HTTP解析。`run_id` 是新 attempt/幂等身份，
+  `request_id` 保持该 admission envelope 稳定；同 run_id 改 parent 或任何原 canonical 字段为
+  409 `run_identity_conflict`。重复请求先完成当前 caller 授权，再返回原 receipt，不因原 parent 已非 latest 而制造新 attempt。
+- retry 的原 message_id/content、feature_key、requested_model_label（含 null）、有序 selected_skill_source_refs、
+  tenant/resource subject/session/派生 namespace 全部与 origin 冻结事实一致；actor/assertion 是当前新授权身份，
+  不复制旧 credential。MCP 当前不在 launch schema，按 Agent 原执行 profile 固定并在 worker 重验；不得捏造已发布选择字段。
+- 父必须是 scope 最新 attempt 且其 logical origin 仍最新、持久 4.0 延续的 strict Failure 合法 tuple 且 retryable=true、terminal outbox
+  与Chat terminal事实已同事务持久，无 active dispatch/Run/HITL。非 latest/非可重试/存在活动 attempt 为 409 `run_retry_conflict`；
+  同租户可见父的冻结业务输入漂移为 409 `run_identity_conflict`。不可见或不存在父统一
+  404 `run_not_found`；错误不回显其他 scope、原 payload 或 provider 内容。
+- normal 与 retry 共用 scope admission；有活动 dispatch/Run/HITL 时 normal 为 409 `run_scope_busy`。
+  native locator/profile 损坏、缺失或未来版本不兼容失败关闭：接纳前为 409 `run_retry_conflict`，
+  已接纳后走现 `contract_incompatible/false` 终态，不复用 latest checkpoint 或把 retryable 人为改 false 规避重试实现。
+- 202 的既有 LaunchReceipt/查询/replay envelope 不变；新 attempt 与旧 attempt 的 Run evidence 独立，
+  failure code/retryable tuple、Run cursor=-1、Chat seq 从 1 均保持。`ChatMessage(role=user).run_id`
+  明确定义为 **origin Run**，其内容/seq/time 恒定；assistant/system/tool 仍属于其 immutable attempt。
+  BFF 通过原消息关系投影，不要求 user.run_id 等于新 assistant.run_id。
+
+权限语义不变：受信服务身份与当前 IAM session 先验证；业务 body 不自报 tenant/actor。重试不是旧 Run resume，
+不接收旧 approval decisions；平台能力、System route/current health、Storage 当前授权在新 Run 重验。
+执行profile按TECHNICAL_DESIGN版本1白名单canonical JSON/SHA256在任何可重试外部preflight前冻结；
+原子继承的digest不是新wire字段，不包含secret/动态route/当前授权。typed terminal outcome在同scope事务
+持久最终usage段、delivery barrier（delivery Chat事实已持久）、terminal/outbox/Chat terminal身份与session seq、
+cleanup、成功head晋升与active释放；同连接原子提交后仅Redis发布，不允许release后补分terminal Chat seq。
+现先terminal CAS后emit的崩溃窗口不作为目标恢复方案。其他nonterminal critical按原outbox/Chat恢复；
+固定terminal重放返回原Chat identity/seq，live可丢并依现Chat/native恢复，
+Agent保留reserve index→独立事务fenced Chat append→无锁live publish；terminal先赢拒durable append，
+live先提交则HTTP Chat seq先live后terminal。BFF正式AG-UI只消费HTTP Chat replay，不读取Agent Redis。
+BFF当前去重/gap门不等于post-terminal source拒绝；后继FIFO切片须显式block该非法source，不静默丢、不新增schema。
+terminal重放核原generation/固定event identity，不重分Chat seq；不保证终态后绝无迟到Redis字节，不新增全帧ledger。
+以上均为目标实现，当前源码未支持；lifecycle/retention用户决定未决，完整三设计门与4.0发布继续未通过。
+
+retryable 只是用户可尝试的失败属性，不保证成功、无副作用或免费；既有 tool journal/artifact 不被撤销或隐藏。
+
+**发布顺序：** Agent 四文档审查 → RED/native atomicity/lifecycle 门 → owner machine/runtime/schema/fresh-install
+同片验收，固定 4.0.0 commit/direct/aggregate digest 并 **只发布 artifact、不激活服务**（failure model 随 source digest
+再生） → BFF 同一个消费切片原字节 repin/生成，全部 normal Chat、Scheduler producer/outbox/parser 显式 null，
+retry 显式 parent 非空，并接原 user/新 assistant/outbox → 核查并更新所有其他 sender（含直接 worker caller）
+→ Web 固定 BFF → Root 自有 fresh/组合验收后一次协调切换。required 字段不允许先激活 Agent4 再补普通发送方，
+也不让 BFF4 向旧 Agent3 热发。旧 3.0 JSON、旧 Run baseline 缺失或旧 trace 不补默认；现受管组不半热混用。
+Proof schema/vectors/独立 digest 不变；owner inventory 因实现文件变动应按实际再生，不以手改摘要遮 drift。
+所有消费者明确固定新 artifact 后再切，不将机器/SQL尚未编辑的本次文档候选称为已通过三文档门。
+
 ## AGENT-FAILURE3-GRANULARITY API 不变门（2026-09-30）
 
 当前 owner HTTP artifact 3.0 已提交于 `da056b0103cced10188cdc1f5baef841d8333889`，Root

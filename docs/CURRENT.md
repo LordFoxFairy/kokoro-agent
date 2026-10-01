@@ -1,5 +1,68 @@
 # kokoro-agent 当前实现
 
+## AGENT-RETRY-DESIGN 文档候选（2026-09-30）
+
+本轮起始 `main f3be3b97dd67df69ed3c6cb88c59f3bc2db97703`、Agent clean；该基线已有下文
+Root 验收的 3.0 failure/cursor 与粒度切片，不重复把旧 main da056b 写成当前 HEAD。
+本阶段唯一改动是 TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT 四现文档，暂无新 machine/SQL/源码。
+
+目标为 required nullable `retry_of_run_id` 的正式 4.0 launch、原 user 与 attempt lineage、同 scope admission、
+完整 pre-turn native checkpoint baseline/head 与 run lease CAS；保留失败后 normal 的稳定 Human 上下文，
+不复制 failed AI/tool/native tail，也不复用旧批准。不是 assembly-only/phase-only重试，不靠改 retryable=false缩目标。
+当前源码尚不支持：同原 user 新 run 会 identity conflict，native 按 run_id 追加 Human，恢复 config 无 checkpoint_id，
+生产 saver 写入尚无 run-bound fence。R2按 Root `bf038a25` 当前任务补逐入口scope-first锁矩阵、两连接
+竞态测试、retry profile非NULL原子复制、实际rg检出的8构造文件及1decoded fixture、publish不激活与全部sender
+协调切换；未扩大源码授权。文档门状态 **未通过**：生命周期用户决定未决，机器/DDL/生产实现及真实验收尚未完成。
+
+实际只读证据：安装 METADATA/源码核验 DeepAgents 0.6.6、LangGraph 1.2.2、checkpoint 4.1.1、
+checkpoint-postgres 3.1.2；native saver 精确 locator 与默认 latest、Pregel 新输入/丢 pending tasks、
+namespace 子图路由、同 connection pipeline 语义已核对。一次 stdin、PYTHONDONTWRITEBYTECODE=1 的纯
+StateGraph/InMemorySaver 无模型探针 exit0：baseline next=()、pending_writes=0，中途失败 next=('last',)，
+retry next=()、原/新 logical Human 各一次、baseline完整不变、retry不继承failed parent。
+这只是 native API 定点证据，不是完整 DeepAgents、PG rollback、子图/Delta 或 HTTP/integration验收。
+
+Root后继native PG R3实际 exit0/PASS：同现PG5432自有随机DB经生产installer/drift，9场景；
+`/tmp/kokoro-retry-native-pg-spike-r3-result.json` 已只读核对，临时driver为
+`/tmp/kokoro-retry-native-pg-spike.py`。DeepAgentState Delta根/子图×empty/历史四场景 exactfork、完整先前messages、
+原Human唯一、failed后继排除、baseline channels/pending不变、旧失败证据与另连接restart精确locator均过；
+公共saver同连接+test-only head的application abort/head CAS lost/SQL abort/task.cancel四rollback与success commit均过。
+资源已删除：database_remaining=false、cleanup_errors=[]。不证明生产Run lease/generation adapter、HTTP、
+完整DeepAgents middleware/HITL/profile/GC或provider；这些仍待正式实施。Memory首子图断言错误及PG前两次fixture安装
+失败保留（prepared多语句、继承role search_path=pg_catalog）；修driver用生产installer/显式public，失败轮亦各自清理。
+Retention用户尚未回复，不擅造DELETEAPI或以永久跳过purge闭环；active/引用保护与生命周期释放仍分别待验。
+
+2026-10-01只读入口审查后，Root授权本次仅修四文档retry候选：实际发现try_mark_terminal先提交而terminal
+payload后写，现heartbeat只补已有outbox，没有缺payload恢复；execute_active_effect持Run锁await Redis；
+profile尚未在外部_preflight前freeze。候选现改为typed outcome单事务usage/barrier/terminal/outbox/cleanup/
+Chat terminal事实/session seq/identity、成功head晋升/active释放、commit后仅Redis发布，删除旧不存在的CAS→outbox恢复描述。live保持可丢与现
+Chat/native恢复；保留reserve→另事务fenced append→无锁publish，terminal先赢拒durable live，live先提交
+则HTTP Chat seq先live后terminal。BFF正式AG-UI不读Redis；post-terminal source block属于后继FIFO待实现，
+不把现去重/gap门冒充该保证。terminal原子持久Chat，重放保留原generation/identity及原seq，不承诺Redis绝无迟到字节、不建全帧ledger。
+profile版本1字段/编码/source职责已按真实Feature/Agent/Toolbox/Subagent入口写明，无secret、不freeze动态route；
+拟新增runtime_profile.py与run_checkpoints.py，无新目录。补worker/main、supervisor_recovery、execution/events、
+domain/run/repositories等遗漏允许集；锁后DB clock及terminal/live RED矩阵、bounded Run purge/native reachability
+为正式后继依赖。该修订不是源码完成、测试通过或生命周期已决定；原HEAD历史正文保持不变。
+
+Root R2源码审查进一步确认：PostgresChatRepository._append_projection:380/_next_seq:473才分配session seq，
+outbox index/durable_seq/fence是per-run；因此terminal Chat必须随outbox/head/active在同连接事务提交，
+不能release后补投。现候选明确leases协调、events窄同cursor outbox协作、Chat唯一SQL的append_on_cursor，
+delivery barrier须证Chat已持久；新增跨run barrier、Chat写后全rollback、重放原seq与Redis失败HTTP已见矩阵。
+
+Root本轮原源码baseline复验（不是retry4新功能GREEN）：lock/format/Ruff/contract exit0；默认pytest
+1520 passed、6 skipped、174 deselected（57.17s），默认不含integration/e2e/acceptance。
+正式 `uv run --frozen pyright` actual0、0 errors/0 warnings，日志
+`/tmp/kokoro-agent4-doc-correction-pyright-uv.log`。首次裸 `.venv/bin/pyright` 1262错误源于checker选择
+Python环境错误，已保留该失败记录，不记为1262个源码缺陷；正确环境通过亦不替代未实现的真实执行/生命周期验收。
+
+Root真实PG旧源码诊断 `/tmp/kokoro-agent-terminal-gap-probe.py`（结果同名前缀 `-result.json`）：自有fresh DB经生产installer/RunRepository，started发布后terminal CAS提交处模拟中断；新连接观察terminal=true、terminal_fence_seq=null、lease已清、queued terminal=0、reclaim=0，gap_reproduced=true、closed=true、脚本exit0。
+这是旧代码崩溃窗口实证，不是修复GREEN或截图根因证明；Root wheel/sdist build exit0，产物目录 `/tmp/kokoro-agent4-doc-correction-build`，349个受保护tracked文件一致。
+四文档仍为明确未通过设计门的候选，提交不代表实现放行或artifact发布；生命周期与整owner真实验收继续未完成。
+
+本Agent未运行服务、PG/Redis、模型、浏览器、pytest完整门或 schema安装；未改依赖、机器源、生成物、Git index/commit。
+底层同连接pipeline/Delta根子图API已定点通过；生产fenced adapter与两连接矩阵、完整middleware/HITL/profile/GC
+仍待四文档门与生命周期裁决后逐片 RED→GREEN，
+Agent发布4.0但不激活→BFF全normal Chat/Scheduler producer/parser与retry同片→其他sender核查→Web→Root自有fresh/协调组合。失败历史、旧运行组与总目标未闭环状态保留。
+
 ## AGENT-FAILURE3-GRANULARITY Root验收（2026-09-30）
 
 Root逐15候选与7保护hash独立核对、最终只读审查P0/P1/P2=0/0/0。fresh完整离线门实际exit0：lock/frozen sync、Ruff252/Pyright0、generator/checker、1520 passed/6既有skip/174deselect/364warnings（74.09s）、wheel/sdist；日志 `/tmp/kokoro-agent-granularity-root-final-gates.log`。同现PG/Redis的自有fixture完整HTTP acceptance22 passed/100warnings/7.20s、无skip/deselect，System/model为doubles；数据库及Redis15残留均0、cleanup_errors[]，不触活跃DB10/共享schema，日志 `/tmp/kokoro-agent-granularity-root-real-acceptance{.log,-result.json}`。Root标准实际FAIL137/0unverified，相比本片前139仅移除events/proof两项粒度，无新增项；日志 `/tmp/kokoro-agent-granularity-root-standard.json`。本片不声称全工程标准清零、BFF/Web3.0已消费或真正外部模型全链。

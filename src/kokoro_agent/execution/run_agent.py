@@ -1,4 +1,4 @@
-"""单次 run 编排：run.started → 投影泵 → interrupt 暂停 / claim-before-emit 终态收口。"""
+"""单次 run 编排：run.started → 投影泵 → interrupt 暂停 / typed atomic 终态收口。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from kokoro_agent.protocol import (
     RunCompletedPayload,
     RunFailedPayload,
     RunStartedPayload,
-    TokenUsage,
 )
 from kokoro_agent.execution.approvals import awaiting_payloads
 from kokoro_agent.execution.events import RunEmitter, SourceResolver
@@ -34,14 +33,16 @@ async def invoke_once(
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
-    claim_terminal: Callable[[], Awaitable[bool]],
+    finalize_terminal: Callable[
+        [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
+    ],
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
-    终态发射前先经 claim_terminal 原子认领：cancel/自然完成/异常三路共用同一认领键，
+    终态发射前经 finalize_terminal 同事务提交：cancel/自然完成/异常共用唯一收口，
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
     config = _config(thread_id, trace, recursion_limit)
@@ -68,24 +69,16 @@ async def invoke_once(
                     # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
                     await _record(record_usage, usage_cb.usage_metadata)
                     return False
-            if await claim_terminal():
-                total_in, total_out = await _record(
-                    record_usage, usage_cb.usage_metadata
-                )
-                token_usage = (
-                    TokenUsage(input_tokens=total_in, output_tokens=total_out)
-                    if total_in or total_out
-                    else None
-                )
-                await _emit_terminal(
-                    emitter,
-                    RunCompletedPayload(status="completed", token_usage=token_usage),
-                )
-            return True
-        except Exception as error:  # noqa: BLE001 — 顶层兜底：任何异常统一收口为 run.failed
-            if await claim_terminal():
-                await _emit_terminal(emitter, run_failed_payload(error))
-            return True
+            outcome: RunCompletedPayload | RunFailedPayload = RunCompletedPayload(
+                status="completed"
+            )
+        except Exception as error:  # noqa: BLE001 — execution failures become safe facts
+            outcome = run_failed_payload(error)
+        # Persistence failures propagate; never turn a failed commit of one
+        # outcome into a second, different terminal decision.
+        totals = _usage_totals(usage_cb.usage_metadata)
+        await finalize_terminal(outcome, totals)
+        return True
 
 
 async def _record(
@@ -93,26 +86,14 @@ async def _record(
     per_model: Mapping[str, UsageMetadata],
 ) -> tuple[int, int]:
     # callback 按 model_name 分组；跨 model 累加本段用量后入账，返回 run 级累计。
-    input_tokens = 0
-    output_tokens = 0
-    for usage in per_model.values():
-        # provider 可能漏报单项：缺省 0，绝不让计量残缺炸成 run.failed。
-        input_tokens += usage.get("input_tokens", 0)
-        output_tokens += usage.get("output_tokens", 0)
-    return await record_usage(input_tokens, output_tokens)
+    return await record_usage(*_usage_totals(per_model))
 
 
-async def _emit_terminal(
-    emitter: RunEmitter, payload: RunCompletedPayload | RunFailedPayload
-) -> None:
-    try:
-        await emitter.emit(payload)
-    except Exception:  # noqa: BLE001 — 终态 outbox 失败已落 queued，下一拍心跳/启动可恢复
-        LOGGER.exception(
-            "terminal emit failed run_id=%s payload_kind=%s; queued outbox remains recoverable",
-            emitter.run_id,
-            type(payload).__name__,
-        )
+def _usage_totals(per_model: Mapping[str, UsageMetadata]) -> tuple[int, int]:
+    return (
+        sum(usage.get("input_tokens", 0) for usage in per_model.values()),
+        sum(usage.get("output_tokens", 0) for usage in per_model.values()),
+    )
 
 
 def _config(

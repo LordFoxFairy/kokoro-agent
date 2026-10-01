@@ -68,3 +68,31 @@ def test_outbox_filter_does_not_accept_a_sql_fragment() -> None:
     assert OutboxFilter("queued") is OutboxFilter.QUEUED
     with pytest.raises(ValueError):
         OutboxFilter("status = 'queued'")
+
+
+async def test_active_lease_reads_database_clock_after_row_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+    from kokoro_agent.domain.run.models import LeaseFence
+
+    cursor = _Cursor()
+    expiry = datetime(2026, 1, 1, tzinfo=UTC)
+    rows = iter([{"lease_expires_at": expiry}, {"now": expiry}])
+
+    async def fetch_one(_: object) -> dict[str, object]:
+        return dict(next(rows))
+
+    monkeypatch.setattr(context_module, "fetch_one", fetch_one)
+    context = PostgresRunRepositoryContext(
+        "postgresql://fixture", ttl_ms=1000, schema="fixture", clock=lambda: 0
+    )
+    assert (
+        await context.lock_active_lease(
+            cursor, "run", LeaseFence(owner="worker", generation=1)
+        )
+        is False
+    )
+    assert len(cursor.calls) == 2
+    assert "FOR UPDATE" in cursor.calls[0][0]
+    assert "clock_timestamp()" in cursor.calls[1][0]

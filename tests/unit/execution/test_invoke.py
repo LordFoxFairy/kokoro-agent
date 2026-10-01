@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import terminal_emitter
+
 import asyncio
 import ast
 import json
@@ -87,7 +89,7 @@ async def _invoke(
         {"messages": []},
         approval_tool_names=approval_tool_names,
         source_for=_runtime_custom,
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(emitter, claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
         trace=trace,
     )
@@ -325,7 +327,7 @@ async def test_text_tool_and_empty_final_segment_are_replayable_in_order() -> No
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
     )
     assert done is True
@@ -721,13 +723,15 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
     )
     bus = FakeBus()
     done = await invoke_once(
-        RunEmitter(bus, "native-empty-final"),
+        (terminal_test_emitter_1 := RunEmitter(bus, "native-empty-final")),
         agent,
         "native-thread",
         {"messages": [HumanMessage(content="go")]},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
+        finalize_terminal=terminal_emitter(
+            terminal_test_emitter_1, _always_claim, usage_recorder()[0]
+        ),
         record_usage=usage_recorder()[0],
     )
     assert done is True
@@ -789,13 +793,15 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(
         return True
 
     terminal = await invoke_once(
-        RunEmitter(stream, run_id),
+        (terminal_test_emitter_2 := RunEmitter(stream, run_id)),
         agent,
         "tloop",
         {"messages": [HumanMessage(content="go")]},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(
+            terminal_test_emitter_2, claim, usage_recorder()[0]
+        ),
         record_usage=usage_recorder()[0],
         recursion_limit=8,
     )
@@ -899,7 +905,7 @@ async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, preloaded_recorder),
         record_usage=preloaded_recorder,
     )
     completed = find_event(bus.run_events("racc"), RunCompleted)
@@ -929,7 +935,7 @@ async def test_pause_segment_records_usage_too() -> None:
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, recorder),
         record_usage=recorder,
     )
     assert terminal is False

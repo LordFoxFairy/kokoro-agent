@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import terminal_emitter
+
 from typing import Any
 
 import pytest
@@ -95,13 +97,15 @@ async def test_steer_reaches_model_in_real_graph(
 
     bus = FakeBus()
     terminal = await invoke_once(
-        RunEmitter(bus, "r-graph"),
+        (terminal_test_emitter_1 := RunEmitter(bus, "r-graph")),
         agent,
         "t-graph",
         {"messages": [HumanMessage(content="写调研报告", id="m0")]},
         approval_tool_names=frozenset(),
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(
+            terminal_test_emitter_1, claim, usage_recorder()[0]
+        ),
         record_usage=usage_recorder()[0],
     )
     assert terminal is True

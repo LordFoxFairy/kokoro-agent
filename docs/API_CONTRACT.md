@@ -1,5 +1,29 @@
 # kokoro-agent API 契约
 
+## AGENT-TERMINAL-ATOMIC/P0：HTTP3.0 wire不变的内部一致性门（2026-10-01）
+
+基线dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3。本片不改OpenAPI/provenance/generated/公开字段、
+失败tuple、LaunchReceipt、Run cursor或Chat envelope，不发布4.0。typed outcome/result只是内部port。
+原有completed/failed/cancelled用唯一finalize事务产生terminal outbox与Chat terminal session seq，HTTP在commit后
+已可读；Redis随后发布，丢失ACK按固定事实重放，不二次分配seq或重写胜者payload。正常callback已观测最终usage
+同事务入账；paused段与resume段沿现generation身份累加。取消无可靠新段时不伪造usage、既有wire形状不变。
+Run outbox index/durable_seq只per-run，Chat event/message seq不同kind；本片没有新增scope锁，不声称同会话FIFO。
+BFF仍只读Agent HTTP Chat replay；live保留reserve→fenced Chat→无锁publish，durable post-terminal live拒绝，
+Redis迟到字节不是新的HTTP事实。terminal generic emit路径删除，nonterminal critical保留原恢复语义。
+NACK由同一finalize的quarantined disposition终止：同txn核持久rejected receipt/fence，terminal/cleanup/superseded
+私有audit原子写，不新增公开Chat、不恢复Redis、不推进毒化consumer；delivery不阻断隔离终止，重放核receipt+Run+audit。
+三文档局部门已由Root批准进入源码；原retry4 required字段/全owner发布/生命周期整体门仍未通过。源码候选已实施，本片 Root 验证门已通过，最终实测证据见 CURRENT 顶部；待 Root 提交。
+
+NACK仅信任同txn与offending outbox匹配的receipt(run_id,seq,event_id)，保留fence并原子supersede毒化open帧；不返回可发布frame。terminal后usage不接受首次新段，既存精确重放只读，不改变wire或赢家。
+
+normal/cancel 不越过同锁已确认的合法 rejected receipt；终态先赢则后到 NACK 不覆写。新增内部只读 verify_terminal_frame 仅验证已提交事实，缺失/漂移不发布、不修补 terminal Chat。retained started 的 Chat 缺口在同终态事务按原 identity/时间/index 补齐后再分配 terminal seq；不是新增 wire、不是另一终态路径。
+
+职责收敛：postgres_run_leases 保持唯一 finalize 同连接事务编排；postgres_run_events 承接 delivery_ready_on_cursor、terminal_chat_on_cursor 与只读 verify_terminal_frame，façade 的只读验证指向 events。events 不 import leases，不复制 SQL、不新增模块，也不放宽现 800 行门。
+
+本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+
+最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+
 ## AGENT-RETRY-DESIGN：目标 launch 4.0（2026-09-30，文档候选）
 
 当前基线 `f3be3b97dd67df69ed3c6cb88c59f3bc2db97703` 的机器 artifact 仍为 **3.0.0**，

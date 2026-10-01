@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from kokoro_agent.domain.run.models import (
+    CancelTerminalAuthority,
+    QuarantineTerminalAuthority,
+    RunTerminalOutcome,
+)
+from kokoro_agent.protocol import RunFailedPayload
+
 import asyncio
 import contextlib
 import hashlib
@@ -214,17 +221,17 @@ class SupervisorControlMixin(SupervisorContext):
             raise DeliveryBarrierPending("run has no claim fence yet")
         emitter = await self._emitter(bus, msg.run_id, current_fence)
         await emitter.ensure_delivery_events()
-        terminal_lease = await self._run_repository.cancel_with_delivery_barrier(
+        result = await self._run_repository.finalize_terminal(
             msg.run_id,
-            self._consumer,
-            msg.command_id,
-            snapshot,
-            RunControlReceiptPayload(
-                command_id=msg.command_id, control_status="applied"
-            ).model_dump_json(exclude_none=True),
-            RunCompletedPayload(status="cancelled", token_usage=None).model_dump_json(
-                exclude_none=True
+            CancelTerminalAuthority(owner=self._consumer, command_id=msg.command_id),
+            RunTerminalOutcome(
+                payload=RunCompletedPayload(status="cancelled", token_usage=None),
+                usage=None,
             ),
+            snapshot,
+        )
+        terminal_lease = (
+            result.lease if result.status in {"committed", "replayed"} else None
         )
         if terminal_lease is None:
             if not await self._run_repository.is_terminal(msg.run_id):
@@ -267,8 +274,19 @@ class SupervisorControlMixin(SupervisorContext):
     ) -> None:
         # session NACK（quarantine）：停止执行——cancel 在跑任务；分配已被 local fence（=rejected_seq）
         # 冻结，其后 critical 帧一律 superseded 不上 wire。原子认领终态后收束（与自然完成/cancel 互斥）。
-        terminal_lease = await self._run_repository.fence_and_mark_terminal(
-            run_id, self._consumer
+        result = await self._run_repository.finalize_terminal(
+            run_id,
+            QuarantineTerminalAuthority(
+                owner=self._consumer, rejected_seq=rejected_seq
+            ),
+            RunTerminalOutcome(
+                payload=RunFailedPayload(code="contract_incompatible", retryable=False),
+                usage=None,
+            ),
+            (),
+        )
+        terminal_lease = (
+            result.lease if result.status in {"committed", "replayed"} else None
         )
         if terminal_lease is None:
             return

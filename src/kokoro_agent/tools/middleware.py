@@ -132,7 +132,7 @@ async def _require_current_lease(
 
 class TerminalGuardMiddleware(AgentMiddleware):
     """跨 worker cancel 的执行侧闸：每个模型轮前查终态，命中即熔断（invoke 的
-    claim_terminal 已被 cancel 方拿走 → 异常路径不再发任何事件）。"""
+    terminal 已由 cancel 方原子提交 → 异常路径不再发任何事件）。"""
 
     def __init__(
         self, *, run_repository: RunRepository, run_id: str, lease: LeaseFence

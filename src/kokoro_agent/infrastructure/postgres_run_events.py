@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
+
+from kokoro_agent.domain.chat.models import chat_event_id
+from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.protocol import RunRequest, RunCompletedPayload, RunFailedPayload
 from uuid import uuid4
 
 from kokoro_agent.domain.run.repository import (
@@ -17,6 +24,8 @@ from kokoro_agent.infrastructure.postgres_run_context import (
     PostgresRunRepositoryContext,
 )
 from kokoro_agent.infrastructure.schema import (
+    CHAT_EVENTS_TABLE,
+    TOOL_JOURNAL_TABLE,
     RUN_CLAIMS_TABLE,
     RUN_OUTBOX_TABLE,
     RUN_RECEIPT_MANIFESTS_TABLE,
@@ -40,6 +49,8 @@ class PostgresRunEvents:
         terminal: bool,
         event_id: str | None = None,
     ) -> StagedFrame | None:
+        if terminal or kind in {"run.completed", "run.failed"}:
+            raise ValueError("terminal facts must use finalize_terminal")
         event_id = event_id or f"evt_{uuid4().hex}"
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
@@ -143,19 +154,44 @@ class PostgresRunEvents:
                         """.format(qualified(self._context.schema, RUN_CLAIMS_TABLE)),
                         (seq, index + 1, fence, run_id),
                     )
-                    await execute_sql(
+                    await self.insert_frame_on_cursor(
                         cur,
-                        """
-                        INSERT INTO {} (
-                            run_id, durable_seq, event_id, kind, status, index_value,
-                            occurred_at, payload_json, published_at
-                        ) VALUES (%s, %s, %s, %s, 'queued', %s,
-                                  to_timestamp(%s / 1000.0), %s, NULL)
-                        """.format(qualified(self._context.schema, RUN_OUTBOX_TABLE)),
-                        (run_id, seq, event_id, kind, index, timestamp, payload_json),
+                        OutboxFrame(
+                            run_id=run_id,
+                            durable_seq=seq,
+                            event_id=event_id,
+                            kind=kind,
+                            index=index,
+                            timestamp=timestamp,
+                            payload_json=payload_json,
+                        ),
                     )
         return StagedFrame(
             durable_seq=seq, event_id=event_id, index=index, timestamp=timestamp
+        )
+
+    async def insert_frame_on_cursor(
+        self, cur: Any, frame: OutboxFrame, *, superseded: bool = False
+    ) -> None:
+        await execute_sql(
+            cur,
+            """INSERT INTO {} (
+                run_id, durable_seq, event_id, kind, status, index_value,
+                occurred_at, payload_json, published_at
+            ) VALUES (%s, %s, %s, %s, %s, %s,
+                      to_timestamp(%s / 1000.0), %s, NULL)""".format(
+                qualified(self._context.schema, RUN_OUTBOX_TABLE)
+            ),
+            (
+                frame.run_id,
+                frame.durable_seq,
+                frame.event_id,
+                frame.kind,
+                "superseded" if superseded else "queued",
+                None if superseded else frame.index,
+                frame.timestamp,
+                frame.payload_json,
+            ),
         )
 
     async def next_event_index(self, run_id: str) -> int:
@@ -216,7 +252,7 @@ class PostgresRunEvents:
 
     async def list_unpublished_outbox(self) -> list[OutboxFrame]:
         rows = await self._context.fetch_outbox(OutboxFilter.QUEUED)
-        return [_outbox_row_to_frame(row) for row in rows]
+        return [outbox_row_to_frame(row) for row in rows]
 
     async def list_open_outbox_runs(self) -> list[str]:
         async with connect_pg(self._context.database_url) as conn:
@@ -240,6 +276,16 @@ class PostgresRunEvents:
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
+                    # Every receipt/GC decision serializes with stage/finalize on Run first.
+                    await execute_sql(
+                        cur,
+                        "SELECT terminal FROM {} WHERE run_id=%s FOR UPDATE".format(
+                            qualified(self._context.schema, RUN_CLAIMS_TABLE)
+                        ),
+                        (run_id,),
+                    )
+                    if await fetch_one(cur) is None:
+                        return ReceiptReconcile(receipt_state_lost=True)
                     await execute_sql(
                         cur,
                         """
@@ -276,23 +322,9 @@ class PostgresRunEvents:
                         if row["status"] == "rejected"
                     )
                     if rejected:
-                        seq = rejected[0]
-                        await execute_sql(
-                            cur,
-                            """
-                            UPDATE {}
-                            SET terminal_fence_seq = CASE
-                                WHEN terminal_fence_seq IS NULL OR terminal_fence_seq > %s
-                                THEN %s
-                                ELSE terminal_fence_seq
-                            END
-                            WHERE run_id = %s
-                            """.format(
-                                qualified(self._context.schema, RUN_CLAIMS_TABLE)
-                            ),
-                            (seq, seq, run_id),
-                        )
-                        return ReceiptReconcile(rejected_seq=seq)
+                        # The finalizer validates the receipt against its exact outbox
+                        # identity and commits quarantine atomically with termination.
+                        return ReceiptReconcile(rejected_seq=rejected[0])
                     republish: list[OutboxFrame] = []
                     for row in live_rows:
                         durable_seq = int(row["durable_seq"])
@@ -303,7 +335,7 @@ class PostgresRunEvents:
                             and published_at is not None
                             and now - int(published_at) >= republish_grace_ms
                         ):
-                            republish.append(_outbox_row_to_frame(row, run_id=run_id))
+                            republish.append(outbox_row_to_frame(row, run_id=run_id))
                     for frame in republish:
                         await execute_sql(
                             cur,
@@ -378,16 +410,19 @@ class PostgresRunEvents:
                                 now,
                             ),
                         )
-                        await execute_sql(
-                            cur,
-                            """
-                            DELETE FROM {}
-                            WHERE run_id = %s AND durable_seq <= %s
-                            """.format(
-                                qualified(self._context.schema, RUN_OUTBOX_TABLE)
-                            ),
-                            (run_id, advanced),
-                        )
+                    # Active delivery mapping is the stable journal-to-Chat identity.
+                    # Re-scan the final watermark after terminal even without new ACKs.
+                    await execute_sql(
+                        cur,
+                        """DELETE FROM {} AS frame WHERE frame.run_id=%s AND frame.durable_seq<=%s
+                           AND (frame.kind <> 'delivery.created' OR EXISTS (
+                               SELECT 1 FROM {} AS claim WHERE claim.run_id=frame.run_id AND claim.terminal=TRUE
+                           ))""".format(
+                            qualified(self._context.schema, RUN_OUTBOX_TABLE),
+                            qualified(self._context.schema, RUN_CLAIMS_TABLE),
+                        ),
+                        (run_id, advanced),
+                    )
                     await execute_sql(
                         cur,
                         """
@@ -432,8 +467,178 @@ class PostgresRunEvents:
                         republish=republish,
                     )
 
+    async def delivery_ready_on_cursor(
+        self,
+        cur: Any,
+        request: RunRequest,
+        snapshot: tuple[tuple[str, str, str], ...],
+    ) -> bool:
+        run_id = request.run_id
+        namespace = RunScope.of(request).namespace
+        await execute_sql(
+            cur,
+            "SELECT tool_call_id,status,result FROM {} WHERE run_id=%s AND name='deliver' ORDER BY created_at,tool_call_id".format(
+                qualified(self._context.schema, TOOL_JOURNAL_TABLE)
+            ),
+            (run_id,),
+        )
+        observed = tuple(
+            (str(r["tool_call_id"]), str(r["status"]), str(r["result"]))
+            for r in await fetch_all(cur)
+        )
+        if observed != snapshot or any(
+            status == "started" for _, status, _ in observed
+        ):
+            return False
+        for tool_id, status, _ in observed:
+            if status != "succeeded":
+                continue
+            event_id = (
+                "evt_"
+                + hashlib.sha256(f"delivery\0{run_id}\0{tool_id}".encode()).hexdigest()
+            )
+            await execute_sql(
+                cur,
+                """SELECT o.payload_json,o.index_value,c.payload_json AS chat_payload,c.chat_event_id FROM {} o JOIN {} c
+                ON c.run_id=o.run_id AND c.source_index=o.index_value
+                WHERE o.run_id=%s AND o.event_id=%s AND o.kind='delivery.created'
+                AND o.status IN ('queued','published') AND c.namespace=%s AND c.tenant_id=%s
+                AND c.session_id=%s AND c.event_type='delivery'""".format(
+                    qualified(self._context.schema, RUN_OUTBOX_TABLE),
+                    qualified(self._context.schema, CHAT_EVENTS_TABLE),
+                ),
+                (
+                    run_id,
+                    event_id,
+                    namespace,
+                    request.execution_identity.tenant_ref,
+                    request.session_id,
+                ),
+            )
+            fact = await fetch_one(cur)
+            if fact is None or fact["chat_event_id"] != chat_event_id(
+                namespace, run_id, int(fact["index_value"])
+            ):
+                return False
+            if json.loads(str(fact["payload_json"])) != json.loads(
+                str(fact["chat_payload"])
+            ):
+                return False
+        return True
 
-def _outbox_row_to_frame(
+    async def terminal_chat_on_cursor(
+        self, cur: Any, request: RunRequest, row: dict[str, Any]
+    ) -> dict[str, Any]:
+        index = int(row["event_index_counter"]) - 1
+        namespace = RunScope.of(request).namespace
+        await execute_sql(
+            cur,
+            """SELECT * FROM {} WHERE tenant_id=%s AND namespace=%s
+            AND session_id=%s AND run_id=%s AND source_index=%s AND chat_event_id=%s
+            AND event_type IN ('run.completed','run.failed') AND created_at=%s""".format(
+                qualified(self._context.schema, CHAT_EVENTS_TABLE)
+            ),
+            (
+                request.execution_identity.tenant_ref,
+                namespace,
+                request.session_id,
+                request.run_id,
+                index,
+                chat_event_id(namespace, request.run_id, index),
+                row["terminal_at"],
+            ),
+        )
+        fact = await fetch_one(cur)
+        if fact is None:
+            raise RuntimeError("terminal Chat identity is missing or corrupt")
+        return dict(fact)
+
+    @staticmethod
+    def quarantine_audit_matches(
+        row: dict[str, Any],
+        audit: dict[str, Any] | None,
+        payload: RunCompletedPayload | RunFailedPayload,
+    ) -> bool:
+        if audit is None:
+            return False
+        try:
+            return (
+                audit["status"] == "superseded"
+                and audit["kind"] == "run.failed"
+                and audit["index_value"] is None
+                and audit["published_at"] is None
+                and audit["occurred_at"] == row["terminal_at"]
+                and row["terminal_at"] is not None
+                and int(audit["durable_seq"]) == int(row["durable_counter"])
+                and int(audit["durable_seq"]) > int(row["terminal_fence_seq"])
+                and json.loads(audit["payload_json"])
+                == payload.model_dump(exclude_none=True)
+            )
+        except (TypeError, ValueError):
+            return False
+
+    async def verify_terminal_frame(self, frame: OutboxFrame) -> None:
+        """Validate retained terminal facts; never repair or allocate Chat state."""
+        async with connect_pg(self._context.database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await execute_sql(
+                        cur,
+                        "SELECT * FROM {} WHERE run_id=%s FOR UPDATE".format(
+                            qualified(self._context.schema, RUN_CLAIMS_TABLE)
+                        ),
+                        (frame.run_id,),
+                    )
+                    raw = await fetch_one(cur)
+                    if raw is None or not raw["terminal"]:
+                        raise RuntimeError("terminal frame has no committed Run")
+                    row = dict(raw)
+                    if (
+                        frame.durable_seq != row["terminal_fence_seq"]
+                        or frame.index != int(row["event_index_counter"]) - 1
+                        or frame.event_id
+                        != "evt_"
+                        + hashlib.sha256(
+                            f"terminal\0{frame.run_id}".encode()
+                        ).hexdigest()
+                        or frame.timestamp != int(row["terminal_at"].timestamp() * 1000)
+                    ):
+                        raise RuntimeError("terminal frame identity drift")
+                    await execute_sql(
+                        cur,
+                        """SELECT *,floor(extract(epoch FROM occurred_at)*1000)::bigint AS timestamp
+                        FROM {} WHERE run_id=%s AND durable_seq=%s AND status IN ('queued','published')""".format(
+                            qualified(self._context.schema, RUN_OUTBOX_TABLE)
+                        ),
+                        (frame.run_id, frame.durable_seq),
+                    )
+                    stored = await fetch_one(cur)
+                    if stored is None or outbox_row_to_frame(dict(stored)) != frame:
+                        raise RuntimeError("terminal frame is not retained")
+                    request = RunRequest.model_validate_json(row["request_json"])
+                    fact = await self.terminal_chat_on_cursor(cur, request, row)
+                    payload = (
+                        RunCompletedPayload.model_validate_json(frame.payload_json)
+                        if frame.kind == "run.completed"
+                        else RunFailedPayload.model_validate_json(frame.payload_json)
+                    )
+                    projection = project_chat_fact(
+                        tenant_id=request.execution_identity.tenant_ref,
+                        namespace=RunScope.of(request).namespace,
+                        session_id=request.session_id,
+                        run_id=frame.run_id,
+                        source_index=frame.index,
+                        created_at=row["terminal_at"],
+                        payload=payload,
+                    )
+                    assert projection is not None
+                    if fact["event_type"] != projection.event.event_type or json.loads(
+                        fact["payload_json"]
+                    ) != json.loads(projection.event.payload_json):
+                        raise RuntimeError("terminal Chat payload drift")
+
+
+def outbox_row_to_frame(
     row: dict[str, Any], *, run_id: str | None = None
 ) -> OutboxFrame:
     return OutboxFrame(

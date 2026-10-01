@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+from support.fakes import finish_run
+
+from support.fakes import terminal_emitter
+
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -96,13 +100,13 @@ async def test_subagent_approval_pauses_then_approve_completes(
 
     recorder, _seen = usage_recorder()
     first = await invoke_once(
-        RunEmitter(stream, run1),
+        (terminal_test_emitter_1 := RunEmitter(stream, run1)),
         _build(saver),
         "tsub",
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(terminal_test_emitter_1, claim, recorder),
         record_usage=recorder,
     )
     assert first is False  # 暂停成卡，而非 run.failed
@@ -121,13 +125,13 @@ async def test_subagent_approval_pauses_then_approve_completes(
     # 重读快照重建帧：合成 id 必须稳定（resume 对齐依据）。
     agent2 = _build(saver)
     second = await invoke_once(
-        RunEmitter(stream, run2),
+        (terminal_test_emitter_2 := RunEmitter(stream, run2)),
         agent2,
         "tsub",
         Command(resume={"decisions": [{"type": "approve"}]}),
         approval_tool_names=names,
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(terminal_test_emitter_2, claim, recorder),
         record_usage=recorder,
     )
     assert second is True
@@ -149,7 +153,7 @@ async def test_general_purpose_delegation_runs_inside_guards(
     run_repository = FakeRunRepository()
     lease = await run_repository.try_claim(request(run_id))
     assert lease is not None
-    assert await run_repository.try_mark_terminal(run_id, lease)
+    assert await finish_run(run_repository, run_id, lease)
     guard = TerminalGuardMiddleware(
         run_repository=run_repository, run_id=run_id, lease=lease
     )
@@ -187,13 +191,13 @@ async def test_general_purpose_delegation_runs_inside_guards(
 
     recorder, _seen = usage_recorder()
     terminal = await invoke_once(
-        RunEmitter(stream, run_id),
+        (terminal_test_emitter_3 := RunEmitter(stream, run_id)),
         agent,
         "tgp",
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=frozenset({"ask_user_question"}),
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(terminal_test_emitter_3, claim, recorder),
         record_usage=recorder,
     )
     assert terminal is True
@@ -277,13 +281,17 @@ async def test_subagent_review_pauses_with_cached_result(
 
     recorder, _seen = usage_recorder()
     paused = await invoke_once(
-        RunEmitter(stream, run_id, review_tool_names=frozenset({"gated"})),
+        (
+            terminal_test_emitter_4 := RunEmitter(
+                stream, run_id, review_tool_names=frozenset({"gated"})
+            )
+        ),
         agent,
         "trev",
         {"messages": [HumanMessage(content="go", id="m1")]},
         approval_tool_names=frozenset({"ask_user_question"}),
         source_for=lambda _n: "built-in",
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(terminal_test_emitter_4, claim, recorder),
         record_usage=recorder,
     )
     assert paused is False

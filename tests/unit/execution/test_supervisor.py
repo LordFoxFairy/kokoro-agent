@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import finish_run
+
 import asyncio
 
 import pytest
@@ -38,7 +40,7 @@ from kokoro_agent.protocol import (
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.run.repository import LeaseFence
-from kokoro_agent.streams.protocol import StreamItem
+from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.domain.run.scope import RunScope, runtime_namespace
@@ -77,7 +79,22 @@ def _supervisor(
     chat_repository: FakeChatRepository | None = None,
 ) -> tuple[RunSupervisor, FakeRunRepository]:
     state_store = store if store is not None else FakeRunRepository()
-    sup = RunSupervisor(
+    if chat_repository is not None:
+        state_store.chat_repository = chat_repository
+
+    class _AdmittedControlSupervisor(RunSupervisor):
+        async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
+            if isinstance(msg, RunCancel):
+                await state_store.record_control_delivery(
+                    msg.run_id,
+                    msg.command_id,
+                    msg.request_digest,
+                    None,
+                    msg.model_dump_json(exclude_none=True),
+                )
+            await super().dispatch(bus, msg)
+
+    sup = _AdmittedControlSupervisor(
         agent_builder=_builder(agent),
         run_repository=state_store,
         approval_tool_names=_gated_names,
@@ -803,9 +820,9 @@ async def test_lease_generation_fences_stale_worker_with_reused_owner_name() -> 
 
     assert second.generation > first.generation
     assert await store.renew(run.run_id, first) is False
-    assert await store.try_mark_terminal(run.run_id, first) is False
+    assert await finish_run(store, run.run_id, first) is False
     assert await store.renew(run.run_id, second) is True
-    assert await store.try_mark_terminal(run.run_id, second) is True
+    assert await finish_run(store, run.run_id, second) is True
 
 
 async def test_paused_lease_cannot_be_revived_by_delayed_heartbeat() -> None:
@@ -918,7 +935,7 @@ async def test_non_owner_cancel_fences_active_generation() -> None:
     assert completed.payload.status == "cancelled"
 
 
-async def test_terminal_claim_remains_latched_when_usage_persistence_fails() -> None:
+async def test_terminal_usage_failure_leaves_run_recoverable_without_terminal() -> None:
     class _UsageFailureRepository(FakeRunRepository):
         async def add_usage(
             self,
@@ -935,11 +952,17 @@ async def test_terminal_claim_remains_latched_when_usage_persistence_fails() -> 
     sup, _ = _supervisor(FakeAgent(run=text_run("done")), store=store)
 
     await sup.dispatch(bus, request("terminal-usage-failure"))
-    await _drain(sup)
+    with pytest.raises(RuntimeError, match="usage persistence unavailable"):
+        await _drain(sup)
 
-    assert await store.is_terminal("terminal-usage-failure") is True
-    assert bus.kinds("terminal-usage-failure")[-1] == "run.failed"
-    assert run_control_stream("terminal-usage-failure") in bus.deleted
+    # A failed usage write must roll back the whole terminal operation. Keeping
+    # terminal=True here seals a Run whose completed outcome never committed.
+    assert await store.is_terminal("terminal-usage-failure") is False
+    assert not any(
+        kind in {"run.completed", "run.failed"}
+        for kind in bus.kinds("terminal-usage-failure")
+    )
+    assert run_control_stream("terminal-usage-failure") not in bus.deleted
 
 
 async def test_heartbeat_renews_and_reclaims() -> None:
@@ -958,6 +981,7 @@ async def test_heartbeat_renews_and_reclaims() -> None:
     await _drain(sup_running)
 
     # 过期重拾：store 吐出他处遗留的 request → 重新执行到终态（index 续接不回卷）。
+    await store.try_claim(request("orphan"), "expired-worker")
     store.expired = [request("orphan")]
     await sup.heartbeat_once(bus)
     await _drain(sup)
@@ -1164,7 +1188,7 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
     assert await store.pause("gone", lease) is True
     adopted = await store.adopt("gone", "remote-worker")
     assert adopted is not None
-    assert await store.try_mark_terminal("gone", adopted) is True  # 他处已终态
+    assert await finish_run(store, "gone", adopted) is True  # 他处已终态
     await sup.heartbeat_once(closing)  # 收养入口＝心跳（公开面）
     for _ in range(200):
         if not sup.control_listeners:
@@ -1805,3 +1829,164 @@ async def test_failure_contract_initial_and_resume_preserve_typed_failure(
         )
         == 1
     )
+
+
+async def test_terminal_rejects_first_usage_segment_after_seal() -> None:
+    store = FakeRunRepository()
+    run = request("sealed-usage")
+    lease = await store.try_claim(run, "worker")
+    assert lease is not None
+    assert await finish_run(store, run.run_id, lease)
+    before = dict(store.usage_totals)
+
+    assert await store.add_usage(run.run_id, lease, 5, 7) is None
+    assert store.usage_totals == before
+    assert (run.run_id, lease.generation) not in store.usage_segments
+
+
+async def test_nack_wrong_event_identity_does_not_fence_or_terminate() -> None:
+    store = FakeRunRepository()
+    run = request("nack-wrong-identity")
+    lease = await store.try_claim(run, "worker")
+    assert lease is not None
+    assert await store.pause(run.run_id, lease)
+    store.outbox[run.run_id] = [
+        {
+            "durable_seq": 1,
+            "event_id": "persisted-event",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 0,
+            "payload_json": "{}",
+            "status": "published",
+        }
+    ]
+    store.receipts[run.run_id] = [
+        {"durable_seq": 1, "event_id": "different-event", "status": "rejected"}
+    ]
+    supervisor, _ = _supervisor(FakeAgent(), store=store)
+    try:
+        await supervisor.heartbeat_once(FakeBus())
+        assert await store.is_terminal(run.run_id) is False
+        assert store.terminal_fence.get(run.run_id) is None
+        assert store.outbox[run.run_id][0]["status"] == "published"
+    finally:
+        tasks = tuple(supervisor.control_listeners.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_terminal_replay_returns_retained_frame_without_reallocation() -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload, RunFailedPayload
+
+    store = FakeRunRepository()
+    run = request("terminal-replay")
+    lease = await store.try_claim(run, "worker")
+    assert lease is not None
+    authority = ExecutionTerminalAuthority(lease=lease)
+    outcome = RunTerminalOutcome(
+        payload=RunCompletedPayload(status="completed", token_usage=None), usage=None
+    )
+    first = await store.finalize_terminal(run.run_id, authority, outcome, ())
+    replay = await store.finalize_terminal(run.run_id, authority, outcome, ())
+    assert replay.status == "replayed"
+    assert replay.retained_frames == first.retained_frames
+    assert len(store.chat_repository.records) == 1
+    losing = await store.finalize_terminal(
+        run.run_id,
+        authority,
+        RunTerminalOutcome(
+            payload=RunFailedPayload(code="internal_error", retryable=False), usage=None
+        ),
+        (),
+    )
+    assert losing.status == "lost"
+    store.outbox[run.run_id] = []
+    after_gc = await store.finalize_terminal(run.run_id, authority, outcome, ())
+    assert after_gc.status == "replayed"
+    assert after_gc.retained_frames == ()
+    assert store.outbox[run.run_id] == []
+
+
+@pytest.mark.parametrize("matching", [True, False])
+async def test_rejected_receipt_preempts_natural_only_with_exact_outbox_identity(
+    matching: bool,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    store = FakeRunRepository()
+    run = request("nack-before-terminal")
+    lease = await store.try_claim(run, "worker")
+    assert lease is not None
+    store.outbox[run.run_id] = [
+        {
+            "durable_seq": 1,
+            "event_id": "offending",
+            "kind": "run.started",
+            "index": 0,
+            "timestamp": 0,
+            "payload_json": "{}",
+            "status": "published",
+        }
+    ]
+    store.receipts[run.run_id] = [
+        {
+            "durable_seq": 1,
+            "event_id": "offending" if matching else "wrong",
+            "status": "rejected",
+        }
+    ]
+    store.durable_counter[run.run_id] = 1
+    store.event_index_counter[run.run_id] = 1
+    result = await store.finalize_terminal(
+        run.run_id,
+        ExecutionTerminalAuthority(lease=lease),
+        RunTerminalOutcome(
+            payload=RunCompletedPayload(status="completed", token_usage=None),
+            usage=None,
+        ),
+        (),
+    )
+    assert result.status == ("lost" if matching else "committed")
+    assert await store.is_terminal(run.run_id) is (not matching)
+    if matching:
+        assert store.chat_repository.records == []
+        assert store.terminal_fence.get(run.run_id) is None
+
+
+async def test_terminal_recovery_does_not_publish_missing_chat_fact() -> None:
+    store = FakeRunRepository()
+    run = request("terminal-orphan-chat")
+    lease = await store.try_claim(run, "worker")
+    assert lease is not None
+    assert await finish_run(store, run.run_id, lease)
+    store.chat_repository.records.clear()
+    supervisor, _ = _supervisor(FakeAgent(), store=store)
+    bus = FakeBus()
+    await supervisor.heartbeat_once(bus)
+    assert bus.run_events(run.run_id) == []
+    assert store.outbox[run.run_id][0]["status"] == "queued"
+
+
+async def test_terminal_repairs_retained_started_before_terminal_chat() -> None:
+    store = FakeRunRepository()
+    run = request("started-gap")
+    lease = await store.try_claim(run, "worker")
+    assert lease is not None
+    assert await store.stage_critical_frame(
+        run.run_id, lease, "run.started", 0, "{}", terminal=False
+    )
+    assert await finish_run(store, run.run_id, lease)
+    assert [fact.event_type for fact in store.chat_repository.records] == [
+        "run.started",
+        "run.completed",
+    ]

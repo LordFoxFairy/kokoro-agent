@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
@@ -23,22 +22,6 @@ _INTENT = TypeAdapter(dict[str, JsonValue])
 class PostgresRunEffects:
     def __init__(self, context: PostgresRunRepositoryContext) -> None:
         self._context = context
-
-    async def execute_active_effect(
-        self,
-        run_id: str,
-        lease: LeaseFence,
-        effect: Callable[[], Awaitable[None]],
-    ) -> bool:
-        """Linearize one bounded external effect with reclaim, pause, and terminal CAS."""
-
-        async with connect_pg(self._context.database_url) as conn:
-            async with conn.transaction():
-                async with conn.cursor() as cur:
-                    if not await self._context.lock_active_lease(cur, run_id, lease):
-                        return False
-                    await effect()
-                    return True
 
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
         row = await self._context.get_claim_row(run_id)

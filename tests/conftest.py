@@ -25,6 +25,7 @@ from kokoro_agent.infrastructure.postgres_run_repository import (
     make_run_repository,
 )
 from kokoro_agent.domain.run.repository import RunRepository
+from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepository
 from kokoro_agent.infrastructure.memory_store import make_memory_store
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import apply_agent_schema
@@ -38,7 +39,7 @@ DATABASE_URL = os.environ.get(
 )
 
 _INTEGRATION_FIXTURES = frozenset(
-    {"stream", "checkpointer", "memory_store", "run_repository"}
+    {"stream", "checkpointer", "memory_store", "run_repository", "chat_repository"}
 )
 
 
@@ -140,14 +141,31 @@ async def memory_store() -> AsyncGenerator[BaseStore, None]:
 
 
 @pytest.fixture
-async def run_repository() -> AsyncGenerator[RunRepository, None]:
-    """真 PostgreSQL run_repository；唯一 schema 隔离。"""
+async def run_chat_schema() -> AsyncGenerator[str, None]:
+    """Run and Chat share the same installed owner schema and cleanup boundary."""
     await require_postgres()
     async with _installed_schema() as schema:
-        settings = RunRepositorySettings(
-            database_url=DATABASE_URL,
-            schema_name=schema,
-            lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
-        )
-        async with make_run_repository(settings) as run_repository:
-            yield run_repository
+        yield schema
+
+
+@pytest.fixture
+def run_chat_database_url() -> str:
+    """Connection URL for explicit receipt facts in the same owner test schema."""
+    return DATABASE_URL
+
+
+@pytest.fixture
+async def chat_repository(run_chat_schema: str) -> PostgresChatRepository:
+    return PostgresChatRepository(DATABASE_URL, run_chat_schema)
+
+
+@pytest.fixture
+async def run_repository(run_chat_schema: str) -> AsyncGenerator[RunRepository, None]:
+    """真 PostgreSQL run_repository；唯一 schema 隔离。"""
+    settings = RunRepositorySettings(
+        database_url=DATABASE_URL,
+        schema_name=run_chat_schema,
+        lease_ttl_ms=DEFAULT_LEASE_TTL_S * 1000,
+    )
+    async with make_run_repository(settings) as run_repository:
+        yield run_repository

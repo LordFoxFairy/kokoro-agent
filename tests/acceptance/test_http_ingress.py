@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from support.fakes import finish_run
+
+from support.fakes import repository_terminal_callback
+
 import asyncio
 import json
 import os
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from typing import Any, LiteralString
 
 import httpx
 import psycopg
@@ -19,7 +25,9 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import JsonValue, SecretStr, TypeAdapter
 from psycopg import sql
 from support.fakes import (
+    FakeAgent,
     FakeBus,
+    text_run,
     usage_recorder,
 )
 from support.deepagents import create_test_deep_agent
@@ -29,6 +37,7 @@ from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
 from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
+    ChatEventRecord,
     ChatMessageDraft,
     ChatProjection,
 )
@@ -40,6 +49,7 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
 from kokoro_agent.protocol import (
     ExecutionIdentity,
     IdentityRef,
+    MessageDeltaPayload,
     RunCompleted,
     RunCompletedPayload,
     RunInput,
@@ -50,6 +60,9 @@ from kokoro_agent.protocol import (
     run_control_stream,
     run_events_stream,
 )
+from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.execution.events import (
     RunEmitter,
@@ -68,6 +81,7 @@ from kokoro_agent.infrastructure.postgres_run_repository import (
 )
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import (
+    RUN_CLAIMS_TABLE,
     CHAT_EVENTS_TABLE,
     CHAT_MESSAGES_TABLE,
     CHAT_SEQUENCES_TABLE,
@@ -78,6 +92,7 @@ from kokoro_agent.infrastructure.schema import (
 )
 from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream
+from kokoro_agent.streams.protocol import StreamItem
 
 _DATABASE_URL = os.environ.get(
     "KOKORO_AGENT_DATABASE_URL",
@@ -442,10 +457,10 @@ async def test_postgres_lease_generation_fences_stale_same_owner_worker(
 ) -> None:
     """A restarted process may reuse its worker name; generation must still fence it."""
 
-    clock_ms = [1_000]
+    clock_ms = [int(time.time() * 1000)]
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
-        ttl_ms=10,
+        ttl_ms=10_000,
         schema=acceptance_state.config.database_schema,
         clock=lambda: clock_ms[0],
     )
@@ -454,7 +469,7 @@ async def test_postgres_lease_generation_fences_stale_same_owner_worker(
 
     first = await repository.try_claim(current_request, "same-worker-name")
     assert first is not None
-    clock_ms[0] += 11
+    clock_ms[0] += 10_001
     assert await repository.renew(current_request.run_id, first) is False
     reclaimed = await repository.reclaim_expired("same-worker-name")
     assert len(reclaimed) == 1
@@ -462,19 +477,19 @@ async def test_postgres_lease_generation_fences_stale_same_owner_worker(
 
     assert second.generation == first.generation + 1
     assert await repository.renew(current_request.run_id, first) is False
-    assert await repository.try_mark_terminal(current_request.run_id, first) is False
+    assert await finish_run(repository, current_request.run_id, first) is False
     assert await repository.renew(current_request.run_id, second) is True
-    assert await repository.try_mark_terminal(current_request.run_id, second) is True
+    assert await finish_run(repository, current_request.run_id, second) is True
 
 
 @pytest.mark.asyncio
 async def test_postgres_execution_effects_require_current_lease_generation(
     acceptance_state: _AcceptanceState,
 ) -> None:
-    clock_ms = [10_000]
+    clock_ms = [int(time.time() * 1000)]
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
-        ttl_ms=10,
+        ttl_ms=10_000,
         schema=acceptance_state.config.database_schema,
         clock=lambda: clock_ms[0],
     )
@@ -484,7 +499,7 @@ async def test_postgres_execution_effects_require_current_lease_generation(
     stale = await repository.try_claim(current_request, "reused-worker-name")
     assert stale is not None
     await repository.add_steer(current_request.run_id, "steer-1", "keep me")
-    clock_ms[0] += 11
+    clock_ms[0] += 10_001
     reclaimed = await repository.reclaim_expired("reused-worker-name")
     current = reclaimed[0].lease
 
@@ -545,7 +560,6 @@ async def test_postgres_execution_effects_require_current_lease_generation(
     chat_repository = PostgresChatRepository(
         acceptance_state.config.database_url,
         schema=acceptance_state.config.database_schema,
-        clock=lambda: clock_ms[0],
     )
     await chat_repository.setup()
     assert await chat_repository.append_fenced(projection, stale, mode="active") is None
@@ -598,24 +612,36 @@ async def test_postgres_execution_effects_require_current_lease_generation(
 async def test_chat_fence_distinguishes_active_work_from_current_generation(
     acceptance_state: _AcceptanceState,
 ) -> None:
-    clock_ms = [20_000]
+    clock_ms = [int(time.time() * 1000)]
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
-        ttl_ms=10,
+        ttl_ms=10_000,
         schema=acceptance_state.config.database_schema,
         clock=lambda: clock_ms[0],
     )
     chat_repository = PostgresChatRepository(
         acceptance_state.config.database_url,
         schema=acceptance_state.config.database_schema,
-        clock=lambda: clock_ms[0],
     )
     await repository.setup()
     await chat_repository.setup()
     current_request = _request(f"chat-fence-mode-{uuid.uuid4().hex}")
     lease = await repository.try_claim(current_request, "chat-worker")
     assert lease is not None
-    clock_ms[0] += 11
+    clock_ms[0] += 10_001
+    async with await psycopg.AsyncConnection.connect(
+        acceptance_state.config.database_url
+    ) as conn:
+        await conn.execute(
+            sql.SQL(
+                "UPDATE {} SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id=%s"
+            ).format(
+                sql.Identifier(
+                    acceptance_state.config.database_schema, RUN_CLAIMS_TABLE
+                )
+            ),
+            (current_request.run_id,),
+        )
     projection = ChatProjection(
         event=ChatEventDraft(
             tenant_id=current_request.execution_identity.tenant_ref,
@@ -853,50 +879,63 @@ async def test_usage_is_idempotent_per_lease_generation(
     current_request = _request(f"usage-segment-{uuid.uuid4().hex}")
     lease = await repository.try_claim(current_request, "usage-worker")
     assert lease is not None
-    assert await repository.try_mark_terminal(current_request.run_id, lease) is True
-
     assert await repository.add_usage(current_request.run_id, lease, 5, 7) == (5, 7)
+    assert await finish_run(repository, current_request.run_id, lease) is True
     assert await repository.add_usage(current_request.run_id, lease, 5, 7) == (5, 7)
     with pytest.raises(RuntimeError, match="usage.*identity|identity.*usage"):
         await repository.add_usage(current_request.run_id, lease, 6, 7)
 
 
 @pytest.mark.asyncio
-async def test_active_effect_blocks_lease_reclaim_until_effect_finishes(
+async def test_live_publish_does_not_hold_run_lock_while_network_waits(
     acceptance_state: _AcceptanceState,
 ) -> None:
-    clock_ms = [40_000]
+    clock_ms = [int(time.time() * 1000)]
+    config = acceptance_state.config
     repository = PostgresRunRepository(
-        acceptance_state.config.database_url,
-        ttl_ms=10,
-        schema=acceptance_state.config.database_schema,
+        config.database_url,
+        ttl_ms=10_000,
+        schema=config.database_schema,
         clock=lambda: clock_ms[0],
     )
-    await repository.setup()
-    current_request = _request(f"effect-linearization-{uuid.uuid4().hex}")
+    current_request = _request(f"live-without-db-lock-{uuid.uuid4().hex}")
     lease = await repository.try_claim(current_request, "old-worker")
     assert lease is not None
-    effect_started = asyncio.Event()
-    release_effect = asyncio.Event()
+    effect_started, release_effect = asyncio.Event(), asyncio.Event()
 
-    async def effect() -> None:
-        effect_started.set()
-        await release_effect.wait()
+    class PausedBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            effect_started.set()
+            await release_effect.wait()
+            return await super().publish(stream, event, maxlen=maxlen)
 
-    effect_task = asyncio.create_task(
-        repository.execute_active_effect(current_request.run_id, lease, effect)
+    chat = PostgresChatRepository(config.database_url, config.database_schema)
+    emitter = await RunEmitter.attach(
+        PausedBus(),
+        current_request.run_id,
+        outbox=repository,
+        lease=lease,
+        chat_repository=chat,
+        tenant_id=current_request.execution_identity.tenant_ref,
+        namespace=runtime_namespace(current_request.execution_identity),
+        session_id=current_request.session_id,
     )
-    await asyncio.wait_for(effect_started.wait(), timeout=1)
-    clock_ms[0] += 11
-    reclaim_task = asyncio.create_task(repository.reclaim_expired("new-worker"))
-    await asyncio.sleep(0.05)
-    assert reclaim_task.done() is False
-
-    release_effect.set()
-    assert await asyncio.wait_for(effect_task, timeout=1) is True
-    reclaimed = await asyncio.wait_for(reclaim_task, timeout=1)
-    assert len(reclaimed) == 1
-    assert reclaimed[0].lease.generation == lease.generation + 1
+    task = asyncio.create_task(
+        emitter.emit(MessageDeltaPayload(segment_id="segment", delta="hello"))
+    )
+    try:
+        await asyncio.wait_for(effect_started.wait(), timeout=1)
+        clock_ms[0] += 10_001
+        reclaimed = await asyncio.wait_for(
+            repository.reclaim_expired("new-worker"), timeout=1
+        )
+        assert len(reclaimed) == 1
+        assert reclaimed[0].lease.generation == lease.generation + 1
+    finally:
+        release_effect.set()
+        await task
 
 
 @pytest.mark.asyncio
@@ -969,7 +1008,7 @@ async def test_sandbox_binding_is_compare_and_swap(
 async def test_terminal_cleanup_intent_is_atomic_and_blocks_retention(
     acceptance_state: _AcceptanceState,
 ) -> None:
-    clock_ms = [60_000]
+    clock_ms = [int(time.time() * 1000)]
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
         ttl_ms=10_000,
@@ -992,7 +1031,15 @@ async def test_terminal_cleanup_intent_is_atomic_and_blocks_retention(
         == "custom-authoritative"
     )
 
-    assert await repository.try_mark_terminal(current_request.run_id, lease) is True
+    assert await finish_run(repository, current_request.run_id, lease) is True
+    async with connect_pg(acceptance_state.config.database_url) as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS now"
+            )
+            database_clock = await cursor.fetchone()
+            assert database_clock is not None
+            clock_ms[0] = int(database_clock["now"])
     claimed = await repository.claim_sandbox_cleanups(
         "cleanup-worker", run_id=current_request.run_id, limit=10, lease_ms=1_000
     )
@@ -1005,6 +1052,7 @@ async def test_terminal_cleanup_intent_is_atomic_and_blocks_retention(
     assert intent.teardown_ref == "fixtures.sandbox:destroy"
     assert intent.attempt_count == 1
 
+    clock_ms[0] = int(time.time() * 1000) + 1
     assert await repository.purge_terminal(0) == 0
     assert await repository.complete_sandbox_cleanup(intent.cleanup_id) is True
     assert await repository.purge_terminal(0) == 1
@@ -1014,10 +1062,10 @@ async def test_terminal_cleanup_intent_is_atomic_and_blocks_retention(
 async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
     acceptance_state: _AcceptanceState,
 ) -> None:
-    clock_ms = [50_000]
+    clock_ms = [int(time.time() * 1000)]
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
-        ttl_ms=10,
+        ttl_ms=10_000,
         schema=acceptance_state.config.database_schema,
         clock=lambda: clock_ms[0],
     )
@@ -1082,7 +1130,7 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
     reconciled = await repository.reconcile_receipts(current_request.run_id)
     assert reconciled.consumed_through == staged.durable_seq
 
-    clock_ms[0] += 11
+    clock_ms[0] += 10_001
     current = (await repository.reclaim_expired("new-worker"))[0].lease
     bus = FakeBus()
 
@@ -1342,9 +1390,6 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
                 chat_repository=chat,
             )
 
-            async def claim_terminal() -> bool:
-                return await runs.try_mark_terminal(run_id, lease)
-
             def lookup() -> str:
                 return "done"
 
@@ -1398,7 +1443,9 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
                 {"messages": [HumanMessage(content="go")]},
                 approval_tool_names=frozenset(),
                 source_for=lambda _name: "runtime-custom",
-                claim_terminal=claim_terminal,
+                finalize_terminal=repository_terminal_callback(
+                    runs, stream, run_id, lease
+                ),
                 record_usage=usage_recorder()[0],
             )
 
@@ -1478,12 +1525,12 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
 async def test_stale_lease_cannot_publish_or_persist_empty_completion(
     acceptance_state: _AcceptanceState,
 ) -> None:
-    clock_ms = [10_000]
+    clock_ms = [int(time.time() * 1000)]
     run_id = f"stale-empty-final-{uuid.uuid4().hex}"
     namespace = runtime_namespace(_identity())
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
-        ttl_ms=10,
+        ttl_ms=10_000,
         schema=acceptance_state.config.database_schema,
         clock=lambda: clock_ms[0],
     )
@@ -1497,7 +1544,6 @@ async def test_stale_lease_cannot_publish_or_persist_empty_completion(
     chat = PostgresChatRepository(
         acceptance_state.config.database_url,
         schema=acceptance_state.config.database_schema,
-        clock=lambda: clock_ms[0],
     )
     await chat.setup()
     try:
@@ -1511,7 +1557,7 @@ async def test_stale_lease_cannot_publish_or_persist_empty_completion(
             session_id="session-1",
             chat_repository=chat,
         )
-        clock_ms[0] += 11
+        clock_ms[0] += 10_001
         reclaimed = await repository.reclaim_expired("reused-worker")
         assert len(reclaimed) == 1
         current = reclaimed[0].lease
@@ -1580,24 +1626,31 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
             )
             lease = await runs.claim_dispatch(current_request, "safe-failure-worker")
             assert lease is not None
-            emitter = await RunEmitter.attach(
-                stream,
-                run_id,
-                outbox=runs,
-                lease=lease,
-                tenant_id="tenant",
-                namespace=namespace,
-                session_id="session-1",
-                chat_repository=chat,
+            from kokoro_agent.domain.run.models import (
+                ExecutionTerminalAuthority,
+                RunTerminalOutcome,
             )
-            assert await runs.try_mark_terminal(run_id, lease) is True
+            from kokoro_agent.execution.events import outbox_wire_event
+
             payload = run_failed_payload(error, code="assembly_failed")
             assert payload.model_dump() == expected_run
-            await emitter.emit(payload)
-            assert await runs.try_mark_terminal(run_id, lease) is False
-            await emitter.emit(
-                payload
-            )  # Existing terminal fence suppresses a duplicate.
+            authority = ExecutionTerminalAuthority(lease=lease)
+            outcome = RunTerminalOutcome(payload=payload, usage=None)
+            committed = await runs.finalize_terminal(run_id, authority, outcome, ())
+            assert committed.status == "committed"
+            assert len(committed.retained_frames) == 1
+            # A repeated terminal request reads the same fact, never stages a second row.
+            replayed = await runs.finalize_terminal(run_id, authority, outcome, ())
+            assert replayed.status == "replayed"
+            assert replayed.retained_frames == committed.retained_frames
+            for frame in committed.retained_frames:
+                await runs.verify_terminal_frame(frame)
+                await stream.publish(stream_name, outbox_wire_event(frame), maxlen=100)
+                await runs.mark_critical_published(run_id, frame.durable_seq)
+            assert (
+                await runs.finalize_terminal(run_id, authority, outcome, ())
+            ).retained_frames == ()
+            assert len(await chat.replay("tenant", namespace, "session-1")) == 1
 
         # Read durable owner outbox bytes independently of the emitter instance.
         async with connect_pg(acceptance_state.config.database_url) as connection:
@@ -1616,7 +1669,7 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
                 rows = await cursor.fetchall()
         assert [
             (row["durable_seq"], row["status"], row["index_value"]) for row in rows
-        ] == [(1, "published", 0), (2, "superseded", None)]
+        ] == [(1, "published", 0)]
         outbox_payloads: list[str] = []
         for row in rows:
             assert row["kind"] == "run.failed"
@@ -1680,3 +1733,270 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
             await stream.delete(stream_name)
         finally:
             await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_terminal_chat_write_failure_rolls_back_run_and_outbox(
+    acceptance_state: _AcceptanceState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production supervisor/repositories: terminal Chat failure is not a sealed Run."""
+    config = acceptance_state.config
+    runs = PostgresRunRepository(
+        config.database_url, ttl_ms=10_000, schema=config.database_schema
+    )
+    chat = PostgresChatRepository(config.database_url, schema=config.database_schema)
+    current_request = _request(f"terminal-chat-rollback-{uuid.uuid4().hex}")
+    agent = FakeAgent(run=text_run("terminal transaction"))
+    bus = FakeBus()
+    terminal_chat_attempts = 0
+    original_append = PostgresChatRepository.append_on_cursor
+
+    async def fail_terminal_chat(
+        self: PostgresChatRepository, cur: Any, projection: ChatProjection
+    ) -> ChatEventRecord:
+        nonlocal terminal_chat_attempts
+        if projection.event.event_type in {"run.completed", "run.failed"}:
+            terminal_chat_attempts += 1
+            await original_append(self, cur, projection)
+            raise RuntimeError("injected terminal Chat persistence failure")
+        return await original_append(self, cur, projection)
+
+    monkeypatch.setattr(PostgresChatRepository, "append_on_cursor", fail_terminal_chat)
+
+    async def build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+        return AgentHandle(runnable=agent, tool_descriptions={})
+
+    supervisor = RunSupervisor(
+        agent_builder=build,
+        run_repository=runs,
+        approval_tool_names=lambda _request: frozenset(),
+        trace_factory=lambda _request: None,
+        source_for=lambda _name: "runtime-custom",
+        consumer="terminal-atomic-test",
+        chat_repository=chat,
+    )
+    try:
+        await supervisor.dispatch(bus, current_request)
+        outcomes = await asyncio.gather(
+            *tuple(supervisor.tasks.values()), return_exceptions=True
+        )
+        assert terminal_chat_attempts > 0
+        for outcome in outcomes:
+            assert outcome is None or (
+                isinstance(outcome, RuntimeError)
+                and "injected terminal Chat persistence failure" in str(outcome)
+            )
+        # Use a fresh repository instance, not supervisor's in-memory flags.
+        recovered = PostgresRunRepository(
+            config.database_url, ttl_ms=10_000, schema=config.database_schema
+        )
+        assert await recovered.is_terminal(current_request.run_id) is False
+        pending = await recovered.list_unpublished_outbox()
+        assert not any(
+            frame.run_id == current_request.run_id
+            and frame.kind in {"run.completed", "run.failed"}
+            for frame in pending
+        )
+        replay = await chat.replay(
+            current_request.execution_identity.tenant_ref,
+            runtime_namespace(current_request.execution_identity),
+            current_request.session_id,
+        )
+        assert not any(
+            event.event_type in {"run.completed", "run.failed"} for event in replay
+        )
+    finally:
+        tasks = tuple(supervisor.tasks.values()) + tuple(
+            supervisor.control_listeners.values()
+        )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("matching", [True, False])
+async def test_terminal_checks_rejected_receipt_identity_under_run_lock(
+    acceptance_state: _AcceptanceState,
+    matching: bool,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+
+    config = acceptance_state.config
+    repository = PostgresRunRepository(
+        config.database_url, ttl_ms=30_000, schema=config.database_schema
+    )
+    run = _request(f"terminal-rejected-{uuid.uuid4().hex}")
+    lease = await repository.try_claim(run, "worker")
+    assert lease is not None
+    frame = await repository.stage_critical_frame(
+        run.run_id, lease, "run.started", int(time.time() * 1000), "{}", terminal=False
+    )
+    assert frame is not None
+    async with await psycopg.AsyncConnection.connect(config.database_url) as conn:
+        await conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id,durable_seq,event_id,status,created_at) VALUES (%s,%s,%s,'rejected',clock_timestamp())"
+            ).format(sql.Identifier(config.database_schema, RUN_RECEIPTS_TABLE)),
+            (
+                run.run_id,
+                frame.durable_seq,
+                frame.event_id if matching else "wrong-event",
+            ),
+        )
+    result = await repository.finalize_terminal(
+        run.run_id,
+        ExecutionTerminalAuthority(lease=lease),
+        RunTerminalOutcome(
+            payload=RunCompletedPayload(status="completed", token_usage=None),
+            usage=None,
+        ),
+        (),
+    )
+    assert result.status == ("lost" if matching else "committed")
+    assert await repository.is_terminal(run.run_id) is (not matching)
+    if matching:
+        assert await repository.list_unpublished_outbox() != []
+        chat = PostgresChatRepository(config.database_url, config.database_schema)
+        assert (
+            await chat.replay(
+                run.execution_identity.tenant_ref,
+                runtime_namespace(run.execution_identity),
+                run.session_id,
+            )
+            == ()
+        )
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("session_id", "wrong-session"),
+        ("chat_event_id", "wrong-chat-id"),
+        ("payload_json", '{"status":"cancelled"}'),
+    ],
+)
+async def test_terminal_recovery_rejects_corrupt_chat_identity(
+    acceptance_state: _AcceptanceState,
+    column: str,
+    value: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.infrastructure.schema import CHAT_EVENTS_TABLE
+
+    config = acceptance_state.config
+    repository = PostgresRunRepository(
+        config.database_url, ttl_ms=30_000, schema=config.database_schema
+    )
+    run = _request(f"terminal-chat-identity-{uuid.uuid4().hex}")
+    lease = await repository.try_claim(run, "worker")
+    assert lease is not None
+    committed = await repository.finalize_terminal(
+        run.run_id,
+        ExecutionTerminalAuthority(lease=lease),
+        RunTerminalOutcome(
+            payload=RunCompletedPayload(status="completed", token_usage=None),
+            usage=None,
+        ),
+        (),
+    )
+    frame = committed.retained_frames[0]
+    await repository.verify_terminal_frame(frame)
+    async with await psycopg.AsyncConnection.connect(config.database_url) as conn:
+        await conn.execute(
+            sql.SQL("UPDATE {} SET {}=%s WHERE run_id=%s").format(
+                sql.Identifier(config.database_schema, CHAT_EVENTS_TABLE),
+                sql.Identifier(column),
+            ),
+            (value, run.run_id),
+        )
+    with pytest.raises(RuntimeError, match="terminal Chat"):
+        await repository.verify_terminal_frame(frame)
+    assert await repository.list_unpublished_outbox() == [frame]
+
+
+@pytest.mark.parametrize(
+    "tamper", ["kind", "payload", "index", "time", "seq", "counter"]
+)
+async def test_quarantine_replay_rejects_private_audit_tampering(
+    acceptance_state: _AcceptanceState,
+    tamper: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        QuarantineTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunFailedPayload
+
+    config = acceptance_state.config
+    repository = PostgresRunRepository(
+        config.database_url, ttl_ms=30_000, schema=config.database_schema
+    )
+    run = _request(f"quarantine-audit-{uuid.uuid4().hex}")
+    lease = await repository.try_claim(run, "worker")
+    assert lease is not None
+    offending = await repository.stage_critical_frame(
+        run.run_id, lease, "run.started", int(time.time() * 1000), "{}", terminal=False
+    )
+    assert offending is not None
+    async with connect_pg(config.database_url) as conn:
+        await conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id,durable_seq,event_id,status) VALUES (%s,%s,%s,'rejected')"
+            ).format(sql.Identifier(config.database_schema, RUN_RECEIPTS_TABLE)),
+            (run.run_id, offending.durable_seq, offending.event_id),
+        )
+        await conn.commit()
+    authority = QuarantineTerminalAuthority(
+        owner="quarantine", rejected_seq=offending.durable_seq
+    )
+    outcome = RunTerminalOutcome(
+        payload=RunFailedPayload(code="contract_incompatible", retryable=False),
+        usage=None,
+    )
+    committed = await repository.finalize_terminal(run.run_id, authority, outcome, ())
+    assert committed.status == "committed" and committed.retained_frames == ()
+    assert (
+        await repository.finalize_terminal(run.run_id, authority, outcome, ())
+    ).status == "replayed"
+    assignments: dict[str, LiteralString] = {
+        "kind": "kind='run.completed'",
+        "payload": "payload_json='{}'",
+        "index": "index_value=0",
+        "time": "occurred_at=occurred_at+interval '1 second'",
+        "seq": "durable_seq=durable_seq+10",
+    }
+    async with connect_pg(config.database_url) as conn:
+        if tamper == "counter":
+            await conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET durable_counter=durable_counter+10 WHERE run_id=%s"
+                ).format(sql.Identifier(config.database_schema, RUN_CLAIMS_TABLE)),
+                (run.run_id,),
+            )
+        else:
+            await conn.execute(
+                sql.SQL("UPDATE {} SET {} WHERE run_id=%s AND durable_seq>%s").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE),
+                    sql.SQL(assignments[tamper]),
+                ),
+                (run.run_id, offending.durable_seq),
+            )
+        await conn.commit()
+    replay = await repository.finalize_terminal(run.run_id, authority, outcome, ())
+    assert replay.status == "lost" and replay.retained_frames == ()
+    chat = PostgresChatRepository(config.database_url, config.database_schema)
+    assert (
+        await chat.replay(
+            run.execution_identity.tenant_ref,
+            runtime_namespace(run.execution_identity),
+            run.session_id,
+        )
+        == ()
+    )

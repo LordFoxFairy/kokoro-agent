@@ -8,7 +8,12 @@ coupling itself to the complete execution persistence surface.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from kokoro_agent.domain.run.models import (
+    RunTerminalOutcome,
+    TerminalAuthority,
+    TerminalCommitResult,
+)
+
 from typing import Protocol
 
 from kokoro_agent.protocol import RunRequest
@@ -141,21 +146,15 @@ class RunLifecyclePort(Protocol):
 
     async def purge_terminal(self, max_age_ms: int) -> int: ...
 
-    async def try_mark_terminal(self, run_id: str, lease: LeaseFence) -> bool: ...
+    async def verify_terminal_frame(self, frame: OutboxFrame) -> None: ...
 
-    async def fence_and_mark_terminal(
-        self, run_id: str, owner: str
-    ) -> LeaseFence | None: ...
-
-    async def cancel_with_delivery_barrier(
+    async def finalize_terminal(
         self,
         run_id: str,
-        owner: str,
-        command_id: str,
+        authority: TerminalAuthority,
+        outcome: RunTerminalOutcome,
         delivery_snapshot: tuple[tuple[str, str, str], ...],
-        receipt_payload_json: str,
-        terminal_payload_json: str,
-    ) -> LeaseFence | None: ...
+    ) -> TerminalCommitResult: ...
 
     async def is_terminal(self, run_id: str) -> bool: ...
 
@@ -188,13 +187,6 @@ class RunSandboxCleanupPort(Protocol):
 
 
 class RunEffectPort(Protocol):
-    async def execute_active_effect(
-        self,
-        run_id: str,
-        lease: LeaseFence,
-        effect: Callable[[], Awaitable[None]],
-    ) -> bool: ...
-
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None: ...
 
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]: ...

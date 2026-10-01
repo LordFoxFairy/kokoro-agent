@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import terminal_emitter
+
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -46,13 +48,15 @@ async def _run(
         return True
 
     terminal = await invoke_once(
-        RunEmitter(bus, run_id),
+        (terminal_test_emitter_1 := RunEmitter(bus, run_id)),
         agent,
         scope.scoped_thread_id,
         {"messages": [HumanMessage(content="hi")]},
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
-        claim_terminal=claim,
+        finalize_terminal=terminal_emitter(
+            terminal_test_emitter_1, claim, usage_recorder()[0]
+        ),
         record_usage=usage_recorder()[0],
     )
     assert terminal is True

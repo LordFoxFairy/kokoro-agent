@@ -12,6 +12,12 @@ from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.chat.models import ChatEventRecord, ChatMessageDraft
 from kokoro_agent.domain.run.repository import LeaseFence, OutboxFrame
 from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.domain.run.models import (
+    ExecutionTerminalAuthority,
+    RunTerminalOutcome,
+    RunUsageSegment,
+)
+from kokoro_agent.protocol import RunCompletedPayload, RunFailedPayload
 from kokoro_agent.execution.events import (
     RunEmitter,
     persist_outbox_chat_event,
@@ -155,16 +161,30 @@ class SupervisorExecutionMixin(SupervisorContext):
             emitter = await self._emitter(bus, run_id, lease)
             terminal_claimed = False
 
-            async def claim_terminal() -> bool:
+            async def finalize_terminal(
+                payload: RunCompletedPayload | RunFailedPayload, usage: tuple[int, int]
+            ) -> bool:
                 nonlocal terminal_claimed
-                # 一旦本 generation 已认领终态，后续异常收口必须保持成功状态；
-                # 不能让第二次 CAS 的 False 覆盖第一次成功，导致漏发终态和漏清理。
-                if not terminal_claimed:
-                    # Storage may have finalized after the live projection was
-                    # dropped. Reconcile journal -> critical outbox -> Chat
-                    # before the terminal CAS seals this Run's event sequence.
-                    await emitter.ensure_delivery_events()
-                    terminal_claimed = await self._claim_terminal(run_id, lease)
+                await emitter.ensure_delivery_events()
+                snapshot = tuple(
+                    await self._run_repository.list_delivery_journal(run_id)
+                )
+                result = await self._run_repository.finalize_terminal(
+                    run_id,
+                    ExecutionTerminalAuthority(lease=lease),
+                    RunTerminalOutcome(
+                        payload=payload,
+                        usage=RunUsageSegment(
+                            input_tokens=usage[0], output_tokens=usage[1]
+                        ),
+                    ),
+                    snapshot,
+                )
+                terminal_claimed = result.status in {"committed", "replayed"}
+                if result.status == "deferred":
+                    raise RuntimeError("terminal delivery barrier pending")
+                if terminal_claimed:
+                    await self._republish_outbox(bus)
                 return terminal_claimed
 
             async def record_usage(
@@ -192,12 +212,12 @@ class SupervisorExecutionMixin(SupervisorContext):
                     trace=trace,
                     recursion_limit=self._recursion_limit,
                     # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
-                    claim_terminal=claim_terminal,
+                    finalize_terminal=finalize_terminal,
                     # 用量跨段累计真源：run.completed 报累计而非末段。
                     record_usage=record_usage,
                 )
             finally:
-                # The terminal CAS durably queues sandbox cleanup in the same
+                # The terminal transaction durably queues sandbox cleanup in the same
                 # transaction.  A failed terminal publish must not skip the
                 # immediate attempt; heartbeat recovery remains the backstop.
                 await self._retry_sandbox_cleanups(run_id=run_id)
@@ -213,9 +233,6 @@ class SupervisorExecutionMixin(SupervisorContext):
             # interrupt 暂停：租约置哨兵，HITL 等人期间不被过期重拾重跑；control 监听存活等 resume。
             if not await self._run_repository.pause(run_id, lease):
                 self._release_local_ownership(run_id, lease)
-
-    async def _claim_terminal(self, run_id: str, lease: LeaseFence) -> bool:
-        return await self._run_repository.try_mark_terminal(run_id, lease)
 
     async def _emitter(
         self, bus: StreamProtocol, run_id: str, lease: LeaseFence
@@ -262,6 +279,10 @@ class SupervisorExecutionMixin(SupervisorContext):
         return emitter
 
     async def _persist_outbox_chat(self, frame: OutboxFrame) -> ChatEventRecord | None:
+        if frame.kind in {"run.completed", "run.failed"}:
+            # Recovery validates the same committed identity; it never fills a terminal gap.
+            await self._run_repository.verify_terminal_frame(frame)
+            return None
         if self._chat_repository is None:
             return None
         request = await self._run_repository.get_request(frame.run_id)
@@ -310,9 +331,18 @@ class SupervisorExecutionMixin(SupervisorContext):
             return
         emitter = await self._emitter(bus, run_id, lease)
         await emitter.ensure_delivery_events()
-        if await self._claim_terminal(run_id, lease):
+        snapshot = tuple(await self._run_repository.list_delivery_journal(run_id))
+        result = await self._run_repository.finalize_terminal(
+            run_id,
+            ExecutionTerminalAuthority(lease=lease),
+            RunTerminalOutcome(
+                payload=run_failed_payload(error, code=code), usage=None
+            ),
+            snapshot,
+        )
+        if result.status in {"committed", "replayed"}:
             try:
-                await emitter.emit(run_failed_payload(error, code=code))
+                await self._republish_outbox(bus)
                 self._emitters.pop(run_id, None)
             finally:
                 await self._teardown_control(bus, run_id)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import terminal_emitter
+
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
@@ -50,7 +52,7 @@ async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
-        claim_terminal=_always_claim,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
     )
 

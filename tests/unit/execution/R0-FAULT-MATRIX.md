@@ -1,3 +1,5 @@
+> 历史诊断记录：其中旧 claim_terminal 分离流程已由当前 finalize_terminal 单事务与 terminal 原子性测试替代，不代表现行执行路径。
+
 # R0 故障注入护栏矩阵 — kokoro-agent
 
 Wave 2 R0：为总设计稿 §2.3 已证实缺陷写「先红后绿」注入钉，不改 src。

@@ -1,5 +1,124 @@
 # kokoro-agent 技术设计
 
+## AGENT-TERMINAL-ATOMIC/P0：现有终态一致性前置切片（2026-10-01，本片 Root 验证门已通过，待 Root 提交）
+
+基线 `main dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3`，起始clean；只修已有HTTP3.0终态持久化，
+不是另一条3.0兼容实现。以下局部设计与原4.0目标并列标明范围，完整Agent4设计门仍未通过。
+Root 已据 unit/真实 PG RED 放行现 source/tests 与窄文档替换；无 DDL/机器源/Git/设施写权限。
+
+| 放置门 | 本片明确范围 |
+| --- | --- |
+| Owner/当前事实 | Agent Run唯一terminal writer；现try_mark_terminal先commit再usage/outbox/Chat，Root真实probe已复现terminal=true却无terminal outbox、无reclaim；cancel已有两outbox原子但Chat后投，NACK另有无payload终止。 |
+| 目标职责 | 一个typed finalize_terminal协调器替代所有无payload terminal原语；最终已观测usage、terminal/outbox/Chat session seq/cleanup同连接事务，commit后网络。 |
+| 两案与粒度 | 采用现postgres_run_leases.py协调，events与Chat提供窄同cursor primitive；淘汰新terminal服务/目录/通用UoW及复制Chat SQL。扩现run models/ports，内部值dataclass，无新源码文件。 |
+| 依赖 | worker/execution传业务outcome；infrastructure协调同owner连接，domain无cursor/native类型；Chat.append_on_cursor仅package-internal复用唯一SQL。 |
+| 数据/API | 现表/索引/HTTP3机器字节/公开字段不变；复用Run、usage_segment、outbox、Chat event/message/sequence、control、cleanup。不存在scope/head故本片不伪造、不宣称同scope串行。 |
+| 删除 | try_mark_terminal、fence_and_mark_terminal、cancel_with_delivery_barrier、_claim_terminal及各port/façade/fake/caller；generic stage_critical_frame禁止terminal写；删除execute_active_effect全部层和唯一live caller，无alias/default/fallback。 |
+| 验证/阶段 | 本节入口矩阵tests-only RED→唯一coordinator生产替换→Root真实PG/Redis/HTTP与完整门；通过本片仍不发布Agent4或宣称FIFO/retry/GC实现。 |
+
+### typed接口与所有入口
+
+现 `domain/run/models.py` 新内部值均使用 frozen/slots/kw_only dataclass：
+`RunUsageSegment(input_tokens,output_tokens)`（generation 来自 authority 当前 lease）、`RunTerminalOutcome(payload,usage)`、
+`TerminalAuthority`（精确lease执行者/持久cancel command/持久NACK receipt的具名tagged值），
+`TerminalCommitResult(status,retained_frames,lease)`；status明确committed/replayed/lost/deferred，
+不以bool混淆ACK未知与竞争失败。safe_failure只承接现strict closed tuple；usage缺席表示该入口没有可结算的
+新模型段，不等于补零。实际字段已落当前源码，待 Root 代码审查，不新增wire model或数据库Row穿透。
+唯一port为 `finalize_terminal(run_id, authority, outcome, delivery_snapshot) -> TerminalCommitResult`；
+传入身份仅用于同事务与已存request/command/receipt精确核验，不让调用者任意强抢owner或generation。
+
+| 现入口 | 替换后的明确动作 |
+| --- | --- |
+| run_agent.invoke_once自然完成 | stream context退出/drain，收集该段usage；构造completed outcome，调用finalize回调；仅committed/replayed发布既有持久frame。删除claim→record→emit分离序列。 |
+| invoke_once执行/投影异常 | 现run_failed_payload安全归码，收集当前已观测usage，failed outcome同一finalize；事务异常不被重新归码成另一个terminal outcome。 |
+| supervisor_execution._start_run/_fail_terminal | build失败使用当前或合法adopt的lease、failed outcome、usage=None；首次模型调用前失败不伪造用量；resume build失败同入口。 |
+| supervisor_control._on_resume及serve/_guarded_control_apply兜底 | 现invalid decision/恢复失败仍安全失败终态；过期无pending interrupt依旧pause，不误改terminal；统一_finalize调用。 |
+| _on_cancel | 可信持久command作为authority；delivery snapshot在锁内重验，receipt applied与cancelled terminal outbox同txn；取消控制CAS赢后才取消本地task/清理/发网络。没有当前worker可靠模型段时usage=None，保留已持久段，不杜撰跨worker未上报用量。 |
+| _terminate_contract_incompatible | 同一coordinator的quarantined disposition：同txn核持久rejected receipt与原rejected fence，terminal/cleanup与superseded私有terminal audit outbox原子写；不新增公开Chat、不恢复Redis、不推进poison consumer，delivery不阻塞该隔离终止。 |
+| recovery._republish_outbox/_reconcile_run_receipts | terminal已在同txn有Chat，仅校验/读取固定terminal identity、复用seq并发Redis；nonterminal critical保留现投影恢复。禁止为缺失terminal Chat补写而假装原子。 |
+| execution.events.emit/live | 不再经generic emit/stage写terminal；live仍reserve→独立fenced Chat append→事务外Redis，删除持锁effect。 |
+
+### usage、锁和唯一事务
+
+- 沿现 `(run_id,lease_generation)` usage_segment PK：一次invoke段一个generation，pause先结算本段，adopt/resume
+  使用新generation；终态段在finalize事务结算。重复同段数字一致只读，漂移抛UsageIdentityConflict并零mutation。
+  `add_usage`只允许非terminal新pause段；terminal后仅既存同段相同数字只读，首次新段拒绝、漂移conflict，aggregate不变；共享现唯一cursor级usage SQL，不复制算法。
+  completed wire token_usage来自锁内结算后的累计值；失败/取消wire仍严格现3.0形状。callback尚未上报的远端消耗
+  本片不声称精确获知；无新metering协议，也不把缺席usage写为零覆盖旧段。
+- 事务前校验typed outcome及strict failure；Run锁后DB clock重验租约。当前无scope表，锁序是Run→Chat
+  identity/sequence→outbox/usage/control/cleanup；delivery journal写也先Run锁，snapshot锁后重读并比较，避免
+  锁子行再回锁Run。4.0后再在此统一加scope/dispatch/head边界，本片不加空占位scope。
+- 同Run锁内分配固定event index/durable seq、timestamp与usage totals后，才调用现纯 `project_chat_fact` 构造
+  完整projection（无I/O）；不在事务前无锁猜source_index/累计usage。`postgres_chat_repository.py`提升窄
+  `append_on_cursor`复用 `_append_projection/_next_seq/_save_message`，events提供同cursor outbox写入，
+  leases协调全部提交；不把cursor暴露到domain port。cancel receipt不产生Chat fact，保留receipt index在terminal前。
+- delivery barrier不止比journal/queued outbox：每个succeeded delivery必须有匹配稳定event identity/source_index
+  的Chat delivery事实，内容精确一致；started/变化/缺Chat返回deferred且无terminal。外部Storage与补投不在锁内。
+- 正常可投影terminal事实、最终usage、outbox、Chat terminal seq/identity、control receipt（适用时）、cleanup同txn成功或
+  全rollback；cleanup网络commit后。稳定terminal event_id由run identity确定，receipt ID由run+command确定。
+  已有胜者按原身份读回，失败竞争者不改payload/seq/usage/generation。相同命令重放回原结果，不能将自然完成
+  胜者改成cancel；terminal已commit但ACK未知先查同Run已存事实，不盲重执行模型或产生新terminal。
+- outbox可能被现receipt GC消费：重放先核Run+Chat固定事实，仍保留的outbox才列retained_frames供网络重发；
+  已确认消费的frame不重新插入。命令结果和usage精确比较仍用现持久表，不要求永久保留outbox、不改retention。
+  未提交崩溃留下非terminal lease，可按现reclaim恢复；提交后崩溃HTTP已可读terminal，Redis靠queued outbox恢复。
+- Chat的message/event各有kind计数器；本片只证明terminal Chat在finalize返回前已提交，之后调用者启动下一Run时
+  old terminal event.seq < new started event.seq。不声称当前3.0已阻止并发同scope admission；4.0 scope门仍待实施。
+
+### 精确拟放行文件与RED矩阵
+
+以下均以 `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/` 为根，当前不授权源码。
+生产现文件：`src/kokoro_agent/domain/run/{models,repository,repositories}.py`；
+`infrastructure/postgres_run_{leases,events,effects,context,repository}.py`、`infrastructure/postgres_chat_repository.py`；
+`execution/{run_agent,events}.py`、`worker/{supervisor_execution,supervisor_control,supervisor_context,supervisor_recovery}.py`；
+`tools/middleware.py`只更新被删claim_terminal引用注释。若实际构造签名需改worker/main或其他生产文件，先报告扩集。
+复用现project_chat_fact与schema，不改projection wire、DDL、contract、generated、lock或业务fail tuple。
+
+现测试精确集：`tests/support/fakes.py`；`tests/unit/execution/{test_control_commands,test_deliver_event,test_invoke,
+test_r0_fault_matrix,test_steering,test_subagent_hitl,test_supervisor}.py`；`tests/unit/tools/test_memory.py`；
+`tests/acceptance/test_http_ingress.py`、`tests/integration/database/{test_delivery_outbox,test_run_outbox_filter}.py`；
+`tests/unit/infrastructure/test_postgres_run_context.py`、`tests/contract/test_postgres_adapters.py`。
+首轮在现acceptance/delivery_outbox/invoke/supervisor加入旧缺陷RED，fakes最终删除旧terminal/effect方法而不是兼容alias；
+不得先改fakes假装生产原子。Root批准RED后改生产及所有11个实际旧terminal调用测试文件。
+
+| 必须RED的行为 | Root真实/单元GREEN断言 |
+| --- | --- |
+| 自然、异常、build、恢复build、invalid resume | 每入口terminal/Chat/outbox/cleanup同时出现；first-frame失败保持index0，不伪造started；safe failure tuple不变。 |
+| pause多段/重复终态 | 第1段pause、第2段resume terminal累计正确；同generation相同用量幂等、漂移全rollback；terminal后首次新段拒绝且aggregate不变；cancel不覆写既存usage。 |
+| Chat写后outbox/cleanup故障、usage后Chat故障 | 真实PG故障注入，全表/计数器rollback，Run仍非terminal；新连接可恢复，不靠mock commit。 |
+| commit后ACK/Redis丢失、进程重建 | 新repo读回固定terminal identity/Chat seq，零重复usage/outbox/seq；HTTP已见，Redis queued按序补发。 |
+| delivery/cancel/natural/旧generation竞态 | 真PG双连接barrier；started/变化/缺delivery Chat不得terminal；receipt→terminal顺序与单赢家，过期拒写。 |
+| live/terminal | terminal先赢则durable live拒；live先Chat commit则event seq先live后terminal；Redis无锁迟到允许。 |
+| finalize完成后新Run与重放 | old terminal event.seq < new started event.seq；重放seq不变；不混比message seq，不冒称scope FIFO。 |
+| NACK | 缺receipt/伪造rejected_seq零mutation；合法quarantine保留原fence，只有superseded私有terminal audit，无新公开Chat/Redis；delivery started/缺Chat不永久defer；重放按receipt+Run+audit核对且不推进poison consumer。 |
+
+拟命令（仅Root拥有运行授权）：`uv run --frozen pytest -q tests/unit/execution/test_invoke.py tests/unit/execution/test_supervisor.py`；
+真实资源显式使用Root自有fixture运行 `uv run --frozen pytest -q -o addopts='' tests/acceptance/test_http_ingress.py
+ tests/integration/database/test_delivery_outbox.py tests/integration/database/test_run_outbox_filter.py`；随后lock/frozen sync、
+Ruff format/check、Pyright、contract checker/generator drift、默认pytest、wheel/sdist及真实owner全部门。
+
+Root已裁决NACK为同一finalize中的quarantined disposition：终止与私有audit同txn，重放核receipt+Run+audit，
+不要求公开Chat、不推进毒化流；不是第二terminal API。NACK在同txn核(run_id,durable_seq,event_id)匹配
+被拒outbox，缺失/漂移零mutation；同txn将被拒及fence后仍open帧supersede，私有audit稳定幂等且retained_frames恒空。
+reconcile_receipts删除提前写fence路径，仅报告候选，finalize失败不得留下独立fence。与natural/cancel按Run锁first-winner，
+既有赢家不可覆盖，delivery barrier不阻断quarantine。正常可投影terminal仍必须Chat同txn。局部三设计已收敛，
+本片已按设计门、tests-only RED、生产替换及 Root 实测逐阶段通过，最终证据见 CURRENT 顶部；待 Root 提交。retention只阻断4.0 scope/GC整体，不阻断本片完成后推进；任何发现必须改DDL/HTTP机器的情况
+先报告，不偷拆兼容路径。后继唯一writer按tests-only RED→生产→Root集成逐阶段放行。
+
+
+### 本片 source 审查收敛（实现候选，非完整 owner 验收）
+
+- normal/cancel 在同 Run 锁内先核与 outbox `(run_id,durable_seq,event_id)` 精确匹配的 rejected receipt；已有合法 rejection 返回 lost，错 identity 不阻挡正常 winner。reconcile 只报候选，不独立写 fence。当前没有新 receipt ingest API；并发边界以各自已持久 receipt 和统一 Run 锁事务观察点定义。terminal 先提交则 NACK 不覆盖赢家。
+- `verify_terminal_frame(frame)` 是 Run port 的只读验证，不是第二终态 API：持久 Run terminal/fence、保留 outbox、固定 event identity/index/time 与 tenant/namespace/session/run/source_index/canonical Chat ID/payload 精确一致后才可 recovery 发布。孤儿或漂移 fail-closed，绝不补写 terminal Chat。outbox 已 GC 不重建；重复 finalize 只返回仍 queued 原帧。
+- `run.started` 的 outbox 已写而 Chat 失败时，同 finalize cursor 按 immutable index 复用 Chat.append_on_cursor 先补 started 再写 terminal；后继 recovery 复用原 Chat seq，不形成 terminal→started。delivery barrier 仍要求真实 journal 与完整作用域/canonical identity 的 Chat 事实，不把 queued 当完成。control receipt 不投影 Chat。
+- live 两步 reserve→fenced Chat 不合并；Run context 与 Chat active fence 都先取得 Run 锁、再读数据库 clock_timestamp 判断到期，删除锁中网络 await。Chat adapter 不再接收只供过期检查的本地 clock；测试显式更新自有 Run 到期事实。
+- 除原入口文件，实际扩现 `tests/conftest.py` 同 schema Run/Chat fixture、`tests/unit/infrastructure/test_postgres_run_context.py` 锁后 DB-clock RED、execution/INDEX 与 R0-FAULT-MATRIX 两窄说明。Root 独占真实 PG/Redis/HTTP 与 Git；无其他 owner/DDL/contract/lock 更改。
+
+职责收敛：postgres_run_leases 保持唯一 finalize 同连接事务编排；postgres_run_events 承接 delivery_ready_on_cursor、terminal_chat_on_cursor 与只读 verify_terminal_frame，façade 的只读验证指向 events。events 不 import leases，不复制 SQL、不新增模块，也不放宽现 800 行门。
+
+本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+
+最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+
 ## AGENT-RETRY-DESIGN：原消息正式重试目标（2026-09-30，文档候选，未放行实现）
 
 基线 `main f3be3b97dd67df69ed3c6cb88c59f3bc2db97703`、初始工作树 clean。当前 HTTP artifact

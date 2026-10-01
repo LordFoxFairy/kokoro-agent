@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol import RunRequest, RunCompletedPayload, RunFailedPayload
 
 
 class LeaseFence(BaseModel):
@@ -140,3 +141,48 @@ __all__ = [
     "StagedFrame",
     "ToolJournalRecord",
 ]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunUsageSegment:
+    input_tokens: int
+    output_tokens: int
+
+    def __post_init__(self) -> None:
+        if self.input_tokens < 0 or self.output_tokens < 0:
+            raise ValueError("usage token counts must be non-negative")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunTerminalOutcome:
+    payload: RunCompletedPayload | RunFailedPayload
+    usage: RunUsageSegment | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExecutionTerminalAuthority:
+    lease: LeaseFence
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CancelTerminalAuthority:
+    owner: str
+    command_id: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class QuarantineTerminalAuthority:
+    owner: str
+    rejected_seq: int
+
+
+TerminalAuthority = (
+    ExecutionTerminalAuthority | CancelTerminalAuthority | QuarantineTerminalAuthority
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TerminalCommitResult:
+    status: Literal["committed", "replayed", "lost", "deferred"]
+    lease: LeaseFence | None
+    retained_frames: tuple[OutboxFrame, ...] = ()

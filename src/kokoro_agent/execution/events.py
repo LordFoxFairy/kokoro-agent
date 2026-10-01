@@ -68,7 +68,7 @@ CRITICAL_KINDS: frozenset[str] = frozenset(
         "run.failed",
     }
 )
-# 终态帧：分配时 CAS 设 local fence（first-terminal），其后更大 seq 一律 superseded。
+# 持久终态仅由 finalize_terminal 原子提交；独立 emitter 的种类识别不提供持久终态写入。
 TERMINAL_KINDS: frozenset[str] = frozenset({"run.completed", "run.failed"})
 PUBLISH_TIMEOUT_SECONDS = 5.0
 
@@ -369,14 +369,6 @@ class RunEmitter:
             return
         self._next_index = max(self._next_index, index + 1)
         wire_event = event.model_dump(exclude_none=True)
-        if self._outbox is not None:
-            assert lease is not None
-
-            async def publish() -> None:
-                await self._publish_event(wire_event)
-
-            await self._outbox.execute_active_effect(self._run_id, lease, publish)
-            return
         await self._publish_event(wire_event)
 
     async def _lease_allows(self, kind: str) -> bool:

@@ -11,7 +11,7 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   DeepAgents `create_deep_agent`。本目录只接收返回的 native runnable，不定义第二套 runtime。
 - `run_agent.py`：`invoke_once(emitter, agent, thread_id, payload, ...) → bool`。
   run.started（仅 index==0）→ pump_run → interrupt 则发 awaiting 并入账用量返 False；
-  否则 claim_terminal 原子认领后发 run.completed/failed 返 True。recursion_limit 熔断失控循环。
+  否则 finalize_terminal 将最终 usage、terminal outbox、Chat 与 cleanup 同事务提交后返 True。recursion_limit 熔断失控循环。
 - `events.py`：`RunEmitter`（一次 run 的唯一发射口；`attach()` 从流重建 index 续段与
   tool_id→segment 归属；审核工具 raw returned 按名抑制）；`AgentEventPayload` 联合；
   投影→payload 映射函数族（`tool_returned_payload` 等）；`clip_result`/
@@ -55,7 +55,7 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 ## 运行时约束
 
 - v3 四路投影必须并发消费：任一通道缓冲满会回压整图直至死锁；queue 只为合流保序。
-- 终态发射前必经 `claim_terminal` 原子认领：cancel/自然完成/异常三路共用认领键，多 pod 恰好一个终态。
+- 终态必经 `finalize_terminal`：cancel/自然完成/异常共用一个持久事务，Chat/outbox/usage/cleanup 一起提交，网络在 commit 后。
 - emit 用 `exclude_none` 上 wire：null 会被 BFF Chat 的契约校验拒收。
 - 工具中途 interrupt 被 langgraph 浮现为 error=Interrupt repr：按前缀识别、抑制伪 returned。
 - execution proof signer 不读环境、文件、数据库或网络，不记录或返回 private key/path、signature、JTI、完整 binding；

@@ -153,25 +153,29 @@ class PostgresRunRepositoryContext:
             now=now,
         )
 
-    async def lock_active_lease(self, cur: Any, run_id: str, lease: LeaseFence) -> bool:
-        """Serialize one execution effect with lease transfer/terminal fencing."""
+    async def database_now(self, cur: Any) -> datetime:
+        """Read database wall time on the transaction cursor after its Run lock."""
+        await execute_sql(cur, "SELECT clock_timestamp() AS now")
+        row = await fetch_one(cur)
+        if row is None:
+            raise RuntimeError("database clock returned no row")
+        return row["now"]
 
+    async def lock_active_lease(self, cur: Any, run_id: str, lease: LeaseFence) -> bool:
+        """Check wall-clock expiry only after acquiring the execution row lock."""
         await execute_sql(
             cur,
-            """
-            SELECT 1
-            FROM {}
-            WHERE run_id = %s
-              AND owner = %s
-              AND lease_generation = %s
-              AND lease_expires_at IS NOT NULL
-              AND lease_expires_at > to_timestamp(%s / 1000.0)
-              AND terminal = FALSE
-            FOR UPDATE
-            """.format(qualified(self.schema, RUN_CLAIMS_TABLE)),
-            (run_id, lease.owner, lease.generation, self.clock()),
+            """SELECT lease_expires_at FROM {} WHERE run_id=%s AND owner=%s
+               AND lease_generation=%s AND terminal=FALSE
+               AND lease_expires_at IS NOT NULL FOR UPDATE""".format(
+                qualified(self.schema, RUN_CLAIMS_TABLE)
+            ),
+            (run_id, lease.owner, lease.generation),
         )
-        return await fetch_one(cur) is not None
+        row = await fetch_one(cur)
+        if row is None:
+            return False
+        return row["lease_expires_at"] > await self.database_now(cur)
 
     async def lock_fence(self, cur: Any, run_id: str, lease: LeaseFence) -> bool:
         """Serialize a terminal/control effect with the current generation."""

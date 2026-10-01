@@ -4,6 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from copy import deepcopy
+from datetime import UTC, datetime
+from support.chat import FakeChatRepository
+from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.domain.chat.models import chat_event_id
+from kokoro_agent.protocol import RunStartedPayload
+from kokoro_agent.domain.run.models import (
+    RunTerminalOutcome,
+    TerminalAuthority,
+    TerminalCommitResult,
+    ExecutionTerminalAuthority,
+    CancelTerminalAuthority,
+    QuarantineTerminalAuthority,
+)
+from kokoro_agent.protocol import (
+    RunCompletedPayload,
+    RunFailedPayload,
+    RunControlReceiptPayload,
+    TokenUsage,
+)
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeVar, cast
@@ -22,7 +42,11 @@ from kokoro_agent.protocol import (
     agent_event_adapter,
     run_events_stream,
 )
-from kokoro_agent.protocol import REQUESTS_STREAM
+from kokoro_agent.protocol import REQUESTS_STREAM, RUN_EVENTS_MAXLEN
+from kokoro_agent.domain.run.models import RunUsageSegment
+from kokoro_agent.domain.run.repository import RunRepository
+from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
+from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.domain.run.repository import (
     RunControlCommandRecord,
@@ -135,6 +159,7 @@ class FakeRunRepository:
     """协议等价的内存 store：租约以 leases dict 表达，None=暂停哨兵。"""
 
     def __init__(self) -> None:
+        self.chat_repository = FakeChatRepository()
         self.requests: dict[str, RunRequest] = {}
         self.terminals: set[str] = set()
         self.leases: dict[str, int | None] = {}
@@ -371,11 +396,7 @@ class FakeRunRepository:
         receipts = {_as_int(r["durable_seq"]): r for r in self.receipts.get(run_id, [])}
         rejected = sorted(s for s, r in receipts.items() if r["status"] == "rejected")
         if rejected:
-            seq = rejected[0]
-            fence = self.terminal_fence.get(run_id)
-            if fence is None or fence > seq:
-                self.terminal_fence[run_id] = seq
-            return ReceiptReconcile(rejected_seq=seq)
+            return ReceiptReconcile(rejected_seq=rejected[0])
         # published 无回执且超宽限期 → 重发候选（touch published_at 复位计时）。
         stale = [
             r
@@ -414,9 +435,12 @@ class FakeRunRepository:
             seq += 1
         if advanced > consumed:
             manifest["consumed_seq"] = advanced
-            self.outbox[run_id] = [
-                r for r in rows if _as_int(r["durable_seq"]) > advanced
-            ]
+        self.outbox[run_id] = [
+            r
+            for r in rows
+            if _as_int(r["durable_seq"]) > advanced
+            or (r["kind"] == "delivery.created" and run_id not in self.terminals)
+        ]
         fence = self.terminal_fence.get(run_id)
         remaining = [
             r
@@ -690,105 +714,363 @@ class FakeRunRepository:
                     f"run {run_id!r} generation {lease.generation}"
                 )
             return self.usage_totals.get(run_id, (0, 0))
+        if run_id in self.terminals:
+            return None
         cur_in, cur_out = self.usage_totals.get(run_id, (0, 0))
         self.usage_segments[segment] = usage
         self.usage_totals[run_id] = (cur_in + input_tokens, cur_out + output_tokens)
         return self.usage_totals[run_id]
 
-    async def try_mark_terminal(
-        self, run_id: str, lease: LeaseFence | None = None
-    ) -> bool:
-        active = lease or self.current_lease(run_id)
+    async def verify_terminal_frame(self, frame: OutboxFrame) -> None:
+        request = self.requests.get(frame.run_id)
+        if request is None or frame.run_id not in self.terminals:
+            raise RuntimeError("terminal frame has no committed Run")
+        namespace = runtime_namespace(request.execution_identity)
+        fact = next(
+            (
+                r
+                for r in self.chat_repository.records
+                if r.run_id == frame.run_id
+                and r.tenant_id == request.execution_identity.tenant_ref
+                and r.namespace == namespace
+                and r.session_id == request.session_id
+                and r.source_index == frame.index
+                and r.chat_event_id
+                == chat_event_id(namespace, frame.run_id, frame.index)
+            ),
+            None,
+        )
+        if fact is None:
+            raise RuntimeError("terminal Chat identity is missing or corrupt")
+        payload = (
+            RunCompletedPayload.model_validate_json(frame.payload_json)
+            if frame.kind == "run.completed"
+            else RunFailedPayload.model_validate_json(frame.payload_json)
+        )
+        projection = project_chat_fact(
+            tenant_id=fact.tenant_id,
+            namespace=namespace,
+            session_id=fact.session_id,
+            run_id=frame.run_id,
+            source_index=frame.index,
+            created_at=datetime.fromtimestamp(frame.timestamp / 1000, tz=UTC),
+            payload=payload,
+        )
+        assert projection is not None
         if (
-            run_id in self.terminals
-            or active is None
-            or not await self.is_lease_current(run_id, active)
+            fact.event_type != projection.event.event_type
+            or fact.payload_json != projection.event.payload_json
         ):
-            return False
-        self.terminals.add(run_id)
-        self.terminal_at[run_id] = self.clock_ms
-        await self._queue_bound_sandbox_cleanup(run_id)
-        return True
+            raise RuntimeError("terminal Chat payload drift")
 
-    async def fence_and_mark_terminal(
-        self, run_id: str, owner: str = "test-consumer"
-    ) -> LeaseFence | None:
-        if run_id not in self.requests or run_id in self.terminals:
-            return None
-        generation = self.generations.get(run_id, 0) + 1
-        self.owners[run_id] = owner
-        self.generations[run_id] = generation
-        self.leases[run_id] = None
-        self.terminals.add(run_id)
-        self.terminal_at[run_id] = self.clock_ms
-        await self._queue_bound_sandbox_cleanup(run_id)
-        return LeaseFence(owner=owner, generation=generation)
-
-    async def cancel_with_delivery_barrier(
+    async def finalize_terminal(
         self,
         run_id: str,
-        owner: str,
-        command_id: str,
+        authority: TerminalAuthority,
+        outcome: RunTerminalOutcome,
         delivery_snapshot: tuple[tuple[str, str, str], ...],
-        receipt_payload_json: str,
-        terminal_payload_json: str,
-    ) -> LeaseFence | None:
-        if run_id in self.terminals or self.terminal_fence.get(run_id) is not None:
-            return None
-        if tuple(await self.list_delivery_journal(run_id)) != delivery_snapshot:
-            return None
-        if any(status == "started" for _, status, _ in delivery_snapshot):
-            return None
-        for tool_id, status, _ in delivery_snapshot:
-            if status != "succeeded":
-                continue
-            event_id = (
-                "evt_"
-                + hashlib.sha256(f"delivery\0{run_id}\0{tool_id}".encode()).hexdigest()
-            )
-            if not any(
-                row.get("event_id") == event_id
-                and row.get("status") in {"queued", "published"}
-                for row in self.outbox.get(run_id, [])
-            ):
-                return None
-        command = self.control_commands.get((run_id, command_id))
-        if command is not None and command["status"] != "persisted":
-            return None
-        if command is not None:
-            command["status"] = "succeeded"
-        generation = self.generations.get(run_id, 0) + 1
-        self.owners[run_id] = owner
-        self.generations[run_id] = generation
-        self.leases[run_id] = None
-        self.terminals.add(run_id)
-        self.terminal_at[run_id] = self.clock_ms
-        start_seq = self.durable_counter.get(run_id, 0)
-        start_index = self.event_index_counter.get(run_id, 0)
-        self.durable_counter[run_id] = start_seq + 2
-        self.event_index_counter[run_id] = start_index + 2
-        self.terminal_fence[run_id] = start_seq + 2
-        rows = self.outbox.setdefault(run_id, [])
-        for offset, (kind, payload_json) in enumerate(
-            (
-                ("run.control.receipt", receipt_payload_json),
-                ("run.completed", terminal_payload_json),
-            ),
-            start=1,
+    ) -> TerminalCommitResult:
+        lease = self.current_lease(run_id)
+        if lease is None:
+            return TerminalCommitResult(status="lost", lease=None)
+        quarantine = isinstance(authority, QuarantineTerminalAuthority)
+        command = (
+            self.control_commands.get((run_id, authority.command_id))
+            if isinstance(authority, CancelTerminalAuthority)
+            else None
+        )
+        if (
+            isinstance(authority, ExecutionTerminalAuthority)
+            and authority.lease != lease
         ):
-            rows.append(
-                {
-                    "durable_seq": start_seq + offset,
-                    "event_id": f"evt_fake_cancel_{run_id}_{start_seq + offset}",
-                    "kind": kind,
-                    "index": start_index + offset - 1,
-                    "timestamp": self.clock_ms,
-                    "payload_json": payload_json,
-                    "status": "queued",
-                }
+            return TerminalCommitResult(status="lost", lease=None)
+        if isinstance(authority, CancelTerminalAuthority) and (
+            command is None or command["status"] not in {"persisted", "succeeded"}
+        ):
+            return TerminalCommitResult(status="lost", lease=None)
+        if isinstance(authority, QuarantineTerminalAuthority):
+            matches = [
+                r
+                for r in self.receipts.get(run_id, [])
+                if r["status"] == "rejected"
+                and r["durable_seq"] == authority.rejected_seq
+            ]
+            if not any(
+                o["durable_seq"] == r["durable_seq"] and o["event_id"] == r["event_id"]
+                for r in matches
+                for o in self.outbox.get(run_id, [])
+            ):
+                return TerminalCommitResult(status="lost", lease=None)
+            fence = self.terminal_fence.get(run_id)
+            if fence is not None and fence != authority.rejected_seq:
+                return TerminalCommitResult(status="lost", lease=None)
+        if run_id in self.terminals:
+            if isinstance(authority, CancelTerminalAuthority) and (
+                command is None or command["status"] != "succeeded"
+            ):
+                return TerminalCommitResult(status="lost", lease=None)
+            if quarantine:
+                audit = next(
+                    (
+                        item
+                        for item in self.outbox.get(run_id, [])
+                        if item["event_id"]
+                        == "evt_"
+                        + hashlib.sha256(f"terminal\0{run_id}".encode()).hexdigest()
+                    ),
+                    None,
+                )
+                if (
+                    audit is None
+                    or audit["status"] != "superseded"
+                    or audit["kind"] != "run.failed"
+                    or audit.get("index") is not None
+                    or audit.get("timestamp") != self.terminal_at.get(run_id)
+                    or audit["durable_seq"] != self.durable_counter.get(run_id)
+                    or audit.get("payload_json")
+                    != outcome.payload.model_dump_json(exclude_none=True)
+                ):
+                    return TerminalCommitResult(status="lost", lease=None)
+                return TerminalCommitResult(status="replayed", lease=lease)
+            persisted = next(
+                (
+                    r
+                    for r in self.chat_repository.records
+                    if r.run_id == run_id
+                    and r.event_type in {"run.completed", "run.failed"}
+                ),
+                None,
             )
-        await self._queue_bound_sandbox_cleanup(run_id)
-        return LeaseFence(owner=owner, generation=generation)
+            if persisted is None:
+                raise RuntimeError("terminal Chat fact is missing")
+            payload = outcome.payload
+            totals = self.usage_totals.get(run_id, (0, 0))
+            if (
+                isinstance(payload, RunCompletedPayload)
+                and payload.status == "completed"
+            ):
+                payload = RunCompletedPayload(
+                    status="completed",
+                    token_usage=(
+                        TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
+                        if any(totals)
+                        else None
+                    ),
+                )
+            projection = project_chat_fact(
+                tenant_id=persisted.tenant_id,
+                namespace=persisted.namespace,
+                session_id=persisted.session_id,
+                run_id=run_id,
+                source_index=persisted.source_index,
+                created_at=persisted.created_at,
+                payload=payload,
+            )
+            assert projection is not None
+            if (
+                projection.event.event_type != persisted.event_type
+                or projection.event.payload_json != persisted.payload_json
+            ):
+                return TerminalCommitResult(status="lost", lease=None)
+            if (
+                outcome.usage is not None
+                and await self.add_usage(
+                    run_id,
+                    lease,
+                    outcome.usage.input_tokens,
+                    outcome.usage.output_tokens,
+                )
+                is None
+            ):
+                return TerminalCommitResult(status="lost", lease=None)
+            retained = tuple(
+                f
+                for f in await self.list_unpublished_outbox()
+                if f.run_id == run_id
+                and (
+                    f.kind in {"run.completed", "run.failed"}
+                    or (
+                        isinstance(authority, CancelTerminalAuthority)
+                        and f.event_id
+                        == "evt_"
+                        + hashlib.sha256(
+                            f"control\0{run_id}\0{authority.command_id}".encode()
+                        ).hexdigest()
+                    )
+                )
+            )
+            return TerminalCommitResult(
+                status="replayed", lease=lease, retained_frames=retained
+            )
+        if isinstance(
+            authority, ExecutionTerminalAuthority
+        ) and not await self.is_lease_current(run_id, lease):
+            return TerminalCommitResult(status="lost", lease=None)
+        if not quarantine and any(
+            r["status"] == "rejected"
+            and r["durable_seq"] == o["durable_seq"]
+            and r["event_id"] == o["event_id"]
+            for r in self.receipts.get(run_id, [])
+            for o in self.outbox.get(run_id, [])
+        ):
+            return TerminalCommitResult(status="lost", lease=None)
+        if not quarantine and (
+            tuple(await self.list_delivery_journal(run_id)) != delivery_snapshot
+            or any(status == "started" for _, status, _ in delivery_snapshot)
+        ):
+            return TerminalCommitResult(status="deferred", lease=None)
+        state = deepcopy(
+            {k: v for k, v in self.__dict__.items() if k != "chat_repository"}
+        )
+        chat_state = deepcopy(self.chat_repository.__dict__)
+        try:
+            totals = self.usage_totals.get(run_id, (0, 0))
+            if outcome.usage is not None:
+                updated = await self.add_usage(
+                    run_id,
+                    lease,
+                    outcome.usage.input_tokens,
+                    outcome.usage.output_tokens,
+                )
+                if updated is None:
+                    return TerminalCommitResult(status="lost", lease=None)
+                totals = updated
+            payload = outcome.payload
+            if (
+                isinstance(payload, RunCompletedPayload)
+                and payload.status == "completed"
+            ):
+                payload = RunCompletedPayload(
+                    status="completed",
+                    token_usage=(
+                        TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
+                        if any(totals)
+                        else None
+                    ),
+                )
+            seq, index = (
+                self.durable_counter.get(run_id, 0),
+                self.event_index_counter.get(run_id, 0),
+            )
+            frames: list[OutboxFrame] = []
+            if isinstance(authority, CancelTerminalAuthority):
+                seq += 1
+                receipt = RunControlReceiptPayload(
+                    command_id=authority.command_id, control_status="applied"
+                )
+                frames.append(
+                    OutboxFrame(
+                        run_id=run_id,
+                        durable_seq=seq,
+                        index=index,
+                        timestamp=self.clock_ms,
+                        event_id="evt_"
+                        + hashlib.sha256(
+                            f"control\0{run_id}\0{authority.command_id}".encode()
+                        ).hexdigest(),
+                        kind="run.control.receipt",
+                        payload_json=receipt.model_dump_json(exclude_none=True),
+                    )
+                )
+                index += 1
+            seq += 1
+            frames.append(
+                OutboxFrame(
+                    run_id=run_id,
+                    durable_seq=seq,
+                    index=index,
+                    timestamp=self.clock_ms,
+                    event_id="evt_"
+                    + hashlib.sha256(f"terminal\0{run_id}".encode()).hexdigest(),
+                    kind="run.failed"
+                    if isinstance(payload, RunFailedPayload)
+                    else "run.completed",
+                    payload_json=payload.model_dump_json(exclude_none=True),
+                )
+            )
+            if not quarantine:
+                request = self.requests[run_id]
+                for started in sorted(
+                    self.outbox.get(run_id, []),
+                    key=lambda item: _as_int(item["durable_seq"]),
+                ):
+                    if started["kind"] != "run.started" or started["status"] not in {
+                        "queued",
+                        "published",
+                    }:
+                        continue
+                    started_projection = project_chat_fact(
+                        tenant_id=request.execution_identity.tenant_ref,
+                        namespace=runtime_namespace(request.execution_identity),
+                        session_id=request.session_id,
+                        run_id=run_id,
+                        source_index=_as_int(started["index"]),
+                        created_at=datetime.fromtimestamp(
+                            _as_int(started["timestamp"]) / 1000, tz=UTC
+                        ),
+                        payload=RunStartedPayload.model_validate_json(
+                            str(started["payload_json"])
+                        ),
+                    )
+                    assert started_projection is not None
+                    await self.chat_repository.append(started_projection)
+                projection = project_chat_fact(
+                    tenant_id=request.execution_identity.tenant_ref,
+                    namespace=runtime_namespace(request.execution_identity),
+                    session_id=request.session_id,
+                    run_id=run_id,
+                    source_index=index,
+                    created_at=datetime.fromtimestamp(self.clock_ms / 1000, tz=UTC),
+                    payload=payload,
+                )
+                assert projection is not None
+                await self.chat_repository.append(projection)
+            if isinstance(authority, QuarantineTerminalAuthority):
+                for row in self.outbox.get(run_id, []):
+                    if _as_int(row["durable_seq"]) >= authority.rejected_seq and row[
+                        "status"
+                    ] in {"queued", "published"}:
+                        row["status"] = "superseded"
+                        row["index"] = None
+            for frame in frames:
+                self.outbox.setdefault(run_id, []).append(
+                    {
+                        **frame.model_dump(),
+                        "status": "superseded" if quarantine else "queued",
+                        "index": None if quarantine else frame.index,
+                    }
+                )
+            if not isinstance(authority, ExecutionTerminalAuthority):
+                lease = LeaseFence(
+                    owner=authority.owner, generation=lease.generation + 1
+                )
+                self.owners[run_id], self.generations[run_id] = (
+                    lease.owner,
+                    lease.generation,
+                )
+            self.terminals.add(run_id)
+            self.leases[run_id] = None
+            self.terminal_at[run_id] = self.clock_ms
+            self.durable_counter[run_id] = seq
+            self.event_index_counter[run_id] = index if quarantine else index + 1
+            self.terminal_fence[run_id] = (
+                authority.rejected_seq
+                if isinstance(authority, QuarantineTerminalAuthority)
+                else seq
+            )
+            if command is not None:
+                command["status"] = "succeeded"
+            await self._queue_bound_sandbox_cleanup(run_id)
+            return TerminalCommitResult(
+                status="committed",
+                lease=lease,
+                retained_frames=() if quarantine else tuple(frames),
+            )
+        except BaseException:
+            self.__dict__.update(state)
+            self.chat_repository.__dict__.clear()
+            self.chat_repository.__dict__.update(chat_state)
+            raise
 
     async def purge_terminal(self, max_age_ms: int) -> int:
         cutoff = self.clock_ms - max_age_ms
@@ -952,17 +1234,6 @@ class FakeRunRepository:
             for (row_run, tool_id), row in sorted(self.tool_journal.items())
             if row_run == run_id and row["name"] == "deliver"
         ]
-
-    async def execute_active_effect(
-        self,
-        run_id: str,
-        lease: LeaseFence,
-        effect: Callable[[], Awaitable[None]],
-    ) -> bool:
-        if not await self.is_lease_current(run_id, lease):
-            return False
-        await effect()
-        return True
 
     async def bind_sandbox_id(
         self,
@@ -1293,3 +1564,83 @@ def usage_recorder() -> tuple[
         return (seen["input"], seen["output"])
 
     return record, seen
+
+
+async def finish_run(
+    repository: "RunRepository",
+    run_id: str,
+    lease: LeaseFence,
+) -> bool:
+    """Test setup using the real terminal port; never a production compatibility API."""
+    result = await repository.finalize_terminal(
+        run_id,
+        ExecutionTerminalAuthority(lease=lease),
+        RunTerminalOutcome(payload=RunCompletedPayload(status="completed"), usage=None),
+        tuple(await repository.list_delivery_journal(run_id)),
+    )
+    return result.status == "committed"
+
+
+def terminal_emitter(
+    emitter: "RunEmitter",
+    claim: Callable[[], Awaitable[bool]],
+    recorder: Callable[[int, int], Awaitable[tuple[int, int]]],
+) -> Callable[
+    [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
+]:
+    """Pure runnable test callback, not evidence of persistent atomicity."""
+
+    async def finish(
+        payload: RunCompletedPayload | RunFailedPayload, usage: tuple[int, int]
+    ) -> bool:
+        totals = await recorder(*usage)
+        if not await claim():
+            return False
+        if isinstance(payload, RunCompletedPayload) and payload.status == "completed":
+            payload = RunCompletedPayload(
+                status="completed",
+                token_usage=(
+                    TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
+                    if any(totals)
+                    else None
+                ),
+            )
+        await emitter.emit(payload)
+        return True
+
+    return finish
+
+
+def repository_terminal_callback(
+    repository: "RunRepository",
+    bus: "StreamProtocol",
+    run_id: str,
+    lease: LeaseFence,
+) -> Callable[
+    [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
+]:
+    async def finish(
+        payload: RunCompletedPayload | RunFailedPayload, usage: tuple[int, int]
+    ) -> bool:
+        result = await repository.finalize_terminal(
+            run_id,
+            ExecutionTerminalAuthority(lease=lease),
+            RunTerminalOutcome(
+                payload=payload,
+                usage=RunUsageSegment(input_tokens=usage[0], output_tokens=usage[1]),
+            ),
+            tuple(await repository.list_delivery_journal(run_id)),
+        )
+        for frame in result.retained_frames:
+            try:
+                await bus.publish(
+                    run_events_stream(run_id),
+                    outbox_wire_event(frame),
+                    maxlen=RUN_EVENTS_MAXLEN,
+                )
+                await repository.mark_critical_published(run_id, frame.durable_seq)
+            except Exception:
+                break
+        return result.status in {"committed", "replayed"}
+
+    return finish

@@ -7,7 +7,13 @@ technical modules directly.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from kokoro_agent.domain.run.models import (
+    RunTerminalOutcome,
+    TerminalAuthority,
+    TerminalCommitResult,
+)
+
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -225,39 +231,22 @@ class PostgresRunRepository:
     async def purge_terminal(self, max_age_ms: int) -> int:
         return await self._leases.purge_terminal(max_age_ms)
 
-    async def try_mark_terminal(self, run_id: str, lease: LeaseFence) -> bool:
-        return await self._leases.try_mark_terminal(run_id, lease)
+    async def verify_terminal_frame(self, frame: OutboxFrame) -> None:
+        await self._events.verify_terminal_frame(frame)
 
-    async def fence_and_mark_terminal(
-        self, run_id: str, owner: str
-    ) -> LeaseFence | None:
-        return await self._leases.fence_and_mark_terminal(run_id, owner)
-
-    async def cancel_with_delivery_barrier(
+    async def finalize_terminal(
         self,
         run_id: str,
-        owner: str,
-        command_id: str,
+        authority: TerminalAuthority,
+        outcome: RunTerminalOutcome,
         delivery_snapshot: tuple[tuple[str, str, str], ...],
-        receipt_payload_json: str,
-        terminal_payload_json: str,
-    ) -> LeaseFence | None:
-        return await self._leases.cancel_with_delivery_barrier(
-            run_id,
-            owner,
-            command_id,
-            delivery_snapshot,
-            receipt_payload_json,
-            terminal_payload_json,
+    ) -> TerminalCommitResult:
+        return await self._leases.finalize_terminal(
+            run_id, authority, outcome, delivery_snapshot
         )
 
     async def is_terminal(self, run_id: str) -> bool:
         return await self._leases.is_terminal(run_id)
-
-    async def execute_active_effect(
-        self, run_id: str, lease: LeaseFence, effect: Callable[[], Awaitable[None]]
-    ) -> bool:
-        return await self._effects.execute_active_effect(run_id, lease, effect)
 
     async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
         return await self._effects.add_steer(run_id, message_id, content)

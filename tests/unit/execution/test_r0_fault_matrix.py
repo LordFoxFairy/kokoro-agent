@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from support.fakes import repository_terminal_callback
+
 from collections.abc import Awaitable, Callable, Mapping
 
 from pydantic import JsonValue
@@ -176,7 +178,7 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
-        claim_terminal=lambda: store.try_mark_terminal("term-drop", lease),
+        finalize_terminal=repository_terminal_callback(store, bus, "term-drop", lease),
         record_usage=usage_recorder()[0],
     )
     # 首次 publish 失败被顶层 except 吞掉 → run.completed 未上 wire，但 outbox 行留 queued。
@@ -229,7 +231,7 @@ async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> N
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
-        claim_terminal=lambda: store.try_mark_terminal("term-fail", lease),
+        finalize_terminal=repository_terminal_callback(store, bus, "term-fail", lease),
         record_usage=usage_recorder()[0],
     )
     assert handled is True

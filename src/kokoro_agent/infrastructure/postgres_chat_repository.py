@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -23,7 +22,7 @@ from kokoro_agent.domain.chat.models import (
     chat_event_id,
 )
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatIdentityConflict
-from kokoro_agent.domain.chat.time import epoch_millis_to_utc, normalize_utc_datetime
+from kokoro_agent.domain.chat.time import normalize_utc_datetime
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.infrastructure.chat_mappers import (
     chat_event_from_row,
@@ -60,14 +59,9 @@ class PostgresChatRepository:
         self,
         database_url: str,
         schema: str = DEFAULT_PG_SCHEMA,
-        clock: Callable[[], int] | None = None,
     ) -> None:
         self._database_url = database_url
         self._schema = schema
-        # The fence clock belongs to the Run claim table and retains its
-        # existing epoch-millisecond injection contract. Chat facts themselves
-        # use aware datetime values before reaching PostgreSQL.
-        self._clock = clock or _now_ms
 
     async def setup(self) -> None:
         async with connect_pg(self._database_url) as conn:
@@ -239,7 +233,6 @@ class PostgresChatRepository:
         active_predicate = (
             """
               AND lease_expires_at IS NOT NULL
-              AND lease_expires_at > %s
               AND terminal = FALSE
             """
             if mode == "active"
@@ -250,8 +243,6 @@ class PostgresChatRepository:
             lease.owner,
             lease.generation,
         )
-        if mode == "active":
-            params = (*params, epoch_millis_to_utc(self._clock()))
 
         async with connect_pg(self._database_url) as conn:
             async with conn.transaction():
@@ -259,7 +250,7 @@ class PostgresChatRepository:
                     await execute_sql(
                         cur,
                         """
-                        SELECT 1
+                        SELECT lease_expires_at
                         FROM {}
                         WHERE run_id = %s
                           AND owner = %s
@@ -272,8 +263,15 @@ class PostgresChatRepository:
                         ),
                         params,
                     )
-                    if await fetch_one(cur) is None:
+                    claim = await fetch_one(cur)
+                    if claim is None:
                         return None
+                    if mode == "active":
+                        await execute_sql(cur, "SELECT clock_timestamp() AS now")
+                        clock = await fetch_one(cur)
+                        assert clock is not None
+                        if claim["lease_expires_at"] <= clock["now"]:
+                            return None
                     return await self._append_projection(cur, projection)
 
     async def save_message(self, message: ChatMessageDraft) -> ChatMessageRecord:
@@ -376,6 +374,12 @@ class PostgresChatRepository:
                 row = await fetch_one(cur)
         value = row["seq"] if row is not None else None
         return 0 if value is None else int(value)
+
+    async def append_on_cursor(
+        self, cur: Any, projection: ChatProjection
+    ) -> ChatEventRecord:
+        """Package-internal append participating in the caller's owner transaction."""
+        return await self._append_projection(cur, projection)
 
     async def _append_projection(
         self, cur: Any, projection: ChatProjection
@@ -593,10 +597,6 @@ def _validate_page(after_seq: int, limit: int) -> None:
         raise ValueError("after_seq must be non-negative")
     if limit <= 0 or limit > 1000:
         raise ValueError("limit must be between 1 and 1000")
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
 
 
 def _assert_event_identity(record: ChatEventRecord, draft: ChatEventDraft) -> None:

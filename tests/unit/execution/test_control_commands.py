@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from support.fakes import finish_run
+
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
@@ -356,7 +358,9 @@ async def test_terminal_run_control_excluded_from_reapply() -> None:
             {"kind": "run.cancel", "command_id": "dec_1", "run_id": "rt"}
         ).model_dump_json(),
     )
-    await run_repository.try_mark_terminal("rt")
+    terminal_lease = run_repository.current_lease("rt")
+    assert terminal_lease is not None
+    await finish_run(run_repository, "rt", terminal_lease)
 
     # 终态 run 不进 pending 列表。
     assert await run_repository.list_pending_control_delivery() == []

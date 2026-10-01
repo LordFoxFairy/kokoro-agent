@@ -1,5 +1,23 @@
 # kokoro-agent 数据模型
 
+## AGENT4-D0：当前 SQL、P1 零持久化边界与完整发布门（2026-10-01）
+
+当前 Agent main `224d0f19ff2199c38b95f621015ea7856f589454` canonical SQL 尚无 scope、lineage、baseline/head、
+runtime_profile_digest。Run lease_generation 是每 Run 的 fence，不是 session 全局 generation。
+当前唯一 finalize_terminal 已将 usage/terminal/outbox/Chat identity/seq/cleanup 同连接提交；未来在此事务增加成功
+committed head/user_seq 晋升与 active 释放，不重建第二终态机制。BFF e7a325ce 的 Chat terminal FIFO 已验收，
+不代替本仓持久 scope，也不证明 Scheduled 同 session 或 native DAG。
+
+P1 只产纯选择计划/编码 bytes/digest，供现 build 同源选择及后继正式 profile 装配使用；不持久、无 DB I/O，
+不改 canonical SQL/表/列/约束/索引/事务/Redis namespace/RunRequest/retention。fixture 的完整 profile 不冒充生产已冻结。
+本轮 D0 与下一 P1 不添加占位 scope/nullable fallback；精确文件与 RED 矩阵见 TECHNICAL_DESIGN。
+
+scope/native 的后继实现子门与完整生命周期发布门分开：用户未决 Conversation 删除/expiry 阻断最终引用释放，
+不阻独立 P1。活跃/latest/committed 引用保护必须随正式引用字段实现；bounded purge/reachability 必须真实验，
+不得把永久保留当 GC 完成。最终取消/drain、通知/重放、释放时机、privacy 删除与 session 复用语义确定后才发布完整4.0。
+本轮不创造 DELETE/tombstone/保留时长。schema 验证须覆盖列/类型/default/约束/索引，现 `verify_agent_schema`
+只检查表存在，不足以宣称完整 drift；新增字段/约束应在正式 schema 切片补真实 catalog 负向测试。
+
 ## AGENT-DURABLE-INGRESS-P0：现 dispatch 事实的唯一入口（2026-10-01）
 
 本片不新增表、列、索引或 migration。`kokoro_agent_run_dispatch` 仍是 Run 启动前的
@@ -35,9 +53,9 @@ normal/cancel 同锁核有效 rejected receipt 优先，错误 event_id 不参�
 
 职责收敛：postgres_run_leases 保持唯一 finalize 同连接事务编排；postgres_run_events 承接 delivery_ready_on_cursor、terminal_chat_on_cursor 与只读 verify_terminal_frame，façade 的只读验证指向 events。events 不 import leases，不复制 SQL、不新增模块，也不放宽现 800 行门。
 
-本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
-最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
 ## AGENT-RETRY-DESIGN：目标 lineage 与 native baseline（2026-09-30，未实施）
 
@@ -70,17 +88,19 @@ chat identity/sequence → native → outbox/receipt/control/tool/cleanup 子行
 精确比较 locator、canonical identity、owner/generation、state 与该操作允许的 active/terminal fence；取得全部前置锁后单独读取数据库时钟重验 expiry，
 不复用等待锁前计算的 Python now，也不把只含等待前谓词的 UPDATE 当作锁后到期验证。
 预读后删除、scope不符或 generation变化即失败/无写；不凭预读结果继续。外部网络不放事务。
+当前目标不额外增加scope_generation；active_run_id、Run owner/generation和expected native head共同授权。
+cleanup_id-only入口先无锁读cleanup→run locator再同序锁后重读；历史terminal证据重放核原attempt，不冒领新active身份。
 
 | 入口锁矩阵（现方法；必须同片统一） | scope-first 后的重验/写边界 |
 | --- | --- |
 | enqueue_dispatch、try_claim/claim_dispatch | 锁相关 origin/parent/new dispatch 与 Run（各按 run_id）；核 frozen identity/baseline/profile，再 admission占位或claim/createRun；不能先 UPDATE dispatch/Run再找scope |
 | adopt、renew、pause | 精确旧 generation及 paused/active 条件重验；scope仍指本attempt才变更租约 |
 | reclaim_expired | 无锁选候选 locator，按 scope key、run_id排序逐scope事务；锁后DB clock重验过期，不保留当前先批量UPDATE Run的路径 |
-| cancel_with_delivery_barrier、try_mark_terminal、fence_and_mark_terminal | scope→dispatch/Run→Chat→native→outbox/usage/receipt/cleanup；typed outcome的最终usage段、delivery Chat barrier、terminal/outbox/Chat身份及session seq/cleanup、成功head晋升与active释放同事务；删除先CAS后emit或release后补Chat路径 |
+| finalize_terminal（execution/cancel/quarantine authority） | scope→dispatch/Run→Chat→native→outbox/usage/receipt/cleanup；typed outcome的最终usage段、delivery Chat barrier、terminal/outbox/Chat身份及session seq/cleanup、仅completed成功head晋升与active释放同事务；quarantine沿现私有audit不新增公开Chat。保留现无先CAS后emit窗口，禁止release后补Chat |
 | stage_critical_frame、reserve/next_event_index、mark_critical_published | run_id定位后同序重读；emit需当前active lease；terminal重投仅原terminal fence/已持久event身份，不允许新active Run冒领 |
 | reconcile_receipts、control admission/delivery/status | 同序重读后receipt/manifest/control CAS；允许终态补收口不代表跳过scope/原fence或重开Run |
 | Chat save_message/append/append_fenced/ensure_session | 已知scope直接先锁scope；run关联投影先锁dispatch/Run再chat identity/sequence；user只normal创建，retry精确复用origin；纯展示写不反向锁Run |
-| tool journal/result、steer、usage、active effect、sandbox bind/cleanup | 同序进入所属子行，重验相应lease或已持久cleanup身份；scope锁不覆盖外部tool/network，回执写重新验证；本片前execute_active_effect持锁await Redis的旧路径已删除，live现于PG提交后无锁发布；GC不能从子行反向寻scope锁 |
+| tool journal/result、steer、usage、sandbox bind/cleanup claim/complete/reschedule | 同序进入所属子行，重验相应lease或已持久cleanup身份；scope锁不覆盖外部tool/network，回执写重新验证；本片前execute_active_effect持锁await Redis的旧路径已删除，live现于PG提交后无锁发布；cleanup_id-only先无锁定位run/scope，锁后重读原cleanup身份，GC不能从子行反向寻scope锁 |
 | native aput/aput_writes | 无锁locator→scope→dispatch/Run重读→native保存及head CAS；同连接/同commit；新attempt不得写origin baseline或失败兄弟分支 |
 | purge_terminal/delete_run_rows、native DAG GC | 无锁候选→按scope排序锁→dispatch/Run按ID锁→重验age、cleanup和全部引用后删；不靠候选快照或仅terminal TTL删，生命周期释放未裁决则不可宣称整scope回收已完成 |
 
@@ -113,8 +133,8 @@ cancel/terminal/event/receipt/chat/tool/native/GC；另以 A 在 B 预读后推�
   input_user_seq；失败/取消不晋升。typed outcome同连接单事务完成最终usage段幂等写、delivery barrier、
   terminal、固定outbox、Chat terminal事实（session seq/identity）、cleanup及active释放；barrier要求delivery
   Chat事实已持久，不仅queued outbox存在。Chat写后outbox/head失败全部rollback，禁止release后补terminal Chat。
-  `postgres_run_leases.py`协调事务，`postgres_run_events.py`提供窄同cursor outbox协作；txn前通过现
-  project_chat_fact构造projection，复用PostgresChatRepository唯一SQL的package-internal append_on_cursor
+  `postgres_run_leases.py`沿现finalize协调事务，`postgres_run_events.py`提供窄同cursor outbox协作；锁内取得固定index/时间/usage后通过现
+  project_chat_fact构造projection，复用PostgresChatRepository已实现唯一SQL的package-internal append_on_cursor
   （承接_append_projection/_next_seq/_save_message），不公开cursor port、不复制SQL、不引入新API。
   terminal Chat取session seq须早于同事务release；outbox durable_seq/index/fence只有per-run语义，不能替代
   session排序。commit后仅Redis发送；重放核原generation/identity并返回相同Chat seq，不分配新seq。
@@ -122,8 +142,8 @@ cancel/terminal/event/receipt/chat/tool/native/GC；另以 A 在 B 预读后推�
   保留live reserve index与fenced Chat append两个事务；append锁后核active，terminal先赢拒绝，live先commit则
   HTTP Chat event seq先live后terminal。真实barrier证明old terminal Chat先commit再允许新user admission，
   同event流old terminal.seq < new run.started.seq；message/event是不同kind计数器，不跨计数器比较大小。
-  BFF通过HTTP Chat replay消费而非Redis；post-terminal连续source显式block是BFF后继FIFO待实现门，
-  现seq/watermark/去重/gap不证明该门已有。不保证终态后无迟到Redis字节，也不为live强并事务或另建ledger。
+  BFF通过HTTP Chat replay消费而非Redis；e7a325ce已验非法post-terminal source显式block与Chat terminal FIFO，
+  不代替Agent scope/native或Scheduled同session门。不保证终态后无迟到Redis字节，也不为live强并事务或另建ledger。
 - 下一 normal 在 committed head 上补齐 seq 范围内所有尚未 committed 的稳定 user（含先前失败原问题），
   同 ID reducer只一次；retry 仍使用 origin 固定窗口，不包含未来 user。原 Chat row 是输入事实，failed native tail
   的 AI/tool/files/todos 不是可补输入。全 native state 由正确 baseline 还原，外部 workspace/store/artifact 不回滚。
@@ -131,10 +151,10 @@ cancel/terminal/event/receipt/chat/tool/native/GC；另以 A 在 B 预读后推�
 无 FK 完整性由同 scope 事务验证 parent/origin/tenant/seq/locator、读回精确比较及 owner reconciliation 负责。
 现 `purge_terminal` 仅 age/cleanup 判定将误删被 lineage/baseline 引用的 Run，必须按上表加入 active/引用保护；
 origin/dispatch/user/native祖先及 blob/delta/子图仍被 active、latest retry候选或committed head引用时禁止TTL删。
-**Retention 生命周期 P1 未决：** latest/committed 指针不会自行过期，只写“无引用才删”并不闭环。Root 已向用户询问
+**Retention 生命周期产品决定未决（非本轮 P1 编码切片）：** latest/committed 指针不会自行过期，只写“无引用才删”并不闭环。Root 已向用户询问
 “上下文随 Conversation 保留，DELETE 会话由 BFF 可靠通知 Agent 清理，Run TTL 只清无引用数据”的方案；待明确
 owner通知契约、幂等/重放、在途取消/drain、释放引用与privacy删除后才能授权整scope GC，本文不自行新增DELETE API。
-暂时保护引用不是永久跳过purge的完成方案，也不承诺现Run TTL足以清全部数据；该未决阻断完整数据设计门。
+暂时保护引用不是永久跳过purge的完成方案，也不承诺现Run TTL足以清全部数据；该未决阻断最终释放/完整生命周期发布，不阻独立P1实施子门。
 Run purge必须有限batch无锁选候选，再按scope/dispatch/Run顺序锁后重读age、cleanup及引用；保留active、
 latest候选、committed head及其origin/lineage/user依赖。native reachability沿精确root/child parent、channel版本、
 blob/delta/pending writes闭包计算，不把“root不再最新”当垃圾。删除须与并发retry/terminal同锁重验，先证明

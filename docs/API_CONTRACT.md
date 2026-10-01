@@ -1,5 +1,21 @@
 # kokoro-agent API 契约
 
+## AGENT4-D0：当前 contract 与 P1 实施子门（2026-10-01）
+
+当前 Agent main `224d0f19ff2199c38b95f621015ea7856f589454` 的唯一机器源仍为 HTTP 3.0.0。
+现 `finalize_terminal` 已原子保存 usage/outbox/Chat/cleanup，durable RunRequest consume 已统一；这些已提交事实
+不是 scope/retry/profile/native 4.0 实现。BFF `e7a325ce` 已验内部 Chat terminal FIFO 与非法 post-terminal source 阻断，
+不代表 Agent scope、Scheduled 同 session 或组合激活。
+
+P1 仅按 TECHNICAL_DESIGN 同名放置表实现纯 profile 编码与真实 build 共用选择计划；不编辑机器源、provenance、
+generated、RunRequest、HTTP/Redis envelope、错误码或 202/409 语义。不会新增 3.0 `run_scope_busy`，不将纯 digest
+变成持久或网络授权 gate。独立 P1 文档子门由 Root 放行；Conversation 删除/expiry 决定只阻最终引用释放及完整发布，
+不阻 P1。当前完整 4.0 门仍未通过，required parent/runtime/schema/真实验收必须协调完成。
+
+正式 4.0 的字段、错误、normal/retry 身份与发布顺序仍见下方目标；每片实现授权与 artifact 发布/服务激活分开。
+当前 canonical fence、首次 Redis publish 和 recovery republish 的 `exclude_none=True` 必须在正式 wire 切片共同修正，
+保留显式 `retry_of_run_id=null`；P1 不先更改这三处，不向现 3.0 sender 偷加 required 字段。
+
 ## AGENT-DURABLE-INGRESS-P0：3.0 wire 不变的 worker 内部门（2026-10-01）
 
 本片不编辑 OpenAPI、generated、provenance 或错误码。`POST /v1/runs` 仍先持久
@@ -20,7 +36,7 @@ BFF仍只读Agent HTTP Chat replay；live保留reserve→fenced Chat→无锁pub
 Redis迟到字节不是新的HTTP事实。terminal generic emit路径删除，nonterminal critical保留原恢复语义。
 NACK由同一finalize的quarantined disposition终止：同txn核持久rejected receipt/fence，terminal/cleanup/superseded
 私有audit原子写，不新增公开Chat、不恢复Redis、不推进毒化consumer；delivery不阻断隔离终止，重放核receipt+Run+audit。
-三文档局部门已由Root批准进入源码；原retry4 required字段/全owner发布/生命周期整体门仍未通过。源码候选已实施，本片 Root 验证门已通过，最终实测证据见 CURRENT 顶部；待 Root 提交。
+三文档局部门已由Root批准进入源码；原retry4 required字段/全owner发布/生命周期整体门仍未通过。源码候选已实施，本片 Root 验证门已通过，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
 NACK仅信任同txn与offending outbox匹配的receipt(run_id,seq,event_id)，保留fence并原子supersede毒化open帧；不返回可发布frame。terminal后usage不接受首次新段，既存精确重放只读，不改变wire或赢家。
 
@@ -28,9 +44,9 @@ normal/cancel 不越过同锁已确认的合法 rejected receipt；终态先赢�
 
 职责收敛：postgres_run_leases 保持唯一 finalize 同连接事务编排；postgres_run_events 承接 delivery_ready_on_cursor、terminal_chat_on_cursor 与只读 verify_terminal_frame，façade 的只读验证指向 events。events 不 import leases，不复制 SQL、不新增模块，也不放宽现 800 行门。
 
-本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
-最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
 ## AGENT-RETRY-DESIGN：目标 launch 4.0（2026-09-30，文档候选）
 
@@ -68,17 +84,17 @@ normal/cancel 不越过同锁已确认的合法 rejected receipt；终态先赢�
 原子继承的digest不是新wire字段，不包含secret/动态route/当前授权。typed terminal outcome在同scope事务
 持久最终usage段、delivery barrier（delivery Chat事实已持久）、terminal/outbox/Chat terminal身份与session seq、
 cleanup、成功head晋升与active释放；同连接原子提交后仅Redis发布，不允许release后补分terminal Chat seq。
-现先terminal CAS后emit的崩溃窗口不作为目标恢复方案。其他nonterminal critical按原outbox/Chat恢复；
+当前 finalize_terminal 已消除先terminal CAS后emit窗口；4.0追加scope/head/active原子性。其他nonterminal critical按原outbox/Chat恢复；
 固定terminal重放返回原Chat identity/seq，live可丢并依现Chat/native恢复，
 Agent保留reserve index→独立事务fenced Chat append→无锁live publish；terminal先赢拒durable append，
 live先提交则HTTP Chat seq先live后terminal。BFF正式AG-UI只消费HTTP Chat replay，不读取Agent Redis。
-BFF当前去重/gap门不等于post-terminal source拒绝；后继FIFO切片须显式block该非法source，不静默丢、不新增schema。
+BFF e7a325ce 已验非法 post-terminal source 显式 block，不静默丢、不新增 schema；其 Chat FIFO 不等于 Agent scope/native fence。
 terminal重放核原generation/固定event identity，不重分Chat seq；不保证终态后绝无迟到Redis字节，不新增全帧ledger。
-以上均为目标实现，当前源码未支持；lifecycle/retention用户决定未决，完整三设计门与4.0发布继续未通过。
+scope/head/retry/profile/native 仍为目标实现；现 terminal 原子性已提交。lifecycle/retention 决定仍阻最终释放/完整4.0发布，独立P1实施子门不受其阻断。
 
 retryable 只是用户可尝试的失败属性，不保证成功、无副作用或免费；既有 tool journal/artifact 不被撤销或隐藏。
 
-**发布顺序：** Agent 四文档审查 → RED/native atomicity/lifecycle 门 → owner machine/runtime/schema/fresh-install
+**发布顺序：** Agent D0 四文档审查 → 独立 P1 纯代码及正式执行各片 RED/GREEN（不激活） → native atomicity/lifecycle 门 → owner machine/runtime/schema/fresh-install
 同片验收，固定 4.0.0 commit/direct/aggregate digest 并 **只发布 artifact、不激活服务**（failure model 随 source digest
 再生） → BFF 同一个消费切片原字节 repin/生成，全部 normal Chat、Scheduler producer/outbox/parser 显式 null，
 retry 显式 parent 非空，并接原 user/新 assistant/outbox → 核查并更新所有其他 sender（含直接 worker caller）

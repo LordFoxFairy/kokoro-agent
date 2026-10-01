@@ -1,3 +1,24 @@
+## AGENT4-D0：当前基线与下一 P1（2026-10-01，文档交付待 Root 审查）
+
+当前 Agent `main 224d0f19ff2199c38b95f621015ea7856f589454`；本轮起始 clean，只改
+TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT。`64665cb0` 已提交 terminal 原子收口，
+`224d0f19` 已提交 durable RunRequest 备用入口收敛。下方各历史阶段的“实施中/待提交/当时未验”保留历史证据，
+不覆盖本段当前状态。HTTP machine 仍3.0.0，scope/lineage/baseline/head/profile/run-bound saver尚未实现。
+BFF e7a325ce 已由 Root R18 验收内部 Chat terminal FIFO 与非法 post-terminal source 阻断；不是 Agent scope 或组合通过。
+
+D0 统一现 finalize_terminal 起点、全部入口 scope-first/锁后DB clock、cleanup locator、现schema仅查缺表与正式drift差距。
+独立 P1 的精确放置表、7个源码/测试路径和4份文档、共享选择计划/编码与完整生产装配的分割边界已写入 TECHNICAL_DESIGN。
+下一动作是 Root 审查后派 P1 tests RED→纯编码/真实build同源选择→离线验证，而非再次泛审。
+P1 不改 SQL/contract/RunRequest、持久freeze、preflight顺序或运行授权，不半激活4.0；完成也不称profile已冻结。
+
+Conversation删除/expiry的取消、保留/恢复窗口、执行记录/native引用释放仍待产品决定；它只阻最终释放与完整生命周期发布，
+不阻独立P1或其他owner工作。scope/native正式各片仍需自身一致设计与Root授权；活跃/被引用事实保护、bounded Run purge及
+native reachability和最终释放均为正式4.0发布门，不靠永久免GC闭环。Agent完整机器/runtime/schema与真实owner门通过后，
+先发布不激活artifact，再BFF全normal Chat/Scheduled+retry、其他sender、Web，Root自有fresh协调切换。
+
+本轮未执行pytest、schema/DB/Redis、服务、provider或browser；不复用下方历史测试数量作为D0/P1 GREEN。
+仅文档差异、允许路径、保护文件摘要与交叉引用验证；Git/index/commit由Root持有。实际文档验证结果随交付报告列出。
+
 ## AGENT-DURABLE-INGRESS-P0：Root fresh 门已验证（2026-10-01）
 
 仅备用 RunRequest 入口复用现 durable `_consume_request`；无intent不persist-user/claim/build，已有canonical覆盖Redis通知内容且duplicate不重复启动。无新SQL/wire/scope/409/retention/provider实现，resume/steer/cancel分支未改。本片不是完整Agent4或session FIFO。
@@ -24,13 +45,13 @@ Root 首轮真实 PG+HTTP 为 134 passed/1 failed：旧 terminal Chat rollback a
 现该现有用例已先 `enqueue_dispatch` 再 dispatch，保留 terminal rollback/outbox/Chat 断言；
 本 worker 未运行真实 PG，修正后 135 例 GREEN 由 Root 复验。
 
-## AGENT-TERMINAL-ATOMIC/P0：本切片 Root 集成门通过，待 Root 提交（2026-10-01）
+## 历史实施记录：AGENT-TERMINAL-ATOMIC/P0（2026-10-01，已提交 64665cb0）
 
 基线 Agent main `dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3`；33 路径实现候选由 Root 统一审查/Git。本片没有 DDL、机器 wire、generated、lock 或其他 owner 改动。
 自然/执行失败/build/resume失败/cancel/NACK 统一由 finalize_terminal 收口；旧三原语、claim callback 与 execute_active_effect 已删除。正常终态的最终 usage、固定 outbox、Chat identity/seq、cleanup 同事务；quarantine 仅私有 superseded audit，不新增公开 Chat/Redis。retained started 的 Chat 缺口在同终态事务先恢复；recovery 只验证已有 terminal Chat，缺失或漂移 fail-closed，不补写终态。
 Run/Chat active fence 与 add_usage 都在取得 Run 锁后读数据库时钟。terminal 只接受既存精确 usage segment 重放。quarantine replay 严格核 private audit kind/payload、NULL index、timestamp、durable counter/fence；normal/cancel 不越过有效 rejected receipt。delivery 的真实 journal/scoped canonical Chat barrier 不变；active ACK 后保留原 outbox 映射，terminal 后按最终 consumed 水位重扫 GC，ensure 不重建第二 delivery。网络均在 commit 后，无锁等待网络。
 
-**Root 冻结真实验证**：`tests/integration/database` + `tests/acceptance/test_http_ingress.py` **135 passed / 15.58s / exit 0**，日志 `/tmp/kokoro-terminal-atomic-root-expanded-pg-final.log`；自有 DB `agent_terminal_atomic_8fff30a8b58b4db5` 已回收。覆盖 Chat 写后 rollback、HTTP 安全失败、started 顺序、usage 过期/封口、receipt/private audit 篡改、GC 与 ensure/finalize 真行锁竞态、重复与 GC 后不重建。Root fresh `uv lock --check`、ruff format（252 unchanged）、ruff check、pyright（0 errors/0 warnings）、contract-check 均 exit 0；默认 pytest **1528 passed / 6 skipped / 192 deselected / 57.97s**，不混算 integration/acceptance。`uv build` wheel + sdist exit 0，输出为 Root 自有 `/tmp/kokoro-terminal-atomic-root-dist`。证据摘要 `/tmp/kokoro-terminal-atomic-root-gates-summary.json` 明确默认测试原始 stdout 在 tool transcript，不冒充已捕获 raw log；真实 build/contract 日志为 `/tmp/kokoro-terminal-atomic-root-build.log`、`/tmp/kokoro-terminal-atomic-root-contract.log`。本切片 Root 门通过，精确 33 路径提交仍由 Root 执行。独立冻结审查代码 P0/P1 均 0、保护范围外变化 0；本次仅收尾文档中两处已删除路径的历史时态。
+**Root 冻结真实验证**：`tests/integration/database` + `tests/acceptance/test_http_ingress.py` **135 passed / 15.58s / exit 0**，日志 `/tmp/kokoro-terminal-atomic-root-expanded-pg-final.log`；自有 DB `agent_terminal_atomic_8fff30a8b58b4db5` 已回收。覆盖 Chat 写后 rollback、HTTP 安全失败、started 顺序、usage 过期/封口、receipt/private audit 篡改、GC 与 ensure/finalize 真行锁竞态、重复与 GC 后不重建。Root fresh `uv lock --check`、ruff format（252 unchanged）、ruff check、pyright（0 errors/0 warnings）、contract-check 均 exit 0；默认 pytest **1528 passed / 6 skipped / 192 deselected / 57.97s**，不混算 integration/acceptance。`uv build` wheel + sdist exit 0，输出为 Root 自有 `/tmp/kokoro-terminal-atomic-root-dist`。证据摘要 `/tmp/kokoro-terminal-atomic-root-gates-summary.json` 明确默认测试原始 stdout 在 tool transcript，不冒充已捕获 raw log；真实 build/contract 日志为 `/tmp/kokoro-terminal-atomic-root-build.log`、`/tmp/kokoro-terminal-atomic-root-contract.log`。本切片 Root 门通过，精确 33 路径已由 Root 提交为 64665cb0。独立冻结审查代码 P0/P1 均 0、保护范围外变化 0；本次仅收尾文档中两处已删除路径的历史时态。
 
 worker 冻结后默认证据：`uv run --frozen pytest -q` **1528 passed / 6 skipped / 192 deselected / 56.86s**；不是 integration/acceptance 数量。pyright 0 errors/0 warnings，ruff check 0、format check 252 unchanged、diff check 0。中途真实失败保留：terminal Chat rollback RED；started 顺序 RED；usage/NACK/replay/锁后时钟 RED；Root 扩展 122 pass/4 fail→125 pass/2 fail→新边界2 pass/8 fail，均按断言修复；architecture 949>800 曾 1 fail/1527 pass，按现 events 核验职责拆分后原门通过，未放宽阈值（摘录 `/tmp/kokoro-terminal-atomic-architecture-red.txt`）。
 
@@ -48,7 +69,7 @@ Root 验收的 3.0 failure/cursor 与粒度切片，不重复把旧 main da056b 
 当前源码尚不支持：同原 user 新 run 会 identity conflict，native 按 run_id 追加 Human，恢复 config 无 checkpoint_id，
 生产 saver 写入尚无 run-bound fence。R2按 Root `bf038a25` 当前任务补逐入口scope-first锁矩阵、两连接
 竞态测试、retry profile非NULL原子复制、实际rg检出的8构造文件及1decoded fixture、publish不激活与全部sender
-协调切换；未扩大源码授权。文档门状态 **未通过**：生命周期用户决定未决，机器/DDL/生产实现及真实验收尚未完成。
+协调切换；未扩大源码授权。当时完整文档门 **未通过**；现按顶部D0区分实施子门与完整发布门，独立P1不等待生命周期决定，机器/DDL/生产实现及真实验收仍待完成。
 
 实际只读证据：安装 METADATA/源码核验 DeepAgents 0.6.6、LangGraph 1.2.2、checkpoint 4.1.1、
 checkpoint-postgres 3.1.2；native saver 精确 locator 与默认 latest、Pregel 新输入/丢 pending tasks、
@@ -72,8 +93,8 @@ payload后写，heartbeat只补已有outbox；execute_active_effect持Run锁awai
 profile尚未在外部_preflight前freeze，此项仍待后继实现。候选现改为typed outcome单事务usage/barrier/terminal/outbox/cleanup/
 Chat terminal事实/session seq/identity、成功head晋升/active释放、commit后仅Redis发布，删除旧不存在的CAS→outbox恢复描述。live保持可丢与现
 Chat/native恢复；保留reserve→另事务fenced append→无锁publish，terminal先赢拒durable live，live先提交
-则HTTP Chat seq先live后terminal。BFF正式AG-UI不读Redis；post-terminal source block属于后继FIFO待实现，
-不把现去重/gap门冒充该保证。terminal原子持久Chat，重放保留原generation/identity及原seq，不承诺Redis绝无迟到字节、不建全帧ledger。
+则HTTP Chat seq先live后terminal。BFF正式AG-UI不读Redis；BFF e7a325ce已验非法post-terminal source block与内部Chat FIFO，
+此事实不替代Agent scope/native fence。terminal原子持久Chat，重放保留原generation/identity及原seq，不承诺Redis绝无迟到字节、不建全帧ledger。
 profile版本1字段/编码/source职责已按真实Feature/Agent/Toolbox/Subagent入口写明，无secret、不freeze动态route；
 拟新增runtime_profile.py与run_checkpoints.py，无新目录。补worker/main、supervisor_recovery、execution/events、
 domain/run/repositories等遗漏允许集；锁后DB clock及terminal/live RED矩阵、bounded Run purge/native reachability
@@ -96,7 +117,7 @@ Root真实PG旧源码诊断 `/tmp/kokoro-agent-terminal-gap-probe.py`（结果�
 
 本Agent未运行服务、PG/Redis、模型、浏览器、pytest完整门或 schema安装；未改依赖、机器源、生成物、Git index/commit。
 底层同连接pipeline/Delta根子图API已定点通过；生产fenced adapter与两连接矩阵、完整middleware/HITL/profile/GC
-仍待四文档门与生命周期裁决后逐片 RED→GREEN，
+按各实施子门逐片 RED→GREEN；独立P1不等待生命周期决定，最终释放及完整发布仍等待该决定，
 Agent发布4.0但不激活→BFF全normal Chat/Scheduler producer/parser与retry同片→其他sender核查→Web→Root自有fresh/协调组合。失败历史、旧运行组与总目标未闭环状态保留。
 
 ## AGENT-FAILURE3-GRANULARITY Root验收（2026-09-30）

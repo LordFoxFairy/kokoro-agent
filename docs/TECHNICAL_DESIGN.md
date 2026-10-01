@@ -1,5 +1,85 @@
 # kokoro-agent 技术设计
 
+## AGENT4-D0：当前实现与分阶段实施门（2026-10-01）
+
+本节以 Agent `main 224d0f19ff2199c38b95f621015ea7856f589454` 为当前基线，优先于下方标明历史基线的实施记录。
+HTTP machine 仍为 3.0.0；`64665cb0` 已交付唯一 `finalize_terminal`，`224d0f19` 已将全部 worker RunRequest 通知
+收敛到 durable canonical consume。现有 terminal 的 usage/outbox/Chat identity/seq/cleanup 已同事务提交，
+提交后才发布 Redis；没有持久 scope、origin/retry、baseline/head 或 runtime profile，现 saver 也无 run-bound fence。
+因此本轮不是补第二终态器，不另建 advisory admission/3.0 scope 状态机，不将 BFF FIFO 当作 Agent 执行互斥。
+
+BFF `e7a325ce232f4be052aa498020bb24e217de4cfa` 已由 Root R18 验收内部 Chat terminal-gated FIFO 与
+非法 post-terminal source 阻断；其证据属于 BFF 单仓，不证明 Agent scope、Scheduled 同 session 或跨 owner 组合完成。
+
+### 两级门与唯一产品未决
+
+- **实施子门**：每片先有本仓三设计一致的目标、精确文件集和 RED；Root 放行后执行，不等完整 4.0 全部完成。
+  下一片 P1 只实现下面的纯 profile 编码/选择规划与现 build 同源重构，无 SQL/wire/持久 freeze/新运行状态。
+  Conversation 生命周期不阻断 P1；后继 scope/native 各片按本节与下方正式目标独立评审，不以本轮文档授权代替源码派工。
+- **完整 4.0 发布门**：正式机器/runtime/canonical schema 一致、全入口 scope-first、profile freeze、native fence、
+  terminal head/active 原子性、bounded 引用感知 GC 和最终生命周期释放均有真实 owner 验证。此前阶段提交不激活 4.0，
+  不发布只多 required 字段而执行器仍旧的 artifact，不混用 Agent3/BFF4。
+- 唯一产品未决仍为 Conversation 删除/expiry 对在途取消、上下文保留/恢复窗口、执行记录及 native 引用释放的语义。
+  该决定阻断最终释放/完整生命周期发布，不阻断独立 P1 或已收敛部分的 RED/设计。通知契约、幂等重放、drain、
+  引用重验与删除竞态由决定后的 owner 工程设计完成；本轮不新增 DELETE/tombstone/expiry 默认策略。
+  活跃/引用保护不是永久免 GC；Run TTL 只清无引用事实，不能自行释放 latest/committed head。
+
+### P1 精确放置表：纯编码与共享选择规划
+
+| 项 | P1 结论 |
+| --- | --- |
+| Owner | Agent 执行配方；单一 Agent writer，Root 审查、Git 与最终验证。BFF/System/Platform 不维护第二 profile。 |
+| 当前事实 | `tools/toolset.py:build_toolset` 合流 core、memory、configured web、固定 MCP wrapper、可选 deliver；`agents/subagents.py:catalog_subagents/build_subagent_bundle` 根据声明及真实可用工具过滤。当前无 profile 模块；FeatureCatalog 只是 registry。 |
+| 目标职责 | 纯函数校验显式 profile v1 白名单输入并输出 canonical bytes/digest；工具与子代理选择产出不可变有序计划，真实 build 与 profile 投影消费同一选择函数/计划，不复制筛选条件。 |
+| 两个位置 | 采用既有 `execution/runtime_profile.py` 承接编码/显式 source descriptor；选择规则保留在现 toolset/subagents，toolbox 承接无 secret 配置元数据。淘汰 FeatureCatalog 编码、factory 混合编码与网络以及新 profile 服务/目录。 |
+| 粒度 | 只新增一个生产模块与一个专用测试文件；既有能力文件增加纯规划并让现构建复用，不搬目录、不造通用 DTO/registry/helper。内部值用 frozen/slots/kw_only dataclass。 |
+| 依赖 | profile 可读可信 Feature/Agent 声明及纯选择结果；选择模块不反向依赖 profile 编码。无 repository、HTTP/provider、环境/Git读取或 native saver；不调用工具、不创建虚构 namespace/backend/client 来取 descriptor。显式包资源读取可校验已登记来源，测试注入在 tests 内。 |
+| 数据/API | 不修改 HTTP3、Redis envelope、SQL、RunRequest、digest 持久化、admission/lease/terminal 或当前 preflight 顺序；新 digest 仅纯函数结果，不成为运行授权 gate。 |
+| 删除 | 被抽出的旧内联选择分支随真实 build 改用计划而删除；不留旧/新两套 selector。现授权、MCP resolve、工具绑定、middleware 与 native graph 路径保持。 |
+| 验证 | 下面精确 RED 矩阵、现 factory/toolset 回归及本仓离线门；无 PG/Redis/provider 需求。Root 实测前只称候选，不将 P1 称完整冻结 profile。 |
+
+P1 允许文件仅以下绝对路径（本 D0 不修改；后继须 Root 明确授权）：
+
+1. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile.py`（新增）：PROFILE_VERSION=1、白名单完整输入校验、canonical 编码、摘要及显式 ToolImplementationSource 值/资源摘要；不接受以缺字段/default 拼成“完整 profile”。
+2. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/toolset.py`：纯有序来源选择计划与现 build 的 materialization；保留实际工具名冲突校验、动态 MCP 当前授权与绑定。
+3. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/toolbox.py`：进程工具顺序与显式无 secret 选项投影；不转储 provider 对象/闭包/凭据。
+4. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/agents/subagents.py`：纯已选且工具齐备的 catalog 计划，现 bundle 按计划绑定真实工具/guards；general-purpose 覆盖及 declared 权限语义不变。
+5. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_runtime_profile.py`（新增）：编码/白名单/source/选择投影纯测试。
+6. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/tools/test_toolset.py`：同源计划与实际 materialization、重复名/顺序/delivery 条件回归。
+7. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_factory.py`：现真实 factory 的主/子代理工具集合与计划一致、授权守卫及当前 preflight 行为不变；使用现测试 doubles，不请求 provider。
+8. `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md`、`/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md`、`/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md`、`/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md` 仅 P1 当前态与实测记录。
+
+**同源与分割边界。** 工具计划记录实际合流次序与启用条件，由 `build_toolset` 绑定当前 request/lease/backend/client；
+profile 只投影该同一计划的静态业务选择，不将绑定实例纳入摘要。子代理计划按 catalog 原顺序选择，缺任一工具则整项过滤，
+保留每项 source/description/prompt/声明工具顺序；现 `catalog_subagents/build_subagent_bundle` 只按此结果构造 native 对象。
+P1 不另建 digest 专用 selector，也不为读取 schema 伪造远端 owner 返回。handoff/native implicit 的完整 descriptor、
+全部登记源码依赖闭包、worker 策略装配和包内来源覆盖仍须后继完整 profile 装配片交付；P1 的 fixture 完整 profile
+只验证纯编码契约，不冒充生产入口已生成完整 profile。缺源/未登记项明确失败，不用 repr、Git SHA 或空 descriptor 兜底。
+后继才扩 `agent_factory`/`worker dependencies/main`：在所有 `_preflight`/System/sandbox/provider 前形成完整计划，
+以 scope/lease 事务 freeze/verify；normal 初次允许 NULL→digest，retry/恢复只比较继承的非 NULL 值。P1 不提前接这道 gate。
+
+| P1 先 RED 的行为 | GREEN 验收 |
+| --- | --- |
+| profile 输入无完整白名单/未知类型、NaN/Infinity、孤立 surrogate | 明确拒绝，无默认补齐；不 trim/Unicode normalize；对象排序、数组保序、frozenset 字符串排序、null 保留。 |
+| prompt/model/options、tool schema/source/order、已选子代理内容或过滤结果变化 | digest 必须变化；相同完整输入稳定，未选 catalog 项变化不污染本次选择。 |
+| 凭据/route/URL/namespace/lease 对象误入输入 | 不存在可接收这些对象的宽泛 model_dump 路径；动态数据不进入白名单 profile，禁 repr/闭包转储。 |
+| selection 与真实 build 两套分支 | 精确比较工具次序/名称、delivery 开关、web provider 缺席、缺工具子代理、duplicate name 与 GP/declared 语义；实际 build 使用同一 plan 函数。 |
+| source 未登记/资源缺失/文件内容变化 | fail-closed 或 digest 正确变化；仅登记的包资源，源码与 wheel 资源读取验证，无运行时 Git/网络。完整生产 manifest 覆盖仍留后继，不宣称 P1 覆盖所有 native 工具。 |
+
+拟命令（P1 后由 Root 按任务卡执行；本 D0 未运行）：`uv run --frozen pytest -q tests/unit/execution/test_runtime_profile.py tests/unit/tools/test_toolset.py tests/unit/agents/test_factory.py`；
+随后 `uv lock --check`、`uv sync --frozen`、`uv run ruff format --check .`、`uv run ruff check .`、
+`uv run pyright`、`uv run kokoro-agent-contract-check`、`uv run pytest -q`、`uv build --wheel --sdist`；
+wheel 资源读取只用自有临时安装验证，不启动服务。DB/schema/contract 字节保持测试或 hash 验证，非 integration 声明。
+
+### 正式 scope/native 后继门的补充
+
+scope PK 仍为 `(tenant_id, namespace, session_id)`；namespace 已含可信 subject，actor/assertion 轮换不换 scope。
+现目标未增加 scope_generation：有效执行 authority 是 scope.active_run_id＋该 Run owner/generation＋expected native head。
+run_id-only（cleanup 则 cleanup_id→run_id）无锁预读仅定位，scope→dispatch→Run 锁后重读；跨 scope/同组按完整 key 排序。
+cleanup claim/complete/reschedule、receipt GC、展示 Chat 写与 terminal evidence replay 都在入口矩阵中，不漏子行入口；
+有效历史 terminal 重放核原 attempt 身份，不要求它仍是当前 active。删除后 session 是否可复用及其 ABA 防护由生命周期方案明确。
+SQL-first 安装须覆盖列/类型/default/CHECK/UNIQUE/index 漂移断言；现 `verify_agent_schema` 只查缺表，不足以通过 4.0 schema 门。
+
 ## AGENT-DURABLE-INGRESS-P0：备用入口收敛（2026-10-01）
 
 本片只收敛现 3.0 worker 的备用 `dispatch(RunRequest)` 入口，不改 HTTP/Redis wire、DDL、
@@ -13,7 +93,7 @@ _on_request -> try_claim`可跳过该 durable intent。
 consumer 赢得 claim/start，重放不重复执行。resume/steer/cancel 继续走现有 control 路径。
 `try_claim` 仍有测试与底层 fixture 用途，本片不扩大为 repository 全面删除。
 
-## AGENT-TERMINAL-ATOMIC/P0：现有终态一致性前置切片（2026-10-01，本片 Root 验证门已通过，待 Root 提交）
+## 历史实施记录：AGENT-TERMINAL-ATOMIC/P0（2026-10-01，已提交 64665cb0）
 
 基线 `main dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3`，起始clean；只修已有HTTP3.0终态持久化，
 不是另一条3.0兼容实现。以下局部设计与原4.0目标并列标明范围，完整Agent4设计门仍未通过。
@@ -21,7 +101,7 @@ Root 已据 unit/真实 PG RED 放行现 source/tests 与窄文档替换；无 D
 
 | 放置门 | 本片明确范围 |
 | --- | --- |
-| Owner/当前事实 | Agent Run唯一terminal writer；现try_mark_terminal先commit再usage/outbox/Chat，Root真实probe已复现terminal=true却无terminal outbox、无reclaim；cancel已有两outbox原子但Chat后投，NACK另有无payload终止。 |
+| Owner/当前事实 | Agent Run唯一terminal writer；原dd5afc35基线的try_mark_terminal先commit再usage/outbox/Chat，Root真实probe已复现terminal=true却无terminal outbox、无reclaim；cancel已有两outbox原子但Chat后投，NACK另有无payload终止。 |
 | 目标职责 | 一个typed finalize_terminal协调器替代所有无payload terminal原语；最终已观测usage、terminal/outbox/Chat session seq/cleanup同连接事务，commit后网络。 |
 | 两案与粒度 | 采用现postgres_run_leases.py协调，events与Chat提供窄同cursor primitive；淘汰新terminal服务/目录/通用UoW及复制Chat SQL。扩现run models/ports，内部值dataclass，无新源码文件。 |
 | 依赖 | worker/execution传业务outcome；infrastructure协调同owner连接，domain无cursor/native类型；Chat.append_on_cursor仅package-internal复用唯一SQL。 |
@@ -114,7 +194,7 @@ Root已裁决NACK为同一finalize中的quarantined disposition：终止与私�
 被拒outbox，缺失/漂移零mutation；同txn将被拒及fence后仍open帧supersede，私有audit稳定幂等且retained_frames恒空。
 reconcile_receipts删除提前写fence路径，仅报告候选，finalize失败不得留下独立fence。与natural/cancel按Run锁first-winner，
 既有赢家不可覆盖，delivery barrier不阻断quarantine。正常可投影terminal仍必须Chat同txn。局部三设计已收敛，
-本片已按设计门、tests-only RED、生产替换及 Root 实测逐阶段通过，最终证据见 CURRENT 顶部；待 Root 提交。retention只阻断4.0 scope/GC整体，不阻断本片完成后推进；任何发现必须改DDL/HTTP机器的情况
+本片已按设计门、tests-only RED、生产替换及 Root 实测逐阶段通过，最终证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。retention最终释放未决不阻独立P1，完整4.0发布仍待验；任何发现必须改DDL/HTTP机器的情况
 先报告，不偷拆兼容路径。后继唯一writer按tests-only RED→生产→Root集成逐阶段放行。
 
 
@@ -128,9 +208,9 @@ reconcile_receipts删除提前写fence路径，仅报告候选，finalize失败�
 
 职责收敛：postgres_run_leases 保持唯一 finalize 同连接事务编排；postgres_run_events 承接 delivery_ready_on_cursor、terminal_chat_on_cursor 与只读 verify_terminal_frame，façade 的只读验证指向 events。events 不 import leases，不复制 SQL、不新增模块，也不放宽现 800 行门。
 
-本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+本片 delivery GC 收敛：reconcile 先取得同一 Run 锁；active Run 的已 ACK delivery.created 保留原 event_id/index/time/payload，consumed watermark 仍推进，非 delivery 正常 GC。terminal 后按最终 consumed 水位重扫而不依赖本轮推进，避免 ensure 重建第二 delivery/Chat。没有新表/API/ledger、没有永久跳过 Run purge、没有退回本地时钟或弱化 barrier。真实测试同时覆盖 natural/cancel、持真实 Run 行锁的 GC↔ensure 与 GC↔finalize、最终 ACK GC 后 replay 不重建；本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
-最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 顶部；待 Root 提交。
+最后两处边界：add_usage（含 pause 段）先锁 Run，再通过 context.database_now 读取数据库时钟校验 active expiry；terminal 只允许已存精确 segment 重放，不接受新段。quarantined replay 同事务严格核 private audit kind/payload、NULL index、timestamp=terminal_at、durable_seq=Run counter 且越过 rejected fence；身份/内容漂移返回 lost，不补写、不公开、不换 winner。Root 已跑 true PG RED（usage 一例/private audit 六例），本片上述矩阵已由 Root 执行，最终实测证据见 CURRENT 的 terminal 历史记录；已由 Root 提交为 64665cb0。
 
 ## AGENT-RETRY-DESIGN：原消息正式重试目标（2026-09-30，文档候选，未放行实现）
 
@@ -204,7 +284,7 @@ checkpoint-postgres 3.1.2。`AsyncPostgresSaver.aget_tuple(config)` 有 checkpoi
    typed terminal outcome 进入单一 scope/fence 事务：最终 usage 段幂等入账、delivery barrier、terminal CAS、固定
    terminal outbox、Chat terminal事实（session seq/identity）、cleanup intent；仅成功同时晋升 committed head/user_seq，
    失败/取消不晋升；该事务释放 active。commit 后仅发布 Redis，固定终态重放复用原 Chat identity/seq。HITL 保持 active，不允许新 normal/retry 穿过。
-   当前 try_mark_terminal 先 commit、随后 emit 的窗口必须删除：现 recovery 只补已有 outbox，不能补缺失 payload。
+   现 finalize_terminal 已消除先 terminal 后 payload 的窗口；4.0 在它的同连接事务追加 scope/head/active，不恢复旧终态原语。
 
 执行锁不是仅 admission/native 的局部约定；逐入口 SQL 顺序见 DATA_MODEL「入口锁矩阵」。
 
@@ -236,7 +316,7 @@ role search_path=pg_catalog）均保留；后者改用生产installer/显式publ
 
 生命周期仍有未决项：Run TTL 不能释放 scope 的 latest/committed 引用；候选为上下文随 Conversation 保留、
 BFF 可靠通知删除，由对应 owner 决定释放。该方案正待用户裁决，本文不创建 DELETE API，不以永久跳过 purge
-冒充 retention 闭环；现 purge 必须保护 active/被引用 scope，未决项阻断完整数据设计门。
+冒充 retention 闭环；后继 purge 必须保护 active/被引用 scope。未决项阻断最终引用释放/完整 4.0 发布，不阻断上方 P1 实施子门。
 
 旧外部副作用、workspace/store、交付 artifact 不由 native fork 撤销；old journal/artifact/evidence 保留。
 新 Run 不复用旧 approval/usage/journal 成功记录，按当前权限及工具的正式幂等契约重新调用；可能重复外部效果，
@@ -254,25 +334,24 @@ namespace/config 转换只在 execution/native adapter；`domain/run/repositorie
   Run/generation 段身份精确幂等比较，与 terminal staging 同事务；不能成功 CAS 后 usage 失败再改发 failure。
   delivery barrier 必须确认delivery Chat事实已持久，不以queued outbox存在冒充完成；未满足时保留active，
   不发布terminal，沿既有delivery journal/outbox/Chat收敛后重试。
-  `cancel_with_delivery_barrier` 与 failure/build-failure 进入相同收口约束；重复 terminal 只回原持久身份。
+  当前 cancel、failure/build-failure 已统一进入 `finalize_terminal`；4.0 扩展同一收口，重复 terminal 只回原持久身份。
   `postgres_run_leases.py` 负责typed terminal事务协调，`postgres_run_events.py` 提供现outbox写入的同cursor窄协作，
-  不各自提交。事务前由现 `project_chat_fact` 构造ChatProjection；同连接复用 `postgres_chat_repository.py`
-  唯一 `_append_projection/_next_seq/_save_message`，提升窄package-internal `append_on_cursor` 给协调器，
+  不各自提交。锁内取得固定 index/时间/usage 后由现 `project_chat_fact` 构造ChatProjection；同连接复用 `postgres_chat_repository.py`
+  唯一 `_append_projection/_next_seq/_save_message`，沿已实现窄package-internal `append_on_cursor` 给协调器，
   不复制SQL、不把cursor放入domain port。`RunTerminalOutcome`只含业务值，无native/DB类型。
   锁序scope→dispatch/Run→Chat→native→outbox/usage/cleanup；先锁Chat identity/sequence，再取native及后组，
   delivery检查需要的事实锁也遵该序。terminal Chat/outbox/usage/head/active全成功或全rollback。
   Chat session seq必须在释放active的同事务获得；Run outbox的durable_seq/index/fence只是per-run，不能证明
   跨run顺序。禁止先释放active再补投terminal Chat，否则下一normal user/start会插到旧terminal前。
-- 当前 `execute_active_effect` 唯一生产调用是 live Redis publish；删除其 Protocol/façade/infra 与调用，
-  不保留通用持锁网络 API。保留 `reserve_event_index` → 另事务 `append_fenced(active)` 核 Run 并提交 Chat(seq)
+- 当前 `execute_active_effect` 及其 Protocol/façade/infra/live 调用已删除，不恢复通用持锁网络 API。保留 `reserve_event_index` → 另事务 `append_fenced(active)` 核 Run 并提交 Chat(seq)
   → 无锁 Redis publish 的两阶段事实写入，不为本片强并 reserve/Chat 事务、不新建 ledger。terminal 先赢则
   fenced append 拒绝；live Chat 先提交则 HTTP Chat replay 的 seq 是 live→terminal，即使 Redis 字节相反。
   Agent 必须拒绝 terminal 后新增 durable live；terminal Chat在同事务已持久，commit后不再补分seq。
   固定终态重放核原generation/identity并返回原Chat seq，不允许下一attempt篡改。其他nonterminal critical仍可
   沿现outbox/Chat恢复；live Redis可丢，依现Chat/native恢复。
   BFF 正式 AG-UI 来源是 Agent HTTP Chat replay，不读取 Agent Redis；现 BFF 有 seq/watermark、ID/digest去重/gap，
-  但尚无 terminal 后连续合法 source 的阻断门。后继 BFF FIFO 切片须增加非法 post-terminal source 的显式 block，
-  不是静默丢弃，不把该门写成已有保证、不新增网络 schema。不承诺终态后绝无迟到 Redis 字节。
+  BFF e7a325ce 已验收非法 post-terminal source 的显式 block（非静默丢弃、无新网络 schema）。
+  这不替代 Agent scope fence，也不证明 Scheduled 同 session 或整组合；不承诺终态后绝无迟到 Redis 字节。
 - `runtime_profile.py` 拥有版本常量 `PROFILE_VERSION=1`、显式白名单投影与编码；选择现 execution 而非
   FeatureCatalog：profile 是一次执行配方/当前部署装配的组合，不是 Feature registry 职责；也不塞 agent_factory
   混合编码、网络和构造。`agent_factory` 在所有 `_preflight`、System resolve、sandbox/provider 之前调用它，
@@ -354,9 +433,10 @@ namespace/config 转换只在 execution/native adapter；`domain/run/repositorie
 Ruff/Pyright/generator/contract/default pytest/build 仍按本仓门；Root 最后执行真实 BFF 原 user→新 assistant/run→
 Agent DAG→AG-UI/reload 的端到端，不拿纯 probe 或 22 项历史 acceptance 代替。
 
-实施依赖：先补四文档一致性与生命周期产品决定；完整设计门未通过前不实施源码。通过后首片为
-scope admission/原 user/baseline 原子持久化与全部写入口锁序骨架；再接 profile/native/start/resume/takeover，
-然后 typed terminal/live 恢复；引用感知 bounded Run purge 与 native reachability 同属发布前必验阶段，不永久跳过。
+实施依赖：先完成上方 D0 三设计一致性；Root 可单独放行 P1 纯编码/共享选择，不等待生命周期产品决定。
+正式执行主线仍为 scope admission/原 user/baseline 原子持久化与全部写入口锁序，再接完整 profile 装配/freeze、
+native/start/resume/takeover，扩展现 finalize_terminal 的 head/active 原子性；引用感知 bounded Run purge、native reachability
+及生命周期决定后的引用释放同属发布前必验阶段，不永久跳过。每个源码片仍须自己的文档子门、RED及Root派工。
 各片 tests-only RED 后 GREEN，可审查提交不代表可激活服务；全 owner/schema/真实 PG Redis HTTP 门通过后才
 发布 4.0 artifact，再按既定消费者顺序协调切换。未决产品生命周期不以降低 retryable 或 NULL profile fallback 绕过。
 

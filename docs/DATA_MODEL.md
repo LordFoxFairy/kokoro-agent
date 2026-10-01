@@ -1,5 +1,16 @@
 # kokoro-agent 数据模型
 
+## AGENT-HITL-DOMAIN-P1-R28：不可变内存规则，SQL未变
+
+基线main512a846。本片只新增纯内部group/item/submission/intent/head值，显式阶段及完整集合不变量；没有新表/列/序列化数据库Row。
+所有集合使用tuple、决策内容使用不透明bytes，源对象不可变；revision由纯规则递增，不自行读取clock或获取fence。
+accepted/start/unknown/terminal是纯合法转换结果，尚未连接Run→command→Chat持久事务。
+当前intent以外的历史幂等仍由后继command表查询，不在head无限累积；native_consumed与observations不由纯规则伪造。
+本片无migration、补值、旧schema兼容或GC改变；后继真正durable门及P3B未提交suffix保持。
+当前纯构造同时拒future intent及缺accept revision的resuming重建值；这不是数据库catalog/fence验证。
+原schema/所有既有源码byte未变；PG8是已提交native证明的历史结果，不是本片事务验收。
+
+
 ## AGENT-HITL-D0-R27：持久交互head/intent/native证据桥（2026-10-01；仅设计）
 
 ### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）

@@ -1,5 +1,36 @@
 # kokoro-agent 技术设计
 
+## AGENT-HITL-DOMAIN-P1-R28：纯交互规则实现子门
+
+基线main `512a8462c52acfc1d87ee20c71bccea04ce63b98`；Root已验native PG8、default1657/6/242，
+它们不代表HITL durable桥已实现。当前仅2新普通文件＋四docs批准HITL prefix；未提交P3B整suffix保持。
+
+| 第8节项 | 本切片决定 |
+| --- | --- |
+| Owner/唯一writer | Agent Run/HITL，原owner；Root独占集成审查/Git。 |
+| 当前事实 | domain/run已有Run内部值；execution/approvals.py依赖SDK和wire映射。现unit/execution测试目录存在。 |
+| 两位置/粒度 | 新domain/run/interactions.py聚合完整集合/分组、不可变提交与状态规则；不膨胀SDK approvals或新增模块。新tests/unit/execution/test_interactions.py复用HITL测试目录，不新建单文件目录。 |
+| 内部API | PendingItem/PendingGroup保原顺序及opaque分组身份；Submission/ResumeIntent保存不可变精确决策；InteractionState提供pause、accept、start、unknown、terminal纯转换。 |
+| 依赖 | 仅标准库；不import协议/SDK/SQL/worker。无I/O、时钟、随机ID或自行验证native证据；IDs与已批准pause事实由后继调用方供给。 |
+| 身份/重放 | 决策按原group/item顺序归一；内容opaque bytes逐字节相等，不自行canonical JSON或相信caller digest。当前intent精确重放零转换；更早命令由后继durable ledger先查原intent并验重放，不在head累积无限历史。 |
+| 数据/API/删除 | 零SQL/wire/版本变化、零装配激活。本片没有替换现入口，不称第二条运行路径；后继整体切换后才删旧synthetic结果。 |
+| 验证 | tests-only真实RED→pure GREEN；Ruff/Pyright/既有architecture门，非授权源码hash与P3B suffix保留。 |
+
+允许的两个新文件绝对路径：
+`/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/interactions.py`；
+`/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_interactions.py`。
+完整集合只接受全集，missing/extra/duplicate/stale/不允许decision整批拒绝且原不可变值不变。
+同request ID的validation重问须新pause_ref与pause_revision；同一waiting事实精确重放不增revision。
+accepted→dispatch_started不可退回，unknown禁止重投，terminal吸收迟到观察。内部start不推进公开interaction_revision。
+本子门不提供“native已消费”推断/active解除API；持久证据、fence、原子Chat、历史command查询及GC由后继另卡接入。
+纯内部值不构成typed wire decoder；安全display/schema payload仍后继映射，不能把opaque私有bytes发布给消费者。
+
+本片实现候选已完成上述纯转换；IntentStatus仅accepted/dispatch_started/unknown/reconciled/terminal五个当前规则值，
+目标durable native_observed以及active解除仍需后继证据API，不以枚举占位冒称实现。历史ledger由唯一持久owner查询，
+`ResumeIntent.verify_replay`供已读原命令校验；`can_dispatch`仅纯资格，不能作为跳过start事务/fence的执行开关。
+52候选中本轮两个新文件已落位（现50已存在/2待新），其他路径未授权修改。真实RED/GREEN与默认门见CURRENT。
+
+
 ## AGENT-HITL-D0-R27：完整pending与恢复桥设计候选（2026-10-01）
 
 ### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）

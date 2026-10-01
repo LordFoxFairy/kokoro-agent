@@ -1,3 +1,46 @@
+## R29 Root 纯规则验收（仅本切片）
+
+绑定冻结manifest8f684dc01f7c6de59163fdcc81f009cf7690a3f85d841ea95b466a4a876e0b78。
+Root fresh `ruff format --check .`265/check/Pyright0，默认pytest **1695 passed/6既定skip/242 deselected/364 warnings（94.62s）**，
+日志 /tmp/kokoro-agent-domain-p1-r29-root-default.log；当前3.0 contract-check通过。
+`uv build --offline`退出0，wheel/sdist构建成功（/tmp/kokoro-agent-domain-p1-r29-root-build.log）。
+构建只更新ignored egg-info/SOURCES.txt以纳入新文件；331/332原保护hash保持，唯一此自产构建清单变化，不暂存构建物。
+独立Astra0P0/0P1/0P2，六候选/四P3B hash通过。仅纯domain接收，未运行PG/Redis/provider，
+持久start/Run→command→Chat/fence/native恢复/GC与4.0发布均不在本片完成范围。
+
+## AGENT-HITL-DOMAIN-P1-R28：纯规则候选冻结待Root验收
+
+基线main `512a8462c52acfc1d87ee20c71bccea04ce63b98`（Root提供、worker不操作Git）。
+本轮新增domain/run/interactions.py与tests/unit/execution/test_interactions.py，加现四docs批准HITL prefix；
+完整P3B未提交suffix保持，332个既有src/tests/contract/database及manifest/lock保护文件hash全同。
+
+已实现纯不可变group/item/decision/submission/intent/head：原分组顺序、全集校验、精确payload bytes重放与冲突、
+同ID validation新pause、不可逆start、unknown不重投、terminal吸收。无SDK/DB/Redis/wire/worker引用，域文件只有stdlib导入。
+允许历史command持久owner先加载原intent后verify_replay；当前head不累积无限ledger。当前没有native证明判定器或active解除API。
+
+真实RED保留：
+- tests-only首次运行因新域模块尚不存在，collection 1 error，`/tmp/kokoro-agent-hitl-domain-p1-red.log`。
+- 追加非法重建revision规则时实际 **2 failed/36 passed**：future intent、resuming缺accept revision；
+  `/tmp/kokoro-agent-hitl-domain-p1-red-invariants.log`。补纯不变量后38例全绿。
+- architecture实际 **1 failed/64 passed**（源码导入cast违规），`/tmp/kokoro-agent-hitl-domain-p1-gates-r2.log`；
+  已删除cast，通过实类型tuple参数保留runtime校验，无ignore/门禁配置放宽。Pyright初2→1→0亦保日志。
+
+定点最终门 `/tmp/kokoro-agent-hitl-domain-p1-gates-r3.log` 整链exit0：
+`uv run --frozen --offline --no-sync ruff format --check src/kokoro_agent/domain/run/interactions.py tests/unit/execution/test_interactions.py`；
+同两路径ruff check、pyright均通过（0 errors/0 warnings）；
+`PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest tests/unit/execution/test_interactions.py tests/contract/test_architecture.py -q`
+→ **65 passed（1.47s；38规则＋27架构）**；当前3.0 `kokoro-agent-contract-check` → ok。
+
+默认全仓离线门 `/tmp/kokoro-agent-hitl-domain-p1-default.log` 整链exit0、原session94122已完成：
+`uv run --frozen --offline --no-sync ruff format --check .` →265 files；`ruff check .` →All checks passed；
+`pyright` →0 errors/0 warnings；`PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest -q`
+→ **1695 passed/6既定skipped/242 deselected/364 warnings（90.96s）**。原SDK warning与测试loopback request异常诊断原样保留，未隐瞒或放宽门。
+未运行真实PG/Redis/provider/wheel/build；没有启动或清理共享基础设施。此纯切片不新增持久/schema，Root后继真PG门另卡。
+
+六文件manifest `/tmp/kokoro-agent-hitl-domain-p1-manifest.json`；当前候选纯规则尚待Root独立审查/重跑/提交。
+Run→command→Chat同事务、durable start及锁后fence、native精确观察/unknown恢复、terminal/GC竞争、机器4.0与consumer pin均未完成。
+完整scope/retry/effective-native/retention目标保持；本片不是52完整实现或HITL4发布。
+
 Root追加默认pytest实跑：**1657 passed /6既定skipped /242 deselected /364 warnings（90.67s）**，
 /tmp/kokoro-agent-hitl-proof-r28-r4-root-default.log；测试HTTP取消路径有既有服务端stderr，pytest仍exit0，
 LangChain beta/deprecation warnings如实保留，不屏蔽。此默认门不替代PG；PG8单独真实通过。

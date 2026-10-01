@@ -1,5 +1,15 @@
 # kokoro-agent API 契约
 
+## AGENT-HITL-DOMAIN-P1-R28：仅内部纯规则
+
+基线main512a846；本片新增domain/run/interactions.py内部不可变值/转换，无HTTP/Redis/Chat source发布，机器仍3.0。
+分组顺序归一后的完整决策逐byte比较，重复command精确重放零转换，差异/不完整/stale拒整批；不引入新的wire schema或code。
+当前head只保当前intent；更早命令幂等由后继durable ledger加载原intent并调用纯重放校验。没有无限内存ledger/fallback。
+接受规则不等于durable accepted；start规则不等于已提交dispatch；unknown不重投、terminal不复活。
+4.0发布继续等待Run/command/Chat事务、native证据与consumer pin，未提交P3B suffix保持。
+实际内部规则与38例pure候选已落位；现机器3.0 contract-check仍通过，没有新source/decoder/HTTP版本发布。
+
+
 ## AGENT-HITL-D0-R27：revisioned pending与动作结果候选（2026-10-01）
 
 ### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）

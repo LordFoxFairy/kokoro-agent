@@ -25,6 +25,9 @@ from kokoro_agent.protocol import REQUESTS_STREAM
 from kokoro_agent.metrics import start_metrics_server
 from kokoro_agent.observability import trace_config
 from kokoro_agent.agent_factory import AgentFactory
+from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
+from kokoro_agent.execution.runtime_profile_sources import production_manifest
+from kokoro_agent.agents.native_profile import prepare_native_recipe
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from kokoro_agent.worker.platform import worker_platform_runtime
 from kokoro_agent.domain.run.repository import SandboxBackendKind
@@ -150,6 +153,15 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
     The standard CLI constructs a configured System resolver. Embedded deployments may
     inject that same boundary plus optional Capability/Storage adapters.
     """
+    # Validate local policy/plugin provenance before opening any owner resources.
+    prepare_native_recipe()
+    runtime_policy = RuntimeAssemblyPolicy.from_settings(
+        run_token_budget=config.run_token_budget,
+        recursion_limit=config.recursion_limit,
+        model=config.model,
+        sandbox=config.sandbox,
+    )
+    manifest = production_manifest()
     owner_clients = clients or WorkerClients()
     # egress is a worker-wide connection policy. Configure it from the already
     # validated AppConfig snapshot; the MCP connection layer never reads env.
@@ -184,7 +196,8 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             platform=platform,
             model=config.model,
             sandbox=config.sandbox,
-            run_token_budget=config.run_token_budget,
+            runtime_policy=runtime_policy,
+            manifest=manifest,
             subagent_catalog=subagent_catalog,
             toolbox=toolbox_from_config(config),
             checkpointer=saver,
@@ -208,7 +221,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             feature_for=agent_factory.feature,
             consumer=_consumer_name(),
             heartbeat_s=config.lease_heartbeat_s,
-            recursion_limit=config.recursion_limit,
+            recursion_limit=runtime_policy.recursion_limit,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
             outbox_republish_ms=config.outbox_republish_ms,

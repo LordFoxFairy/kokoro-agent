@@ -28,6 +28,16 @@ class SearchMemoryArgs(BaseModel):
     query: str = Field(min_length=1)
 
 
+MEMORY_0_DESCRIPTION = "持久保存本空间的长期记忆（key 用短横线小写）。用户表达持久偏好、纠正做法、给出可复用事实时及时保存；一次性/临时信息与任何密钥密码绝不入记忆。"
+MEMORY_1_DESCRIPTION = (
+    "检索本空间既往保存的长期记忆。请求可能涉及用户偏好或长期背景时，先查一下再动手。"
+)
+MEMORY_TOOL_METADATA: tuple[tuple[str, str, type[BaseModel]], ...] = (
+    (SAVE_MEMORY_TOOL_NAME, MEMORY_0_DESCRIPTION, SaveMemoryArgs),
+    (SEARCH_MEMORY_TOOL_NAME, MEMORY_1_DESCRIPTION, SearchMemoryArgs),
+)
+
+
 def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
     """scope 是调用方的隔离政策（如租户 namespace）；本模块只负责在其下存取。"""
     prefix = (scope, _MEMORY_SEGMENT)
@@ -59,19 +69,13 @@ def make_memory_tools(scope: str) -> tuple[StructuredTool, ...]:
     return (
         StructuredTool(
             name=SAVE_MEMORY_TOOL_NAME,
-            description=(
-                "持久保存本空间的长期记忆（key 用短横线小写）。用户表达持久偏好、"
-                "纠正做法、给出可复用事实时及时保存；一次性/临时信息与任何密钥密码绝不入记忆。"
-            ),
+            description=(MEMORY_0_DESCRIPTION),
             args_schema=SaveMemoryArgs,
             coroutine=save_memory,
         ),
         StructuredTool(
             name=SEARCH_MEMORY_TOOL_NAME,
-            description=(
-                "检索本空间既往保存的长期记忆。请求可能涉及用户偏好或长期背景时，"
-                "先查一下再动手。"
-            ),
+            description=(MEMORY_1_DESCRIPTION),
             args_schema=SearchMemoryArgs,
             coroutine=search_memory,
         ),

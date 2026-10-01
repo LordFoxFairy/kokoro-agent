@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextvars import ContextVar
 from importlib.metadata import version
 from typing import Any, cast
@@ -32,6 +32,33 @@ from pydantic import PrivateAttr
 import pytest
 from typing_extensions import TypedDict
 from packaging.version import Version
+
+
+@pytest.fixture(autouse=True)
+def isolate_native_profile_registry() -> Iterator[None]:
+    """Each native contract probe restores globals before the production factory runs."""
+    from deepagents.profiles import _builtin_profiles as bootstrap
+    from deepagents.profiles.harness.harness_profiles import _HARNESS_PROFILES
+    from deepagents.profiles.provider.provider_profiles import _PROVIDER_PROFILES
+
+    global _bound_profile_registered
+    harness_before = dict(_HARNESS_PROFILES)
+    provider_before = dict(_PROVIDER_PROFILES)
+    loaded = bootstrap._loaded
+    loading_thread = bootstrap._loading_thread_id
+    bootstrap_keys = bootstrap._BOOTSTRAP_HARNESS_KEYS
+    bound_before = _bound_profile_registered
+    try:
+        yield
+    finally:
+        _HARNESS_PROFILES.clear()
+        _HARNESS_PROFILES.update(harness_before)
+        _PROVIDER_PROFILES.clear()
+        _PROVIDER_PROFILES.update(provider_before)
+        bootstrap._loaded = loaded
+        bootstrap._loading_thread_id = loading_thread
+        bootstrap._BOOTSTRAP_HARNESS_KEYS = bootstrap_keys
+        _bound_profile_registered = bound_before
 
 
 @tool

@@ -78,3 +78,81 @@ def test_skill_object_origin_does_not_require_storage_write_credentials() -> Non
     )
     assert config.storage_object_origin == "https://objects.test"
     assert config.storage_base_url is None
+
+
+def test_worker_dependencies_has_one_required_runtime_policy() -> None:
+    from dataclasses import fields, MISSING
+    from kokoro_agent.worker.dependencies import WorkerDependencies
+
+    names = {field.name: field for field in fields(WorkerDependencies)}
+    assert "runtime_policy" in names
+    assert "manifest" in names
+    assert "run_token_budget" not in names
+    assert names["runtime_policy"].default is MISSING
+    assert names["manifest"].default is MISSING
+
+
+async def test_real_worker_composition_sends_same_policy_to_factory_and_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import asynccontextmanager
+    from collections.abc import AsyncGenerator
+    from importlib import import_module
+    from unittest.mock import AsyncMock, Mock
+    import asyncio
+    from kokoro_agent.worker.dependencies import WorkerDependencies
+
+    module = import_module("kokoro_agent.worker.main")
+    config = AppConfig.from_env(
+        {"KOKORO_RUN_TOKEN_BUDGET": "71", "KOKORO_RECURSION_LIMIT": "37"}
+    )
+    captures: list[WorkerDependencies] = []
+
+    @asynccontextmanager
+    async def resource(*args: object, **kwargs: object) -> AsyncGenerator[object, None]:
+        yield Mock()
+
+    for name in (
+        "worker_platform_runtime",
+        "worker_model_resolver",
+        "make_checkpointer",
+        "make_run_repository",
+        "worker_storage_delivery",
+        "make_memory_store",
+        "make_chat_repository",
+    ):
+        monkeypatch.setattr(module, name, resource)
+
+    def stream(settings: object) -> Mock:
+        return Mock()
+
+    monkeypatch.setattr(module, "make_stream", stream)
+
+    def factory(dependencies: WorkerDependencies) -> Mock:
+        captures.append(dependencies)
+        return Mock()
+
+    monkeypatch.setattr(module, "AgentFactory", factory)
+    supervisor = Mock()
+    supervisor.serve = AsyncMock(return_value=None)
+    supervisor_constructor = Mock(return_value=supervisor)
+    monkeypatch.setattr(module, "RunSupervisor", supervisor_constructor)
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", Mock())
+    await module.serve(config)
+    assert len(captures) == 1
+    policy = captures[0].runtime_policy
+    assert policy.run_token_budget == 71
+    assert policy.recursion_limit == 37
+    assert (
+        supervisor_constructor.call_args.kwargs["recursion_limit"]
+        == policy.recursion_limit
+    )
+    # The unchanged executor passes that exact limit into the native config.
+    from kokoro_agent.execution import run_agent
+
+    assert (
+        getattr(run_agent, "_config")("thread", None, policy.recursion_limit)[
+            "recursion_limit"
+        ]
+        == 37
+    )

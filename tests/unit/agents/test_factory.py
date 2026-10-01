@@ -27,7 +27,9 @@ from kokoro_agent.config import AppConfig
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.policy import ModelConfig
-from kokoro_agent.tools.toolbox import ProcessToolbox
+from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
+from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
+from kokoro_agent.execution.runtime_profile_sources import production_manifest
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from kokoro_agent.worker.platform import WorkerPlatformRuntime
 from support.fakes import FakeRunRepository
@@ -115,9 +117,15 @@ def _factory(
         WorkerDependencies(
             model=config.model,
             sandbox=config.sandbox,
-            run_token_budget=config.run_token_budget,
+            runtime_policy=RuntimeAssemblyPolicy.from_settings(
+                run_token_budget=config.run_token_budget,
+                recursion_limit=config.recursion_limit,
+                model=config.model,
+                sandbox=config.sandbox,
+            ),
+            manifest=production_manifest(),
             subagent_catalog=build_subagent_catalog(None),
-            toolbox=ProcessToolbox(configured=()),
+            toolbox=build_toolbox(fetch_allow_private=False, search=None),
             checkpointer=InMemorySaver(),
             run_repository=repository,
             memory_store=InMemoryStore(),
@@ -993,7 +1001,11 @@ def test_subagent_materialization_uses_the_same_pure_selection(
         )
     )
     bundle = module.build_subagent_bundle(
-        Toolset.from_tools((tool,)), catalog, (), ("missing", "kept")
+        Toolset.from_tools((tool,)),
+        module.plan_subagents(
+            catalog, frozenset({"available"}), selected=frozenset({"missing", "kept"})
+        ),
+        (),
     )
     assert len(calls) == 1
     plan = planner(
@@ -1047,3 +1059,91 @@ async def test_native_factory_build_uses_both_shared_planners(
     assert built.runnable
     assert resolver.calls
     assert observed == ["tools", "subagents"]
+
+
+async def test_all_peer_guard_validation_precedes_any_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.policy import Permissions
+
+    feature = Feature(
+        key="bad",
+        agents=(
+            Agent(key="one", prompt="one"),
+            Agent(
+                key="two",
+                prompt="two",
+                permissions=Permissions(review_tools=("ask_user_question",)),
+            ),
+        ),
+        entry_agent="one",
+        handoffs=(("one", "two"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    calls: list[str] = []
+
+    async def forbidden(*args: object, **kwargs: object) -> object:
+        calls.append("preflight")
+        raise AssertionError("guard validation must precede all preflight")
+
+    monkeypatch.setattr(agent_factory_module, "_preflight", forbidden)
+    request = _request("bad")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    with pytest.raises(ValueError, match="result-review"):
+        await factory.build(request, lease)
+    assert calls == []
+
+
+def test_dependencies_reject_drift_between_actual_settings_and_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    factory, _ = _factory(monkeypatch, RouteResolver())
+    dependencies: WorkerDependencies = getattr(factory, "_dependencies")
+    with pytest.raises(ValueError, match="policy"):
+        replace(
+            dependencies,
+            model=dependencies.model.model_copy(
+                update={"disable_streaming": not dependencies.model.disable_streaming}
+            ),
+        )
+
+
+async def test_real_factory_materializers_consume_exact_prepared_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.execution.runtime_profile_plan import PreparedFeaturePlan
+
+    observed: list[PreparedFeaturePlan] = []
+    prepare = agent_factory_module.prepare_feature
+    materialize = agent_factory_module.build_toolset
+    bundle = agent_factory_module.build_subagent_bundle
+
+    def prepare_record(*args: Any, **kwargs: Any) -> PreparedFeaturePlan:
+        plan = prepare(*args, **kwargs)
+        observed.append(plan)
+        return plan
+
+    async def tools_record(*args: Any, **kwargs: Any):
+        assert kwargs["plan"] is observed[0].peers[0].tools
+        return await materialize(*args, **kwargs)
+
+    def subagents_record(*args: Any, **kwargs: Any):
+        assert args[1] is observed[0].peers[0].subagents
+        return bundle(*args, **kwargs)
+
+    monkeypatch.setattr(agent_factory_module, "prepare_feature", prepare_record)
+    monkeypatch.setattr(agent_factory_module, "build_toolset", tools_record)
+    monkeypatch.setattr(agent_factory_module, "build_subagent_bundle", subagents_record)
+    factory, repository = _factory(monkeypatch, RouteResolver())
+    request = _request("chat")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    await factory.build(request, lease)
+    assert len(observed) == 1

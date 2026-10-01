@@ -1,6 +1,38 @@
 # kokoro-agent 技术设计
 
-## AGENT-P2-D0-R24：生产来源登记与实际装配计划（2026-10-01；仅设计，待 Root 复核）
+## AGENT-PROFILE-P2-R24：来源 manifest 与同一装配计划候选（2026-10-01）
+
+实现基线为 Root 已提交的 `main 9dcaa34a3664668c3ad2da6adcc71f271ea96224`；本片仍由 Root 独占 Git/提交。
+现在已实现生产来源登记、静态 `PreparedFeaturePlan`、真实 factory 必填计划消费和 worker 同一 runtime policy。
+P2 只计算 `assembly_recipe_fingerprint`，没有 Run 持久 freeze、effective-native 后置绑定、scope/native/retention 或4.0激活。
+
+- `runtime_profile_sources.py`：22来源组、232资源条目/229唯一资源（本包151、DeepAgents48、LangChain27、Swarm3），
+  12条显式动态边、115个固定runtime distribution版本及extra/marker依赖闭包。有限清单从包resource读取，不在请求期递归扫描；完整本地静态import
+  闭包由测试核。composition覆盖worker/执行/生成client依赖；catalog声明值进入实际选择投影，不把未选prompt资产
+  当成当前prompt。general与web-researcher资产仅按当前受信选择登记；第三方叶SDK在明确包/版本边界收口。
+- `runtime_profile_plan.py`：不可变policy/feature/peer计划；全部peer先校验guard/source/工具冲突、再外部preflight；
+  真handoff实例只构造一次且随plan传递。tool/subagent materializer不另选，实际绑定工具metadata与prepare快照比较。
+  GP/空tools继承、MCP当前授权、0预算关闭和原preflight顺序保持。backend custom缺批准来源/政策时显式拒绝，
+  当前没有部署第三方custom批准项，不按任意引用导入或读取其YAML来填充摘要。
+- `agents/native_profile.py`：固定0.6.6的基准模板及policy来源适配，不选harness、不创建图；第三方批准集合为空，
+  初始metadata与上游bootstrap再次枚举均在load/call前闸住，后者上游吞错也转为明确失败，避免安装变化窗口执行插件。
+  registry首次仅接受干净bootstrap，之后比较有序key+对象身份；真build前后重验。对象身份仅进程内核对，不hash。
+  runtime-only middleware callable不在prepare调用；本片拒未支持者，后置实际输出绑定仍属独立后继。
+- worker policy由main同一config快照构造，budget供guard、recursion供现Supervisor→executor链；dependencies校验
+  policy与真正model/sandbox设置一致，凭据/URL/namespace/绑定对象不进入JSON。没有第二selector或optional-plan fallback。
+- 当前recipe根仍为`domain_tag/feature/runtime/implementations/native_recipe`；implementations内为有序sources、
+  dynamic_edges和dependencies。native_recipe保存真实filesystem/todo schema与模板、task模板、GP、注入序、policy keys
+  和空批准plugin集合；每peer另存已选GP/catalog的基准task描述。它们明确`materialization=post_route`，不是最终有效descriptor。
+
+Root额外批准现 `tests/contract/test_deepagents.py` 的逐case registry/bootstrap snapshot/finally恢复：原生契约探针
+注册测试profile后原先跨case泄漏，正式source gate不能把这些fake key加生产白名单。保持原断言/执行，不skip或放宽。
+故精确候选为**26路径＝原25＋该既有fixture**；6新文件、无新目录。下方文件表已纳入该补授权，精确补充路径为
+`/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_deepagents.py`。
+
+验收证据见CURRENT同名节。完整两阶段Run身份、缺第二阶段失败的retry资格、SQL原子绑定与全peer后置顺序仍待独立门；
+Conversation最终引用释放只阻最终释放/完整发布，不阻该foundation。下方D0措辞为已批准设计历史，不覆盖本节候选事实。
+
+## 历史 AGENT-P2-D0-R24：生产来源登记与实际装配计划（2026-10-01；仅设计，待 Root 复核）
 
 **当前基线：** `main ec65d04f9915580eb57629126fffffc20f4c4033`，Root 已提交并推送 P1；
 Root 独立离线门 1588 passed / 6 skipped / 192 deselected、static/build exit0、wheel 四生产资源一致。
@@ -30,7 +62,7 @@ RED 和候选措辞均为当时历史记录，不覆盖本节。机器仍 HTTP3�
   本地 model 构造不等于 provider 推理请求；该顺序调整、实际输出提取、持久绑定及 Run SQL 是独立后继，P2 不实现。
   当前逐 peer resolve/build 的结构尚不满足“全 peer 绑定完成前零 sandbox/provider 执行”，不得称已达成。
 - 本 P2 严格只交付前置 foundation，保持现 preflight 顺序，不提前 System I/O、不静态执行 runtime-only callable、
-  不覆写上游 harness，不扩大下方25路径。完整生产 manifest/共享计划有独立价值，但不是完整 Run profile 发布。
+  不覆写上游 harness；原D0为25路径，实施期仅按Root授权补一个原生测试隔离fixture。完整生产 manifest/共享计划有独立价值，但不是完整 Run profile 发布。
 
 ### 第8节放置表
 
@@ -72,10 +104,10 @@ RED 和候选措辞均为当时历史记录，不覆盖本节。机器仍 HTTP3�
 SubagentSelectionPlan、真实未绑定handoff工具、RuntimeAssemblyPolicy，以及canonical recipe bytes/fingerprint。
 业务对象/工具实例只供后续materialization使用，不进入JSON。每次build构造一次，不作全局mutable缓存。
 recipe的显式JSON字段为`domain_tag/feature/runtime/implementations/native_recipe`：feature使用实际声明及已选
-工具metadata、GP+catalog声明与继承标记；runtime使用上节批准白名单；implementations为有序source descriptors。
-native_recipe使用`templates/policy_sources/materialization`，其中materialization固定语义值`post_route`，
-templates是安装包真实基准schema/description/prompt模板而非最终tool descriptor，policy_sources覆盖批准的
-builtin/plugin选择与生成实现。未知键/对象/secret拒绝；数组保序、set字段显式排序、UTF8与数值规则复用P1。
+工具metadata、GP+catalog声明与继承标记；runtime使用上节批准白名单；implementations包含有序sources、动态边与
+固定依赖版本。native_recipe的filesystem/todo/task_template/general_purpose为安装包真实基准schema/description/prompt，
+另存injection_order/policy_keys/approved_plugins；materialization固定为`post_route`。这些不是最终tool descriptor，
+其批准builtin/plugin选择及生成来源由对应manifest条目覆盖。未知键/对象/secret拒绝；数组保序、set字段显式排序、UTF8与数值规则复用P1。
 此对象不是传输DTO；完整`profile_version=1/feature/runtime`输入不会接收`native_recipe`或代填implicit_tools。
 
 实际工具source绑定采用显式登记的工具/工厂身份（known core实例或受信声明提供source_id与已登记factory），
@@ -159,12 +191,13 @@ S3 key/endpoint、API key、连接URL、容器/session ID与custom原始配置�
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/tools/test_toolset.py` | 必填共享plan消费、metadata与真binder相等、现授权/重复名回归。 |
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_factory.py` | 唯一WorkerDependencies测试装配点；真实factory plan identity、全部peer预检、现native行为。 |
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/worker/test_dependencies.py` | worker实际policy→factory/Supervisor/调用参数同源、禁secret注入。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_deepagents.py`（Root补授权） | 仅逐case native registry/bootstrap snapshot与finally恢复，保留所有原生契约断言。 |
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md` | 本实施门与验收后状态。 |
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md` | 纯内部fingerprint与HTTP3/最终4发布门。 |
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md` | 零持久化/生命周期与freeze欠项。 |
 | `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md` | 当前提交、真实RED/GREEN/Root证据，不预填成功。 |
 
-共25路径：14生产（3新）、7测试（3新）、4docs；无新目录。这是跨真实owner声明所需集合，不以文件数证明完成。
+原D0共25路径；Root实施补授权后为26路径：14生产（3新）、8测试（3新）、4docs；无新目录。这是跨真实owner声明所需集合，不以文件数证明完成。
 若落实native API或custom政策发现必须动本表外文件，先给确切路径/原因，Root调整卡后才写，不加fallback绕过。
 
 ### 必须先 RED 的验收矩阵与先后

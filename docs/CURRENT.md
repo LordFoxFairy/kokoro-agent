@@ -1,4 +1,46 @@
-## AGENT-P2-D0-R24：两阶段边界与插件准入整改待审（2026-10-01）
+## AGENT-PROFILE-P2：Root 独立验收（2026-10-01）
+
+Root核最终26/26范围/hash，独立只读审查agent_p2_review_r25 P0=0/P1=0。随后在停写主树完整执行 lock-check、frozen sync、Ruff format/check、Pyright、contract、failure generator、默认pytest、wheel/sdist，全链exit0：format260、Pyright0 errors/0 warnings，pytest **1627 passed / 6 skipped / 192 deselected / 364 warnings（83.20s）**。命令输出工具摘录（保留显示截断说明，非完整原始日志）`/tmp/kokoro-agent-p2-r25-root-check-excerpts.log`。
+
+Root另对本次自己构建wheel作离线独立目标安装，在/tmp导入且每个kokoro_agent模块路径受安装目录约束；22来源组、229唯一实际资源、12动态边、115精确runtime distributions，chat/music/music_chat与源码fingerprint逐值一致；删除安装目录memory.py后fail-closed。证据 `/tmp/kokoro-agent-p2-r25-root-wheel-evidence.log`、`/tmp/kokoro-agent-p2-r25-root-source-evidence.json`。本片只完成static recipe/source manifest/真实factory同plan与policy装配；后置effective native policy持久绑定、SQL/lease/scope/retention/HTTP4、真实模型与九owner端到端仍未完成。
+
+## AGENT-PROFILE-P2-R24：实现候选已冻结、待Root审查（2026-10-01）
+
+基线`main 9dcaa34a3664668c3ad2da6adcc71f271ea96224`，Root已提交P2-D0，writer不操作Git。
+当前精确26路径＝原批准14生产/7tests/4docs＋Root补授权现`tests/contract/test_deepagents.py`隔离fixture；
+6个新增文件、无新目录/依赖升级/SQL/wire/lock改动。已接生产manifest、实际factory单PreparedFeaturePlan、worker同policy、
+插件metadata零副作用拒绝及二次枚举gate；仅前置foundation，不是Run持久freeze/完整profile或4.0激活。
+
+本worker真实RED历史：缺模块8 failed（`/tmp/kokoro-agent-p2-r24-red.log`）；全peer预检/单policy2 failed
+（`/tmp/kokoro-agent-p2-r24-red-assembly.log`）；缺源码闭包1 failed（`/tmp/kokoro-agent-p2-r24-red-closure.log`）；
+manifest/绑定metadata/worker政策漂移3 failed（`/tmp/kokoro-agent-p2-r24-red-drift.log`）；native task模板1 failed
+（`/tmp/kokoro-agent-p2-r24-red-native-task.log`）；bootstrap再次枚举晚插件1 failed
+（`/tmp/kokoro-agent-p2-r24-red-plugin-race.log`），最后一项曾实际load/call，现已前置阻断并显式抛错，未静默吞掉。
+另有runtime distribution传递闭包缺登记1 failed（`/tmp/kokoro-agent-p2-r24-red-distribution-closure.log`），
+现115个runtime依赖（含extras/markers）固定登记。中途3 failed/5 passed、native私有API错误29 failed/19 passed、
+Pyright15→5→晚枚举fixture空集合类型1诊断均为真实修复历史，不计GREEN。
+原contract native探针注册全局profile的泄漏以逐case snapshot/finally恢复，不给生产加fake白名单。
+
+焦点141通过（`/tmp/kokoro-agent-p2-r24-focused-final.log`，晚枚举/依赖闭包追加前）；追加晚枚举修复后原生/工厂/
+contract55通过（`/tmp/kokoro-agent-p2-r24-green-plugin-race.log`），完整四包import闭包9通过
+（`/tmp/kokoro-agent-p2-r24-source-closure-all-imports.log`）。中间default1602/6/192与1623/6/192保留作诊断，不代替最终冻结门。
+
+**最终worker离线门：** `/tmp/kokoro-agent-p2-r24-full-final.log` exit0；`uv lock --check --offline`、
+`uv sync --frozen --offline`、Ruff format260/check、Pyright0 errors/0 warnings、contract-check、failure generator-check、
+default pytest **1627 passed / 6 skipped / 192 deselected / 364 warnings（78.85s）**、wheel/sdist build全部通过。
+保留原LangChain beta/deprecation及Pyright升级提示，未升级/放宽配置。未运行真实PG/Redis/provider或服务组合验收。
+
+**真实安装wheel证据：** `/tmp/kokoro-agent-p2-r24-wheel-evidence.log`；wheel/sdist位于
+`/tmp/kokoro-agent-p2-r24-dist/`。以同一3.14解释器离线无依赖安装到自有临时target，在`/tmp`工作目录从该已安装包
+实际导入；全部22组/229唯一资源与源码descriptor逐项相等，chat/music/music_chat真实静态plan fingerprint相等，
+移除安装包memory源码必须失败（随后恢复）。仅复用已锁第三方依赖；逐个核本包已导入module绝非源码checkout回退，
+未用src路径补丁掩盖打包。build目录启动前已确认不存在，为本次构建自有产物，交付时回收；不动dist/用户文件。
+Root独立源码审查、冻结hash复核及主树重跑仍待执行，本节不是Root验收或完整4发布。
+
+完整两阶段持久绑定、全peer后置顺序、缺第二阶段时retry资格仍属后继Agent门；Conversation最终引用释放产品未决
+只阻最终释放/完整发布。第三方native plugin与未登记custom backend保持显式拒绝，未把任意扩展伪装为已批准实现。
+
+## 历史 AGENT-P2-D0-R24：两阶段边界与插件准入整改待审（2026-10-01）
 
 当前`main ec65d04f9915580eb57629126fffffc20f4c4033`已由Root提交/推送P1，起始clean由Root任务卡提供；
 本writer不操作Git。P1当前为已验收，不是候选；其1588/6/192、静态/build/wheel证据见下一节，历史失败不删除。

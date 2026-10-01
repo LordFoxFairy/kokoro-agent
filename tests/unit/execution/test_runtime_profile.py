@@ -512,3 +512,15 @@ def test_unknown_selected_subagent_is_rejected_by_the_shared_plan() -> None:
         plan_subagents(
             SubagentCatalog(()), frozenset(), selected=frozenset({"missing"})
         )
+
+
+def test_canonical_json_shared_encoder_rejects_bound_objects() -> None:
+    from kokoro_agent.execution.runtime_profile import canonical_json
+
+    assert (
+        canonical_json({"b": (2, 1), "a": "真实"}) == '{"a":"真实","b":[2,1]}'.encode()
+    )
+    with pytest.raises(ValueError, match="unsupported"):
+        canonical_json({"bound": object()})
+    with pytest.raises(ValueError, match="finite"):
+        canonical_json({"value": float("nan")})

@@ -1,6 +1,16 @@
 # kokoro-agent 数据模型
 
-## AGENT-P2-D0-R24：只读包来源与单次装配内存（2026-10-01；仅设计）
+## AGENT-PROFILE-P2-R24：装配候选仍零持久化（2026-10-01）
+
+基线`9dcaa34a3664668c3ad2da6adcc71f271ea96224`。生产SourceManifest/RuntimeAssemblyPolicy、单次PreparedFeaturePlan
+及其bytes/fingerprint已接真实factory；显式资源只读，绑定工具实例与native registry身份仅进程内比较，绝不序列化。
+没有SQL/索引/事务/Redis key/Run identity/profile列变化，没有用内存registry seal冒充Run scope/generation fence。
+recipe包含源码/白名单政策，排除运行凭据/URL/绑定对象；RuntimeAssemblyPolicy与真正worker设置漂移时拒绝装配。
+完整Run profile依然需要两阶段持久身份；effective-native实际结果和缺阶段retry资格在后继SQL/事务门处理，不补NULL、
+不把P2 fingerprint当完整冻结。Conversation生命周期最终引用释放仍独立未决；没有永久免GC或新持久状态机。
+26路径范围及离线验证见TECH/CURRENT；本轮未执行数据库/Redis或provider验收，未更新canonical schema或机器契约。
+
+## 历史 AGENT-P2-D0-R24：只读包来源与单次装配内存（2026-10-01；仅设计）
 
 当前基线`ec65d04f9915580eb57629126fffffc20f4c4033`已含Root验收P1；SQL仍无scope/profile持久freeze。
 P2拟对象为进程不可变RuntimeAssemblyPolicy/显式SourceManifest，以及单次build的PreparedFeaturePlan；

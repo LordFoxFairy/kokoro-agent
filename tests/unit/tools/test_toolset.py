@@ -165,6 +165,9 @@ async def test_toolset_materialization_consumes_the_shared_plan(
     built = await module.build_toolset(
         request,
         agent=agent,
+        plan=module.plan_toolset(
+            agent=agent, toolbox=box, delivery_available=available
+        ),
         toolbox=box,
         mcp_servers={},
         mcp_client=None,

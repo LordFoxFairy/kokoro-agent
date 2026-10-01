@@ -49,6 +49,12 @@ class DeliverResult(BaseModel):
     note: str
 
 
+DELIVER_0_DESCRIPTION = "把工作区中的成品发布为用户可访问的冻结产物。"
+DELIVER_TOOL_METADATA: tuple[tuple[str, str, type[BaseModel]], ...] = (
+    (DELIVER_TOOL_NAME, DELIVER_0_DESCRIPTION, DeliverArgs),
+)
+
+
 def make_deliver_tool(
     backend: BackendProtocol,
     delivery: DeliveryClient,
@@ -159,7 +165,7 @@ def make_deliver_tool(
 
     return StructuredTool(
         name=DELIVER_TOOL_NAME,
-        description="把工作区中的成品发布为用户可访问的冻结产物。",
+        description=DELIVER_0_DESCRIPTION,
         args_schema=DeliverArgs,
         coroutine=deliver,
     )

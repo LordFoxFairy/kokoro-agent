@@ -83,9 +83,17 @@ def catalog_subagents(
 ) -> tuple[list[SubAgent], frozenset[str]]:
     """内建/配置子代理 → deepagents 定义：声明工具缺任一即整个不挂（不设空壳），
     返回 (定义, 实际可委派名集)——deny 声明集只含真挂载者。"""
+    plan = plan_subagents(catalog, frozenset(tool_index), selected=selected)
+    return _materialize_subagents(plan, tool_index, guards)
+
+
+def _materialize_subagents(
+    plan: SubagentSelectionPlan,
+    tool_index: Mapping[str, BaseTool],
+    guards: Sequence[AgentMiddleware],
+) -> tuple[list[SubAgent], frozenset[str]]:
     subs: list[SubAgent] = []
     mounted: set[str] = set()
-    plan = plan_subagents(catalog, frozenset(tool_index), selected=selected)
     for name, missing in plan.missing:
         LOGGER.info(
             "built-in subagent %r not mounted (tools unavailable: %s)",
@@ -119,17 +127,10 @@ class SubagentBundle:
 
 def build_subagent_bundle(
     toolset: Toolset,
-    catalog: SubagentCatalog,
+    plan: SubagentSelectionPlan,
     chain: tuple[AgentMiddleware, ...],
-    declared_subagents: tuple[str, ...] = (),
 ) -> SubagentBundle:
-    selected = frozenset(declared_subagents)
-    catalog_defs, catalog_names = catalog_subagents(
-        catalog,
-        toolset.by_name,
-        chain,
-        selected=selected,
-    )
+    catalog_defs, catalog_names = _materialize_subagents(plan, toolset.by_name, chain)
     return SubagentBundle(
         subagents=(general_purpose_subagent(chain), *catalog_defs),
         declared=catalog_names,

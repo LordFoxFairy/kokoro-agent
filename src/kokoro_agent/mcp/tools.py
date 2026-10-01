@@ -194,6 +194,18 @@ class CallToolArgs(BaseModel):
     )
 
 
+MCP_0_DESCRIPTION = "列出本次运行可用的外部（MCP）server 与工具。调用前先用 mcp_describe_tool 查看参数。"
+MCP_1_DESCRIPTION = "查看某个 MCP 工具的说明与参数 schema。"
+MCP_2_DESCRIPTION = (
+    "调用一个 MCP 工具（server + tool + arguments）。只允许本次运行授权的 server。"
+)
+MCP_TOOL_METADATA: tuple[tuple[str, str, type[BaseModel]], ...] = (
+    ("mcp_list_tools", MCP_0_DESCRIPTION, ListToolsArgs),
+    ("mcp_describe_tool", MCP_1_DESCRIPTION, DescribeToolArgs),
+    ("mcp_call", MCP_2_DESCRIPTION, CallToolArgs),
+)
+
+
 def make_mcp_tools(
     server_names: Sequence[str],
     registry: Mapping[str, McpServerEntry],
@@ -301,19 +313,19 @@ def make_mcp_tools(
     return (
         StructuredTool(
             name="mcp_list_tools",
-            description="列出本次运行可用的外部（MCP）server 与工具。调用前先用 mcp_describe_tool 查看参数。",
+            description=MCP_0_DESCRIPTION,
             args_schema=ListToolsArgs,
             coroutine=list_tools,
         ),
         StructuredTool(
             name="mcp_describe_tool",
-            description="查看某个 MCP 工具的说明与参数 schema。",
+            description=MCP_1_DESCRIPTION,
             args_schema=DescribeToolArgs,
             coroutine=describe_tool,
         ),
         StructuredTool(
             name="mcp_call",
-            description="调用一个 MCP 工具（server + tool + arguments）。只允许本次运行授权的 server。",
+            description=MCP_2_DESCRIPTION,
             args_schema=CallToolArgs,
             coroutine=call_tool,
         ),

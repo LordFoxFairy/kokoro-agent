@@ -13,7 +13,7 @@ Agent 定义只描述完整能力；请求和 worker 服务都不会进入 Agent
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 from time import monotonic
@@ -21,7 +21,6 @@ from uuid import uuid4
 from typing import Any
 
 import deepagents
-from langchain_core.tools import BaseTool
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.backends.state import StateBackend
@@ -48,7 +47,11 @@ from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
 from kokoro_agent.features.definition import Feature
 from kokoro_agent.swarm import create_swarm
-from langgraph_swarm import create_handoff_tool
+from kokoro_agent.execution.runtime_profile_plan import (
+    PreparedPeerPlan,
+    prepare_feature,
+)
+from kokoro_agent.agents.native_profile import validate_native_registry
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.models import LeasedRun
@@ -103,11 +106,13 @@ async def build_deep_agent(
     request: RunRequest,
     lease: LeaseFence,
     *,
-    additional_tools: Sequence[BaseTool] = (),
+    plan: PreparedPeerPlan,
+    capabilities: _ResolvedCapabilities,
     name: str | None = None,
-    capabilities: _ResolvedCapabilities | None = None,
 ) -> AgentHandle:
-    capabilities = capabilities or await _preflight(agent, dependencies, request, lease)
+    if plan.agent is not agent:
+        raise ValueError("prepared peer does not match build declaration")
+    validate_native_registry()
     started = monotonic()
     resolver = dependencies.model_resolver
     if resolver is None:
@@ -155,6 +160,7 @@ async def build_deep_agent(
     toolset = await build_toolset(
         request,
         agent=agent,
+        plan=plan.tools,
         toolbox=dependencies.toolbox,
         mcp_servers=dependencies.mcp_servers,
         mcp_client=dependencies.mcp_client,
@@ -163,20 +169,20 @@ async def build_deep_agent(
         lease=lease,
         resolved_mcp=capabilities.mcp,
     )
-    if additional_tools:
-        toolset = toolset.with_tools(additional_tools)
+    if plan.handoffs:
+        toolset = toolset.with_tools(plan.handoffs)
+    plan.verify_tools(toolset.tools)
     chains = build_guard_chains(
         dependencies.run_repository,
-        dependencies.run_token_budget,
+        dependencies.runtime_policy.run_token_budget,
         request,
         lease,
         policy,
     )
     subagent_bundle = build_subagent_bundle(
         toolset,
-        dependencies.subagent_catalog,
+        plan.subagents,
         chains.subagent,
-        declared_subagents=agent.subagents,
     )
     main_chain = chains.main(
         ToolPolicyMiddleware(
@@ -194,6 +200,7 @@ async def build_deep_agent(
     # unresolved in the installed stubs.  Keep that uncertainty at this one
     # official-constructor boundary; the returned value is validated below.
     native_constructor: Any = getattr(deepagents, "create_deep_agent")
+    validate_native_registry()
     candidate: object = native_constructor(
         model=make_chat_model(dependencies.model, model),
         tools=toolset.tools,
@@ -216,6 +223,7 @@ async def build_deep_agent(
         store=dependencies.memory_store,
         name=name,
     )
+    validate_native_registry()
     return AgentHandle(
         runnable=require_agent_runnable(candidate),
         tool_descriptions=toolset.descriptions,
@@ -263,37 +271,41 @@ class AgentFactory:
         self, feature: Feature, request: RunRequest, lease: LeaseFence
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
+        prepared = prepare_feature(
+            feature,
+            runtime_policy=self._dependencies.runtime_policy,
+            manifest=self._dependencies.manifest,
+            toolbox=self._dependencies.toolbox,
+            subagent_catalog=self._dependencies.subagent_catalog,
+            delivery_available=self._dependencies.delivery is not None,
+        )
         capabilities = {
-            agent.key: await _preflight(agent, self._dependencies, request, lease)
-            for agent in feature.agents
+            peer.agent.key: await _preflight(
+                peer.agent, self._dependencies, request, lease
+            )
+            for peer in prepared.peers
         }
-        if len(feature.agents) == 1:
+        if len(prepared.peers) == 1:
+            peer = prepared.peers[0]
             return await build_deep_agent(
-                feature.agents[0],
+                peer.agent,
                 self._dependencies,
                 request,
                 lease,
-                capabilities=capabilities[feature.agents[0].key],
-            )
-        if not feature.handoffs:
-            raise ValueError(
-                f"feature {feature.key!r} has multiple agents but no handoffs"
+                plan=peer,
+                capabilities=capabilities[peer.agent.key],
             )
         built_agents: list[AgentHandle] = []
-        for agent in feature.agents:
-            targets = [
-                target for source, target in feature.handoffs if source == agent.key
-            ]
-            handoffs = [create_handoff_tool(agent_name=target) for target in targets]
+        for peer in prepared.peers:
             built_agents.append(
                 await build_deep_agent(
-                    agent,
+                    peer.agent,
                     self._dependencies,
                     request,
                     lease,
-                    additional_tools=handoffs,
-                    name=agent.key,
-                    capabilities=capabilities[agent.key],
+                    plan=peer,
+                    name=peer.agent.key,
+                    capabilities=capabilities[peer.agent.key],
                 )
             )
         native = create_swarm(

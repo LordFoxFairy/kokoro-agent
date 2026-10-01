@@ -67,14 +67,12 @@ class ProcessToolbox:
     # 进程配置态工具（当前=联网工具 web_search/web_fetch；Web 仅是互联网能力名）。
     configured: tuple[BaseTool, ...]
     profile_options: ToolboxProfileOptions | None = None
+    # Explicit factory bindings: identity is checked, never hashed or serialized.
+    source_bindings: tuple[tuple[BaseTool, str], ...] = ()
 
     def tools_for(self, namespace: str) -> tuple[BaseTool, ...]:
         """恒挂底座 = 租户态记忆工具（隔离在此注入，工具体不含租户概念）+ 配置态工具。"""
-        plan = plan_toolbox(self)
-        tools = (*make_memory_tools(namespace), *self.configured)
-        if tuple(tool.name for tool in tools) != plan.names:
-            raise ValueError("toolbox materialization differs from selection plan")
-        return tools
+        return (*make_memory_tools(namespace), *self.configured)
 
 
 def build_toolbox(
@@ -86,6 +84,7 @@ def build_toolbox(
         tools.append(make_web_search_tool(make_search_provider(search)))
     return ProcessToolbox(
         configured=tuple(tools),
+        source_bindings=tuple((tool, tool.name) for tool in tools),
         profile_options=ToolboxProfileOptions(
             fetch_allow_private=fetch_allow_private,
             search_provider=None if search is None else search.provider,

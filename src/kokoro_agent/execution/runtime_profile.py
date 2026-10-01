@@ -448,8 +448,13 @@ def canonical_profile(profile: Mapping[str, object]) -> bytes:
     for pair in _items(feature["handoffs"]):
         if any(_text(name) not in keys for name in _items(pair)):
             raise ValueError("handoff must reference selected agents")
+    return canonical_json(result)
+
+
+def canonical_json(value: object) -> bytes:
+    """Encode explicitly projected JSON; bound objects and non-finite numbers fail."""
     return json.dumps(
-        result,
+        _json(value),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

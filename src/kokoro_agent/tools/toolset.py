@@ -108,6 +108,7 @@ async def build_toolset(
     request: RunRequest,
     *,
     agent: Agent,
+    plan: ToolSelectionPlan,
     toolbox: ProcessToolbox,
     mcp_servers: Mapping[str, McpServerConfig],
     mcp_client: McpClient | None,
@@ -124,11 +125,8 @@ async def build_toolset(
     ⑤ peer handoff 只在 Feature 选择 official Swarm 时由 swarm.py 装配，不混入单 Agent 工具面。
     """
     scope = RunScope.of(request)
-    plan = plan_toolset(
-        agent=agent, toolbox=toolbox, delivery_available=delivery is not None
-    )
     bound: dict[str, Sequence[BaseTool]] = {
-        "core": resolve_tools([], core=agent.tools),
+        "core": agent.tools,
         "toolbox": toolbox.tools_for(scope.namespace),
     }
     mcp_names = list(agent.mcp)

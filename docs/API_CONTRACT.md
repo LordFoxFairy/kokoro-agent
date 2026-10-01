@@ -1,6 +1,15 @@
 # kokoro-agent API 契约
 
-## AGENT-P2-D0-R24：内部装配证明与最终 profile 边界（2026-10-01；仅设计）
+## AGENT-PROFILE-P2-R24：内部装配候选，wire 不变（2026-10-01）
+
+基线`9dcaa34a3664668c3ad2da6adcc71f271ea96224`。已实现生产manifest与factory/worker共享静态计划；metadata/source/
+policy验证在全peer外部preflight前，当前Skill/MCP与System授权仍照常重验。插件空批准/二次枚举前load拒绝、late registry
+mutation与绑定metadata漂移均为内部失败，不加公开错误码/字段。HTTP仍3.0.0、RunRequest/Redis/failure tuple未修改。
+`assembly_recipe_fingerprint`不发布、不持久、不作retry身份；P1完整codec未降级。正式4两阶段目标保持下节裁决，
+main+全部peer的effective-native后置持久绑定仍未实现。本片26路径（Root补一个原生contract测试隔离fixture），
+不把该fixture修复称contract机器源变化或4.0发布。实际离线与wheel证据见CURRENT；Root最终验收仍待进行。
+
+## 历史 AGENT-P2-D0-R24：内部装配证明与最终 profile 边界（2026-10-01；仅设计）
 
 当前已提交 P1：`ec65d04f9915580eb57629126fffffc20f4c4033`，Root离线1588/6/192与build/wheel已验。
 HTTP OpenAPI仍3.0.0，P2不修改机器源/provenance/generated、RunRequest/Redis、202/409或failure tuple。

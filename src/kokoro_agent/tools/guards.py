@@ -42,6 +42,15 @@ class GuardChains:
         return tuple(chain)
 
 
+def validate_guard_policy(permissions: Permissions) -> None:
+    """Pure preflight validation shared with actual guard construction."""
+    review_tools = frozenset(permissions.review_tools)
+    if ASK_USER_TOOL_NAME in review_tools:
+        # review_tools=结果须人工复核后才继续的工具集；ask_user 的结果本身就是人工答复，
+        # 再送人工复核=人审人答死循环，装配期即拒绝。
+        raise ValueError("ask_user cannot be a result-review tool")
+
+
 def build_guard_chains(
     run_repository: RunRepository,
     run_token_budget: int,
@@ -51,11 +60,8 @@ def build_guard_chains(
 ) -> GuardChains:
     """守卫两件套：终态闸恒挂 + 预算闸按政策；主 agent 与每个子代理同套下发
     （子代理 middleware 链独立，不下发即 task 委派旁路）。"""
+    validate_guard_policy(permissions)
     review_tools = frozenset(permissions.review_tools)
-    if ASK_USER_TOOL_NAME in review_tools:
-        # review_tools=结果须人工复核后才继续的工具集；ask_user 的结果本身就是人工答复，
-        # 再送人工复核=人审人答死循环，装配期即拒绝。
-        raise ValueError("ask_user cannot be a result-review tool")
     guards: list[AgentMiddleware] = [
         TerminalGuardMiddleware(
             run_repository=run_repository, run_id=request.run_id, lease=lease

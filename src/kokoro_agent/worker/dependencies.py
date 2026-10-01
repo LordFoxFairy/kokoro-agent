@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from kokoro_agent.worker.platform import WorkerPlatformRuntime
+from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
+from kokoro_agent.execution.runtime_profile_sources import SourceManifest
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
@@ -42,7 +44,8 @@ class WorkerDependencies:
 
     model: ChatModelSettings
     sandbox: SandboxSettings
-    run_token_budget: int
+    runtime_policy: RuntimeAssemblyPolicy
+    manifest: SourceManifest
     subagent_catalog: SubagentCatalog
     toolbox: ProcessToolbox
     checkpointer: BaseCheckpointSaver[str]
@@ -58,3 +61,15 @@ class WorkerDependencies:
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。
     delivery: DeliveryClient | None = None
     model_resolver: ModelResolver | None = None
+
+    def __post_init__(self) -> None:
+        expected = RuntimeAssemblyPolicy.from_settings(
+            run_token_budget=self.runtime_policy.run_token_budget,
+            recursion_limit=self.runtime_policy.recursion_limit,
+            model=self.model,
+            sandbox=self.sandbox,
+        )
+        if expected != self.runtime_policy:
+            raise ValueError(
+                "runtime assembly policy differs from actual worker settings"
+            )

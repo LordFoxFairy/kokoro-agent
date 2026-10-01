@@ -130,6 +130,55 @@ async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -
             + ", ".join(missing)
         )
 
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """SELECT column_name, data_type, is_nullable, column_default
+               FROM information_schema.columns
+               WHERE table_schema = %s AND table_name = 'kokoro_agent_run'
+                 AND column_name IN ('assembly_recipe_bytes', 'assembly_recipe_fingerprint')
+               ORDER BY column_name""",
+            (schema,),
+        )
+        columns = [
+            tuple(
+                row[key]
+                for key in ("column_name", "data_type", "is_nullable", "column_default")
+            )
+            for row in await cur.fetchall()
+        ]
+        if columns != [
+            ("assembly_recipe_bytes", "bytea", "YES", None),
+            ("assembly_recipe_fingerprint", "text", "YES", None),
+        ]:
+            raise SchemaNotReadyError(
+                "Agent static recipe columns differ from canonical schema"
+            )
+        await cur.execute(
+            """SELECT pg_get_constraintdef(c.oid, true) AS definition,
+                      c.convalidated, c.connoinherit
+               FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+               JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname = %s AND t.relname = 'kokoro_agent_run'
+                 AND c.conname = 'ck_kokoro_agent_run_static_recipe' AND c.contype = 'c'""",
+            (schema,),
+        )
+        constraints = await cur.fetchall()
+        expected = (
+            "CHECK (assembly_recipe_bytes IS NULL AND assembly_recipe_fingerprint IS NULL OR "
+            "assembly_recipe_bytes IS NOT NULL AND assembly_recipe_fingerprint IS NOT NULL AND "
+            "octet_length(assembly_recipe_bytes) >= 1 AND octet_length(assembly_recipe_bytes) <= 8388608 AND "
+            "assembly_recipe_fingerprint ~ '^[0-9a-f]{64}$'::text)"
+        )
+        if (
+            len(constraints) != 1
+            or constraints[0]["definition"] != expected
+            or constraints[0]["convalidated"] is not True
+            or constraints[0]["connoinherit"] is not False
+        ):
+            raise SchemaNotReadyError(
+                "Agent static recipe constraint differs from canonical schema"
+            )
+
 
 def _quote_ident(value: str) -> str:
     return value.replace('"', '""')

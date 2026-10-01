@@ -138,6 +138,7 @@ infrastructure/postgres_run_effects.py
 infrastructure/postgres_run_events.py
 infrastructure/postgres_run_leases.py
 infrastructure/postgres_run_repository.py
+infrastructure/postgres_run_profiles.py
 infrastructure/postgres_run_sandbox.py
 infrastructure/schema.py
 infrastructure/sql.py

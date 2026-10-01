@@ -13,6 +13,8 @@ from kokoro_agent.domain.chat.models import ChatEventRecord, ChatMessageDraft
 from kokoro_agent.domain.run.repository import LeaseFence, OutboxFrame
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.domain.run.models import (
+    StaticRecipeAuthorityLost,
+    StaticRecipeIncompatible,
     ExecutionTerminalAuthority,
     RunTerminalOutcome,
     RunUsageSegment,
@@ -326,7 +328,15 @@ class SupervisorExecutionMixin(SupervisorContext):
         # 认领成功才发 run.failed，与并发 cancel/自然完成互斥为单一终态。
         # resume/control 的失败可能发生在本 worker 尚未缓存租约之前；仅允许收养暂停态，
         # 绝不抢夺仍活跃的其他 generation。无法证明所有权时保持 fail closed，交给持有者/重拾恢复。
-        lease = await self._control_lease(run_id)
+        if isinstance(error, StaticRecipeAuthorityLost):
+            return
+        if isinstance(error, StaticRecipeIncompatible):
+            # A delayed failed build must never borrow a newer local/adopted lease.
+            lease = error.lease
+            if not await self._run_repository.is_lease_current(run_id, lease):
+                return
+        else:
+            lease = await self._control_lease(run_id)
         if lease is None:
             return
         emitter = await self._emitter(bus, run_id, lease)

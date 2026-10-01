@@ -1147,3 +1147,155 @@ async def test_real_factory_materializers_consume_exact_prepared_objects(
     assert lease is not None
     await factory.build(request, lease)
     assert len(observed) == 1
+
+
+@pytest.mark.parametrize("feature_key", ["chat", "music", "music_chat"])
+async def test_static_recipe_must_commit_before_any_external_preflight(
+    feature_key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory, repository = _factory(monkeypatch, RouteResolver())
+    run_request = _request(feature_key)
+    lease = await repository.try_claim(run_request)
+    assert lease is not None
+    calls: list[str] = []
+
+    async def refuse_commit(*args: object) -> None:
+        calls.append("freeze")
+        raise RuntimeError("recipe transaction rejected")
+
+    async def external(*args: object) -> None:
+        calls.append("external")
+        raise RuntimeError("external called before recipe commit")
+
+    monkeypatch.setattr(
+        repository, "freeze_or_verify_static_recipe", refuse_commit, raising=False
+    )
+    monkeypatch.setattr(agent_factory_module, "_preflight", external)
+    with pytest.raises(RuntimeError, match="recipe transaction rejected"):
+        await factory.build(run_request, lease)
+    assert calls == ["freeze"]
+
+
+@pytest.mark.parametrize("mutation", ["order", "space", "escape", "default", "unknown"])
+async def test_static_request_identity_is_original_text_not_json_equivalence(
+    mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from kokoro_agent.domain.run.models import StaticRecipeIncompatible
+
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver)
+    req = _request("chat")
+    lease = await repository.try_claim(req)
+    assert lease is not None
+    raw = req.model_dump_json()
+    value = json.loads(raw)
+    if mutation == "order":
+        raw = json.dumps(dict(reversed(tuple(value.items()))), separators=(",", ":"))
+    elif mutation == "space":
+        raw = raw + " "
+    elif mutation == "escape":
+        raw = raw.replace('"chat"', '"\\u0063hat"')
+    elif mutation == "default":
+        value.pop("requested_model_label")
+        raw = json.dumps(value, separators=(",", ":"))
+    else:
+        value["unknown"] = None
+        raw = json.dumps(value, separators=(",", ":"))
+    repository.request_json[req.run_id] = raw
+    with pytest.raises(StaticRecipeIncompatible):
+        await factory.build(req, lease)
+    assert resolver.calls == []
+    assert repository.static_recipes == {}
+
+
+async def test_static_recipe_same_run_restore_and_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.domain.run.models import StaticRecipeIncompatible
+
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver)
+    req = _request("chat")
+    lease = await repository.try_claim(req)
+    assert lease is not None
+    await factory.build(req, lease)
+    original = repository.static_recipes[req.run_id]
+    assert await repository.pause(req.run_id, lease)
+    restored = await repository.adopt(req.run_id, "next")
+    assert restored is not None
+    await factory.build(req, restored)
+    assert repository.static_recipes[req.run_id] is original
+    repository.static_recipes[req.run_id] = type(original)(
+        canonical_bytes=original.canonical_bytes, fingerprint="0" * 64
+    )
+    resolver.calls.clear()
+    with pytest.raises(StaticRecipeIncompatible):
+        await factory.build(req, restored)
+    assert not resolver.calls
+
+
+@pytest.mark.parametrize("fact", ["started", "usage", "sandbox"])
+async def test_executed_run_with_missing_static_binding_is_rejected(
+    fact: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kokoro_agent.domain.run.models import StaticRecipeIncompatible
+
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver)
+    req = _request("chat")
+    lease = await repository.try_claim(req)
+    assert lease is not None
+    if fact == "started":
+        repository.event_index_counter[req.run_id] = 1
+    elif fact == "usage":
+        repository.usage_totals[req.run_id] = (1, 0)
+    else:
+        repository.sandbox_ids[req.run_id] = "box"
+    with pytest.raises(StaticRecipeIncompatible):
+        await factory.build(req, lease)
+    assert not resolver.calls
+
+
+async def test_external_preflight_waits_for_the_successful_recipe_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.domain.run.models import StaticRecipeBinding
+    from kokoro_agent.domain.run.repository import LeaseFence
+
+    factory, repository = _factory(monkeypatch, RouteResolver())
+    req = _request("chat")
+    lease = await repository.try_claim(req)
+    assert lease is not None
+    entered, release = asyncio.Event(), asyncio.Event()
+    events: list[str] = []
+    original = repository.freeze_or_verify_static_recipe
+
+    async def delayed_commit(
+        request: RunRequest, fence: LeaseFence, binding: StaticRecipeBinding
+    ) -> str:
+        entered.set()
+        await release.wait()
+        result = await original(request, fence, binding)
+        events.append("committed")
+        return result
+
+    async def preflight(*args: object) -> None:
+        events.append("external")
+        raise RuntimeError("stop after preflight boundary")
+
+    monkeypatch.setattr(repository, "freeze_or_verify_static_recipe", delayed_commit)
+    monkeypatch.setattr(agent_factory_module, "_preflight", preflight)
+    task = asyncio.create_task(factory.build(req, lease))
+    try:
+        await entered.wait()
+        assert not events
+        release.set()
+        with pytest.raises(RuntimeError, match="stop after preflight"):
+            await task
+        assert events == ["committed", "external"]
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

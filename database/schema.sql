@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_run (
   run_id                  TEXT PRIMARY KEY,
   tenant_id               TEXT NOT NULL,
   request_json            TEXT,
+  assembly_recipe_bytes   BYTEA,
+  assembly_recipe_fingerprint TEXT,
   owner                   TEXT,
   lease_generation        BIGINT NOT NULL DEFAULT 0,
   lease_expires_at        TIMESTAMPTZ(3),
@@ -27,6 +29,15 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_run (
   sandbox_teardown_ref    TEXT,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT ck_kokoro_agent_run_static_recipe CHECK (
+    (assembly_recipe_bytes IS NULL AND assembly_recipe_fingerprint IS NULL)
+    OR (
+      assembly_recipe_bytes IS NOT NULL AND assembly_recipe_fingerprint IS NOT NULL
+      AND octet_length(assembly_recipe_bytes) >= 1
+      AND octet_length(assembly_recipe_bytes) <= 8388608
+      AND assembly_recipe_fingerprint ~ '^[0-9a-f]{64}$'
+    )
+  ),
   CONSTRAINT ck_kokoro_agent_run_tenant CHECK (length(trim(tenant_id)) > 0),
   CONSTRAINT ck_kokoro_agent_run_lease_generation CHECK (lease_generation >= 0),
   CONSTRAINT ck_kokoro_agent_run_counters CHECK (

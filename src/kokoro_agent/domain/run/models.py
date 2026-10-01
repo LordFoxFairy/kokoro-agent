@@ -19,6 +19,26 @@ class LeaseFence(BaseModel):
     generation: int = Field(ge=1)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StaticRecipeBinding:
+    """Exact static assembly identity, independent of mutable lease ownership."""
+
+    canonical_bytes: bytes
+    fingerprint: str
+
+
+class StaticRecipeAuthorityLost(RuntimeError):
+    """The original build has no authority to bind or terminate this Run."""
+
+
+class StaticRecipeIncompatible(RuntimeError):
+    """Safe failure retaining the exact authority of the rejected build."""
+
+    def __init__(self, lease: LeaseFence) -> None:
+        super().__init__("static execution recipe is incompatible")
+        self.lease = lease
+
+
 class LeasedRun(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 

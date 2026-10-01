@@ -8,6 +8,7 @@ technical modules directly.
 from __future__ import annotations
 
 from kokoro_agent.domain.run.models import (
+    StaticRecipeBinding,
     RunTerminalOutcome,
     TerminalAuthority,
     TerminalCommitResult,
@@ -15,7 +16,7 @@ from kokoro_agent.domain.run.models import (
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,6 +43,7 @@ from kokoro_agent.infrastructure.postgres_run_dispatch import PostgresRunDispatc
 from kokoro_agent.infrastructure.postgres_run_effects import PostgresRunEffects
 from kokoro_agent.infrastructure.postgres_run_events import PostgresRunEvents
 from kokoro_agent.infrastructure.postgres_run_leases import PostgresRunLeases
+from kokoro_agent.infrastructure.postgres_run_profiles import PostgresRunProfiles
 from kokoro_agent.infrastructure.postgres_run_sandbox import PostgresRunSandbox
 from kokoro_agent.protocol import RunRequest
 
@@ -81,9 +83,17 @@ class PostgresRunRepository:
         self._leases = PostgresRunLeases(context)
         self._effects = PostgresRunEffects(context)
         self._sandbox = PostgresRunSandbox(context)
+        self._profiles = PostgresRunProfiles(context)
 
     async def setup(self) -> None:
         await self._context.setup()
+
+    async def freeze_or_verify_static_recipe(
+        self, request: RunRequest, lease: LeaseFence, binding: StaticRecipeBinding
+    ) -> Literal["frozen", "matched"]:
+        return await self._profiles.freeze_or_verify_static_recipe(
+            request, lease, binding
+        )
 
     async def enqueue_dispatch(
         self, request: RunRequest, namespace: str, fence: str

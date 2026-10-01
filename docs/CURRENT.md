@@ -1,4 +1,57 @@
-## AGENT-PROFILE-P3-D0：四文档候选、等待Root设计门（2026-10-01）
+## P3A Root 正式代码验收（2026-10-01）
+
+22路径最终52e4a9f9冻结Root hash/范围复核，独立初审及PG屏障复审均0P0/0P1/0P2。Root真PG两文件 **43 passed/0 failed/0 skipped（2.72s）**，包括schema catalog与事务原request/fence/rollback/取消/ACK失联/精确PID竞争；日志 /tmp/kokoro-agent-p3a-r26-root-real-pg.log，临时DBagent_profile_17ac684fe518473e已drop，无Redis/provider访问。此前41/2 RED保留，修正soft queue观察不是生产降门。
+
+Root最终默认完整链exit0：lock/sync离线、Ruff262/Pyright0、contract/generated、**1649 passed/6既定skipped/234 deselected（94.95s）**及wheel/sdist；/tmp/kokoro-agent-p3a-r26-root-full.log。Root自有wheel从/tmp独立安装，230资源/115依赖/12动态边/三Feature与源码完全相同、缺memory拒绝、新profile adapter和canonical SQL准确；/tmp/kokoro-agent-p3a-r26-root-wheel.log，临时target已回收，user dist未改。本片fresh schema，不热patch旧应用库，不宣称当前运行已经切换。P3B effective native/materialization/all-peer执行前屏障、scope/native/retry/retention/4发布尚未完成，原owner已只读推进实际技术落点。
+
+## AGENT-P3A-PG-BARRIER-R26：真实PG屏障返修候选（2026-10-01）
+
+Root已核前次22hash，独立源码审查P0/P1/P2=0；主树完整默认链exit0（`/tmp/kokoro-agent-p3a-root-full.log`）。
+Root真实PG43实际 **41 passed / 2 failed（13.23s）**，日志 `/tmp/kokoro-agent-p3a-root-real-pg.log`；
+canonical CHECK catalog各项实际通过。两个失败均为同/异配方竞争case期待两个事务直接被外部root PID阻塞而超时；
+PG队列soft blocking可形成第二事务→第一事务→root，旧direct count漏掉真实等待者。原RED保留，不把默认GREEN当PG通过。
+Root自有DB843c903debef4573已回收，无Redis操作。
+
+本返修仅 `tests/integration/database/test_run_profiles.py` 与本CURRENT，其他20路径保持前次冻结hash。
+测试观察生产adapter创建的真实连接PID（不替换事务/SQL），在 `datname=current_database()` 的活动集合上从精确root PID
+递归追踪pg_blocking_pids的直接及soft队列边；必须全部预期participant PID实际出现在rooted wait graph才释放屏障。
+不泛数实例waiter、不降低参与者数量、不改胜负/最终事实断言；原5秒timeout不变，删除固定poll sleep，依真实SQL观察推进。
+expiry case复用相同精确单participant观测，生产schema/authority/事务完全不变。
+
+实际定点Ruff format/check通过，Pyright首次3处set推断诊断后明确类型修复至0 errors/0 warnings；
+证据 `/tmp/kokoro-agent-p3a-r26-barrier-static-r2.log`。PG定点collect仍43例通过（`/tmp/kokoro-agent-p3a-r26-pg-collection.log`），
+writer未连接数据库/服务/Git。Root尚须重新实际运行43例及完整默认门；本段不宣称返修PG已GREEN。
+
+## AGENT-PROFILE-P3A-R25：实现冻结候选，待Root真PG与独立审查（2026-10-01）
+
+基线main `a37e8f1e308286d922212f2d5365634fd3ff2c21`；Root已验收r2四docs并提交后明确授权22路径。
+本片只改22批准路径，新增1生产adapter/1独立真PG测试，无新目录/contract/protocol/generated/lock或其他owner改动。
+已实现同plan静态bytes/digest持久freeze/verify、精确request原UTF8 TEXT身份、Run锁后DBclock/lease generation校验、
+commit后才preflight，以及原build fence错误收口；未实现scope/native第二阶段/HTTP4/完整retention，不称完整4完成。
+
+**实际RED与中间证据：** `/tmp/kokoro-agent-p3a-red-order.log` 3 failed（chat/music/music_chat均在freeze前进入外部preflight）；
+后焦点40 passed；扩展请求原TEXT/恢复/缺值/authority/HTTP-only后182 passed（`/tmp/kokoro-agent-p3a-focus-r2.log`）。
+新增四worker入口4 passed；Pyright真实9→1→0修复，无ignore或放宽门；旧默认1644/6/233是追加测试前中间结果，不替代最终门。
+
+**冻结代码最终worker门：** `/tmp/kokoro-agent-p3a-full-final.log` 全链exit0：uv lock --check --offline、
+uv sync --frozen --offline、Ruff format262/check、Pyright0 errors/0 warnings、contract-check、failure-model generator --check、
+default pytest **1649 passed / 6 skipped / 234 deselected / 364 warnings（101.06s）**、wheel/sdist build成功。
+保留原LangChain beta/deprecation和Pyright版本提示，不升级锁文件。默认门不含真实DB/provider/外部服务验收。
+
+**安装wheel实证：** `/tmp/kokoro-agent-p3a-wheel-evidence.log`；源码证据 `/tmp/kokoro-agent-p3a-source-evidence.json`。
+真实离线安装wheel到自有target，CPython3.14.3从/tmp仅target导入，包括新增PostgresRunProfiles；所有kokoro_agent模块路径
+均约束到安装目标，22来源组/230唯一资源/115runtime distributions/12动态边及chat/music/music_chat指纹逐项等于source；
+移除已安装memory.py时failclosed后恢复。wheel/sdist在 `/tmp/kokoro-agent-p3a-dist/`；本次build启动前不存在，属自有产物。
+
+**真PG明确未验：** `/tmp/kokoro-agent-p3a-pg-collection-final.log` 43用例仅collect成功，没有连接PG。
+Root须在自有schema运行test_run_profiles.py与test_schema_installation.py；尤其CHECK catalog精确输出、双连接PID barrier、
+锁等待后expiry、late generation、terminal两序、真实UPDATE后异常/SQL错误/task取消rollback、commit ACK丢失、原TEXT变体、
+已执行缺binding、保存值损坏/partial与8MiB边界均需实跑。Python/fake结果不代替该门；未启动DB/Redis/服务/provider/浏览器。
+
+Root独立范围/hash/源码审查、真PG及主树完整门仍待；Git/index/commit由Root独占。P3B真实单次native实际材料化输出与
+all-peer有效政策执行前绑定继续由Agent owner推进；完整scope/native/retry/retention与Conversation最终release未闭环仍如实保留。
+
+## 历史 AGENT-PROFILE-P3-D0：四文档候选、等待Root设计门（2026-10-01）
 
 基线 `main 7e902c08296cacdacfe810ccbb4a6233d1b2ca7b`，P2已正式提交，不再作为当前待验候选。
 本D0仅改TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT；未操作Git、源码、SQL、机器契约、设施或服务。

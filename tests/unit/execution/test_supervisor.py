@@ -2052,3 +2052,130 @@ async def test_terminal_repairs_retained_started_before_terminal_chat() -> None:
         "run.started",
         "run.completed",
     ]
+
+
+class _ProfileFailureSupervisor(RunSupervisor):
+    async def fail_original_build(
+        self, bus: FakeBus, run_id: str, error: Exception, current: LeaseFence
+    ) -> None:
+        self._leases[run_id] = current
+        await self._fail_terminal(bus, run_id, error, code="assembly_failed")
+
+
+def _profile_failure_supervisor(store: FakeRunRepository) -> _ProfileFailureSupervisor:
+    return _ProfileFailureSupervisor(
+        agent_builder=_builder(FakeAgent(text_run())),
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="profile-test",
+    )
+
+
+@pytest.mark.parametrize("lost", [False, True])
+async def test_profile_failure_never_borrows_newer_local_authority(lost: bool) -> None:
+    from kokoro_agent.domain.run.models import (
+        StaticRecipeAuthorityLost,
+        StaticRecipeIncompatible,
+    )
+
+    bus = FakeBus()
+    store = FakeRunRepository()
+    sup = _profile_failure_supervisor(store)
+    req = request("profile-authority")
+    original = await store.try_claim(req, "old")
+    assert original is not None
+    assert await store.pause(req.run_id, original)
+    newer = await store.adopt(req.run_id, "new")
+    assert newer is not None
+    error = (
+        StaticRecipeAuthorityLost("lost")
+        if lost
+        else StaticRecipeIncompatible(original)
+    )
+    await sup.fail_original_build(bus, req.run_id, error, newer)
+    assert req.run_id not in store.terminals
+    assert not store.outbox.get(req.run_id)
+    assert await store.is_lease_current(req.run_id, newer)
+
+
+async def test_profile_failure_preserves_contract_tuple_with_original_fence() -> None:
+    from kokoro_agent.domain.run.models import StaticRecipeIncompatible
+
+    bus = FakeBus()
+    store = FakeRunRepository()
+    sup = _profile_failure_supervisor(store)
+    req = request("profile-mismatch")
+    lease = await store.try_claim(req, "original")
+    assert lease is not None
+    await sup.fail_original_build(
+        bus, req.run_id, StaticRecipeIncompatible(lease), lease
+    )
+    assert req.run_id in store.terminals
+    frames = store.outbox[req.run_id]
+    assert any('"contract_incompatible"' in str(frame) for frame in frames)
+
+
+@pytest.mark.parametrize("entry", ["initial", "resume", "takeover", "fingerprint"])
+async def test_every_worker_build_entry_reaches_the_same_profile_gate(
+    entry: str,
+) -> None:
+    from kokoro_agent.domain.run.models import StaticRecipeIncompatible
+
+    calls: list[LeaseFence] = []
+
+    async def rejected_build(_request: RunRequest, lease: LeaseFence) -> AgentHandle:
+        calls.append(lease)
+        raise StaticRecipeIncompatible(lease)
+
+    class FingerprintSupervisor(RunSupervisor):
+        async def read_interrupt_identity(self, run_id: str) -> str | None:
+            return await self._interrupt_fingerprint(run_id)
+
+    store = FakeRunRepository()
+    sup = FingerprintSupervisor(
+        agent_builder=rejected_build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="profile-entries",
+    )
+    bus = FakeBus()
+    req = request("profile-entries")
+    if entry == "initial":
+        _seed_pending_dispatch(store, req)
+        await sup.dispatch(bus, req)
+    else:
+        lease = await store.try_claim(req, "old")
+        assert lease is not None
+        if entry == "takeover":
+            store.expired.append(req)
+            store.leases[req.run_id] = -1
+            await sup.heartbeat_once(bus)
+        else:
+            assert await store.pause(req.run_id, lease)
+            if entry == "fingerprint":
+                assert await sup.read_interrupt_identity(req.run_id) is None
+                assert req.run_id not in store.terminals
+            else:
+                await sup.dispatch(
+                    bus,
+                    _inbound(
+                        {
+                            "kind": "run.resume",
+                            "command_id": "profile-resume",
+                            "run_id": req.run_id,
+                            "decisions": [{"type": "approve", "tool_id": _TID}],
+                        }
+                    ),
+                )
+    assert len(calls) == 1
+    if entry != "fingerprint":
+        failed = find_event(bus.run_events(req.run_id), RunFailed)
+        assert failed.payload.model_dump() == {
+            "code": "contract_incompatible",
+            "retryable": False,
+        }
+    await sup.drain(timeout_s=1)

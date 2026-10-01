@@ -1,6 +1,15 @@
 # kokoro-agent API 契约
 
-## AGENT-PROFILE-P3-D0：静态持久子门与正式两阶段协议（2026-10-01）
+## AGENT-PROFILE-P3A-R25：内部持久gate实现候选，HTTP3不变（2026-10-01）
+
+基线main a37e8f1；当前代码新增Run内部freeze_or_verify_static_recipe真实facade/adapter，非外部API。
+factory同plan在任何preflight/System前await事务commit；request比较唯一无参数model_dump_json原UTF8 bytes，
+不接受JSON等价替代；漂移用原build lease映射现contract_incompatible/false，authority丢失不借新lease发terminal。
+HTTP-only不读取worker/private设置；HTTP/Redis/protocol/generated/Failure值域未修改，不发布HTTP4或3.0 scope busy。
+SQL为fresh canonical变化，旧schema明确拒绝，未引入兼容补值。worker离线/安装wheel通过，真实PG43矩阵仅collect待Root。
+P3B有效native policy与两阶段完整身份、正式HTTP4 required retry parent及消费者协调激活仍按下方设计，不因本片通过降义。
+
+## 历史 AGENT-PROFILE-P3-D0：静态持久子门与正式两阶段协议（2026-10-01）
 
 当前main `7e902c08296cacdacfe810ccbb4a6233d1b2ca7b` 已验P2；唯一HTTP机器源仍3.0.0，SQL尚无profile列。
 本轮只四docs；TECH顶节P3A精确22路径为拟授权，不是实现或4.0发布。

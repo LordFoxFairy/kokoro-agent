@@ -54,7 +54,7 @@ from kokoro_agent.execution.runtime_profile_plan import (
 from kokoro_agent.agents.native_profile import validate_native_registry
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.domain.run.repository import LeaseFence
-from kokoro_agent.domain.run.models import LeasedRun
+from kokoro_agent.domain.run.models import LeasedRun, StaticRecipeBinding
 
 LOGGER = logging.getLogger(__name__)
 
@@ -278,6 +278,13 @@ class AgentFactory:
             toolbox=self._dependencies.toolbox,
             subagent_catalog=self._dependencies.subagent_catalog,
             delivery_available=self._dependencies.delivery is not None,
+        )
+        await self._dependencies.run_repository.freeze_or_verify_static_recipe(
+            request,
+            lease,
+            StaticRecipeBinding(
+                canonical_bytes=prepared.recipe_bytes, fingerprint=prepared.fingerprint
+            ),
         )
         capabilities = {
             peer.agent.key: await _preflight(

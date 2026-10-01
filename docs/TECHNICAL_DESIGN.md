@@ -1,6 +1,25 @@
 # kokoro-agent 技术设计
 
-## AGENT-PROFILE-P3-D0：持久静态配方与完整两阶段后继门（2026-10-01）
+## AGENT-PROFILE-P3A-R25：静态Run配方持久实现候选（2026-10-01）
+
+基线main `a37e8f1e308286d922212f2d5365634fd3ff2c21`，Root已通过r2设计门；本片只批准22路径，
+20既有+2新（postgres_run_profiles.py、test_run_profiles.py），无新目录/依赖/机器契约/lock改动。
+实际代码已把同PreparedFeaturePlan的bytes/fingerprint接入Run行持久freeze-or-verify，commit后才进全部peer preflight/System。
+精确请求身份仍为 `request.model_dump_json().encode("utf-8")` 与stored原TEXT UTF8 bytes，无parse等价授权。
+窄adapter同连接Run行锁后读DB clock，核tenant/request、owner/generation/nonterminal/expiry；已有值重算摘要逐byte比较、
+matched零更新；无执行事实的首次claim（包括RUNNING）可freeze，已有counter/usage/sandbox事实而缺值拒绝。
+迟到authority错误不再借新adopt；mismatch保留原build fence，以现唯一finalize_terminal和contract_incompatible/false收口。
+
+SQL只增现Run成对bytes/digest+8MiB/check，schema gate查精确column与CHECK catalog定义；无迁移、旧schema补值或第二真源。
+已登记新adapter包源码，原codec/selector/manifest机制不重写。HTTP-only导入测试不加载worker/factory/plan/manifest。
+source/wheel实际230资源、115依赖、12动态边及三Feature指纹一致；具体全门见CURRENT。
+
+**验收边界：** worker默认离线1649 passed/6 skipped/234 deselected，完整门exit0；新增真PG文件与schema矩阵共43用例
+仅collect、尚未执行。PG的catalog exact CHECK表现、事务/并发/fault矩阵由Root在自有隔离schema实际验证后决定放行，
+本段不把Python/fake GREEN冒充真PG已过。P3A当前只Run fence、不实现scope；P3B真实单次native输出、全部peer执行前有效
+政策绑定及完整4 scope/retry/native/retention仍硬门。Conversation最终引用释放未决不阻本片，但不允许永久免GC假闭环。
+
+## 历史 AGENT-PROFILE-P3-D0：持久静态配方与完整两阶段后继门（2026-10-01）
 
 **当前基线 `main 7e902c08296cacdacfe810ccbb4a6233d1b2ca7b`，P2 已由 Root 验收提交。**
 Root 1627 passed/6 skipped/192 deselected（83.20s）、完整离线链与安装 wheel 的229资源/115依赖/12动态边证据见 CURRENT。

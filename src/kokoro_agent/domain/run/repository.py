@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from kokoro_agent.domain.run.repositories import (
+    RunProfilePort,
     RunAdmissionPort,
     RunControlPort,
     RunEffectPort,
@@ -35,6 +36,7 @@ from kokoro_agent.domain.run.models import (
 
 
 class RunRepository(
+    RunProfilePort,
     RunAdmissionPort,
     RunControlPort,
     RunEffectPort,

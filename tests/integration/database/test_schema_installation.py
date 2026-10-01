@@ -52,3 +52,43 @@ async def test_apply_schema_installs_only_a_blank_namespace() -> None:
                         sql.Identifier(schema)
                     )
                 )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "DROP COLUMN assembly_recipe_bytes",
+        "ALTER COLUMN assembly_recipe_bytes TYPE text USING encode(assembly_recipe_bytes, 'hex')",
+        "ALTER COLUMN assembly_recipe_fingerprint SET NOT NULL",
+        "ALTER COLUMN assembly_recipe_fingerprint SET DEFAULT repeat('0', 64)",
+        "DROP CONSTRAINT ck_kokoro_agent_run_static_recipe",
+        "DROP CONSTRAINT ck_kokoro_agent_run_static_recipe, ADD CONSTRAINT ck_kokoro_agent_run_static_recipe CHECK (assembly_recipe_bytes IS NULL OR octet_length(assembly_recipe_bytes) > 0)",
+    ],
+)
+async def test_profile_schema_catalog_drift_rejected(
+    run_chat_schema: str, run_chat_database_url: str, mutation: str
+) -> None:
+    from kokoro_agent.infrastructure.schema import SchemaNotReadyError
+    from kokoro_agent.infrastructure.postgres import qualified
+    from kokoro_agent.infrastructure.sql import execute_sql
+
+    async with connect_pg(run_chat_database_url) as connection:
+        await verify_agent_schema(connection, run_chat_schema)
+        async with connection.cursor() as cursor:
+            # The test owns this random schema; expressions are parametrized cases,
+            # never external input. A bytea->text type change must drop its check.
+            if "TYPE text" in mutation:
+                await execute_sql(
+                    cursor,
+                    "ALTER TABLE {} DROP CONSTRAINT ck_kokoro_agent_run_static_recipe".format(
+                        qualified(run_chat_schema, "kokoro_agent_run")
+                    ),
+                )
+            await execute_sql(
+                cursor,
+                "ALTER TABLE {} {}".format(
+                    qualified(run_chat_schema, "kokoro_agent_run"), mutation
+                ),
+            )
+        with pytest.raises(SchemaNotReadyError):
+            await verify_agent_schema(connection, run_chat_schema)

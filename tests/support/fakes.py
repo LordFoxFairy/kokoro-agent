@@ -11,6 +11,9 @@ from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.domain.chat.models import chat_event_id
 from kokoro_agent.protocol import RunStartedPayload
 from kokoro_agent.domain.run.models import (
+    StaticRecipeBinding,
+    StaticRecipeIncompatible,
+    StaticRecipeAuthorityLost,
     RunTerminalOutcome,
     TerminalAuthority,
     TerminalCommitResult,
@@ -26,7 +29,7 @@ from kokoro_agent.protocol import (
 )
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TypeVar, cast
+from typing import Literal, TypeVar, cast
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -161,6 +164,8 @@ class FakeRunRepository:
     def __init__(self) -> None:
         self.chat_repository = FakeChatRepository()
         self.requests: dict[str, RunRequest] = {}
+        self.request_json: dict[str, str] = {}
+        self.static_recipes: dict[str, StaticRecipeBinding] = {}
         self.terminals: set[str] = set()
         self.leases: dict[str, int | None] = {}
         self.owners: dict[str, str] = {}
@@ -199,6 +204,38 @@ class FakeRunRepository:
         # tool effect journal（R3）：(run_id, tool_call_id) → {name,status,result,is_error}。
         self.tool_journal: dict[tuple[str, str], dict[str, object]] = {}
 
+    async def freeze_or_verify_static_recipe(
+        self, request: RunRequest, lease: LeaseFence, binding: StaticRecipeBinding
+    ) -> Literal["frozen", "matched"]:
+        from kokoro_agent.infrastructure.postgres_run_profiles import (
+            validate_static_recipe,
+        )
+
+        validate_static_recipe(binding, lease)
+        run_id = request.run_id
+        if not await self.is_lease_current(run_id, lease):
+            raise StaticRecipeAuthorityLost("static recipe authority lost")
+        if self.request_json.get(run_id, "").encode(
+            "utf-8"
+        ) != request.model_dump_json().encode("utf-8"):
+            raise StaticRecipeIncompatible(lease)
+        saved = self.static_recipes.get(run_id)
+        if saved is not None:
+            validate_static_recipe(saved, lease)
+            if saved != binding:
+                raise StaticRecipeIncompatible(lease)
+            return "matched"
+        if (
+            self.durable_counter.get(run_id, 0) != 0
+            or self.event_index_counter.get(run_id, 0) != 0
+            or self.token_totals.get(run_id, 0) != 0
+            or self.usage_totals.get(run_id, (0, 0)) != (0, 0)
+            or run_id in self.sandbox_ids
+        ):
+            raise StaticRecipeIncompatible(lease)
+        self.static_recipes[run_id] = binding
+        return "frozen"
+
     def _active_expiry(self) -> int:
         return self.clock_ms + 90_000
 
@@ -227,6 +264,7 @@ class FakeRunRepository:
         if request.run_id in self.requests:
             return None
         self.requests[request.run_id] = request
+        self.request_json[request.run_id] = request.model_dump_json()
         self.leases[request.run_id] = self._active_expiry()
         self.owners[request.run_id] = owner
         self.generations[request.run_id] = 1
@@ -249,6 +287,7 @@ class FakeRunRepository:
             if run_id in self.requests:
                 return None
             self.requests[run_id] = request
+            self.request_json[run_id] = request.model_dump_json()
             self.leases[run_id] = self._active_expiry()
             self.owners[run_id] = consumer
             self.generations[run_id] = 1

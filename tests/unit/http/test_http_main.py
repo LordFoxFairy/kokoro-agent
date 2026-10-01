@@ -683,3 +683,17 @@ def test_config_summary_classifies_bind_and_blank_secret_without_raw_host(
     assert "HOST_SENTINEL" not in caplog.text
     assert "bind_mode" in caplog.text
     assert "service_auth_configured': False" in caplog.text
+
+
+def test_profile_persistence_does_not_import_worker_private_assembly() -> None:
+    script = (
+        "import sys; import kokoro_agent.interfaces.http.main; "
+        "assert 'kokoro_agent.agent_factory' not in sys.modules; "
+        "assert 'kokoro_agent.worker.main' not in sys.modules; "
+        "assert 'kokoro_agent.execution.runtime_profile_plan' not in sys.modules; "
+        "assert 'kokoro_agent.execution.runtime_profile_sources' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr

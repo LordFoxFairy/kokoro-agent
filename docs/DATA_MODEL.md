@@ -1,6 +1,16 @@
 # kokoro-agent 数据模型
 
-## AGENT-PROFILE-P3-D0：下一片Run静态绑定字段与最终两阶段（2026-10-01）
+## AGENT-PROFILE-P3A-R25：Run静态绑定已编码、真PG待验（2026-10-01）
+
+基线main a37e8f1。现候选canonical schema在kokoro_agent_run新增assembly_recipe_bytes BYTEA与
+assembly_recipe_fingerprint TEXT，成对NULL/非NULL、1..8388608 bytes/小写64hex具名CHECK；无新表/索引/外键/迁移。
+RunProfilePort由新PostgresRunProfiles执行同Run行锁/锁后DB clock/原TEXT身份与lease generation校验；首次bind同事务两列写，
+已有binding严格重算与逐byte比较、matched不更新；错误/取消rollback，失去旧authority不冒新generation终态。
+真正fresh install/catalog精确约束drift与43个PG用例仅collect待Root执行，尚不宣称数据库门已通过。
+profile与Run同生命周期，不另设TTL。当前没有scope/head/origin/effective第二阶段字段；下方完整4引用保护/两阶段继承与
+最终release仍为后继硬门，不用static SHA冒充完整profile。HTTP机器源保持3.0，未改任何协议/生成物。
+
+## 历史 AGENT-PROFILE-P3-D0：下一片Run静态绑定字段与最终两阶段（2026-10-01）
 
 当前main `7e902c08296cacdacfe810ccbb4a6233d1b2ca7b`，P2已验；canonical `database/schema.sql` 仍无profile字段。
 以下为目标，D0没有改SQL。下一最短P3A仅现Run两列，完整scope/dispatch lineage/native字段依下方正式4目标另片实施。

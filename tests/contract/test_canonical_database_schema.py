@@ -71,3 +71,12 @@ def test_database_schema_contains_every_agent_owned_durable_surface() -> None:
         assert f"create table if not exists {table}" in schema
 
     assert "tenant_id" in schema
+
+
+def test_static_recipe_binding_has_atomic_bounded_canonical_columns() -> None:
+    schema = _schema().lower()
+    assert re.search(r"assembly_recipe_bytes\s+bytea", schema)
+    assert re.search(r"assembly_recipe_fingerprint\s+text", schema)
+    assert "ck_kokoro_agent_run_static_recipe" in schema
+    assert "8388608" in schema
+    assert "^[0-9a-f]{64}$" in schema

@@ -9,12 +9,13 @@ coupling itself to the complete execution persistence surface.
 from __future__ import annotations
 
 from kokoro_agent.domain.run.models import (
+    StaticRecipeBinding,
     RunTerminalOutcome,
     TerminalAuthority,
     TerminalCommitResult,
 )
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.domain.run.models import (
@@ -30,6 +31,12 @@ from kokoro_agent.domain.run.models import (
     StagedFrame,
     ToolJournalRecord,
 )
+
+
+class RunProfilePort(Protocol):
+    async def freeze_or_verify_static_recipe(
+        self, request: RunRequest, lease: LeaseFence, binding: StaticRecipeBinding
+    ) -> Literal["frozen", "matched"]: ...
 
 
 class RunAdmissionPort(Protocol):

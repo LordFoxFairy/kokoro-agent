@@ -359,3 +359,83 @@ def test_saved_intent_replay_rejects_changed_full_set(fault: str) -> None:
     with pytest.raises(InteractionConflict, match="command_conflict"):
         state.intent.verify_replay(command)
     assert state == started()
+
+
+# P2 codec must consume precisely the durable owner command, not caller Submission.
+def test_durable_resume_decoder_uses_canonical_owner_body_and_digest() -> None:
+    import importlib
+    import importlib.util
+
+    module = "kokoro_agent.infrastructure.postgres_run_interactions"
+    assert importlib.util.find_spec(module) is not None, "durable resume codec missing"
+    codec = importlib.import_module(module)
+    from kokoro_agent.protocol.control import RunResume, control_request_digest
+
+    message = RunResume.model_validate(
+        {
+            "kind": "run.resume",
+            "run_id": "run-1",
+            "session_id": "session-1",
+            "command_id": "command-1",
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
+            "decisions": [{"type": "approve", "item_id": "item-1"}],
+        }
+    )
+    digest = control_request_digest(message)
+    message = message.model_copy(update={"request_digest": digest})
+    body = message.model_dump_json()
+    submission = codec.decode_resume_command(
+        body, digest, run_id="run-1", session_id="session-1", command_id="command-1"
+    )
+    assert submission.pause_revision == 1 and submission.pause_ref == "pause-1"
+    assert submission.decisions[0].payload == b"{}"
+    for invalid in (body + " ", body.replace('"item-1"', '"item-2"')):
+        with pytest.raises(ValueError):
+            codec.decode_resume_command(
+                invalid,
+                digest,
+                run_id="run-1",
+                session_id="session-1",
+                command_id="command-1",
+            )
+
+
+def test_candidate_chat_state_validates_full_collection_without_private_fields() -> (
+    None
+):
+    from kokoro_agent.protocol import events
+
+    model = getattr(events, "ChatInteractionState", None)
+    assert model is not None, "candidate complete ChatInteractionState missing"
+    valid = {
+        "interaction_revision": 1,
+        "pause_revision": 1,
+        "pause_ref": "pause-1",
+        "phase": "waiting",
+        "action_result": None,
+        "groups": [
+            {
+                "group_id": "g",
+                "items": [
+                    {
+                        "item_id": "i",
+                        "request_id": "r",
+                        "kind": "tool_approval",
+                        "allowed_decisions": ["approve"],
+                        "display": {
+                            "name": "lookup",
+                            "description": "Review",
+                            "editable": False,
+                            "input_schema": {"type": "object"},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    model.model_validate(valid)
+    with pytest.raises(ValueError):
+        model.model_validate({**valid, "groups": []})
+    with pytest.raises(ValueError):
+        model.model_validate({**valid, "checkpoint_id": "private"})

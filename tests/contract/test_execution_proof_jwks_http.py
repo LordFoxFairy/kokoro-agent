@@ -1,4 +1,4 @@
-"""Agent HTTP 3.0.0 JWKS machine-contract pins."""
+"""Agent HTTP 4.0.0 JWKS machine-contract pins."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def _documents() -> tuple[dict[str, Any], dict[str, Any]]:
 
 def test_jwks_contract_is_exact_anonymous_owner_wire() -> None:
     document, provenance = _documents()
-    assert document["info"]["version"] == "3.0.0"
+    assert document["info"]["version"] == "4.0.0"
     path = document["paths"][PATH]
     assert set(path) == {"get", "head"}
     for method in ("get", "head"):
@@ -80,7 +80,7 @@ def test_jwks_contract_is_exact_anonymous_owner_wire() -> None:
             assert expected in text
     direct = provenance["http_contract"]
     assert direct == {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "path": "contract/openapi/v1/openapi.json",
         "sha256": hashlib.sha256(OPENAPI.read_bytes()).hexdigest(),
     }

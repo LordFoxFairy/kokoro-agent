@@ -1,4 +1,526 @@
+## R39 HTTP 4 owner 切换候选（当前解释覆盖下方历史 HITL 段落）
+
+本轮仍为 main0245a36 基线上的完整 HITL 候选工作树，未发布 artifact、未更新 BFF/Web pin。
+R40 精确追加现 JWKS contract test 的3处整体 HTTP version（标题/info/direct provenance）3→4；
+其余 proof/JWKS/tuple/路径/SHA 断言逐字保持，最终范围为原19＋该1现文件，共20。
+当前机器源已一次切为 Agent HTTP **4.0.0，原 /v1 单路径**；下方“机器仍3”的文字只记历史阶段。
+既有已 typed4 的 control/events 保持，删除旧 resume tool_id/request_id 寻址与 Chat interaction alias；
+Machine、两个 decoded payload mapping、owner checkers、生成 provenance、HTTP admission/receipt 和公开正负例同步。
+这不是 scope/retry/effective-native/retention/P3B 完成；P3B 整段候选不变。
+
+Root 本轮裁决覆盖历史 error/reason 承诺：receipt 继续现有 status/error_code，只有真实 typed
+InteractionConflict 才落 failed/error_code=interaction_conflict；**不新增公开 reason/rejected 变体**。
+内部 stale_pause/incomplete_collection/decision_not_allowed/not_waiting 不是额外 wire 字段。
+missing context 保持现 control_apply_failed；读取失败/authority_lost 原样传播，不伪装 conflict，
+不借新 authority 终结健康 Run。拒命令只收口该 command，当前 waiting head/source 不被清空。
+
+### 归属与实施范围
+
+沿已批准 §8 同 owner/模块：现 ingress 严格拒错 kind 的字段（包括 null/空值），现 supervisor_control
+只在 accept_resume 的 InteractionConflict 分支写既有终态 command receipt。既有终态 receipt 不被后续通用
+apply 记账覆盖；读取/持久失败不进入该分类。DTO/mappers 已消费 typed4 source，本轮不复制新映射层。
+现19个批准路径：3 contract、5 source（其中 failure 只生成）、3 contract tests、2 HTTP unit、
+1 control unit、1 HTTP acceptance、4 HITL 文档前缀；零新文件/目录/SQL/依赖。failure generator 薄 CLI 未改。
+Root 验收顺序：冻结实际字节/独立审 → 默认全门与真实 HTTP/PG → Agent 固定 artifact → BFF → Web。
+
+---
+
 # kokoro-agent 技术设计
+
+## AGENT-HITL-INTERNAL-CALLERS-R38：内部切换与生命周期候选
+
+Root 已验前一桥冻结候选 44/44 真 PG（6.74s，自有库已回收）及独立审查 0P0/P1/P2；
+此证据不覆盖本轮新增首次 worker pause 旅程，也不表示 HTTP4 发布。本轮仍基线 main0245a36＋既有候选工作树，Git/资源由 Root 独占。
+原八 native proof、机器/OpenAPI/generated、SQL 与完整 P3B 后缀保持；下方 R35 等记录为历史，不再表示当前尚未运行那 44 例。
+
+删除唯一遗留 `execution/approvals.py` 与 source 清单引用，原测试迁到真实官方 InMemory saver＋正式 checkpoint adapter 的完整集合/全集 map/安全 validation；
+它只证明内存 SDK 形状，不充当 PG 消费或外部效果 exactly-once 证据。普通 caller 显式提供 reader/callback；
+测试替身按明确场景区分初 pause、accepted、started/unknown，不把缺证据返回 active；control delivery 只更新正式 admission 的既有行。
+裸 SDK 单测每 case 恢复原 registry/bootstrap，避免先于生产批准流程初始化全局状态，不放宽生产 plugin/registry 门。
+
+`invoke_once` 必需 `on_native_settled(seal_usage)`；闭包绑定本次 native context 完全 drain 后的真实 token 总数及原 lease 的 record_usage，
+并发/顺序重复成功 seal 至多写一次。真实 worker 在 waiting/unknown 分支、释放 lease 的 pause/reconcile 前 seal；active 不 seal，
+正常 terminal usage 仍由唯一 finalizer 同事务提交。SDK interrupted 而 reader active 时，以仍有效原 fence seal 后返回非终态，不静默漏段或借新 authority。
+usage/reader/settlement 持久失败在 native 异常映射外原样传播，绝不改写另一 run.failed；未 seal 的失败不推进 waiting。
+
+initial/resume build 错误显式携带构建开始时捕获的 lease；仅此路径不走 control adoption，不从更新后的本地 lease 借 authority。
+StaticRecipeAuthorityLost 零终态；Incompatible 自带 fence 与显式 captured fence 冲突也零终态；原 safe code/retryable 映射保持，retryable 不是自动重投。
+本轮精确顺序 RED 2 例、必需 seal API RED 10 例、构建映射 RED 15 例及失效 fence race RED 6 例日志均保留。
+授权 19 caller 文件纯组合已实际 438 passed/48 deselected（21.82s）；不是 Root 最终验收。首次组合人工中断 exit130 不计完成，
+后续 -x 345 passed/1 failed 准确定位原裸 SDK registry 污染；修复 fixture 恢复后才得到上述组合结果。
+
+新增既有 PG 事务测试 `test_first_worker_dispatch_seals_usage_before_durable_initial_pause`：正式 ingress/dispatch、正式 saver 与独立 reader、
+官方 native projections，由真实 worker 首次进入 native（无预先 graph.ainvoke），独立 SQL 核 waiting/释放 lease/7+3 用量/零 terminal；
+7+3 是确定性 SDK callback fixture，不声称真实 provider 用量。此新例及修改后原 44 例待 Root 真实运行。
+完整 HITL4 机器/HTTP/contract 发布、跨 takeover 的原 generation 归属/absolute execution deadline、scope/retry/P3B/retention 仍各自原门，不以内部绿色缩减目标。
+
+最终 worker 离线门（本候选）：全 Ruff format 267 files/check exit0，Pyright 0 errors；
+fresh 全纯 1721 passed/38 failed/6 skipped/287 deselected（97.17s），剩 37 为锁定 machine/chat/public/proof contract，
+此 38 中另 1 是 `tests/unit/execution/test_interactions.py` 原 valid fixture 缺 required action_result；
+Root 于全纯柄结束后精确授权只补 action_result: None，原两个负例保留，单例实际 1 passed。
+该一行之后未重复全纯（Root 冻结复验）；37 个机器/公开/证明契约失败仍原样保留，不宣称已获新的全纯 37-fail 计数。
+正式 contract-check exit1 为 provenance aggregate stale，机器仍3的完整4发布门保留。
+PG45只 collect（0.39s）；InMemory 首次 native entry 7/3 usage 探针通过，绝不据此宣称真实45已验。
+日志 `/tmp/kokoro-agent-callers-r38-{full-pure-final,type-final,format-final,lint-final,contract-final,pg-collect,first-pause-probe}.log`。
+本轮未启动/操作 PG、Redis、provider 或应用服务，未执行 Git/依赖安装/build；上述纯测试自身的离线/loopback fixtures 不代表生产服务验收。
+候选冻结交 Root 后停写，由 Root 独占真实45、原相邻PG与完整发布门。
+
+## AGENT-HITL-NATIVE-BRIDGE-GREEN-R35：实现候选，等待 Root 真实 PG
+
+当前基线仍 main0245a36＋已验P2事务核；Root桥RED实际18 failed/26 passed/0 skip（4.61s），
+`/tmp/kokoro-agent-hitl-native-bridge-r35-root-real-pg-red.log`。本轮已授权普通checkpoint_interactions.py与既有
+Run/SQL/worker边界实现；不是HTTP4发布、完整scope/P3B或外部exactly-once验收。下方D0“未实施”保历史，
+本节覆盖当前候选事实；机器/生成/依赖及P3B完整suffix保持，Git/真实PG仅Root。
+
+七ports与完整observation canonical SQL、Run-first GC、独立官方reader、唯一StartedResume调用和drain后持久callback已接入。
+原supervisor四mixin与execution/run_agent.py由Root精准追加：删除实际resume路径旧adopt/fingerprint/partial-awaiting selector，
+不把其职责搬进门面；cancel/steer/普通dispatch保留。reader与on_native_settled均必需，无空默认/alias/fallback。
+stream.interrupted()完成官方iterator后且context退出才调用持久callback；callback失败在native异常handler外原样传播，
+不制造另一个run.failed。waiting/unknown不发completed；新validation直接waiting，active仅来自完整正向证据。
+
+实际纯新增15/15已通过；三纯文件完整选择20 failed/45 passed/3 resource deselected（0.88s），旧HITL寻址/reader消费者明确未切。
+域与架构选择1 failed/69 passed（2.38s）：唯一失败是原test_interactions.py候选fixture缺新必需action_result，未越权补默认；
+首次误用不存在tests/architecture的collection错误保留日志，不计业务RED。44 PG最终只collect（0.02s），原26＋新18，尚未实际运行。
+R37最终定点24个Python文件Ruff format/check全过，19生产Python定点Pyright0；full Pyright145错误为旧approvals35＋未切测试110（包含原8），不以局部0冒称全门。
+官方InMemorySaver纯探针实际验证单input与root/child/mixed三集合材料化、一次全集map及正向分类；
+它们只证明SDK形状，不是独立PG连接、事务/进程重启或外部副作用证明。所有首失败日志保留。
+
+两处已授权测试fixture纠正：混合图节点统一approval_node（原state key/edge不匹配）；新增source正例补原必需input_schema={}。
+保持原全集/一次map/最终向量与26断言；不以fixture修正记生产GREEN。原八nativeproof不变。
+Root R37追加真实result-review consumer与其现测试：唯一request_id决策解析/匹配，拒旧tool_id与重复request_id；
+工具call_id/journal/cache身份原样。实际RED为5 failed/6 passed，切换后11 passed（0.13s），所有approve/respond/reject/
+非法缺项/缓存重入防双执行断言保留；日志`/tmp/kokoro-agent-bridge-r37-result-review-{red,green}.log`。
+完整4仍须其他caller/fakes/机器/contract/generated统一切换，不以该consumer单点绿色宣称全链已完成。
+最终四纯文件按原integration/e2e/acceptance排除：20 failed/56 passed/3 deselected（0.87s）；原20旧消费者RED保留。
+验证选择曾误用not resource清默认过滤，3个旧integration setup尝试Redis后ConnectionRefused，未成功连接或执行native/provider；
+该20 failed/56 passed/3 setup errors日志单独保留，不计纯门或业务RED；后已按原标记重跑。
+初pause跨expired takeover缺原generation归属时严格拒native_pause_generation_unattributed，零再次invoke；
+不借新authority给旧执行收口、不称A窗口跨generation恢复已完成；当前无独立absolute execution deadline。Root明确TTL不是执行期限；该跨takeover恢复/期限门保留，不新增deadline schema。
+
+### 本片实现细节
+
+官方saver只委托SDK写调度/serde；有限received/delegated/exception诊断仅标量locator，不保存mutable vector。
+完整事实在settled/recovery显式read_interaction通过独立aget_tuple/alist读取；delegate成功本身不产生消费结论。
+同thread尚有委托写时拒绝分类，不把pending write当持久事实。恢复返回无Command；只有accepted准备plan且StartedResume commit后调用。
+expected_append_digest唯一解释为canonical JSON完整`pre_vector + [native_resume_value]`的SHA256；另核pre长度/摘要。
+安全display与私有locator/plan各有独立生命周期；读取已保存原plan，不从当前向量逆推历史。非JSON native向量拒归属，绝不repr哈希。
+健康tracked task续租后清probe计数；只有同进程官方iterator完全退出后的local_drained token允许新独立读取计数。
+无token的restart/远端失联不制造三读证明；明确unknown保持原attempt，无自动重投。三读耗尽只用原精确lease走唯一finalizer。
+
+
+## AGENT-HITL-NATIVE-BRIDGE-D0-R35：精确桥接口（候选，未实施）
+
+Root已验R3事务26/26（2.51s）、相关四PG文件71/71（5.56s），资源均回收；它们不证明正式桥。
+Root fresh default实际78 failed/1664 passed/6 skip/268 deselected（97.96s），Pyright仍43错误；
+失败分布supervisor26、machine_contract16、chat_response14、hitl11、public_contract6、control_commands4、execution_proof_artifact1。
+日志`/tmp/kokoro-agent-hitl-p2-r34-root-{related-pg,default}.log`。本轮仅四HITL前缀；生产、测试、机器与P3B整suffix保护。
+以下精确决定覆盖下方历史D0的未定字段/方法；既有P2事务语义保持，新增桥/schema/完整4均待源码卡和真实门。
+
+### 放置及本轮边界
+
+新增普通`infrastructure/checkpoint_interactions.py`负责官方saver装饰、精确读取与native证据分类；
+优于把SDK类型/读写调度塞入domain或现SQL adapter。Run SQL/Row/codec仍唯一位于postgres_run_interactions.py，
+port和值仍现domain/run文件；worker/main在取得saver与repository后装配，现agent_factory透传checkpointer即可。
+不改安装包、不复制scheduler/serde、不加服务/目录/fork；checkpoints.py目前无必须改动，实际需改先报Root。
+HTTP-only不import此native模块。新增source须登记既有runtime_profile_sources，保持同源装配算法。
+
+### 内部值与唯一port增量
+
+沿现RunInteractionPort增加以下方法；所有request保现原TEXT UTF8身份，Row/SDK对象不出边界。
+下列类为现domain/run/interactions.py内不可变值；native classifier产值，SQL adapter重验身份/codec/引用，不接受裸consumed布尔。
+
+| 精确签名 | 结果/职责 |
+| --- | --- |
+| `record_checkpoint_observation(request: RunRequest, lease: LeaseFence, observation: CheckpointObservation) -> ObservationStored` | Run→若有则command锁，核完整关联，插入已独立读取的事实；返回digest、disposition(current/audit)、inserted。无native调用，无head变化；缺Run抛InteractionRunMissing。 |
+| `read_checkpoint_observations(request: RunRequest, target: ObservationTarget) -> tuple[CheckpointObservation, ...]` | target固定generation及可空command/attempt同组身份；按digest确定排序，不取thread latest。只读、不授执行权。 |
+| `reconcile_resume(request: RunRequest, lease: LeaseFence, evidence: ConsumedPauseEvidence | UnknownResumeEvidence) -> InteractionCommitted | ReplayedResume` | 锁Run→command→按digest排序观察→Chat；重验本轮、原attempt、全部观察及当前authority，原子写head/intent/result/source。native_observed跨提交后可精确续办。 |
+| `record_reconcile_probe(request: RunRequest, lease: LeaseFence, probe: QuiescentProbe) -> ReconcileProbeResult` | 同锁序原子插入probe观察＋持久计数/unknown结果；独立读取事实在锁外完成，锁内核进展版本。返回count、exhausted、snapshot；不自行调用native或终态。 |
+| `reset_reconcile_probe(request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str) -> None` | 同Run→command锁及锁后当前authority核验，真实tracked调用恢复健康/有进展时清静止计数；不变intent/head/source，不授调用许可。 |
+| `list_unsettled_interactions(limit: int) -> tuple[InteractionRecoveryTarget, ...]` | limit 1..1000，现command部分索引扫描accepted/dispatch_started/native_observed/unknown，按run_id,command_id；只是候选定位，后续重新scoped读取及锁验，不授收养权。 |
+
+ObservationTarget=(generation>0, command_id?, attempt_id?)，两个可空ID必须同时空或同时非空。
+CheckpointObservation=(target, kind, canonical_bytes, digest)，canonical内容与DATA唯一schema相符；received batch不构造此类。
+ConsumedPauseEvidence=(command_id, attempt_id, attempt_generation, pause_revision, pause_ref, collection_digest,
+observation_digests按序去重, disposition, next_pause?)；disposition仅`active`或`waiting`，后者必有完整DurablePauseSnapshot。
+每个原group/task/interrupt/item恰好覆盖一次；逐task核pre向量长度/摘要＋预期append摘要与实际向量，
+核所有namespace的因果后继及完整当前tasks。active无新待决且无本次ERROR；waiting有已持久完整新集合，
+validation只来自已验证结构化字段。RESUME+ERROR不构造active/waiting成功证据，交原异常终态边界。
+无法唯一关联新pause与原attempt也归unknown，不因看见新interrupt绕过全量消费归属。
+UnknownResumeEvidence包含同command/attempt/generation/pause revision/ref/collection_digest、已读observation_digests及
+固定reason=incomplete_native_evidence；它不需要/不伪造完整消费证据。reconcile_resume此分支核原started身份后只写unknown动作与
+保留resuming集合；不经过native_observed。健康任务暂缺证据只继续观察，不提交此分支；失联且静止条件仅限制三读耗尽，不限制明确歧义的持久记录。
+
+### 持久观察与执行许可
+
+仅StartedResume commit返回授一次native调用；create_task也在其后，ReplayedResume零调用。
+初次Run调用仍由既有durable dispatch claim许可，不伪装resume。受信config/官方checkpoint metadata写
+`kokoro_run_id`、`kokoro_generation`及resume时command/attempt；这些标量由executor覆盖，trace/body不得注入。
+初pause未有command/attempt，generation即当前已持久claim；恢复只用官方alist按受信metadata过滤并逐项复核
+同Run/generation/thread的完整因果链，再aget_tuple精确定位；无匹配/多条不相容分支保持unknown，不挑latest。
+初次新waiting的pause_ref由已验证完整pause evidence的SHA256稳定派生，重复读取同证据不产生新轮次。
+同ID validation的因果checkpoint/原attempt不同，证据identity不同，生成新ref/revision。
+
+装饰器在await前只提取受信标量locator/JSON值摘要，不deepcopy SDK config/conn/callback；
+received/delegated/exception只作有限诊断，异常原样传播。委托返回后通过独立reader的官方aget_tuple/alist读取实际持久内容，
+不直接读改native SQL、不把received vector当持久向量。精确native读取与Run观察提交是两个独立事务。
+观察已落而Run source未落：读取已存证据重做reconcile；观察丢失：从原intent固定定位只读重建，缺证据unknown零重投。
+混合batch保留旧RESUME槽时，即使有成功successor仍unknown；本切片不承诺任意崩溃都能自动恢复或外部exactly-once。
+
+### native_observed、结果与健康协调
+
+正向完整事实由record_checkpoint_observation提交：同事务将匹配当前intent从dispatch_started/unknown改为native_observed，
+保存唯一resume_observation_digest；不推进公开revision。只有包含完整已验证消费＋稳定后继的resume证据可触发，
+普通read/probe、NULL_TASK输入、单task写和初pause观察都不改变此状态。失效generation只能audit。
+reconcile_resume锁内消费同digest，写reconciled及公开结果；active清当前集合但保历史snapshot，
+waiting直接新轮次完整集合并释放lease，不先发active。head/result/Chat/source同连接提交，通知仅在commit后发已有事实。
+terminal竞争仍唯一finalize_terminal处理，终态后不清回active；replay返回原source不重复revision。
+
+tracked invocation保存run/command/attempt/generation及进程boot identity；task未done、精确lease有效且续租成功为健康。
+跨worker缺本地handle、仅lease过期、仅cancel已请求或三次相同读取，都不是已静止证明。
+QuiescentProbe含唯一read_id、原target、实际读取证据、progress_digest、quiescence(kind=local_drained, worker_boot_id,
+invocation_id)。local_drained要求原tracked invocation已退出、全部所属子任务已await、装饰器委托writes已drain且不可再调度；
+由同进程监督器确认，SDK普通task.done不足。另一进程重启后没有此事实则不制造证明，不进入三读计数，
+保持unknown并使用既有deadline/cancel/fencing终态边界；本方案不以推测的远程进程死亡授执行权。
+有静止证据且原authority有效的协调者，每次重新完成独立官方读取后才交probe；read_id重放不累计。
+首次合格静止读取计1；已有进展摘要变化重置为0（本次变化不计稳定读），随后同摘要三次成功读取才到3。读I/O失败零累计，
+健康或重新有进展由reset_reconcile_probe清旧计数/静止token，不把分隔开的读取累计成三连读。更新规则及列见DATA。
+count=3仅返回exhausted，当前authority可用既有internal_error/false finalizer收口；authority已失效则零终态，
+不借新generation为旧调用错误收口。unknown结果可先持久发布；无静止证据也不允许无限自动重投。
+
+### R35 RED接线补名：同一装饰器与原intent只读上下文
+
+Root批准第7窄port：`read_resume_context(request: RunRequest, command_id: str) -> ResumeReadContext | None`。
+同一一致读取事务Run→command锁序，核scoped身份及原request TEXT UTF8；只读、不领lease、不生成plan。
+ResumeReadContext六字段：snapshot: InteractionSnapshot（当前head）、original_pause: DurablePauseSnapshot（该command冻结集合）、
+intent: ResumeIntent（该历史command）、dispatch_plan: ResumeDispatchPlan | None、attempt_generation: int | None、
+observation_digest: str | None。accepted的plan/generation全NULL；started/native_observed/unknown必须全存在且与intent.attempt_id一致；
+terminal按原是否started保留，不从新head反填历史值。plan严格解码原resume_dispatch_plan_json；当前native向量不反推pre-vector。
+
+两个native普通入口固定在已批准checkpoint_interactions.py：
+`make_interaction_checkpointer(*, saver: BaseCheckpointSaver[str], reader: BaseCheckpointSaver[str], repository: RunRepository) -> InteractionCheckpointer`；
+reader是独立连接官方saver，两者生命周期worker/main持有，返回对象委托官方BaseCheckpointSaver，不复制调度/serde。
+实例`async read_interaction(*, request: RunRequest, lease: LeaseFence, handle: AgentHandle, target: PauseReadTarget | ResumeReadTarget)`。
+PauseReadTarget(command_id: str | None, attempt_id: str | None)仅同时NULL（初pause）或同时非空（resume后）；
+ResumeReadTarget(command_id: str)只定位持久命令，不接第二Submission。返回四个显式分支：
+- PauseReadTarget：NativePauseRead(pause: DurablePauseSnapshot, observation: CheckpointObservation)。
+- ResumeReadTarget且accepted：PreparedNativeResume(plan: ResumeDispatchPlan, command: langgraph.types.Command)；仅准备，不授执行许可。
+- dispatch_started/native_observed/unknown：ObservedNativeResume(observations: tuple[CheckpointObservation, ...], evidence: ConsumedPauseEvidence | UnknownResumeEvidence)，
+  从第7port原plan/locator只读分类；无Command、无新attempt，无论原ACK是否丢失均不重建执行请求。
+- reconciled/terminal：既有ReplayedResume，零native执行。
+现supervisor必需interaction_reader注入wrapped.read_interaction；AgentHandle保持既有runnable/tool_descriptions，不暗藏saver。
+读取通过handle.runnable.aget_state(subgraphs=True)及独立reader官方精确locator；execution/protocols后继同步该官方参数。
+executor只从已claim RunRequest/LeaseFence或StartedResume构建受信run/generation/command/attempt标量config；
+trace/body不自报身份，受信metadata键由executor覆盖。工厂无mutable current_run，支持多Run并发；HTTP-only不引native模块。
+仅此接线补名，不新增SQL事实、不改已批七个状态/事务含义；具体生产仍未授权。
+
+### 下一张RED卡（尚未授权）
+
+仅现test_hitl.py、test_request_input.py、test_control_commands.py、test_run_interaction_transactions.py；
+前3位于tests/unit/execution，最后位于tests/integration/database。依次锁全集map/安全validation、唯一StartedResume许可、
+真实saver→observation→source故障窗口及Run-first purge双锁序；旧八native证明不改。缺桥方法用测试体能力assert，
+不以import/collection失败当事务RED。Root独占PG，worker仅纯测试/collect；完整4机器与旧consumer最后同owner验收发布。
+
+## AGENT-HITL-P2-R33-R3：故障注入固定组合修正
+
+Root R2真PG **24 passed / 2 failed / 0 skip（2.62s）**；
+`/tmp/kokoro-agent-hitl-p2-core-r33-r2-root-real-pg.log`，自有DB已回收。
+两例在安装trigger前被测试helper旧phase白名单拒绝，未到start/terminal故障回滚断言；不归因生产事务。
+R3仅将helper校验改为七个明确(stage,phase)组合，增加(command,dispatch_started)/(chat,terminal)，
+仍拒任意字符串或无效组合；原真实AFTER trigger、RaiseException、wholefacts/outbox=0断言原样。
+生产18路径及其余冻结25路径不改；P3B四suffix与两native proof保护。
+本轮Ruff format/check通过、定点Pyright0，26 collected（0.05s）；无DB/Git/服务，无运行句柄。
+日志`/tmp/kokoro-agent-hitl-p2-core-r33-r3-static.log`与`/tmp/kokoro-agent-hitl-p2-core-r33-r3-collect.log`。
+Root下一次实际26 PG仍是放行门，不将24局部通过冒称26或完整HITL4完成。
+
+## AGENT-HITL-P2-R33-R2：正式launch fixture与GC竞争补证（仅测试/文档）
+
+Root R33实际PG **16 failed / 6 passed / 0 skip（1.78s）**，日志
+`/tmp/kokoro-agent-hitl-p2-core-r33-root-real-pg.log`；自有DB已回收。
+16例共同在真实control的scoped lookup早停404：原fixture只try_claim没有dispatch，
+现正式get_request_scoped要求Run/dispatch同tenant及namespace JOIN，此资格正确，不放宽生产。
+本R2仅改现事务PG测试及四docs批准prefix，18生产与其余冻结文件保持；P3B完整suffix、两份native proof未改。
+
+统一fixture现在调用公开AgentIngress.launch创建正式dispatch/session，从get_pending_dispatch读取原RunRequest，
+独立连接核原request_json UTF8、tenant/namespace/pending，再claim_dispatch且复核scoped Run原bytes，最后pause/control。
+不手插dispatch、不在已pause之后补admission、不绕过真实Ingress.control。仅通知bus使用既有FakeBus；所有事实仍PG。
+首正例由持久RunResume逐项重建expected kind/payload base64，与整份持久decisions codec比较，不只检查digest自相等。
+
+独立Sol原生产审0P0/0P1/1P2保留：原串行terminal→purge→late不等于竞争证明。
+现补purge↔admit_control及purge↔record_control_delivery各两锁序，共4例：
+精确owned blocker PID持Run锁，先操作进入等待队列后再投第二操作；递归pg_blocking_pids包含soft queue边，
+确认1→2独立backend均阻塞才释放，无sleep/共享waiter计数/timeout放宽/重投。
+purge先胜则admission 404零新child；admission先胜只原命令创建一次且随同一次purge删除。
+delivery是UPDATE既有command而非INSERT，terminal或missing两种资格均false；其先拿锁也不伪造成功更新，
+既有child仍随一次purge清理，最终Run/control/dispatch均零残留。新测试尚待Root真PG，不能据收集声称竞争已证。
+R1六个真实通过仅包含pause rollback与四catalog drift；accept/start/terminal/竞争的最终断言仍待修fixture后重跑。
+本R2不修改生产、不运行DB/Git/服务，不把HITL4或native桥标完成。
+实际离线：本测试Ruff format/check通过，定点Pyright 0 errors，26 collected（0.05s）exit0；
+日志`/tmp/kokoro-agent-hitl-p2-core-r33-r2-test-static-r2.log`与`/tmp/kokoro-agent-hitl-p2-core-r33-r2-collect-r2.log`。
+首新增断言列表未标类型产生的1个Pyright错误保留原log，补明确list[dict[str,str]]后真实重跑0，不放宽检查。
+26 PG入口仍同一文件、`-o addopts='' -q`，由Root独占资源；无运行句柄，冻结待验。
+
+
+## AGENT-HITL-P2-CORE-GREEN-R31：事务核工作树候选（未发布）
+
+Root已以真实PG 6 failed/0 skip（缺record_pause；未到rollback）放行本批，基线仍main0245a36；
+当前新增唯一普通生产文件infrastructure/postgres_run_interactions.py，并在既有Run/command/Chat上实现
+pause/accept/start/unknown及原finalize_terminal收口。Root随后仅追加现infrastructure/chat_mappers.py持久类型decoder，
+旧interaction拒绝，不留兼容分支。本批30路径（18生产含SQL＋fake＋7tests＋4docs），不等于36/52或后继22全授权。
+机器OpenAPI/provenance/generated仍3；native桥、observation表、真实消费/恢复、全部旧worker消费者未切换。
+以下历史D0/tests-only段保留其当时基线；本节覆盖其“生产尚未修改/仅四docs”当前状态解释。P3B整suffix未改。
+
+当前内部API是`accept_resume(request, command_id, owner)`，caller不再传第二Submission；
+同连接Run→command锁后，从现权威`control.body`唯一typed decode，重建Submission，再整批校验/归一。
+`StartedResume`仅首次start提交返回；同attempt重放、历史command重放、unknown均不授第二执行许可。
+PostgresRunLeases仍唯一终态入口；purge入口委托现context内统一Run-lock/children清理实现，
+不新增GC模块。正常terminal同事务清集合并写interaction terminal在run terminal之前；私有quarantine保持无新增公开源。
+现partial ToolAwaitingApprovalPayload缺完整pause/revision，旧projection显式拒绝，绝不伪装新source；后继bridge必须替换真实调用。
+测试fake新增port只明确抛NotImplementedError，不伪造持久结果；本能力正例只使用真实PG repository。
+
+### 入口与持久请求的唯一表示（Root R32裁决）
+
+既有`body=typed_message.model_dump_json()`；既有request_digest不是该TEXT直接SHA，而是`sha256:`前缀＋
+`json.dumps({run_id,...控制字段}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)` UTF8摘要。
+新4 resume入口先严格RunResume validate（必需revision/ref/item，无旧别名、未知字段/重复item拒绝），
+再唯一`control_request_digest(message)`对`message.model_dump(mode="json", exclude={"command_id","request_digest"}, exclude_none=True)`算上述摘要；
+将摘要回填typed message后以原model_dump_json写control.body，不保存raw第二事实。cancel/steer原表示不变。
+锁内`decode_resume_command`同时核Run/session/command、body中的digest、重新计算digest与存储列，
+以及`RunResume.model_validate_json(body).model_dump_json().encode("utf-8") == body.encode("utf-8")`；
+不拿两个调用同一字符串的自相等替代这些独立身份/摘要校验。
+cancel/steer即使携带null的resume专属ref/revision也在入口拒绝，保原表示不扩大。
+nullable optional（如reject.reason、approve.args）允许入口null/omitted同义归一；required revision/ref/item无默认，
+省略/null/unknown字段均拒。持久body重排、whitespace或被删默认字段即使解析等价也拒；
+Run原request_json仍复用P3A原model_dump_json UTF8逐byte身份，不使用上述摘要codec替代。
+
+### 当前实际证据与未到达门
+
+worker最终受限纯选择121 passed＋架构36 passed，合并157 passed（2.38s），exit0；定点Ruff check/format-check通过。
+事务PG仅22 collected（0.04s），零DB/Redis/provider/服务访问，所有新rollback/start/锁等待/竞争/terminal/catalog断言待Root实际运行。
+完整机器候选两contract文件：30 failed/26 passed（0.97s），3机器及application decoded mapping仍旧，保留真实RED；
+全Pyright 43 errors仅execution/approvals.py及旧tests/unit/execution/test_hitl.py的旧tool/request寻址消费者；
+本片授权文件无新增类型错误。既有32fail tests-only、Root6fail及本片codec/duplicate/mapper RED日志保留。
+不以局部绿或收集数冒称完整4/default通过；Root真实PG和独立审查后决定下一片，完整机器/bridge/消费者统一发布。
+
+## AGENT-HITL-P2-RED-R31：首批契约与事务RED（tests-only）
+
+基线main0245a36＋P2-D0冻结57140f75；WIN03独立审0P0/0P1/2P2。唯一授权现两contract测试、
+新普通tests/integration/database/test_run_interaction_transactions.py及本四docs批准HITL前缀；生产/机器/SQL/SDK不改。
+时间列候选明确TIMESTAMPTZ(3)；后继infrastructure/checkpoint_interactions.py是尚不存在的新增普通文件，
+只列后继，不在本卡创建桥。P3B整suffix保持。
+
+放置沿已批第8节：新事务PG文件聚焦真实Run/command/Chat提交，优于混改原八native证据文件；现database目录，不新目录。
+首批PG经现run_repository真实setup/try_claim，随后在测试体明确断言record_pause/accept_resume方法存在；
+不导入缺失模块、不把collection错误当事务RED。首正例按原namespace/thread构造受信pause输入（不是native提交证明），
+独立连接核waiting释放lease＋source，accept保全集/新generation＋规范化intent＋原source身份，重复接受零额外变化。
+五回滚case分别在pause的head/Chat、accept的head/command/Chat用自有schema真实AFTER触发器抛错，
+独立连接对比Run/commands/Chat/Chat sequence完整前后值，不用fake repository或伪造返回值证明原子。
+真实PG由Root运行，worker只collect；初始缺能力RED不声称已运行到触发器回滚断言。
+
+本测试锁定DurablePauseSnapshot内部构造字段为pause_ref、canonical_bytes、digest：bytes为DATA规定完整snapshot唯一UTF8，
+adapter必须验证完整内容/重算digest并拆为typed groups/locator；不是只信digest的proof token。测试通过公开AgentIngress.control（内部复用现_parse_control）生成
+command request_digest及model_dump_json，不发明第二HTTP摘要。公开源schema候选名ChatInteractionState，groups保原分组，
+phase表达整组awaiting/submitted状态；首测试不凭ACK改变集合。所有生产和机器修改仍待Root根据实际RED另卡。
+
+## AGENT-HITL-PERSIST-P2-D0-R29：持久事务核候选（未授权源码）
+
+当前基线main `0245a36c85422b4e0e85cc22aba426b0e30fec12`；DOMAIN-P1纯规则已Root验收提交，
+不是仍待验的候选。当前HTTP机器3.0、SQL没有交互列、native桥未实现。以下覆盖HITL旧52整体实施顺序，
+不覆盖P3B整suffix：本P2零新表，仅Run/command事务核与typed Chat；观察表随真实桥首次writer后继同片实施。
+完整HITL4仍待native消费/恢复/全部入口及消费者门；不发布只有schema或部分状态的4，不用开关保留旧新双轨。
+
+### 第8节放置与唯一能力接口
+
+| 项 | 本次精确结论 |
+| --- | --- |
+| Owner / writer | Agent Run/HITL原owner；本次仅四docs批准prefix。Root审查、源码授权、真实PG资源、提交及发布。 |
+| 当前事实 | domain/run/interactions.py已有38例纯规则；admission尚无Run锁，pause/adopt只有lease条件；Chat仅旧interaction。源代码和机器均不因D0改变。 |
+| 目标 / API | 新RunInteractionPort承接下表五个方法，现RunRepository组合、PostgresRunRepository委托唯一新PostgresRunInteractions；不造第二执行器。 |
+| 两位置 / 粒度 | 普通infrastructure/postgres_run_interactions.py聚合交互SQL，优于继续膨胀admission或把SQL塞execution/approvals.py。新普通tests/integration/database/test_run_interaction_transactions.py复用现目录，优于混入已有八例native证据test_run_interactions.py；后者完整保留不改。无新目录/服务。 |
+| 依赖 | domain仅stdlib；infra依赖domain及既有Chat同cursor能力；protocol仅stdlib/Pydantic。HTTP-only不加载native/worker/private配置。新源文件和已落domain文件登记现显式production resource清单，不修改manifest算法。 |
+| 数据 / 删除 | 两现表列与具名CHECK/两个唯一索引见DATA；不新表/外键/迁移/兼容补值。替代未来HITL路径中的分离head/intent写入；现通用receipt不冒充新intent。 |
+| 验证 | 新事务PG RED、现schema/contract/domain/default回归、Root fresh PG、source/wheel资源闭包；native八例是独立历史证据，不代替事务测试。 |
+
+类型均为内部不可变值，放现domain/run/interactions.py；Row/codec仅在新SQL adapter内。具体方法：
+
+| RunInteractionPort方法 | 输入/返回与唯一责任 |
+| --- | --- |
+| `read_interaction(request)` | scoped RunRequest；返回InteractionSnapshot或缺失。验证tenant/namespace/session与存储Run身份，不返回别租户head；只读不授执行权。 |
+| `record_pause(request, lease, pause)` | DurablePauseSnapshot含完整有序groups、安全display、原生定位和集合摘要；当前fence下记录已持久暂停。返回InteractionCommitted或ReplayedResume（原source身份）；不在此方法推断native是否已提交。 |
+| `accept_resume(request, command_id, owner)` | 从锁内现control.body唯一typed解码全集Submission；锁内paused专用领取+head/intent/source。返回AcceptedResume(snapshot, lease)或ReplayedResume(current_snapshot, original_intent, accepted_source_identity)，重放不返回新的调用许可。 |
+| `start_resume(request, lease, command_id, plan)` | ResumeDispatchPlan含唯一attempt_id、原pause定位、逐task预存向量长度/摘要和预期追加摘要；返回StartedResume(snapshot, attempt_id)或ReplayedResume。只有`StartedResume`即started_now授一次调用权。 |
+| `mark_resume_unknown(request, lease, command_id, attempt_id)` | 原fence及精确attempt；持久unknown并保持resuming集合；返回Committed/Replayed，零再次执行许可；不自行终态或主动重读native。 |
+
+request身份逐字节复用`request.model_dump_json().encode("utf-8")`对stored原TEXT UTF8（同现P3A），
+不parse后声称等价。DurablePauseSnapshot是受信native adapter的输入契约，不是通过构造一个类就证明native提交；
+P2 PG测试只证明输入后的owner事务。native adapter证据准入在后继门。安全display是公开展示模型，私有locator/decisions绝不复用其字段。
+所有结果携稳定interaction_revision/已提交source identity；新typed错误区分run_missing、authority_lost、conflict、corrupt_state，
+不以bool丢失重放身份。ingress仅把锁内run_missing映射已有404 run_not_found；其他HTTP映射随完整candidate4定义，不临时发码。
+
+### 三事务、终态和GC（可执行边界）
+
+A `record_pause`：同连接锁Run，锁后clock_timestamp核当前nonterminal/owner/generation/有效expiry，
+核pause snapshot对应原运行身份，完整head+Chat同事务；进入waiting时lease_expires_at置NULL亦在同事务。
+先判同Run/owner/generation且已存waiting同ref/snapshot的精确重放，此时expiry已由A置NULL仍可返回原source但不授任何执行权；
+其余新写才要求有效expiry。新generation/不同snapshot不得借重放分支绕权威。重放同pause/source身份零revision/seq增量；新validation轮次仍生成新pause_ref/revision。输入不完整不做部分写入。
+
+B `accept_resume`：先Run FOR UPDATE，再现command FOR UPDATE；全部锁后取DB clock。
+先查原command：精确同提交只回原intent，不改变后来的head；异提交冲突。新接受要求phase=waiting、
+lease_expires_at IS NULL、同pause/ref与完整集合且无本轮已接受intent；owner来自受信worker，不取body自报。
+锁内赋当前owner、generation+1、expiry=DB now+现TTL，调用纯accept，保存规范化决策、原accepted revision/source index和resuming全量Chat后commit。
+active+NULL/过期active均不是paused；不调用现泛adopt去绕条件。未来worker替换既有adopt→resume序列，不保fallback。
+
+C `start_resume`：同Run→command锁序；全部锁后DB clock/lease/current generation/nonterminal，
+原command必须accepted、同pause/ref、完整dispatch plan匹配存储pause；写dispatch_started、attempt/generation/plan/时间后commit。
+同attempt重复只能ReplayedResume；其他attempt拒绝。即使同attempt正常重放也不再授native调用；start commit后调用前崩溃归unknown。
+start不推进公开revision，不多发resuming；下一writer只能在StartedResume commit返回后启动native，不能先建执行task再补start。
+这里不实现native调用/桥/恢复调度，故也不声称所有当前入口已执行该门。
+
+所有公开phase变化均Run→command→既有Chat identity/seq锁；复用PostgresChatRepository.append_on_cursor，
+禁另开连接append_fenced。分配run source_index、Chat seq及revision同事务，commit后才通知已有事实，不让emitter再造第二事件。
+PostgresRunLeases.finalize_terminal仍唯一终态入口：同事务head.terminal、全部未结intent→terminal、清集合、
+有序interaction terminal source和现terminal事实一起提交，重放不增revision。私有quarantine原本不公开的Run保持不生成公开source，
+但内部head/intent仍终结；不借新generation替失效execution authority终态。普通reject不是Run取消。
+
+purge_terminal按run_id确定顺序锁Run，锁后DB clock复验terminal/retention/原sandbox cleanup和交互intent结清；
+统一delete_run_rows先children后Run。admit_control创建行先锁存在Run，关闭ingress先读后写的purge窗口；
+record_control_delivery现为SELECT后UPDATE既有command，并不INSERT；为与terminal/purge资格一致也采用Run-first，
+Run消失则零UPDATE。admit锁内消失零INSERT，delivery/receipt更新不新建或复活command。late record_pause/start/unknown只凭原authority，终态/消失零head/source创建。
+本片没有observation表，因此不伪称已验真实late observation竞争；下一桥writer必须同Run-first锁、purge后零insert，
+并同步将其表加入现delete_run_rows。unknown由原权威terminal结清后可按retention清理，不永久免GC。
+
+### 完整typed4候选前置与精确后继范围
+
+现ChatEventType/机器3/checker只允许旧interaction；真实interaction.state必须连同完整resume字段、全量payload、
+decoded mapping和错误契约一起进入owner候选，不能隐藏在旧interaction/activity。先三面及候选contract测试一致，
+再P2事务核；候选未完成全部native/worker/consumer门前不发artifact、不让BFF pin，不宣称现3可兼容新payload。
+本次仅D0；以下36路径为下一源码卡候选，不授权全部旧52。2新普通文件是新SQL adapter与新事务PG测试；
+现runtime profile测试新增缺登记/source-wheel断言，属于相对旧52精确补列。generated只能现generator重建。
+
+```text
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/database/schema.sql
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repositories.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repository.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/chat/models.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/chat/projection.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_repository.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_admission.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_leases.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_context.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/schema.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/interfaces/http/ingress.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile_sources.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/control.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/events.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/__init__.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/run_failure_generated.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/chat_contract_check.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/contract_check.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/contract/openapi/v1/openapi.json
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/contract/provenance.json
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/support/fakes.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_runtime_profile.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/chat/test_projection.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/http/test_control_receipts.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_machine_contract.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_chat_response_envelopes.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_canonical_database_schema.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_schema_installation.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_run_interaction_transactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md
+```
+
+现PostgresChatRepository已有append_on_cursor无需新增writer；原native测试、worker/supervisor、checkpoint_interactions、
+checkpoints、P3B/fork/lock均不在此36范围。若实现发现完整candidate编解码另需路径，先报Root，不手写生成或放宽检查。
+
+### 真PG RED顺序（Root独占运行；当前均未执行）
+
+新test_run_interaction_transactions.py使用现run_repository/chat_repository/run_chat_database_url/隔离schema fixtures，
+不启动DB、不依赖Redis/provider。明确测试方法和注入步骤：
+
+| 测试case | RED/验收事实 |
+| --- | --- |
+| `test_pause_and_accept_rollback_at_each_write` | 参数化head/command/Chat INSERT后故障；独立连接核全回滚，revision/source/seq无半提交。成功再独立读取三者一致。 |
+| `test_same_pause_two_connections_have_one_accept` | ownedDB精确PID Run blocker及包括soft queue的wait graph；同/异command和同/异决策，最多一个新accept/source，另一精确重放或冲突。 |
+| `test_old_command_replay_preserves_new_validation_round` | 同ID新pause后重放原command；返回原intent，当前revision/pending/lease不变；差异bytes、partial/extra/duplicate/stale整批拒绝。 |
+| `test_locked_expiry_and_paused_adoption_are_distinct` | 行锁等待中越过expiry，锁后拒绝；真实waiting+NULL可接受，active+NULL/expired active/异tenant/旧ref/terminal拒绝；不借泛adopt。 |
+| `test_start_commit_grants_execution_once` | 双连接争同attempt；只有一StartedResume。独立连接看到完整start记录后才增加本地计数；重放/新attempt/unknown不给许可。commit后模拟调用前crash也unknown、计数不补投。 |
+| `test_start_rollback_and_lost_ack_preserve_identity` | 写start后异常回滚，仍accepted；成功commit丢响应后重读精确attempt只replayed，零二次许可。禁止模拟“丢响应”时回滚已经提交的事实。 |
+| `test_terminal_wins_without_late_head_or_source` | accept/start与cancel/execution terminal两种锁先后；原finalize_terminal原子清集合/结全部intent，交互terminal先于最终事件；旧generation零新事实，重放终态不增seq。 |
+| `test_purge_and_control_creation_have_no_orphans_in_both_lock_orders` | purge与admit_control双向锁先后证明创建零孤儿；record_control_delivery另证明UPDATE资格：先更新后随Run删除，或Run消失零UPDATE，绝不称其原会INSERT；额外检查晚到record_pause/unknown不复活。 |
+| `test_schema_rejects_incomplete_interaction_rows` | fresh owner/schema catalog、两唯一索引、每项具名CHECK真实非法INSERT/UPDATE；删除列/改CHECK/旧schema fail-closed；JSON内部重复ID由decoder/域规则拒绝。 |
+| `test_private_decisions_never_enter_chat_state` | 原bytes/locator与公开安全payload分别读取；全group顺序/validation保留，私有payload不出source；完整typed mapping拒unknown字段。 |
+
+并发不得靠sleep/泛实例waiter或增加timeout；只定位自有数据库和确切测试PID/Run。fixture新旧native证据测试分文件不改调度。
+Root入口：`KOKORO_AGENT_DATABASE_URL=<owned URL> uv run --frozen --offline --no-sync pytest -o addopts='' -m integration tests/integration/database/test_run_interaction_transactions.py tests/integration/database/test_schema_installation.py -q`。
+P2实现后跑现default/contract/architecture及安装wheel资源闭包；以上命令现在只是待验入口，不是绿灯。
+
+后继active API须精确ConsumedPauseEvidence：run/pause/command/attempt/generation、原全集及各namespace/task实际消费与因果successor。
+分类器位于真实native adapter；域只核身份/集合，不接受consumed=True猜测。固定PG mixed batch旧RESUME槽不齐仍unknown零重投，
+不能只凭successor或saver返回清active。观察表/完整恢复/所有入口屏障/最终GC仍后继硬门；Conversation最终释放未决不阻P2。
+
+选择快照方案B：Run pause_snapshot_json冻结完整groups（含display/validation/allowed_decisions）＋locator，
+command resume_pause_snapshot_json复制接受时原快照；当前pending_groups_json只表示可见集合。waiting/resuming与snapshot.groups一致，
+terminal清当前pending而保快照；新pause替换Run快照不改历史command。decoder从各自完整快照重算摘要，不信裸digest，不从新head补旧值。
+这两份快照分属当前pause和历史命令生命周期，只有record_pause/accept单向写入，不设双向同步或第二可编辑真源。
+
+### R29 Root裁决：事务先行，不机械切断协议真实消费者
+
+36是完整HITL owner实施目标内的先行事务TDD候选，不是可独立发布/宣称default全绿的完整4切片。
+若typed4变更使旧实际消费者失败，保留真实RED及待整HITL验收工作树；不以旧decision alias、默认item/revision、
+旧interaction payload或隐藏新source换取局部绿。Root每阶段另卡，只派精确当批，不一次授权旧52或下面扩展集合。
+
+已核实际依赖：execution/approvals.py:371–417仍按tool_id/request_id寻址；hitl/input.py:43–63是native局部回灌校验；
+supervisor_control.py:136–175还有提前synthetic returned，必须替换。run_agent.py:63–68当前用emitter发布旧awaiting；
+supervisor_execution.py:235之后才分离pause。新的完整collection与暂停lease释放必须移入A事务，不能两次发布。
+supervisor_context.py:66–77及supervisor.py:105–107只跟踪task/lease，健康判定需要绑定真实durable attempt，
+所以这两个现文件是原52遗漏的实际接线候选，不以新表/服务代替。native内部request_id仍是HumanRequest身份，
+外部item_id由受信完整pending映射到它；不保留外部旧decision寻址alias。
+
+| 依赖阶段 | 先RED，再允许的实现/退出门 |
+| --- | --- |
+| P2事务TDD先行 | 新事务test先缺能力/原子性RED，随后36中Root授权的SQL/port/adapter/typed候选必要子集；真PG只证明存储事务，不证明原生提交。源码卡由Root另定。 |
+| 同一HITL交付内的协议＋消费接线 | 先现test_public_contract/test_hitl/test_control_commands等强制新item/revision/全集map；再替换approvals、input、run_agent及control全部旧寻址/提前结果路径，record_pause/accept/start正式接入；禁止局部兼容。 |
+| 同一HITL交付内的真实证据桥 | 先嵌套、多轮validation、缺证据unknown、观察丢失和healthy attempt RED；再checkpoint装饰/观察表/恢复与active证据API。其schema/上下文清理仍复用本36内文件，但桥新增列/表先经该阶段三面门。 |
+| 最终完整验收/发布 | 新旧所有相关default＋Root真实事务/native/全链、HTTP-only、安装wheel、机器及安全门通过；Root统一验收owner artifact后BFF再pin。此前不宣称完整4可提交发布。 |
+
+相对36的实际扩展候选如下；其中tests/unit/agents/test_factory.py仍验证真实恢复build同profile，
+test_request_human保native信封/回灌行为，不能只改最容易的四份tests就宣称所有消费者已更新。
+原tests/contract/test_deepagents.py、tests/integration/database/test_run_interactions.py的固定native证明保持原样回归，
+新的owner事务/桥测试放新事务文件或由后继Root明确另卡；不篡改旧八例以适配猜测的证据语义。
+
+```text
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/approvals.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/events.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/run_agent.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/protocols.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/hitl/input.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/main.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_context.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_control.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_execution.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_recovery.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/checkpoint_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/checkpoints.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_hitl.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_request_input.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_request_human.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_control_commands.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_supervisor.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_subagent_hitl.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/chat/test_emitter.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_factory.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_public_contract.py
+```
+
+这22是依赖落点清单，不是当前写授权或承诺全部都要改；Root按每阶段实际方法变化冻结精确子集。
+原52是历史整体候选，未覆盖新事务分文件/显式source闭包测试/真实attempt跟踪等后来发现的职责，不能按数字机械缩减目标。
 
 ## AGENT-HITL-DOMAIN-P1-R28：纯交互规则实现子门
 

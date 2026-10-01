@@ -63,22 +63,6 @@ class _Activity(_Payload):
     error: str | None = None
 
 
-class _Interaction(_Payload):
-    interaction_id: str
-    segment_id: str
-    tool_id: str
-    name: str
-    kind: str
-    description: str
-    allowed_decisions: list[str]
-    args: dict[str, JsonValue]
-    editable: bool
-    pending_tool_ids: list[str]
-    risk: dict[str, JsonValue] | None = None
-    input_schema: dict[str, JsonValue] | None = None
-    result: str | None = None
-
-
 class _Delivery(_Payload):
     tool_call_id: str
     artifact_id: str
@@ -174,25 +158,9 @@ def project_chat_fact(
             truncated=payload.truncated,
         )
     elif isinstance(payload, ToolAwaitingApprovalPayload):
-        event_type = "interaction"
-        safe_payload = _Interaction(
-            interaction_id=payload.tool_id,
-            segment_id=payload.segment_id,
-            tool_id=payload.tool_id,
-            name=payload.name,
-            kind=payload.kind,
-            description=payload.description,
-            allowed_decisions=list(payload.allowed_decisions),
-            # Tool arguments are intentionally not persisted in the chat
-            # projection.  Approval UI gets the redacted public shape; raw
-            # arguments remain in the execution-owned event stream.
-            args={},
-            editable=payload.editable,
-            pending_tool_ids=list(payload.pending_tool_ids),
-            risk=None if payload.risk is None else payload.risk.model_dump(mode="json"),
-            input_schema=payload.input_schema,
-            result=payload.result,
-        )
+        # Partial execution notifications cannot supply the committed collection,
+        # pause identity or revision. Only the Run transaction writes this source.
+        raise ValueError("interaction source requires a complete durable pause")
     elif isinstance(payload, SubagentStartedPayload):
         event_type = "activity"
         safe_payload = _Activity(

@@ -52,7 +52,7 @@ model/factory.py worker/dependencies.py worker/main.py
         "guards",
         """
 tools/guards.py tools/middleware.py tools/permissions.py hitl/__init__.py
-hitl/input.py hitl/request.py hitl/presets.py domain/run/models.py
+hitl/input.py hitl/request.py hitl/presets.py domain/run/models.py domain/run/interactions.py
 domain/run/repository.py domain/run/repositories.py domain/run/scope.py
 protocol/__init__.py protocol/control.py protocol/events.py protocol/streams.py protocol/run_failure_generated.py
 """,
@@ -105,7 +105,6 @@ domain/chat/repositories.py
 domain/chat/time.py
 domain/run/__init__.py
 execution/__init__.py
-execution/approvals.py
 execution/events.py
 execution/failures.py
 execution/publish_agent_events.py
@@ -127,6 +126,7 @@ generated/platform_request_projector.py
 infrastructure/__init__.py
 infrastructure/chat_mappers.py
 infrastructure/checkpoints.py
+infrastructure/checkpoint_interactions.py
 infrastructure/memory_store.py
 infrastructure/postgres.py
 infrastructure/postgres_chat_repository.py
@@ -139,6 +139,7 @@ infrastructure/postgres_run_events.py
 infrastructure/postgres_run_leases.py
 infrastructure/postgres_run_repository.py
 infrastructure/postgres_run_profiles.py
+infrastructure/postgres_run_interactions.py
 infrastructure/postgres_run_sandbox.py
 infrastructure/schema.py
 infrastructure/sql.py

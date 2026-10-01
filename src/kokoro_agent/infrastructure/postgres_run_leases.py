@@ -19,6 +19,9 @@ from kokoro_agent.domain.run.models import (
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepository
+from kokoro_agent.infrastructure.postgres_run_interactions import (
+    PostgresRunInteractions,
+)
 from kokoro_agent.infrastructure.postgres_run_events import (
     PostgresRunEvents,
     outbox_row_to_frame,
@@ -39,7 +42,6 @@ from kokoro_agent.infrastructure.schema import (
     RUN_DISPATCHES_TABLE,
     RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
-    SANDBOX_CLEANUP_INTENTS_TABLE,
     RUN_RECEIPTS_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
@@ -385,45 +387,7 @@ class PostgresRunLeases:
         )
 
     async def purge_terminal(self, max_age_ms: int) -> int:
-        cutoff = self._context.clock() - max_age_ms
-        async with connect_pg(self._context.database_url) as conn:
-            async with conn.transaction():
-                async with conn.cursor() as cur:
-                    await execute_sql(
-                        cur,
-                        """
-                        SELECT claim.run_id
-                        FROM {} AS claim
-                        WHERE claim.terminal = TRUE
-                          AND claim.terminal_at IS NOT NULL
-                          AND claim.terminal_at <= to_timestamp(%s / 1000.0)
-                          AND NOT EXISTS (
-                              SELECT 1
-                              FROM {} AS cleanup
-                              WHERE cleanup.run_id = claim.run_id
-                                AND cleanup.status <> 'completed'
-                          )
-                        """.format(
-                            qualified(self._context.schema, RUN_CLAIMS_TABLE),
-                            qualified(
-                                self._context.schema, SANDBOX_CLEANUP_INTENTS_TABLE
-                            ),
-                        ),
-                        (cutoff,),
-                    )
-                    rows = await fetch_all(cur)
-                    run_ids = [str(row["run_id"]) for row in rows]
-                    if not run_ids:
-                        return 0
-                    await self._context.delete_run_rows(cur, run_ids)
-                    await execute_sql(
-                        cur,
-                        "DELETE FROM {} WHERE run_id = ANY(%s)".format(
-                            qualified(self._context.schema, RUN_CLAIMS_TABLE)
-                        ),
-                        (run_ids,),
-                    )
-        return len(run_ids)
+        return await self._context.purge_terminal(max_age_ms)
 
     async def finalize_terminal(
         self,
@@ -728,6 +692,19 @@ class PostgresRunLeases:
                             )
                             assert started_projection is not None
                             await chat.append_on_cursor(cur, started_projection)
+                    index = await PostgresRunInteractions(
+                        self._context
+                    ).terminal_on_cursor(
+                        cur,
+                        request,
+                        row,
+                        now=datetime.fromtimestamp(now / 1000, tz=UTC),
+                        index=index,
+                        visible=not quarantine,
+                    )
+                    terminal_frame = terminal_frame.model_copy(update={"index": index})
+                    frames[-1] = terminal_frame
+                    if not quarantine:
                         projection = project_chat_fact(
                             tenant_id=request.execution_identity.tenant_ref,
                             namespace=scope.namespace,

@@ -524,3 +524,24 @@ def test_canonical_json_shared_encoder_rejects_bound_objects() -> None:
         canonical_json({"bound": object()})
     with pytest.raises(ValueError, match="finite"):
         canonical_json({"value": float("nan")})
+
+
+def test_hitl_transaction_sources_are_explicit_installed_resources() -> None:
+    from kokoro_agent.execution.runtime_profile_sources import production_manifest
+
+    manifest = production_manifest()
+    required = {
+        "domain/run/interactions.py",
+        "infrastructure/postgres_run_interactions.py",
+    }
+    registered = {
+        path
+        for source in manifest.sources
+        if source.package == "kokoro_agent"
+        for path in source.resource_paths
+    }
+    assert required <= registered
+    for source in manifest.sources:
+        if required.intersection(source.resource_paths):
+            descriptor = manifest.descriptor(source.source_id)
+            assert descriptor["files"]

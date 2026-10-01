@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from typing import Literal
 
 from langchain_core.callbacks import get_usage_metadata_callback
 from langchain_core.messages import UsageMetadata
@@ -15,7 +17,6 @@ from kokoro_agent.protocol import (
     RunFailedPayload,
     RunStartedPayload,
 )
-from kokoro_agent.execution.approvals import awaiting_payloads
 from kokoro_agent.execution.events import RunEmitter, SourceResolver
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
@@ -37,6 +38,10 @@ async def invoke_once(
         [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
     ],
     record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
+    on_native_settled: Callable[
+        [Callable[[], Awaitable[tuple[int, int]]]],
+        Awaitable[Literal["active", "waiting", "unknown"]],
+    ],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
 ) -> bool:
@@ -60,33 +65,41 @@ async def invoke_once(
             )
             async with run:
                 await pump_run(emitter, run, source_for=source_for)
-                if await run.interrupted():
-                    snapshot = await agent.aget_state(config)
-                    for awaiting in awaiting_payloads(
-                        snapshot, approval_tool_names, describe_tool=describe_tool
-                    ):
-                        await emitter.emit(awaiting)
-                    # 暂停段的用量当场入账：终态段只报累计值，多段 run 不再少报。
-                    await _record(record_usage, usage_cb.usage_metadata)
-                    return False
+                interrupted = await run.interrupted()
             outcome: RunCompletedPayload | RunFailedPayload = RunCompletedPayload(
                 status="completed"
             )
         except Exception as error:  # noqa: BLE001 — execution failures become safe facts
             outcome = run_failed_payload(error)
+        else:
+            # The SDK context has drained. Persistence failures deliberately sit
+            # outside the native exception handler: no invented failed outcome.
+            segment = _usage_totals(usage_cb.usage_metadata)
+            sealed: tuple[int, int] | None = None
+            seal_lock = asyncio.Lock()
+
+            async def seal_usage() -> tuple[int, int]:
+                nonlocal sealed
+                async with seal_lock:
+                    if sealed is None:
+                        sealed = await record_usage(*segment)
+                    return sealed
+
+            # Waiting/unknown settlement seals before it can release the lease.
+            # Active leaves usage to the unique atomic terminal transaction.
+            phase = await on_native_settled(seal_usage)
+            if interrupted:
+                # A conservative reader may still report active after an SDK
+                # interrupt. Retain this segment using only the original fence.
+                await seal_usage()
+                return False
+            if phase != "active":
+                return False
         # Persistence failures propagate; never turn a failed commit of one
         # outcome into a second, different terminal decision.
         totals = _usage_totals(usage_cb.usage_metadata)
         await finalize_terminal(outcome, totals)
         return True
-
-
-async def _record(
-    record_usage: Callable[[int, int], Awaitable[tuple[int, int]]],
-    per_model: Mapping[str, UsageMetadata],
-) -> tuple[int, int]:
-    # callback 按 model_name 分组；跨 model 累加本段用量后入账，返回 run 级累计。
-    return await record_usage(*_usage_totals(per_model))
 
 
 def _usage_totals(per_model: Mapping[str, UsageMetadata]) -> tuple[int, int]:

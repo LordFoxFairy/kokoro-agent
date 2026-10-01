@@ -252,3 +252,180 @@ async def test_control_publish_failure_persists_failed_receipt() -> None:
     assert failed["status"] == "failed"
     assert failed["error_code"] == "control_enqueue_failed"
     assert failed["replayed"] is False
+
+
+@pytest.mark.asyncio
+async def test_resume_normalization_binds_ingress_stored_body_and_decoder() -> None:
+    from kokoro_agent.infrastructure.postgres_run_interactions import (
+        decode_resume_command,
+    )
+    from kokoro_agent.protocol.control import RunResume, control_request_digest
+
+    repository = ReceiptRepository()
+    ingress = _ingress(Bus(), repository)
+    body: dict[str, object] = {
+        "kind": "run.resume",
+        "session_id": "session-1",
+        "expected_pause_revision": 1,
+        "pause_ref": "pause-1",
+        "decisions": [{"type": "reject", "item_id": "item-1"}],
+    }
+    first = await ingress.control(
+        "run-1", body, command_id="cmd", execution_identity=_identity()
+    )
+    # Only this nullable optional reason may normalize omission to explicit null.
+    second = await ingress.control(
+        "run-1",
+        {
+            **body,
+            "decisions": [{"type": "reject", "item_id": "item-1", "reason": None}],
+        },
+        command_id="cmd",
+        execution_identity=_identity(),
+    )
+    assert first["request_digest"] == second["request_digest"]
+    assert second["replayed"] is True
+    stored = repository.commands[("run-1", "cmd")]
+    text = str(stored["body"])
+    parsed = RunResume.model_validate_json(text)
+    digest = str(stored["request_digest"])
+    assert control_request_digest(parsed) == digest
+    assert parsed.request_digest == digest
+    assert parsed.model_dump_json() == text
+    submission = decode_resume_command(
+        text, digest, run_id="run-1", session_id="session-1", command_id="cmd"
+    )
+    assert submission.decisions[0].payload == b"{}"
+    with pytest.raises(ValueError):
+        decode_resume_command(
+            text + " ", digest, run_id="run-1", session_id="session-1", command_id="cmd"
+        )
+    assert len(repository.commands) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault", ["revision", "ref", "item", "unknown", "nullable_required", "duplicate"]
+)
+async def test_resume_required_identity_and_unknown_fields_fail_before_admission(
+    fault: str,
+) -> None:
+    repository = ReceiptRepository()
+    bus = Bus()
+    body: dict[str, Any] = {
+        "kind": "run.resume",
+        "session_id": "session-1",
+        "expected_pause_revision": 1,
+        "pause_ref": "pause-1",
+        "decisions": [{"type": "approve", "item_id": "item-1"}],
+    }
+    if fault == "revision":
+        body.pop("expected_pause_revision")
+    elif fault == "ref":
+        body.pop("pause_ref")
+    elif fault == "item":
+        body["decisions"][0].pop("item_id")
+    elif fault == "unknown":
+        body["decisions"][0]["unknown"] = None
+    elif fault == "duplicate":
+        body["decisions"].append(dict(body["decisions"][0]))
+    else:
+        body["pause_ref"] = None
+    with pytest.raises(IngressError) as caught:
+        await _ingress(bus, repository).control(
+            "run-1", body, command_id="cmd", execution_identity=_identity()
+        )
+    assert caught.value.status == 400
+    assert repository.commands == {} and bus.published == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["run.cancel", "run.steer"])
+@pytest.mark.parametrize("field", ["pause_ref", "expected_pause_revision"])
+async def test_resume_only_fields_do_not_change_cancel_or_steer_contract(
+    kind: str, field: str
+) -> None:
+    repository = ReceiptRepository()
+    body: dict[str, object] = {"kind": kind, "session_id": "session-1", field: None}
+    if kind == "run.steer":
+        body.update(message_id="m", content="hi")
+    with pytest.raises(IngressError) as caught:
+        await _ingress(Bus(), repository).control(
+            "run-1", body, command_id="cmd", execution_identity=_identity()
+        )
+    assert caught.value.code == "invalid_run_control"
+    assert repository.commands == {}
+
+
+@pytest.mark.parametrize("kind", ["run.cancel", "run.steer"])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"decisions": []},
+        {"decisions": None},
+        {"pause_ref": None},
+        {"expected_pause_revision": None},
+    ],
+)
+async def test_non_resume_rejects_resume_fields_before_admission(
+    kind: str, extra: dict[str, object]
+) -> None:
+    repository = ReceiptRepository()
+    bus = Bus()
+    body: dict[str, object] = {"kind": kind, "session_id": "session-1", **extra}
+    if kind == "run.steer":
+        body.update(message_id="m", content="continue")
+    with pytest.raises(IngressError) as caught:
+        await _ingress(bus, repository).control(
+            "run-1", body, command_id="bad-kind", execution_identity=_identity()
+        )
+    assert caught.value.status == 400 and caught.value.code == "invalid_run_control"
+    assert repository.commands == {} and bus.published == []
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {"type": "approve", "tool_id": "old"},
+        {"type": "submit", "request_id": "old", "value": {}},
+        {"type": "edit", "item_id": "item"},
+        {"type": "respond", "item_id": "item", "response": ""},
+    ],
+)
+async def test_resume_rejects_old_or_invalid_decisions_with_complete_pause_identity(
+    decision: dict[str, object],
+) -> None:
+    repository, bus = ReceiptRepository(), Bus()
+    with pytest.raises(IngressError) as caught:
+        await _ingress(bus, repository).control(
+            "run-1",
+            {
+                "kind": "run.resume",
+                "session_id": "session-1",
+                "expected_pause_revision": 1,
+                "pause_ref": "pause-1",
+                "decisions": [decision],
+            },
+            command_id="invalid",
+            execution_identity=_identity(),
+        )
+    assert caught.value.status == 400 and caught.value.code == "invalid_run_control"
+    assert repository.commands == {} and bus.published == []
+
+
+@pytest.mark.parametrize(
+    "extra", [{"message_id": None}, {"content": "not-a-cancel-field"}]
+)
+async def test_cancel_rejects_steer_fields_before_admission(
+    extra: dict[str, object],
+) -> None:
+    repository, bus = ReceiptRepository(), Bus()
+    with pytest.raises(IngressError) as failure:
+        await _ingress(bus, repository).control(
+            "run-1",
+            {"kind": "run.cancel", "session_id": "session-1", **extra},
+            command_id="command",
+            execution_identity=_identity(),
+        )
+    assert (failure.value.status, failure.value.code) == (400, "invalid_run_control")
+    assert repository.commands == {} and bus.published == []

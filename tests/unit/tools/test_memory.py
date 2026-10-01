@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from support.fakes import terminal_emitter
+from collections.abc import Iterator
+from support.fakes import isolated_native_registry
+
+from support.fakes import terminal_emitter, settled_state_callback
 
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.store.base import BaseStore
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import ValidationError
 import pytest
 
@@ -23,7 +27,7 @@ from kokoro_agent.tools.memory import SaveMemoryArgs, make_memory_tools
 
 
 def _context(namespace: str, run_id: str) -> tuple[RunScope, str]:
-    return RunScope(namespace=namespace, session_id="s1"), run_id
+    return RunScope(namespace=namespace, session_id=run_id), run_id
 
 
 async def _run(
@@ -31,6 +35,7 @@ async def _run(
     store: BaseStore,
     context: tuple[RunScope, str],
     bus: RedisStream,
+    checkpointer: BaseCheckpointSaver[str],
 ) -> RedisStream:
     scope, run_id = context
     agent = create_test_deep_agent(
@@ -38,7 +43,7 @@ async def _run(
         tools=list(make_memory_tools(scope.namespace)),
         system_prompt="x",
         subagents=[],
-        checkpointer=None,
+        checkpointer=checkpointer,
         permissions=[],
         interrupt_on={},
         store=store,
@@ -58,6 +63,7 @@ async def _run(
             terminal_test_emitter_1, claim, usage_recorder()[0]
         ),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(agent, scope.scoped_thread_id),
     )
     assert terminal is True
     return bus
@@ -111,7 +117,7 @@ def _search_script(query: str) -> list[AIMessage]:
 
 
 async def test_save_then_search_across_runs_same_namespace(
-    stream: RedisStream, memory_store: BaseStore
+    stream: RedisStream, memory_store: BaseStore, checkpointer: BaseCheckpointSaver[str]
 ) -> None:
     store = memory_store
     r1, r2 = f"r1-{uuid4().hex}", f"r2-{uuid4().hex}"
@@ -120,9 +126,12 @@ async def test_save_then_search_across_runs_same_namespace(
         store,
         _context("team-a", r1),
         stream,
+        checkpointer,
     )
     # 跨 run（新图、新 run_id、同 store）：记忆持久可读。
-    bus = await _run(_search_script("dark"), store, _context("team-a", r2), stream)
+    bus = await _run(
+        _search_script("dark"), store, _context("team-a", r2), stream, checkpointer
+    )
     result = await _tool_result(bus, r2, "search_memory")
     assert "user likes dark mode" in result
     items = await store.asearch(("team-a", "memories"))
@@ -132,25 +141,33 @@ async def test_save_then_search_across_runs_same_namespace(
 
 
 async def test_namespace_isolation_between_tenants(
-    stream: RedisStream, memory_store: BaseStore
+    stream: RedisStream, memory_store: BaseStore, checkpointer: BaseCheckpointSaver[str]
 ) -> None:
     store = memory_store
     r1, r2 = f"r1-{uuid4().hex}", f"r2-{uuid4().hex}"
     await _run(
-        _save_script("k", "team-a secret"), store, _context("team-a", r1), stream
+        _save_script("k", "team-a secret"),
+        store,
+        _context("team-a", r1),
+        stream,
+        checkpointer,
     )
-    bus = await _run(_search_script("secret"), store, _context("team-b", r2), stream)
+    bus = await _run(
+        _search_script("secret"), store, _context("team-b", r2), stream, checkpointer
+    )
     assert await _tool_result(bus, r2, "search_memory") == "no memories found"
     assert await store.asearch(("team-b",)) == []
     assert len(await store.asearch(("team-a", "memories"))) == 1
 
 
 async def test_save_memory_error_reaches_wire_as_tool_error(
-    stream: RedisStream, memory_store: BaseStore
+    stream: RedisStream, memory_store: BaseStore, checkpointer: BaseCheckpointSaver[str]
 ) -> None:
     store = memory_store
     r1 = f"r1-{uuid4().hex}"
-    bus = await _run(_save_script("k", "   "), store, _context("team-a", r1), stream)
+    bus = await _run(
+        _save_script("k", "   "), store, _context("team-a", r1), stream, checkpointer
+    )
     result = await _tool_result(bus, r1, "save_memory")
     assert "non-empty" in result
     assert await store.asearch(("team-a", "memories")) == []
@@ -169,3 +186,9 @@ async def test_save_memory_error_reaches_wire_as_tool_error(
 def test_save_memory_args_schema_rejects_invalid(args: dict[str, str]) -> None:
     with pytest.raises(ValidationError):
         SaveMemoryArgs.model_validate(args)
+
+
+@pytest.fixture(autouse=True)
+def isolate_sdk_profile_side_effects() -> Iterator[None]:
+    with isolated_native_registry():
+        yield

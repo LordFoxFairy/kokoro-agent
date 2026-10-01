@@ -22,6 +22,7 @@ from kokoro_agent.infrastructure.postgres import (
 )
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
+    RUN_CHECKPOINT_OBSERVATIONS_TABLE,
     RUN_CONTROL_COMMANDS_TABLE,
     RUN_DISPATCHES_TABLE,
     RUN_OUTBOX_TABLE,
@@ -242,7 +243,17 @@ class PostgresRunRepositoryContext:
         self, run_id: str, command_id: str, status: str
     ) -> None:
         async with connect_pg(self.database_url) as conn:
-            async with conn.cursor() as cur:
+            async with conn.transaction(), conn.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    "SELECT terminal FROM {} WHERE run_id=%s FOR UPDATE".format(
+                        qualified(self.schema, RUN_CLAIMS_TABLE)
+                    ),
+                    (run_id,),
+                )
+                run = await fetch_one(cur)
+                if run is None or run["terminal"]:
+                    return
                 await execute_sql(
                     cur,
                     """
@@ -250,7 +261,12 @@ class PostgresRunRepositoryContext:
                     SET status = %s, updated_at = to_timestamp(%s / 1000.0)
                     WHERE run_id = %s AND command_id = %s AND status = 'persisted'
                     """.format(qualified(self.schema, RUN_CONTROL_COMMANDS_TABLE)),
-                    (status, self.clock(), run_id, command_id),
+                    (
+                        status,
+                        int((await self.database_now(cur)).timestamp() * 1000),
+                        run_id,
+                        command_id,
+                    ),
                 )
 
     async def update_control_command_status(
@@ -262,7 +278,17 @@ class PostgresRunRepositoryContext:
         error_code: str | None = None,
     ) -> None:
         async with connect_pg(self.database_url) as conn:
-            async with conn.cursor() as cur:
+            async with conn.transaction(), conn.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    "SELECT terminal FROM {} WHERE run_id=%s FOR UPDATE".format(
+                        qualified(self.schema, RUN_CLAIMS_TABLE)
+                    ),
+                    (run_id,),
+                )
+                run = await fetch_one(cur)
+                if run is None or run["terminal"]:
+                    return
                 await execute_sql(
                     cur,
                     """
@@ -272,7 +298,13 @@ class PostgresRunRepositoryContext:
                     WHERE run_id = %s AND command_id = %s
                       AND status IN ('admitted', 'persisted', 'applied')
                     """.format(qualified(self.schema, RUN_CONTROL_COMMANDS_TABLE)),
-                    (status, error_code, self.clock(), run_id, command_id),
+                    (
+                        status,
+                        error_code,
+                        int((await self.database_now(cur)).timestamp() * 1000),
+                        run_id,
+                        command_id,
+                    ),
                 )
 
     async def fetch_outbox(self, outbox_filter: OutboxFilter) -> list[dict[str, Any]]:
@@ -295,10 +327,59 @@ class PostgresRunRepositoryContext:
                 )
                 return [dict(row) for row in await fetch_all(cur)]
 
+    async def purge_terminal(self, max_age_ms: int) -> int:
+        if max_age_ms < 0:
+            raise ValueError("negative retention")
+        async with connect_pg(self.database_url) as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await execute_sql(
+                        cur,
+                        """SELECT run_id FROM {} WHERE terminal=TRUE
+                        ORDER BY run_id FOR UPDATE""".format(
+                            qualified(self.schema, RUN_CLAIMS_TABLE)
+                        ),
+                    )
+                    locked = [str(row["run_id"]) for row in await fetch_all(cur)]
+                    if not locked:
+                        return 0
+                    now = await self.database_now(cur)
+                    await execute_sql(
+                        cur,
+                        """SELECT claim.run_id FROM {} AS claim
+                        WHERE claim.run_id=ANY(%s) AND claim.terminal=TRUE
+                          AND claim.interaction_phase='terminal'
+                          AND claim.terminal_at <= %s - %s * interval '1 millisecond'
+                          AND NOT EXISTS (SELECT 1 FROM {} AS cleanup
+                            WHERE cleanup.run_id=claim.run_id AND cleanup.status <> 'completed')
+                          AND NOT EXISTS (SELECT 1 FROM {} AS command
+                            WHERE command.run_id=claim.run_id AND command.resume_intent_status IS NOT NULL
+                              AND command.resume_intent_status <> 'terminal')
+                        ORDER BY claim.run_id""".format(
+                            qualified(self.schema, RUN_CLAIMS_TABLE),
+                            qualified(self.schema, SANDBOX_CLEANUP_INTENTS_TABLE),
+                            qualified(self.schema, RUN_CONTROL_COMMANDS_TABLE),
+                        ),
+                        (locked, now, max_age_ms),
+                    )
+                    run_ids = [str(row["run_id"]) for row in await fetch_all(cur)]
+                    if not run_ids:
+                        return 0
+                    await self.delete_run_rows(cur, run_ids)
+                    await execute_sql(
+                        cur,
+                        "DELETE FROM {} WHERE run_id=ANY(%s)".format(
+                            qualified(self.schema, RUN_CLAIMS_TABLE)
+                        ),
+                        (run_ids,),
+                    )
+                    return len(run_ids)
+
     async def delete_run_rows(self, cur: Any, run_ids: list[str]) -> None:
         if not run_ids:
             return
         for table in (
+            RUN_CHECKPOINT_OBSERVATIONS_TABLE,
             RUN_OUTBOX_TABLE,
             RUN_RECEIPTS_TABLE,
             RUN_RECEIPT_MANIFESTS_TABLE,

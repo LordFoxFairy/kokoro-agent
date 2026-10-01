@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kokoro_agent.domain.run.interactions import InteractionRunMissing
 from kokoro_agent.domain.run.repository import (
     ControlAdmission,
     ControlAdmissionReceipt,
@@ -97,9 +98,19 @@ class PostgresRunAdmission:
         ``command_id`` is the durable identity.  A retry may only replay the
         original command when its canonical request digest is unchanged.
         """
-        now = self._context.clock()
         async with connect_pg(self._context.database_url) as conn:
-            async with conn.cursor() as cur:
+            async with conn.transaction(), conn.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    "SELECT terminal FROM {} WHERE run_id=%s FOR UPDATE".format(
+                        qualified(self._context.schema, RUN_CLAIMS_TABLE)
+                    ),
+                    (run_id,),
+                )
+                run = await fetch_one(cur)
+                if run is None:
+                    raise InteractionRunMissing("Run was not found")
+                now = int((await self._context.database_now(cur)).timestamp() * 1000)
                 await execute_sql(
                     cur,
                     """
@@ -186,25 +197,25 @@ class PostgresRunAdmission:
         body: str,
     ) -> bool:
         async with connect_pg(self._context.database_url) as conn:
-            async with conn.cursor() as cur:
+            async with conn.transaction(), conn.cursor() as cur:
                 await execute_sql(
                     cur,
                     """
                     SELECT terminal
                     FROM {}
-                    WHERE run_id = %s
+                    WHERE run_id = %s FOR UPDATE
                     """.format(qualified(self._context.schema, RUN_CLAIMS_TABLE)),
                     (run_id,),
                 )
                 row = await fetch_one(cur)
-                if row is None:
+                if row is None or row["terminal"]:
                     return False
                 await execute_sql(
                     cur,
                     """
                     SELECT request_digest
                     FROM {}
-                    WHERE run_id = %s AND command_id = %s
+                    WHERE run_id = %s AND command_id = %s FOR UPDATE
                     """.format(
                         qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
                     ),
@@ -233,7 +244,7 @@ class PostgresRunAdmission:
                     ),
                     (
                         fingerprint,
-                        self._context.clock(),
+                        int((await self._context.database_now(cur)).timestamp() * 1000),
                         run_id,
                         command_id,
                     ),

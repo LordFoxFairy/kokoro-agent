@@ -79,7 +79,7 @@ async def test_first_pass_caches_then_interrupts(
 ) -> None:
     store = FakeRunRepository()
     handler = _Handler()
-    seen = _patch_interrupt(monkeypatch, [{"tool_id": "c1", "type": "approve"}])
+    seen = _patch_interrupt(monkeypatch, [{"request_id": "c1", "type": "approve"}])
     result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "raw result"
     assert handler.calls == 1
@@ -106,7 +106,7 @@ async def test_resume_reentry_skips_handler(monkeypatch: pytest.MonkeyPatch) -> 
     store = FakeRunRepository()
     store.tool_results[("rn", "c1")] = ("first run result", False)
     handler = _Handler("second run result")
-    _patch_interrupt(monkeypatch, [{"tool_id": "c1", "type": "approve"}])
+    _patch_interrupt(monkeypatch, [{"request_id": "c1", "type": "approve"}])
     result = await (await _mw(store)).awrap_tool_call(_request(), handler)
     assert isinstance(result, ToolMessage) and result.text == "first run result"
     assert handler.calls == 0
@@ -115,7 +115,7 @@ async def test_resume_reentry_skips_handler(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_respond_replaces_result(monkeypatch: pytest.MonkeyPatch) -> None:
     store = FakeRunRepository()
     _patch_interrupt(
-        monkeypatch, [{"tool_id": "c1", "type": "respond", "response": "curated"}]
+        monkeypatch, [{"request_id": "c1", "type": "respond", "response": "curated"}]
     )
     result = await (await _mw(store)).awrap_tool_call(_request(), _Handler())
     assert isinstance(result, ToolMessage) and result.text == "curated"
@@ -124,7 +124,7 @@ async def test_respond_replaces_result(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_reject_discards_result(monkeypatch: pytest.MonkeyPatch) -> None:
     store = FakeRunRepository()
     _patch_interrupt(
-        monkeypatch, [{"tool_id": "c1", "type": "reject", "reason": "wrong data"}]
+        monkeypatch, [{"request_id": "c1", "type": "reject", "reason": "wrong data"}]
     )
     result = await (await _mw(store)).awrap_tool_call(_request(), _Handler())
     assert isinstance(result, ToolMessage)
@@ -136,9 +136,14 @@ async def test_reject_discards_result(monkeypatch: pytest.MonkeyPatch) -> None:
     "resume_value",
     [
         "not-a-list",
-        [{"tool_id": "someone-else", "type": "approve"}],
-        [{"tool_id": "c1", "type": "edit", "response": None, "reason": None}],
-        [{"tool_id": "c1", "type": "respond"}],
+        [{"tool_id": "c1", "type": "approve"}],
+        [
+            {"request_id": "c1", "type": "approve"},
+            {"request_id": "c1", "type": "reject"},
+        ],
+        [{"request_id": "someone-else", "type": "approve"}],
+        [{"request_id": "c1", "type": "edit", "response": None, "reason": None}],
+        [{"request_id": "c1", "type": "respond"}],
     ],
 )
 async def test_bad_resume_values_fail_loud(
@@ -146,5 +151,5 @@ async def test_bad_resume_values_fail_loud(
 ) -> None:
     store = FakeRunRepository()
     _patch_interrupt(monkeypatch, resume_value)
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValueError):
         await (await _mw(store)).awrap_tool_call(_request(), _Handler())

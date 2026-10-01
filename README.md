@@ -176,13 +176,14 @@ HTTP owner 的接口、fixture 要求和验收证据见 [`ACCEPTANCE.md`](ACCEPT
 
 ## 关键不变量
 
-- wire 词汇由本仓 `protocol/` 与 Agent v1 API 文档定义；GA ProductEvent 写入 `chat_events`，由 `chat_event_id + seq` 保证幂等与顺序；
-  契约 optional 字段缺席=省略（exclude_none），null 永不上 wire。
-- 请求流 XREADGROUP 消费、parse 后即 XACK；崩溃恢复权在 RunStateStore TTL 租约，
-  HITL 暂停置哨兵永不被重拾重跑，其 control 监听由存活 worker 心跳收养。
-- claim-before-emit：cancel/自然完成/异常三路共用同一原子认领键，恰好一个终态事件。
-- HITL 帧构造唯一在 `execution/approvals.py`：resume 按 tool_id fail-loud 对齐，
-  `tool.awaiting_approval` 携带 `pending_tool_ids`（同帧凑齐才提交的契约依据）。
+- Agent HTTP4 保持 `/v1`；机器契约与 typed protocol 一致。Chat 事实以 `chat_event_id + seq` 保证幂等与顺序；
+  字段省略/null 按 schema 区分，`pause_ref`、`action_result` 为必需 nullable 字段。
+- Run/command 的 durable admission、lease/fence 与持久状态决定执行资格；Redis 投递和 ACK 不是执行或恢复事实。
+  HITL waiting 保存完整 pending 集合，unknown 不自动重投。
+- 终态由 `finalize_terminal` 在受信 authority 下同事务完成 Run、command、usage、terminal interaction、终态 Chat/outbox；
+  终态重放不新增事实。
+- HITL 使用正式 saver 与独立 reader 的持久证据，resume 必须匹配 pause revision/ref 和完整 item 集合；
+  仅 `StartedResume` 允许一次 native 调用，HTTP ACK/普通活动不解除等待。
 - 第三方类型豁免锁死于 `tests/contract/test_boundary_pragmas.py` allowlist，
   行内 `type: ignore` 全仓为零（同测执法）。
 - 异常 → `run.failed` 终态 fail-loud，worker 存活（单消息隔离，不崩调度循环）。

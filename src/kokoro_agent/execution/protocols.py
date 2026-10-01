@@ -112,7 +112,9 @@ class AgentRunnable(Protocol):
         transformers: Sequence[type[StreamTransformer]],
     ) -> AgentRunStream: ...
 
-    async def aget_state(self, config: RunnableConfig) -> NativeStateSnapshot: ...
+    async def aget_state(
+        self, config: RunnableConfig, *, subgraphs: bool = False
+    ) -> NativeStateSnapshot: ...
 
 
 def is_agent_runnable(value: object) -> TypeGuard[AgentRunnable]:

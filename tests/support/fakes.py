@@ -4,9 +4,45 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from copy import deepcopy
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from support.chat import FakeChatRepository
+from kokoro_agent.domain.run.interactions import (
+    AcceptedResume,
+    CheckpointObservation,
+    ConsumedPauseEvidence,
+    UnknownResumeEvidence,
+    ObservationStored,
+    ObservationTarget,
+    QuiescentProbe,
+    ReconcileProbeResult,
+    ResumeReadContext,
+    InteractionRecoveryTarget,
+    InteractionState,
+    InteractionConflict,
+    InteractionAuthorityLost,
+    InteractionRunMissing,
+    PendingGroup,
+    PendingItem,
+    ValidationIssue,
+    IntentStatus,
+    Phase,
+    DurablePauseSnapshot,
+    InteractionCommitted,
+    InteractionSnapshot,
+    ReplayedResume,
+    ResumeDispatchPlan,
+    StartedResume,
+)
+from kokoro_agent.infrastructure.postgres_run_interactions import (
+    canonical_interaction_bytes,
+    decode_pause_snapshot,
+    decode_resume_command,
+    decode_checkpoint_observation,
+    StoredResumePlan,
+)
 from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.domain.chat.models import chat_event_id
 from kokoro_agent.protocol import RunStartedPayload
@@ -27,13 +63,20 @@ from kokoro_agent.protocol import (
     RunControlReceiptPayload,
     TokenUsage,
 )
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Literal, TypeVar, cast
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Sequence,
+    Generator,
+)
+from dataclasses import dataclass, field, replace
+from typing import Literal, TypeVar, TypeGuard, cast
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
-from langgraph.types import Interrupt
+from langgraph.types import Interrupt, Command
 from pydantic import JsonValue
 
 from kokoro_agent.protocol import (
@@ -42,15 +85,28 @@ from kokoro_agent.protocol import (
     IdentityRef,
     RunInput,
     RunRequest,
+    RunResume,
+    RunCancel,
+    RunSteer,
     agent_event_adapter,
     run_events_stream,
 )
+from kokoro_agent.protocol.control import control_request_digest
 from kokoro_agent.protocol import REQUESTS_STREAM, RUN_EVENTS_MAXLEN
 from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
+from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.execution.protocols import AgentRunnable
+from kokoro_agent.infrastructure.checkpoint_interactions import (
+    PauseReadTarget,
+    ResumeReadTarget,
+    NativePauseRead,
+    PreparedNativeResume,
+    ObservedNativeResume,
+)
 from kokoro_agent.streams.protocol import StreamProtocol
-from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.domain.run.scope import runtime_namespace, RunScope
 from kokoro_agent.domain.run.repository import (
     RunControlCommandRecord,
     ControlAdmission,
@@ -161,7 +217,320 @@ class FakeBus:
 class FakeRunRepository:
     """协议等价的内存 store：租约以 leases dict 表达，None=暂停哨兵。"""
 
+    async def read_interaction(self, request: RunRequest) -> InteractionSnapshot | None:
+        if self.requests.get(request.run_id) != request:
+            return None
+        return self.interaction_snapshots.get(
+            request.run_id,
+            InteractionSnapshot(
+                state=InteractionState(), pause=None, source_index=None
+            ),
+        )
+
+    async def _interaction_authority(
+        self, request: RunRequest, lease: LeaseFence
+    ) -> None:
+        if self.requests.get(request.run_id) != request:
+            raise InteractionRunMissing()
+        if not await self.is_lease_current(request.run_id, lease):
+            raise InteractionAuthorityLost()
+
+    def _save_interaction(
+        self, run_id: str, state: InteractionState, pause: DurablePauseSnapshot | None
+    ) -> InteractionSnapshot:
+        snapshot = InteractionSnapshot(
+            state=state, pause=pause, source_index=state.interaction_revision
+        )
+        self.interaction_snapshots[run_id] = snapshot
+        return snapshot
+
+    async def record_pause(
+        self, request: RunRequest, lease: LeaseFence, pause: DurablePauseSnapshot
+    ) -> InteractionCommitted | ReplayedResume:
+        await self._interaction_authority(request, lease)
+        parsed = decode_pause_snapshot(pause)
+        current = await self.read_interaction(request)
+        assert current is not None
+        groups = tuple(
+            PendingGroup(
+                group_id=g.group_id,
+                items=tuple(
+                    PendingItem(
+                        item_id=i.item_id,
+                        request_id=i.request_id,
+                        allowed_decisions=tuple(i.allowed_decisions),
+                        validation=None
+                        if i.validation is None
+                        else ValidationIssue(
+                            instance_path=tuple(i.validation.instance_path)
+                        ),
+                    )
+                    for i in g.items
+                ),
+            )
+            for g in parsed.groups
+        )
+        state = current.state.pause(pause_ref=pause.pause_ref, groups=groups)
+        snapshot = self._save_interaction(request.run_id, state, pause)
+        self.leases[request.run_id] = None
+        self.paused_runs.append(request.run_id)
+        return InteractionCommitted(snapshot=snapshot)
+
+    async def accept_resume(
+        self, request: RunRequest, command_id: str, owner: str
+    ) -> AcceptedResume | ReplayedResume:
+        current = await self.read_interaction(request)
+        if current is None:
+            raise InteractionRunMissing()
+        entry = self.control_commands.get((request.run_id, command_id))
+        if entry is None:
+            raise InteractionConflict("command_missing")
+        body, digest = entry["body"], entry["request_digest"]
+        assert isinstance(body, str) and isinstance(digest, str)
+        submission = decode_resume_command(
+            body,
+            digest,
+            run_id=request.run_id,
+            session_id=request.session_id,
+            command_id=command_id,
+        )
+        context = self.resume_contexts.get((request.run_id, command_id))
+        if context is not None:
+            context.intent.verify_replay(submission)
+            return ReplayedResume(
+                snapshot=current,
+                original_intent=context.intent,
+                accepted_source_index=context.snapshot.source_index,
+            )
+        state = current.state.accept(submission)
+        assert current.pause is not None and state.intent is not None
+        if request.run_id in self.terminals:
+            raise InteractionConflict("terminal")
+        self.generations[request.run_id] += 1
+        self.owners[request.run_id] = owner
+        self.leases[request.run_id] = self._active_expiry()
+        lease = self.current_lease(request.run_id)
+        assert lease is not None
+        snapshot = self._save_interaction(request.run_id, state, current.pause)
+        self.resume_contexts[(request.run_id, command_id)] = ResumeReadContext(
+            snapshot=snapshot,
+            original_pause=current.pause,
+            intent=state.intent,
+            dispatch_plan=None,
+            attempt_generation=None,
+            observation_digest=None,
+        )
+        return AcceptedResume(snapshot=snapshot, lease=lease)
+
+    async def start_resume(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        command_id: str,
+        plan: ResumeDispatchPlan,
+    ) -> StartedResume | ReplayedResume:
+        await self._interaction_authority(request, lease)
+        context = await self.read_resume_context(request, command_id)
+        if context is None:
+            raise InteractionConflict("command_missing")
+        if not context.intent.can_dispatch:
+            return ReplayedResume(
+                snapshot=context.snapshot,
+                original_intent=context.intent,
+                accepted_source_index=context.snapshot.source_index,
+            )
+        stored_plan = StoredResumePlan.model_validate_json(plan.canonical_bytes)
+        assert stored_plan.attempt_id == plan.attempt_id
+        state = context.snapshot.state.start(
+            command_id=command_id, attempt_id=plan.attempt_id
+        )
+        assert state.intent is not None
+        snapshot = self._save_interaction(request.run_id, state, context.original_pause)
+        self.resume_contexts[(request.run_id, command_id)] = replace(
+            context,
+            snapshot=snapshot,
+            intent=state.intent,
+            dispatch_plan=plan,
+            attempt_generation=lease.generation,
+        )
+        return StartedResume(snapshot=snapshot, attempt_id=plan.attempt_id)
+
+    async def mark_resume_unknown(
+        self, request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str
+    ) -> InteractionCommitted | ReplayedResume:
+        await self._interaction_authority(request, lease)
+        context = await self.read_resume_context(request, command_id)
+        if context is None or context.intent.attempt_id != attempt_id:
+            raise InteractionConflict("attempt_conflict")
+        state = context.snapshot.state.unknown(command_id=command_id)
+        assert state.intent is not None
+        snapshot = self._save_interaction(request.run_id, state, context.original_pause)
+        self.resume_contexts[(request.run_id, command_id)] = replace(
+            context, snapshot=snapshot, intent=state.intent
+        )
+        return InteractionCommitted(snapshot=snapshot)
+
+    async def read_resume_context(
+        self, request: RunRequest, command_id: str
+    ) -> ResumeReadContext | None:
+        current = await self.read_interaction(request)
+        context = self.resume_contexts.get((request.run_id, command_id))
+        return (
+            None
+            if current is None or context is None
+            else replace(context, snapshot=current)
+        )
+
+    async def record_checkpoint_observation(
+        self, request: RunRequest, lease: LeaseFence, observation: CheckpointObservation
+    ) -> ObservationStored:
+        if self.requests.get(request.run_id) != request:
+            raise InteractionRunMissing()
+        decode_checkpoint_observation(observation, request)
+        key = (request.run_id, observation.digest)
+        existing = self.checkpoint_observations.get(key)
+        if existing is not None and existing != observation:
+            raise InteractionConflict("observation_conflict")
+        current = (
+            await self.is_lease_current(request.run_id, lease)
+            and observation.target.generation == lease.generation
+        )
+        self.checkpoint_observations[key] = observation
+        return ObservationStored(
+            digest=observation.digest,
+            disposition="current" if current else "audit",
+            inserted=existing is None,
+        )
+
+    async def read_checkpoint_observations(
+        self, request: RunRequest, target: ObservationTarget
+    ) -> tuple[CheckpointObservation, ...]:
+        if self.requests.get(request.run_id) != request:
+            return ()
+        return tuple(
+            value
+            for (run_id, _), value in self.checkpoint_observations.items()
+            if run_id == request.run_id and value.target == target
+        )
+
+    async def reconcile_resume(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        evidence: ConsumedPauseEvidence | UnknownResumeEvidence,
+    ) -> InteractionCommitted | ReplayedResume:
+        await self._interaction_authority(request, lease)
+        context = await self.read_resume_context(request, evidence.command_id)
+        if context is None or (
+            context.intent.attempt_id,
+            context.attempt_generation,
+            context.original_pause.digest,
+        ) != (
+            evidence.attempt_id,
+            evidence.attempt_generation,
+            evidence.collection_digest,
+        ):
+            raise InteractionConflict("attempt_conflict")
+        if not evidence.observation_digests or any(
+            (request.run_id, d) not in self.checkpoint_observations
+            for d in evidence.observation_digests
+        ):
+            raise InteractionConflict("observation_missing")
+        if isinstance(evidence, UnknownResumeEvidence):
+            return await self.mark_resume_unknown(
+                request, lease, evidence.command_id, evidence.attempt_id
+            )
+        state = context.snapshot.state
+        intent = replace(context.intent, status=IntentStatus.RECONCILED)
+        if evidence.disposition == "waiting":
+            assert evidence.next_pause is not None
+            # Reuse the same domain transition, with a current lease, not a second selector.
+            result = await self.record_pause(request, lease, evidence.next_pause)
+            snapshot = result.snapshot
+        else:
+            state = replace(
+                state,
+                phase=Phase.ACTIVE,
+                groups=(),
+                intent=intent,
+                interaction_revision=state.interaction_revision + 1,
+            )
+            snapshot = self._save_interaction(
+                request.run_id, state, context.original_pause
+            )
+        self.resume_contexts[(request.run_id, evidence.command_id)] = replace(
+            context,
+            snapshot=snapshot,
+            intent=intent,
+            observation_digest=evidence.observation_digests[-1],
+        )
+        return InteractionCommitted(snapshot=snapshot)
+
+    async def record_reconcile_probe(
+        self, request: RunRequest, lease: LeaseFence, probe: QuiescentProbe
+    ) -> ReconcileProbeResult:
+        await self._interaction_authority(request, lease)
+        command_id = probe.observation.target.command_id
+        attempt_id = probe.observation.target.attempt_id
+        assert command_id is not None and attempt_id is not None
+        context = await self.read_resume_context(request, command_id)
+        if (
+            context is None
+            or context.intent.attempt_id != attempt_id
+            or context.attempt_generation != lease.generation
+        ):
+            raise InteractionConflict("attempt_conflict")
+        key = (request.run_id, command_id, attempt_id)
+        prior = self.reconcile_probes.get(key)
+        if prior is not None and prior[0].read_id == probe.read_id:
+            return ReconcileProbeResult(
+                count=prior[1], exhausted=prior[1] >= 3, snapshot=context.snapshot
+            )
+        count = (
+            1
+            if prior is None
+            else min(prior[1] + 1, 3)
+            if (prior[0].progress_digest, prior[0].quiescence)
+            == (probe.progress_digest, probe.quiescence)
+            else 0
+        )
+        await self.record_checkpoint_observation(request, lease, probe.observation)
+        self.reconcile_probes[key] = (probe, count)
+        return ReconcileProbeResult(
+            count=count, exhausted=count >= 3, snapshot=context.snapshot
+        )
+
+    async def reset_reconcile_probe(
+        self, request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str
+    ) -> None:
+        await self._interaction_authority(request, lease)
+        self.reconcile_probes.pop((request.run_id, command_id, attempt_id), None)
+
+    async def list_unsettled_interactions(
+        self, limit: int = 100
+    ) -> tuple[InteractionRecoveryTarget, ...]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("invalid limit")
+        return tuple(
+            InteractionRecoveryTarget(run_id=run_id, command_id=command_id)
+            for (run_id, command_id), context in self.resume_contexts.items()
+            if run_id not in self.terminals
+            and context.intent.status
+            in {
+                IntentStatus.ACCEPTED,
+                IntentStatus.DISPATCH_STARTED,
+                IntentStatus.NATIVE_OBSERVED,
+                IntentStatus.UNKNOWN,
+            }
+        )[:limit]
+
     def __init__(self) -> None:
+        self.interaction_snapshots: dict[str, InteractionSnapshot] = {}
+        self.resume_contexts: dict[tuple[str, str], ResumeReadContext] = {}
+        self.checkpoint_observations: dict[tuple[str, str], CheckpointObservation] = {}
+        self.reconcile_probes: dict[
+            tuple[str, str, str], tuple[QuiescentProbe, int]
+        ] = {}
         self.chat_repository = FakeChatRepository()
         self.requests: dict[str, RunRequest] = {}
         self.request_json: dict[str, str] = {}
@@ -505,32 +874,25 @@ class FakeRunRepository:
         fingerprint: str | None,
         body: str,
     ) -> bool:
-        # worker unit fixture 可直接投递 control；缺少 HTTP admission 时在同一 ledger 建立 persisted 行。
-        if run_id not in self.requests:
+        del body
+        if run_id not in self.requests or run_id in self.terminals:
             return False
-        key = (run_id, command_id)
-        existing = self.control_commands.get(key)
-        if existing is not None:
-            if (
-                request_digest is not None
-                and existing["request_digest"] != request_digest
-            ):
-                raise ControlCommandConflict("command digest mismatch")
+        existing = self.control_commands.get((run_id, command_id))
+        if existing is None:
             return False
-        self.control_commands[key] = {
-            "run_id": run_id,
-            "command_id": command_id,
-            "request_digest": request_digest,
-            "fingerprint": fingerprint,
-            "status": "persisted",
-            "body": body,
-            "error_code": None,
-        }
+        if request_digest is not None and existing["request_digest"] != request_digest:
+            raise ControlCommandConflict("command digest mismatch")
+        if existing["status"] != "admitted":
+            return False
+        existing["status"] = "persisted"
+        existing["fingerprint"] = fingerprint
         return True
 
     async def admit_control(
         self, run_id: str, command_id: str, request_digest: str, body: str
     ) -> ControlAdmission:
+        if run_id not in self.requests:
+            raise InteractionRunMissing("Run was not found")
         key = (run_id, command_id)
         existing = self.control_commands.get(key)
         if existing is not None:
@@ -1087,6 +1449,20 @@ class FakeRunRepository:
                     lease.owner,
                     lease.generation,
                 )
+            current_interaction = self.interaction_snapshots.get(run_id)
+            if current_interaction is not None:
+                terminal_state = current_interaction.state.terminal()
+                self._save_interaction(
+                    run_id, terminal_state, current_interaction.pause
+                )
+                for key, context in tuple(self.resume_contexts.items()):
+                    if key[0] == run_id:
+                        self.resume_contexts[key] = replace(
+                            context,
+                            intent=replace(
+                                context.intent, status=IntentStatus.TERMINAL
+                            ),
+                        )
             self.terminals.add(run_id)
             self.leases[run_id] = None
             self.terminal_at[run_id] = self.clock_ms
@@ -1126,6 +1502,22 @@ class FakeRunRepository:
         for run_id in stale:
             self.terminals.discard(run_id)
             self.terminal_at.pop(run_id, None)
+            self.interaction_snapshots.pop(run_id, None)
+            self.resume_contexts = {
+                key: value
+                for key, value in self.resume_contexts.items()
+                if key[0] != run_id
+            }
+            self.checkpoint_observations = {
+                key: value
+                for key, value in self.checkpoint_observations.items()
+                if key[0] != run_id
+            }
+            self.reconcile_probes = {
+                key: value
+                for key, value in self.reconcile_probes.items()
+                if key[0] != run_id
+            }
             self.requests.pop(run_id, None)
             self.leases.pop(run_id, None)
             self.owners.pop(run_id, None)
@@ -1481,6 +1873,7 @@ class FakeRunStream:
     custom_items: Sequence[object] = ()
     is_interrupted: bool = False
     raise_on_messages: bool = False
+    context_exited: bool = False
 
     @property
     def messages(self) -> AsyncIterator[FakeModel]:
@@ -1504,9 +1897,11 @@ class FakeRunStream:
         return self.is_interrupted
 
     async def __aenter__(self) -> "FakeRunStream":
+        self.context_exited = False
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.context_exited = True
         return None
 
 
@@ -1548,7 +1943,9 @@ class FakeAgent:
             raise self.raise_on_stream
         return self.run
 
-    async def aget_state(self, config: RunnableConfig) -> FakeState:
+    async def aget_state(
+        self, config: RunnableConfig, *, subgraphs: bool = False
+    ) -> FakeState:
         return self.state
 
 
@@ -1683,3 +2080,340 @@ def repository_terminal_callback(
         return result.status in {"committed", "replayed"}
 
     return finish
+
+
+async def read_unpaused_interaction(
+    *,
+    request: RunRequest,
+    lease: LeaseFence,
+    handle: AgentHandle,
+    target: PauseReadTarget | ResumeReadTarget,
+) -> NativePauseRead | PreparedNativeResume | ObservedNativeResume | ReplayedResume:
+    """Explicit non-HITL fixture: inspect native state and reject any pending work.
+
+    This reader supplies no checkpoint evidence. Tests with pauses/resume must
+    provide a real reader or explicitly scripted evidence instead of using it.
+    """
+    del lease
+    assert isinstance(target, PauseReadTarget), "resume needs explicit evidence fixture"
+    state = await handle.runnable.aget_state(
+        {"configurable": {"thread_id": RunScope.of(request).scoped_thread_id}},
+        subgraphs=True,
+    )
+    assert not state.interrupts, "pending native state needs explicit evidence fixture"
+    raise InteractionConflict("native_not_paused")
+
+
+def settled_state_callback(
+    agent: AgentRunnable, thread_id: str
+) -> Callable[
+    [Callable[[], Awaitable[tuple[int, int]]]],
+    Awaitable[Literal["active", "waiting", "unknown"]],
+]:
+    """Invoke-only fixture records actual state; it does not claim durable binding."""
+
+    async def settle(
+        seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        if isinstance(agent, FakeAgent):
+            assert agent.run.context_exited, "settlement precedes native drain"
+        state = await agent.aget_state(
+            {"configurable": {"thread_id": thread_id}}, subgraphs=True
+        )
+        if state.interrupts:
+            await seal_usage()
+            return "waiting"
+        return "active"
+
+    return settle
+
+
+def interaction_pause_fixture(
+    run: RunRequest, *, pause_ref: str = "pause-1"
+) -> DurablePauseSnapshot:
+    """Explicit trusted storage fixture, not evidence of native writes."""
+    raw = canonical_interaction_bytes(
+        {
+            "format": "kokoro-agent:pause-collection:1",
+            "groups": [
+                {
+                    "group_id": "group-1",
+                    "items": [
+                        {
+                            "item_id": "item-A",
+                            "request_id": "call-A",
+                            "kind": "tool_approval",
+                            "allowed_decisions": ["approve", "edit", "reject"],
+                            "display": {
+                                "name": "danger",
+                                "description": "Danger",
+                                "editable": True,
+                                "input_schema": dict[str, JsonValue](),
+                            },
+                            "validation": None,
+                        }
+                    ],
+                }
+            ],
+            "locator": {
+                "groups": [
+                    {
+                        "group_id": "group-1",
+                        "thread_id": RunScope.of(run).scoped_thread_id,
+                        "checkpoint_ns": "",
+                        "checkpoint_id": "unit-checkpoint",
+                        "tasks": [
+                            {
+                                "task_id": "unit-task",
+                                "interrupt_id": "unit-interrupt",
+                                "item_ids": ["item-A"],
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    return DurablePauseSnapshot(
+        pause_ref=pause_ref, canonical_bytes=raw, digest=hashlib.sha256(raw).hexdigest()
+    )
+
+
+async def admit_resume_fixture(
+    repository: FakeRunRepository,
+    run: RunRequest,
+    *,
+    command_id: str,
+    decisions: list[dict[str, JsonValue]],
+    revision: int = 1,
+    pause_ref: str = "pause-1",
+) -> RunResume:
+    """The same strictly typed bytes/digest enter fake ingress and port decoding."""
+    command = RunResume.model_validate(
+        {
+            "kind": "run.resume",
+            "run_id": run.run_id,
+            "session_id": run.session_id,
+            "command_id": command_id,
+            "expected_pause_revision": revision,
+            "pause_ref": pause_ref,
+            "decisions": decisions,
+        }
+    )
+    digest = control_request_digest(command)
+    command = command.model_copy(update={"request_digest": digest})
+    await repository.admit_control(
+        run.run_id, command_id, digest, command.model_dump_json()
+    )
+    return command
+
+
+class InitialPauseThenUnknownReader:
+    """Explicit supervisor-only scenario: initial pause, permitted call, unknown.
+
+    Values are declared fixtures, never inferred from a native interrupt. Actual
+    adapter mapping/consumption is tested separately with native and real PG.
+    A started attempt always remains unknown here: no fake successful evidence.
+    """
+
+    def __init__(
+        self, repository: FakeRunRepository, *, native_value: JsonValue
+    ) -> None:
+        self.repository = repository
+        self.native_value = native_value
+        self.initial_reads: set[str] = set()
+        self.calls: list[PauseReadTarget | ResumeReadTarget] = []
+
+    async def __call__(
+        self,
+        *,
+        request: RunRequest,
+        lease: LeaseFence,
+        handle: AgentHandle,
+        target: PauseReadTarget | ResumeReadTarget,
+    ) -> NativePauseRead | PreparedNativeResume | ObservedNativeResume | ReplayedResume:
+        del handle
+        self.calls.append(target)
+        if isinstance(target, PauseReadTarget):
+            assert target.command_id is None
+            if request.run_id not in self.initial_reads:
+                self.initial_reads.add(request.run_id)
+                raise InteractionConflict("native_not_paused")
+            pause = interaction_pause_fixture(request)
+            parsed = decode_pause_snapshot(pause)
+            locator = parsed.locator.groups[0]
+            empty_digest = hashlib.sha256(canonical_interaction_bytes([])).hexdigest()
+            raw = canonical_interaction_bytes(
+                {
+                    "format": "kokoro-agent:checkpoint-observation:1",
+                    "run_id": request.run_id,
+                    "generation": lease.generation,
+                    "command_id": None,
+                    "attempt_id": None,
+                    "kind": "pause",
+                    "probe_read_id": None,
+                    "facts": [
+                        {
+                            "group_id": locator.group_id,
+                            "thread_id": locator.thread_id,
+                            "checkpoint_ns": locator.checkpoint_ns,
+                            "checkpoint_id": locator.checkpoint_id,
+                            "parent_checkpoint_id": None,
+                            "successors": [],
+                            "tasks": [
+                                {
+                                    "task_id": "unit-task",
+                                    "interrupt_id": "unit-interrupt",
+                                    "item_ids": ["item-A"],
+                                    "resume_length": 0,
+                                    "resume_digest": empty_digest,
+                                    "error": False,
+                                    "interrupt_digest": hashlib.sha256(
+                                        pause.canonical_bytes
+                                    ).hexdigest(),
+                                }
+                            ],
+                        }
+                    ],
+                    "pause": parsed.model_dump(mode="json", exclude_unset=True),
+                    "pause_ref": pause.pause_ref,
+                }
+            )
+            observation = CheckpointObservation(
+                target=ObservationTarget(
+                    generation=lease.generation, command_id=None, attempt_id=None
+                ),
+                kind="pause",
+                canonical_bytes=raw,
+                digest=hashlib.sha256(raw).hexdigest(),
+            )
+            return NativePauseRead(pause=pause, observation=observation)
+        context = await self.repository.read_resume_context(request, target.command_id)
+        assert context is not None
+        if context.intent.status in {IntentStatus.RECONCILED, IntentStatus.TERMINAL}:
+            return ReplayedResume(
+                snapshot=context.snapshot,
+                original_intent=context.intent,
+                accepted_source_index=context.snapshot.source_index,
+            )
+        if context.intent.status is IntentStatus.ACCEPTED:
+            attempt = "unit-attempt-" + target.command_id
+            raw = canonical_interaction_bytes(
+                {
+                    "format": "kokoro-agent:resume-dispatch:1",
+                    "attempt_id": attempt,
+                    "groups": [
+                        {
+                            "group_id": "group-1",
+                            "tasks": [
+                                {
+                                    "task_id": "unit-task",
+                                    "interrupt_id": "unit-interrupt",
+                                    "pre_resume_length": 0,
+                                    "pre_resume_digest": hashlib.sha256(
+                                        canonical_interaction_bytes([])
+                                    ).hexdigest(),
+                                    "expected_append_digest": hashlib.sha256(
+                                        canonical_interaction_bytes([self.native_value])
+                                    ).hexdigest(),
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+            return PreparedNativeResume(
+                plan=ResumeDispatchPlan(attempt_id=attempt, canonical_bytes=raw),
+                command=Command(resume={"unit-interrupt": self.native_value}),
+            )
+        assert (
+            context.intent.attempt_id is not None
+            and context.attempt_generation is not None
+        )
+        raw = canonical_interaction_bytes(
+            {
+                "format": "kokoro-agent:checkpoint-observation:1",
+                "run_id": request.run_id,
+                "generation": lease.generation,
+                "command_id": target.command_id,
+                "attempt_id": context.intent.attempt_id,
+                "kind": "read",
+                "probe_read_id": None,
+                "facts": [],
+            }
+        )
+        observation = CheckpointObservation(
+            target=ObservationTarget(
+                generation=lease.generation,
+                command_id=target.command_id,
+                attempt_id=context.intent.attempt_id,
+            ),
+            kind="read",
+            canonical_bytes=raw,
+            digest=hashlib.sha256(raw).hexdigest(),
+        )
+        return ObservedNativeResume(
+            observations=(observation,),
+            evidence=UnknownResumeEvidence(
+                command_id=target.command_id,
+                attempt_id=context.intent.attempt_id,
+                attempt_generation=context.attempt_generation,
+                pause_revision=context.intent.pause_revision,
+                pause_ref=context.intent.pause_ref,
+                collection_digest=context.original_pause.digest,
+                observation_digests=(observation.digest,),
+            ),
+        )
+
+
+async def admit_control_fixture(
+    repository: FakeRunRepository,
+    message: RunResume | RunCancel | RunSteer,
+) -> RunResume | RunCancel | RunSteer:
+    if isinstance(message, RunResume):
+        digest = control_request_digest(message)
+    else:
+        payload = message.model_dump(
+            mode="json", exclude={"command_id", "request_digest"}, exclude_none=True
+        )
+        digest = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+        )
+    normalized = message.model_copy(update={"request_digest": digest})
+    await repository.admit_control(
+        normalized.run_id, normalized.command_id, digest, normalized.model_dump_json()
+    )
+    return normalized
+
+
+def _mutable_registry(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+@contextmanager
+def isolated_native_registry() -> Generator[None, None, None]:
+    """Raw SDK unit probes restore exactly the registry state they inherited."""
+    from deepagents.profiles import _builtin_profiles as bootstrap
+    from deepagents.profiles.harness import harness_profiles
+    from deepagents.profiles.provider import provider_profiles
+
+    harness: object = getattr(harness_profiles, "_HARNESS_PROFILES")
+    provider: object = getattr(provider_profiles, "_PROVIDER_PROFILES")
+    assert _mutable_registry(harness) and _mutable_registry(provider)
+    harness_before, provider_before = dict(harness), dict(provider)
+    fields = ("_loaded", "_loading_thread_id", "_BOOTSTRAP_HARNESS_KEYS")
+    before: dict[str, object] = {name: getattr(bootstrap, name) for name in fields}
+    try:
+        yield
+    finally:
+        harness.clear()
+        harness.update(harness_before)
+        provider.clear()
+        provider.update(provider_before)
+        for name, value in before.items():
+            setattr(bootstrap, name, value)

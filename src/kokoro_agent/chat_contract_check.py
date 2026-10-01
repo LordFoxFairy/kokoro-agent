@@ -47,7 +47,10 @@ _TYPED_SCHEMAS: dict[str, object] = {
         "x-kokoro-decoded-payloads": {
             "discriminator": "event_type",
             "property": "payload_json",
-            "mapping": {"run.failed": "#/components/schemas/ChatFailure"},
+            "mapping": {
+                "run.failed": "#/components/schemas/ChatFailure",
+                "interaction.state": "#/components/schemas/ChatInteractionState",
+            },
         },
         "type": "object",
         "required": [
@@ -73,7 +76,7 @@ _TYPED_SCHEMAS: dict[str, object] = {
                     "assistant.delta",
                     "assistant.completed",
                     "activity",
-                    "interaction",
+                    "interaction.state",
                     "delivery",
                     "run.completed",
                     "run.failed",
@@ -91,6 +94,98 @@ _TYPED_SCHEMAS: dict[str, object] = {
 }
 
 
+_HITL_REQUIRED: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "ResumeControl": (
+        frozenset(
+            {"kind", "session_id", "expected_pause_revision", "pause_ref", "decisions"}
+        ),
+        frozenset(),
+    ),
+    "ChatInteractionState": (
+        frozenset(
+            {
+                "interaction_revision",
+                "pause_revision",
+                "pause_ref",
+                "phase",
+                "groups",
+                "action_result",
+            }
+        ),
+        frozenset(),
+    ),
+    "InteractionGroup": (frozenset({"group_id", "items"}), frozenset()),
+    "InteractionItem": (
+        frozenset({"item_id", "request_id", "kind", "allowed_decisions", "display"}),
+        frozenset({"validation"}),
+    ),
+    "InteractionDisplay": (
+        frozenset({"name", "description", "editable", "input_schema"}),
+        frozenset({"result_preview", "truncated", "source"}),
+    ),
+    "InteractionValidation": (frozenset({"code", "instance_path"}), frozenset()),
+    "InteractionActionResult": (
+        frozenset({"command_id", "pause_revision", "kind"}),
+        frozenset(),
+    ),
+}
+
+
+def _validate_hitl_shapes(schemas: dict[str, object]) -> None:
+    """Guard the owner-only identity and safe projection boundaries of HTTP4."""
+    for name, (required, optional) in _HITL_REQUIRED.items():
+        schema = _object(schemas.get(name), source=f"HITL {name}")
+        fields = TypeAdapter(list[str]).validate_python(schema.get("required"))
+        properties = _object(schema.get("properties"), source=f"HITL {name} properties")
+        if (
+            schema.get("type") != "object"
+            or schema.get("additionalProperties") is not False
+            or len(fields) != len(required)
+            or frozenset(fields) != required
+            or frozenset(properties) != required | optional
+        ):
+            raise ValueError(f"HITL {name} strict fields are invalid")
+    resume = _object(schemas["ResumeControl"], source="HITL resume")
+    properties = _object(resume["properties"], source="HITL resume properties")
+    if (
+        properties.get("expected_pause_revision") != {"type": "integer", "minimum": 1}
+        or properties.get("pause_ref") != _IDENTIFIER
+    ):
+        raise ValueError("HITL required pause identity is invalid")
+    decision = _object(schemas.get("ResumeDecision"), source="HITL decision")
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        decision.get("oneOf")
+    )
+    expected_fields: dict[str, tuple[set[str], set[str]]] = {
+        "approve": ({"type", "item_id"}, {"args"}),
+        "edit": ({"type", "item_id", "args"}, set()),
+        "reject": ({"type", "item_id"}, {"reason"}),
+        "respond": ({"type", "item_id", "response"}, set()),
+        "submit": ({"type", "item_id", "value"}, set()),
+    }
+    seen: set[str] = set()
+    for branch in branches:
+        properties = _object(
+            branch.get("properties"), source="HITL decision properties"
+        )
+        kind = _object(properties.get("type"), source="HITL decision type").get("const")
+        if not isinstance(kind, str) or kind not in expected_fields or kind in seen:
+            raise ValueError("HITL decision kinds are invalid")
+        seen.add(kind)
+        decision_required, decision_optional = expected_fields[kind]
+        fields = TypeAdapter(list[str]).validate_python(branch.get("required"))
+        if (
+            branch.get("additionalProperties") is not False
+            or set(properties) != decision_required | decision_optional
+            or set(fields) != decision_required
+            or len(fields) != len(decision_required)
+            or properties.get("item_id") != _IDENTIFIER
+        ):
+            raise ValueError("HITL decision identity or strict fields are invalid")
+    if seen != set(expected_fields):
+        raise ValueError("HITL decision collection is incomplete")
+
+
 def _object(value: object, *, source: str) -> dict[str, object]:
     try:
         return _OBJECT.validate_python(value)
@@ -105,6 +200,7 @@ def validate_chat_response_contract(
 
     components = _object(document.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
+    _validate_hitl_shapes(schemas)
     for name, expected in _TYPED_SCHEMAS.items():
         if schemas.get(name) != expected:
             raise ValueError(f"{name} typed response payload schema is invalid")
@@ -161,8 +257,8 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
-    if _object(document.get("info"), source="info").get("version") != "3.0.0":
-        raise ValueError("failure profiles require HTTP 3.0.0")
+    if _object(document.get("info"), source="info").get("version") != "4.0.0":
+        raise ValueError("failure profiles require HTTP 4.0.0")
     schemas = _object(
         _object(document.get("components"), source="components").get("schemas"),
         source="schemas",
@@ -210,7 +306,10 @@ def failure_model_bytes(
     decoded = {
         "discriminator": "event_type",
         "property": "payload_json",
-        "mapping": {"run.failed": "#/components/schemas/ChatFailure"},
+        "mapping": {
+            "run.failed": "#/components/schemas/ChatFailure",
+            "interaction.state": "#/components/schemas/ChatInteractionState",
+        },
     }
     # JSON comparison distinguishes true/1 and false/0, unlike Python equality.
     for actual, required in (
@@ -280,7 +379,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact]
     provenance["http_contract"] = {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }

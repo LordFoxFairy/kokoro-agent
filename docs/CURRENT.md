@@ -1,3 +1,281 @@
+## Root R43：本 HITL/HTTP4 切片验收证据（2026-10-01）
+
+本提交仅收敛完整66路径的HITL/HTTP4业务切片，不表示全Agent外部能力或Wave0–7闭环。Root冻结复验：Ruff267文件format/check通过、Pyright0 errors；contract/check及failure生成检查通过；完整pure1799passed/6skipped/288deselected（96.81s，364 warnings），uv lock --check与wheel/sdist build通过。真实owner资源：完整database196passed/0skip；HTTP4邻接45PG+35HTTP=80passed；unit资源18passed/1356deselected（3.32s，1034 warnings）。每轮自有临时库created/closed=true，unit Redis15 reservation后仅精确删除本次17stream、remaining0；无清理共享数据。官方saver的persisted list[Interrupt]严格验证后与snapshot tuple比较，root→child精确因果/locator/完整ID与value、approval0→1/review1→1及终态保持。日志 /tmp/kokoro-agent-r43-root-final-pure.log、/tmp/kokoro-agent-hitl-r41-root-all-database-r2.log、/tmp/kokoro-agent-http4-r40-root-real-pg-http-r2.log、/tmp/kokoro-agent-r42-root-unit-resources-r4.log。
+
+BFF消费者仍待固定本提交的4.0.0机器artifact后更新正式projection/resume；Web、正式收费、真实provider/浏览器完整旅程尚未通过，不宣称完成。原P3B工作树候选与两native proof保留不纳入此提交；四docs仅批准HITL前缀，HEAD历史body保持。外部MCP/Storage等资源不由以上pure/PG门替代。
+
+## R39 HTTP 4 owner 切换候选（当前解释覆盖下方历史 HITL 段落）
+
+本轮仍为 main0245a36 基线上的完整 HITL 候选工作树，未发布 artifact、未更新 BFF/Web pin。
+R40 精确追加现 JWKS contract test 的3处整体 HTTP version（标题/info/direct provenance）3→4；
+其余 proof/JWKS/tuple/路径/SHA 断言逐字保持，最终范围为原19＋该1现文件，共20。
+当前机器源已一次切为 Agent HTTP **4.0.0，原 /v1 单路径**；下方“机器仍3”的文字只记历史阶段。
+既有已 typed4 的 control/events 保持，删除旧 resume tool_id/request_id 寻址与 Chat interaction alias；
+Machine、两个 decoded payload mapping、owner checkers、生成 provenance、HTTP admission/receipt 和公开正负例同步。
+这不是 scope/retry/effective-native/retention/P3B 完成；P3B 整段候选不变。
+
+Root 本轮裁决覆盖历史 error/reason 承诺：receipt 继续现有 status/error_code，只有真实 typed
+InteractionConflict 才落 failed/error_code=interaction_conflict；**不新增公开 reason/rejected 变体**。
+内部 stale_pause/incomplete_collection/decision_not_allowed/not_waiting 不是额外 wire 字段。
+missing context 保持现 control_apply_failed；读取失败/authority_lost 原样传播，不伪装 conflict，
+不借新 authority 终结健康 Run。拒命令只收口该 command，当前 waiting head/source 不被清空。
+
+### 实际过程与待验
+
+- Root R38 复验：45 PG/0skip；全 pure 37failed/1722passed/6skip/287deselect，Ruff267/0、Pyright0；旧37机器/proof不是已绿。
+- R39 receipt 首 RED 5failed/41passed；补错 kind 的 steer 字段后 RED 7failed/44passed（0.71s），日志 `/tmp/kokoro-agent-http4-r39-receipt-red-r2.log`。
+- checker strict required-fields RED 6failed/34deselect，日志 `/tmp/kokoro-agent-http4-r39-checker-red.log`；均行为断言失败、非 import/collection。
+- 当前源/机器已切候选4，并通过真实 failure generator 更新完整 source hash/provenance；生成的 Failure tuple/body不改。
+- 新 unit fixture 的 launch 未 claim 导致2个404，以及 bus omit-null 与持久 typed body不同导致2个断言失败均保留日志；已按真实 admission→claim 与 bus序列化规则修测试，未改生产 scope/fence。
+- 全 pure 实跑 **1failed/1798passed/6skip/288deselect/364warnings，97.93s**，日志 `/tmp/kokoro-agent-http4-r39-full-pure.log`；旧37收敛，唯一旧 JWKS 整体 version3 被前置遮住。R40 Root只准同文件3处整体HTTP版本更新，非 proof 放宽。
+- 静态实际 Ruff267/0、Pyright0、contract-check0、failure generator --check0；资源 **80 collected**（45事务PG＋35HTTP），未执行，日志 `/tmp/kokoro-agent-http4-r40-static.log`、`/tmp/kokoro-agent-http4-r39-resource-collect.log`。
+- R40 首次定点1failed/262passed（1.42s）到达同文件 direct HTTP provenance version3，已按Root单点授权同改4；最终实际定点 **263passed（1.37s），exit0**，连同 fresh Ruff267/0、Pyright0、contract0、generator --check0 见 `/tmp/kokoro-agent-http4-r40-final-gates.log`。不重跑一次全suite推算全绿，完整纯门交Root fresh复验。
+- worker未访问真实HTTP/PG/Redis/provider，无服务/Git操作。
+- Root 接收并重跑资源前不称 HTTP4 已发布；整体 scope、跨 takeover 生命周期、effective native/P3B 与最终 GC仍保持原未决。
+
+---
+
+## AGENT-HITL-INTERNAL-CALLERS-R38：内部切换与生命周期候选
+
+Root 已验前一桥冻结候选 44/44 真 PG（6.74s，自有库已回收）及独立审查 0P0/P1/P2；
+此证据不覆盖本轮新增首次 worker pause 旅程，也不表示 HTTP4 发布。本轮仍基线 main0245a36＋既有候选工作树，Git/资源由 Root 独占。
+原八 native proof、机器/OpenAPI/generated、SQL 与完整 P3B 后缀保持；下方 R35 等记录为历史，不再表示当前尚未运行那 44 例。
+
+删除唯一遗留 `execution/approvals.py` 与 source 清单引用，原测试迁到真实官方 InMemory saver＋正式 checkpoint adapter 的完整集合/全集 map/安全 validation；
+它只证明内存 SDK 形状，不充当 PG 消费或外部效果 exactly-once 证据。普通 caller 显式提供 reader/callback；
+测试替身按明确场景区分初 pause、accepted、started/unknown，不把缺证据返回 active；control delivery 只更新正式 admission 的既有行。
+裸 SDK 单测每 case 恢复原 registry/bootstrap，避免先于生产批准流程初始化全局状态，不放宽生产 plugin/registry 门。
+
+`invoke_once` 必需 `on_native_settled(seal_usage)`；闭包绑定本次 native context 完全 drain 后的真实 token 总数及原 lease 的 record_usage，
+并发/顺序重复成功 seal 至多写一次。真实 worker 在 waiting/unknown 分支、释放 lease 的 pause/reconcile 前 seal；active 不 seal，
+正常 terminal usage 仍由唯一 finalizer 同事务提交。SDK interrupted 而 reader active 时，以仍有效原 fence seal 后返回非终态，不静默漏段或借新 authority。
+usage/reader/settlement 持久失败在 native 异常映射外原样传播，绝不改写另一 run.failed；未 seal 的失败不推进 waiting。
+
+initial/resume build 错误显式携带构建开始时捕获的 lease；仅此路径不走 control adoption，不从更新后的本地 lease 借 authority。
+StaticRecipeAuthorityLost 零终态；Incompatible 自带 fence 与显式 captured fence 冲突也零终态；原 safe code/retryable 映射保持，retryable 不是自动重投。
+本轮精确顺序 RED 2 例、必需 seal API RED 10 例、构建映射 RED 15 例及失效 fence race RED 6 例日志均保留。
+授权 19 caller 文件纯组合已实际 438 passed/48 deselected（21.82s）；不是 Root 最终验收。首次组合人工中断 exit130 不计完成，
+后续 -x 345 passed/1 failed 准确定位原裸 SDK registry 污染；修复 fixture 恢复后才得到上述组合结果。
+
+新增既有 PG 事务测试 `test_first_worker_dispatch_seals_usage_before_durable_initial_pause`：正式 ingress/dispatch、正式 saver 与独立 reader、
+官方 native projections，由真实 worker 首次进入 native（无预先 graph.ainvoke），独立 SQL 核 waiting/释放 lease/7+3 用量/零 terminal；
+7+3 是确定性 SDK callback fixture，不声称真实 provider 用量。此新例及修改后原 44 例待 Root 真实运行。
+完整 HITL4 机器/HTTP/contract 发布、跨 takeover 的原 generation 归属/absolute execution deadline、scope/retry/P3B/retention 仍各自原门，不以内部绿色缩减目标。
+
+最终 worker 离线门（本候选）：全 Ruff format 267 files/check exit0，Pyright 0 errors；
+fresh 全纯 1721 passed/38 failed/6 skipped/287 deselected（97.17s），剩 37 为锁定 machine/chat/public/proof contract，
+此 38 中另 1 是 `tests/unit/execution/test_interactions.py` 原 valid fixture 缺 required action_result；
+Root 于全纯柄结束后精确授权只补 action_result: None，原两个负例保留，单例实际 1 passed。
+该一行之后未重复全纯（Root 冻结复验）；37 个机器/公开/证明契约失败仍原样保留，不宣称已获新的全纯 37-fail 计数。
+正式 contract-check exit1 为 provenance aggregate stale，机器仍3的完整4发布门保留。
+PG45只 collect（0.39s）；InMemory 首次 native entry 7/3 usage 探针通过，绝不据此宣称真实45已验。
+日志 `/tmp/kokoro-agent-callers-r38-{full-pure-final,type-final,format-final,lint-final,contract-final,pg-collect,first-pause-probe}.log`。
+本轮未启动/操作 PG、Redis、provider 或应用服务，未执行 Git/依赖安装/build；上述纯测试自身的离线/loopback fixtures 不代表生产服务验收。
+候选冻结交 Root 后停写，由 Root 独占真实45、原相邻PG与完整发布门。
+
+## AGENT-HITL-NATIVE-BRIDGE-GREEN-R35：实现候选，等待 Root 真实 PG
+
+当前基线仍 main0245a36＋已验P2事务核；Root桥RED实际18 failed/26 passed/0 skip（4.61s），
+`/tmp/kokoro-agent-hitl-native-bridge-r35-root-real-pg-red.log`。本轮已授权普通checkpoint_interactions.py与既有
+Run/SQL/worker边界实现；不是HTTP4发布、完整scope/P3B或外部exactly-once验收。下方D0“未实施”保历史，
+本节覆盖当前候选事实；机器/生成/依赖及P3B完整suffix保持，Git/真实PG仅Root。
+
+七ports与完整observation canonical SQL、Run-first GC、独立官方reader、唯一StartedResume调用和drain后持久callback已接入。
+原supervisor四mixin与execution/run_agent.py由Root精准追加：删除实际resume路径旧adopt/fingerprint/partial-awaiting selector，
+不把其职责搬进门面；cancel/steer/普通dispatch保留。reader与on_native_settled均必需，无空默认/alias/fallback。
+stream.interrupted()完成官方iterator后且context退出才调用持久callback；callback失败在native异常handler外原样传播，
+不制造另一个run.failed。waiting/unknown不发completed；新validation直接waiting，active仅来自完整正向证据。
+
+实际纯新增15/15已通过；三纯文件完整选择20 failed/45 passed/3 resource deselected（0.88s），旧HITL寻址/reader消费者明确未切。
+域与架构选择1 failed/69 passed（2.38s）：唯一失败是原test_interactions.py候选fixture缺新必需action_result，未越权补默认；
+首次误用不存在tests/architecture的collection错误保留日志，不计业务RED。44 PG最终只collect（0.02s），原26＋新18，尚未实际运行。
+R37最终定点24个Python文件Ruff format/check全过，19生产Python定点Pyright0；full Pyright145错误为旧approvals35＋未切测试110（包含原8），不以局部0冒称全门。
+官方InMemorySaver纯探针实际验证单input与root/child/mixed三集合材料化、一次全集map及正向分类；
+它们只证明SDK形状，不是独立PG连接、事务/进程重启或外部副作用证明。所有首失败日志保留。
+
+两处已授权测试fixture纠正：混合图节点统一approval_node（原state key/edge不匹配）；新增source正例补原必需input_schema={}。
+保持原全集/一次map/最终向量与26断言；不以fixture修正记生产GREEN。原八nativeproof不变。
+Root R37追加真实result-review consumer与其现测试：唯一request_id决策解析/匹配，拒旧tool_id与重复request_id；
+工具call_id/journal/cache身份原样。实际RED为5 failed/6 passed，切换后11 passed（0.13s），所有approve/respond/reject/
+非法缺项/缓存重入防双执行断言保留；日志`/tmp/kokoro-agent-bridge-r37-result-review-{red,green}.log`。
+完整4仍须其他caller/fakes/机器/contract/generated统一切换，不以该consumer单点绿色宣称全链已完成。
+最终四纯文件按原integration/e2e/acceptance排除：20 failed/56 passed/3 deselected（0.87s）；原20旧消费者RED保留。
+验证选择曾误用not resource清默认过滤，3个旧integration setup尝试Redis后ConnectionRefused，未成功连接或执行native/provider；
+该20 failed/56 passed/3 setup errors日志单独保留，不计纯门或业务RED；后已按原标记重跑。
+初pause跨expired takeover缺原generation归属时严格拒native_pause_generation_unattributed，零再次invoke；
+不借新authority给旧执行收口、不称A窗口跨generation恢复已完成；当前无独立absolute execution deadline。Root明确TTL不是执行期限；该跨takeover恢复/期限门保留，不新增deadline schema。
+
+### 当前门禁及未完成
+
+worker未成功连接PG/Redis/provider、未启动服务或操作Git；上述一次Redis连接尝试失误明确保留。Root接收冻结文件后独占实际44 PG及相邻回归；
+任何catalog/fixture/SDK后段实际失败原样记录，不把18首port/table RED之后未到达断言算通过。
+当前候选未满足完整default/typecheck/contract；P3B/fork、scope/retry/native-retention及Conversation引用最终释放仍各自原门。
+日志集中`/tmp/kokoro-agent-bridge-green-r35-*`，最终manifest另交Root，当前尚未提交。
+
+
+Root已验R3事务26/26（2.51s）、相关四PG文件71/71（5.56s），资源均回收；它们不证明正式桥。
+Root fresh default实际78 failed/1664 passed/6 skip/268 deselected（97.96s），Pyright仍43错误；
+失败分布supervisor26、machine_contract16、chat_response14、hitl11、public_contract6、control_commands4、execution_proof_artifact1。
+日志`/tmp/kokoro-agent-hitl-p2-r34-root-{related-pg,default}.log`。本轮仅四HITL前缀；生产、测试、机器与P3B整suffix保护。
+以下精确决定覆盖下方历史D0的未定字段/方法；既有P2事务语义保持，新增桥/schema/完整4均待源码卡和真实门。
+
+本卡只补已裁决三处实施接口：观察表精确SQL/幂等identity与Run-first GC；ConsumedPauseEvidence/port及
+健康与静止计数；native_observed→reconciled和完整action_result/source原子映射。没有新源码/SQL/test/机器修改。
+初pause无command/attempt为合法NULL；received批次不当持久观察；缺证据unknown零重投。
+官方公共saver装饰器和现worker/main接线，不加fork/库/依赖/P3B。新桥文件仍仅候选，未创建。
+现P2未实现观察表、source action_result、native_observed或任何全入口许可；历史PG绿色不可推出这些能力完成。
+后续仅待Root四前缀三面审查后，另卡授权四现tests先RED，再按真实失败授权生产，不一次放全部52。
+无Git/DB/Redis/provider/服务访问；无worker测试进程。Root默认全门已返回上述实际RED，未去修改冻结消费者。
+未决Conversation最终引用释放仍只阻最终DAG/GC发布；不阻本桥独立实施。任意不完整native归属保unknown，
+不将无自动恢复保证表述为需要预先等待fork。完整4发布和Root真实native桥故障矩阵均未完成。
+
+最终离线日志：`/tmp/kokoro-agent-hitl-p2-core-pure-final-r2.log`（157/0）、
+
+R35 RED期间Root精确批准两个native入口补名及第7只读read_resume_context；四docs仅此增量，生产仍未授。
+它复用原Run/command列，无新SQL事实；恢复分支无Command/新attempt，原P3B及其余历史内容保持。
+纯14 RED已到达（0.80s）：source action_result七例、六原port缺失、安全validation一例；初次测试误假定checkpoint变化已纠正并保日志，
+实际invalid→invalid→valid完成一次效果、同nativeID和checkpoint保留。新四test正在按批准接口继续；不是bridge通过。
+
+## AGENT-HITL-P2-R33-R3：故障注入固定组合修正
+
+Root R2真PG **24 passed / 2 failed / 0 skip（2.62s）**；
+`/tmp/kokoro-agent-hitl-p2-core-r33-r2-root-real-pg.log`，自有DB已回收。
+两例在安装trigger前被测试helper旧phase白名单拒绝，未到start/terminal故障回滚断言；不归因生产事务。
+R3仅将helper校验改为七个明确(stage,phase)组合，增加(command,dispatch_started)/(chat,terminal)，
+仍拒任意字符串或无效组合；原真实AFTER trigger、RaiseException、wholefacts/outbox=0断言原样。
+生产18路径及其余冻结25路径不改；P3B四suffix与两native proof保护。
+本轮Ruff format/check通过、定点Pyright0，26 collected（0.05s）；无DB/Git/服务，无运行句柄。
+日志`/tmp/kokoro-agent-hitl-p2-core-r33-r3-static.log`与`/tmp/kokoro-agent-hitl-p2-core-r33-r3-collect.log`。
+Root下一次实际26 PG仍是放行门，不将24局部通过冒称26或完整HITL4完成。
+
+## AGENT-HITL-P2-R33-R2：正式launch fixture与GC竞争补证（仅测试/文档）
+
+Root R33实际PG **16 failed / 6 passed / 0 skip（1.78s）**，日志
+`/tmp/kokoro-agent-hitl-p2-core-r33-root-real-pg.log`；自有DB已回收。
+16例共同在真实control的scoped lookup早停404：原fixture只try_claim没有dispatch，
+现正式get_request_scoped要求Run/dispatch同tenant及namespace JOIN，此资格正确，不放宽生产。
+本R2仅改现事务PG测试及四docs批准prefix，18生产与其余冻结文件保持；P3B完整suffix、两份native proof未改。
+
+统一fixture现在调用公开AgentIngress.launch创建正式dispatch/session，从get_pending_dispatch读取原RunRequest，
+独立连接核原request_json UTF8、tenant/namespace/pending，再claim_dispatch且复核scoped Run原bytes，最后pause/control。
+不手插dispatch、不在已pause之后补admission、不绕过真实Ingress.control。仅通知bus使用既有FakeBus；所有事实仍PG。
+首正例由持久RunResume逐项重建expected kind/payload base64，与整份持久decisions codec比较，不只检查digest自相等。
+
+独立Sol原生产审0P0/0P1/1P2保留：原串行terminal→purge→late不等于竞争证明。
+现补purge↔admit_control及purge↔record_control_delivery各两锁序，共4例：
+精确owned blocker PID持Run锁，先操作进入等待队列后再投第二操作；递归pg_blocking_pids包含soft queue边，
+确认1→2独立backend均阻塞才释放，无sleep/共享waiter计数/timeout放宽/重投。
+purge先胜则admission 404零新child；admission先胜只原命令创建一次且随同一次purge删除。
+delivery是UPDATE既有command而非INSERT，terminal或missing两种资格均false；其先拿锁也不伪造成功更新，
+既有child仍随一次purge清理，最终Run/control/dispatch均零残留。新测试尚待Root真PG，不能据收集声称竞争已证。
+R1六个真实通过仅包含pause rollback与四catalog drift；accept/start/terminal/竞争的最终断言仍待修fixture后重跑。
+本R2不修改生产、不运行DB/Git/服务，不把HITL4或native桥标完成。
+实际离线：本测试Ruff format/check通过，定点Pyright 0 errors，26 collected（0.05s）exit0；
+日志`/tmp/kokoro-agent-hitl-p2-core-r33-r2-test-static-r2.log`与`/tmp/kokoro-agent-hitl-p2-core-r33-r2-collect-r2.log`。
+首新增断言列表未标类型产生的1个Pyright错误保留原log，补明确list[dict[str,str]]后真实重跑0，不放宽检查。
+26 PG入口仍同一文件、`-o addopts='' -q`，由Root独占资源；无运行句柄，冻结待验。
+
+
+`/tmp/kokoro-agent-hitl-p2-core-collect-final-r2.log`（22 collect）、
+`/tmp/kokoro-agent-hitl-p2-core-static-final.log`（Ruff）、
+`/tmp/kokoro-agent-hitl-p2-core-pyright-final.log`（43个后继旧消费者错误）、
+`/tmp/kokoro-agent-hitl-p2-core-contract-red.log`（30 fail/26 pass）。
+新增source已纳现显式manifest（235 resource registrations/115 distributions/12 dynamic edges）；
+测试实际读取新domain/infra所属package资源并验证descriptor，未构建/安装wheel，不冒称本轮wheel门通过。
+Root独占临时PG后运行：`KOKORO_AGENT_DATABASE_URL=<owned-url> uv run --frozen --offline --no-sync pytest tests/integration/database/test_run_interaction_transactions.py -o addopts='' -q`。
+22例中fresh catalog与精确pg_get_constraintdef、真实触发器回滚、两连接竞争/锁后clock及terminal/purge均待此实际门；
+worker只collect。默认全链/机器生成发布/native8复跑/外部资源/wheel未运行，禁止由本局部候选推断完成。
+当前没有运行中的测试句柄；全部生产、测试、四docs以最终manifest冻结交Root复验。
+
+## AGENT-HITL-P2-RED-R31：首批契约与事务RED（tests-only）
+
+## AGENT-HITL-P2-CORE-GREEN-R31：事务核工作树候选（未发布）
+
+Root已以真实PG 6 failed/0 skip（缺record_pause；未到rollback）放行本批，基线仍main0245a36；
+当前新增唯一普通生产文件infrastructure/postgres_run_interactions.py，并在既有Run/command/Chat上实现
+pause/accept/start/unknown及原finalize_terminal收口。Root随后仅追加现infrastructure/chat_mappers.py持久类型decoder，
+旧interaction拒绝，不留兼容分支。本批30路径（18生产含SQL＋fake＋7tests＋4docs），不等于36/52或后继22全授权。
+机器OpenAPI/provenance/generated仍3；native桥、observation表、真实消费/恢复、全部旧worker消费者未切换。
+以下历史D0/tests-only段保留其当时基线；本节覆盖其“生产尚未修改/仅四docs”当前状态解释。P3B整suffix未改。
+
+当前内部API是`accept_resume(request, command_id, owner)`，caller不再传第二Submission；
+同连接Run→command锁后，从现权威`control.body`唯一typed decode，重建Submission，再整批校验/归一。
+`StartedResume`仅首次start提交返回；同attempt重放、历史command重放、unknown均不授第二执行许可。
+PostgresRunLeases仍唯一终态入口；purge入口委托现context内统一Run-lock/children清理实现，
+不新增GC模块。正常terminal同事务清集合并写interaction terminal在run terminal之前；私有quarantine保持无新增公开源。
+现partial ToolAwaitingApprovalPayload缺完整pause/revision，旧projection显式拒绝，绝不伪装新source；后继bridge必须替换真实调用。
+测试fake新增port只明确抛NotImplementedError，不伪造持久结果；本能力正例只使用真实PG repository。
+
+### 入口与持久请求的唯一表示（Root R32裁决）
+
+既有`body=typed_message.model_dump_json()`；既有request_digest不是该TEXT直接SHA，而是`sha256:`前缀＋
+`json.dumps({run_id,...控制字段}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)` UTF8摘要。
+新4 resume入口先严格RunResume validate（必需revision/ref/item，无旧别名、未知字段/重复item拒绝），
+再唯一`control_request_digest(message)`对`message.model_dump(mode="json", exclude={"command_id","request_digest"}, exclude_none=True)`算上述摘要；
+将摘要回填typed message后以原model_dump_json写control.body，不保存raw第二事实。cancel/steer原表示不变。
+锁内`decode_resume_command`同时核Run/session/command、body中的digest、重新计算digest与存储列，
+以及`RunResume.model_validate_json(body).model_dump_json().encode("utf-8") == body.encode("utf-8")`；
+不拿两个调用同一字符串的自相等替代这些独立身份/摘要校验。
+cancel/steer即使携带null的resume专属ref/revision也在入口拒绝，保原表示不扩大。
+nullable optional（如reject.reason、approve.args）允许入口null/omitted同义归一；required revision/ref/item无默认，
+省略/null/unknown字段均拒。持久body重排、whitespace或被删默认字段即使解析等价也拒；
+Run原request_json仍复用P3A原model_dump_json UTF8逐byte身份，不使用上述摘要codec替代。
+
+### 当前实际证据与未到达门
+
+worker最终受限纯选择121 passed＋架构36 passed，合并157 passed（2.38s），exit0；定点Ruff check/format-check通过。
+事务PG仅22 collected（0.04s），零DB/Redis/provider/服务访问，所有新rollback/start/锁等待/竞争/terminal/catalog断言待Root实际运行。
+完整机器候选两contract文件：30 failed/26 passed（0.97s），3机器及application decoded mapping仍旧，保留真实RED；
+全Pyright 43 errors仅execution/approvals.py及旧tests/unit/execution/test_hitl.py的旧tool/request寻址消费者；
+本片授权文件无新增类型错误。既有32fail tests-only、Root6fail及本片codec/duplicate/mapper RED日志保留。
+不以局部绿或收集数冒称完整4/default通过；Root真实PG和独立审查后决定下一片，完整机器/bridge/消费者统一发布。
+
+基线main0245a36＋P2-D0冻结57140f75；WIN03独立审0P0/0P1/2P2。唯一授权现两contract测试、
+新普通tests/integration/database/test_run_interaction_transactions.py及本四docs批准HITL前缀；生产/机器/SQL/SDK不改。
+时间列候选明确TIMESTAMPTZ(3)；后继infrastructure/checkpoint_interactions.py是尚不存在的新增普通文件，
+只列后继，不在本卡创建桥。P3B整suffix保持。
+
+实际单进程纯contract首RED：32 failed /24 passed（1.01s），pytest实际exit1；
+日志/tmp/kokoro-agent-hitl-p2-red-r31-contract.log。失败对应仍为3版本、缺revision/ref/item schema、
+旧decision仍接受、缺interaction.state枚举/decoded mapping；非导入或collection失败。
+相邻正例前置尚失败时，其后negative/runtime分支未执行，不冒称全部负例或HTTP实际路径已测完。
+真实PG未运行，首六例只收集待Root执行；静态/收集最终结果冻结前追加。36生产及22后继依赖仍未授权。
+
+R31最终冻结证据：纯contract重跑 **32 failed/24 passed（0.97s），实际pytest exit1**，
+/tmp/kokoro-agent-hitl-p2-red-r31-contract-r2.log；新PG文件 **6 tests collected（0.03s），exit0**，
+/tmp/kokoro-agent-hitl-p2-red-r31-collect-r2.log。真实PG尚未执行，expected首RED是现真实Repository缺record_pause/accept_resume的测试体断言，
+不是已证明五处rollback失败；待生产能力落位后同六例继续跑真实边界，不删后续断言。
+定点三test Ruff format/check通过，Pyright **0 errors/0 warnings**，/tmp/kokoro-agent-hitl-p2-red-r31-static-r2.log；
+初次Pyright7 errors（私有helper引用/未标注嵌套fixture）保留/tmp/kokoro-agent-hitl-p2-red-r31-static.log，
+改为公开AgentIngress.control与显式测试类型，未加ignore或改生产。唯一通知替身为FakeBus，Repository/Schema/Chat持久事实均真实PG；
+无Redis/provider/native推理，纯contract也未启动服务。原native八例未改。现所有执行句柄已结束。
+
+Root真实RED入口（仅Root自有资源）：
+`KOKORO_AGENT_DATABASE_URL=<owned URL> PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest -o addopts='' -m integration tests/integration/database/test_run_interaction_transactions.py -q`。
+现fixture先真实安装schema及try_claim再assert能力，PostgreSQL不可达fail-loud不skip；只清本例唯一schema。
+本轮manifest /tmp/kokoro-agent-hitl-p2-red-r31-manifest.json绑定三tests＋四docs；冻结后停写，Root真PG/独立审后才授权必要生产子集。
+
+## AGENT-HITL-PERSIST-P2-D0-R29：仅四docs设计冻结准备
+
+Root已提交推送main `0245a36c85422b4e0e85cc22aba426b0e30fec12`，纯DOMAIN-P1已验收，下面P1“候选待验”段保历史。
+本轮唯一writer只四docs批准HITL prefix；P3B四整suffix、源码/SQL/机器/tests/依赖原样，未使用Git/DB/Redis/provider/services。
+Root采纳零新表先Run/command/Chat事务核、三事务与started_now单次许可、purge Run-first及完整typed4候选前置。
+本D0已精确列两表列/Row/codec/CHECK/唯一索引、五port方法和36路径后继候选（2新普通文件；没有创建）。
+新事务PG测试拟放tests/integration/database/test_run_interaction_transactions.py，不混入原八native证明。
+
+当前机器仍3.0，canonical SQL尚无交互列；完整native bridge/active消费证据、所有worker入口、真实事务PG与HITL4发布均未实施。
+本次只文档一致性/现contract检查；实际命令结果冻结前追加，不把原1695/default、native8或P3A PG43说成本P2事务通过。
+未决是Root对本36精确源码集/完整candidate4的实施放行、真实PG结果及后继桥证据门，不重新讨论已定三事务/零新表顺序。
+Conversation最终释放只阻最终DAG/GC发布，不阻P2；P3B fork/依赖仍未批准。完成后停写，Root独立审查后另卡TDD。
+
+实际验证（本D0）：`PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync kokoro-agent-contract-check`
+→ `kokoro-agent contract: ok`，exit0，日志`/tmp/kokoro-agent-hitl-p2-d0-contract.log`；仅现3.0未漂移。
+四P3B后缀4/4 byte相等、Markdown fence/尾空白检查通过；36先行候选去重且唯二新普通文件未创建。
+源码/SQL/tests/contract保护核验只见Root已声明的ignored egg-info/SOURCES.txt构建更新，无本轮生产变更。
+Root已裁定协议/native真实消费者切换属于同一完整HITL owner交付，P2先行TDD不等于36可独立发布完整4；
+TECH补22实际扩展依赖及各批RED/退出门，Root另卡不一次授权。保全部旧失败，不为局部default绿加兼容。
+本轮没有运行新的pytest/PG/build/provider，无运行句柄。四whole与P3B suffix manifest冻结后停写，独立审查/源码授权仍待Root。
+
 ## R29 Root 纯规则验收（仅本切片）
 
 绑定冻结manifest8f684dc01f7c6de59163fdcc81f009cf7690a3f85d841ea95b466a4a876e0b78。
@@ -159,6 +437,7 @@ worker未运行PG，Root须核实际0skip/0fail、返回后可见性和取消分
 P3B effective-native、scope/retry/checkpoint/retention功能目标均保留，库fork仍未批准。BFF4.0/后继4.1是其独立版本线，不机械同号。
 一次替换旧interaction/resume解释、无新/v2长期双轨、无兼容fallback；Agent4机器＋实现/schema/artifact验证提交后，
 BFF才固定pin并更新集合投影，再Web消费。HITL本身也必须完整实现、真门通过后发布，不发半contract。
+
 
 ## P3A Root 正式代码验收（2026-10-01）
 

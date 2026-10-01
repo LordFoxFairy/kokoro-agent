@@ -258,6 +258,11 @@ def _control(kind: str, **extra: JsonValue) -> dict[str, JsonValue]:
         "run_id": "r1",
         "session_id": "s1",
         "command_id": "dec_wire",
+        **(
+            {"expected_pause_revision": 1, "pause_ref": "pause-1"}
+            if kind == "run.resume"
+            else {}
+        ),
         **extra,
     }
 
@@ -294,12 +299,12 @@ def test_run_request_requires_explicit_skill_selection() -> None:
 @pytest.mark.parametrize(
     "decision",
     [
-        {"type": "approve", "tool_id": "t1"},
-        {"type": "approve", "tool_id": "t1", "args": {"x": 1}},
-        {"type": "edit", "tool_id": "t1", "args": {"x": 2}},
-        {"type": "reject", "tool_id": "t1"},
-        {"type": "reject", "tool_id": "t1", "reason": "no"},
-        {"type": "respond", "tool_id": "t1", "response": "42"},
+        {"type": "approve", "item_id": "t1"},
+        {"type": "approve", "item_id": "t1", "args": {"x": 1}},
+        {"type": "edit", "item_id": "t1", "args": {"x": 2}},
+        {"type": "reject", "item_id": "t1"},
+        {"type": "reject", "item_id": "t1", "reason": "no"},
+        {"type": "respond", "item_id": "t1", "response": "42"},
     ],
 )
 def test_resume_decisions_accepted(decision: dict[str, JsonValue]) -> None:
@@ -312,14 +317,14 @@ def test_resume_decisions_accepted(decision: dict[str, JsonValue]) -> None:
     [
         _control("run.resume", decisions=[]),  # 空决策列表
         _control(
-            "run.resume", decisions=[{"type": "veto", "tool_id": "t1"}]
+            "run.resume", decisions=[{"type": "veto", "item_id": "t1"}]
         ),  # 未知判别
         _control(
-            "run.resume", decisions=[{"type": "edit", "tool_id": "t1"}]
+            "run.resume", decisions=[{"type": "edit", "item_id": "t1"}]
         ),  # edit 缺 args
         _control(
             "run.resume",
-            decisions=[{"type": "respond", "tool_id": "t1", "response": ""}],
+            decisions=[{"type": "respond", "item_id": "t1", "response": ""}],
         ),
         _request(conversation_id="c1"),  # 旧字段污染
         _request(execution_style="fast"),  # 旧字段污染
@@ -353,3 +358,18 @@ def test_stream_constants() -> None:
     assert run_control_stream("abc") == "kokoro:run:abc:control"
     assert live_stream("s1") == "kokoro:session:s1:live"
     assert event_id("r1", 7) == "r1:7"
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        {"type": "approve", "tool_id": "t1"},
+        {"type": "submit", "request_id": "r1", "value": {}},
+        {"type": "approve", "item_id": "i1", "tool_id": "t1"},
+    ],
+)
+def test_resume_rejects_legacy_addressing_with_complete_pause(
+    legacy: dict[str, JsonValue],
+) -> None:
+    with pytest.raises(ValidationError):
+        inbound_adapter.validate_python(_control("run.resume", decisions=[legacy]))

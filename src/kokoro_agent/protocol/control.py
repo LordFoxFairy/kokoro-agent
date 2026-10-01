@@ -8,6 +8,7 @@ or persisted as request ``runtime`` data.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Annotated, Literal, Union
@@ -99,31 +100,31 @@ class RunRequest(StrictModel):
 
 class ApproveDecision(StrictModel):
     type: Literal["approve"]
-    tool_id: NonEmptyStr
+    item_id: NonEmptyStr
     args: dict[str, JsonValue] | None = None
 
 
 class EditDecision(StrictModel):
     type: Literal["edit"]
-    tool_id: NonEmptyStr
+    item_id: NonEmptyStr
     args: dict[str, JsonValue]
 
 
 class RejectDecision(StrictModel):
     type: Literal["reject"]
-    tool_id: NonEmptyStr
+    item_id: NonEmptyStr
     reason: str | None = None
 
 
 class RespondDecision(StrictModel):
     type: Literal["respond"]
-    tool_id: NonEmptyStr
+    item_id: NonEmptyStr
     response: NonEmptyStr
 
 
 class SubmitDecision(StrictModel):
     type: Literal["submit"]
-    request_id: NonEmptyStr
+    item_id: NonEmptyStr
     value: dict[str, JsonValue]
 
 
@@ -141,7 +142,16 @@ class RunResume(StrictModel):
     session_id: NonEmptyStr
     command_id: NonEmptyStr
     request_digest: NonEmptyStr | None = None
+    expected_pause_revision: Annotated[int, Field(ge=1)]
+    pause_ref: NonEmptyStr
     decisions: Annotated[list[ResumeDecision], Field(min_length=1)]
+
+    @field_validator("decisions")
+    @classmethod
+    def unique_items(cls, values: list[ResumeDecision]) -> list[ResumeDecision]:
+        if len({value.item_id for value in values}) != len(values):
+            raise ValueError("duplicate resume item")
+        return values
 
 
 class RunCancel(StrictModel):
@@ -189,3 +199,23 @@ __all__ = [
     "SubmitDecision",
     "inbound_adapter",
 ]
+
+
+def control_request_digest(message: RunResume) -> str:
+    """HITL4 digest of the one typed normalized request, excluding delivery IDs.
+
+    Keep the existing sha256 prefix and sorted compact {run_id, ...} format.
+    Optional nullable decision values normalize identically; required pause/item
+    identity never has a default. Cancel/steer retain their existing ingress path.
+    """
+    payload = message.model_dump(
+        mode="json", exclude={"command_id", "request_digest"}, exclude_none=True
+    )
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()

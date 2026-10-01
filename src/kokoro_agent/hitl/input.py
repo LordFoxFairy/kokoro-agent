@@ -66,12 +66,12 @@ def _pick(raw: object, request_id: str) -> _InputResumeItem:
 
 def _schema_error(
     value: dict[str, JsonValue], schema: dict[str, JsonValue]
-) -> str | None:
+) -> dict[str, JsonValue] | None:
     # jsonschema 校验靠近消费点：不合法返回错误文案（供人重填），不抛出、不炸 run。
     try:
         jsonschema.validate(value, schema)
     except jsonschema.ValidationError as exc:
-        return str(exc.message)
+        return {"code": "json_schema_invalid", "instance_path": list(exc.absolute_path)}
     return None
 
 
@@ -88,7 +88,7 @@ def request_input(
     无 schema 的请求跳过校验直接采纳。同步调用（与 request_human 一致，async 工具体内无需 await）。
     """
     base = dict(context or {})
-    attempt_context = dict(base)
+    attempt_context: dict[str, JsonValue] = dict(base)
     while True:
         raw = request_human(
             kind="input", request_id=request_id, schema=schema, context=attempt_context

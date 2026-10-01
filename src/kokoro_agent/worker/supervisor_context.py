@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from langchain_core.runnables.config import RunnableConfig
 
 from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.infrastructure.checkpoint_interactions import InteractionReader
+from kokoro_agent.domain.run.interactions import StartedResume
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.chat.repositories import ChatRepository
 from kokoro_agent.domain.run.repository import (
@@ -49,6 +51,10 @@ SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
 class SupervisorContext:
     """State and callbacks shared by the supervisor's focused mixins."""
 
+    _boot_id: str
+    _drained_attempts: dict[tuple[str, int, str], str]
+    _interaction_reader: InteractionReader
+    _resume_attempts: dict[str, tuple[str, StartedResume]]
     _build: AgentBuilder
     _run_repository: RunRepository
     _approval_tool_names: ApprovalToolNames
@@ -106,6 +112,11 @@ class SupervisorContext:
     async def _start_run(
         self, bus: StreamProtocol, request: RunRequest, lease: LeaseFence
     ) -> None: ...
+
+    async def _resume_owned(
+        self, bus: StreamProtocol, request: RunRequest, command_id: str
+    ) -> None: ...
+    async def _reconcile_interactions(self, bus: StreamProtocol) -> None: ...
 
     async def _on_resume(self, bus: StreamProtocol, msg: RunResume) -> None: ...
 
@@ -167,12 +178,6 @@ class SupervisorContext:
         status: ControlReceiptStatus,
     ) -> None: ...
 
-    async def _control_fingerprint(
-        self, run_id: str, msg: RunResume | RunCancel | RunSteer
-    ) -> str | None: ...
-
-    async def _interrupt_fingerprint(self, run_id: str) -> str | None: ...
-
     async def _reapply_pending_control(self, bus: StreamProtocol) -> None: ...
 
     async def _retry_sandbox_cleanups(self, run_id: str | None = None) -> None: ...
@@ -196,4 +201,5 @@ class SupervisorContext:
         error: Exception,
         *,
         code: RunErrorCode | None = None,
+        build_lease: LeaseFence | None = None,
     ) -> None: ...

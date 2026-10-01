@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from support.fakes import isolated_native_registry
+
+from support.fakes import settled_state_callback
+
 from support.fakes import terminal_emitter
 
 import asyncio
+import pytest
 import ast
 import json
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForLLMRun
@@ -20,6 +26,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel as PydanticBaseModel
 
 from support.fakes import (
@@ -41,6 +48,8 @@ from kokoro_agent.protocol import (
     RUN_EVENTS_MAXLEN,
     MessageCompleted,
     RunCompleted,
+    RunCompletedPayload,
+    RunFailedPayload,
     RunFailed,
     RunStartedPayload,
     SubagentFinished,
@@ -48,7 +57,6 @@ from kokoro_agent.protocol import (
     SubagentStarted,
     SubagentToolInvoked,
     SubagentToolReturned,
-    ToolAwaitingApproval,
     ToolAwaitingApprovalPayload,
     ToolInvoked,
     ToolInvokedPayload,
@@ -92,6 +100,7 @@ async def _invoke(
         finalize_terminal=terminal_emitter(emitter, claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
         trace=trace,
+        on_native_settled=settled_state_callback(agent, "c1"),
     )
 
 
@@ -329,6 +338,7 @@ async def test_text_tool_and_empty_final_segment_are_replayable_in_order() -> No
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(agent, "thread-1"),
     )
     assert done is True
     events = bus.run_events(run_id)
@@ -586,17 +596,20 @@ def _interrupt_state() -> FakeState:
     )
 
 
-async def test_pending_interrupt_emits_awaiting_no_terminal() -> None:
+async def test_pending_interrupt_defers_durable_waiting_to_callback_no_terminal() -> (
+    None
+):
     bus = FakeBus()
     agent = FakeAgent(run=FakeRunStream(is_interrupted=True), state=_interrupt_state())
     done = await _invoke(bus, agent, approval_tool_names=frozenset({"danger"}))
     assert done is False
     kinds = bus.kinds("r1")
-    assert kinds[-1] == "tool.awaiting_approval"
+    assert "tool.awaiting_approval" not in kinds
     assert "run.completed" not in kinds
-    awaiting = find_event(bus.run_events("r1"), ToolAwaitingApproval)
-    assert awaiting.payload.tool_id == "call-A"
-    assert awaiting.payload.pending_tool_ids == ["call-A"]
+    assert agent.run.context_exited
+    # Full safe pending groups now belong to the repository/reader transaction;
+    # this invocation layer must not synthesize old partial activity frames.
+    assert agent.state.interrupts == _interrupt_state().interrupts
 
 
 async def test_exception_emits_run_failed() -> None:
@@ -717,7 +730,7 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
         tools=[noop],
         system_prompt="x",
         subagents=[],
-        checkpointer=None,
+        checkpointer=InMemorySaver(),
         permissions=[],
         interrupt_on={},
     )
@@ -733,6 +746,7 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
             terminal_test_emitter_1, _always_claim, usage_recorder()[0]
         ),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(agent, "native-thread"),
     )
     assert done is True
     events = bus.run_events("native-empty-final")
@@ -783,7 +797,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(
         tools=[noop],
         system_prompt="x",
         subagents=[],
-        checkpointer=None,
+        checkpointer=InMemorySaver(),
         permissions=[],
         interrupt_on={},
     )
@@ -804,6 +818,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(
         ),
         record_usage=usage_recorder()[0],
         recursion_limit=8,
+        on_native_settled=settled_state_callback(agent, "tloop"),
     )
     assert terminal is True
     events = [item.event for item in await stream.read_all(run_events_stream(run_id))]
@@ -900,13 +915,14 @@ async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
     emitter = await RunEmitter.attach(bus, "racc")
     await invoke_once(
         emitter,
-        FakeAgent(run=text_run("hi")),
+        (settlement_agent := FakeAgent(run=text_run("hi"))),
         "c1",
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, preloaded_recorder),
         record_usage=preloaded_recorder,
+        on_native_settled=settled_state_callback(settlement_agent, "c1"),
     )
     completed = find_event(bus.run_events("racc"), RunCompleted)
     assert completed.payload.token_usage is not None
@@ -937,6 +953,7 @@ async def test_pause_segment_records_usage_too() -> None:
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, recorder),
         record_usage=recorder,
+        on_native_settled=settled_state_callback(agent, "c1"),
     )
     assert terminal is False
     assert len(calls) == 1  # 暂停路径恰好入账一次
@@ -1006,3 +1023,206 @@ def test_failure_classification_has_a_dedicated_execution_module_owner() -> None
         module.endswith("failures") or source in owned or binding in owned
         for module, source, binding in event_imports
     ), "events.py must not retain compatibility aliases or a second failure owner"
+
+
+@pytest.mark.parametrize("phase", ["active", "waiting", "unknown"])
+async def test_native_settlement_is_after_context_drain_before_terminal(
+    phase: Literal["active", "waiting", "unknown"],
+) -> None:
+    order: list[str] = []
+    agent = FakeAgent(run=text_run("done"))
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(bus, "settled-order")
+
+    async def settle(
+        seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        assert agent.run.context_exited
+        order.append("settled")
+        if phase != "active":
+            await seal_usage()
+        return phase
+
+    async def finalize(
+        payload: RunCompletedPayload | RunFailedPayload, usage: tuple[int, int]
+    ) -> bool:
+        assert order == ["settled"]
+        order.append("terminal")
+        return await terminal_emitter(emitter, _always_claim, usage_recorder()[0])(
+            payload, usage
+        )
+
+    completed = await invoke_once(
+        emitter,
+        agent,
+        "c1",
+        {},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        finalize_terminal=finalize,
+        record_usage=usage_recorder()[0],
+        on_native_settled=settle,
+    )
+    assert completed is (phase == "active")
+    assert order == (["settled", "terminal"] if phase == "active" else ["settled"])
+    assert ("run.completed" in bus.kinds("settled-order")) is (phase == "active")
+    assert "run.failed" not in bus.kinds("settled-order")
+
+
+async def test_settlement_persistence_failure_propagates_without_second_terminal() -> (
+    None
+):
+    agent = FakeAgent(run=text_run("done"))
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(bus, "settlement-failed")
+    failure = RuntimeError("repository unavailable")
+
+    async def settle(
+        seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        assert agent.run.context_exited
+        await seal_usage()
+        raise failure
+
+    with pytest.raises(RuntimeError) as caught:
+        await invoke_once(
+            emitter,
+            agent,
+            "c1",
+            {},
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=terminal_emitter(
+                emitter, _always_claim, usage_recorder()[0]
+            ),
+            record_usage=usage_recorder()[0],
+            on_native_settled=settle,
+        )
+    assert caught.value is failure
+    assert "run.failed" not in bus.kinds("settlement-failed")
+    assert "run.completed" not in bus.kinds("settlement-failed")
+
+
+@pytest.mark.parametrize("native_interrupted", [True, False])
+@pytest.mark.parametrize("phase", ["waiting", "unknown"])
+async def test_waiting_settlement_seals_usage_before_releasing_lease(
+    native_interrupted: bool,
+    phase: Literal["waiting", "unknown"],
+) -> None:
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=native_interrupted))
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(bus, "waiting-usage-order")
+    writes: list[tuple[int, int]] = []
+    released = False
+
+    async def record_usage(input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        assert not released, "the real repository rejects usage after lease release"
+        writes.append((input_tokens, output_tokens))
+        return input_tokens, output_tokens
+
+    async def settle(
+        seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        nonlocal released
+        assert agent.run.context_exited
+        assert await asyncio.gather(seal_usage(), seal_usage()) == [(0, 0), (0, 0)]
+        assert await seal_usage() == (0, 0)
+        assert writes == [(0, 0)], "seal this segment before committing waiting"
+        released = True
+        return phase
+
+    terminal = await invoke_once(
+        emitter,
+        agent,
+        "c1",
+        {},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, record_usage),
+        record_usage=record_usage,
+        on_native_settled=settle,
+    )
+    assert terminal is False and released
+    assert writes == [(0, 0)]
+    assert "run.completed" not in bus.kinds("waiting-usage-order")
+    assert "run.failed" not in bus.kinds("waiting-usage-order")
+
+
+async def test_usage_seal_failure_propagates_without_settlement_or_terminal() -> None:
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=False))
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(bus, "usage-seal-failed")
+    failure = RuntimeError("usage transaction failed")
+    settled = False
+    attempts = 0
+
+    async def record_usage(_input: int, _output: int) -> tuple[int, int]:
+        nonlocal attempts
+        attempts += 1
+        raise failure
+
+    async def settle(
+        seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        nonlocal settled
+        assert agent.run.context_exited
+        await seal_usage()
+        settled = True
+        return "waiting"
+
+    with pytest.raises(RuntimeError) as caught:
+        await invoke_once(
+            emitter,
+            agent,
+            "c1",
+            {},
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=terminal_emitter(emitter, _always_claim, record_usage),
+            record_usage=record_usage,
+            on_native_settled=settle,
+        )
+    assert caught.value is failure
+    assert attempts == 1 and not settled
+    assert "run.completed" not in bus.kinds("usage-seal-failed")
+    assert "run.failed" not in bus.kinds("usage-seal-failed")
+
+
+async def test_interrupted_active_reader_keeps_usage_without_terminal() -> None:
+    agent = FakeAgent(run=FakeRunStream(is_interrupted=True))
+    bus = FakeBus()
+    emitter = await RunEmitter.attach(bus, "interrupted-active")
+    totals: list[tuple[int, int]] = []
+
+    async def record_usage(input_tokens: int, output_tokens: int) -> tuple[int, int]:
+        totals.append((input_tokens, output_tokens))
+        return input_tokens, output_tokens
+
+    async def settle(
+        seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        assert agent.run.context_exited
+        assert totals == []
+        return "active"
+
+    terminal = await invoke_once(
+        emitter,
+        agent,
+        "c1",
+        {},
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, record_usage),
+        record_usage=record_usage,
+        on_native_settled=settle,
+    )
+    assert terminal is False
+    assert totals == [(0, 0)]
+    assert "run.completed" not in bus.kinds("interrupted-active")
+    assert "run.failed" not in bus.kinds("interrupted-active")
+
+
+@pytest.fixture(autouse=True)
+def isolate_sdk_profile_side_effects() -> Iterator[None]:
+    with isolated_native_registry():
+        yield

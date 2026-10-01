@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 from jsonschema import validate
+from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import SecretStr
 
 from kokoro_agent import contract_check
@@ -215,3 +216,147 @@ async def test_actual_http_dispatch_serializes_typed_launch_and_replay(
         _response_ref(document, "/v1/sessions/{session_id}/events", "get", "200"),
         replay,
     )
+
+
+# R31 full replacement source: payload_json has a real owner-decoded schema.
+def _hitl4_state(phase: str = "waiting") -> dict[str, Any]:
+    groups: list[dict[str, Any]] = [
+        {
+            "group_id": "group-1",
+            "items": [
+                {
+                    "item_id": "item-1",
+                    "request_id": "call-1",
+                    "kind": "tool_approval",
+                    "allowed_decisions": ["approve", "reject"],
+                    "display": {
+                        "name": "lookup",
+                        "description": "Review lookup",
+                        "editable": False,
+                        "input_schema": {"type": "object", "properties": {}},
+                    },
+                    "validation": {
+                        "code": "json_schema_invalid",
+                        "instance_path": ["query"],
+                    },
+                }
+            ],
+        }
+    ]
+    return {
+        "interaction_revision": 2,
+        "pause_revision": 1,
+        "pause_ref": "pause-opaque-1",
+        "phase": phase,
+        "groups": groups if phase in {"waiting", "resuming"} else [],
+        "action_result": (
+            {"command_id": "command-1", "pause_revision": 1, "kind": "accepted"}
+            if phase == "resuming"
+            else None
+        ),
+    }
+
+
+def _hitl4_state_schema() -> dict[str, Any]:
+    document = _document()
+    schema = document["components"]["schemas"]["ChatEvent"]
+    mapping = schema["x-kokoro-decoded-payloads"]["mapping"]
+    assert mapping.get("interaction.state") == (
+        "#/components/schemas/ChatInteractionState"
+    ), "HITL4 needs a strict full-state decoded payload, not untyped payload_json"
+    return {"$ref": mapping["interaction.state"], "components": document["components"]}
+
+
+def test_hitl4_chat_source_replaces_old_interaction_type() -> None:
+    event = _document()["components"]["schemas"]["ChatEvent"]
+    values = event["properties"]["event_type"]["enum"]
+    assert "interaction.state" in values
+    assert "interaction" not in values, "No old source/alias alongside HITL4"
+
+
+@pytest.mark.parametrize("phase", ["waiting", "resuming", "active", "terminal"])
+def test_hitl4_source_validates_complete_phase_and_collection(phase: str) -> None:
+    validate(_hitl4_state(phase), _hitl4_state_schema())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_groups",
+        "empty_waiting",
+        "active_with_items",
+        "missing_ref",
+        "zero_revision",
+        "raw_args",
+        "raw_locator",
+        "validation_value",
+        "unknown_field",
+    ],
+)
+def test_hitl4_source_rejects_partial_or_private_payloads(mutation: str) -> None:
+    schema = _hitl4_state_schema()
+    valid = _hitl4_state()
+    validate(valid, schema)
+    invalid = copy.deepcopy(valid)
+    if mutation == "missing_groups":
+        del invalid["groups"]
+    elif mutation == "empty_waiting":
+        invalid["groups"] = []
+    elif mutation == "active_with_items":
+        invalid["phase"] = "active"
+    elif mutation == "missing_ref":
+        del invalid["pause_ref"]
+    elif mutation == "zero_revision":
+        invalid["interaction_revision"] = 0
+    elif mutation == "raw_args":
+        invalid["groups"][0]["items"][0]["args"] = {"token": "private-marker"}
+    elif mutation == "raw_locator":
+        invalid["checkpoint_id"] = "private-checkpoint"
+    elif mutation == "validation_value":
+        invalid["groups"][0]["items"][0]["validation"]["value"] = "private-marker"
+    else:
+        invalid["unregistered"] = True
+    with pytest.raises(SchemaValidationError):
+        validate(invalid, schema)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_action",
+        "resuming_null",
+        "resuming_consumed",
+        "preview_without_source",
+        "duplicate_allowed",
+        "empty_input_schema_missing",
+        "null_waiting_ref",
+    ],
+)
+def test_hitl4_machine_and_runtime_reject_invalid_action_or_display(
+    mutation: str,
+) -> None:
+    from pydantic import ValidationError
+    from kokoro_agent.protocol.events import ChatInteractionState
+
+    value = _hitl4_state("resuming")
+    schema = _hitl4_state_schema()
+    validate(value, schema)
+    ChatInteractionState.model_validate(value)
+    if mutation == "missing_action":
+        del value["action_result"]
+    elif mutation == "resuming_null":
+        value["action_result"] = None
+    elif mutation == "resuming_consumed":
+        value["action_result"]["kind"] = "native_consumed"
+    elif mutation == "preview_without_source":
+        value["groups"][0]["items"][0]["display"]["result_preview"] = "safe result"
+    elif mutation == "duplicate_allowed":
+        value["groups"][0]["items"][0]["allowed_decisions"] = ["approve", "approve"]
+    elif mutation == "empty_input_schema_missing":
+        del value["groups"][0]["items"][0]["display"]["input_schema"]
+    else:
+        value["pause_ref"] = None
+    with pytest.raises(SchemaValidationError):
+        validate(value, schema)
+    with pytest.raises(ValidationError):
+        ChatInteractionState.model_validate(value)

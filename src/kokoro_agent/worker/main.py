@@ -36,6 +36,9 @@ from kokoro_agent.sandbox import teardown_backend_for_run
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.tools.web_search import SearchProviderSettings
 from kokoro_agent.infrastructure.checkpoints import make_checkpointer
+from kokoro_agent.infrastructure.checkpoint_interactions import (
+    make_interaction_checkpointer,
+)
 from kokoro_agent.infrastructure.memory_store import make_memory_store
 from kokoro_agent.infrastructure.postgres_run_repository import make_run_repository
 from kokoro_agent.streams.factory import make_stream
@@ -180,6 +183,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         worker_platform_runtime(config) as platform,
         worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
         make_checkpointer(config.checkpoint) as saver,
+        make_checkpointer(config.checkpoint) as interaction_reader,
         make_run_repository(config.run_repository) as run_repository,
         worker_storage_delivery(
             config, owner_clients.delivery, run_repository
@@ -192,6 +196,9 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             )
         ) as chat_repository,
     ):
+        interaction_checkpointer = make_interaction_checkpointer(
+            saver=saver, reader=interaction_reader, repository=run_repository
+        )
         dependencies = WorkerDependencies(
             platform=platform,
             model=config.model,
@@ -200,7 +207,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             manifest=manifest,
             subagent_catalog=subagent_catalog,
             toolbox=toolbox_from_config(config),
-            checkpointer=saver,
+            checkpointer=interaction_checkpointer,
             run_repository=run_repository,
             memory_store=memory_store,
             # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
@@ -212,6 +219,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         )
         agent_factory = AgentFactory(dependencies)
         supervisor = RunSupervisor(
+            interaction_reader=interaction_checkpointer.read_interaction,
             agent_builder=agent_factory.build,
             run_repository=run_repository,
             approval_tool_names=agent_factory.approval_names,

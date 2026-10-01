@@ -42,8 +42,10 @@ assertion headers。浏览器不得直接调用此服务。每个 operation 的 
 
 ## Version
 
-当前候选 HTTP 机器 contract version 为 `3.0.0`，路径仍为 `/v1`；尚待 Root 协调发布。
-此次 pre-launch breaking 新增 required retryable、扩展 failure code 并删除原异常 error_kind/message。
+当前候选 HTTP 机器 contract version 为 `4.0.0`，路径仍为 `/v1`；尚待 Root 协调发布。
+本次 breaking 将 resume 一次切为 required expected_pause_revision/pause_ref、全集 item_id 决策，
+Chat 源改为完整 interaction.state；旧 tool_id/request_id 寻址与 interaction 事件不保留 alias。
+此前 Failure code/required retryable/合法 tuple 保持原义，不增加公开 reason。
 `info.version` 与内部 URL major 分别计数。2.0 已要求的 selected_skill_source_refs/[] 保持不变，
 不接受旧 trace fallback。Agent 固定 commit → BFF strict repin/正式 Product+AG-UI → Web 固定消费 →
 Root 仅对已授权自有 fixture 有序停止/清理/fresh 切换；禁止旧 failure JSON 双读或默认补字段。
@@ -55,7 +57,8 @@ Protobuf/RPC 不在本仓发布；其他 Redis envelope 的 kind 与 payload 继
 OpenAPI 文件是本仓手工审查的 canonical source，不从 Root、BFF 或数据库生成。Pydantic 模型、HTTP
 handler 和 contract tests 必须与它同步。失败形状例外为已落地的单向生成：基础 Failure 唯一定义
 code/required retryable/合法 tuple，RunFailure 与 ChatFailure 在最终 profile 用 unevaluatedProperties=false
-封闭；ChatEvent.x-kokoro-decoded-payloads 只为 run.failed 标明 payload_json 的解码形状。
+封闭；ChatEvent.x-kokoro-decoded-payloads 精确登记 run.failed→ChatFailure 与
+interaction.state→ChatInteractionState；两者 payload_json 仍为字符串，消费方按声明解码。
 `scripts/generate_failure_models.py` 调用 `chat_contract_check.py` 内唯一失败 profile 编译器，生成
 `src/kokoro_agent/protocol/run_failure_generated.py` 的 RunErrorCode/RunFailedPayload/ChatFailure；
 仅 stdlib/Pydantic，无 protocol 向内依赖。生成物带完整 OpenAPI source hash，不手改；
@@ -94,7 +97,20 @@ BFF consumer contract test 验证。
 ## Provenance
 
 contract source 与实现属于同一个 Git commit；`contract/provenance.json` 的 `source_files` 必须精确等于
-checker 内置的完整有序 owner inventory，同时记录 HTTP `3.0.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
+checker 内置的完整有序 owner inventory，同时记录 HTTP `4.0.0` direct path/SHA、execution-proof schema/vector 各自 digest 和 aggregate
 digest；generated_artifacts 记录 failure 生成物 direct hash/source hash/generator。消费者固定 `repository + commit + version + schema path/hash + vectors path/hash`，不把会随无关
 OpenAPI/protocol 变化的 aggregate 当作 proof digest。重新计算 provenance 后，必须把 contract、测试和文档放在同一逻辑 commit 中。运行时
 事件的持久化顺序由 PostgreSQL ledger/receipt owner 保证，Redis 只是可重放传输，不是公开协议事实源。
+
+
+## HITL 4 receipt 与发布门
+
+HTTP 202 只表示 command durable admission；成功 receipt 不证明 native 消费、不会清空 waiting。
+worker 事务真正抛出的 InteractionConflict 才记 failed/error_code=interaction_conflict；不发布 reason，
+不把 missing context、读取故障或 authority_lost 伪装为此 code。正常 waiting head/source 保持。
+args/reason 这两个允许 nullable 的 optional 字段可 null/omitted 同义归一；revision/ref/item 无默认。
+RunResume 严格验证后唯一 model_dump_json body 与规范化 request_digest 进入同一 command ledger。
+
+本工作树是完整 owner 切换候选，仍待 Root 真 HTTP/PG、默认全门与固定 artifact 验收。
+发布次序为 Agent owner → BFF 固定版本/commit/digest → Web 消费 BFF；无 /v2、兼容开关或先改消费者 pin。
+HTTP 4 不代表完整 scope/retry/effective-native/retention 或 P3B 已完成。

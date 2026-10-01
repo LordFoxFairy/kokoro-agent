@@ -197,6 +197,9 @@ async def test_cancel_terminal_command_and_outbox_survive_crash_before_publish(
     run_repository: RunRepository,
     chat_repository: PostgresChatRepository,
 ) -> None:
+    from kokoro_agent.protocol.events import ChatInteractionState
+    from kokoro_agent.domain.chat.models import chat_event_id
+
     run = _request()
     lease = await run_repository.try_claim(run, "worker-1")
     assert lease is not None
@@ -225,7 +228,43 @@ async def test_cancel_terminal_command_and_outbox_survive_crash_before_publish(
     ]
     assert [row.kind for row in queued] == ["run.control.receipt", "run.completed"]
     assert [row.durable_seq for row in queued] == [1, 2]
-    assert [row.index for row in queued] == [0, 1]
+    assert [row.index for row in queued] == [0, 2]
+    facts = await chat_repository.replay(
+        run.execution_identity.tenant_ref, RunScope.of(run).namespace, run.session_id
+    )
+    assert [fact.event_type for fact in facts] == ["interaction.state", "run.completed"]
+    assert [fact.seq for fact in facts] == [1, 2]
+    assert [fact.source_index for fact in facts] == [1, 2]
+    assert ChatInteractionState.model_validate_json(facts[0].payload_json).model_dump(
+        mode="json"
+    ) == {
+        "interaction_revision": 1,
+        "pause_revision": 0,
+        "pause_ref": None,
+        "phase": "terminal",
+        "groups": [],
+        "action_result": None,
+    }
+    for fact in facts:
+        assert (fact.tenant_id, fact.namespace, fact.session_id, fact.run_id) == (
+            run.execution_identity.tenant_ref,
+            RunScope.of(run).namespace,
+            run.session_id,
+            run.run_id,
+        )
+        assert fact.chat_event_id == chat_event_id(
+            RunScope.of(run).namespace, run.run_id, fact.source_index
+        )
+    assert json.loads(queued[0].payload_json) == receipt.model_dump(
+        mode="json", exclude_none=True
+    )
+    assert (
+        json.loads(facts[1].payload_json)
+        == json.loads(queued[1].payload_json)
+        == terminal.model_dump(mode="json", exclude_none=True)
+    )
+    assert sorted([row.index for row in queued] + [facts[0].source_index]) == [0, 1, 2]
+    await run_repository.verify_terminal_frame(queued[1])
     assert (
         await _cancel_run(
             run_repository,
@@ -239,6 +278,16 @@ async def test_cancel_terminal_command_and_outbox_survive_crash_before_publish(
         is None
     )
     assert len(await run_repository.list_unpublished_outbox()) == 2
+
+    assert await run_repository.list_unpublished_outbox() == queued
+    assert (
+        await chat_repository.replay(
+            run.execution_identity.tenant_ref,
+            RunScope.of(run).namespace,
+            run.session_id,
+        )
+        == facts
+    )
 
 
 async def test_cancel_snapshot_rejects_new_started_and_new_success(
@@ -513,6 +562,9 @@ async def test_terminal_replay_usage_seal_and_chat_sequence_are_immutable(
     )
     from kokoro_agent.domain.run.repository import UsageIdentityConflict
 
+    from kokoro_agent.protocol.events import ChatInteractionState
+    from kokoro_agent.domain.chat.models import chat_event_id
+
     run = _request()
     lease = await run_repository.try_claim(run, "worker")
     assert lease is not None
@@ -530,7 +582,46 @@ async def test_terminal_replay_usage_seal_and_chat_sequence_are_immutable(
     events = await chat_repository.replay(
         run.execution_identity.tenant_ref, RunScope.of(run).namespace, run.session_id
     )
-    assert len(events) == 1 and events[0].event_type == "run.completed"
+    assert [event.event_type for event in events] == [
+        "interaction.state",
+        "run.completed",
+    ]
+    assert [event.seq for event in events] == [1, 2]
+    assert [event.source_index for event in events] == [0, 1]
+    assert ChatInteractionState.model_validate_json(events[0].payload_json).model_dump(
+        mode="json"
+    ) == {
+        "interaction_revision": 1,
+        "pause_revision": 0,
+        "pause_ref": None,
+        "phase": "terminal",
+        "groups": [],
+        "action_result": None,
+    }
+    for fact in events:
+        assert (fact.tenant_id, fact.namespace, fact.session_id, fact.run_id) == (
+            run.execution_identity.tenant_ref,
+            RunScope.of(run).namespace,
+            run.session_id,
+            run.run_id,
+        )
+        assert fact.chat_event_id == chat_event_id(
+            RunScope.of(run).namespace, run.run_id, fact.source_index
+        )
+    assert [
+        (frame.kind, frame.durable_seq, frame.index) for frame in first.retained_frames
+    ] == [("run.completed", 1, 1)]
+    assert (
+        json.loads(events[1].payload_json)
+        == json.loads(first.retained_frames[0].payload_json)
+        == {
+            "status": "completed",
+            "token_usage": {"input_tokens": 5, "output_tokens": 7},
+        }
+    )
+    assert sorted(
+        [frame.index for frame in first.retained_frames] + [events[0].source_index]
+    ) == [0, 1]
     assert await run_repository.add_usage(run.run_id, lease, 5, 7) == (5, 7)
     with pytest.raises(UsageIdentityConflict):
         await run_repository.add_usage(run.run_id, lease, 6, 7)
@@ -558,6 +649,9 @@ async def test_terminal_repairs_retained_started_chat_before_terminal_sequence(
     run_repository: RunRepository,
     chat_repository: PostgresChatRepository,
 ) -> None:
+    from kokoro_agent.protocol.events import ChatInteractionState
+    from kokoro_agent.domain.chat.models import chat_event_id
+
     run = _request()
     lease = await run_repository.try_claim(run, "worker")
     assert lease is not None
@@ -569,8 +663,59 @@ async def test_terminal_repairs_retained_started_chat_before_terminal_sequence(
     facts = await chat_repository.replay(
         run.execution_identity.tenant_ref, RunScope.of(run).namespace, run.session_id
     )
-    assert [fact.event_type for fact in facts] == ["run.started", "run.completed"]
-    assert facts[0].seq < facts[1].seq
+    assert [fact.event_type for fact in facts] == [
+        "run.started",
+        "interaction.state",
+        "run.completed",
+    ]
+    assert [fact.seq for fact in facts] == [1, 2, 3]
+    assert [fact.source_index for fact in facts] == [0, 1, 2]
+    assert facts[0].seq < facts[1].seq < facts[2].seq
+    assert ChatInteractionState.model_validate_json(facts[1].payload_json).model_dump(
+        mode="json"
+    ) == {
+        "interaction_revision": 1,
+        "pause_revision": 0,
+        "pause_ref": None,
+        "phase": "terminal",
+        "groups": [],
+        "action_result": None,
+    }
+    for fact in facts:
+        assert (fact.tenant_id, fact.namespace, fact.session_id, fact.run_id) == (
+            run.execution_identity.tenant_ref,
+            RunScope.of(run).namespace,
+            run.session_id,
+            run.run_id,
+        )
+        assert fact.chat_event_id == chat_event_id(
+            RunScope.of(run).namespace, run.run_id, fact.source_index
+        )
+    queued = [
+        frame
+        for frame in await run_repository.list_unpublished_outbox()
+        if frame.run_id == run.run_id
+    ]
+    assert [(frame.kind, frame.durable_seq, frame.index) for frame in queued] == [
+        ("run.started", 1, 0),
+        ("run.completed", 2, 2),
+    ]
+    assert (
+        queued[0].durable_seq,
+        queued[0].event_id,
+        queued[0].index,
+        queued[0].timestamp,
+    ) == (staged.durable_seq, staged.event_id, staged.index, staged.timestamp)
+    assert facts[0].created_at.timestamp() * 1000 == staged.timestamp
+    assert json.loads(queued[0].payload_json) == {}
+    assert json.loads(facts[0].payload_json) == {"status": "running"}
+    assert json.loads(facts[2].payload_json) == json.loads(queued[1].payload_json)
+    assert sorted([frame.index for frame in queued] + [facts[1].source_index]) == [
+        0,
+        1,
+        2,
+    ]
+    await run_repository.verify_terminal_frame(queued[1])
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -595,6 +740,9 @@ async def test_delivery_ack_gc_preserves_mapping_until_terminal_then_rescans(
     import kokoro_agent.infrastructure.postgres_run_context as context_module
     import kokoro_agent.infrastructure.postgres_run_leases as lease_module
     from kokoro_agent.infrastructure.schema import RUN_CLAIMS_TABLE
+
+    from kokoro_agent.protocol.events import ChatInteractionState
+    from kokoro_agent.domain.chat.models import chat_event_id
 
     run = _request()
     lease = await run_repository.try_claim(run, "worker")
@@ -752,6 +900,62 @@ async def test_delivery_ack_gc_preserves_mapping_until_terminal_then_rescans(
             asyncio.gather(gc_task, terminal_task), timeout=5
         )
     assert terminal_result.status == "committed"
+    terminal_facts = await chat_repository.replay(
+        run.execution_identity.tenant_ref, RunScope.of(run).namespace, run.session_id
+    )
+    assert terminal_facts[:2] == facts
+    assert [fact.event_type for fact in terminal_facts] == [
+        "run.started",
+        "delivery",
+        "interaction.state",
+        "run.completed",
+    ]
+    assert [fact.seq for fact in terminal_facts] == [1, 2, 3, 4]
+    assert [fact.source_index for fact in terminal_facts] == (
+        [0, 1, 3, 4] if cancel else [0, 1, 2, 3]
+    )
+    assert ChatInteractionState.model_validate_json(
+        terminal_facts[2].payload_json
+    ).model_dump(mode="json") == {
+        "interaction_revision": 1,
+        "pause_revision": 0,
+        "pause_ref": None,
+        "phase": "terminal",
+        "groups": [],
+        "action_result": None,
+    }
+    for fact in terminal_facts:
+        assert (fact.tenant_id, fact.namespace, fact.session_id, fact.run_id) == (
+            run.execution_identity.tenant_ref,
+            RunScope.of(run).namespace,
+            run.session_id,
+            run.run_id,
+        )
+        assert fact.chat_event_id == chat_event_id(
+            RunScope.of(run).namespace, run.run_id, fact.source_index
+        )
+    frames = terminal_result.retained_frames
+    assert [(frame.kind, frame.durable_seq, frame.index) for frame in frames] == (
+        [("run.control.receipt", 3, 2), ("run.completed", 4, 4)]
+        if cancel
+        else [("run.completed", 3, 3)]
+    )
+    if cancel:
+        assert RunControlReceiptPayload.model_validate_json(
+            frames[0].payload_json
+        ) == RunControlReceiptPayload(command_id="cancel-gc", control_status="applied")
+    assert (
+        json.loads(terminal_facts[-1].payload_json)
+        == json.loads(frames[-1].payload_json)
+        == terminal_payload.model_dump(mode="json", exclude_none=True)
+    )
+    assert terminal_facts[-1].source_index == frames[-1].index
+    assert sorted(
+        [event.index for event in original]
+        + [frame.index for frame in frames]
+        + [terminal_facts[2].source_index]
+    ) == list(range(5 if cancel else 4))
+    await run_repository.verify_terminal_frame(frames[-1])
     # No new receipt: the unchanged consumed watermark must still collect the retained delivery.
     await run_repository.reconcile_receipts(run.run_id)
     async with connect_pg(run_chat_database_url) as conn:
@@ -798,8 +1002,11 @@ async def test_delivery_ack_gc_preserves_mapping_until_terminal_then_rescans(
     assert [fact.event_type for fact in facts] == [
         "run.started",
         "delivery",
+        "interaction.state",
         "run.completed",
     ]
+
+    assert facts == terminal_facts
 
 
 async def test_usage_segment_rejects_database_expiry_despite_stale_application_clock(

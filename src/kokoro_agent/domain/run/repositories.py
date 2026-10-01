@@ -33,6 +33,26 @@ from kokoro_agent.domain.run.models import (
 )
 
 
+from kokoro_agent.domain.run.interactions import (
+    CheckpointObservation,
+    ObservationTarget,
+    ObservationStored,
+    ConsumedPauseEvidence,
+    UnknownResumeEvidence,
+    QuiescentProbe,
+    ReconcileProbeResult,
+    InteractionRecoveryTarget,
+    ResumeReadContext,
+    AcceptedResume,
+    DurablePauseSnapshot,
+    InteractionCommitted,
+    InteractionSnapshot,
+    ReplayedResume,
+    ResumeDispatchPlan,
+    StartedResume,
+)
+
+
 class RunProfilePort(Protocol):
     async def freeze_or_verify_static_recipe(
         self, request: RunRequest, lease: LeaseFence, binding: StaticRecipeBinding
@@ -266,3 +286,50 @@ __all__ = [
     "RunLifecyclePort",
     "RunSandboxCleanupPort",
 ]
+
+
+class RunInteractionPort(Protocol):
+    async def read_interaction(
+        self, request: RunRequest
+    ) -> InteractionSnapshot | None: ...
+    async def record_pause(
+        self, request: RunRequest, lease: LeaseFence, pause: DurablePauseSnapshot
+    ) -> InteractionCommitted | ReplayedResume: ...
+    async def accept_resume(
+        self, request: RunRequest, command_id: str, owner: str
+    ) -> AcceptedResume | ReplayedResume: ...
+    async def start_resume(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        command_id: str,
+        plan: ResumeDispatchPlan,
+    ) -> StartedResume | ReplayedResume: ...
+    async def mark_resume_unknown(
+        self, request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str
+    ) -> InteractionCommitted | ReplayedResume: ...
+
+    async def record_checkpoint_observation(
+        self, request: RunRequest, lease: LeaseFence, observation: CheckpointObservation
+    ) -> ObservationStored: ...
+    async def read_checkpoint_observations(
+        self, request: RunRequest, target: ObservationTarget
+    ) -> tuple[CheckpointObservation, ...]: ...
+    async def reconcile_resume(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        evidence: ConsumedPauseEvidence | UnknownResumeEvidence,
+    ) -> InteractionCommitted | ReplayedResume: ...
+    async def record_reconcile_probe(
+        self, request: RunRequest, lease: LeaseFence, probe: QuiescentProbe
+    ) -> ReconcileProbeResult: ...
+    async def reset_reconcile_probe(
+        self, request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str
+    ) -> None: ...
+    async def list_unsettled_interactions(
+        self, limit: int
+    ) -> tuple[InteractionRecoveryTarget, ...]: ...
+    async def read_resume_context(
+        self, request: RunRequest, command_id: str
+    ) -> ResumeReadContext | None: ...

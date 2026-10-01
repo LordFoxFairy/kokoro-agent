@@ -1,7 +1,7 @@
 # Agent-owned event protocol. Keep changes within this repository.
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal, Union, Self
 
 from pydantic import (
     BaseModel,
@@ -10,6 +10,7 @@ from pydantic import (
     JsonValue,
     StringConstraints,
     TypeAdapter,
+    model_validator,
 )
 
 from kokoro_agent.protocol.run_failure_generated import RunFailedPayload
@@ -450,3 +451,97 @@ AgentEvent = Annotated[
 ]
 
 agent_event_adapter: TypeAdapter[AgentEvent] = TypeAdapter(AgentEvent)
+
+
+class InteractionValidation(StrictModel):
+    code: Literal["json_schema_invalid"]
+    instance_path: list[str | int]
+
+
+class InteractionDisplay(StrictModel):
+    name: NonEmptyStr
+    description: str
+    editable: bool
+    input_schema: dict[str, JsonValue]
+    result_preview: str | None = None
+    truncated: bool | None = None
+    source: str | None = None
+
+    @model_validator(mode="after")
+    def validate_preview(self) -> Self:
+        if self.result_preview is not None and (
+            self.truncated is None or not self.source
+        ):
+            raise ValueError("result preview requires truncation and source")
+        return self
+
+
+class InteractionItem(StrictModel):
+    item_id: NonEmptyStr
+    request_id: NonEmptyStr
+    kind: AwaitingKind
+    allowed_decisions: Annotated[list[AllowedDecision], Field(min_length=1)]
+    display: InteractionDisplay
+    validation: InteractionValidation | None = None
+
+    @model_validator(mode="after")
+    def unique_decisions(self) -> Self:
+        if len(set(self.allowed_decisions)) != len(self.allowed_decisions):
+            raise ValueError("duplicate allowed decision")
+        return self
+
+
+class InteractionGroup(StrictModel):
+    group_id: NonEmptyStr
+    items: Annotated[list[InteractionItem], Field(min_length=1)]
+
+
+class InteractionActionResult(StrictModel):
+    command_id: NonEmptyStr
+    pause_revision: Annotated[int, Field(ge=1)]
+    kind: Literal[
+        "accepted", "native_consumed", "validation_failed", "unknown", "cancelled"
+    ]
+
+
+class ChatInteractionState(StrictModel):
+    """Candidate full replacement source, not an execution/consumption proof."""
+
+    interaction_revision: Annotated[int, Field(ge=1)]
+    pause_revision: Annotated[int, Field(ge=0)]
+    pause_ref: NonEmptyStr | None
+    phase: Literal["active", "waiting", "resuming", "terminal"]
+    groups: list[InteractionGroup]
+    action_result: InteractionActionResult | None
+
+    @model_validator(mode="after")
+    def complete_collection(self) -> Self:
+        if self.pause_revision > self.interaction_revision:
+            raise ValueError("pause revision exceeds interaction revision")
+        if (self.pause_revision == 0) != (self.pause_ref is None):
+            raise ValueError("pause identity is incomplete")
+        waiting = self.phase in {"waiting", "resuming"}
+        if waiting != bool(self.groups) or (waiting and self.pause_revision == 0):
+            raise ValueError("phase and complete collection disagree")
+        action = self.action_result
+        if action is not None:
+            if action.pause_revision > self.pause_revision:
+                raise ValueError("action references a future pause")
+            if self.phase == "resuming" and (
+                action.kind not in {"accepted", "unknown"}
+                or action.pause_revision != self.pause_revision
+            ):
+                raise ValueError("resuming action disagrees with original round")
+            if (
+                action.kind == "validation_failed"
+                and self.phase == "waiting"
+                and action.pause_revision >= self.pause_revision
+            ):
+                raise ValueError("validation result requires a new pause round")
+        elif self.phase == "resuming":
+            raise ValueError("resuming requires an accepted action")
+        group_ids = [group.group_id for group in self.groups]
+        item_ids = [item.item_id for group in self.groups for item in group.items]
+        if len(set(group_ids)) != len(group_ids) or len(set(item_ids)) != len(item_ids):
+            raise ValueError("duplicate group or item")
+        return self

@@ -102,11 +102,11 @@ class ToolPolicyMiddleware(AgentMiddleware):
 
 
 class _ReviewDecision(BaseModel):
-    """resume 值的洗净模型：与 approvals.review_resume_value 产出的 dict 同构。"""
+    """真实全集 resume map 中结果审核项的唯一内部决策格式。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    tool_id: str
+    request_id: str
     type: str
     response: str | None = None
     reason: str | None = None
@@ -244,7 +244,7 @@ class ToolResultReviewMiddleware(AgentMiddleware):
             cached = persisted
         content, is_error = cached
         # 结果审核 = request_human(kind="review") 预设：request_id=tool_id（工具边界幂等锚），
-        # context 携已执行结果供人裁决。resume 值语义不变（list[decision dict]），wire 投影不变。
+        # context 携已执行结果供人裁决。内部 resume 项仅按 request_id 寻址。
         decisions = request_human(
             kind="review",
             request_id=tool_id,
@@ -263,9 +263,12 @@ class ToolResultReviewMiddleware(AgentMiddleware):
 def _apply_review_decision(
     decisions: object, *, tool_id: str, name: str, content: str
 ) -> ToolMessage:
-    # resume 值与 HIL 同构：list[decision dict]，Pydantic 洗净后按 tool_id 取己项；形状不符 fail-loud。
+    # 内部请求身份与工具执行身份只在此边界关联；不接受旧 tool_id 决策字段。
     parsed = _REVIEW_DECISIONS_ADAPTER.validate_python(decisions)
-    mine = next((d for d in parsed if d.tool_id == tool_id), None)
+    identities = [decision.request_id for decision in parsed]
+    if len(identities) != len(set(identities)):
+        raise ValueError("result review resume contains duplicate request identities")
+    mine = next((d for d in parsed if d.request_id == tool_id), None)
     if mine is None:
         raise ValueError(f"result review resume missing decision for tool {tool_id!r}")
     if mine.type == "approve":

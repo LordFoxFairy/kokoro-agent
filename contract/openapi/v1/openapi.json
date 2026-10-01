@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "3.0.0"
+    "version": "4.0.0"
   },
   "servers": [
     {
@@ -466,19 +466,22 @@
             "type": "object",
             "required": [
               "type",
-              "tool_id"
+              "item_id"
             ],
             "properties": {
               "type": {
                 "const": "approve"
               },
-              "tool_id": {
+              "args": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": true
+              },
+              "item_id": {
                 "type": "string",
                 "minLength": 1
-              },
-              "args": {
-                "type": "object",
-                "additionalProperties": true
               }
             },
             "additionalProperties": false
@@ -487,20 +490,20 @@
             "type": "object",
             "required": [
               "type",
-              "tool_id",
+              "item_id",
               "args"
             ],
             "properties": {
               "type": {
                 "const": "edit"
               },
-              "tool_id": {
-                "type": "string",
-                "minLength": 1
-              },
               "args": {
                 "type": "object",
                 "additionalProperties": true
+              },
+              "item_id": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "additionalProperties": false
@@ -509,18 +512,21 @@
             "type": "object",
             "required": [
               "type",
-              "tool_id"
+              "item_id"
             ],
             "properties": {
               "type": {
                 "const": "reject"
               },
-              "tool_id": {
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "item_id": {
                 "type": "string",
                 "minLength": 1
-              },
-              "reason": {
-                "type": "string"
               }
             },
             "additionalProperties": false
@@ -529,18 +535,18 @@
             "type": "object",
             "required": [
               "type",
-              "tool_id",
+              "item_id",
               "response"
             ],
             "properties": {
               "type": {
                 "const": "respond"
               },
-              "tool_id": {
+              "response": {
                 "type": "string",
                 "minLength": 1
               },
-              "response": {
+              "item_id": {
                 "type": "string",
                 "minLength": 1
               }
@@ -551,20 +557,20 @@
             "type": "object",
             "required": [
               "type",
-              "request_id",
+              "item_id",
               "value"
             ],
             "properties": {
               "type": {
                 "const": "submit"
               },
-              "request_id": {
-                "type": "string",
-                "minLength": 1
-              },
               "value": {
                 "type": "object",
                 "additionalProperties": true
+              },
+              "item_id": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "additionalProperties": false
@@ -576,7 +582,9 @@
         "required": [
           "kind",
           "session_id",
-          "decisions"
+          "decisions",
+          "expected_pause_revision",
+          "pause_ref"
         ],
         "properties": {
           "kind": {
@@ -593,9 +601,18 @@
             "items": {
               "$ref": "#/components/schemas/ResumeDecision"
             }
+          },
+          "expected_pause_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pause_ref": {
+            "type": "string",
+            "minLength": 1
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "Full pending collection submission for one exact pause. The owner rejects duplicate, missing, extra or stale item identities as a whole; HTTP admission is not native consumption."
       },
       "ControlRequest": {
         "oneOf": [
@@ -831,7 +848,7 @@
               "assistant.delta",
               "assistant.completed",
               "activity",
-              "interaction",
+              "interaction.state",
               "delivery",
               "run.completed",
               "run.failed"
@@ -857,7 +874,8 @@
           "discriminator": "event_type",
           "property": "payload_json",
           "mapping": {
-            "run.failed": "#/components/schemas/ChatFailure"
+            "run.failed": "#/components/schemas/ChatFailure",
+            "interaction.state": "#/components/schemas/ChatInteractionState"
           }
         }
       },
@@ -1112,6 +1130,350 @@
           }
         ],
         "unevaluatedProperties": false
+      },
+      "InteractionValidation": {
+        "type": "object",
+        "required": [
+          "code",
+          "instance_path"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "const": "json_schema_invalid"
+          },
+          "instance_path": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionDisplay": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "editable",
+          "input_schema"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "input_schema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "result_preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "result_preview"
+              ],
+              "properties": {
+                "result_preview": {
+                  "type": "string"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "truncated",
+                "source"
+              ],
+              "properties": {
+                "truncated": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ]
+      },
+      "InteractionItem": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "request_id",
+          "kind",
+          "allowed_decisions",
+          "display"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tool_approval",
+              "ask_user_question",
+              "result_review",
+              "input"
+            ]
+          },
+          "allowed_decisions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "approve",
+                "edit",
+                "reject",
+                "respond",
+                "submit"
+              ]
+            }
+          },
+          "display": {
+            "$ref": "#/components/schemas/InteractionDisplay"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractionValidation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionGroup": {
+        "type": "object",
+        "required": [
+          "group_id",
+          "items"
+        ],
+        "properties": {
+          "group_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/InteractionItem"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionActionResult": {
+        "type": "object",
+        "required": [
+          "command_id",
+          "pause_revision",
+          "kind"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pause_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "native_consumed",
+              "validation_failed",
+              "unknown",
+              "cancelled"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatInteractionState": {
+        "type": "object",
+        "required": [
+          "interaction_revision",
+          "pause_revision",
+          "pause_ref",
+          "phase",
+          "groups",
+          "action_result"
+        ],
+        "properties": {
+          "interaction_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pause_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pause_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "active",
+              "waiting",
+              "resuming",
+              "terminal"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InteractionGroup"
+            }
+          },
+          "action_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractionActionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "phase": {
+                  "enum": [
+                    "waiting",
+                    "resuming"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "groups": {
+                  "minItems": 1
+                },
+                "pause_revision": {
+                  "minimum": 1
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "groups": {
+                  "maxItems": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "pause_revision": {
+                  "const": 0
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "pause_ref": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "pause_ref": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "phase": {
+                  "const": "resuming"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "action_result": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/InteractionActionResult"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "accepted",
+                            "unknown"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "description": "Complete replacement of the pending collection, never a delta. Runtime additionally enforces globally unique group/item IDs, pause_revision <= interaction_revision, action_result.pause_revision <= pause_revision, exact current revision for resuming, and an earlier action revision for validation_failed waiting. Locator, arguments and submitted values are private and absent."
       }
     },
     "responses": {

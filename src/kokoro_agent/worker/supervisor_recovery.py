@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+from kokoro_agent.infrastructure.checkpoint_interactions import (
+    ResumeReadTarget,
+    ObservedNativeResume,
+    make_quiescent_probe,
+)
+from kokoro_agent.domain.run.interactions import UnknownResumeEvidence
+from kokoro_agent.domain.run.models import (
+    ExecutionTerminalAuthority,
+    RunTerminalOutcome,
+)
+from kokoro_agent.protocol import RunFailedPayload
+
+
 import asyncio
 import contextlib
 import json
@@ -89,6 +102,13 @@ class SupervisorRecoveryMixin(SupervisorContext):
             if task is None or lease is None:
                 continue
             if await self._run_repository.renew(run_id, lease):
+                resume = self._resume_attempts.get(run_id)
+                if not task.done() and resume is not None:
+                    request = await self._run_repository.get_request(run_id)
+                    if request is not None:
+                        await self._run_repository.reset_reconcile_probe(
+                            request, lease, resume[0], resume[1].attempt_id
+                        )
                 continue
             # renew 跨 await；期间旧任务可能暂停，resume 已覆盖为新 task/generation。
             # 仅 fence 当时观测到的同一个任务与同一个 lease，绝不取消后来者。
@@ -115,6 +135,12 @@ class SupervisorRecoveryMixin(SupervisorContext):
                     await task
             LOGGER.warning("reclaiming expired run_id=%s", request.run_id)
             self._leases[request.run_id] = reclaimed.lease
+            interaction = await self._run_repository.read_interaction(request)
+            if interaction is not None and interaction.state.intent is not None:
+                # Reclaim never grants a second native invocation for an intent.
+                # Original attempt evidence remains fenced to its generation.
+                self._ensure_control_listener(bus, request.run_id)
+                continue
             await self._start_run(bus, request, reclaimed.lease)
         # control 监听收养：暂停 run 的认领 worker 崩溃后，其 resume/cancel 无人处理会永久卡死；
         # 每 worker 心跳确保监听存在（control 流是 consumer group，多 worker 收养天然去重）。
@@ -123,6 +149,7 @@ class SupervisorRecoveryMixin(SupervisorContext):
         # Persisted control commands include cancellation deferred behind an
         # in-flight delivery journal. Revisit them without requiring restart.
         await self._reapply_pending_control(bus)
+        await self._reconcile_interactions(bus)
         # 存活期间同样补发 queued critical outbox；不是只有启动时才扫描。
         await self._republish_pending_dispatches(bus)
         await self._republish_outbox(bus)
@@ -224,18 +251,86 @@ class SupervisorRecoveryMixin(SupervisorContext):
                 )
                 metrics.record_control_delivery("superseded")
                 continue
-            if isinstance(msg, RunResume):
-                current = await self._interrupt_fingerprint(entry.run_id)
-                if entry.fingerprint is None or current != entry.fingerprint:
-                    await self._run_repository.mark_control_superseded(
-                        entry.run_id, entry.command_id
-                    )
-                    await self._run_repository.mark_control_failed(
-                        entry.run_id, entry.command_id, "control_superseded"
-                    )
-                    metrics.record_control_delivery("superseded")
-                    continue
             await self._apply_recorded_control(bus, entry.run_id, msg)
+
+    async def _reconcile_interactions(self, bus: StreamProtocol) -> None:
+        for target in await self._run_repository.list_unsettled_interactions(100):
+            task = self._tasks.get(target.run_id)
+            if task is not None and not task.done():
+                continue
+            request = await self._run_repository.get_request(target.run_id)
+            lease = await self._run_repository.get_fence(target.run_id)
+            if (
+                request is None
+                or lease is None
+                or lease.owner != self._consumer
+                or not await self._run_repository.is_lease_current(target.run_id, lease)
+            ):
+                continue
+            context = await self._run_repository.read_resume_context(
+                request, target.command_id
+            )
+            if context is None or (
+                context.attempt_generation is not None
+                and context.attempt_generation != lease.generation
+            ):
+                continue
+            await self._resume_owned(bus, request, target.command_id)
+            context = await self._run_repository.read_resume_context(
+                request, target.command_id
+            )
+            if (
+                context is None
+                or context.intent.status.value != "unknown"
+                or context.intent.attempt_id is None
+            ):
+                continue
+            invocation = self._drained_attempts.get(
+                (target.run_id, lease.generation, context.intent.attempt_id)
+            )
+            if invocation is None:
+                # Restart/remote absence never invents a local-drained token.
+                continue
+            built = await self._build(request, lease)
+            observed = await self._interaction_reader(
+                request=request,
+                lease=lease,
+                handle=built,
+                target=ResumeReadTarget(command_id=target.command_id),
+            )
+            if not isinstance(observed, ObservedNativeResume) or not isinstance(
+                observed.evidence, UnknownResumeEvidence
+            ):
+                await self._run_repository.reset_reconcile_probe(
+                    request, lease, target.command_id, context.intent.attempt_id
+                )
+                continue
+            probe = make_quiescent_probe(
+                observed,
+                request=request,
+                worker_boot_id=self._boot_id,
+                invocation_id=invocation,
+            )
+            result = await self._run_repository.record_reconcile_probe(
+                request, lease, probe
+            )
+            if result.exhausted:
+                committed = await self._run_repository.finalize_terminal(
+                    target.run_id,
+                    ExecutionTerminalAuthority(lease=lease),
+                    RunTerminalOutcome(
+                        payload=RunFailedPayload(
+                            code="internal_error", retryable=False
+                        ),
+                        usage=None,
+                    ),
+                    tuple(
+                        await self._run_repository.list_delivery_journal(target.run_id)
+                    ),
+                )
+                if committed.status in ("committed", "replayed"):
+                    await self._republish_outbox(bus)
+                    await self._teardown_control(bus, target.run_id)
 
     async def _retry_sandbox_cleanups(self, run_id: str | None = None) -> None:
         if self._sandbox_teardown is None:

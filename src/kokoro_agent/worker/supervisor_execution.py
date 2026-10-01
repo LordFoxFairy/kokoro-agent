@@ -2,7 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Literal
+from uuid import uuid4
+from kokoro_agent.infrastructure.checkpoint_interactions import (
+    NativePauseRead,
+    ObservedNativeResume,
+    PauseReadTarget,
+    ResumeReadTarget,
+)
+from kokoro_agent.domain.run.interactions import (
+    InteractionConflict,
+    UnknownResumeEvidence,
+)
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -72,10 +85,31 @@ class SupervisorExecutionMixin(SupervisorContext):
             built = await self._build(request, lease)
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(
-                bus, request.run_id, error, code="assembly_failed"
+                bus, request.run_id, error, code="assembly_failed", build_lease=lease
             )
             return
         scope = RunScope.of(request)
+        # A committed native pause may precede the Run/Chat pause transaction.
+        # Recover that fact without another graph invocation.
+        try:
+            recovered = await self._interaction_reader(
+                request=request,
+                lease=lease,
+                handle=built,
+                target=PauseReadTarget(command_id=None, attempt_id=None),
+            )
+        except InteractionConflict as error:
+            if error.code != "native_not_paused":
+                raise
+        else:
+            if not isinstance(recovered, NativePauseRead):
+                raise RuntimeError("unexpected initial recovery evidence")
+            await self._run_repository.record_checkpoint_observation(
+                request, lease, recovered.observation
+            )
+            await self._run_repository.record_pause(request, lease, recovered.pause)
+            self._ensure_control_listener(bus, request.run_id)
+            return
         payload: dict[str, object] = {
             # Native message ID 只服务 LangGraph 重放去重，绝不复用 GA/外部 chat_message_id。
             # run_id 内确定性派生让 TTL 重拾仍命中同一 native message。
@@ -201,6 +235,79 @@ class SupervisorExecutionMixin(SupervisorContext):
                     )
                 return totals
 
+            request = await self._run_repository.get_request(run_id)
+            if request is None:
+                return
+            resume = self._resume_attempts.get(run_id)
+            metadata = dict((trace or {}).get("metadata", {}))
+            for key in (
+                "kokoro_run_id",
+                "kokoro_generation",
+                "kokoro_command_id",
+                "kokoro_attempt_id",
+            ):
+                metadata.pop(key, None)
+            metadata.update(kokoro_run_id=run_id, kokoro_generation=lease.generation)
+            if resume is not None:
+                metadata.update(
+                    kokoro_command_id=resume[0], kokoro_attempt_id=resume[1].attempt_id
+                )
+            trusted_trace: RunnableConfig = {**(trace or {}), "metadata": metadata}
+
+            async def on_native_settled(
+                seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+            ) -> Literal["active", "waiting", "unknown"]:
+                # Reached only after interrupted() exhausts the official async
+                # iterator and its executor exit waits all child/write tasks.
+                # Cancellation never reaches this marker (task.done is insufficient).
+                if resume is not None:
+                    self._drained_attempts[
+                        (run_id, lease.generation, resume[1].attempt_id)
+                    ] = uuid4().hex
+                if resume is None:
+                    try:
+                        read = await self._interaction_reader(
+                            request=request,
+                            lease=lease,
+                            handle=built,
+                            target=PauseReadTarget(command_id=None, attempt_id=None),
+                        )
+                    except InteractionConflict as error:
+                        if error.code == "native_not_paused":
+                            return "active"
+                        raise
+                    if not isinstance(read, NativePauseRead):
+                        raise RuntimeError("unexpected initial pause evidence")
+                    await self._run_repository.record_checkpoint_observation(
+                        request, lease, read.observation
+                    )
+                    await seal_usage()
+                    await self._run_repository.record_pause(request, lease, read.pause)
+                    return "waiting"
+                read = await self._interaction_reader(
+                    request=request,
+                    lease=lease,
+                    handle=built,
+                    target=ResumeReadTarget(command_id=resume[0]),
+                )
+                if not isinstance(read, ObservedNativeResume):
+                    raise RuntimeError("unexpected settled resume evidence")
+                for observation in read.observations:
+                    await self._run_repository.record_checkpoint_observation(
+                        request, lease, observation
+                    )
+                if (
+                    isinstance(read.evidence, UnknownResumeEvidence)
+                    or read.evidence.disposition == "waiting"
+                ):
+                    await seal_usage()
+                await self._run_repository.reconcile_resume(
+                    request, lease, read.evidence
+                )
+                if isinstance(read.evidence, UnknownResumeEvidence):
+                    return "unknown"
+                return read.evidence.disposition
+
             try:
                 terminal = await invoke_once(
                     emitter,
@@ -211,7 +318,8 @@ class SupervisorExecutionMixin(SupervisorContext):
                     # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
                     describe_tool=built.describe_tool,
                     source_for=self._source_for,
-                    trace=trace,
+                    trace=trusted_trace,
+                    on_native_settled=on_native_settled,
                     recursion_limit=self._recursion_limit,
                     # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                     finalize_terminal=finalize_terminal,
@@ -231,10 +339,9 @@ class SupervisorExecutionMixin(SupervisorContext):
                 # invoke 已结束但终态 CAS 输给更新 generation：只释放本地句柄，
                 # 绝不删除新 owner 的 control stream 或销毁其 sandbox。
                 self._release_local_ownership(run_id, lease)
-        else:
-            # interrupt 暂停：租约置哨兵，HITL 等人期间不被过期重拾重跑；control 监听存活等 resume。
-            if not await self._run_repository.pause(run_id, lease):
-                self._release_local_ownership(run_id, lease)
+        # Waiting releases its lease in the same head/Chat transaction. Unknown
+        # deliberately retains the original attempt and is never put in the old
+        # generic paused/reinvoke path.
 
     async def _emitter(
         self, bus: StreamProtocol, run_id: str, lease: LeaseFence
@@ -324,18 +431,30 @@ class SupervisorExecutionMixin(SupervisorContext):
         error: Exception,
         *,
         code: RunErrorCode | None = None,
+        build_lease: LeaseFence | None = None,
     ) -> None:
         # 认领成功才发 run.failed，与并发 cancel/自然完成互斥为单一终态。
         # resume/control 的失败可能发生在本 worker 尚未缓存租约之前；仅允许收养暂停态，
         # 绝不抢夺仍活跃的其他 generation。无法证明所有权时保持 fail closed，交给持有者/重拾恢复。
         if isinstance(error, StaticRecipeAuthorityLost):
             return
-        if isinstance(error, StaticRecipeIncompatible):
-            # A delayed failed build must never borrow a newer local/adopted lease.
+        if build_lease is not None:
+            # Both build entry points capture this before awaiting construction.
+            # Local cache replacement, expiry or takeover grants no new authority.
+            if (
+                isinstance(error, StaticRecipeIncompatible)
+                and error.lease != build_lease
+            ):
+                return
+            lease = build_lease
+            if not await self._run_repository.is_lease_current(run_id, lease):
+                return
+        elif isinstance(error, StaticRecipeIncompatible):
             lease = error.lease
             if not await self._run_repository.is_lease_current(run_id, lease):
                 return
         else:
+            # Existing non-build control failure semantics are unchanged.
             lease = await self._control_lease(run_id)
         if lease is None:
             return

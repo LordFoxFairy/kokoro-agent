@@ -513,3 +513,115 @@ async def test_evidence_http_empty_initial_page_then_late_terminal(
         "next_seq": 0,
         "terminal": True,
     }
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {"type": "approve", "item_id": "item-1"},
+        {"type": "reject", "item_id": "item-1"},
+    ],
+)
+async def test_resume_admission_persists_one_typed_body_and_canonical_digest(
+    decision: dict[str, object],
+) -> None:
+    import hashlib
+    import json
+
+    from kokoro_agent.protocol import RunResume
+
+    repository, bus = FakeRunRepository(), FakeBus()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    await ingress.launch(launch_body(), execution_identity=identity())
+    admitted = await repository.get_pending_dispatch("run-1")
+    assert admitted is not None
+    assert await repository.claim_dispatch(admitted, "http-unit") is not None
+    body = {
+        "kind": "run.resume",
+        "session_id": "session-1",
+        "expected_pause_revision": 1,
+        "pause_ref": "pause-1",
+        "decisions": [decision],
+    }
+    first = await ingress.control(
+        "run-1", body, command_id="command", execution_identity=identity()
+    )
+    optional = "args" if decision["type"] == "approve" else "reason"
+    replay = await ingress.control(
+        "run-1",
+        {**body, "decisions": [{**decision, optional: None}]},
+        command_id="command",
+        execution_identity=identity(),
+    )
+    entry = repository.control_commands[("run-1", "command")]
+    stored = entry["body"]
+    assert isinstance(stored, str)
+    parsed = RunResume.model_validate_json(stored)
+    assert stored.encode("utf-8") == parsed.model_dump_json().encode("utf-8")
+    canonical = json.dumps(
+        {"run_id": "run-1", **body},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    assert (
+        entry["request_digest"]
+        == parsed.request_digest
+        == first["request_digest"]
+        == digest
+    )
+    assert first["status"] == replay["status"] == "pending"
+    assert replay["replayed"] is True
+    assert bus.published[-1][1] == parsed.model_dump(mode="json", exclude_none=True)
+    # Admission is not an accepted intent or native consumption.
+    request = await repository.get_request("run-1")
+    assert request is not None
+    assert await repository.read_resume_context(request, "command") is None
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing_revision", "missing_ref", "duplicate", "unknown", "null_item"]
+)
+async def test_resume_required_identity_and_unique_items_fail_before_admission(
+    mutation: str,
+) -> None:
+    repository, bus = FakeRunRepository(), FakeBus()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    await ingress.launch(launch_body(), execution_identity=identity())
+    body: dict[str, object] = {
+        "kind": "run.resume",
+        "session_id": "session-1",
+        "expected_pause_revision": 1,
+        "pause_ref": "pause-1",
+        "decisions": [{"type": "approve", "item_id": "item-1"}],
+    }
+    if mutation == "missing_revision":
+        del body["expected_pause_revision"]
+    elif mutation == "missing_ref":
+        del body["pause_ref"]
+    elif mutation == "duplicate":
+        body["decisions"] = [
+            {"type": "approve", "item_id": "item-1"},
+            {"type": "reject", "item_id": "item-1"},
+        ]
+    elif mutation == "unknown":
+        body["decisions"] = [{"type": "approve", "item_id": "item-1", "extra": None}]
+    else:
+        body["decisions"] = [{"type": "approve", "item_id": None}]
+    published = len(bus.published)
+    with pytest.raises(IngressError) as failure:
+        await ingress.control(
+            "run-1", body, command_id="command", execution_identity=identity()
+        )
+    assert (failure.value.status, failure.value.code) == (400, "invalid_run_control")
+    assert repository.control_commands == {}
+    assert len(bus.published) == published

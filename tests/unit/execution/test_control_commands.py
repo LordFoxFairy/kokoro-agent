@@ -2,16 +2,23 @@
 
 - command ledger keep-first：重复 command_id 不双放。
 - 两时点回执：persisted（落 command ledger）与 applied（apply 后）各发一次 run.control.receipt。
-- 重启续办 scanner：persisted 未 applied 的 command——fingerprint 匹配当前 interrupt 才续 apply，
-  不匹配/已终态=stale→superseded 不 apply（经 public serve() 启动路径驱动）。
+- 重启续办 scanner：以持久 collection revision/ref 与原 command 判定，
+  unknown 不重投，stale 整批拒绝（经 public serve() 启动路径驱动）。
 """
 
 from __future__ import annotations
 
+from support.fakes import (
+    read_unpaused_interaction,
+    InitialPauseThenUnknownReader,
+    interaction_pause_fixture,
+    admit_resume_fixture,
+    admit_control_fixture,
+)
+
 from support.fakes import finish_run
 
 import asyncio
-import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -39,6 +46,8 @@ from kokoro_agent.protocol import (
     RunRequest,
     SubagentSource,
     RunSteer,
+    RunCancel,
+    RunResume,
     inbound_adapter,
     run_control_stream,
 )
@@ -97,8 +106,15 @@ def _source(_name: str) -> SubagentSource:
     return "runtime-custom"
 
 
-def _supervisor(agent: FakeAgent, store: FakeRunRepository) -> RunSupervisor:
+def _supervisor(
+    agent: FakeAgent, store: FakeRunRepository, *, native_resume: JsonValue = None
+) -> RunSupervisor:
     return RunSupervisor(
+        interaction_reader=(
+            InitialPauseThenUnknownReader(store, native_value=native_resume)
+            if native_resume is not None
+            else read_unpaused_interaction
+        ),
         agent_builder=_builder(agent),
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -123,23 +139,6 @@ async def _drain(sup: RunSupervisor) -> None:
         await task
 
 
-def _fingerprint_of(state: FakeState) -> str:
-    # 复刻 supervisor._interrupt_fingerprint 的指纹公式：稳定 interrupt.id 集合的 sha256。
-    joined = ",".join(sorted(str(interrupt.id) for interrupt in state.interrupts))
-    return hashlib.sha256(joined.encode()).hexdigest()
-
-
-def _resume_body(run_id: str) -> str:
-    return _inbound(
-        {
-            "kind": "run.resume",
-            "command_id": "dec_1",
-            "run_id": run_id,
-            "decisions": [{"type": "approve", "tool_id": _TID}],
-        }
-    ).model_dump_json()
-
-
 @pytest.mark.parametrize(
     ("kind", "body"),
     [
@@ -147,7 +146,9 @@ def _resume_body(run_id: str) -> str:
             "run.resume",
             {
                 "command_id": "dec_r",
-                "decisions": [{"type": "approve", "tool_id": _TID}],
+                "expected_pause_revision": 1,
+                "pause_ref": "pause-1",
+                "decisions": [{"type": "approve", "item_id": "item-A"}],
             },
         ),
         ("run.cancel", {"command_id": "dec_c"}),
@@ -186,20 +187,22 @@ async def test_restart_scanner_supersedes_foreign_session_resume() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     run_repository = FakeRunRepository()
     await run_repository.try_claim(request("fs", session_id="local-session"))
-    await run_repository.record_control_delivery(
-        "fs",
-        "dec_1",
-        None,
-        _fingerprint_of(_PENDING_STATE),
-        _inbound(
+    command = await admit_control_fixture(
+        run_repository,
+        RunResume.model_validate(
             {
                 "kind": "run.resume",
-                "command_id": "dec_1",
                 "run_id": "fs",
                 "session_id": "foreign-session",
-                "decisions": [{"type": "approve", "tool_id": _TID}],
+                "command_id": "dec_1",
+                "expected_pause_revision": 1,
+                "pause_ref": "pause-1",
+                "decisions": [{"type": "approve", "item_id": "item-A"}],
             }
-        ).model_dump_json(),
+        ),
+    )
+    await run_repository.record_control_delivery(
+        "fs", "dec_1", command.request_digest, None, command.model_dump_json()
     )
 
     bus = FakeBus()
@@ -215,6 +218,13 @@ async def test_restart_scanner_supersedes_foreign_session_resume() -> None:
 async def test_control_commands_keep_first_dedup() -> None:
     run_repository = FakeRunRepository()
     await run_repository.try_claim(request("rd"))
+    for command_id in ("dec_1", "dec_2"):
+        await admit_control_fixture(
+            run_repository,
+            RunCancel(
+                kind="run.cancel", run_id="rd", session_id="s1", command_id=command_id
+            ),
+        )
     assert (
         await run_repository.record_control_delivery("rd", "dec_1", None, "fp", "{}")
         is True
@@ -250,11 +260,16 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
         }
     )
     run_repository = FakeRunRepository()
+
     sup = _supervisor(agent, run_repository)
     run = request("cc")
     run_repository.dispatches[run.run_id] = "pending"
     run_repository.dispatch_requests[run.run_id] = run
     await sup.dispatch(bus, run)
+    await admit_control_fixture(
+        run_repository,
+        RunCancel(kind="run.cancel", run_id="cc", session_id="s1", command_id="dec_1"),
+    )
     for _ in range(200):
         if run_control_stream("cc") in bus.deleted:
             break
@@ -286,6 +301,8 @@ async def test_steer_via_control_loop_uses_the_same_ledger_and_is_idempotent() -
         }
     )
     assert isinstance(steer, RunSteer)
+    steer = await admit_control_fixture(run_repository, steer)
+    assert isinstance(steer, RunSteer)
 
     consumer = cast(Any, sup)._consume_control_frame
     await consumer(bus, "cs", steer, run_control_stream("cs"), "1")
@@ -303,47 +320,78 @@ async def test_steer_via_control_loop_uses_the_same_ledger_and_is_idempotent() -
     assert bus.acked == ["1", "2"]
 
 
-async def test_restart_scanner_reapplies_on_fingerprint_match() -> None:
-    # 崩溃前：command ledger persisted 已落，fingerprint=当时 interrupt 指纹，apply 未跑。serve() 启动续办。
+async def test_restart_scanner_dispatches_accepted_once_then_unknown_never_reinvokes() -> (
+    None
+):
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    run_repository = FakeRunRepository()
-    lease = await run_repository.try_claim(request("rf"))
+    repository = FakeRunRepository()
+    run = request("rf")
+    lease = await repository.try_claim(run)
     assert lease is not None
-    assert await run_repository.pause("rf", lease) is True
-    await run_repository.record_control_delivery(
-        "rf", "dec_1", None, _fingerprint_of(_PENDING_STATE), _resume_body("rf")
+    await repository.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        repository,
+        run,
+        command_id="dec_1",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
     )
-
-    bus = FakeBus()  # 空请求流：serve 跑完 startup 续办即收束
-    sup = _supervisor(agent, run_repository)
+    await repository.record_control_delivery(
+        run.run_id,
+        command.command_id,
+        command.request_digest,
+        None,
+        command.model_dump_json(),
+    )
+    bus = FakeBus()
+    native: JsonValue = {"decisions": [{"type": "approve"}]}
+    sup = _supervisor(agent, repository, native_resume=native)
     await sup.serve(bus)
     await _drain(sup)
-
-    # 指纹匹配 → 续 apply：agent 收到 resume Command。
-    assert len(agent.seen_payloads) >= 1
-    assert run_repository.control_commands[("rf", "dec_1")]["status"] == "succeeded"
-    # restart 续办只补 applied（persisted 已在崩溃前发过，不重发）。
+    assert len(agent.seen_payloads) == 1
+    assert repository.control_commands[("rf", "dec_1")]["status"] == "succeeded"
     receipts = find_events(bus.run_events("rf"), RunControlReceipt)
     assert [r.payload.control_status for r in receipts] == ["applied"]
+    context = await repository.read_resume_context(run, "dec_1")
+    assert context is not None and context.intent.status.value == "unknown"
+    resumed = _supervisor(agent, repository, native_resume=native)
+    await resumed.serve(bus)
+    await _drain(resumed)
+    assert len(agent.seen_payloads) == 1
 
 
-async def test_restart_scanner_supersedes_on_fingerprint_mismatch() -> None:
-    # 崩溃前记录的 fingerprint 与当前 interrupt 不符（interrupt 已变/run 已推进）。
+async def test_restart_scanner_rejects_stale_collection_without_native_effect() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
-    run_repository = FakeRunRepository()
-    await run_repository.try_claim(request("rm"))
-    await run_repository.record_control_delivery(
-        "rm", "dec_1", None, "stale-fingerprint-mismatch", _resume_body("rm")
+    repository = FakeRunRepository()
+    run = request("rm")
+    lease = await repository.try_claim(run)
+    assert lease is not None
+    await repository.record_pause(run, lease, interaction_pause_fixture(run))
+    before = await repository.read_interaction(run)
+    command = await admit_resume_fixture(
+        repository,
+        run,
+        command_id="dec_1",
+        revision=2,
+        decisions=[{"type": "approve", "item_id": "item-A"}],
     )
-
+    await repository.record_control_delivery(
+        run.run_id,
+        command.command_id,
+        command.request_digest,
+        None,
+        command.model_dump_json(),
+    )
     bus = FakeBus()
-    sup = _supervisor(agent, run_repository)
+    sup = _supervisor(agent, repository)
     await sup.serve(bus)
     await _drain(sup)
-
-    # 不匹配 → 不 apply，标 superseded；无 apply、无 applied 回执。
     assert agent.seen_payloads == []
-    assert run_repository.control_commands[("rm", "dec_1")]["status"] == "superseded"
+    assert repository.control_commands[("rm", "dec_1")]["status"] == "failed"
+    assert (
+        repository.control_commands[("rm", "dec_1")]["error_code"]
+        == "interaction_conflict"
+    )
+    assert await repository.read_interaction(run) == before
     assert find_events(bus.run_events("rm"), RunControlReceipt) == []
 
 
@@ -352,6 +400,10 @@ async def test_terminal_run_control_excluded_from_reapply() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     run_repository = FakeRunRepository()
     await run_repository.try_claim(request("rt"))
+    await admit_control_fixture(
+        run_repository,
+        RunCancel(kind="run.cancel", run_id="rt", session_id="s1", command_id="dec_1"),
+    )
     await run_repository.record_control_delivery(
         "rt",
         "dec_1",
@@ -375,3 +427,86 @@ async def test_terminal_run_control_excluded_from_reapply() -> None:
     # 未重放 apply；条目留 persisted 待 purge_terminal 清理。
     assert agent.seen_payloads == []
     assert run_repository.control_commands[("rt", "dec_1")]["status"] == "persisted"
+
+
+@pytest.mark.parametrize(
+    ("method", "parameters"),
+    [
+        ("record_checkpoint_observation", ("self", "request", "lease", "observation")),
+        ("read_checkpoint_observations", ("self", "request", "target")),
+        ("reconcile_resume", ("self", "request", "lease", "evidence")),
+        ("record_reconcile_probe", ("self", "request", "lease", "probe")),
+        (
+            "reset_reconcile_probe",
+            ("self", "request", "lease", "command_id", "attempt_id"),
+        ),
+        ("list_unsettled_interactions", ("self", "limit")),
+        ("read_resume_context", ("self", "request", "command_id")),
+    ],
+)
+def test_bridge_r35_exact_run_port_is_present(
+    method: str, parameters: tuple[str, ...]
+) -> None:
+    """Declaration RED only; transaction/call-gate proof is in real-PG tests."""
+    import inspect
+
+    from kokoro_agent.domain.run.repositories import RunInteractionPort
+
+    operation = getattr(RunInteractionPort, method, None)
+    assert callable(operation), f"Approved RunInteractionPort.{method} is missing"
+    assert tuple(inspect.signature(operation).parameters) == parameters
+
+
+@pytest.mark.parametrize("failure_kind", ["read", "authority", "missing"])
+async def test_resume_operational_failures_are_not_interaction_conflicts(
+    failure_kind: str,
+) -> None:
+    from kokoro_agent.domain.run.interactions import (
+        AcceptedResume,
+        ReplayedResume,
+        InteractionAuthorityLost,
+        InteractionRunMissing,
+    )
+
+    failure = {
+        "read": RuntimeError("read unavailable"),
+        "authority": InteractionAuthorityLost(),
+        "missing": InteractionRunMissing(),
+    }[failure_kind]
+
+    class FailingAcceptance(FakeRunRepository):
+        async def accept_resume(
+            self, request: RunRequest, command_id: str, owner: str
+        ) -> AcceptedResume | ReplayedResume:
+            raise failure
+
+    repository = FailingAcceptance()
+    run = request("read-failure")
+    lease = await repository.try_claim(run)
+    assert lease is not None
+    await repository.record_pause(run, lease, interaction_pause_fixture(run))
+    before = await repository.read_interaction(run)
+    command = await admit_resume_fixture(
+        repository,
+        run,
+        command_id="command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+    await repository.record_control_delivery(
+        run.run_id,
+        command.command_id,
+        command.request_digest,
+        None,
+        command.model_dump_json(),
+    )
+    agent, bus = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE), FakeBus()
+    supervisor = _supervisor(agent, repository)
+    with pytest.raises(type(failure)) as caught:
+        await supervisor.serve(bus)
+    assert caught.value is failure
+    assert repository.control_commands[(run.run_id, "command")]["status"] == "persisted"
+    assert repository.control_commands[(run.run_id, "command")]["error_code"] is None
+    assert await repository.read_interaction(run) == before
+    assert not await repository.is_terminal(run.run_id)
+    assert agent.seen_payloads == []
+    assert bus.run_events(run.run_id) == []

@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from kokoro_agent.application.chat.dto import (
     ChatHistoryPage,
@@ -37,12 +37,13 @@ from kokoro_agent.protocol import (
     RunRequest,
     RunResume,
     RunSteer,
-    ResumeDecision,
     agent_event_adapter,
     run_control_stream,
     run_events_stream,
 )
 from kokoro_agent.domain.run.scope import runtime_namespace
+from kokoro_agent.protocol.control import control_request_digest
+from kokoro_agent.domain.run.interactions import InteractionRunMissing
 from kokoro_agent.domain.run.repository import (
     ControlCommandConflict,
     DispatchConflict,
@@ -85,9 +86,8 @@ class ControlBody(BaseModel):
     decisions: list[dict[str, Any]] | None = None
     message_id: str | None = None
     content: str | None = None
-
-
-_RESUME_DECISIONS: TypeAdapter[list[ResumeDecision]] = TypeAdapter(list[ResumeDecision])
+    expected_pause_revision: int | None = None
+    pause_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,8 +143,14 @@ def _parse_control(
 ) -> tuple[InboundMessage, str]:
     try:
         control = ControlBody.model_validate(dict(body))
+        if control.kind != "run.resume" and any(
+            key in body for key in ("pause_ref", "expected_pause_revision", "decisions")
+        ):
+            raise ValueError("resume identity is not valid for this control kind")
         request_digest = _canonical_control_digest(run_id, control)
         if control.kind == "run.cancel":
+            if any(key in body for key in ("message_id", "content")):
+                raise ValueError("steer fields are not valid for cancel")
             return RunCancel(
                 kind="run.cancel",
                 run_id=run_id,
@@ -165,13 +171,16 @@ def _parse_control(
                 content=control.content,
             ), request_digest
         if control.kind == "run.resume" and control.decisions:
-            return RunResume(
-                kind="run.resume",
-                run_id=run_id,
-                session_id=control.session_id,
-                command_id=command_id,
-                request_digest=request_digest,
-                decisions=_RESUME_DECISIONS.validate_python(control.decisions),
+            message = RunResume.model_validate(
+                {
+                    **dict(body),
+                    "run_id": run_id,
+                    "command_id": command_id,
+                }
+            )
+            request_digest = control_request_digest(message)
+            return message.model_copy(
+                update={"request_digest": request_digest}
             ), request_digest
         raise ValueError("control kind or required fields are invalid")
     except (ValidationError, TypeError, ValueError) as error:
@@ -271,6 +280,8 @@ class AgentIngress:
             admission = await self._run_repository.admit_control(
                 run_id, command_id, request_digest, msg.model_dump_json()
             )
+        except InteractionRunMissing as error:
+            raise IngressError(404, "run_not_found", "Run was not found") from error
         except ControlCommandConflict as error:
             raise IngressError(409, "command_digest_mismatch", str(error)) from error
         if admission.publish_required:

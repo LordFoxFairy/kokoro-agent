@@ -63,7 +63,7 @@ def _event_type(row: Row, key: str) -> ChatEventType:
         return value
     if value == "activity":
         return value
-    if value == "interaction":
+    if value == "interaction.state":
         return value
     if value == "delivery":
         return value

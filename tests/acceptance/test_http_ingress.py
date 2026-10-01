@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import read_unpaused_interaction, settled_state_callback
+
 from support.fakes import finish_run
 
 from support.fakes import repository_terminal_callback
@@ -1362,6 +1364,13 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
     acceptance_state: _AcceptanceState,
     http_client: httpx.AsyncClient,
 ) -> None:
+    from kokoro_agent.infrastructure.checkpoints import (
+        CheckpointSettings,
+        make_checkpointer,
+    )
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.protocol.events import ChatInteractionState
+
     run_id = f"empty-final-{uuid.uuid4().hex}"
     namespace = runtime_namespace(_identity())
     stream_name = run_events_stream(run_id)
@@ -1374,8 +1383,15 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
         async with (
             make_run_repository(acceptance_state.config.run_repository) as runs,
             make_chat_repository(settings) as chat,
+            make_checkpointer(
+                CheckpointSettings(
+                    database_url=acceptance_state.config.database_url,
+                    schema_name=acceptance_state.config.database_schema,
+                )
+            ) as saver,
         ):
             request = _request(run_id)
+            thread_id = RunScope.of(request).scoped_thread_id
             await runs.enqueue_dispatch(request, namespace, f"acceptance:{run_id}")
             lease = await runs.claim_dispatch(request, "empty-final-worker")
             assert lease is not None
@@ -1432,14 +1448,14 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
                 tools=[tool],
                 system_prompt="x",
                 subagents=[],
-                checkpointer=None,
+                checkpointer=saver,
                 permissions=[],
                 interrupt_on={},
             )
             await invoke_once(
                 emitter,
                 agent,
-                "thread-1",
+                thread_id,
                 {"messages": [HumanMessage(content="go")]},
                 approval_tool_names=frozenset(),
                 source_for=lambda _name: "runtime-custom",
@@ -1447,6 +1463,7 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
                     runs, stream, run_id, lease
                 ),
                 record_usage=usage_recorder()[0],
+                on_native_settled=settled_state_callback(agent, thread_id),
             )
 
         # 重新打开 SQL repository，证据来自落库后的 replay 而非进程内缓存。
@@ -1488,7 +1505,35 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
         assert completed_http == ["draft", "", ""]
         assert http_seq_by_index == replay_by_index
         wire = await stream.read_all(stream_name)
-        assert [item.event["index"] for item in wire] == list(range(len(wire)))
+        assert [event.event_type for event in replay[-2:]] == [
+            "interaction.state",
+            "run.completed",
+        ]
+        interaction = replay[-2]
+        terminal_state = ChatInteractionState.model_validate_json(
+            interaction.payload_json
+        )
+        assert terminal_state.model_dump(mode="json") == {
+            "interaction_revision": 1,
+            "pause_revision": 0,
+            "pause_ref": None,
+            "phase": "terminal",
+            "groups": [],
+            "action_result": None,
+        }
+        assert replay[-1].seq == interaction.seq + 1
+        assert replay[-1].source_index == interaction.source_index + 1
+        wire_indices: list[int] = []
+        for item in wire:
+            index = item.event["index"]
+            assert isinstance(index, int)
+            wire_indices.append(index)
+        assert wire_indices == sorted(set(wire_indices))
+        assert interaction.source_index not in wire_indices
+        assert sorted([*wire_indices, interaction.source_index]) == list(
+            range(len(wire) + 1)
+        )
+        assert wire_indices[-1] == replay[-1].source_index
         assert wire[-1].event["kind"] == "run.completed"
         assert [item.event["kind"] for item in wire].count("message.delta") == 1
         ordered = [
@@ -1603,6 +1648,16 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
     http_client: httpx.AsyncClient,
     retryable: bool,
 ) -> None:
+    from kokoro_agent.protocol.events import ChatInteractionState
+
+    expected_interaction: dict[str, JsonValue] = {
+        "interaction_revision": 1,
+        "pause_revision": 0,
+        "pause_ref": None,
+        "phase": "terminal",
+        "groups": [],
+        "action_result": None,
+    }
     run_id = f"safe-failure-{uuid.uuid4().hex}"
     current_request = _request(run_id)
     namespace = runtime_namespace(current_request.execution_identity)
@@ -1650,7 +1705,12 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
             assert (
                 await runs.finalize_terminal(run_id, authority, outcome, ())
             ).retained_frames == ()
-            assert len(await chat.replay("tenant", namespace, "session-1")) == 1
+            first_replay = await chat.replay("tenant", namespace, "session-1")
+            assert [
+                (event.event_type, event.seq, event.source_index)
+                for event in first_replay
+            ] == [("interaction.state", 1, 0), ("run.failed", 2, 1)]
+            assert await runs.is_terminal(run_id)
 
         # Read durable owner outbox bytes independently of the emitter instance.
         async with connect_pg(acceptance_state.config.database_url) as connection:
@@ -1669,7 +1729,7 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
                 rows = await cursor.fetchall()
         assert [
             (row["durable_seq"], row["status"], row["index_value"]) for row in rows
-        ] == [(1, "published", 0)]
+        ] == [(1, "published", 1)]
         outbox_payloads: list[str] = []
         for row in rows:
             assert row["kind"] == "run.failed"
@@ -1680,16 +1740,24 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
 
         async with make_chat_repository(settings) as reopened:
             persisted = await reopened.replay("tenant", namespace, "session-1")
-        assert len(persisted) == 1
-        assert persisted[0].event_type == "run.failed"
-        assert json.loads(persisted[0].payload_json) == expected_chat
+        assert persisted == first_replay
+        assert [
+            (event.event_type, event.seq, event.source_index) for event in persisted
+        ] == [("interaction.state", 1, 0), ("run.failed", 2, 1)]
+        assert (
+            ChatInteractionState.model_validate_json(
+                persisted[0].payload_json
+            ).model_dump(mode="json")
+            == expected_interaction
+        )
+        assert json.loads(persisted[1].payload_json) == expected_chat
 
         wire = await stream.read_all(stream_name)
         assert len(wire) == 1
         assert wire[0].event["kind"] == "run.failed"
         assert wire[0].event["payload"] == expected_run
         assert (
-            persisted[0].source_index
+            persisted[1].source_index
             == wire[0].event["index"]
             == rows[0]["index_value"]
         )
@@ -1710,18 +1778,36 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
         assert response.status_code == 200
         page = _nested(_json_object(response.json()), "data")
         records = page["events"]
-        assert isinstance(records, list) and len(records) == 1
-        record = _json_object(records[0])
+        assert isinstance(records, list) and len(records) == 2
+        http_records = [_json_object(item) for item in records]
+        assert [
+            (item["event_type"], item["seq"], item["source_index"])
+            for item in http_records
+        ] == [("interaction.state", 1, 0), ("run.failed", 2, 1)]
+        for item, durable in zip(http_records, persisted, strict=True):
+            assert item["run_id"] == run_id
+            assert item["session_id"] == current_request.session_id
+            assert item["chat_event_id"] == durable.chat_event_id
+            assert item["payload_json"] == durable.payload_json
+        interaction_json = http_records[0]["payload_json"]
+        assert isinstance(interaction_json, str)
+        assert (
+            ChatInteractionState.model_validate_json(interaction_json).model_dump(
+                mode="json"
+            )
+            == expected_interaction
+        )
+        record = http_records[1]
         assert record["event_type"] == "run.failed"
         assert record["run_id"] == run_id
-        assert record["seq"] == persisted[0].seq
+        assert record["seq"] == persisted[1].seq
         assert record["source_index"] == wire[0].event["index"]
         raw = record["payload_json"]
         assert isinstance(raw, str)
         assert json.loads(raw) == expected_chat
         for representation in (
             *outbox_payloads,
-            persisted[0].payload_json,
+            *(event.payload_json for event in persisted),
             evidence.text,
             response.text,
         ):
@@ -1768,6 +1854,7 @@ async def test_terminal_chat_write_failure_rolls_back_run_and_outbox(
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=build,
         run_repository=runs,
         approval_tool_names=lambda _request: frozenset(),
@@ -1915,13 +2002,25 @@ async def test_terminal_recovery_rejects_corrupt_chat_identity(
     frame = committed.retained_frames[0]
     await repository.verify_terminal_frame(frame)
     async with await psycopg.AsyncConnection.connect(config.database_url) as conn:
-        await conn.execute(
-            sql.SQL("UPDATE {} SET {}=%s WHERE run_id=%s").format(
+        unaffected_query = sql.SQL(
+            "SELECT * FROM {} WHERE run_id=%s AND event_type='interaction.state' ORDER BY source_index"
+        ).format(sql.Identifier(config.database_schema, CHAT_EVENTS_TABLE))
+        before_cursor = await conn.execute(unaffected_query, (run.run_id,))
+        unaffected_before = await before_cursor.fetchall()
+        assert len(unaffected_before) == 1
+        assert frame.kind == "run.completed"
+        changed = await conn.execute(
+            sql.SQL(
+                "UPDATE {} SET {}=%s WHERE run_id=%s AND source_index=%s AND event_type=%s"
+            ).format(
                 sql.Identifier(config.database_schema, CHAT_EVENTS_TABLE),
                 sql.Identifier(column),
             ),
-            (value, run.run_id),
+            (value, run.run_id, frame.index, frame.kind),
         )
+        assert changed.rowcount == 1
+        after_cursor = await conn.execute(unaffected_query, (run.run_id,))
+        assert await after_cursor.fetchall() == unaffected_before
     with pytest.raises(RuntimeError, match="terminal Chat"):
         await repository.verify_terminal_frame(frame)
     assert await repository.list_unpublished_outbox() == [frame]
@@ -2006,3 +2105,168 @@ async def test_quarantine_replay_rejects_private_audit_tampering(
         )
         == ()
     )
+
+
+@pytest.mark.asyncio
+async def test_http4_resume_full_identity_and_conflict_receipt_preserve_waiting(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+) -> None:
+    from support.fakes import interaction_pause_fixture
+    from kokoro_agent.protocol import RunResume, SubagentSource
+    from kokoro_agent.protocol.control import control_request_digest
+    from kokoro_agent.infrastructure.schema import RUN_CONTROL_COMMANDS_TABLE
+
+    run_id = f"http4-resume-{uuid.uuid4().hex}"
+    launched = await http_client.post(
+        "/v1/runs", headers=_headers(), json=_launch_body(run_id)
+    )
+    assert launched.status_code == 202
+    async with make_run_repository(acceptance_state.config.run_repository) as runs:
+        request = await runs.get_pending_dispatch(run_id)
+        assert request is not None
+        lease = await runs.claim_dispatch(request, "http4-worker")
+        assert lease is not None
+        await runs.record_pause(request, lease, interaction_pause_fixture(request))
+        before = await runs.read_interaction(request)
+        assert before is not None
+        replay_before = await http_client.get(
+            "/v1/sessions/session-1/events?after_seq=0", headers=_headers()
+        )
+        assert replay_before.status_code == 200
+        source_before = _nested(_json_object(replay_before.json()), "data")
+        body: dict[str, JsonValue] = {
+            "kind": "run.resume",
+            "session_id": request.session_id,
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
+        }
+        invalid_requests: list[dict[str, JsonValue]] = [
+            {**body, "decisions": [{"type": "approve", "tool_id": "call-A"}]},
+            {
+                **body,
+                "decisions": [{"type": "submit", "request_id": "call-A", "value": {}}],
+            },
+            {
+                key: value
+                for key, value in body.items()
+                if key != "expected_pause_revision"
+            },
+            {
+                **body,
+                "decisions": [
+                    {"type": "approve", "item_id": "item-A"},
+                    {"type": "approve", "item_id": "item-A"},
+                ],
+            },
+        ]
+        for index, invalid in enumerate(invalid_requests):
+            response = await http_client.post(
+                f"/v1/runs/{run_id}/control",
+                headers={**_headers(), "Idempotency-Key": f"invalid-{index}"},
+                json=invalid,
+            )
+            assert response.status_code == 400
+            assert (
+                _nested(_json_object(response.json()), "error")["code"]
+                == "invalid_run_control"
+            )
+
+        stale_body = {**body, "expected_pause_revision": 2}
+        stale = await http_client.post(
+            f"/v1/runs/{run_id}/control",
+            headers={**_headers(), "Idempotency-Key": "stale"},
+            json=stale_body,
+        )
+        assert stale.status_code == 202  # Admission, not native acceptance.
+        frames = await _read_matching(
+            acceptance_state, run_control_stream(run_id), run_id
+        )
+        command = RunResume.model_validate(
+            next(frame for frame in frames if frame.get("command_id") == "stale")
+        )
+
+        async def build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+            raise AssertionError("stale collection must not build")
+
+        def source_for(_name: str) -> SubagentSource:
+            raise AssertionError("stale collection must not resolve a peer")
+
+        supervisor = RunSupervisor(
+            interaction_reader=read_unpaused_interaction,
+            agent_builder=build,
+            run_repository=runs,
+            approval_tool_names=lambda _request: frozenset(),
+            trace_factory=lambda _request: None,
+            source_for=source_for,
+            consumer="http4-worker",
+        )
+        # Actual worker's typed acceptance boundary, using the durable HTTP command.
+        # No native handle is constructed and no provider is involved.
+        await supervisor.dispatch(FakeBus(), command)
+        replay = await http_client.post(
+            f"/v1/runs/{run_id}/control",
+            headers={**_headers(), "Idempotency-Key": "stale"},
+            json=stale_body,
+        )
+        assert replay.status_code == 202
+        receipt = _nested(_json_object(replay.json()), "data")
+        assert receipt["status"] == "failed" and receipt["replayed"] is True
+        assert receipt["error_code"] == "interaction_conflict"
+        assert "reason" not in receipt
+        assert await runs.read_interaction(request) == before
+        assert not await runs.is_terminal(run_id)
+
+        valid = await http_client.post(
+            f"/v1/runs/{run_id}/control",
+            headers={**_headers(), "Idempotency-Key": "valid"},
+            json=body,
+        )
+        assert valid.status_code == 202
+        assert _nested(_json_object(valid.json()), "data")["status"] == "pending"
+        replay = await http_client.post(
+            f"/v1/runs/{run_id}/control",
+            headers={**_headers(), "Idempotency-Key": "valid"},
+            json={
+                **body,
+                "decisions": [{"type": "approve", "item_id": "item-A", "args": None}],
+            },
+        )
+        assert replay.status_code == 202
+        assert _nested(_json_object(replay.json()), "data")["replayed"] is True
+        assert await runs.read_resume_context(request, "valid") is None
+        assert await runs.read_interaction(request) == before
+
+    async with connect_pg(acceptance_state.config.database_url) as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT command_id, body, request_digest, status, error_code FROM {}.{} WHERE run_id = %s ORDER BY command_id"
+                ).format(
+                    sql.Identifier(acceptance_state.config.database_schema),
+                    sql.Identifier(RUN_CONTROL_COMMANDS_TABLE),
+                ),
+                (run_id,),
+            )
+            rows = await cursor.fetchall()
+    assert len(rows) == 2  # Invalid legacy/missing/duplicate requests made zero rows.
+    for row in rows:
+        command_id, stored_body, digest = (
+            row["command_id"],
+            row["body"],
+            row["request_digest"],
+        )
+        status, error_code = row["status"], row["error_code"]
+        parsed = RunResume.model_validate_json(stored_body)
+        assert stored_body.encode("utf-8") == parsed.model_dump_json().encode("utf-8")
+        assert digest == parsed.request_digest == control_request_digest(parsed)
+        if command_id == "stale":
+            assert (status, error_code) == ("failed", "interaction_conflict")
+        else:
+            assert command_id == "valid" and (status, error_code) == ("admitted", None)
+    replay_after = await http_client.get(
+        "/v1/sessions/session-1/events?after_seq=0", headers=_headers()
+    )
+    assert replay_after.status_code == 200
+    assert _nested(_json_object(replay_after.json()), "data") == source_before

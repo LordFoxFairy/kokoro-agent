@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "3.0.0"
+    assert _object(document["info"])["version"] == "4.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -222,7 +222,10 @@ def test_failure_contract_http_payload_string_has_explicit_failed_discriminator(
     assert chat_event.get("x-kokoro-decoded-payloads") == {
         "discriminator": "event_type",
         "property": "payload_json",
-        "mapping": {"run.failed": "#/components/schemas/ChatFailure"},
+        "mapping": {
+            "run.failed": "#/components/schemas/ChatFailure",
+            "interaction.state": "#/components/schemas/ChatInteractionState",
+        },
     }
 
 
@@ -381,3 +384,152 @@ def test_evidence_page_next_seq_allows_initial_empty_cursor_only_down_to_minus_o
     for invalid in [-2, 2**63, "-1", None, True, 0.5]:
         with pytest.raises(SchemaValidationError):
             validate(invalid, next_seq, cls=Draft202012Validator)
+
+
+# R31 owner-first RED: full HITL4, never accept the old tool/request addressing.
+def _hitl4_control(decision: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "run.resume",
+        "session_id": "session-hitl",
+        "expected_pause_revision": 1,
+        "pause_ref": "pause-opaque-1",
+        "decisions": [decision],
+    }
+
+
+def test_hitl4_resume_requires_revision_ref_and_full_item_decisions() -> None:
+    document = _document()
+    schemas = _object(_object(document["components"])["schemas"])
+    resume = _object(schemas["ResumeControl"])
+    required = TypeAdapter(list[str]).validate_python(resume["required"])
+    assert {"expected_pause_revision", "pause_ref", "decisions"} <= set(required), (
+        "HITL4 requires an explicit frozen pause identity; no default/fallback"
+    )
+    properties = _object(resume["properties"])
+    assert _object(properties["expected_pause_revision"])["minimum"] == 1
+    assert _object(properties["pause_ref"])["minLength"] == 1
+    assert resume["additionalProperties"] is False
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {"type": "approve", "item_id": "item-1"},
+        {"type": "edit", "item_id": "item-1", "args": {"query": "approved"}},
+        {"type": "reject", "item_id": "item-1", "reason": "declined"},
+        {"type": "respond", "item_id": "item-1", "response": "reviewed"},
+        {"type": "submit", "item_id": "item-1", "value": {"approved": True}},
+    ],
+)
+@pytest.mark.asyncio
+async def test_hitl4_machine_and_runtime_accept_the_same_item_addressed_decisions(
+    decision: dict[str, object],
+) -> None:
+    from kokoro_agent.protocol.control import inbound_adapter
+
+    control = _hitl4_control(decision)
+    validate(control, _profile_validator(_document(), "ResumeControl"))
+    parsed = inbound_adapter.validate_python(
+        {**control, "run_id": "run-hitl", "command_id": "command-1"}
+    )
+    assert parsed.model_dump(mode="json")["expected_pause_revision"] == 1
+    from kokoro_agent.application.chat.service import ChatService
+    from kokoro_agent.interfaces.http.ingress import AgentIngress
+    from support.fakes import FakeBus, FakeRunRepository, request
+
+    repository = FakeRunRepository()
+    run = request("run-hitl", session_id="session-hitl")
+    await repository.try_claim(run, "worker-1")
+    bus = FakeBus()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(repository.chat_repository),
+    )
+    receipt = await ingress.control(
+        run.run_id,
+        control,
+        command_id="command-1",
+        execution_identity=run.execution_identity,
+    )
+    assert receipt["status"] == "pending"
+    assert len(bus.published) == 1
+    event = bus.published[0][1]
+    assert event["expected_pause_revision"] == 1
+    assert event["pause_ref"] == "pause-opaque-1"
+    assert event["decisions"] == [decision]
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {"type": "approve", "tool_id": "call-1"},
+        {"type": "edit", "tool_id": "call-1", "args": {}},
+        {"type": "reject", "tool_id": "call-1", "reason": "declined"},
+        {"type": "respond", "tool_id": "call-1", "response": "reviewed"},
+        {"type": "submit", "request_id": "call-1", "value": {}},
+    ],
+)
+def test_hitl4_machine_rejects_old_decision_addressing_without_alias(
+    decision: dict[str, object],
+) -> None:
+    with pytest.raises(SchemaValidationError):
+        validate(decision, _profile_validator(_document(), "ResumeDecision"))
+    from kokoro_agent.protocol.control import ResumeDecision
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(ResumeDecision).validate_python(decision)
+
+
+@pytest.mark.parametrize("field", ["expected_pause_revision", "pause_ref"])
+def test_hitl4_runtime_does_not_default_missing_pause_identity(field: str) -> None:
+    from kokoro_agent.protocol.control import inbound_adapter
+
+    valid = {
+        **_hitl4_control({"type": "approve", "item_id": "item-1"}),
+        "run_id": "run-hitl",
+        "command_id": "command-1",
+    }
+    # Positive precondition makes rejection meaningful, rather than all inputs invalid.
+    inbound_adapter.validate_python(valid)
+    del valid[field]
+    with pytest.raises(ValidationError):
+        inbound_adapter.validate_python(valid)
+
+
+@pytest.mark.parametrize("bad_revision", [0, -1, True, "1"])
+def test_hitl4_machine_rejects_invalid_pause_revision(bad_revision: object) -> None:
+    valid = _hitl4_control({"type": "approve", "item_id": "item-1"})
+    schema = _profile_validator(_document(), "ResumeControl")
+    validate(valid, schema)
+    with pytest.raises(SchemaValidationError):
+        validate({**valid, "expected_pause_revision": bad_revision}, schema)
+
+
+@pytest.mark.parametrize(
+    "component,field",
+    [
+        ("ResumeControl", "expected_pause_revision"),
+        ("ResumeControl", "pause_ref"),
+        ("ChatInteractionState", "action_result"),
+        ("InteractionItem", "item_id"),
+        ("InteractionDisplay", "input_schema"),
+        ("InteractionActionResult", "command_id"),
+    ],
+)
+def test_owner_checker_rejects_relaxed_hitl_required_fields(
+    component: str, field: str
+) -> None:
+    from kokoro_agent.contract_check import validate_openapi_document
+
+    document = _document()
+    schemas = _object(_object(document["components"])["schemas"])
+    shape = _object(schemas[component])
+    required = TypeAdapter(list[str]).validate_python(shape["required"])
+    shape["required"] = [name for name in required if name != field]
+    schemas[component] = shape
+    _object(document["components"])["schemas"] = schemas
+    # _object validates/copies dictionaries: mutate the actual root explicitly.
+    document["components"] = {**_object(document["components"]), "schemas": schemas}
+    with pytest.raises(ValueError, match="HITL"):
+        validate_openapi_document(document)

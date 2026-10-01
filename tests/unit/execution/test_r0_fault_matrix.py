@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from support.fakes import read_unpaused_interaction, settled_state_callback
+
 from support.fakes import repository_terminal_callback
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -90,6 +92,7 @@ async def test_request_not_acked_before_durable_claim_persists() -> None:
         "sha256:req-crash",
     )
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
         run_repository=store,
         approval_tool_names=_no_names,
@@ -173,13 +176,14 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
     emitter = await RunEmitter.attach(bus, "term-drop", frozenset(), store, lease=lease)
     await invoke_once(
         emitter,
-        FakeAgent(run=text_run("hi")),
+        (settlement_agent := FakeAgent(run=text_run("hi"))),
         "c1",
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
         finalize_terminal=repository_terminal_callback(store, bus, "term-drop", lease),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(settlement_agent, "c1"),
     )
     # 首次 publish 失败被顶层 except 吞掉 → run.completed 未上 wire，但 outbox 行留 queued。
     on_wire = [
@@ -226,13 +230,14 @@ async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> N
     emitter = await RunEmitter.attach(bus, "term-fail", frozenset(), store, lease=lease)
     handled = await invoke_once(
         emitter,
-        FakeAgent(raise_on_stream=RuntimeError("boom")),
+        (settlement_agent := FakeAgent(raise_on_stream=RuntimeError("boom"))),
         "c1",
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_source,
         finalize_terminal=repository_terminal_callback(store, bus, "term-fail", lease),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(settlement_agent, "c1"),
     )
     assert handled is True
     assert [e.kind for e in bus.run_events("term-fail")] == ["run.started"]

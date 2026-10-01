@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import json
 import logging
+from uuid import uuid4
 from collections.abc import Mapping
 
 from kokoro_agent.domain.chat.repositories import ChatRepository
@@ -25,6 +26,7 @@ from kokoro_agent.protocol import (
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor_context import (
+    InteractionReader,
     AgentBuilder,
     ApprovalToolNames,
     BackendResolver,
@@ -67,6 +69,7 @@ class RunSupervisor(
         self,
         *,
         agent_builder: AgentBuilder,
+        interaction_reader: InteractionReader,
         run_repository: RunRepository,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
@@ -85,6 +88,10 @@ class RunSupervisor(
         sandbox_teardown: SandboxTeardown | None = None,
         chat_repository: ChatRepository | None = None,
     ) -> None:
+        self._interaction_reader = interaction_reader
+        self._resume_attempts = {}
+        self._boot_id = uuid4().hex
+        self._drained_attempts = {}
         self._build = agent_builder
         self._run_repository = run_repository
         self._approval_tool_names = approval_tool_names

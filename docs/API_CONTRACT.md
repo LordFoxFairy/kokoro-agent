@@ -1,4 +1,301 @@
+## R39 HTTP 4 owner 切换候选（当前解释覆盖下方历史 HITL 段落）
+
+本轮仍为 main0245a36 基线上的完整 HITL 候选工作树，未发布 artifact、未更新 BFF/Web pin。
+R40 精确追加现 JWKS contract test 的3处整体 HTTP version（标题/info/direct provenance）3→4；
+其余 proof/JWKS/tuple/路径/SHA 断言逐字保持，最终范围为原19＋该1现文件，共20。
+当前机器源已一次切为 Agent HTTP **4.0.0，原 /v1 单路径**；下方“机器仍3”的文字只记历史阶段。
+既有已 typed4 的 control/events 保持，删除旧 resume tool_id/request_id 寻址与 Chat interaction alias；
+Machine、两个 decoded payload mapping、owner checkers、生成 provenance、HTTP admission/receipt 和公开正负例同步。
+这不是 scope/retry/effective-native/retention/P3B 完成；P3B 整段候选不变。
+
+Root 本轮裁决覆盖历史 error/reason 承诺：receipt 继续现有 status/error_code，只有真实 typed
+InteractionConflict 才落 failed/error_code=interaction_conflict；**不新增公开 reason/rejected 变体**。
+内部 stale_pause/incomplete_collection/decision_not_allowed/not_waiting 不是额外 wire 字段。
+missing context 保持现 control_apply_failed；读取失败/authority_lost 原样传播，不伪装 conflict，
+不借新 authority 终结健康 Run。拒命令只收口该 command，当前 waiting head/source 不被清空。
+
+### 当前候选机器语义
+
+唯一机器源为 `contract/openapi/v1/openapi.json`。ResumeControl required revision/ref、全部 item_id decisions；
+旧字段即便同时携带新 item_id 也拒绝。required revision/ref/item 无默认；仅语义允许的 approve.args /
+reject.reason 可 null/omitted 同义。先严格 typed validate，唯一 typed model_dump_json body 持久化；
+request_digest 仍以现 sort_keys/compact 的规范化请求算法生成，不加 raw 第二字段或新 hash 规则。
+HTTP 202/receipt succeeded 是 durable admission/delivery，不是 native consumption、不是清 waiting 证据。
+
+ChatEvent 精确 decoded mapping 为 run.failed→ChatFailure、interaction.state→ChatInteractionState。
+后者 required action_result（nullable），resuming 必须 accepted/unknown；groups 为完整替换集合，
+validation 只安全 code/instance_path。跨字段 revision 比较、跨 group item 唯一性继续由 strict runtime 校验；
+机器 schema 覆盖可表达的 phase/集合/null/preview/封闭字段约束，不承诺 JSON Schema 能表达任意跨字段相等。
+Failure code/retryable tuple、proof/JWKS、Storage/Platform pins 与原 HTTP 路径/权限未改。
+
+---
+
 # kokoro-agent API 契约
+
+## AGENT-HITL-INTERNAL-CALLERS-R38：内部切换与生命周期候选
+
+Root 已验前一桥冻结候选 44/44 真 PG（6.74s，自有库已回收）及独立审查 0P0/P1/P2；
+此证据不覆盖本轮新增首次 worker pause 旅程，也不表示 HTTP4 发布。本轮仍基线 main0245a36＋既有候选工作树，Git/资源由 Root 独占。
+原八 native proof、机器/OpenAPI/generated、SQL 与完整 P3B 后缀保持；下方 R35 等记录为历史，不再表示当前尚未运行那 44 例。
+
+删除唯一遗留 `execution/approvals.py` 与 source 清单引用，原测试迁到真实官方 InMemory saver＋正式 checkpoint adapter 的完整集合/全集 map/安全 validation；
+它只证明内存 SDK 形状，不充当 PG 消费或外部效果 exactly-once 证据。普通 caller 显式提供 reader/callback；
+测试替身按明确场景区分初 pause、accepted、started/unknown，不把缺证据返回 active；control delivery 只更新正式 admission 的既有行。
+裸 SDK 单测每 case 恢复原 registry/bootstrap，避免先于生产批准流程初始化全局状态，不放宽生产 plugin/registry 门。
+
+`invoke_once` 必需 `on_native_settled(seal_usage)`；闭包绑定本次 native context 完全 drain 后的真实 token 总数及原 lease 的 record_usage，
+并发/顺序重复成功 seal 至多写一次。真实 worker 在 waiting/unknown 分支、释放 lease 的 pause/reconcile 前 seal；active 不 seal，
+正常 terminal usage 仍由唯一 finalizer 同事务提交。SDK interrupted 而 reader active 时，以仍有效原 fence seal 后返回非终态，不静默漏段或借新 authority。
+usage/reader/settlement 持久失败在 native 异常映射外原样传播，绝不改写另一 run.failed；未 seal 的失败不推进 waiting。
+
+initial/resume build 错误显式携带构建开始时捕获的 lease；仅此路径不走 control adoption，不从更新后的本地 lease 借 authority。
+StaticRecipeAuthorityLost 零终态；Incompatible 自带 fence 与显式 captured fence 冲突也零终态；原 safe code/retryable 映射保持，retryable 不是自动重投。
+本轮精确顺序 RED 2 例、必需 seal API RED 10 例、构建映射 RED 15 例及失效 fence race RED 6 例日志均保留。
+授权 19 caller 文件纯组合已实际 438 passed/48 deselected（21.82s）；不是 Root 最终验收。首次组合人工中断 exit130 不计完成，
+后续 -x 345 passed/1 failed 准确定位原裸 SDK registry 污染；修复 fixture 恢复后才得到上述组合结果。
+
+新增既有 PG 事务测试 `test_first_worker_dispatch_seals_usage_before_durable_initial_pause`：正式 ingress/dispatch、正式 saver 与独立 reader、
+官方 native projections，由真实 worker 首次进入 native（无预先 graph.ainvoke），独立 SQL 核 waiting/释放 lease/7+3 用量/零 terminal；
+7+3 是确定性 SDK callback fixture，不声称真实 provider 用量。此新例及修改后原 44 例待 Root 真实运行。
+完整 HITL4 机器/HTTP/contract 发布、跨 takeover 的原 generation 归属/absolute execution deadline、scope/retry/P3B/retention 仍各自原门，不以内部绿色缩减目标。
+
+最终 worker 离线门（本候选）：全 Ruff format 267 files/check exit0，Pyright 0 errors；
+fresh 全纯 1721 passed/38 failed/6 skipped/287 deselected（97.17s），剩 37 为锁定 machine/chat/public/proof contract，
+此 38 中另 1 是 `tests/unit/execution/test_interactions.py` 原 valid fixture 缺 required action_result；
+Root 于全纯柄结束后精确授权只补 action_result: None，原两个负例保留，单例实际 1 passed。
+该一行之后未重复全纯（Root 冻结复验）；37 个机器/公开/证明契约失败仍原样保留，不宣称已获新的全纯 37-fail 计数。
+正式 contract-check exit1 为 provenance aggregate stale，机器仍3的完整4发布门保留。
+PG45只 collect（0.39s）；InMemory 首次 native entry 7/3 usage 探针通过，绝不据此宣称真实45已验。
+日志 `/tmp/kokoro-agent-callers-r38-{full-pure-final,type-final,format-final,lint-final,contract-final,pg-collect,first-pause-probe}.log`。
+本轮未启动/操作 PG、Redis、provider 或应用服务，未执行 Git/依赖安装/build；上述纯测试自身的离线/loopback fixtures 不代表生产服务验收。
+候选冻结交 Root 后停写，由 Root 独占真实45、原相邻PG与完整发布门。
+
+## AGENT-HITL-NATIVE-BRIDGE-GREEN-R35：实现候选，等待 Root 真实 PG
+
+当前基线仍 main0245a36＋已验P2事务核；Root桥RED实际18 failed/26 passed/0 skip（4.61s），
+`/tmp/kokoro-agent-hitl-native-bridge-r35-root-real-pg-red.log`。本轮已授权普通checkpoint_interactions.py与既有
+Run/SQL/worker边界实现；不是HTTP4发布、完整scope/P3B或外部exactly-once验收。下方D0“未实施”保历史，
+本节覆盖当前候选事实；机器/生成/依赖及P3B完整suffix保持，Git/真实PG仅Root。
+
+七ports与完整observation canonical SQL、Run-first GC、独立官方reader、唯一StartedResume调用和drain后持久callback已接入。
+原supervisor四mixin与execution/run_agent.py由Root精准追加：删除实际resume路径旧adopt/fingerprint/partial-awaiting selector，
+不把其职责搬进门面；cancel/steer/普通dispatch保留。reader与on_native_settled均必需，无空默认/alias/fallback。
+stream.interrupted()完成官方iterator后且context退出才调用持久callback；callback失败在native异常handler外原样传播，
+不制造另一个run.failed。waiting/unknown不发completed；新validation直接waiting，active仅来自完整正向证据。
+
+实际纯新增15/15已通过；三纯文件完整选择20 failed/45 passed/3 resource deselected（0.88s），旧HITL寻址/reader消费者明确未切。
+域与架构选择1 failed/69 passed（2.38s）：唯一失败是原test_interactions.py候选fixture缺新必需action_result，未越权补默认；
+首次误用不存在tests/architecture的collection错误保留日志，不计业务RED。44 PG最终只collect（0.02s），原26＋新18，尚未实际运行。
+R37最终定点24个Python文件Ruff format/check全过，19生产Python定点Pyright0；full Pyright145错误为旧approvals35＋未切测试110（包含原8），不以局部0冒称全门。
+官方InMemorySaver纯探针实际验证单input与root/child/mixed三集合材料化、一次全集map及正向分类；
+它们只证明SDK形状，不是独立PG连接、事务/进程重启或外部副作用证明。所有首失败日志保留。
+
+两处已授权测试fixture纠正：混合图节点统一approval_node（原state key/edge不匹配）；新增source正例补原必需input_schema={}。
+保持原全集/一次map/最终向量与26断言；不以fixture修正记生产GREEN。原八nativeproof不变。
+Root R37追加真实result-review consumer与其现测试：唯一request_id决策解析/匹配，拒旧tool_id与重复request_id；
+工具call_id/journal/cache身份原样。实际RED为5 failed/6 passed，切换后11 passed（0.13s），所有approve/respond/reject/
+非法缺项/缓存重入防双执行断言保留；日志`/tmp/kokoro-agent-bridge-r37-result-review-{red,green}.log`。
+完整4仍须其他caller/fakes/机器/contract/generated统一切换，不以该consumer单点绿色宣称全链已完成。
+最终四纯文件按原integration/e2e/acceptance排除：20 failed/56 passed/3 deselected（0.87s）；原20旧消费者RED保留。
+验证选择曾误用not resource清默认过滤，3个旧integration setup尝试Redis后ConnectionRefused，未成功连接或执行native/provider；
+该20 failed/56 passed/3 setup errors日志单独保留，不计纯门或业务RED；后已按原标记重跑。
+初pause跨expired takeover缺原generation归属时严格拒native_pause_generation_unattributed，零再次invoke；
+不借新authority给旧执行收口、不称A窗口跨generation恢复已完成；当前无独立absolute execution deadline。Root明确TTL不是执行期限；该跨takeover恢复/期限门保留，不新增deadline schema。
+
+### 当前候选接口事实
+
+ChatInteractionState.action_result为required nullable；初waiting显式null，其他结果绑定原command/pause revision。
+未知保持resuming全集并产生新revision/source；validation重问动作原revision与新等待revision分离。
+公开item_id唯一寻址；native原request_id只在adapter内部还原，SDK approval的action结构不成为公开alias。
+七Run ports及R35 R2两native入口签名未换第二版本；HTTP机器仍3，候选typed变化须后继完整4 artifact门。
+
+
+## AGENT-HITL-NATIVE-BRIDGE-D0-R35：精确桥接口（候选，未实施）
+
+Root已验R3事务26/26（2.51s）、相关四PG文件71/71（5.56s），资源均回收；它们不证明正式桥。
+Root fresh default实际78 failed/1664 passed/6 skip/268 deselected（97.96s），Pyright仍43错误；
+失败分布supervisor26、machine_contract16、chat_response14、hitl11、public_contract6、control_commands4、execution_proof_artifact1。
+日志`/tmp/kokoro-agent-hitl-p2-r34-root-{related-pg,default}.log`。本轮仅四HITL前缀；生产、测试、机器与P3B整suffix保护。
+以下精确决定覆盖下方历史D0的未定字段/方法；既有P2事务语义保持，新增桥/schema/完整4均待源码卡和真实门。
+
+### 完整4 source与动作结果的准确增量
+
+内部port和不可变值唯一签名见TECH本R35节；SQL列/CHECK/codec唯一见DATA本R35节，不新增HTTP endpoint。
+完整Agent HTTP4仍原/v1单路径；机器当前3，P2内部候选不作为已发布artifact。所有新字段同时进入机器、runtime严格model、
+Chat decoded-payload mapping及正反例；不默认补旧字段、不保旧interaction/tool_id/request_id寻址。
+
+ChatInteractionState候选新增必需`action_result`字段，值为null或严格对象：
+`{command_id: 非空str, pause_revision: 正整数, kind: accepted|native_consumed|validation_failed|unknown|cancelled}`。
+初waiting无已接受动作时显式null；原P2 typed模型尚未有此字段，下一完整4实现必须补，不据本D0声称已支持。
+action_result.pause_revision指原动作所属轮次；新validation source的顶层pause_revision是新轮次，两者不得混用。
+拒绝接受（stale/partial/不允许）仍为现command失败receipt的`rejected`结果及稳定安全error/reason，不改变当前waiting集合，
+不凭无accepted intent制造native消费结果。对已接受的拒绝决策，native实际消费证明到达后可为native_consumed，
+它不是工具执行成功；工具结果只走真实native结果通道，不在resume前synthetic returned。
+
+| 持久阶段 | 公开全量source |
+| --- | --- |
+| accept事务 | resuming、原全集、action_result=accepted；只是接受。 |
+| start或native_observed提交 | 不发新phase/source；调用许可仅首次StartedResume。 |
+| 完整消费且稳定无新interrupt | active、空集合、native_consumed，同事务写command/result/Run/Chat。 |
+| 完整可归属的新validation/interrupt | 直接新waiting完整集合；有结构化validation为validation_failed，否则native_consumed；无中间空active。 |
+| 缺完整证据 | unknown动作结果与保留resuming集合一起持久；零再调用；健康任务不因暂缺证据立刻判unknown失败。 |
+| 原权威终态 | terminal空集合；未结动作cancelled表示被Run终态关闭，不倒推工具没执行或成功；已结动作保持原结果。 |
+
+action_result随全量state持久，source仍(run_id,interaction_revision)，历史重放返回原Chat source；
+未知ACK查原command，不生成新command/attempt。native_observed是私有可恢复中间状态，不是新wire phase。
+公开字段禁止native locator、观察digest/向量、quiescence token、原决策、raw异常/validation value；
+validation只code=json_schema_invalid与安全instance_path。HTTP-only不加载worker/native/private配置。
+
+官方独立读取证明实际写入，不证明所有saver收到的新值均覆盖；NULL_TASK只输入、旧RESUME槽/混合batch/缺子namespace归属仍unknown。
+观察丢失可只读重建充分证据，否则保持歧义，不能以成功successor、HTTP ACK、run.started或普通活动解除等待。
+healthy invocation受当前有效lease及真实tracked task保护；只有明确已drain静止的同attempt三次新成功稳定读取才耗尽协调计数。
+终态从既有authority/finalizer产生，跨worker缺handle或lease到期本身不授权重投/错误终态。
+
+43类型错误由真实全集item映射替换旧审批消费者收敛；30机器contract RED由完整4的机器/checker/生成provenance同向更新收敛。
+Root新增default失败还覆盖public_contract/execution_proof_artifact等真实消费者/证据绑定，后继精确授权后同步更新；
+不删断言、不写旧alias，不因相关PG71绿发布半4。Agent完整门及artifact先验收，BFF后固定pin，Web再消费。
+
+R35接线补名：新增只读read_resume_context不改wire，恢复读取原command冻结pause/plan而非当前head。
+accepted只返回PreparedNativeResume，仍须StartedResume授许可；started/native_observed/unknown只返回无Command的
+ObservedNativeResume，reconciled/terminal只精确重放。两个native装配/读取入口及六字段只读上下文见TECH本R35补名节。
+
+## AGENT-HITL-P2-R33-R3：故障注入固定组合修正
+
+Root R2真PG **24 passed / 2 failed / 0 skip（2.62s）**；
+`/tmp/kokoro-agent-hitl-p2-core-r33-r2-root-real-pg.log`，自有DB已回收。
+两例在安装trigger前被测试helper旧phase白名单拒绝，未到start/terminal故障回滚断言；不归因生产事务。
+R3仅将helper校验改为七个明确(stage,phase)组合，增加(command,dispatch_started)/(chat,terminal)，
+仍拒任意字符串或无效组合；原真实AFTER trigger、RaiseException、wholefacts/outbox=0断言原样。
+生产18路径及其余冻结25路径不改；P3B四suffix与两native proof保护。
+本轮Ruff format/check通过、定点Pyright0，26 collected（0.05s）；无DB/Git/服务，无运行句柄。
+日志`/tmp/kokoro-agent-hitl-p2-core-r33-r3-static.log`与`/tmp/kokoro-agent-hitl-p2-core-r33-r3-collect.log`。
+Root下一次实际26 PG仍是放行门，不将24局部通过冒称26或完整HITL4完成。
+
+## AGENT-HITL-P2-R33-R2：正式launch fixture与GC竞争补证（仅测试/文档）
+
+Root R33实际PG **16 failed / 6 passed / 0 skip（1.78s）**，日志
+`/tmp/kokoro-agent-hitl-p2-core-r33-root-real-pg.log`；自有DB已回收。
+16例共同在真实control的scoped lookup早停404：原fixture只try_claim没有dispatch，
+现正式get_request_scoped要求Run/dispatch同tenant及namespace JOIN，此资格正确，不放宽生产。
+本R2仅改现事务PG测试及四docs批准prefix，18生产与其余冻结文件保持；P3B完整suffix、两份native proof未改。
+
+统一fixture现在调用公开AgentIngress.launch创建正式dispatch/session，从get_pending_dispatch读取原RunRequest，
+独立连接核原request_json UTF8、tenant/namespace/pending，再claim_dispatch且复核scoped Run原bytes，最后pause/control。
+不手插dispatch、不在已pause之后补admission、不绕过真实Ingress.control。仅通知bus使用既有FakeBus；所有事实仍PG。
+首正例由持久RunResume逐项重建expected kind/payload base64，与整份持久decisions codec比较，不只检查digest自相等。
+
+独立Sol原生产审0P0/0P1/1P2保留：原串行terminal→purge→late不等于竞争证明。
+现补purge↔admit_control及purge↔record_control_delivery各两锁序，共4例：
+精确owned blocker PID持Run锁，先操作进入等待队列后再投第二操作；递归pg_blocking_pids包含soft queue边，
+确认1→2独立backend均阻塞才释放，无sleep/共享waiter计数/timeout放宽/重投。
+purge先胜则admission 404零新child；admission先胜只原命令创建一次且随同一次purge删除。
+delivery是UPDATE既有command而非INSERT，terminal或missing两种资格均false；其先拿锁也不伪造成功更新，
+既有child仍随一次purge清理，最终Run/control/dispatch均零残留。新测试尚待Root真PG，不能据收集声称竞争已证。
+R1六个真实通过仅包含pause rollback与四catalog drift；accept/start/terminal/竞争的最终断言仍待修fixture后重跑。
+本R2不修改生产、不运行DB/Git/服务，不把HITL4或native桥标完成。
+实际离线：本测试Ruff format/check通过，定点Pyright 0 errors，26 collected（0.05s）exit0；
+日志`/tmp/kokoro-agent-hitl-p2-core-r33-r2-test-static-r2.log`与`/tmp/kokoro-agent-hitl-p2-core-r33-r2-collect-r2.log`。
+首新增断言列表未标类型产生的1个Pyright错误保留原log，补明确list[dict[str,str]]后真实重跑0，不放宽检查。
+26 PG入口仍同一文件、`-o addopts='' -q`，由Root独占资源；无运行句柄，冻结待验。
+
+
+## AGENT-HITL-P2-CORE-GREEN-R31：事务核工作树候选（未发布）
+
+Root已以真实PG 6 failed/0 skip（缺record_pause；未到rollback）放行本批，基线仍main0245a36；
+当前新增唯一普通生产文件infrastructure/postgres_run_interactions.py，并在既有Run/command/Chat上实现
+pause/accept/start/unknown及原finalize_terminal收口。Root随后仅追加现infrastructure/chat_mappers.py持久类型decoder，
+旧interaction拒绝，不留兼容分支。本批30路径（18生产含SQL＋fake＋7tests＋4docs），不等于36/52或后继22全授权。
+机器OpenAPI/provenance/generated仍3；native桥、observation表、真实消费/恢复、全部旧worker消费者未切换。
+以下历史D0/tests-only段保留其当时基线；本节覆盖其“生产尚未修改/仅四docs”当前状态解释。P3B整suffix未改。
+
+当前内部API是`accept_resume(request, command_id, owner)`，caller不再传第二Submission；
+同连接Run→command锁后，从现权威`control.body`唯一typed decode，重建Submission，再整批校验/归一。
+`StartedResume`仅首次start提交返回；同attempt重放、历史command重放、unknown均不授第二执行许可。
+PostgresRunLeases仍唯一终态入口；purge入口委托现context内统一Run-lock/children清理实现，
+不新增GC模块。正常terminal同事务清集合并写interaction terminal在run terminal之前；私有quarantine保持无新增公开源。
+现partial ToolAwaitingApprovalPayload缺完整pause/revision，旧projection显式拒绝，绝不伪装新source；后继bridge必须替换真实调用。
+测试fake新增port只明确抛NotImplementedError，不伪造持久结果；本能力正例只使用真实PG repository。
+
+### 入口与持久请求的唯一表示（Root R32裁决）
+
+既有`body=typed_message.model_dump_json()`；既有request_digest不是该TEXT直接SHA，而是`sha256:`前缀＋
+`json.dumps({run_id,...控制字段}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)` UTF8摘要。
+新4 resume入口先严格RunResume validate（必需revision/ref/item，无旧别名、未知字段/重复item拒绝），
+再唯一`control_request_digest(message)`对`message.model_dump(mode="json", exclude={"command_id","request_digest"}, exclude_none=True)`算上述摘要；
+将摘要回填typed message后以原model_dump_json写control.body，不保存raw第二事实。cancel/steer原表示不变。
+锁内`decode_resume_command`同时核Run/session/command、body中的digest、重新计算digest与存储列，
+以及`RunResume.model_validate_json(body).model_dump_json().encode("utf-8") == body.encode("utf-8")`；
+不拿两个调用同一字符串的自相等替代这些独立身份/摘要校验。
+cancel/steer即使携带null的resume专属ref/revision也在入口拒绝，保原表示不扩大。
+nullable optional（如reject.reason、approve.args）允许入口null/omitted同义归一；required revision/ref/item无默认，
+省略/null/unknown字段均拒。持久body重排、whitespace或被删默认字段即使解析等价也拒；
+Run原request_json仍复用P3A原model_dump_json UTF8逐byte身份，不使用上述摘要codec替代。
+
+### 当前实际证据与未到达门
+
+worker最终受限纯选择121 passed＋架构36 passed，合并157 passed（2.38s），exit0；定点Ruff check/format-check通过。
+事务PG仅22 collected（0.04s），零DB/Redis/provider/服务访问，所有新rollback/start/锁等待/竞争/terminal/catalog断言待Root实际运行。
+完整机器候选两contract文件：30 failed/26 passed（0.97s），3机器及application decoded mapping仍旧，保留真实RED；
+全Pyright 43 errors仅execution/approvals.py及旧tests/unit/execution/test_hitl.py的旧tool/request寻址消费者；
+本片授权文件无新增类型错误。既有32fail tests-only、Root6fail及本片codec/duplicate/mapper RED日志保留。
+不以局部绿或收集数冒称完整4/default通过；Root真实PG和独立审查后决定下一片，完整机器/bridge/消费者统一发布。
+
+## AGENT-HITL-P2-RED-R31：首批契约与事务RED（tests-only）
+
+基线main0245a36＋P2-D0冻结57140f75；WIN03独立审0P0/0P1/2P2。唯一授权现两contract测试、
+新普通tests/integration/database/test_run_interaction_transactions.py及本四docs批准HITL前缀；生产/机器/SQL/SDK不改。
+时间列候选明确TIMESTAMPTZ(3)；后继infrastructure/checkpoint_interactions.py是尚不存在的新增普通文件，
+只列后继，不在本卡创建桥。P3B整suffix保持。
+
+首RED锁Agent4版本、ResumeControl必需expected_pause_revision>=1/pause_ref/decisions、五类decision只按item_id寻址，
+旧tool_id/request_id寻址拒绝；实际inbound_adapter及HTTP _parse_control均须保新pause身份，不仅OpenAPI示例可通过。
+ChatEvent删除旧interaction、增加interaction.state，decoded mapping必须指向严格ChatInteractionState；
+其interaction_revision/pause_revision/pause_ref/phase/groups是全量表示，waiting/resuming非空、active/terminal为空。
+负例锁缺集合/ref、零revision、raw args/checkpoint locator、validation原值及未知字段拒绝；正例预检防“所有payload均无效”的伪绿。
+本次只新增失败断言，不宣称当前3支持这些4字段/验证/运行时语义。
+
+## AGENT-HITL-PERSIST-P2-D0-R29：候选事务接口与发布边界
+
+基线main0245a36：P1已提交；实际机器仍3.0，SQL/事务核未实现。仅四docs HITL prefix更新；P3B后缀保持。
+本P2的五个内部RunInteractionPort方法及参数/返回以TECH同名表为唯一接口清单：read_interaction、record_pause、
+accept_resume、start_resume、mark_resume_unknown。内部Row、Native locator和私有决策编码见DATA，不复制成HTTP DTO。
+AcceptedResume仅证明Run/command/resuming Chat同事务提交；StartedResume才表示本次唯一start提交/一次调用许可，
+ReplayedResume永不授第二次调用。start/unknown不推进公开phase revision；admitted/applied/HTTP ACK仍不清等待。
+
+完整Agent HTTP4候选是P2 typed Chat前置：原/v1单路径，resume强制expected_pause_revision、pause_ref、全集decisions，
+decision各分支固定item_id为全集身份，既有type及对应args/reason/response/value语义保留；
+tool_id/request_id由pending关联承接而非第二caller寻址身份，不留旧字段alias；统一typed interaction.state及decoded payload mapping、完整动作结果/错误测试；不只增enum就称完整contract。
+当前strict ChatEventType与3.0机器/checker只有旧interaction，新payload不得借旧名称或任意JSON绕过。
+候选代码的schema/运行模型/生成hash必须一致；完整native/全部入口/恢复/消费者门之前不发布artifact、不改消费者pin，
+不把P2内部可测试能力当当前3运行时的新承诺，不加运行开关/兼容fallback做半4。
+
+公开source每次完整替换：waiting/resuming均非空原group顺序；前者awaiting、后者submitted；active/terminal为空。
+只公开安全display/validation及动作类别，排除原decision bytes、locator、resume vector、secret/原始异常；
+native_consumed及validation_failed留真实桥才能发，P2不合成这些结果。terminal由原权威原子清集合，不倒推已消费。
+source身份为(run_id, interaction_revision)，仍使用既有Chat envelope、source_index与session seq，不新增第二网络通道。
+数据表示/内部codec不改变现control request_digest算法；原command必须核存储归属和规范化完整决策原bytes，不能只信caller摘要。
+同command重放先读历史intent，不改新pause或lease；不同command争同pause至多一个新accept；unknown不发新command试探执行。
+
+HTTP入口现先get_request_scoped再admit_control有purge竞争；后继Run-first admission锁内Run消失以typed run_missing
+映射已有404 run_not_found，异tenant继续按现隐藏存在性规则，不误报409 digest mismatch。完整candidate4预期映射：结构/unknown字段/重复item→HTTP400 invalid_run_control；原HTTP command digest冲突→409 command_digest_mismatch；
+集合/轮次接受冲突发生在worker事务而非HTTP admission，command结果failed/error_code=interaction_conflict，安全细分reason为stale_pause/incomplete_collection/decision_not_allowed/not_waiting；
+它不清当前pending、不发伪native_consumed。内部authority_lost只丢弃失效writer、零head/source，不借新generation造失败；
+corrupt_state沿现当前authority的internal_error/false终态，若authority也失效则零终态。以上新reason/command error须机器候选登记及负例测试，
+不从异常message生成wire值、不把HTTP ACK升级成accept。request原TEXT身份比较沿P3A精确UTF8规则。
+
+P2生产候选36路径及事务PG文件见TECH；本轮仅设计，contract/provenance/generated/source一字未改。
+机器候选生成时现run_failure_generated.py会随源hash重建，不能手改。发布仍Agent完整4先于BFF固定artifact及Web集合消费；
+后续scope/retry/effective/native retention目标不降义、若breaking再5。当前3的contract-check只证明未漂移。
+
+选择快照方案B：Run pause_snapshot_json冻结完整groups（含display/validation/allowed_decisions）＋locator，
+command resume_pause_snapshot_json复制接受时原快照；当前pending_groups_json只表示可见集合。waiting/resuming与snapshot.groups一致，
+terminal清当前pending而保快照；新pause替换Run快照不改历史command。decoder从各自完整快照重算摘要，不信裸digest，不从新head补旧值。
+这两份快照分属当前pause和历史命令生命周期，只有record_pause/accept单向写入，不设双向同步或第二可编辑真源。
+
+R29 Root已裁决：P2为完整HITL owner目标内的先行事务TDD，36不是独立可发布4；旧审批消费者仍按tool/request寻址，
+必须按TECH依赖阶段同一owner交付替换全部真实编解码/worker路径。必要candidate wire同步变更造成的旧tests RED如实保留，
+待完整HITL验收，不用alias/default、伪source或只SQL方案掩盖；native内部HumanRequest身份与外部item_id的受信映射不等于wire兼容。
+TECH列22精确扩展依赖（含真实attempt跟踪supervisor/context），每批Root另卡；本次仍只四docs，没有源码/协议授权。
 
 ## AGENT-HITL-DOMAIN-P1-R28：仅内部纯规则
 

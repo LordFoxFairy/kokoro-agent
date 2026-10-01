@@ -178,3 +178,52 @@ def test_failure_contract_dynamic_exception_name_and_message_never_enter_wire() 
     payload = run_failed_payload(error_type("SENTINEL_PASSWORD_TOKEN"))
     assert payload.model_dump() == {"code": "internal_error", "retryable": False}
     assert "SENTINEL" not in payload.model_dump_json()
+
+
+def test_partial_native_approval_cannot_impersonate_complete_interaction_source() -> (
+    None
+):
+    from kokoro_agent.protocol import ToolAwaitingApprovalPayload
+
+    payload = ToolAwaitingApprovalPayload(
+        segment_id="segment",
+        tool_id="tool",
+        name="lookup",
+        kind="tool_approval",
+        description="Review",
+        allowed_decisions=["approve"],
+        args={},
+        editable=False,
+        pending_tool_ids=["tool"],
+    )
+    with pytest.raises(ValueError, match="complete durable pause"):
+        project_chat_fact(
+            tenant_id="tenant",
+            namespace="ns",
+            session_id="session",
+            run_id="run",
+            source_index=1,
+            created_at=wire_epoch_millis_to_utc(10),
+            payload=payload,
+        )
+
+
+def test_committed_interaction_row_decoder_rejects_legacy_event_type() -> None:
+    from kokoro_agent.infrastructure.chat_mappers import chat_event_from_row
+
+    row = dict(
+        chat_event_id="event",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session",
+        run_id="run",
+        source_index=0,
+        chat_message_id=None,
+        event_type="interaction.state",
+        payload_json="{}",
+        created_at=wire_epoch_millis_to_utc(10),
+        seq=1,
+    )
+    assert chat_event_from_row(row).event_type == "interaction.state"
+    with pytest.raises(TypeError, match="unsupported"):
+        chat_event_from_row({**row, "event_type": "interaction"})

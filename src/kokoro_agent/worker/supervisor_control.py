@@ -9,32 +9,24 @@ from kokoro_agent.protocol import RunFailedPayload
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 
-from langchain_core.runnables.config import RunnableConfig
-from langgraph.types import Command
 
 from kokoro_agent import metrics
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.scope import RunScope
-from kokoro_agent.execution.approvals import (
-    align_decisions,
-    align_input_decisions,
-    align_review_decisions,
-    approval_frame,
-    has_pending_interrupt,
-    input_entries,
-    input_frame,
-    nested_approved_payloads,
-    resolution_payloads,
-    resume_command_decisions,
-    review_entries,
-    review_frame,
-    review_resolution_payloads,
-    review_resume_value,
-    submit_resume_value,
+from kokoro_agent.domain.run.interactions import (
+    AcceptedResume,
+    InteractionConflict,
+    ReplayedResume,
+    StartedResume,
 )
+from kokoro_agent.infrastructure.checkpoint_interactions import (
+    PreparedNativeResume,
+    ObservedNativeResume,
+    ResumeReadTarget,
+)
+
 from kokoro_agent.protocol import (
     CONSUMER_GROUP,
     ControlReceiptStatus,
@@ -100,93 +92,101 @@ class SupervisorControlMixin(SupervisorContext):
             await self._on_cancel(bus, msg)
 
     async def _on_resume(self, bus: StreamProtocol, msg: RunResume) -> None:
-        # 终态权威闸：cancel/自然完成后 stale resume 即使 checkpoint 仍有 interrupt 也不续跑。
         request = await self._control_request(msg.run_id)
-        if request is None:
-            LOGGER.warning("dropping resume for unknown run_id=%s", msg.run_id)
+        if request is None or not self._control_session_matches(
+            request, msg.session_id
+        ):
             return
-        if not self._control_session_matches(request, msg.session_id):
+        await self._resume_owned(bus, request, msg.command_id)
+
+    async def _resume_owned(
+        self, bus: StreamProtocol, request: RunRequest, command_id: str
+    ) -> None:
+        if await self._run_repository.is_terminal(request.run_id):
             return
-        if await self._run_repository.is_terminal(msg.run_id):
-            LOGGER.warning("dropping resume for already-terminal run_id=%s", msg.run_id)
-            return
-        lease = await self._run_repository.adopt(msg.run_id, self._consumer)
-        if lease is None:
-            LOGGER.warning(
-                "dropping resume without paused lease ownership run_id=%s", msg.run_id
+        try:
+            accepted = await self._run_repository.accept_resume(
+                request, command_id, self._consumer
+            )
+        except InteractionConflict:
+            # A malformed/stale collection is not an execution failure and must
+            # not change the current waiting head or finalize a healthy Run.
+            # The command receipt is terminal; later delivery bookkeeping cannot
+            # overwrite it. Internal conflict reasons are never public fields.
+            await self._run_repository.mark_control_failed(
+                request.run_id, command_id, "interaction_conflict"
             )
             return
-        self._leases[msg.run_id] = lease
+        if isinstance(accepted, AcceptedResume):
+            lease = accepted.lease
+        else:
+            context = await self._run_repository.read_resume_context(
+                request, command_id
+            )
+            if context is None or context.intent.status.value in (
+                "reconciled",
+                "terminal",
+            ):
+                return
+            lease = await self._run_repository.get_fence(request.run_id)
+            if (
+                lease is None
+                or lease.owner != self._consumer
+                or not await self._run_repository.is_lease_current(
+                    request.run_id, lease
+                )
+            ):
+                return
+            task = self._tasks.get(request.run_id)
+            if task is not None and not task.done():
+                return
+        self._leases[request.run_id] = lease
         try:
             built = await self._build(request, lease)
-        except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
-            await self._fail_terminal(bus, msg.run_id, error, code="assembly_failed")
-            return
-        scope = RunScope.of(request)
-        config: RunnableConfig = {"configurable": {"thread_id": scope.scoped_thread_id}}
-        snapshot = await built.runnable.aget_state(config)
-        # 幂等护栏：无 pending interrupt 的 resume 是重复/过期帧，丢弃不重跑。
-        if not has_pending_interrupt(snapshot):
-            LOGGER.warning(
-                "dropping resume without pending interrupt for run_id=%s", msg.run_id
+        except Exception as error:  # noqa: BLE001 — preserve typed build failure with its original fence
+            await self._fail_terminal(
+                bus, request.run_id, error, code="assembly_failed", build_lease=lease
             )
-            # adopt 已把暂停哨兵切回活跃租约；重复/过期 resume 不启动任务时必须恢复暂停态，
-            # 否则该 Run 会成为既无执行任务、又不会被 paused scanner 接管的孤儿。
-            await self._run_repository.pause(msg.run_id, lease)
             return
-        names = self._approval_tool_names(request)
-        entries = review_entries(snapshot.interrupts)
-        command: Command[object]
-        if entries is not None:
-            # 结果审核帧：投影侧 returned 被抑制，裁决后的 returned 在此直发（approve/respond/reject 全量）。
-            rframe = review_frame(snapshot, entries)
-            ordered = align_review_decisions(msg.decisions, rframe)
-            results: dict[str, tuple[str, bool]] = {}
-            for tool_id in rframe.tool_ids:
-                cached = await self._run_repository.get_tool_result(msg.run_id, tool_id)
-                if cached is not None:
-                    results[tool_id] = cached
-            emitter = await self._emitter(bus, msg.run_id, lease)
-            for resolution in review_resolution_payloads(ordered, rframe, results):
-                await emitter.emit(resolution)
-            command = Command(resume=review_resume_value(ordered))
-        elif (input_ents := input_entries(snapshot.interrupts)) is not None:
-            # kind=input（如 MCP elicitation）：value 回灌到 request_input 调用点续跑。
-            # 不直发 tool.returned——发起工具在 resume 后原地续跑，其 returned 走正常投影浮现。
-            iframe = input_frame(snapshot, input_ents)
-            ordered = align_input_decisions(msg.decisions, iframe)
-            command = Command(resume=submit_resume_value(ordered))
-        else:
-            frame, requests = approval_frame(snapshot, names)
-            # 按 tool_id 对齐到 pending 顺序；缺/多/重复/未知/respond 越界即 fail-loud（serve 兜为 run.failed）。
-            ordered = align_decisions(msg.decisions, frame, requests)
-            emitter = await self._emitter(bus, msg.run_id, lease)
-            # reject/respond 不经 v3 projection → 据快照+decision 直发 tool.returned。
-            for resolution in resolution_payloads(ordered, frame):
-                await emitter.emit(resolution)
-            if frame.nested:
-                # 子代理内工具无投影通道：approve/edit 的 returned 也在此直发（占位文案），
-                # 否则审批卡永远停在 awaiting（工具在子图内执行，projection 早已 drain）。
-                for resolution in nested_approved_payloads(ordered, frame):
-                    await emitter.emit(resolution)
-            command = Command(
-                resume={"decisions": resume_command_decisions(ordered, frame)}
-            )
-        # 多 worker 收养后 resume/cancel 可能分投两处：build/aget_state 长窗内他处 cancel
-        # 已终态则此处收手——终态后绝不再 spawn（复审 #1 竞态收窄）。
-        if await self._run_repository.is_terminal(msg.run_id):
-            LOGGER.warning("resume lost to concurrent terminal, run_id=%s", msg.run_id)
+        read = await self._interaction_reader(
+            request=request,
+            lease=lease,
+            handle=built,
+            target=ResumeReadTarget(command_id=command_id),
+        )
+        if isinstance(read, ReplayedResume):
             return
+        if isinstance(read, ObservedNativeResume):
+            for observation in read.observations:
+                await self._run_repository.record_checkpoint_observation(
+                    request, lease, observation
+                )
+            await self._run_repository.reconcile_resume(request, lease, read.evidence)
+            return
+        if not isinstance(read, PreparedNativeResume):
+            raise RuntimeError("unexpected resume reader result")
+        started = await self._run_repository.start_resume(
+            request, lease, command_id, read.plan
+        )
+        if not isinstance(started, StartedResume):
+            return
+        self._drained_attempts = {
+            key: value
+            for key, value in self._drained_attempts.items()
+            if key[0] != request.run_id
+        }
+        self._resume_attempts[request.run_id] = (command_id, started)
         self._spawn_agent(
             bus,
             built,
-            msg.run_id,
-            scope.scoped_thread_id,
-            command,
-            names,
+            request.run_id,
+            RunScope.of(request).scoped_thread_id,
+            read.command,
+            self._approval_tool_names(request),
             trace=self._trace(request),
             lease=lease,
         )
+        self._ensure_control_listener(bus, request.run_id)
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
         request = await self._control_request(msg.run_id)
@@ -369,7 +369,7 @@ class SupervisorControlMixin(SupervisorContext):
                 msg.run_id, msg.command_id, "run_scope_forbidden"
             )
             return
-        fingerprint = await self._control_fingerprint(run_id, msg)
+        fingerprint = None
         first = await self._run_repository.record_control_delivery(
             run_id,
             msg.command_id,
@@ -412,6 +412,25 @@ class SupervisorControlMixin(SupervisorContext):
                 return
             metrics.record_control_delivery("applied")
             return
+        if isinstance(msg, RunResume):
+            # Receipt describes durable acceptance/delivery, never native consumption.
+            # Storage/read failures propagate; no alternate terminal decision.
+            await self._on_resume(bus, msg)
+            request = await self._control_request(run_id)
+            context = (
+                await self._run_repository.read_resume_context(request, msg.command_id)
+                if request is not None
+                else None
+            )
+            if context is None:
+                await self._run_repository.mark_control_failed(
+                    run_id, msg.command_id, "control_apply_failed"
+                )
+                return
+            await self._run_repository.mark_control_applied(run_id, msg.command_id)
+            await self._run_repository.mark_control_succeeded(run_id, msg.command_id)
+            await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
+            return
         # resume/steer：apply 后再写 applied，随后把 HTTP receipt 收口为 succeeded。
         if await self._guarded_control_apply(bus, run_id, msg):
             await self._run_repository.mark_control_applied(run_id, msg.command_id)
@@ -442,44 +461,6 @@ class SupervisorControlMixin(SupervisorContext):
             RunControlReceiptPayload(command_id=command_id, control_status=status)
         )
 
-    async def _control_fingerprint(
-        self, run_id: str, msg: RunResume | RunCancel | RunSteer
-    ) -> str | None:
-        # resume 记录当前 interrupt 指纹（重启续办据此判 stale）；cancel/steer 无 interrupt 依赖。
-        if isinstance(msg, RunResume):
-            return await self._interrupt_fingerprint(run_id)
-        return None
-
-    async def _interrupt_fingerprint(self, run_id: str) -> str | None:
-        # 当前 interrupt 指纹：稳定 interrupt.id 集合的 sha256；无 interrupt/取不到=None。
-        request = await self._run_repository.get_request(run_id)
-        if request is None:
-            return None
-        # 指纹读取同样会装配 backend/guards；先原子收养暂停 lease，禁止无 fence 构建。
-        # 读取完成后恢复暂停哨兵，真正 resume 再 adopt 新 generation。
-        lease = await self._run_repository.adopt(run_id, self._consumer)
-        if lease is None:
-            return None
-        self._leases[run_id] = lease
-        try:
-            built = await self._build(request, lease)
-            scope = RunScope.of(request)
-            config: RunnableConfig = {
-                "configurable": {"thread_id": scope.scoped_thread_id}
-            }
-            snapshot = await built.runnable.aget_state(config)
-        except Exception:  # noqa: BLE001 — 指纹是 stale 判定辅助，取不到降级 None（续办侧按不匹配处理）
-            LOGGER.exception("interrupt fingerprint build failed run_id=%s", run_id)
-            return None
-        finally:
-            if not await self._run_repository.pause(run_id, lease):
-                self._release_local_ownership(run_id, lease)
-        interrupts = snapshot.interrupts
-        if not interrupts:
-            return None
-        joined = ",".join(sorted(str(interrupt.id) for interrupt in interrupts))
-        return hashlib.sha256(joined.encode()).hexdigest()
-
     async def _teardown_control(self, bus: StreamProtocol, run_id: str) -> None:
         # 终态统一漏斗：三路（自然完成/失败/取消）都经此——沙箱随终态回收。
         await self._retry_sandbox_cleanups(run_id=run_id)
@@ -493,6 +474,12 @@ class SupervisorControlMixin(SupervisorContext):
         if task is not None and not task.done():
             task.cancel()
         self._leases.pop(run_id, None)
+        self._resume_attempts.pop(run_id, None)
+        self._drained_attempts = {
+            key: value
+            for key, value in self._drained_attempts.items()
+            if key[0] != run_id
+        }
 
     def _release_local_ownership(self, run_id: str, lease: LeaseFence) -> None:
         """Drop only process-local state for one stale generation; never touch shared resources."""

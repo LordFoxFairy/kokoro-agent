@@ -7,6 +7,7 @@ from kokoro_agent.protocol.run_failure_generated import (
     RunFailedPayload,
 )
 from kokoro_agent.protocol.events import (
+    ChatInteractionState,
     AgentEvent,
     agent_event_adapter,
     TodoStatus,
@@ -92,6 +93,7 @@ from kokoro_agent.protocol.streams import (
 )
 
 __all__ = [
+    "ChatInteractionState",
     "AgentEvent",
     "agent_event_adapter",
     "TodoStatus",

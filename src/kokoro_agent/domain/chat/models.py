@@ -26,7 +26,7 @@ ChatEventType = Literal[
     "assistant.delta",
     "assistant.completed",
     "activity",
-    "interaction",
+    "interaction.state",
     "delivery",
     "run.completed",
     "run.failed",

@@ -7,6 +7,7 @@ jsonschema 校验、不合法重新 interrupt（同 request_id 附 validation_er
 from __future__ import annotations
 
 from uuid import uuid4
+from typing import Any, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -151,7 +152,40 @@ async def test_invalid_value_reprompts_with_validation_error_then_submits(
     snapshot = await agent.aget_state(config)
     hr = HumanRequest.from_interrupt_value(snapshot.interrupts[0].value)
     assert hr is not None and hr.request_id == "probe-1"  # 幂等锚不变。
-    assert isinstance(hr.context.get("validation_error"), str)
+    from kokoro_agent.protocol.events import InteractionValidation
+
+    error = InteractionValidation.model_validate(hr.context["validation_error"])
+    assert error.model_dump(mode="json") == {
+        "code": "json_schema_invalid",
+        "instance_path": [],
+    }
+    assert hr.context["validation_error"] == error.model_dump(mode="json")
+    assert "message" not in error.model_dump() and "value" not in error.model_dump()
+    assert "required property" not in error.model_dump_json()
+
+    secret = "secret-otp-r42-never-expose"
+    secret_bad: list[dict[str, JsonValue]] = [
+        {
+            "request_id": "probe-1",
+            "type": "submit",
+            "value": {"otp": {"secret": secret}},
+        }
+    ]
+    assert await _drive(agent, Command(resume=secret_bad), config, emitter)
+    secret_snapshot = await agent.aget_state(config)
+    secret_request = HumanRequest.from_interrupt_value(
+        secret_snapshot.interrupts[0].value
+    )
+    assert secret_request is not None and secret_request.request_id == hr.request_id
+    safe_error = InteractionValidation.model_validate(
+        secret_request.context["validation_error"]
+    )
+    assert safe_error.model_dump(mode="json") == {
+        "code": "json_schema_invalid",
+        "instance_path": ["otp"],
+    }
+    assert secret not in secret_request.model_dump_json()
+    assert "is not of type" not in secret_request.model_dump_json()
 
     # ② 重填合法值：通过校验，续跑。
     good: list[dict[str, JsonValue]] = [
@@ -179,3 +213,96 @@ async def test_reject_returns_rejected(
     done = await _drive(agent, Command(resume=resume), config, emitter)
     assert done is False
     assert "rejected:用户拒绝" in await _returned(stream, run_id)
+
+
+class _BridgeValidationState(TypedDict, total=False):
+    answer: dict[str, JsonValue]
+
+
+async def test_bridge_r35_repeated_input_validation_is_safe_and_keeps_native_id() -> (
+    None
+):
+    """Real interrupt/validation loop, no model, provider, Redis or fake saver."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph import END, START, StateGraph
+
+    completions: list[dict[str, JsonValue]] = []
+
+    def collect(state: _BridgeValidationState) -> _BridgeValidationState:
+        del state
+        value = request_input(
+            request_id="stable-native-request",
+            schema=_OTP_SCHEMA,
+            context={"name": "otp", "args": {}},
+        )
+        assert isinstance(value, InputSubmitted)
+        completions.append(value.value)
+        return {"answer": value.value}
+
+    # Match the fixed native-proof tests: contain incomplete SDK generic stubs
+    # at construction only; this remains the real official graph implementation.
+    native_graph: Any = StateGraph
+    graph: Any = (
+        native_graph(_BridgeValidationState)
+        .add_node("collect", collect)
+        .add_edge(START, "collect")
+        .add_edge("collect", END)
+        .compile(checkpointer=InMemorySaver())
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": "r35-safe-validation"}}
+    await graph.ainvoke({}, config)
+    first = await graph.aget_state(config)
+    native_id = first.interrupts[0].id
+    checkpoints = [first.config.get("configurable", {})["checkpoint_id"]]
+    validations: list[HumanRequest] = []
+    for _ in range(2):
+        await graph.ainvoke(
+            Command(
+                resume={
+                    native_id: [
+                        {
+                            "request_id": "stable-native-request",
+                            "type": "submit",
+                            "value": {"otp": 987654321},
+                        }
+                    ]
+                }
+            ),
+            config,
+        )
+        paused = await graph.aget_state(config)
+        assert len(paused.interrupts) == 1
+        assert paused.interrupts[0].id == native_id
+        human = HumanRequest.from_interrupt_value(paused.interrupts[0].value)
+        assert human is not None and human.request_id == "stable-native-request"
+        validations.append(human)
+        checkpoints.append(paused.config.get("configurable", {})["checkpoint_id"])
+        assert completions == []
+    completed = await graph.ainvoke(
+        Command(
+            resume={
+                native_id: [
+                    {
+                        "request_id": "stable-native-request",
+                        "type": "submit",
+                        "value": {"otp": "valid"},
+                    }
+                ]
+            }
+        ),
+        config,
+    )
+    assert completed == {"answer": {"otp": "valid"}}
+    assert completions == [{"otp": "valid"}]
+    assert (await graph.aget_state(config)).interrupts == ()
+    # Native may retain the same checkpoint and interrupt across revalidation;
+    # owner pause revisions must not be derived from those two IDs alone.
+    assert len(set(checkpoints)) == 1
+    # Assert after valid completion: a RED here characterizes unsafe validation,
+    # not a broken native resume loop or an unfinished valid-value assertion.
+    for human in validations:
+        assert human.context.get("validation_error") == {
+            "code": "json_schema_invalid",
+            "instance_path": ["otp"],
+        }
+        assert "987654321" not in human.model_dump_json()

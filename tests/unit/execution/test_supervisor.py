@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from support.fakes import finish_run
+from support.fakes import read_unpaused_interaction
+
+from support.fakes import (
+    finish_run,
+    interaction_pause_fixture,
+    admit_resume_fixture,
+    admit_control_fixture,
+    InitialPauseThenUnknownReader,
+)
 
 import asyncio
 
@@ -32,6 +40,7 @@ from kokoro_agent.protocol import (
     RunCancel,
     RunFailed,
     RunRequest,
+    RunResume,
     RunSteer,
     SubagentSource,
     inbound_adapter,
@@ -39,6 +48,17 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.domain.run.models import (
+    TerminalAuthority,
+    RunTerminalOutcome,
+    TerminalCommitResult,
+)
+from kokoro_agent.domain.run.interactions import (
+    ResumeDispatchPlan,
+    InteractionAuthorityLost,
+    StartedResume,
+    ReplayedResume,
+)
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
@@ -79,6 +99,7 @@ def _supervisor(
     chat_repository: FakeChatRepository | None = None,
     *,
     seed_direct_requests: bool = True,
+    native_resume: JsonValue = None,
 ) -> tuple[RunSupervisor, FakeRunRepository]:
     state_store = store if store is not None else FakeRunRepository()
     if chat_repository is not None:
@@ -92,17 +113,26 @@ def _supervisor(
                 and msg.run_id not in state_store.dispatches
             ):
                 _seed_pending_dispatch(state_store, msg)
+            if isinstance(msg, RunResume | RunCancel):
+                stored = state_store.requests.get(msg.run_id)
+                if stored is not None and stored.session_id == msg.session_id:
+                    msg = await admit_control_fixture(state_store, msg)
             if isinstance(msg, RunCancel):
                 await state_store.record_control_delivery(
                     msg.run_id,
                     msg.command_id,
                     msg.request_digest,
                     None,
-                    msg.model_dump_json(exclude_none=True),
+                    msg.model_dump_json(),
                 )
             await super().dispatch(bus, msg)
 
     sup = _AdmittedControlSupervisor(
+        interaction_reader=InitialPauseThenUnknownReader(
+            state_store, native_value=native_resume
+        )
+        if native_resume is not None
+        else read_unpaused_interaction,
         agent_builder=_builder(agent),
         run_repository=state_store,
         approval_tool_names=_gated_names,
@@ -299,7 +329,7 @@ async def test_duplicate_run_id_skipped() -> None:
 async def test_resume_with_pending_invokes_command() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup, store = _supervisor(agent)
+    sup, store = _supervisor(agent, native_resume={"decisions": [{"type": "approve"}]})
     await sup.dispatch(bus, request("r2"))
     await _drain(sup)
     # interrupt 暂停：租约进入暂停哨兵。
@@ -308,10 +338,12 @@ async def test_resume_with_pending_invokes_command() -> None:
 
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "r2",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
     await sup.dispatch(bus, resume)
@@ -320,55 +352,66 @@ async def test_resume_with_pending_invokes_command() -> None:
     assert len(agent.seen_payloads) == 1
     payload = agent.seen_payloads[0]
     assert isinstance(payload, Command)
-    assert payload.resume == {"decisions": [{"type": "approve"}]}
+    assert payload.resume == {"unit-interrupt": {"decisions": [{"type": "approve"}]}}
     # 离开暂停：resume 前完成所有权交接（fencing 属主随收养更新）；
     # 段末再次 interrupt 会重回暂停哨兵，故不断言租约数值。
     assert store.owners.get("r2") == "test-consumer"
 
 
-async def test_resume_edit_and_reject_decision_shapes() -> None:
+@pytest.mark.parametrize(
+    ("decision", "native_value"),
+    [
+        (
+            {"type": "edit", "item_id": "item-A", "args": {"x": 1}},
+            {
+                "decisions": [
+                    {
+                        "type": "edit",
+                        "edited_action": {"name": _GATED, "args": {"x": 1}},
+                    }
+                ]
+            },
+        ),
+        (
+            {"type": "reject", "item_id": "item-A", "reason": "no"},
+            {"decisions": [{"type": "reject", "message": "no"}]},
+        ),
+    ],
+)
+async def test_resume_edit_and_reject_decision_shapes(
+    decision: dict[str, JsonValue],
+    native_value: JsonValue,
+) -> None:
+    # Actual SDK mapping is asserted by test_hitl; this worker test declares the
+    # reader's output explicitly and verifies one permission/one whole-map call.
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup, _store = _supervisor(agent)
-    await sup.dispatch(bus, request("r4"))
+    sup, store = _supervisor(agent, native_resume=native_value)
+    run = request("r4")
+    await sup.dispatch(bus, run)
     await _drain(sup)
-
     agent.seen_payloads.clear()
-    edit = _inbound(
-        {
-            "kind": "run.resume",
-            "command_id": "dec_wire",
-            "run_id": "r4",
-            "decisions": [{"type": "edit", "tool_id": _TID, "args": {"x": 1}}],
-        }
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="decision",
+        decisions=[decision],
     )
-    await sup.dispatch(bus, edit)
+    await sup.dispatch(bus, command)
     await _drain(sup)
-    edit_payload = agent.seen_payloads[0]
-    assert isinstance(edit_payload, Command)
-    assert edit_payload.resume == {
-        "decisions": [
-            {"type": "edit", "edited_action": {"name": _GATED, "args": {"x": 1}}}
-        ]
-    }
-
-    agent.seen_payloads.clear()
-    reject = _inbound(
-        {
-            "kind": "run.resume",
-            "command_id": "dec_wire",
-            "run_id": "r4",
-            "decisions": [{"type": "reject", "tool_id": _TID, "reason": "no"}],
-        }
-    )
-    await sup.dispatch(bus, reject)
+    assert len(agent.seen_payloads) == 1
+    payload = agent.seen_payloads[0]
+    assert isinstance(payload, Command)
+    assert payload.resume == {"unit-interrupt": native_value}
+    context = await store.read_resume_context(run, "decision")
+    assert context is not None and context.intent.status.value == "unknown"
+    # Acceptance/dispatch is not consumption: no invented rejected result.
+    assert not [
+        event for event in bus.run_events("r4") if event.kind == "tool.returned"
+    ]
+    await sup.dispatch(bus, command)
     await _drain(sup)
-    reject_payload = agent.seen_payloads[0]
-    assert isinstance(reject_payload, Command)
-    assert reject_payload.resume == {"decisions": [{"type": "reject", "message": "no"}]}
-    # reject 快照直发 tool.returned{rejected}。
-    returned = [e for e in bus.run_events("r4") if e.kind == "tool.returned"]
-    assert returned, "reject must emit snapshot tool.returned"
+    assert len(agent.seen_payloads) == 1
 
 
 # ④ resume：无 pending → 幂等护栏丢弃。
@@ -383,10 +426,12 @@ async def test_resume_without_pending_is_dropped() -> None:
 
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "r3",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
     await sup.dispatch(bus, resume)
@@ -401,10 +446,12 @@ async def test_resume_unknown_run_dropped() -> None:
     sup, _store = _supervisor(agent)
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "ghost",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
     await sup.dispatch(bus, resume)
@@ -522,7 +569,7 @@ async def test_cancel_after_natural_completion_no_duplicate_terminal() -> None:
 async def test_cancel_after_pause_emits_cancelled() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup, _store = _supervisor(agent)
+    sup, _store = _supervisor(agent, native_resume={"decisions": [{"type": "approve"}]})
     await sup.dispatch(bus, request("rc2"))
     await _drain(sup)
     await sup.dispatch(
@@ -536,7 +583,7 @@ async def test_cancel_after_pause_emits_cancelled() -> None:
 async def test_resume_after_cancel_blocked_by_terminal() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup, _store = _supervisor(agent)
+    sup, _store = _supervisor(agent, native_resume={"decisions": [{"type": "approve"}]})
     await sup.dispatch(bus, request("rc4"))
     await _drain(sup)
     await sup.dispatch(
@@ -548,10 +595,12 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
-            "command_id": "dec_wire",
+            "command_id": "resume-after-cancel",
             "run_id": "rc4",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
     await sup.dispatch(bus, resume)
@@ -567,6 +616,7 @@ async def test_builder_failure_emits_run_failed_once() -> None:
     bus = FakeBus()
     store = FakeRunRepository()
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=boom,
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -615,7 +665,14 @@ async def test_control_stream_delivers_cancel() -> None:
         }
     )
     sup, _store = _supervisor(agent)
+
     await sup.dispatch(bus, request("cx"))
+    await admit_control_fixture(
+        _store,
+        RunCancel(
+            kind="run.cancel", run_id="cx", session_id="s1", command_id="dec_wire"
+        ),
+    )
     # 轮询等待 control 监听消费 cancel 并终态删流。
     for _ in range(200):
         if run_control_stream("cx") in bus.deleted:
@@ -678,6 +735,7 @@ async def test_cancel_waits_for_started_delivery_then_reapplies_once() -> None:
         {"kind": "run.cancel", "command_id": "cancel-pending", "run_id": run.run_id}
     )
     assert isinstance(cancel, RunCancel)
+    cancel = await admit_control_fixture(store, cancel)
     assert await store.record_control_delivery(
         run.run_id,
         cancel.command_id,
@@ -782,7 +840,7 @@ async def test_resume_replaces_completed_pause_with_new_task_handle() -> None:
     gate2 = asyncio.Event()
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE, gates=[gate1, gate2])
     bus = FakeBus()
-    sup, _store = _supervisor(agent)
+    sup, _store = _supervisor(agent, native_resume={"decisions": [{"type": "approve"}]})
     await sup.dispatch(bus, request("race"))
     await asyncio.sleep(0)  # task1 阻塞在 gate1
 
@@ -792,10 +850,12 @@ async def test_resume_replaces_completed_pause_with_new_task_handle() -> None:
 
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "race",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
     await sup.dispatch(bus, resume)
@@ -820,11 +880,13 @@ async def test_serve_acks_and_isolates_failures() -> None:
     resume_boom = StreamItem(
         cursor="3",
         event={
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "rx",
             "session_id": "s1",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         },
     )
     bus = FakeBus(inbound=(good, malformed, resume_boom))
@@ -836,6 +898,7 @@ async def test_serve_acks_and_isolates_failures() -> None:
     assert rx_lease is not None
     assert await store.pause("rx", rx_lease) is True
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=_builder(FakeAgent(run=text_run("hi"))),
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -910,7 +973,9 @@ async def test_delayed_heartbeat_does_not_cancel_resumed_generation() -> None:
         gates=[first_gate, resumed_gate],
     )
     bus = FakeBus()
-    sup, _ = _supervisor(agent, store=store)
+    sup, _ = _supervisor(
+        agent, store=store, native_resume={"decisions": [{"type": "approve"}]}
+    )
 
     await sup.dispatch(bus, request("heartbeat-resume-race"))
     await asyncio.sleep(0)
@@ -924,10 +989,12 @@ async def test_delayed_heartbeat_does_not_cancel_resumed_generation() -> None:
         bus,
         _inbound(
             {
+                "expected_pause_revision": 1,
+                "pause_ref": "pause-1",
                 "kind": "run.resume",
                 "command_id": "resume-after-heartbeat",
                 "run_id": "heartbeat-resume-race",
-                "decisions": [{"type": "approve", "tool_id": _TID}],
+                "decisions": [{"type": "approve", "item_id": "item-A"}],
             }
         ),
     )
@@ -1119,18 +1186,24 @@ async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
     store = FakeRunRepository()
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup_a, _ = _supervisor(agent, store=store)
+    sup_a, _ = _supervisor(
+        agent, store=store, native_resume={"decisions": [{"type": "approve"}]}
+    )
     await sup_a.dispatch(bus, request("rx2"))
     await _drain(sup_a)
 
-    sup_b, _ = _supervisor(agent, store=store)
+    sup_b, _ = _supervisor(
+        agent, store=store, native_resume={"decisions": [{"type": "approve"}]}
+    )
     agent.seen_payloads.clear()
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "rx2",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
     await sup_b.dispatch(bus, resume)
@@ -1146,7 +1219,7 @@ async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
 async def test_pause_recorded_on_interrupt() -> None:
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup, store = _supervisor(agent)
+    sup, store = _supervisor(agent, native_resume={"decisions": [{"type": "approve"}]})
     await sup.dispatch(bus, request("rp"))
     await _drain(sup)
     assert store.paused_runs == ["rp"]
@@ -1175,6 +1248,15 @@ async def test_heartbeat_adopts_control_listener_for_paused_run() -> None:
     # 模拟他处 worker 崩溃遗留：run 已认领并暂停（哨兵），本 supervisor 从未 dispatch 过它。
     await store.try_claim(request("orphan-hitl"))
     await store.pause("orphan-hitl")
+    await admit_control_fixture(
+        store,
+        RunCancel(
+            kind="run.cancel",
+            run_id="orphan-hitl",
+            session_id="s1",
+            command_id="dec_wire",
+        ),
+    )
 
     await sup.heartbeat_once(bus)
     for _ in range(200):
@@ -1252,17 +1334,25 @@ async def test_adopted_listener_pops_after_remote_teardown() -> None:
 # ⑫ 复审 #1 竞态：多 worker 收养后 resume/cancel 分投两处——终态后绝不 spawn。
 async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
     class _CancelInWindowStore(FakeRunRepository):
-        async def adopt(
-            self, run_id: str, owner: str = "test-consumer"
-        ) -> LeaseFence | None:
-            lease = await super().adopt(run_id, owner)
-            # 模拟他处 cancel 恰在 resume 长窗（build/aget_state/adopt 之后）完成终态。
-            self.terminals.add(run_id)
-            return lease
+        async def start_resume(
+            self,
+            request: RunRequest,
+            lease: LeaseFence,
+            command_id: str,
+            plan: ResumeDispatchPlan,
+        ) -> StartedResume | ReplayedResume:
+            # A concurrent terminal wins before dispatch_started; preserve the
+            # real port's authority-lost failure, never fabricate StartedResume.
+            assert await finish_run(self, request.run_id, lease)
+            return await super().start_resume(request, lease, command_id, plan)
 
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
-    sup, store = _supervisor(agent, store=_CancelInWindowStore())
+    sup, store = _supervisor(
+        agent,
+        store=_CancelInWindowStore(),
+        native_resume={"decisions": [{"type": "approve"}]},
+    )
     await sup.dispatch(bus, request("rc"))
     await _drain(sup)
     assert "rc" in store.paused_runs
@@ -1270,13 +1360,16 @@ async def test_resume_lost_to_concurrent_cancel_does_not_spawn() -> None:
 
     resume = _inbound(
         {
+            "expected_pause_revision": 1,
+            "pause_ref": "pause-1",
             "kind": "run.resume",
             "command_id": "dec_wire",
             "run_id": "rc",
-            "decisions": [{"type": "approve", "tool_id": _TID}],
+            "decisions": [{"type": "approve", "item_id": "item-A"}],
         }
     )
-    await sup.dispatch(bus, resume)
+    with pytest.raises(InteractionAuthorityLost):
+        await sup.dispatch(bus, resume)
     await _drain(sup)
     # 终态复检收手：不 spawn、无新 invoke。
     assert agent.seen_payloads == []
@@ -1302,6 +1395,7 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
     bus = FakeBus()
     store = FakeRunRepository()
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=_builder(agent),
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -1322,6 +1416,7 @@ async def test_retention_heartbeat_purges_terminal_runs() -> None:
     bus = FakeBus()
     store = FakeRunRepository()
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=_builder(agent),
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -1402,6 +1497,7 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=builder,
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -1435,6 +1531,7 @@ async def test_heartbeat_retries_a_failed_durable_sandbox_cleanup() -> None:
         teardown_ref="fixtures.sandbox:destroy",
     )
     supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=_builder(FakeAgent()),
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -1489,6 +1586,7 @@ async def test_terminal_publish_failure_still_runs_durable_sandbox_cleanup() -> 
         torn.append((kind, sandbox_id, teardown_ref))
 
     supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=builder,
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -1840,6 +1938,7 @@ async def test_failure_contract_initial_and_resume_preserve_typed_failure(
     bus = FakeBus()
     store = FakeRunRepository()
     sup = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=fail_build,
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -1849,20 +1948,17 @@ async def test_failure_contract_initial_and_resume_preserve_typed_failure(
     )
     run_id = "failure-contract-run"
     if resuming:
-        lease = await store.try_claim(request(run_id), "failure-contract")
+        run = request(run_id)
+        lease = await store.try_claim(run, "failure-contract")
         assert lease is not None
-        assert await store.pause(run_id, lease)
-        await sup.dispatch(
-            bus,
-            _inbound(
-                {
-                    "kind": "run.resume",
-                    "command_id": "resume-failure-contract",
-                    "run_id": run_id,
-                    "decisions": [{"type": "approve", "tool_id": _TID}],
-                }
-            ),
+        await store.record_pause(run, lease, interaction_pause_fixture(run))
+        command = await admit_resume_fixture(
+            store,
+            run,
+            command_id="resume-failure-contract",
+            decisions=[{"type": "approve", "item_id": "item-A"}],
         )
+        await sup.dispatch(bus, command)
     else:
         run = request(run_id)
         _seed_pending_dispatch(store, run)
@@ -2064,6 +2160,7 @@ class _ProfileFailureSupervisor(RunSupervisor):
 
 def _profile_failure_supervisor(store: FakeRunRepository) -> _ProfileFailureSupervisor:
     return _ProfileFailureSupervisor(
+        interaction_reader=read_unpaused_interaction,
         agent_builder=_builder(FakeAgent(text_run())),
         run_repository=store,
         approval_tool_names=_gated_names,
@@ -2117,7 +2214,7 @@ async def test_profile_failure_preserves_contract_tuple_with_original_fence() ->
     assert any('"contract_incompatible"' in str(frame) for frame in frames)
 
 
-@pytest.mark.parametrize("entry", ["initial", "resume", "takeover", "fingerprint"])
+@pytest.mark.parametrize("entry", ["initial", "resume", "takeover", "recovery"])
 async def test_every_worker_build_entry_reaches_the_same_profile_gate(
     entry: str,
 ) -> None:
@@ -2129,53 +2226,132 @@ async def test_every_worker_build_entry_reaches_the_same_profile_gate(
         calls.append(lease)
         raise StaticRecipeIncompatible(lease)
 
-    class FingerprintSupervisor(RunSupervisor):
-        async def read_interrupt_identity(self, run_id: str) -> str | None:
-            return await self._interrupt_fingerprint(run_id)
-
     store = FakeRunRepository()
-    sup = FingerprintSupervisor(
+    sup = RunSupervisor(
         agent_builder=rejected_build,
         run_repository=store,
+        interaction_reader=read_unpaused_interaction,
         approval_tool_names=_gated_names,
         trace_factory=_no_trace,
         source_for=_source,
         consumer="profile-entries",
     )
     bus = FakeBus()
-    req = request("profile-entries")
+    run = request("profile-entries")
     if entry == "initial":
-        _seed_pending_dispatch(store, req)
-        await sup.dispatch(bus, req)
+        _seed_pending_dispatch(store, run)
+        await sup.dispatch(bus, run)
     else:
-        lease = await store.try_claim(req, "old")
+        lease = await store.try_claim(run, "old")
         assert lease is not None
         if entry == "takeover":
-            store.expired.append(req)
-            store.leases[req.run_id] = -1
+            store.expired.append(run)
+            store.leases[run.run_id] = -1
             await sup.heartbeat_once(bus)
         else:
-            assert await store.pause(req.run_id, lease)
-            if entry == "fingerprint":
-                assert await sup.read_interrupt_identity(req.run_id) is None
-                assert req.run_id not in store.terminals
+            await store.record_pause(run, lease, interaction_pause_fixture(run))
+            command = await admit_resume_fixture(
+                store,
+                run,
+                command_id="profile-resume",
+                decisions=[{"type": "approve", "item_id": "item-A"}],
+            )
+            if entry == "recovery":
+                await store.accept_resume(run, command.command_id, "profile-entries")
+                await sup.heartbeat_once(bus)
             else:
-                await sup.dispatch(
-                    bus,
-                    _inbound(
-                        {
-                            "kind": "run.resume",
-                            "command_id": "profile-resume",
-                            "run_id": req.run_id,
-                            "decisions": [{"type": "approve", "tool_id": _TID}],
-                        }
-                    ),
-                )
+                await sup.dispatch(bus, command)
     assert len(calls) == 1
-    if entry != "fingerprint":
-        failed = find_event(bus.run_events(req.run_id), RunFailed)
-        assert failed.payload.model_dump() == {
-            "code": "contract_incompatible",
-            "retryable": False,
-        }
+    failed = find_event(bus.run_events(run.run_id), RunFailed)
+    assert failed.payload.model_dump() == {
+        "code": "contract_incompatible",
+        "retryable": False,
+    }
     await sup.drain(timeout_s=1)
+
+
+@pytest.mark.parametrize("entry", ["initial", "resume"])
+@pytest.mark.parametrize("race", ["new_owner", "expired", "local_cache"])
+async def test_delayed_build_failure_uses_only_captured_execution_fence(
+    entry: str, race: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    captured: list[LeaseFence] = []
+    store = FakeRunRepository()
+    run = request("delayed-build-failure")
+    bus = FakeBus()
+    adopts: list[str] = []
+    finalized: list[str] = []
+
+    async def build(_request: RunRequest, lease: LeaseFence) -> AgentHandle:
+        captured.append(lease)
+        entered.set()
+        await release.wait()
+        raise ModelResolutionError("MODEL_UNAVAILABLE", retryable=True)
+
+    class BuildRaceSupervisor(RunSupervisor):
+        def replace_local_lease(self, lease: LeaseFence) -> None:
+            self._leases[run.run_id] = lease
+
+    async def forbidden_adopt(run_id: str, owner: str) -> LeaseFence | None:
+        del owner
+        adopts.append(run_id)
+        raise AssertionError("delayed build must never adopt")
+
+    async def forbidden_terminal(
+        run_id: str,
+        authority: TerminalAuthority,
+        outcome: RunTerminalOutcome,
+        delivery_snapshot: tuple[tuple[str, str, str], ...],
+    ) -> TerminalCommitResult:
+        del authority, outcome, delivery_snapshot
+        finalized.append(run_id)
+        raise AssertionError("superseded build must not call finalizer")
+
+    monkeypatch.setattr(store, "adopt", forbidden_adopt)
+    monkeypatch.setattr(store, "finalize_terminal", forbidden_terminal)
+    supervisor = BuildRaceSupervisor(
+        agent_builder=build,
+        run_repository=store,
+        interaction_reader=read_unpaused_interaction,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="original-worker",
+    )
+    if entry == "initial":
+        _seed_pending_dispatch(store, run)
+        message: InboundMessage = run
+    else:
+        lease = await store.try_claim(run, "original-worker")
+        assert lease is not None
+        await store.record_pause(run, lease, interaction_pause_fixture(run))
+        message = await admit_resume_fixture(
+            store,
+            run,
+            command_id="accepted-race",
+            decisions=[{"type": "approve", "item_id": "item-A"}],
+        )
+    task = asyncio.create_task(supervisor.dispatch(bus, message))
+    async with asyncio.timeout(2):
+        await entered.wait()
+    assert len(captured) == 1
+    old = captured[0]
+    if race == "expired":
+        store.leases[run.run_id] = store.clock_ms - 1
+    else:
+        newer = LeaseFence(owner="new-worker", generation=old.generation + 1)
+        store.generations[run.run_id] = newer.generation
+        store.owners[run.run_id] = newer.owner
+        store.leases[run.run_id] = store.clock_ms + 90_000
+        if race == "local_cache":
+            supervisor.replace_local_lease(newer)
+    release.set()
+    await task
+    assert finalized == adopts == []
+    assert run.run_id not in store.terminals
+    assert bus.run_events(run.run_id) == []
+    context = await store.read_resume_context(run, "accepted-race")
+    if entry == "resume":
+        assert context is not None and context.intent.status.value == "accepted"
+        assert context.dispatch_plan is None and context.attempt_generation is None

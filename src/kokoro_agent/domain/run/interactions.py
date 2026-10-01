@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+
+from kokoro_agent.domain.run.models import LeaseFence
 from typing import Literal
 
 DecisionKind = Literal["approve", "edit", "reject", "respond", "submit"]
@@ -24,6 +26,7 @@ class Phase(StrEnum):
 class IntentStatus(StrEnum):
     ACCEPTED = "accepted"
     DISPATCH_STARTED = "dispatch_started"
+    NATIVE_OBSERVED = "native_observed"
     UNKNOWN = "unknown"
     RECONCILED = "reconciled"
     TERMINAL = "terminal"
@@ -183,6 +186,7 @@ class ResumeIntent:
             self.status
             in (
                 IntentStatus.DISPATCH_STARTED,
+                IntentStatus.NATIVE_OBSERVED,
                 IntentStatus.UNKNOWN,
                 IntentStatus.RECONCILED,
             )
@@ -261,6 +265,7 @@ class InteractionState:
             if self.intent is None or self.intent.status not in (
                 IntentStatus.ACCEPTED,
                 IntentStatus.DISPATCH_STARTED,
+                IntentStatus.NATIVE_OBSERVED,
                 IntentStatus.UNKNOWN,
             ):
                 raise ValueError("resuming requires unresolved intent")
@@ -293,7 +298,7 @@ class InteractionState:
                 if self.phase is Phase.TERMINAL
                 else IntentStatus.RECONCILED
             )
-            if self.phase is Phase.ACTIVE or self.intent.status is not expected_status:
+            if self.intent.status is not expected_status:
                 raise ValueError("intent and phase disagree")
             if (
                 self.phase is Phase.WAITING
@@ -316,7 +321,11 @@ class InteractionState:
             if (
                 intent is None
                 or intent.status
-                not in (IntentStatus.DISPATCH_STARTED, IntentStatus.UNKNOWN)
+                not in (
+                    IntentStatus.DISPATCH_STARTED,
+                    IntentStatus.NATIVE_OBSERVED,
+                    IntentStatus.UNKNOWN,
+                )
                 or pause_ref == self.pause_ref
             ):
                 raise InteractionConflict("pause_conflict")
@@ -418,3 +427,171 @@ class InteractionState:
         ):
             raise InteractionConflict("intent_conflict")
         return self.intent
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DurablePauseSnapshot:
+    """Complete immutable owner pause input; native provenance is checked upstream."""
+
+    pause_ref: str
+    canonical_bytes: bytes = field(repr=False)
+    digest: str
+
+    def __post_init__(self) -> None:
+        _text(self.pause_ref)
+        if (
+            type(self.canonical_bytes) is not bytes
+            or not 1 <= len(self.canonical_bytes) <= 8388608
+        ):
+            raise ValueError("invalid pause bytes")
+        _text(self.digest)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResumeDispatchPlan:
+    attempt_id: str
+    canonical_bytes: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        _text(self.attempt_id)
+        if (
+            type(self.canonical_bytes) is not bytes
+            or not 1 <= len(self.canonical_bytes) <= 8388608
+        ):
+            raise ValueError("invalid dispatch plan bytes")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InteractionSnapshot:
+    state: InteractionState
+    pause: DurablePauseSnapshot | None
+    source_index: int | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InteractionCommitted:
+    snapshot: InteractionSnapshot
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReplayedResume:
+    snapshot: InteractionSnapshot
+    original_intent: ResumeIntent | None
+    accepted_source_index: int | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StartedResume:
+    snapshot: InteractionSnapshot
+    attempt_id: str
+
+
+class InteractionRunMissing(RuntimeError):
+    """The scoped Run no longer exists; never recreate a child row."""
+
+
+class InteractionAuthorityLost(RuntimeError):
+    """This writer has lost its exact lease authority."""
+
+
+class InteractionCorrupt(ValueError):
+    """Stored interaction evidence failed strict decoding; no payload in message."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AcceptedResume:
+    snapshot: InteractionSnapshot
+    lease: LeaseFence
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ObservationTarget:
+    generation: int
+    command_id: str | None
+    attempt_id: str | None
+
+    def __post_init__(self) -> None:
+        _revision(self.generation, minimum=1)
+        if (self.command_id is None) != (self.attempt_id is None):
+            raise ValueError("incomplete observation target")
+        if self.command_id is not None:
+            _text(self.command_id)
+            _text(self.attempt_id)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CheckpointObservation:
+    target: ObservationTarget
+    kind: Literal["pause", "read", "resume", "probe"]
+    canonical_bytes: bytes = field(repr=False)
+    digest: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ObservationStored:
+    digest: str
+    disposition: Literal["current", "audit"]
+    inserted: bool
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConsumedPauseEvidence:
+    command_id: str
+    attempt_id: str
+    attempt_generation: int
+    pause_revision: int
+    pause_ref: str
+    collection_digest: str
+    observation_digests: tuple[str, ...]
+    disposition: Literal["active", "waiting"]
+    next_pause: DurablePauseSnapshot | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnknownResumeEvidence:
+    command_id: str
+    attempt_id: str
+    attempt_generation: int
+    pause_revision: int
+    pause_ref: str
+    collection_digest: str
+    observation_digests: tuple[str, ...]
+    reason: Literal["incomplete_native_evidence"] = "incomplete_native_evidence"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResumeReadContext:
+    snapshot: InteractionSnapshot
+    original_pause: DurablePauseSnapshot
+    intent: ResumeIntent
+    dispatch_plan: ResumeDispatchPlan | None
+    attempt_generation: int | None
+    observation_digest: str | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Quiescence:
+    worker_boot_id: str
+    invocation_id: str
+    kind: Literal["local_drained"] = "local_drained"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class QuiescentProbe:
+    read_id: str
+    observation: CheckpointObservation
+    progress_digest: str
+    quiescence: Quiescence
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReconcileProbeResult:
+    count: int
+    exhausted: bool
+    snapshot: InteractionSnapshot
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InteractionRecoveryTarget:
+    run_id: str
+    command_id: str

@@ -7,6 +7,25 @@ technical modules directly.
 
 from __future__ import annotations
 
+from kokoro_agent.domain.run.interactions import (
+    CheckpointObservation,
+    ObservationTarget,
+    ObservationStored,
+    ConsumedPauseEvidence,
+    UnknownResumeEvidence,
+    QuiescentProbe,
+    ReconcileProbeResult,
+    InteractionRecoveryTarget,
+    ResumeReadContext,
+    AcceptedResume,
+    DurablePauseSnapshot,
+    InteractionCommitted,
+    InteractionSnapshot,
+    ReplayedResume,
+    ResumeDispatchPlan,
+    StartedResume,
+)
+
 from kokoro_agent.domain.run.models import (
     StaticRecipeBinding,
     RunTerminalOutcome,
@@ -44,6 +63,9 @@ from kokoro_agent.infrastructure.postgres_run_effects import PostgresRunEffects
 from kokoro_agent.infrastructure.postgres_run_events import PostgresRunEvents
 from kokoro_agent.infrastructure.postgres_run_leases import PostgresRunLeases
 from kokoro_agent.infrastructure.postgres_run_profiles import PostgresRunProfiles
+from kokoro_agent.infrastructure.postgres_run_interactions import (
+    PostgresRunInteractions,
+)
 from kokoro_agent.infrastructure.postgres_run_sandbox import PostgresRunSandbox
 from kokoro_agent.protocol import RunRequest
 
@@ -84,6 +106,78 @@ class PostgresRunRepository:
         self._effects = PostgresRunEffects(context)
         self._sandbox = PostgresRunSandbox(context)
         self._profiles = PostgresRunProfiles(context)
+        self._interactions = PostgresRunInteractions(context)
+
+    async def read_interaction(self, request: RunRequest) -> InteractionSnapshot | None:
+        return await self._interactions.read_interaction(request)
+
+    async def record_pause(
+        self, request: RunRequest, lease: LeaseFence, pause: DurablePauseSnapshot
+    ) -> InteractionCommitted | ReplayedResume:
+        return await self._interactions.record_pause(request, lease, pause)
+
+    async def accept_resume(
+        self, request: RunRequest, command_id: str, owner: str
+    ) -> AcceptedResume | ReplayedResume:
+        return await self._interactions.accept_resume(request, command_id, owner)
+
+    async def start_resume(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        command_id: str,
+        plan: ResumeDispatchPlan,
+    ) -> StartedResume | ReplayedResume:
+        return await self._interactions.start_resume(request, lease, command_id, plan)
+
+    async def mark_resume_unknown(
+        self, request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str
+    ) -> InteractionCommitted | ReplayedResume:
+        return await self._interactions.mark_resume_unknown(
+            request, lease, command_id, attempt_id
+        )
+
+    async def record_checkpoint_observation(
+        self, request: RunRequest, lease: LeaseFence, observation: CheckpointObservation
+    ) -> ObservationStored:
+        return await self._interactions.record_checkpoint_observation(
+            request, lease, observation
+        )
+
+    async def read_checkpoint_observations(
+        self, request: RunRequest, target: ObservationTarget
+    ) -> tuple[CheckpointObservation, ...]:
+        return await self._interactions.read_checkpoint_observations(request, target)
+
+    async def reconcile_resume(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        evidence: ConsumedPauseEvidence | UnknownResumeEvidence,
+    ) -> InteractionCommitted | ReplayedResume:
+        return await self._interactions.reconcile_resume(request, lease, evidence)
+
+    async def record_reconcile_probe(
+        self, request: RunRequest, lease: LeaseFence, probe: QuiescentProbe
+    ) -> ReconcileProbeResult:
+        return await self._interactions.record_reconcile_probe(request, lease, probe)
+
+    async def reset_reconcile_probe(
+        self, request: RunRequest, lease: LeaseFence, command_id: str, attempt_id: str
+    ) -> None:
+        return await self._interactions.reset_reconcile_probe(
+            request, lease, command_id, attempt_id
+        )
+
+    async def list_unsettled_interactions(
+        self, limit: int
+    ) -> tuple[InteractionRecoveryTarget, ...]:
+        return await self._interactions.list_unsettled_interactions(limit)
+
+    async def read_resume_context(
+        self, request: RunRequest, command_id: str
+    ) -> ResumeReadContext | None:
+        return await self._interactions.read_resume_context(request, command_id)
 
     async def setup(self) -> None:
         await self._context.setup()

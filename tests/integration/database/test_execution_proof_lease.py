@@ -1784,14 +1784,14 @@ async def test_real_postgres_current_mismatch_aba_and_exact_cleanup() -> None:
             observer,
             sql.SQL(
                 "INSERT INTO {}.kokoro_agent_run "
-                "(run_id, tenant_id, owner, lease_generation, lease_expires_at, terminal) "
+                "(run_id, tenant_id, owner, lease_generation, lease_expires_at, terminal, interaction_phase) "
                 "VALUES "
-                "('current','tenant','owner',7,clock_timestamp()+interval '30 sec',FALSE),"
-                "('aba','tenant','owner',7,clock_timestamp()+interval '30 sec',FALSE),"
-                "('paused','tenant','owner',7,NULL,FALSE),"
-                "('terminal','tenant','owner',7,clock_timestamp()+interval '30 sec',TRUE),"
-                "('expired','tenant','owner',7,clock_timestamp()-interval '1 sec',FALSE),"
-                "('unsafe','tenant','owner',9007199254740992,clock_timestamp()+interval '30 sec',FALSE)"
+                "('current','tenant','owner',7,clock_timestamp()+interval '30 sec',FALSE,'active'),"
+                "('aba','tenant','owner',7,clock_timestamp()+interval '30 sec',FALSE,'active'),"
+                "('paused','tenant','owner',7,NULL,FALSE,'active'),"
+                "('terminal','tenant','owner',7,clock_timestamp()+interval '30 sec',TRUE,'terminal'),"
+                "('expired','tenant','owner',7,clock_timestamp()-interval '1 sec',FALSE,'active'),"
+                "('unsafe','tenant','owner',9007199254740992,clock_timestamp()+interval '30 sec',FALSE,'active')"
             ).format(sql.Identifier(schema)),
         )
         reader = PostgresExecutionProofLeaseReader(

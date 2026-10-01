@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import settled_state_callback
+
 from support.fakes import terminal_emitter
 
 from collections.abc import Mapping
@@ -47,13 +49,14 @@ async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
     emitter = await RunEmitter.attach(bus, "r1")
     await invoke_once(
         emitter,
-        FakeAgent(run=run),
+        (settlement_agent := FakeAgent(run=run)),
         "c1",
         {"messages": []},
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(settlement_agent, "c1"),
     )
 
 

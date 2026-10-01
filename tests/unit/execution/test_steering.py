@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.fakes import settled_state_callback
+
 from support.fakes import terminal_emitter
 
 from typing import Any
@@ -107,6 +109,7 @@ async def test_steer_reaches_model_in_real_graph(
             terminal_test_emitter_1, claim, usage_recorder()[0]
         ),
         record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(agent, "t-graph"),
     )
     assert terminal is True
     humans = [m.text for m in captured[-1] if m.type == "human"]

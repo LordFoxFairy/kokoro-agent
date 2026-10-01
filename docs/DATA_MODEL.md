@@ -1,6 +1,89 @@
 # kokoro-agent 数据模型
 
-## AGENT-PROFILE-P3A-R25：Run静态绑定已编码、真PG待验（2026-10-01）
+## AGENT-HITL-D0-R27：持久交互head/intent/native证据桥（2026-10-01；仅设计）
+
+### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）
+
+独立完整HITL owner切片使用 **Agent HTTP 4.0.0、原/v1单路径clean-slate替换**；当前机器源仍3.0.0，
+本D0不提前修改。4.0版本号仅表示本次breaking协议，不表示完整scope第四阶段目标验收。下方历史候选的
+“HTTP4 required retry/fullscope协调激活”不再作为本次4.0发布内容；这些能力继续完整goal，后续若breaking则另发Agent5.0.0。
+P3B effective-native、scope/retry/checkpoint/retention功能目标均保留，库fork仍未批准。BFF4.0/后继4.1是其独立版本线，不机械同号。
+一次替换旧interaction/resume解释、无新/v2长期双轨、无兼容fallback；Agent4机器＋实现/schema/artifact验证提交后，
+BFF才固定pin并更新集合投影，再Web消费。HITL本身也必须完整实现、真门通过后发布，不发半contract。
+
+当前main af45817260478f1ee755d8e6e6963051e2049062，已有Run、control ledger、独立native checkpoint和Chat interaction持久投影；
+当前SQL没有下列交互head/bridge字段。本节不改SQL，不否定已有durable interaction；以下P3B effective列仍另一个未批准候选。
+
+拟在现Run增加interaction_revision（BIGINT非负，初始0）、交互phase（初始active；无pause_ref时空集合不发虚构等待事件）、
+pause_revision、opaque pause_ref、完整安全pending JSONB和内部native locator/集合摘要。phase与items状态由CHECK约束，
+waiting非空awaiting、resuming非空submitted、active/terminal空；集合ID唯一及允许决策由事务应用规则验证，不假称JSONB CHECK涵盖全部。
+pause_revision每次新等待/validation重问递增，不随每次resuming增；interaction_revision每次可见集合/phase更新递增。
+terminal的交互清理和原Run terminal在同一finalize_terminal事务完成，不新增第二终态入口。
+
+现control command表扩展expected pause revision/ref、完整normalized decisions私有表示/digest、内部checkpoint定位、
+resume-intent状态（内部枚举固定accepted/dispatch_started/native_observed/reconciled/unknown/terminal），与HTTP receipt状态分离；
+原applied/succeeded不自动当native_consumed。Run→command锁顺序，锁后clock/fence/tenant及revision比较，
+最多一个同轮次accepted动作；同command同digest返回原动作，不更新新轮次。未知ACK只重读/重放原命令，不生成新ID。
+
+拟新增owner内`kokoro_agent_run_checkpoint_observation`证据表：Run/command、generation、明确thread/ns/checkpoint/task/interrupt
+关联、parent关联/集合摘要、已持久native观察类型及时间，幂等唯一键覆盖完整观察身份（不是只interrupt ID）。
+该表是独立提交恢复桥，不是第二套checkpoint内容、并非复制SDK schema；证据记录不存消息正文或原始secret结果。
+必要索引仅run+未结command协调及按Run生命周期清理。无外键、跨ownerSQL、新数据库/role、迁移或历史补值。
+现Run/control字段与新表catalog必须在已裁决Agent4版本及桥证据准入后完整落唯一canonical SQL，并通过fresh/drift门。
+
+source以(run_id, interaction_revision)作为稳定幂等身份；Run head、command动作结果及Chat事件必须共用同一数据库连接/事务，
+分配source_index与Chat seq后一起commit，不通过另开连接的append_fenced伪造原子性。需要原Run→Chat锁顺序的相同SQL能力在
+新窄adapter内承接；禁止事务里调用会另起事务的repository facade。通知在commit后发布已提交事实，不经普通emitter再造第二条source。
+terminal在原finalize_terminal同事务分配独立且有序的交互清理source与最终terminal，重复调用重放原identity而不重增revision。
+
+三段提交明确独立：
+A. native已保存暂停，Run事务确认fence/定位后写等待集合＋同事务Chat source；A前crash从明确native事实补同一集合。
+B. Run事务接受全集command＋resuming＋Chat source，commit后调native；B不是native成功。
+C. 官方saver提交native writes/checkpoint后桥记录观察，当前owner核同链完整消费/稳定snapshot，再Run事务写active或新waiting＋动作结果＋Chat source。
+C的native提交与桥/Chat不是原子；native已落桥缺失时通过官方aget_tuple/alist读取确切定位恢复。空记录不证明没执行，
+graph lifecycle消息也不证明持久化。部分消费/新interrupt不能发空active；终态wins后旧观察只能留审计、不改head。
+
+所有phase转换锁Run后再command，之后分配Chat source seq与append（沿既有Chat owner锁顺序，不反向先Chat再Run）；
+消费端BFF采用其独立Conversation-first全局锁图，不跨库同事务。源writer与BFF cursor各有自己的原子边界，不混为一次分布式事务。
+resume接受时验证原Run身份/当前pause；暂停状态可以无活跃expiry，必须专用paused→adopt current generation规则，
+不能让任意已过期active lease借“paused”绕过。active转换核锁后当前有效authority，恢复转移明确绑定当前owner与原intent。
+
+无法判定native是否已执行的窗口进入bounded reconciliation；只有可证明未执行才重投原决策，已消费则从该native链继续。
+仅已失联且静止attempt判定超界保unknown证据并真实Run失败收口，绝不凭旧fingerprint相同重复执行；不承诺外部副作用exactly-once。
+待结intent/观察引用阻该Run有关checkpoint先行GC；终态＋已结桥＋现source消费/retention条件允许后有界清理，不能永久保留。
+完整4 scope.active/head/generation、checkpoint DAG/committed引用与Conversation最终释放仍后继，不在本片伪实现。
+
+真PG故障矩阵见TECH：A/B/C各提交前后注入、原native写持久与桥缺失、部分task/子ns消费、unknown状态、同revision竞争、
+锁后expiry/迟到generation、terminal竞争、源重复/分页/ACK丢失/重启。不得用默认pytest绿色或native内存saver代替真实提交证据。
+本D0数据库未连接，当前PG43是P3A历史验收而非这些新矩阵。
+
+
+### proof修订：attempt、证据与purge原子性
+
+intent枚举候选固定accepted/dispatch_started/native_observed/reconciled/unknown/terminal。
+accepted到dispatch_started是独立Run→command事务：唯一attempt identity、当时generation、原thread/ns/checkpoint/task组、
+pre-resume向量长度/摘要和预期追加决策摘要一同commit，之后才native调用。无started且统一入口门成立才是确定未执行；
+started后缺native写一律可能执行，不能通过清空started重新尝试。恢复证据不保存secret原值，私有decisions沿原命令权限管理。
+observation仅记录委托saver成功提交后精确事实；NULL_TASK输入、task消费、task失败/新interrupt及因果successor分开，
+历史pending_writes行残留不当最新结果。跨ns各自精确关联，无法归属原attempt时unknown，不按最近thread/latest猜测。
+三次计数只对已失联且静止同attempt的成功读取判定持久累计；有效lease/tracked task、进展变化或读I/O失败不累计。
+outer cancel可能丢task RESUME/ERROR，不能仅phase判native已消费。业务cancel的terminal由原事务权威决定。
+
+52候选补现postgres_run_context.py的delete_run_rows，在原统一清理事务中删除新观察表，不旁建GC服务。
+purge与observation均先锁Run；purge在锁后复验终态/retention/未结intent和引用，按children→Run删除；
+late observer发现Run不存在零insert，不能创建孤儿或复活；observer先赢则purge必须看新引用再决定。
+未结引用由上述恢复或权威terminal结清后按retention有界释放，不能永久豁免。native checkpoint最终DAG与Conversation释放仍独立门。
+真PG新增测试只验证既有native checkpoint表的真实提交可见性，不创建候选业务表，不证明这些Run事务或purge已实现。
+
+### R28 checkpoint写成功与值覆盖的区别
+
+固定PostgresSaver对混合特殊/普通channel批次采用ON CONFLICT DO NOTHING，native RESUME的负slot也可能保留旧payload。
+因此observation不得仅据aput_writes正常返回保存“全部新值已持久”的结论；原调用batch与独立读到的native事实是两类证据。
+拟议intent预存的pre-resume向量/预期追加摘要仍须与实际持久事实核验；因果successor不替代缺失的attempt归属。
+连续invalid、invalid、valid的PG exact-payload例只读现checkpoint表，不新增或修改native SQL；Root尚待执行本轮新例。
+证据缺项进入unknown且不重调，不篡改保存的原intent或据最新输出补值；原Run terminal和有界retention规则保持。
+
+ AGENT-PROFILE-P3A-R25：Run静态绑定已编码、真PG待验（2026-10-01）
 
 基线main a37e8f1。现候选canonical schema在kokoro_agent_run新增assembly_recipe_bytes BYTEA与
 assembly_recipe_fingerprint TEXT，成对NULL/非NULL、1..8388608 bytes/小写64hex具名CHECK；无新表/索引/外键/迁移。

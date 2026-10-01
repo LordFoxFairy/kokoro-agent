@@ -1,6 +1,249 @@
 # kokoro-agent 技术设计
 
-## AGENT-PROFILE-P3A-R25：静态Run配方持久实现候选（2026-10-01）
+## AGENT-HITL-D0-R27：完整pending与恢复桥设计候选（2026-10-01）
+
+### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）
+
+独立完整HITL owner切片使用 **Agent HTTP 4.0.0、原/v1单路径clean-slate替换**；当前机器源仍3.0.0，
+本D0不提前修改。4.0版本号仅表示本次breaking协议，不表示完整scope第四阶段目标验收。下方历史候选的
+“HTTP4 required retry/fullscope协调激活”不再作为本次4.0发布内容；这些能力继续完整goal，后续若breaking则另发Agent5.0.0。
+P3B effective-native、scope/retry/checkpoint/retention功能目标均保留，库fork仍未批准。BFF4.0/后继4.1是其独立版本线，不机械同号。
+一次替换旧interaction/resume解释、无新/v2长期双轨、无兼容fallback；Agent4机器＋实现/schema/artifact验证提交后，
+BFF才固定pin并更新集合投影，再Web消费。HITL本身也必须完整实现、真门通过后发布，不发半contract。
+
+**基线main af45817260478f1ee755d8e6e6963051e2049062＋工作树未提交P3B四docs候选。** 本轮文档仅四docs获写授权；另获现contract test和新普通PG test的可行性测试授权；
+P3A已验，P3B依赖/源码未批准。HITL机器版本已Root裁决为4.0.0；SQL、native桥和消费者均尚未实现。本节不覆盖/批准工作树未提交P3B方案。
+
+### 当前事实与缺口（不是完全没有持久interaction）
+
+- `execution/events.py:62–70`的Run critical outbox不含tool.awaiting_approval/tool.returned；但`:351–372,386–420`
+  先以fence持久Chat projection，再发Redis。`domain/chat/projection.py:176–195`已有durable **interaction**，
+  包含pending_tool_ids/schema/result；BFF现adapter把该Chat source转成tool.awaiting_approval。因此进入等待有持久来源。
+- 同projection把args清空；`execution/approvals.py:140–144`放在args的validation_error随之丢失。当前不是完整安全表单/校验恢复协议。
+- `supervisor_control.py:141–173,180–189,415–420`先发部分synthetic returned、spawn后即记applied/succeeded。
+  这只证明调度返回，不证明native消费/校验；nested_approved_payloads还有提前“已执行”占位，目标删除该伪结果。
+- `hitl/input.py:92–104`在native恢复后校验input，非法时同request_id重interrupt。run.started仅emitter.at_start发；
+  普通activity、tool.returned、HTTP ACK、control applied均不是解除pending集合的权威事实。
+- `_interrupt_fingerprint`只hash interrupt IDs；旧checkpoint saver与Run/Chat事务独立，没有pause revision/command/native消费/source的原子联系。
+- 固定LangGraph `pregel/_loop.py:898–907`要求多个pending interrupt使用interrupt-id→resume-value map；现单
+  Command(resume={decisions:...})只适配单interrupt内多action，不能据扁平全集宣称多interrupt恢复已完整。
+
+### 目标状态与唯一source
+
+保留Agent为pending/action/native执行事实owner，BFF为Conversation head与AG-UI投影owner。
+新增严格typed Chat source `interaction.state`（名称为候选，尚未发布）；每条是完整集合替换，不是item delta。
+Run单调`interaction_revision`每次状态/集合变化递增；`pause_revision`标识一个等待轮次，首次等待及校验重问/新暂停生成新值，
+resuming/active携同轮次用于关联。内部绑定完整(native thread_id, checkpoint_ns, checkpoint_id, task/interrupt identity)，
+对外只opaque pause_ref与revision，不泄漏native定位值或凭据。每项ID为opaque pause-item identity，保留tool/request业务ID作关联，
+不能以重复request_id当新旧轮次唯一身份。原始interrupt group/action顺序由Agent保存并用于原生map恢复。
+
+| phase | pending集合/动作意义 | 合法来源 |
+| --- | --- | --- |
+| waiting | 完整awaiting集合非空；包含安全展示schema、allowed_decisions、显式validation结果 | 已持久native暂停快照经Run fence确认并提交集合＋Chat事件 |
+| resuming | 保留原完整集合，item标submitted；用户不应重复决策，但不声称已消费或已执行 | 精确revision全集校验后的durable command接受，与状态/Chat source同事务commit；不是HTTP receipt |
+| active | 完整pending为空；已确认该轮次全部决策的native消费且存在同链已提交可继续的checkpoint证据 | 下述恢复桥证明；没有证明就保持resuming，不因普通输出改active |
+| terminal | 集合清空且结清未完成动作，completed/failed/cancelled为原Run权威 | 原唯一finalize_terminal同事务；迟到桥事件不能复活 |
+
+native消费只是恢复值进入框架，不等于所有用户输入业务校验已过，更不是工具结果成功。
+validation失败发布新pause_revision的waiting完整集合，保留同request_id与安全机器校验错误；不能先把旧输入的ACK当永久解除。
+普通reject通常是该项决策，不等于取消Run；全集含reject仍可继续产生新等待或最终terminal。
+不新增服务端partial：客户端本地暂存，提交必须覆盖该轮次全部项；missing/extra/duplicate/stale/type不允许时拒整批，
+零状态推进、零native调度。单interrupt内多action保原顺序；跨interrupt按保存分组产生native map，不丢分组或拼成单列表。
+混合kind/多review原未支持组合：目标必须逐组合法翻译并以真实native测试证明；证明前对该组合明确拒绝，不默默丢项。
+
+### 决策、checkpoint独立提交及恢复桥
+
+不宣称LangGraph saver与Run/Chat共享事务；使用现Run control ledger扩展durable intent＋窄checkpoint observation桥。
+
+1. **暂停发现**：在native段结束/interrupt后读明确checkpoint config/tasks/interrupts，等待saver提交可读；
+   固定checkpoint定位与完整集合摘要，再在Run锁下核fence/tenant/nonterminal、确认没有更新轮次，提交waiting＋同事务Chat source。
+   checkpoint已落而集合未落的崩溃，由reconciler从已登记Run/native关联重新发布相同轮次（幂等观察身份），不重跑工具。
+2. **接受全集**：HTTP只admit命令及幂等身份；worker用权威当前pause revision、全项ID/allowed decisions/分组校验，
+   同事务写command accepted/resume intent、resuming完整集合与Chat source；commit后才调用native。
+   完整schema业务校验若仍位于native消费点，以后置validation重新waiting，不把前置结构校验误称业务通过。
+3. **native证据桥**：新`checkpoint_interactions.py`只装饰官方BaseCheckpointSaver的读写方法并委托原saver，
+   不复制序列化/任务调度。记录已成功持久写的明确checkpoint/task/interrupt/command关联；run/generation/intent通过受信
+   execution config传入，不从消息正文或最近thread推断。所有目标namespace（含子agent）都必须关联。
+   native graph lifecycle通知/GraphResumeEvent只作唤醒；不能当作commit。恢复使用官方aget_tuple/alist读取确切checkpoint
+   和pending writes；桥只解释固定版本已验证的明确RESUME/interrupt/parent关系，不靠repr/闭包，也不把任意新checkpoint当消费证据。
+4. **消费确认**：只有原完整集合每项的消费关联齐备，且同链一致checkpoint快照已持久、无新的待决interrupt时，
+   才在Run锁内compare原intent/revision/fence，提交native_consumed动作结果＋active空集合＋Chat source。
+   若快照有重问/新interrupt，直接提交新waiting全集与旧动作的validation/消费结果，不制造无证据的中间active。
+   快照未到稳定可验证边界就保resuming；接受全集不承诺立即active，允许长执行期间真实展示resuming/progress。
+5. **恢复分类**：intent已落、native尚未开始且有确定未执行证据时可原command继续；native resume写已持久但桥记录丢失，
+   从明确原checkpoint/task恢复证据，按原执行链继续而非再投同一决策；状态source已提交ACK丢失则重放同一事件/receipt。
+   若出现“native可能已执行而证据不完整”，禁止盲重投、禁止仅凭旧interrupt IDs相等判未执行。仅下节已失联且静止attempt的bounded协调后仍不确定则
+   保留unknown动作证据并通过原Run失败终态收口，不把动作标succeeded、也不伪造工具结果；恢复未知可能已有外部效果，
+   该失败不承诺自动重试安全。恢复歧义映射现internal_error/false（不自动retry）；三次判定严格限下节已失联且静止attempt，健康/仍可写任务不计数。
+6. **fence/并发**：每个桥发布与intent转换先锁Run，锁后DB clock校验当前generation及操作允许的paused/active状态；
+   旧generation只能留下其真实观察证据供当前owner校对，不直接推进当前状态。terminal赢后拒新waiting/resuming/active。
+   仅当前owner能用已提交checkpoint事实完成旧intent协调；不是借新authority替旧异常收口。
+
+桥的**可实现性准入**是实际固定LangGraph/PostgresSaver真PG故障测试：原生RESUME写可能异步安排，缺写不证明没执行；
+不同任务/namespace的消费也不等于业务校验。须证明上述可判定分支及unknown fail-closed分支，才授权生产接入。
+本片不声称所有native写已具完整scope/head fence，也不声称任意工具exactly-once；完整4原目标仍独立硬门。
+P3B有效政策屏障继续按其D0，不借HITL桥批准fork或依赖变化。本HITL采用已固定saver公共接口，无新依赖；
+如实际证明需要额外native接口/库修改，先Root依赖门，不能偷偷扩大实现集。
+
+### R27 proof修订：真实native证据分类与调度边界（实施前硬门）
+
+固定LangGraph 1.2.2 `types.py:904–914`的interrupt消费先发到task.writes内存；
+`pregel/_runner.py:574–613`在任务结束/interrupt/error/cancel时交writes，loop再安排后台saver。
+`pregel/_loop.py:890–919`的多interrupt map跳过NULL_TASK RESUME；标量由`_io.py:74–75`写NULL_TASK输入。
+因此“已调用interrupt / 发出GraphResumeEvent / saver已被安排”均不证明提交；`aput_writes`原委托返回后仍须
+独立连接读取精确locator才是本次真PG证据。测试观察器不改变调度，不实现生产恢复分类器。
+
+| 可观察事实 | 唯一允许结论 / 后续 |
+| --- | --- |
+| 只有NULL_TASK_ID的RESUME | 输入已保存，不是任何task消费；map模式可能连该行都没有。保resuming。 |
+| task内存RESUME、工具/外部效果标记已发生、saver尚未提交 | 执行结果unknown；禁止再投决策。健康执行继续，不清集合、不判失败。 |
+| 精确task RESUME已落 | 仅证明该task某次消费；还要原intent的定位、预存resume向量长度/摘要及预期追加决策相等性，不能只看channel存在。 |
+| 本次提交批次RESUME+ERROR（含可能的任务取消） | 消费后失败，不是active成功；保真动作结果，经原Run权威错误/取消边界收口。外层ainvoke取消也可能根本不提交这两项，按缺证据unknown处理。 |
+| 本次批次RESUME+INTERRUPT或对应稳定快照重新暂停 | 新waiting轮次；同request_id、甚至同native interrupt ID也生成新pause_revision，保validation。 |
+| 原checkpoint pending_writes同时有RESUME和旧INTERRUPT/ERROR | 不等于当前重新暂停/失败。原写slot可能残留；必须读因果successor及其当前tasks/interrupts，不能将历史行集合当本次批次。 |
+| 所有原pending项消费向量与intent对应，因果successor已提交、当前完整task快照无新待决，执行链稳定 | 才有active空集合的候选证据；不是任意latest、单个task成功、子ns孤立成功或只有RESUME行。 |
+| task提交成功、桥observation丢失 | 从原intent的明确thread/ns/checkpoint/task/预期resume向量与因果后继只读重建；无法唯一关联则unknown，绝不再执行来“验证”。 |
+
+生产桥必须保存恢复用原定位、完整group顺序、pre-resume向量长度/摘要与预期追加值摘要；输入私有值留原command权限边界，
+不入公开source/日志。map无NULL_TASK行时仍逐task关联。历史ERROR/INTERRUPT残留、同ID重问及重复相同输入不可用行存在性消歧。
+证据不完备时明确unknown，不以测试中的observer列表充当durable记录；单节点成功的证明不自动覆盖全部peer/嵌套/多轮路径。
+
+**dispatch/start持久边界：** accepted事务仅写resuming。实际executor调用native前必须另在Run→command锁内核当前fence、
+锁后clock/lease、原pause与唯一command，写`dispatch_started`及唯一attempt identity/generation/原native定位/预期向量，commit后才调用。
+只有accepted且从未有dispatch_started，并且所有调用入口均遵守此前置门，才证明未调native；允许原command首次调度。
+start已commit而调用前崩溃同样unknown，牺牲自动重投而不假称exactly-once；内存task创建/HTTP ACK/原applied都不是durable start。
+外层取消并await不保证后台task writes已提交；应用终态取消仍走原finalize_terminal，不等native取消去清集合。
+
+**健康与失联：** 当前owner的tracked invocation必须匹配durable attempt identity/generation，task未done，
+Run非terminal、锁后DB时钟lease未过期且续租成功，才认定为本owner健康执行；协调读取只观察，不累计“三读失败”。
+跨worker看不到内存task不证明失联，当前有效lease/心跳仍保护它；有明确失效/fence撤销且旧invocation已停止或被隔离的证据，
+才进入失联稳定协调。若旧执行/写入尚可能继续，保持unknown，不重调、不清active屏障；原cancel/terminal可以先权威收口，
+其后旧观察不得复活。三个判定须为同attempt、已失联且静止的明确checkpoint链成功读取，持久累计；I/O失败、快照变化、
+活跃lease或任务进展不算判定。计数耗尽只允许当前authority沿internal_error/false终态，保unknown且不承诺自动retry安全。
+没有证据证明静止时，三读规则本身不能解决活性：使用既有Run期限/取消和fencing，不能无限重试或伪造“未执行”。
+
+**GC与晚到观察：** 候选范围补现`infrastructure/postgres_run_context.py:299–324`统一delete_run_rows；
+`postgres_run_leases.py:387–426`候选查询不是最终资格，purge须Run按固定顺序FOR UPDATE后重新核终态、retention及未结intent/观察引用。
+观察写入同样先锁存在Run，再command/observation；purge先赢则后续观察零insert/不重建Run，observer先赢则purge重验其引用资格。
+最终children→Run删除在同事务，不能先删Run留新观察孤儿。旧generation仅可按当前Run存在且引用仍有效的审计规则留事实，不推进head。
+这些是待实现真PG竞争门，当前schema/GC未修改，既有P3A测试不证明此行为。
+
+### R28 重复validation的PG写slot证据门（尚待本轮真PG）
+
+Root已实际运行R27原7例PG：7 passed/0skip、0.45s，日志`/tmp/kokoro-agent-hitl-proof-r28-root-real-pg.log`；
+它们只到首次reask，不证明连续同值重问后最终成功的消费向量。固定PostgresSaver `aio.py:325–328`仅当整批都是
+WRITES_IDX_MAP特殊channel时使用UPSERT，否则整批采用`base.py:155–160`的INSERT ON CONFLICT DO NOTHING。
+同task的RESUME槽idx=-4可已有旧值；成功batch含普通输出时，方法成功返回也不保证新RESUME向量覆盖。
+InMemorySaver对负idx覆盖，内存测试不替代该PG语义；不允许wrapper将“调用参数”冒充“独立连接已读持久值”。
+
+新增真实PG测试精确执行invalid→invalid→valid：两次同request_id/native ID、同validation内容的重问；
+每轮独立connection读完整RESUME payload，最终核真实委托收到三项向量＋普通输出，再丢观察列表。
+预期PG原slot仍是两项invalid，而已提交直接successor输出valid；这是假设待Root真PG核实，不能先写成实测。
+纯native内存对照已实测完整三项向量，说明两种saver行为有区别。测试不添加业务恢复predicate或猜command归属。
+
+若PG证实原向量落后：即使successor存在，也只证明graph推进，不单独证明原intent所有决策均已持久可归属。
+恢复必须取得精确command/attempt消费关联；缺关联返回unknown、零重投、不发布active/native_consumed。
+既有Run terminal权威仍可结清等待，但不能补造动作消费成功；不是永久保留或更改当前三次静止协调规则。
+此约束维持原52候选，不自动要求fork。若后续要求该类证据丢失也无条件自动恢复成功，须另证持久attempt身份，
+先Root依赖/设计门，而非复制调度、修改第三方SQL或降低证据门。机器4.0与生产52仍未获本轮授权。
+
+### 第8节放置与后继精确范围
+
+| 项 | 设计结论 |
+| --- | --- |
+| owner/当前 | Agent Run/HITL唯一writer；Root审查/版本/SQL资源/Git。main af45817＋P3B docs候选，旧Chat interaction已有持久化但缺轮次与解除集合。 |
+| 目标职责 | domain/run/interactions.py只定义集合/动作值与合法转换；postgres_run_interactions.py只Run/command/Chat原子持久转换；checkpoint_interactions.py只native提交观察/证据恢复。 |
+| 两位置 | 采用现domain/run、infrastructure普通文件；淘汰把恢复SQL/SDK塞进approvals.py（现职责为typed决策映射）、继续膨胀admission adapter或新HITL微服务/模块。 |
+| 粒度/依赖 | 3生产＋2测试新普通文件，既有目录；Run port向内，infra实现；native桥不泄漏SDK类型进domain。HTTP不加载worker/private/native graph。 |
+| 数据/API | 现Run交互head＋现command intent扩展，独立checkpoint观察证据表有恢复身份/生命周期；无跨owner SQL/外键/迁移；版本化owner Chat payload与resume轮次。 |
+| 删除 | 删除提前synthetic“已执行”结果；新集合替代旧不完整interaction投影及活动猜解除。原tool实际结果/通用command receipt保留其真实职责，不转成解除事件；无双读/兼容fallback。 |
+| 验证 | 精确全集/轮次/分组与安全payload RED，原生多interrupt/resume实证，真PG分提交crash矩阵、default门、安装wheel和consumer pin。 |
+
+拟议后继精确文件清单如下；不是当前源码授权，Root版本/恢复桥审查后才冻结代码卡。机器源变更后的generated与provenance
+必须运行现generator产生，严禁手改；未确定version时不预填任意版本。无新目录、没有P3B库fork/lock改动。
+
+```text
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/database/schema.sql
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/control.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/events.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/__init__.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/protocol/run_failure_generated.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repositories.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repository.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/chat/models.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/chat/projection.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/checkpoint_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/checkpoints.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_repository.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_admission.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_leases.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_context.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/schema.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/approvals.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/events.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/run_agent.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/protocols.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile_sources.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/hitl/input.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/main.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_control.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_execution.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_recovery.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/interfaces/http/ingress.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/chat_contract_check.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/contract_check.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/contract/openapi/v1/openapi.json
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/contract/provenance.json
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/support/fakes.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_hitl.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_request_input.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_control_commands.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_supervisor.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/chat/test_projection.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/chat/test_emitter.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/http/test_control_receipts.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_deepagents.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_machine_contract.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_chat_response_envelopes.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_canonical_database_schema.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_run_interactions.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_schema_installation.py
+```
+
+本HITL候选共**52路径，原47既有＋5新普通文件（其中PG proof测试本轮新建后为48已存在/4待新建）**；P3B的30路径是另一独立候选，不合并授予写权。
+
+### RED矩阵、阶段门与发布依赖
+
+| 组 | RED验收 |
+| --- | --- |
+| 集合/安全 | 每轮完整items；同ID新revision保validation；public payload显式安全字段而非raw args/error；结果截断/来源标记，重名工具不同item不碰撞。 |
+| 决策 | 全集乱序重排、多action单interrupt与跨interrupt map；partial/duplicate/extra/stale/type拒整批；混kind和多review支持面真实测，未支持明确拒绝。 |
+| 语义 | admitted/HTTP ACK/unknown ACK/applied/activity/run.started/tool returned均不清集合；resuming保submitted项；native重问直接waiting；真实terminal清全。 |
+| 幂等 | 同command同digest重放既有动作，无二次native；不同digest409；同pause不同command竞争最多一个accepted；新revision拒旧动作。 |
+| checkpoint桥 | checkpoint保存后集合提交前；resuming commit后native前；native已写桥未记；native可能执行而写未完成；消费齐/不齐；新暂停已落source未落；source已落ACK丢。各边界主动故障，不能以sleep或fake green替真PG。 |
+| 并发/恢复 | 精确ownedDB双连接PID屏障，cancel/terminal与resume/reconcile竞争，锁后expiry，旧generation/子namespace迟到，restart不从任意latest跨run恢复。 |
+| bounded未知 | 缺乏可证明执行状态不盲重放，不succeeded；只对已失联且静止attempt协调耗尽保unknown证据并真实失败终态；健康长任务三读不得误杀；外部效果未知不承诺安全自动retry。 |
+| 投影/消费 | Agent source分页/replay事件幂等，BFF同事务head/pending/cursor；同snapshot watermark的一致读取；消费者未pin时不激活新等待语义。 |
+| 回归 | 现原子cancel/failure/terminal与tool journal行为保持；HTTP-only不导入native；schema drift、原默认门及source/wheel新闭包。 |
+
+步骤：D0/恢复桥可证性与版本裁决→tests-only RED→Agent机器/SQL/实现同业务片→Root真PG/原生故障/默认全门→
+Agent固定commit+artifact→BFF更新pin/decoder/完整pending同事务投影→Web状态/表单→组合旅程，不能BFF先发明Agent解除事件。
+当前建议首发前单路径clean-slate corrective：正式提升contract版本并删除旧payload解释；比较新/v2一次完整替换后，
+Root已裁定前者：Agent HTTP4.0.0原/v1单路径，消费者顺序如上；不沿用3.0标签静默breaking，也不借本片声称架构第四阶段完成。
+
+未决：具体Agent4 artifact commit/digest及消费者pin、桥的固定native持久消费证据在真PG上的可证性。
+unknown的三次协调上限仅适用于已失联且静止attempt的成功读取判定，健康任务不计数，耗尽沿现internal_error/false终态；公开表单字段allowlist按API本节固定。它们是实施准入项，不以“将来会做”宣称D0已通过。P3B依赖ADR另门，Conversation最终引用释放
+只阻最终GC/完整4；本HITL记录按Run生命周期处理并保未结intent/native证据引用，不能永久免GC。
+
+
+ AGENT-PROFILE-P3A-R25：静态Run配方持久实现候选（2026-10-01）
 
 基线main `a37e8f1e308286d922212f2d5365634fd3ff2c21`，Root已通过r2设计门；本片只批准22路径，
 20既有+2新（postgres_run_profiles.py、test_run_profiles.py），无新目录/依赖/机器契约/lock改动。

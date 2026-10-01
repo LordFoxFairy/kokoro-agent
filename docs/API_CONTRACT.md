@@ -1,6 +1,67 @@
 # kokoro-agent API 契约
 
-## AGENT-PROFILE-P3A-R25：内部持久gate实现候选，HTTP3不变（2026-10-01）
+## AGENT-HITL-D0-R27：revisioned pending与动作结果候选（2026-10-01）
+
+### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）
+
+独立完整HITL owner切片使用 **Agent HTTP 4.0.0、原/v1单路径clean-slate替换**；当前机器源仍3.0.0，
+本D0不提前修改。4.0版本号仅表示本次breaking协议，不表示完整scope第四阶段目标验收。下方历史候选的
+“HTTP4 required retry/fullscope协调激活”不再作为本次4.0发布内容；这些能力继续完整goal，后续若breaking则另发Agent5.0.0。
+P3B effective-native、scope/retry/checkpoint/retention功能目标均保留，库fork仍未批准。BFF4.0/后继4.1是其独立版本线，不机械同号。
+一次替换旧interaction/resume解释、无新/v2长期双轨、无兼容fallback；Agent4机器＋实现/schema/artifact验证提交后，
+BFF才固定pin并更新集合投影，再Web消费。HITL本身也必须完整实现、真门通过后发布，不发半contract。
+
+当前main af45817260478f1ee755d8e6e6963051e2049062，HTTP仍3.0.0；P3B下节只候选，HITL本节也只设计，
+机器源/消费者尚未修改。现Agent Chat interaction确实持久，含pending_tool_ids/schema/result，但args={}会丢validation_error；
+Run critical outbox不含原始awaiting。现HTTP/control applied是调度receipt，不是native解除事实。
+
+拟由Agent发布严格typed Chat `interaction.state`完整替换source（候选schema，Agent4.0.0版本已裁决，待实现门）：
+- run_id沿既有受信事件envelope；interaction_revision正整数单调，pause_revision标识等待轮次；opaque pause_ref不暴露native checkpoint key。
+- phase=waiting/resuming/active/terminal；waiting完整非空awaiting集合，resuming仍完整但submitted，active/terminal为空。
+- items含唯一pause-item ID、tool/request关联ID、kind、allowed_decisions、安全display/schema/result字段；validation为显式
+  allowlist机器错误与安全字段path，不用原始异常message或将敏感value塞args。display只含name、description、editable、既有input_schema与受限result_preview；不得复制raw args/defaults/调用凭据。validation只含code=json_schema_invalid与instance_path，不放无界异常message/输入值；result_preview沿现裁剪规则且显式标truncated/来源。
+- 动作结果携command_id、关联pause_revision和结果类别固定accepted/native_consumed/validation_failed/rejected/unknown/cancelled；native_consumed不是工具执行成功；工具实际结果走原真实结果事实。全集接受仅表示resuming。
+- 每条state是完整集合，不允许缺items表示“沿用上一集合”；不得从activity尾项、receipt、正文、run.started猜解除。
+
+resume目标必带expected_pause_revision、pause_ref与全集item decisions，command_id仍Idempotency-Key；
+受信tenant/actor/subject来自既有认证上下文。Worker核Run归属、当前revision/集合、allowed kind、全部ID与分组，
+同事务接受intent并写resuming source；结构/集合错误拒整批且不推进。HTTP admitted/pending/未知ACK仍不改变消费者等待。
+同command同digest重放，异digest409；两个不同command竞争同一revision最多一条接受；旧revision拒绝不消费新轮次。
+保持全集提交，不新增partial接口；一个interrupt的多action有序，跨interrupt恢复必须native interrupt-ID map，不能flatten。
+input schema最终消费点校验失败时，同request_id但新pause_revision完整waiting；显式validation source可重放。
+普通reject不是Run取消；cancel/failed/completed以唯一终态原子清集合，迟到native通知不能复活。
+
+checkpoint与Run/Chat不共享事务：durable resume intent→native已持久证据→source状态commit，恢复规则见TECH。
+GraphResumeEvent只是通知；无完整checkpoint/task/interrupt/command证明不发active。未知执行窗口不盲重投；仅已失联且静止attempt的bounded协调失败
+保unknown动作证据并Run失败，不伪造成功结果或承诺自动retry安全。消费者可见resuming持续到可验证native边界。
+
+Root已比较并批准首发前Agent HTTP4.0.0原/v1单路径corrective，不另增/v2。删除旧不完整interaction
+消费解释、无双轨fallback；不能仍声称固定3.0兼容。owner机器/source/schema先发布并固定artifact；BFF repin、完整pending与head/cursor
+同事务，然后Web升级。P3B无wire变化的独立结论保持，不能把本HITL breaking混成P3B已经发布4。
+新增payload必须补OpenAPI decoded-payload mapping和negative schema测试，现failure generator随source hash再生成；
+当前contract-check仅证明现3.0未漂移，不证明这些候选字段已存在。精确实施集/RED见TECH顶节，当前四docs＋两份可行性tests；没有机器/业务源码授权。
+
+
+### proof修订后的消费与可见状态边界
+
+NULL_TASK RESUME只证明输入写入；多interrupt map可以没有该行。task RESUME先在内存、后异步持久；
+真实RESUME+ERROR不是成功，RESUME+本次INTERRUPT是新waiting。同request_id/native interrupt ID可重复，pause_revision仍须前进。
+历史checkpoint保留的INTERRUPT/ERROR行不是本次结果；须原intent预存resume向量/明确定位与已提交因果后继的当前完整tasks共同证明。
+外层取消可能没有任何task RESUME/ERROR持久写；无证据保持unknown，不从取消ACK猜动作已消费。
+accepted/resuming与commit后的dispatch_started为不同内部事实；后一状态不公开为succeeded。
+只有确定尚无dispatch_started且所有native入口执行此前置事务才允许首次投递；start后失联绝不据缺行盲重投。
+健康task/有效lease或可能仍写的执行不适用三次终止；限已失联且静止attempt的三次持久判定后才可原authority失败收口。
+消费者仍只凭Agent受信完整state source替换集合，不能实现另一套native推断。Root批准4.0单路径版本顺序不变。
+本轮仅tests-only验证native语义，未发布新的消费source或业务恢复保证。
+
+### R28 消费证据缺项不由成功输出补齐
+
+现固定PG saver的混合普通输出batch可能不更新已有RESUME槽；返回成功、出现successor或输出valid，
+各自都不等于精确command/attempt的完整消费向量已经持久。连续同值validation的新PG证明例仍待Root执行；
+内存对照完整向量已通过但不代表PG。若丢observation后仅有旧向量，保持unknown动作证据、零重投，
+不发active/native_consumed；terminal仍按原权威清集合，不倒推已消费。无新API/错误码/版本例外，4.0发布门不变。
+
+ AGENT-PROFILE-P3A-R25：内部持久gate实现候选，HTTP3不变（2026-10-01）
 
 基线main a37e8f1；当前代码新增Run内部freeze_or_verify_static_recipe真实facade/adapter，非外部API。
 factory同plan在任何preflight/System前await事务commit；request比较唯一无参数model_dump_json原UTF8 bytes，

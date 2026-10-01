@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextvars import ContextVar
 from importlib.metadata import version
 from typing import Any, cast
@@ -24,6 +24,8 @@ from langchain_core.language_models.fake_chat_models import (
     GenericFakeChatModel,
 )
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph._internal._constants import ERROR, INTERRUPT, NULL_TASK_ID, RESUME
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
@@ -845,3 +847,293 @@ def test_official_tool_middleware_rejects_an_unbound_destructive_tool_call(
     assert blocked[0].name == tool_name
     assert blocked[0].status == "error"
     assert blocked[0].content == "blocked by static tool policy"
+
+
+class HitlProofState(TypedDict, total=False):
+    left: str
+    right: str
+
+
+class HitlProofSaver(InMemorySaver):
+    """Test-only batch observer; native scheduler and serialization remain untouched."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[tuple[RunnableConfig, str, tuple[str, ...]]] = []
+
+    async def aput_writes(
+        self,
+        config: RunnableConfig,
+        writes: Sequence[tuple[str, Any]],
+        task_id: str,
+        task_path: str = "",
+    ) -> None:
+        await super().aput_writes(config, writes, task_id, task_path)
+        self.batches.append((config, task_id, tuple(channel for channel, _ in writes)))
+
+
+async def test_hitl_proof_multiple_interrupts_require_map_not_null_task_input() -> None:
+    saver = HitlProofSaver()
+
+    def left(state: HitlProofState) -> HitlProofState:
+        return {"left": interrupt({"request_id": "left"})}
+
+    def right(state: HitlProofState) -> HitlProofState:
+        return {"right": interrupt({"request_id": "right"})}
+
+    graph = (
+        StateGraph(HitlProofState)
+        .add_node("left_node", left)
+        .add_node("right_node", right)
+        .add_edge(START, "left_node")
+        .add_edge(START, "right_node")
+        .add_edge("left_node", END)
+        .add_edge("right_node", END)
+        .compile(checkpointer=saver)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": "proof-multiple"}}
+    paused = await graph.ainvoke({}, config)
+    pending = paused["__interrupt__"]
+    assert len(pending) == 2
+    with pytest.raises(RuntimeError, match="multiple pending interrupts"):
+        await graph.ainvoke(Command(resume="not-a-map"), config)
+    saver.batches.clear()
+    result = await graph.ainvoke(
+        Command(resume={item.id: item.value["request_id"] for item in pending}), config
+    )
+    assert result == {"left": "left", "right": "right"}
+    consumed = [batch for batch in saver.batches if RESUME in batch[2]]
+    assert len(consumed) == 2
+    assert all(task_id != NULL_TASK_ID for _, task_id, _ in consumed)
+
+
+@pytest.mark.parametrize("outcome", ["error", "reask"])
+async def test_hitl_proof_task_resume_with_error_or_interrupt_is_not_success(
+    outcome: str,
+) -> None:
+    saver = HitlProofSaver()
+
+    def ask(state: HitlProofState) -> HitlProofState:
+        value = interrupt({"request_id": "stable-id"})
+        if outcome == "error":
+            raise ValueError("proof failure after consumption")
+        value = interrupt(
+            {"request_id": "stable-id", "validation_error": "json_schema_invalid"}
+        )
+        return {"left": value}
+
+    graph = (
+        StateGraph(HitlProofState)
+        .add_node("ask", ask)
+        .add_edge(START, "ask")
+        .add_edge("ask", END)
+        .compile(checkpointer=saver)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": f"proof-{outcome}"}}
+    first = await graph.ainvoke({}, config)
+    saver.batches.clear()
+    if outcome == "error":
+        with pytest.raises(ValueError, match="proof failure"):
+            await graph.ainvoke(Command(resume="invalid"), config)
+    else:
+        second = await graph.ainvoke(Command(resume="invalid"), config)
+        assert second["__interrupt__"][0].value["request_id"] == "stable-id"
+        assert second["__interrupt__"][0].id == first["__interrupt__"][0].id
+        assert (
+            second["__interrupt__"][0].value["validation_error"]
+            == "json_schema_invalid"
+        )
+    assert any(
+        task == NULL_TASK_ID and RESUME in channels
+        for _, task, channels in saver.batches
+    )
+    expected = ERROR if outcome == "error" else INTERRUPT
+    assert any(
+        task != NULL_TASK_ID and RESUME in channels and expected in channels
+        for _, task, channels in saver.batches
+    )
+
+
+async def test_hitl_proof_healthy_long_task_three_reads_are_not_failure() -> None:
+    saver = HitlProofSaver()
+    entered, release = asyncio.Event(), asyncio.Event()
+    effects: list[str] = []
+
+    async def ask(state: HitlProofState) -> HitlProofState:
+        value = interrupt({"request_id": "long"})
+        effects.append(value)
+        entered.set()
+        await release.wait()
+        return {"left": value}
+
+    graph = (
+        StateGraph(HitlProofState)
+        .add_node("ask", ask)
+        .add_edge(START, "ask")
+        .add_edge("ask", END)
+        .compile(checkpointer=saver)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": "proof-long"}}
+    await graph.ainvoke({}, config)
+    saver.batches.clear()
+    running = asyncio.create_task(graph.ainvoke(Command(resume="once"), config))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        for _ in range(3):
+            await graph.aget_state(config)
+            assert not running.done()
+            assert effects == ["once"]
+            assert not any(
+                task != NULL_TASK_ID and RESUME in channels
+                for _, task, channels in saver.batches
+            )
+    finally:
+        release.set()
+        result = await asyncio.wait_for(running, 5)
+    assert result == {"left": "once"}
+    assert effects == ["once"]
+
+
+async def test_hitl_proof_subgraph_resume_observation_preserves_namespace() -> None:
+    saver = HitlProofSaver()
+
+    def ask(state: HitlProofState) -> HitlProofState:
+        return {"left": interrupt({"request_id": "nested"})}
+
+    child = (
+        StateGraph(HitlProofState)
+        .add_node("ask", ask)
+        .add_edge(START, "ask")
+        .add_edge("ask", END)
+        .compile()
+    )
+    graph = (
+        StateGraph(HitlProofState)
+        .add_node("child", child)
+        .add_edge(START, "child")
+        .add_edge("child", END)
+        .compile(checkpointer=saver)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": "proof-nested"}}
+    await graph.ainvoke({}, config)
+    saver.batches.clear()
+    assert await graph.ainvoke(Command(resume="nested-ok"), config) == {
+        "left": "nested-ok"
+    }
+    assert any(
+        str(observed.get("configurable", {})["checkpoint_ns"]).startswith("child:")
+        and task != NULL_TASK_ID
+        and RESUME in channels
+        for observed, task, channels in saver.batches
+    )
+
+
+@pytest.mark.parametrize("outcome", ["success", "cancel"])
+async def test_hitl_proof_prior_interrupt_write_is_not_current_pending(
+    outcome: str,
+) -> None:
+    saver = HitlProofSaver()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def ask(state: HitlProofState) -> HitlProofState:
+        value = interrupt({"request_id": "prior"})
+        if outcome == "cancel":
+            entered.set()
+            await release.wait()
+        return {"left": value}
+
+    graph = (
+        StateGraph(HitlProofState)
+        .add_node("ask", ask)
+        .add_edge(START, "ask")
+        .add_edge("ask", END)
+        .compile(checkpointer=saver)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": f"proof-prior-{outcome}"}}
+    await graph.ainvoke({}, config)
+    paused = await graph.aget_state(config)
+    if outcome == "cancel":
+        running = asyncio.create_task(graph.ainvoke(Command(resume="value"), config))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+        finally:
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+            release.set()
+    else:
+        assert await graph.ainvoke(Command(resume="value"), config) == {"left": "value"}
+    exact = await saver.aget_tuple(paused.config)
+    assert exact is not None
+    channels = {
+        channel
+        for task_id, channel, _ in exact.pending_writes or ()
+        if task_id == paused.tasks[0].id
+    }
+    if outcome == "cancel":
+        # Outer invocation cancellation can discard task writes before saver dispatch.
+        assert channels == {INTERRUPT}
+        assert (await graph.aget_state(config)).tasks
+    else:
+        assert RESUME in channels
+        assert INTERRUPT in channels  # Prior pause survives in the original tuple.
+        latest = await saver.aget_tuple(config)
+        assert latest is not None and latest.parent_config == paused.config
+        assert latest.checkpoint["channel_values"]["left"] == "value"
+        assert (await graph.aget_state(config)).tasks == ()
+
+
+async def test_hitl_proof_repeated_validation_final_success_memory_resume_vector() -> (
+    None
+):
+    """Memory overwrites negative slots; the PG counterpart deliberately differs."""
+    saver = HitlProofSaver()
+    invocations: list[str] = []
+
+    def ask(state: HitlProofState) -> HitlProofState:
+        value = interrupt({"request_id": "repeat"})
+        while value != "valid":
+            value = interrupt(
+                {"request_id": "repeat", "validation_error": "json_schema_invalid"}
+            )
+        invocations.append(value)
+        return {"left": value}
+
+    graph = (
+        StateGraph(HitlProofState)
+        .add_node("ask", ask)
+        .add_edge(START, "ask")
+        .add_edge("ask", END)
+        .compile(checkpointer=saver)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": "proof-repeated-memory"}}
+    initial = await graph.ainvoke({}, config)
+    paused = await graph.aget_state(config)
+    original_id = initial["__interrupt__"][0].id
+    for count in (1, 2):
+        result = await graph.ainvoke(Command(resume="invalid"), config)
+        assert result["__interrupt__"][0].id == original_id
+        assert result["__interrupt__"][0].value == {
+            "request_id": "repeat",
+            "validation_error": "json_schema_invalid",
+        }
+        exact = await saver.aget_tuple(paused.config)
+        assert exact is not None
+        assert [
+            value
+            for task, channel, value in exact.pending_writes or ()
+            if task == paused.tasks[0].id and channel == RESUME
+        ] == [["invalid"] * count]
+    assert await graph.ainvoke(Command(resume="valid"), config) == {"left": "valid"}
+    saver.batches.clear()
+    exact = await saver.aget_tuple(paused.config)
+    assert exact is not None
+    assert [
+        value
+        for task, channel, value in exact.pending_writes or ()
+        if task == paused.tasks[0].id and channel == RESUME
+    ] == [["invalid", "invalid", "valid"]]
+    latest = await saver.aget_tuple(config)
+    assert latest is not None and latest.parent_config == paused.config
+    assert latest.checkpoint["channel_values"]["left"] == "valid"
+    assert invocations == ["valid"]

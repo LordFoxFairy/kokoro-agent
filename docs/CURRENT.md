@@ -1,3 +1,122 @@
+Root追加默认pytest实跑：**1657 passed /6既定skipped /242 deselected /364 warnings（90.67s）**，
+/tmp/kokoro-agent-hitl-proof-r28-r4-root-default.log；测试HTTP取消路径有既有服务端stderr，pytest仍exit0，
+LangChain beta/deprecation warnings如实保留，不屏蔽。此默认门不替代PG；PG8单独真实通过。
+
+## R28 Root native 证据与 HITL D0 验收（生产实现未完成）
+
+冻结33c8b20e六文件经Root6hash/4P3B后缀与独立26保护核验；独立Astra最终0P0/0P1/0P2。
+Root真实PG全部 **8 passed /0 skipped（0.51s）**，/tmp/kokoro-agent-hitl-proof-r28-r4-root-real-pg.log，
+自有agent_terminal_atomic_97ebd2406c704f6d已回收；原5/3和1/7 observer RED完整保留。
+Root定点Ruff format/check、Pyright0、contract19 passed（0.40s）、当前3.0 contract-check通过。
+当前native证明只是输入/消费/PG写slot与因果单节点边界，不是生产Run恢复、外部效果exactly-once或HTTP4发布。
+四docs只接收批准HITL设计与证明prefix，工作树未批准P3B整后缀留存而不暂存；不授权fork/依赖变更。
+后继只放最小纯domain状态规则与测试，SQL/worker/完整52/机器4/消费者发布仍独立待门。
+
+## AGENT-HITL-PROOF-R28-R4：仅观察定位投影返修（2026-10-01）
+
+Root R3真PG **1 failed/7 passed（0.54s）**，日志`/tmp/kokoro-agent-hitl-proof-r28-r3-root-real-pg.log`；
+新增重复validation精确向量case已通过，原multi-interrupt map子graph仍interrupt而主second完成，Root正在定位，未宣称8绿。
+纯native定点只读探针确认子graph saver config含AsyncCallbackManager、Runtime、Saver自身、PregelScratchpad与send/read/call闭包。
+完整deepcopy越过只观察定位的职责；它是否唯一导致此次partial-map仍待Root真实复验，不把相关性冒充根因。
+按精确授权仅改observer为thread_id/checkpoint_ns/checkpoint_id三个str标量投影；原config原样委托native，
+payload仍在任何await前复制，未改调度/等待屏障/最终map结果，也未单独再投child决策。
+Root独立审查进一步定位：完整config复制可触发SDK对象复制异常，child GraphInterrupt退出路径可掩盖后台saver异常，
+缺pending_writes时scratchpad又不应用resume_map，符合child重问/root成功现象。此源代码因果链不代替新一轮真PG结果。
+按Root补授权记录有限received/delegated/exception stages，异常原样raise；值副本仅测试JSON，不复制SDK对象。
+原并行map测试在初始pause后立即检查零observer异常，并在resume前通过独立connection、精确locator/task/interrupt ID
+证明root和child暂停都已commit，再且仅再执行一次全集map。未加sleep/重试/child补投，最终精确结果不变。
+除本CURRENT和PG test外其余四hash保持。真实PG8等待Root单次验证；若仍失败保留RED，另报原生提交/map调查。
+本轮静态日志`/tmp/kokoro-agent-hitl-proof-r28-r4-static.log`整链exit0：Ruff格式/check、Pyright0、
+contract文件19 passed（0.41s）、PG8 collected（0.02s）、当前contract: ok；六hash见`/tmp/kokoro-agent-hitl-proof-r28-r4-manifest.json`。
+P3B后缀/26保护文件保持，生产52及新native接口未授权。
+
+## AGENT-HITL-PROOF-R28-R3：测试observer窄返修（2026-10-01）
+
+Root实际PG8前轮 **5 failed/3 passed（0.82s）**，日志`/tmp/kokoro-agent-hitl-proof-r28-r2-root-real-pg.log`，
+自有DB已回收。直接原因是本测试observer把NULL_TASK的标量RESUME也assert为list；这改变了native执行，
+该RED不构成混合batch持久语义结论。原日志完整保留，不以新静态绿覆盖。
+本轮只修PG observer与本CURRENT：在任何await之前deepcopy收到的config/RESUME，明确分开NULL_TASK input与task列表，
+不在observer做会抛出的类型断言；委托原saver后只追加收到参数快照，绝不冒充持久值。新增精确scalar/vector对照断言。
+invalid→invalid→valid的完整委托三项向量、独立连接旧两项向量、因果successor及零重调断言全部保留。
+其余四冻结文件未改，生产/SQL/机器/P3B后缀/26保护文件均不动；Root独立审查须绑定R3新manifest而非0ff5546d。
+静态与收集日志`/tmp/kokoro-agent-hitl-proof-r28-r3-static.log`整链exit0：Ruff格式/check、Pyright0 errors，
+contract文件19 passed（0.40s）、PG8 collected（0.02s）、当前contract: ok。真实PG8等待Root重跑，没有worker DB连接。
+新六hash见`/tmp/kokoro-agent-hitl-proof-r28-r3-manifest.json`；此前原7绿与本次observer RED严格分别记载。
+
+## AGENT-HITL-PROOF-R28-PG-VALIDATION：精确向量证明候选（2026-10-01）
+
+正式基线仍main `af45817260478f1ee755d8e6e6963051e2049062`；输入六文件manifest `b34be947`。
+本轮仅原六文件，原P3B后缀/26生产等保护hash不变，生产52未获授权。没有连接DB、provider、Redis或操作Git。
+Root上轮真实PG已7 passed/0skip（0.45s），自有DB已回收；已读取实际日志
+`/tmp/kokoro-agent-hitl-proof-r28-root-real-pg.log`。下方R27待验叙述仅历史，本轮新增第8例仍未真运行。
+
+源码确认PostgresSaver混合batch采用INSERT DO NOTHING，区别于InMemorySaver覆盖负slot。
+新增连续同值invalid→invalid→valid测试：每轮独立连接检查确切payload/同ID，记录真实提交batch，
+丢弃observation后读取原checkpoint和直接successor；精确预期旧slot两项invalid且最终输出valid，待Root核事实。
+任何不符保留真实RED，不把不同实际值改成“存在RESUME”放宽；没有预先声称PG新例通过。
+纯内存对照实际完整三项向量，1 passed/18 deselected（0.11s），日志`/tmp/kokoro-agent-hitl-proof-r28-pure.log`。
+没有制造业务RED→GREEN；本轮Pyright初测2 errors、修类型边界后0，原日志保留。
+
+最终静态日志`/tmp/kokoro-agent-hitl-proof-r28-static-r2.log`整链exit0：两tests Ruff format/check通过、
+Pyright0 errors/0 warnings、整contract文件19 passed（0.41s），真实PG文件仅8 collected（0.02s）。
+命令均`uv run --frozen --offline --no-sync`，pytest加`PYTHONDONTWRITEBYTECODE=1`；原完整命令同R27，
+PG仅`pytest tests/integration/database/test_run_interactions.py --collect-only -q -o addopts=''`，未执行fixture。
+Root新例入口（显式自有KOKORO_AGENT_DATABASE_URL）：
+`PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest tests/integration/database/test_run_interactions.py -k repeated_validation -q -o addopts=''`。
+随后Root可同文件全8例复跑；不共享清理或扩大timeout。当前3.0 contract-check另见`/tmp/kokoro-agent-hitl-proof-r28-contract.log`。
+
+设计结论仍保守：旧向量＋成功successor不足以补齐精确attempt消费关联；缺证据unknown、零再次执行、不猜active。
+现公共saver不因此被宣称能自动恢复所有观察丢失场景；未新增native接口/依赖。进程重启、Run事务、外部效果、
+完整生产recovery/GC与HITL发布均未证明。六hash/保护检查见`/tmp/kokoro-agent-hitl-proof-r28-manifest.json`。
+
+## 历史 AGENT-HITL-PROOF-R27：恢复桥可行性证据，生产未授权（2026-10-01）
+
+准确正式基线：`af45817260478f1ee755d8e6e6963051e2049062`；输入四docs冻结manifest `8c6ed31f`。
+本轮只四docs＋现tests/contract/test_deepagents.py＋新普通tests/integration/database/test_run_interactions.py，
+未写生产/SQL/机器/依赖/安装目录/Git；工作树未提交P3B后缀保留，fork/依赖/source接口仍未批准。
+
+设计补正：NULL_TASK输入非消费，map可无此写；task RESUME先内存后后台保存，RESUME+本次ERROR/INTERRUPT非成功；
+历史INTERRUPT行在成功resume后仍可能残留，必须精确intent向量与因果successor的当前快照消歧。
+accepted与dispatch_started分事务，统一native前commit started；started后缺证据unknown不盲投。
+三读失败仅限已失联且静止attempt，不误杀当前有效lease/健康长task；晚到observation与purge同锁Run、复验引用后children→Run删除。
+TECH后继52候选补现postgres_run_context.py统一清理落点（原47现有/5拟新；本轮PG test创建后48已存在/4待新建），仍非生产授权。
+
+实际纯native证明（无provider）：完整map、标量NULL_TASK与task消费区别、同业务/native ID validation重问、子namespace、
+RESUME+ERROR/INTERRUPT、三次读取仍在执行、成功后旧INTERRUPT残留。新增7例通过，原整文件18 passed（0.40s）。
+新增取消探针真实RED：期望取消必有task RESUME时 **1 failed/6 passed**（0.21s），日志
+`/tmp/kokoro-agent-hitl-proof-pure-r2.log`；实际只剩旧INTERRUPT，修正为缺证据unknown断言后7 passed（0.13s），
+`/tmp/kokoro-agent-hitl-proof-pure-r3.log`。这是原生假设的反例/修正，不是生产bug RED→GREEN。
+类型首轮29 errors→修正native节点参数名与明确SDK overload边界后0 errors，无新增ignore/门禁放宽。
+
+最终实际命令日志 `/tmp/kokoro-agent-hitl-proof-final.log`，整链exit0：
+- `uv run --frozen --offline --no-sync ruff format --check tests/contract/test_deepagents.py tests/integration/database/test_run_interactions.py` → 2 files already formatted。
+- 同两路径`ruff check` → All checks passed；同两路径`pyright` → 0 errors/0 warnings。
+- `PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest tests/contract/test_deepagents.py -q` → 18 passed。
+- `PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest tests/integration/database/test_run_interactions.py --collect-only -q -o addopts=''` → 7 collected，未执行fixture/连接数据库。
+- `PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync kokoro-agent-contract-check` → contract: ok（仅当前3.0未漂移）。
+
+Root真PG入口：在Root自有临时数据库设置非空KOKORO_AGENT_DATABASE_URL后，于本仓执行
+`PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync pytest tests/integration/database/test_run_interactions.py -q -o addopts=''`。
+预计7例：健康node/写提交前barrier、成功观察丢失/error/reask/cancel、跨namespace多interrupt map。
+每例独立owner schema沿现fixture安装清理；独立connection读原checkpoint_writes/官方aget_tuple，非同连接spy通过。
+worker未运行PG，Root须核实际0skip/0fail、返回后可见性和取消分支是否同纯native；如固定saver事实不同，保RED回报，不放宽到成功。
+
+**已证范围：** 固定native的上述纯执行语义与反例；测试observer只委托saver、Event显式边界，不替换调度。
+**未证范围：** PG七例尚待Root；effect计数只是本地标记、没有真实外部调用；无真实进程kill/重启、Run lease/start事务、
+生产恢复predicate/多轮向量归属/完整Chat source、GC竞争或Exactly-once实现。模拟丢弃观察列表仅证明可重新读取native事实，
+不等于跨进程业务恢复闭环。生产52路径继续等待Root三面/测试门，机器4.0与消费者pin尚未发布。
+四docs三面一致性、P3B后缀/保护源码hash、52路径及六文件hash见`/tmp/kokoro-agent-hitl-proof-manifest.json`；
+实际纯native/contract绿色不代表HITL生产完成，原完整scope/retry/effective/native/retention与Conversation最终释放目标不缩减。
+
+### R27 Root已裁决的版本顺序（覆盖下方旧候选数字解释）
+
+独立完整HITL owner切片使用 **Agent HTTP 4.0.0、原/v1单路径clean-slate替换**；当前机器源仍3.0.0，
+本D0不提前修改。4.0版本号仅表示本次breaking协议，不表示完整scope第四阶段目标验收。下方历史候选的
+“HTTP4 required retry/fullscope协调激活”不再作为本次4.0发布内容；这些能力继续完整goal，后续若breaking则另发Agent5.0.0。
+P3B effective-native、scope/retry/checkpoint/retention功能目标均保留，库fork仍未批准。BFF4.0/后继4.1是其独立版本线，不机械同号。
+一次替换旧interaction/resume解释、无新/v2长期双轨、无兼容fallback；Agent4机器＋实现/schema/artifact验证提交后，
+BFF才固定pin并更新集合投影，再Web消费。HITL本身也必须完整实现、真门通过后发布，不发半contract。
+
 ## P3A Root 正式代码验收（2026-10-01）
 
 22路径最终52e4a9f9冻结Root hash/范围复核，独立初审及PG屏障复审均0P0/0P1/0P2。Root真PG两文件 **43 passed/0 failed/0 skipped（2.72s）**，包括schema catalog与事务原request/fence/rollback/取消/ACK失联/精确PID竞争；日志 /tmp/kokoro-agent-p3a-r26-root-real-pg.log，临时DBagent_profile_17ac684fe518473e已drop，无Redis/provider访问。此前41/2 RED保留，修正soft queue观察不是生产降门。

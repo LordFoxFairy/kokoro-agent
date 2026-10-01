@@ -1,10 +1,36 @@
+## AGENT-P2-D0-R24：两阶段边界与插件准入整改待审（2026-10-01）
+
+当前`main ec65d04f9915580eb57629126fffffc20f4c4033`已由Root提交/推送P1，起始clean由Root任务卡提供；
+本writer不操作Git。P1当前为已验收，不是候选；其1588/6/192、静态/build/wheel证据见下一节，历史失败不删除。
+
+本次只更新四设计文档，提出25路径P2实施门（14生产/7测试/4docs，6个拟新增文件、无新目录），**尚未授权源码**。
+目标是完整生产来源登记、静态recipe/政策fingerprint、preflight前全peer计划与真build共用，recursion_limit已追踪至
+Supervisor→invoke_once实际config，拟从main同一policy装配，不增加无消费者字段。
+
+R24独立评审原四hash通过、P0=0/P1=2；本次仅整改四文档，是否关闭由Root复核。生产第三方plugin批准集合
+默认空；lazy bootstrap/ep.load/call前pure metadata枚举拒unknown/重复/同key冲突，未来批准清单须显式有序
+identity/dist/version/source，拒late mutation；负向counter=0及乱序/重复/晚注册加入RED矩阵。runtime-only
+middleware callable不静态执行，P2默认拒绝不支持声明，后继若支持须绑定实际输出。
+
+Root已裁决正式4两阶段：pre-System static recipe envelope冻结；route后仅本地model构造，在任何sandbox/provider
+执行前绑定main+全部peer实际prompt/tool override/exclusion/GP/middleware source的effective_native_policy_digest；
+retry/resume/takeover严格比较，route revision/health/凭据排除。P2仅25路径前置foundation，不实现持久第二阶段，
+也不冒称完整Run profile已冻结；旧“所有最终descriptor在pre-System已知”的目标叙述已纠正而非降义为recipe。
+后继Run SQL/事务、全peer装配顺序及缺第二阶段时retry资格须单独通过门。Conversation最终引用释放仍为独立产品
+未决，仅阻最终释放/完整发布，不阻P2；两阶段方案本身不再列待裁决。
+
+本D0实际只读源码/已安装资源及本轮R24任务卡/map，验证四文档UTF-8/围栏/尾空白、25唯一路径（19现有/6拟新增，
+全部父目录存在）与只读HTTP机器版本3.0.0，生成新四文档hash manifest；未跑pytest/build/contract或schema测试，
+未请求provider、访问PG/Redis或启动服务；SQL/wire/contract/lock/Python未改。完整production manifest、真实wheel
+闭包、guard与plugin负向RED/GREEN、Root代码放行均待后续，不把P1四资源wheel证据移作P2完成。
+
 ## AGENT-PROFILE-P1：Root 独立验收通过（2026-10-01）
 
 基线 main7570141；Root核11/11冻结路径与hash、独立审查P0/P1=0后，重跑完整离线门：lock/sync、Ruff format254/check、Pyright0 errors/0 warnings、contract-check、failure generator-check、pytest **1588 passed/6 skipped/192 deselected/364 warnings（58.24s）**、wheel/sdist，全部exit0。日志 `/tmp/kokoro-agent-profile-p1-root-r21-check.log`；Root构建wheel四生产resource与源码逐字节匹配，Root自有build产物已回收。
 
 本片验收仅覆盖纯profile编码与共用选择计划；没有完整生产manifest/worker装配、持久freeze、scope/native或HTTP4发布，没有当前provider/browser组合证据。PG/Redis无本片行为变化，未拿离线测试替代全项目组合验收。下方worker交付及失败历史保留。Root精确11路径提交，不包含其他仓变更。
 
-## AGENT-PROFILE-P1：实现交付待 Root 独立复验（2026-10-01）
+## 历史 AGENT-PROFILE-P1：worker 交付与返修证据（2026-10-01；现已提交）
 
 基线 Agent `main 757014139cce9e6eb73a1b62e9420917a1e984a0`。唯一 writer 只改 D0 批准11路径：
 4个生产、3个测试、4个文档；新增仅runtime_profile.py与test_runtime_profile.py。Git/index/commit仍由Root持有。
@@ -26,7 +52,7 @@
 范围与最终11文件hash随交付manifest；Root冻结复验并提交后才标本片已验收。Conversation最终释放决定仍待答复，
 它不阻独立P1；完整4.0的scope/profile freeze/native/head/GC/协调消费者发布继续按D0依赖推进，九owner目标不缩小。
 
-## AGENT4-D0：当前基线与下一 P1（2026-10-01，文档交付待 Root 审查）
+## 历史 AGENT4-D0：当时基线与 P1 实施门（2026-10-01）
 
 当前 Agent `main 224d0f19ff2199c38b95f621015ea7856f589454`；本轮起始 clean，只改
 TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT。`64665cb0` 已提交 terminal 原子收口，

@@ -1,6 +1,208 @@
 # kokoro-agent 技术设计
 
-## AGENT-PROFILE-P1：纯配方与共享选择实现候选（2026-10-01）
+## AGENT-P2-D0-R24：生产来源登记与实际装配计划（2026-10-01；仅设计，待 Root 复核）
+
+**当前基线：** `main ec65d04f9915580eb57629126fffffc20f4c4033`，Root 已提交并推送 P1；
+Root 独立离线门 1588 passed / 6 skipped / 192 deselected、static/build exit0、wheel 四生产资源一致。
+P1 已实现纯 profile v1 codec、包资源读取与 tool/subagent 选择计划；不是“仍待验候选”。下方 P1/D0 的基线、
+RED 和候选措辞均为当时历史记录，不覆盖本节。机器仍 HTTP3，SQL 没有 runtime profile freeze。
+
+### 裁决：P2 能交付什么，什么尚不成立
+
+本片交付**生产来源 manifest + preflight 前完整静态装配计划及其内部 fingerprint + 真 build 消费同一计划**。
+它不交付“所有模型路由后的最终 descriptor 已在 preflight 前确定”。两者不能混称：
+
+- 当前 `agent_factory.py:AgentFactory._build_feature` 先对全部 peer `_preflight`（Skill resolve/load、MCP resolve），
+  再各 peer `build_deep_agent` 内 System resolve → sandbox → tools/guards/subagents → native constructor。
+- 已安装 `deepagents==0.6.6` 的 `graph.py:538–559,577–650,654–739` 在获得模型后选 harness profile；
+  它可改 prompt、tool description、工具 exclusion、GP 和 middleware。`profiles/_builtin_profiles.py` 还会惰性加载
+  builtin 与 entry-point plugin；只记录 `RESERVED_TOOL_NAMES` 或空 native descriptor 会漏掉真实执行政策。
+- P2 的 `assembly_recipe_fingerprint` **只标识经批准的静态 recipe、完整来源与 native policy 集合**，不是未来
+  Run 的 `runtime_profile_digest`，不调用完整 profile codec 补造空字段，也不写 Run/事件/日志当授权证据。
+  `canonical_profile/profile_digest` 的完整 v1 语义保持；P2 的内部准备记录具有独立 domain tag
+  `kokoro-agent:assembly-recipe:1`，不是第二状态机、第二 selector 或第二公开协议。
+- **R24 Root 已裁决正式4采用两阶段，不再把完整实际 descriptor 声称为 pre-System 已知。**
+  第一阶段在全部外部 preflight/System 前冻结 static recipe envelope；第二阶段在 route 后仅作本地 model/政策构造，
+  在任何 sandbox/provider 执行前，以同 scope/lease/generation fence 原子绑定 `effective_native_policy_digest`。
+  第二阶段必须覆盖 main 与全部 peer 的实际 prompt、tool description override/exclusion、有序实际工具面、GP
+  和 middleware 实现 source/无 secret 政策；两阶段一起才表达完整 Run profile，不降义为只冻结批准 recipe 集合。
+  retry/resume/takeover 必须核继承值相等；System 当前 route revision/health、授权与凭据不入摘要且照常重验。
+  本地 model 构造不等于 provider 推理请求；该顺序调整、实际输出提取、持久绑定及 Run SQL 是独立后继，P2 不实现。
+  当前逐 peer resolve/build 的结构尚不满足“全 peer 绑定完成前零 sandbox/provider 执行”，不得称已达成。
+- 本 P2 严格只交付前置 foundation，保持现 preflight 顺序，不提前 System I/O、不静态执行 runtime-only callable、
+  不覆写上游 harness，不扩大下方25路径。完整生产 manifest/共享计划有独立价值，但不是完整 Run profile 发布。
+
+### 第8节放置表
+
+| 项 | P2 最小实现决定 |
+| --- | --- |
+| Owner | Agent 拥有本地执行 recipe/代码来源；FeatureCatalog 只登记 Feature；System 仍拥有实时模型路由，Platform 拥有当前 Skill/MCP 授权，Storage 拥有 delivery。Root 唯一审查/提交人。 |
+| 当前事实 | `agent_factory.py:76–99,255–302`；`tools/toolset.py:97–115,139–167`；`agents/subagents.py:66–91,143–164` 为现选择/装配；`execution/runtime_profile.py:224–282,412–497` 为 P1 codec/source/projection。无生产 source manifest、PreparedFeaturePlan 或完整 native recipe。 |
+| 目标职责/API | `prepare_feature(feature, runtime_policy, manifest, toolbox, subagent_catalog, delivery_available) -> PreparedFeaturePlan` 同步、无 owner I/O，保存有序 peer/tool/subagent/handoff plan、显式 recipe bytes/fingerprint。factory 内消费该同一对象，不再次按声明分支筛选。 |
+| 位置比较 | 采用 `execution/runtime_profile_sources.py`（显式资源登记）、`execution/runtime_profile_plan.py`（静态计划/纯 recipe）与 `agents/native_profile.py`（固定上游版本 metadata 适配）。淘汰继续扩497行 codec混入工厂/包manifest、FeatureCatalog发网络、worker/main堆全部规则及新profile服务/目录。 |
+| 粒度 | 三个新生产文件各一变化原因；无新目录。既有工具模块仅提取各自 metadata 单一常量/声明供真实 StructuredTool 与 plan 共同读，不另建通用工具运行器。内部不可变记录用 frozen/slots/kw_only dataclass；不复制 wire DTO。 |
+| 依赖 | sources依赖P1包资源 API；plan依赖现工具/子代理 planner与 native metadata adapter，不依赖 WorkerDependencies/repository/provider。factory/worker向下装配；tools/subagents不反向依赖profile。native adapter是上游版本专属边界，不 introspect callable/闭包/图执行状态。 |
+| 数据/API | HTTP3/Redis/RunRequest、SQL、幂等、lease/terminal/native saver保持原状。新增对象仅单次build/进程配置内存，fingerprint不持久、不回填NULL、不成为retry身份。 |
+| 删除 | 删除factory的第二份handoff筛选、build内部重复生成的选择结果；工具description/schema声明移为唯一来源后旧内联重复文本删除。无optional-plan fallback、空descriptor、猜source或旧新selector并行。 |
+| 验证 | 下方RED矩阵、现factory/toolset/dependencies回归、source与真实wheel隔离导入、完整离线门；PG/Redis/真实模型由对应后继/Root执行，不以本片替代。 |
+
+### 实际 owner 与顺序：不能只是多加一个无消费者字段
+
+1. `worker/main.py` 用已验证的同一 AppConfig 构造不可变 `RuntimeAssemblyPolicy`（放 plan 模块），
+   包含 run_token_budget、recursion_limit、三个模型执行布尔、显式 toolbox选项、backend政策及 native登记。
+   WorkerDependencies新增必填policy/manifest，不存第二份可独立漂移的run_token_budget；factory的guard budget读policy。
+2. recursion_limit当前真实链为 `config.py:247 → worker/main.py:211 → supervisor.py:97 →
+   supervisor_execution.py:213 → execution/run_agent.py:99–105`。main给Supervisor传**同一policy.recursion_limit**，
+   不是再次读默认值；测试捕获Supervisor参数并让现invoke_once收到该值。不修改executor `_config` 或trace规则。
+3. 每次 `AgentFactory.build` 在任何peer `_preflight`之前同步prepare所有peer；缺登记、工具名冲突、未知子代理、
+   无效guard政策（例如ask_user result-review）一律先失败。`tools/guards.py`提取纯policy校验，prepare与真build共用。
+   现“所有peer preflight完才建任何backend/model”保持；之后网络授权仍每次重验，不因fingerprint相同跳过。
+4. tool/subagent materializer接收必填已选plan；native handoff由真实 `create_handoff_tool(agent_name=target)` 在prepare
+   按有序边生成，读取安全metadata并将**同一真实工具实例**交build，不创建dummy request/namespace/backend/model。
+   handoff加入主tool面后再按现catalog选择子代理；保持GP继承parent tools/model、catalog空tools省略即继承、
+   显式tools只选已存在者、GP不进入declared授权集合与主/子守卫顺序，绝不把`tools=()`解释为禁用所有工具。
+5. native GP/文件/todo/task 的基准schema、description模板、生成规则和policy来源进入 **NativeRecipe**，不是伪造
+   最终ToolDescriptor。原生GP模板直接取安装包常量，task模板按同一已选GP+catalog names/descriptions投影；
+   filesystem真实顺序为ls/read_file/write_file/edit_file/glob/grep/execute，todo/task及其注入位置按已锁源码登记。
+   真constructor仍由现官方调用创建；后置harness有效结果按上述已裁决两阶段门由独立后继绑定，P2不声称已完成。
+
+### 静态准备记录的精确边界
+
+`PreparedFeaturePlan`保留：feature（key/entry_agent/有序agents/handoffs）、每peer的既有ToolSelectionPlan与
+SubagentSelectionPlan、真实未绑定handoff工具、RuntimeAssemblyPolicy，以及canonical recipe bytes/fingerprint。
+业务对象/工具实例只供后续materialization使用，不进入JSON。每次build构造一次，不作全局mutable缓存。
+recipe的显式JSON字段为`domain_tag/feature/runtime/implementations/native_recipe`：feature使用实际声明及已选
+工具metadata、GP+catalog声明与继承标记；runtime使用上节批准白名单；implementations为有序source descriptors。
+native_recipe使用`templates/policy_sources/materialization`，其中materialization固定语义值`post_route`，
+templates是安装包真实基准schema/description/prompt模板而非最终tool descriptor，policy_sources覆盖批准的
+builtin/plugin选择与生成实现。未知键/对象/secret拒绝；数组保序、set字段显式排序、UTF8与数值规则复用P1。
+此对象不是传输DTO；完整`profile_version=1/feature/runtime`输入不会接收`native_recipe`或代填implicit_tools。
+
+实际工具source绑定采用显式登记的工具/工厂身份（known core实例或受信声明提供source_id与已登记factory），
+不能只用tool.name冒认同名实现；匹配对象可作进程内identity检查，但不hash对象/地址。memory/MCP/deliver的
+静态schema与description原本在本模块，提升为唯一声明后真binder和prepare共同读；web/core已创建的真实实例
+只经P1安全metadata读取，不重新造实例。native/handoff顺序及subagent筛选仅由现计划与官方工具factory决定。
+
+### Manifest：显式闭包、无secret、无运行时扫描推断
+
+manifest记录稳定source_id、package/symbol、distribution实际版本、逐文件相对路径与原bytes SHA256。
+登记表由源码维护、运行时只读枚举路径，不递归glob整仓、不Git/inspect/`repr`/callable地址/model_dump。
+资源路径闭包应按以下能力拆登记项；共同guard/native装配为共享项，未选择的本地工具/子代理资产不污染当前计划。
+跨distribution闭包使用多个P1 `ToolImplementationSource`，不把langchain文件冒充kokoro_agent资源。
+
+| 登记组 | 必须覆盖的实际来源与边界 |
+| --- | --- |
+| local assembly | `agent_factory.py`、`swarm.py`（仅peer场景）、`policy.py`、`agents/definition.py`、`features/definition.py`、新plan/source/native适配及P1 codec；选择算法 `tools/{toolset,toolbox,registry}.py`、`agents/{subagents,subagent_catalog}.py`。Feature/prompt实际值直接来自已选对象，未选catalog内容不作为本轮prompt。 |
+| guards/skill adapter | `tools/{guards,middleware,permissions}.py`、`hitl/{__init__,input,request,presets}.py`、`skills/{backend,middleware}.py`，及其实际引用的本地规则/协议文件。Run/lease/证明/客户端实例不hash；这些边界的实现资源可以登记，不能漏掉影响guard或tool行为的helper。 |
+| core/memory/web | `tools/ask_user_question.py`及hitl；`tools/memory.py`；已选`tools/web_fetch.py`、`tools/web_search.py`及实际provider实现所在模块；选中prompt资源（如`prompts/web-researcher.md`）按bytes登记。不得只hash工具入口而漏HTML提取、限制或schema代码。 |
+| MCP固定wrapper | `mcp/{tools,config,servers,egress}.py`和hitl相关闭包；schema来自ListToolsArgs/DescribeToolArgs/CallToolArgs同源声明。动态server/tool目录、URL/凭据/Resolve响应不hash，当前授权仍走preflight。 |
+| delivery | `tools/deliver.py`、`clients/{storage,storage_delivery,storage_transport}.py`及实际本地引用闭包；只在实际声明且client可用时选中。不得为拿metadata造伪StorageClient/backend/run。 |
+| backend | `sandbox/backend.py`及选中`archive.py`/`workspace.py`/`docker_backend.py`/`e2b_backend.py`/`custom_backend.py`的行为闭包；native `deepagents/backends/{protocol,state,composite,utils}.py`以及所选local_shell/sandbox实现。custom factory与teardown必须各有显式来源与已审无secret政策，不读取custom YAML全量当摘要。 |
+| native | `deepagents/graph.py`、`_models.py`、`_tools.py`、`_excluded_middleware.py`、`_messages_reducer.py`、`_subagent_transformer.py`、filesystem/subagents/skills/patch_tool_calls/summarization及其本地依赖；`langchain.agents.middleware.todo`、官方graph assembly；peer的`langgraph_swarm/{handoff,swarm}.py`。明确版本0.6.6/0.1.0及当前安装langchain版本；不靠版本号替代源码bytes。 |
+| model/native policy | `model/factory.py`；DeepAgents `profiles/_builtin_profiles.py`、harness/provider注册与合并规则、实际builtin policy模块（含Anthropic与OpenAI Codex）。对其完整批准政策集合登记，而非提前猜某个System路由。未知entry-point/plugin/后注册mutation先failclosed；不执行未知plugin再尝试hash它。非内置扩展由受信装配显式提供source与政策登记，禁止按名字任意信任。 |
+
+**插件与 registry 的可执行约束（R24）。** `agents/native_profile.py` 是唯一上游适配边界：
+
+1. 生产第三方 plugin 的批准集合默认 **空**。在任何可能触发 lazy builtin bootstrap 的入口、`ep.load()` 或
+   plugin callable 之前，先用纯 distribution/entry-point metadata 枚举两个组
+   `deepagents.provider_profiles`、`deepagents.harness_profiles`；不 import plugin、不调用 registry lazy accessor。
+   unknown、重复 entry identity、同注册 key 多来源或 builtin/plugin 同 key 冲突立即失败；失败时 bootstrap、load、
+   plugin call 及 owner/provider/sandbox side-effect counter 必须全为0，不能先执行再检测，也不依赖上游吞错跳过。
+2. 未来批准扩展须另经 Root 来源审批，提供显式**有序**清单：group/name/value 的完整 identity、distribution
+   规范身份/实际版本、声明注册 keys、已登记的逐资源 source digest；不能仅按工具名或 entry-point 名放行。
+   纯枚举的集合和 multiplicity 必须与批准清单精确匹配，再按批准顺序组织 recipe/允许装配；metadata 返回乱序
+   不改 fingerprint 或调用顺序，批准顺序变化须改变 fingerprint。未批准第三方安装存在即拒，不做静默忽略。
+3. builtin keys/source 同样显式登记。校验后建立封闭 registry 快照与来源身份；之后任何新增、覆盖、删除、重排或
+   未登记 mutation 均在使用前失败；真 factory 使用时再次核封闭状态，不能拿一次启动校验长期放行。
+   adapter 负责禁止装配窗口内晚注册，并检测直接 registry 漂移；不新增另一套 harness selector，实际选择仍由上游完成。
+4. runtime-only middleware callable 的结果不是静态 metadata。P2 默认拒绝无法由批准静态声明完整描述的 callable，
+   不能为生成 fingerprint 在 prepare 执行它；未来允许的动态扩展须在第二阶段本地 materialization 后把实际输出
+   的 middleware source/政策绑定到 effective digest，并仍在 sandbox/provider 执行前完成。不得 hash callable 地址、
+   闭包/对象 dump 或固定空输出。静态声明支持范围与当前锁定 builtin 集合必须逐项测试，不为纯片硬编码 fake 值。
+
+上表是实现必须展开的**来源覆盖契约**，不是声称所有资源清单已经交付；P2源码manifest必须给出真实存在的
+有限逐文件清单及distribution引用。现包`__init__.py`和本地import/re-export/helper亦计入闭包；验收以静态import
+边界检查与显式动态边清单判缺漏，第三方叶依赖以登记版本/对应包资源边界收口，不在请求期任意追import。
+变更未登记行为文件必须使coverage RED，不能通过“登记整个仓库”掩盖未选能力隔离。native私有API只集中适配
+已锁版本并受wheel/升级测试约束，不复制上游执行loop、profile resolver或工具selector。
+
+backend policy使用明确白名单：kind；local_shell timeout/max_output/inherit_env/virtual-mode；workspace local/S3形态；
+docker已批准image标识/ttl；e2b已批准template标识/timeout；custom受信factory+teardown来源与部署提供的非敏感policy_id。
+policy_id由该白名单canonical值确定（custom需显式登记），不是固定`default`忽略配置变化；部署地址、workspace实际路径、
+S3 key/endpoint、API key、连接URL、容器/session ID与custom原始配置均排除。带凭据或URL形态的标识不得进入白名单。
+需要新增环境政策字段或新的custom配置语义时另向Root报精确路径，不在本片扩AppConfig/读取secret文件。
+
+### P2 拟放行精确文件集（本 D0 只写四文档）
+
+以下每项均为绝对路径；不改未列源码、SQL、contract、lock、Supervisor/executor、依赖版本或目录。
+
+| 文件 | 必要变化 |
+| --- | --- |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile_sources.py`（新） | 显式生产source登记、依赖组与coverage边界，复用P1资源读取。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile_plan.py`（新） | RuntimeAssemblyPolicy/PreparedFeaturePlan、一次静态prepare、domain-tagged recipe fingerprint；不生产最终runtime_profile_digest。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/agents/native_profile.py`（新） | 固定上游版本的原生模板/政策/source adapter；不创建fake native实例。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile.py` | 仅提取现严格canonical JSON编码窄复用入口；完整v1字段/语义不降级，不新增空descriptor兼容。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/agent_factory.py` | preflight前prepare；全部peer真build消费同一plan；保现网络与native顺序。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/dependencies.py` | 必填typed policy/manifest，删除重复budget配置真源；不把clients dump进profile。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/main.py` | 同一config快照构建policy/source；Supervisor与factory使用同一budget/recursion值。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/toolset.py` | materialize必须消费prepare给的计划，保授权/重复名；不重新选择。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/toolbox.py` | metadata/plan从同一实际toolbox读取，保缺metadata failclosed。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/agents/subagents.py` | bundle消费同一已选plan，GP/空tools继承语义显式保留。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/guards.py` | 抽现policy非法组合纯校验供prepare与build共用；不提前创建绑定guard。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/memory.py` | schema/description唯一静态声明由真binder与recipe共读，namespace不入。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/tools/deliver.py` | 同上；无伪run/backend/client，绑定及副作用规则不变。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/mcp/tools.py` | 固定三wrapper metadata唯一声明，解析/远端授权与调用不变。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_runtime_profile_sources.py`（新） | 生产登记覆盖、源码闭包/缺文件/版本/插件未知 failclosed、资源变化。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_runtime_profile_plan.py`（新） | 全Feature静态recipe/计划/无secret/政策变化/选中隔离/guard顺序。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_native_profile.py`（新） | 原生模板/handoff/GP及模型后置差异诚实边界；受控原生组件无provider执行。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_runtime_profile.py` | P1严格codec回归，不能把assembly fingerprint误当完整profile。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/tools/test_toolset.py` | 必填共享plan消费、metadata与真binder相等、现授权/重复名回归。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_factory.py` | 唯一WorkerDependencies测试装配点；真实factory plan identity、全部peer预检、现native行为。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/worker/test_dependencies.py` | worker实际policy→factory/Supervisor/调用参数同源、禁secret注入。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md` | 本实施门与验收后状态。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md` | 纯内部fingerprint与HTTP3/最终4发布门。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md` | 零持久化/生命周期与freeze欠项。 |
+| `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md` | 当前提交、真实RED/GREEN/Root证据，不预填成功。 |
+
+共25路径：14生产（3新）、7测试（3新）、4docs；无新目录。这是跨真实owner声明所需集合，不以文件数证明完成。
+若落实native API或custom政策发现必须动本表外文件，先给确切路径/原因，Root调整卡后才写，不加fallback绕过。
+
+### 必须先 RED 的验收矩阵与先后
+
+| RED | 必须证明的GREEN |
+| --- | --- |
+| 未登记core/custom factory/teardown、资源缺失/版本不符、登记重复 | 在任何peer Skill/MCP/System/sandbox/model调用前失败；无client请求，无空descriptor/repr替代。 |
+| unknown plugin、重复entry identity/注册key、builtin/plugin同key | 在lazy bootstrap/ep.load/plugin call前纯metadata拒绝；所有副作用counter=0，不能只断言最终异常。 |
+| metadata枚举乱序、批准清单顺序变化、late registry新增/覆盖/删除 | 枚举乱序保持批准序列和fingerprint；批准顺序改变则fingerprint变化；任何late mutation在真build使用前失败。 |
+| runtime-only middleware callable被静态执行或以空descriptor登记 | prepare调用counter=0并拒不支持声明；本片不声称后置输出绑定已做，不用静态执行绕过拒绝。 |
+| 源码/选中资源/无secret政策或harness集合变化 | assembly fingerprint变化；source/wheel读取同一资源结果一致；无Git目录仍成功；只改secret/URL/run/lease不改变。 |
+| 另写tool/subagent/handoff selector或挂载顺序漂移 | factory消费同一个PreparedFeaturePlan及子plan；真工具metadata/顺序/重复名与计划匹配；GP与catalog空tools继承不变。 |
+| 第二peer非法guard/未知source，但第一peer已preflight | 先全部prepare/validate再任何I/O；失败顺序spy为0 calls，现全部peer preflight后建model/backend的测试继续绿。 |
+| recursion/budget仅入配方但执行仍用默认值 | 非默认值经main同一policy同时送factory guard与Supervisor，existing invoke_once实际config仍相同；0预算关闭保持。 |
+| native policy按System route改变实际descriptor | 测试明确静态recipe相同并不证明最终descriptor相同；记录有效差异，不以fake model固定默认描述通过完整freeze门。 |
+| 包漏资源/closure漏本地helper/隐式entrypoint | installed wheel隔离导入所有生产登记来源，逐文件与source核bytes，移除资源/增加未登记行为边/未知plugin必须失败。 |
+
+顺序：Root通过本D0 → tests-only RED → metadata单源/manifest与plan → factory/worker装配 → 全默认离线门 →
+Root独立hash/源码审查/重跑与wheel证据 → 单片提交。此后按R24已裁决两阶段实现完整profile与scope事务freeze，
+再native fence/head/retention、机器4与消费者协调；Conversation最终释放未决只阻最终释放，不阻本片。
+拟聚焦命令：`uv run --frozen --offline pytest -q tests/unit/execution/test_runtime_profile.py tests/unit/execution/test_runtime_profile_sources.py tests/unit/execution/test_runtime_profile_plan.py tests/unit/agents/test_native_profile.py tests/unit/agents/test_factory.py tests/unit/tools/test_toolset.py tests/unit/worker/test_dependencies.py`。
+随后原 lock/sync、Ruff format/check、Pyright、contract-check、failure generator-check、全部pytest、wheel/sdist；
+wheel验证以临时target安装、隔离工作目录真实导入，不能只读zip目录。schema/wire/lock字节由Root核，不运行基础设施。
+
+### R24 设计门、实际验证与后继依赖
+
+本轮仅收敛四文档。原四hash独立评审为P0=0/P1=2；本修订逐项处理插件有序/零副作用边界与完整实际profile
+两阶段语义，关闭情况由Root复核裁决，不把文档整改自称代码验收。三设计现在一致：P2无SQL/wire变化、25路径
+仅前置foundation；完整4保持实际策略冻结目标，并新增独立后置绑定门。Python/contract/SQL实现均未改。
+
+未决产品项仍为Conversation删除/expiry最终引用释放；仅阻最终释放/完整发布，不阻P2。两阶段选型已决，
+后继Agent owner须先给Run schema/事务精确门：两个阶段的原子身份、缺失第二阶段时的失败/retry资格、全peer本地
+materialization与并发恢复/回滚验收；未绑定不能冒充相等或自动以当前政策补值。Root协调System当前路由授权边界，
+不需要把route revision变成冻结字段；后继获独立文件/SQL授权才实现，不把其文件暗加本P2集合。
+本次实际验证仅UTF-8/围栏/尾空白、25路径清单及四文档hash、HTTP机器版本只读核对；没有运行代码门、schema检查、
+pytest/build或设施/provider请求。P2的RED/GREEN与wheel闭包证据全部待Root放行代码后取得。
+
+## 历史 AGENT-PROFILE-P1：纯配方实施记录（现已提交 ec65d04）
 
 基线 `main 757014139cce9e6eb73a1b62e9420917a1e984a0`（D0 已由 Root 审查提交）。P1 只使用下方
 批准的 11 路径，新增 `execution/runtime_profile.py` 与对应 unit 测试，无新目录/依赖/SQL/机器源。
@@ -27,7 +229,7 @@ ToolboxProfileOptions只由现build_toolbox明确记录fetch/search业务选项�
 新纯函数不作为admission/lease/native/terminal gate，未半激活4.0。真实factory与现MCP/Skill preflight回归由现测试覆盖。
 实际RED/GREEN、架构门失败返修与完整离线证据见CURRENT的P1记录；Root独立复跑前仅为候选。
 
-## AGENT4-D0：当前实现与分阶段实施门（2026-10-01）
+## 历史 AGENT4-D0：实施起点与分阶段门（2026-10-01）
 
 本节以 Agent `main 224d0f19ff2199c38b95f621015ea7856f589454` 为当前基线，优先于下方标明历史基线的实施记录。
 HTTP machine 仍为 3.0.0；`64665cb0` 已交付唯一 `finalize_terminal`，`224d0f19` 已将全部 worker RunRequest 通知
@@ -82,8 +284,8 @@ profile 只投影该同一计划的静态业务选择，不将绑定实例纳入
 P1 不另建 digest 专用 selector，也不为读取 schema 伪造远端 owner 返回。handoff/native implicit 的完整 descriptor、
 全部登记源码依赖闭包、worker 策略装配和包内来源覆盖仍须后继完整 profile 装配片交付；P1 的 fixture 完整 profile
 只验证纯编码契约，不冒充生产入口已生成完整 profile。缺源/未登记项明确失败，不用 repr、Git SHA 或空 descriptor 兜底。
-后继才扩 `agent_factory`/`worker dependencies/main`：在所有 `_preflight`/System/sandbox/provider 前形成完整计划，
-以 scope/lease 事务 freeze/verify；normal 初次允许 NULL→digest，retry/恢复只比较继承的非 NULL 值。P1 不提前接这道 gate。
+后继才扩 `agent_factory`/`worker dependencies/main`；此历史P1计划按R24修正为preflight前静态计划与
+route后实际native政策两阶段，持久freeze/verify属独立后继；P1不接gate，也不证明完整实际descriptor已在System前确定。
 
 | P1 先 RED 的行为 | GREEN 验收 |
 | --- | --- |
@@ -274,12 +476,13 @@ selected_skill_source_refs 一致。父必须有 4.0 延续的 strict Failure �
 当前 actor/assertion 可更新，不参与“同旧 actor”限制；新 attempt canonical identity 冻结当前 actor/assertion，
 replay 仍核原 envelope 不变。BFF 当前 IAM 权限和 Agent 服务身份 gate 先执行，worker 的 System/Platform/Storage
 当前授权继续重验；旧 token/proof、批准结果、signed URL 和 lease 从不复制。当前 MCP 是 Feature 静态声明，
-不是已发布 launch 选择字段；worker 在首次任何外部 build 前冻结 Feature/Agent/子代理、tool schema/实现来源、
-MCP 声明、模型选项等 canonical profile digest。retry/恢复校验当前受信 catalog 同 digest；漂移失败关闭，不改选。
-请求模型 label 冻结，System route/health/current policy 每次重解；不把旧 route 凭据当冻结业务选项。
-retry claim/createRun 在 scope→parent/origin dispatch→Run 有序锁内，原子复制 origin 的非 NULL profile digest
-与固定 baseline/window；仅 normal Run 初始 digest 可 NULL。replay 不重新选 profile，缺失 origin digest
-拒绝且回滚；每次 build/resume/takeover 在任何外部 effect 前核当前 catalog，同 digest 才继续。
+不是已发布 launch 选择字段。正式4按R24两阶段：worker在全部外部preflight/System前冻结Feature/Agent/子代理、
+本地tool schema/source、MCP声明、模型选项及批准native政策集合的static recipe envelope；System route后仅本地
+model/政策构造，sandbox/provider执行前另绑定全部peer实际有效native政策。完整Run profile包含两者，不以静态
+recipe替代最终prompt/tool override/exclusion/GP/middleware source。请求模型label冻结，route revision/health与
+凭据不入摘要；当前授权每次重验。retry/resume/takeover对两阶段继承身份严格比较，漂移失败关闭、不改选。
+retry claim/createRun在scope→parent/origin dispatch→Run有序锁内复制原冻结事实与baseline/window；两阶段SQL、
+绑定/比较事务及缺失有效政策时的retry资格由独立后继门实现，不能把NULL当相等或恢复时重选。当前代码尚无持久gate。
 
 ### 原生 baseline、失败上下文与真实入口
 
@@ -379,16 +582,18 @@ namespace/config 转换只在 execution/native adapter；`domain/run/repositorie
   BFF 正式 AG-UI 来源是 Agent HTTP Chat replay，不读取 Agent Redis；现 BFF 有 seq/watermark、ID/digest去重/gap，
   BFF e7a325ce 已验收非法 post-terminal source 的显式 block（非静默丢弃、无新网络 schema）。
   这不替代 Agent scope fence，也不证明 Scheduled 同 session 或整组合；不承诺终态后绝无迟到 Redis 字节。
-- `runtime_profile.py` 拥有版本常量 `PROFILE_VERSION=1`、显式白名单投影与编码；选择现 execution 而非
-  FeatureCatalog：profile 是一次执行配方/当前部署装配的组合，不是 Feature registry 职责；也不塞 agent_factory
-  混合编码、网络和构造。`agent_factory` 在所有 `_preflight`、System resolve、sandbox/provider 之前调用它，
-  然后经 repository 原子 freeze/verify；normal 第一次可 NULL→digest，retry/恢复只比较继承值。
+- **当前/P2/完整4分层：** P1 `execution/runtime_profile.py` 已有 `PROFILE_VERSION=1`、白名单投影和编码，
+  不是尚待创建模块。P2 `runtime_profile_sources.py` 负责生产来源登记，`runtime_profile_plan.py` 负责静态recipe，
+  factory/worker共用PreparedFeaturePlan；不写Run。完整4另以scope/lease/generation事务实现R24两阶段：
+  static recipe envelope在全部preflight/System前freeze/verify；route后仅本地model构造并获取main和所有peer
+  实际政策，任何sandbox/provider执行前绑定/比较`effective_native_policy_digest`。不可把下表模型后置实际值
+  放进第一阶段当成已知；完整profile身份须包含两阶段，retry/resume严格相等，不重算覆盖继承值。
 - 编码为 `json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)`
   后 UTF-8 编码并 SHA256（小写 hex）。仅白名单 JSON 标量/对象/数组；不做 Unicode/字符串 trim，拒绝孤立 surrogate、
   非有限数及未知类型。对象 key 排序，原有 tuple/list 保序；只有 frozenset 语义字段先按字符串排序，null 保留。
   profile version 纳入对象；升级视为不兼容，不把旧 digest 重算覆盖。
 
-| profile 来源（源码当前字段） | 版本 1 纳入/排除规则 |
+| 正式4 profile 来源（P1 codec字段与后继实际绑定） | 纳入/排除规则；后置实际值归第二阶段 |
 | --- | --- |
 | Feature | key、agents 的声明顺序、entry_agent、handoffs 有序对全部纳入。 |
 | Agent | key、prompt、tools 的实际顺序/descriptor、mcp 顺序、subagents 顺序、delivery 声明与实际挂载布尔、model 的 provider/name/effort/thinking（或 null）、backend、permissions 全四字段、pause_tools 排序。 |
@@ -396,17 +601,18 @@ namespace/config 转换只在 execution/native adapter；`domain/run/repositorie
 | ProcessToolbox/toolset | 按实际合流顺序纳入 core、memory、configured web、固定 MCP list/describe/call、可选 deliver、Swarm handoff 与 native implicit 工具 descriptor；纳入 fetch_allow_private、search 是否启用及 provider 名、delivery client 可用性；namespace/run/lease 绑定不纳入 descriptor。MCP 只冻结静态声明及固定本地 wrapper，不冻结动态远端工具目录/凭据/授权。 |
 | tool descriptor | name、description、输入 schema、return_direct/response_format、稳定实现来源与本地无 secret 行为选项；schema 按同编码规则，保留数组顺序。禁止 repr、callable 地址、闭包全量转储或含 secret 的工具 model_dump。 |
 | WorkerDependencies/运行策略 | run_token_budget、Supervisor recursion_limit、ChatModelSettings.disable_streaming/openai_reasoning/litellm_enabled，以及已选 backend 的无 secret 执行策略标识纳入；这些值由 main 显式传递，不隐读环境。 |
-| 请求/动态 owner | requested_model_label 与 selected_skill_source_refs 仍由 canonical dispatch 独立冻结；profile 不 hash 整请求。System 当前 route/health/policy/revision、IAM actor/assertion、service token/proof、Storage signed URL、旧审批一律排除并每次当前授权重验。 |
+| 请求/动态 owner | requested_model_label 与 selected_skill_source_refs 仍由 canonical dispatch 独立冻结；不hash整请求。System route revision/health、当前授权与凭据、IAM actor/assertion、service proof、signed URL、旧审批排除并重验；由路由选择产生的实际native prompt/tool override/exclusion/GP/middleware source明确纳入第二阶段，不因排除route而漏掉其有效结果。 |
 | 资源/部署 | 所有 API key/secret、base URL、连接 URL、workspace 路径、容器/session ID、checkpointer/store/client 实例、进程调度并发/heartbeat/日志配置排除。sandbox 的部署凭据/地址/运行实例不作 recipe；backend 实现与策略变化须由稳定实现来源/无 secret 策略标识反映。 |
 
 实现来源采用显式 `ToolImplementationSource` descriptor（内部 dataclass），不是网络发现或运行时 inspect 猜测。
-`execution/runtime_profile.py` 持有版本化本地实现清单：tool factory 的模块限定名/符号及实际构建包内批准源码文件
+P2拟由 `execution/runtime_profile_sources.py` 持有版本化本地实现清单，复用P1 codec：tool factory模块限定名/符号及包内批准源码文件
 字节 SHA256（含明确列出的本地依赖闭包）；native implicit 工具纳入固定 distribution 版本及相应实现文件摘要。
 从安装包资源读取，缺源/未登记工具失败关闭；开发源码与 wheel 均验，禁止运行时访问 Git 或把 commit 当内容指纹。
 `tools/toolbox.py` 在创建 web/memory 工具时同时产生 descriptor/无 secret 选项；`tools/toolset.py` 复用同一选择规划
 提供实际工具序列，`agents/subagents.py` 复用同一纯选择规则，避免 profile 和 build 两套过滤逻辑。
 `worker/main.py` 显式装配策略与源码 descriptor；sandbox 非默认定制实现也须登记稳定来源和无 secret policy 标识，
-禁止偷偷 hash 任意 custom config。以上是拟实施职责，当前尚无这些字段/模块；本轮只修改文档。
+禁止偷偷 hash 任意 custom config。当前已有P1 codec与共享选择plan；生产manifest/worker完整装配仍为P2拟实施，
+两阶段持久字段及有效native输出绑定属独立后继，均不因本轮文档修订视为落地。
 
 ### 后续精确写入集与验收矩阵
 
@@ -419,7 +625,7 @@ namespace/config 转换只在 execution/native adapter；`domain/run/repositorie
 - 输入/执行：`src/kokoro_agent/protocol/control.py`、`interfaces/http/ingress.py`、`interfaces/http/server.py`、
   `domain/run/models.py`、`domain/run/repository.py`、`domain/run/repositories.py`、`domain/run/scope.py`、`agent_factory.py`、
   `features/catalog.py`、`execution/protocols.py`、`execution/run_agent.py`、`execution/events.py`、
-  `execution/runtime_profile.py`（拟新增）、`tools/{toolbox,toolset}.py`、`agents/subagents.py`、
+  `execution/runtime_profile.py`（P1已存在）、`tools/{toolbox,toolset}.py`、`agents/subagents.py`、
   `worker/main.py`、`worker/dependencies.py`、`worker/supervisor_recovery.py`、
   `worker/supervisor_context.py`、`worker/supervisor_execution.py`、`worker/supervisor_control.py`。
 - 数据：`database/schema.sql`；`src/kokoro_agent/infrastructure/{schema.py,checkpoints.py,run_checkpoints.py,

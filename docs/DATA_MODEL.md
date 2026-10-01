@@ -1,5 +1,28 @@
 # kokoro-agent 数据模型
 
+## AGENT-P2-D0-R24：只读包来源与单次装配内存（2026-10-01；仅设计）
+
+当前基线`ec65d04f9915580eb57629126fffffc20f4c4033`已含Root验收P1；SQL仍无scope/profile持久freeze。
+P2拟对象为进程不可变RuntimeAssemblyPolicy/显式SourceManifest，以及单次build的PreparedFeaturePlan；
+包source字节只读，无新SQL/表/列/索引/事务/Redis key/保留策略。计划不跨worker持久、不复用旧Run计划，
+不为NULL digest补值，不代替Run/lease/native head身份。每次当前授权照常重验。
+
+`assembly_recipe_fingerprint`是批准静态recipe/源码/政策集合的内存证明，**不是**Run.runtime_profile_digest；
+R24已裁决完整profile由pre-System static recipe envelope冻结及route后有效native政策绑定两阶段组成。
+第二阶段`effective_native_policy_digest`覆盖main+全部peer实际prompt/tool override/exclusion/GP/middleware source，
+仅本地model构造后、全部sandbox/provider执行前以scope/lease/generation fence持久绑定；retry/resume/takeover严格
+比较继承身份，缺值不等于匹配、不以当前值补写绕过。route revision/health/凭据不纳入。此SQL/事务属独立后继，
+本P2既不新增该列，也不把内存fingerprint视为已持久冻结；完整Run profile目标没有降级为静态recipe。
+P2不把动态route/凭据/namespace/workspace实例/client/checkpointer对象存入配方；backend仅显式无secret政策。
+完整source闭包与源码/wheel一致的验收不等于真实PG事务、恢复或跨owner授权证据。
+
+未来正式scope freeze仍须scope-first、锁后DBclock、normal首次冻结/retry继承比较、HITL占active、
+terminal原子推进committed/latest、native引用DAG与bounded GC；当前finalize_terminal不可被第二终态器替代。
+Conversation删除/expiry仍只阻最终取消/保留/释放语义及完整发布，不阻P2。不得永久免GC假装闭环。
+生产plugin批准集合默认空；pure metadata gate在lazy bootstrap/load/call前拒unknown/重复/同key冲突，登记清单
+显式有序，late registry mutation拒绝；runtime-only middleware不静态执行。该进程封闭source身份不是持久授权缓存。
+精确25文件、plan同源与RED矩阵以TECHNICAL_DESIGN P2为准；本D0不改canonical schema或机器字节。
+
 ## AGENT-PROFILE-P1：纯内存值与零持久化变更（2026-10-01）
 
 D0基线75701413之后的P1仅产不可变选择计划、白名单metadata、canonical bytes与SHA256。
@@ -76,7 +99,7 @@ normal/cancel 同锁核有效 rejected receipt 优先，错误 event_id 不参�
 | --- | --- |
 | 新 `kokoro_agent_run_scope` | PK `(tenant_id TEXT, namespace TEXT, session_id TEXT)` 均 NOT NULL；`latest_origin_run_id TEXT`、`latest_attempt_run_id TEXT`、`active_run_id TEXT` 可空，初建 NULL；`committed_checkpoint_id TEXT` 初建 NULL，仅初始化 genesis 期间允许；`committed_user_seq BIGINT NOT NULL DEFAULT 0`；`created_at/updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)`。根 thread/ns 可由 scope 唯一推导不重复存。该行只由 run admission/native/terminal 协调写，不复用展示 chat_session。 |
 | 现 `kokoro_agent_run_dispatch` | 新 `origin_run_id TEXT NOT NULL`（无默认，normal=self）、`retry_of_run_id TEXT NULL`（normal NULL）；`baseline_kind TEXT NOT NULL`（empty/native）、`baseline_checkpoint_id TEXT NOT NULL`（empty 亦是已持久 genesis ID）；`baseline_user_seq BIGINT NOT NULL`、`input_user_seq BIGINT NOT NULL`。两 seq 冻结原 native 缺失 user 的读取窗口，retry 从 origin 原样复制。既有 tenant/namespace/session 确定 root locator；request_json/fence 也承接 typed parent，row 与 canonical 比较一致。 |
-| 现 `kokoro_agent_run` | 新 `native_head_checkpoint_id TEXT NULL`（尚未写本 attempt checkpoint 时 NULL，绝不表示可取 latest）；`runtime_profile_digest TEXT NULL`（只允许 normal 初建 NULL；retry claim/createRun 与 baseline 原子复制 origin 非 NULL digest，缺失回滚拒绝）。Run PK/tenant/lease/terminal/usage 均保留；claim 同事务读 dispatch 固定 baseline，避免第二套 request。 |
+| 现 `kokoro_agent_run` | 新 `native_head_checkpoint_id TEXT NULL`（尚未写本 attempt checkpoint 时 NULL，绝不表示可取 latest）；`runtime_profile_digest` 仍指完整Run profile身份目标，不以静态recipe单独充当；后继须给static recipe envelope与 `effective_native_policy_digest` 的两阶段持久表示（前者preflight前冻结、后者route后全peer实际政策绑定，未绑定不是相等/空政策）。确切列/类型/约束、完整身份组合、继承/比较与缺阶段retry资格须在独立SQL门精化，P2不加列。Run PK/tenant/lease/terminal/usage 均保留；claim 同事务读 dispatch 固定 baseline，避免第二套 request。 |
 | 原 user/message | 不改 Chat PK `(tenant_id,chat_message_id)` 或 seq 唯一键。`role=user.run_id=origin_run_id`，retry 查回并验证同 tenant/namespace/session/message/content/status，返回原记录，不 UPDATE run_id/seq/time。非 user 的完整 immutable identity 原样保留。 |
 | 原 native 三表 | `checkpoints/checkpoint_blobs/checkpoint_writes` 不复制为 payload 快照表、不更改上游格式。使用完整 native parent/checkpoint/channel versions/namespace，delta/子图/pending writes 不手工剪裁。旧分支只作证据。 |
 
@@ -125,14 +148,14 @@ cancel/terminal/event/receipt/chat/tool/native/GC；另以 A 在 B 预读后推�
 - 首 scope 在同事务以公共 native `empty_checkpoint()`/`AsyncPostgresSaver.aput` 建 genesis：
   metadata source=input/step=-2、channel/pending 空，scope committed locator 与 dispatch baseline 同 commit。
   native saver 使用相同 connection，失败回滚全部；empty kind 是业务显式标记，不用随机缺失 id触发 native empty fallback。
-- worker claim/createRun 在持 scope、parent/origin/new dispatch/Run 有序锁的同事务中，原子复制 origin
-  非 NULL runtime_profile_digest 及已冻结 baseline/window；origin NULL/字段漂移拒绝并 rollback，replay只读原值。
-  仅 normal claim 初始可 NULL，首次 build 前按相同 scope/lease fence freeze 本地 profile。
-  digest按TECHNICAL_DESIGN版本1白名单、UTF-8有序对象紧凑JSON及SHA256生成，含真实工具/子代理选择、
-  schema/稳定source及无secret业务选项；不复制secret、route或当前token。内部locator/profile/outcome使用dataclass。
-  admission 验请求选择，normal首次在所有可产生retryable失败的外部preflight前freeze；build/resume/takeover
-  在任何外部 effect 前另验当前 catalog profile；漂移不替换原选择，retry不走NULL重新freeze。
-  定点测试包括 origin NULL、漂移、复制后rollback、同key重放、正常首次freeze，不允许retry走NULL→当前catalog重新freeze。
+- 正式4 worker claim/createRun在scope、parent/origin/new dispatch/Run有序锁内原子继承冻结recipe与baseline/window；
+  replay只读原事实，正常首次static recipe freeze在全部外部preflight/System前。R24另设route后全peer有效native政策
+  绑定：仅本地model构造，任何sandbox/provider执行前在同scope/lease/generation fence核身份并持久第二阶段digest。
+  两阶段共同构成完整profile，recipe相同不证明实际prompt/tools/GP/middleware相同。retry/resume/takeover必须核
+  继承值相等，漂移拒绝不改选；不复制secret/route revision/health/token，当前授权仍重验。
+  精确schema/阶段状态与“第一阶段已冻但第二阶段前失败”的retry资格/恢复由独立后继门审定，不以NULL匹配、
+  自动补当前native值或随意改Failure.retryable绕过。必须覆盖全peer绑定前零sandbox/provider、双阶段漂移、缺阶段、
+  generation失效、原子复制/绑定回滚、相同key replay及normal首次绑定；P2没有这些持久实现或事务验收。
 - 原生 write adapter 用独占同连接 transaction，statement-time DB clock 验租约及 active Run，委托 saver 公共
   `aput/aput_writes`，root head CAS 同 commit；失效 lease/并发取消/错误 parent 全部 rollback。
   pending writes 只接受该 attempt 自有 checkpoint，绝不写 immutable baseline；若 installed native 在 delta/input

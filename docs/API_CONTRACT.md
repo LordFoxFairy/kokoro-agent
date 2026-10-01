@@ -1,12 +1,35 @@
 # kokoro-agent API 契约
 
-## AGENT-PROFILE-P1：内部纯配方候选，HTTP3不变（2026-10-01）
+## AGENT-P2-D0-R24：内部装配证明与最终 profile 边界（2026-10-01；仅设计）
+
+当前已提交 P1：`ec65d04f9915580eb57629126fffffc20f4c4033`，Root离线1588/6/192与build/wheel已验。
+HTTP OpenAPI仍3.0.0，P2不修改机器源/provenance/generated、RunRequest/Redis、202/409或failure tuple。
+`PreparedFeaturePlan`、`RuntimeAssemblyPolicy`与`assembly_recipe_fingerprint`只属于Agent内部装配：
+静态来源/政策/选择验证失败在现factory错误边界处理，不新增公开错误，不公开fingerprint或secret配置。
+该fingerprint有独立domain tag，不冒充未来持久`runtime_profile_digest`，不调用完整codec用空native项补齐。
+
+TECHNICAL_DESIGN的P2放置表是本片唯一拟写入集；metadata与真实build共用plan，不新增网络selector。
+先全peer静态prepare，再保持当前Skill/MCP preflight→System route→backend/model/native的顺序与授权重验。
+DeepAgents0.6.6 harness会在route后改变prompt/tools/GP等；P2只证明批准recipe/source/policy集合。
+R24 Root已裁决正式4采用两阶段：pre-System且全部外部preflight前冻结static recipe envelope；route后仅本地model
+构造，任何sandbox/provider执行前另绑定`effective_native_policy_digest`，覆盖main+全部peer实际prompt、工具
+override/exclusion、GP与middleware source/政策。retry/resume/takeover须核继承身份相等，route revision/health/
+凭据不入摘要。此内部持久绑定/Run SQL是独立后继，P2不发布字段或声称完整Run profile已生效。
+
+生产第三方plugin批准集合默认空；在lazy bootstrap/ep.load/call前仅metadata枚举，拒unknown/重复/同key冲突；
+未来扩展须按显式有序identity/dist/version/source清单，late registry mutation拒绝。runtime-only middleware callable
+不在静态prepare执行，P2默认拒绝不支持声明；后继若支持须绑定真实后置输出。精确负向counter=0见TECH验收矩阵。
+完整4选型已决，后继事务/恢复细化门尚待实施，不新增用户产品决策。Conversation删除/expiry最终引用释放仍独立
+未决；只阻最终释放/完整发布，不阻P2。机器4与BFF全normal Chat/Scheduled+retry、其他sender/Web仍须协调发布。
+本D0只验证文档/manifest与只读机器版本，没有代码/contract/服务测试；下方P1候选措辞仅为历史。
+
+## 历史 AGENT-PROFILE-P1：内部纯配方交付（现已提交 ec65d04）
 
 在 D0 已提交基线75701413上，P1实现纯canonical profile/摘要、显式包来源descriptor与现build共用选择plan。
 完整字段形状只属于内部配方，见TECHNICAL_DESIGN的P1段落；ValueError是内部失败，不新增wire错误码。
 HTTP OpenAPI/provenance/generated、RunRequest/Redis/required字段、202/409、failure tuple和当前preflight顺序均未改。
 没有digest网络传输/持久freeze/授权gate；完整生产manifest与worker装配仍待后继。不把P1交付称4.0 artifact发布或激活。
-Root尚须独立复验；完整scope/native/retention与协调consumer发布门维持D0裁决。
+当时交付待Root复验；现P1已由Root验收并提交。完整scope/native/retention与协调consumer发布门仍维持D0裁决。
 
 ## AGENT4-D0：当前 contract 与 P1 实施子门（2026-10-01）
 
@@ -88,8 +111,10 @@ normal/cancel 不越过同锁已确认的合法 rejected receipt；终态先赢�
 
 权限语义不变：受信服务身份与当前 IAM session 先验证；业务 body 不自报 tenant/actor。重试不是旧 Run resume，
 不接收旧 approval decisions；平台能力、System route/current health、Storage 当前授权在新 Run 重验。
-执行profile按TECHNICAL_DESIGN版本1白名单canonical JSON/SHA256在任何可重试外部preflight前冻结；
-原子继承的digest不是新wire字段，不包含secret/动态route/当前授权。typed terminal outcome在同scope事务
+正式4执行profile按TECHNICAL_DESIGN的R24两阶段冻结：static recipe envelope在任何外部preflight/System前；
+实际effective_native_policy_digest在route后、本地model构造后且任何sandbox/provider执行前绑定全部peer。
+两阶段继承值须严格比较，不以recipe冒充最终descriptor；不纳secret/route revision/health/当前授权，也不是本P2新wire字段。
+typed terminal outcome在同scope事务
 持久最终usage段、delivery barrier（delivery Chat事实已持久）、terminal/outbox/Chat terminal身份与session seq、
 cleanup、成功head晋升与active释放；同连接原子提交后仅Redis发布，不允许release后补分terminal Chat seq。
 当前 finalize_terminal 已消除先terminal CAS后emit窗口；4.0追加scope/head/active原子性。其他nonterminal critical按原outbox/Chat恢复；

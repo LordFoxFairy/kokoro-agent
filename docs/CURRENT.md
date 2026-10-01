@@ -1,3 +1,31 @@
+## AGENT-PROFILE-P1：Root 独立验收通过（2026-10-01）
+
+基线 main7570141；Root核11/11冻结路径与hash、独立审查P0/P1=0后，重跑完整离线门：lock/sync、Ruff format254/check、Pyright0 errors/0 warnings、contract-check、failure generator-check、pytest **1588 passed/6 skipped/192 deselected/364 warnings（58.24s）**、wheel/sdist，全部exit0。日志 `/tmp/kokoro-agent-profile-p1-root-r21-check.log`；Root构建wheel四生产resource与源码逐字节匹配，Root自有build产物已回收。
+
+本片验收仅覆盖纯profile编码与共用选择计划；没有完整生产manifest/worker装配、持久freeze、scope/native或HTTP4发布，没有当前provider/browser组合证据。PG/Redis无本片行为变化，未拿离线测试替代全项目组合验收。下方worker交付及失败历史保留。Root精确11路径提交，不包含其他仓变更。
+
+## AGENT-PROFILE-P1：实现交付待 Root 独立复验（2026-10-01）
+
+基线 Agent `main 757014139cce9e6eb73a1b62e9420917a1e984a0`。唯一 writer 只改 D0 批准11路径：
+4个生产、3个测试、4个文档；新增仅runtime_profile.py与test_runtime_profile.py。Git/index/commit仍由Root持有。
+纯profile v1完整白名单编码/摘要、显式包resource来源、无secret toolbox metadata，以及tool/subagent共享plan已实现候选；
+真实factory通过现build_toolset/build_subagent_bundle复用plan，profile直接投影同一plan，不维护第二selector。
+现MCP授权、重复名、GP/declared/guards、preflight顺序保持；run_token_budget=0关闭语义保留。
+没有SQL/wire/RunRequest/持久freeze/授权gate、没有完整生产manifest/worker装配，也未实现scope/native/retention或发布4.0。
+
+**本 worker 实测（非 Root 验收）：**
+
+- tests-only首轮RED **45 failed/32 passed**，最小GREEN77；追加同源投影/缺metadata/未知provider RED **5 failed/78 passed**→GREEN83；来源不可变/metadata挂载漂移RED **2 failed/47 passed**→聚焦GREEN88；预算0/未知subagent RED **2 failed/49 passed**。日志 `/tmp/kokoro-agent-profile-p1-red.log`、`/tmp/kokoro-agent-profile-p1-red-r2.log`、`/tmp/kokoro-agent-profile-p1-red-r3.log`、`/tmp/kokoro-agent-profile-p1-red-r4.log`。
+- 首轮完整default真实 **1585 passed/1 failed/6 skipped/192 deselected/57.99s**：新模块cast违反既有architecture门；已用逐值运行时校验与sound TypeGuard修复，未改门或配置。历史 `/tmp/kokoro-agent-profile-p1-full-gates-r2.log` 保留。较早Pyright8→2类型诊断及full-gates-r1的测试lambda类型2错亦保留，不记为最终PASS。
+- 修复后焦点三文件＋现architecture **117 passed**（3.80s），日志 `/tmp/kokoro-agent-profile-p1-green-r4.log`；Ruff/Pyright不放宽，当前模块497行。
+- 最终完整离线门 `/tmp/kokoro-agent-profile-p1-full-gates-r3.log` **exit0**：`uv lock --check --offline`、`uv sync --frozen --offline`、Ruff format254/check、Pyright0 errors/0 warnings、contract-check、default pytest **1588 passed/6 skipped/192 deselected/364 warnings/57.26s**、wheel/sdist build全部通过。现LangChain deprecation/beta及Pyright新版本提示保留，不在本片升级依赖。
+- `uv run --frozen --offline python scripts/generate_failure_models.py --check` exit0，日志 `/tmp/kokoro-agent-profile-p1-generator-check.log`；机器contract仍HTTP3.0。
+- wheel产物 `/tmp/kokoro-agent-profile-p1-dist/kokoro_agent-2.0.0-py3-none-any.whl` 与sdist；在自有临时target离线无依赖安装，隔离Python实际从wheel导入，4个生产资源hash与源码相同，显式descriptor及真实tool plan通过。日志 `/tmp/kokoro-agent-profile-p1-wheel-evidence.log`；临时target已回收，无服务/owner/provider请求。这不是完整生产manifest/安装部署smoke。
+
+以上验证不含PG/Redis/integration/acceptance/浏览器/provider；P1无这些行为变化，不拿默认测试数量替代它们。
+范围与最终11文件hash随交付manifest；Root冻结复验并提交后才标本片已验收。Conversation最终释放决定仍待答复，
+它不阻独立P1；完整4.0的scope/profile freeze/native/head/GC/协调消费者发布继续按D0依赖推进，九owner目标不缩小。
+
 ## AGENT4-D0：当前基线与下一 P1（2026-10-01，文档交付待 Root 审查）
 
 当前 Agent `main 224d0f19ff2199c38b95f621015ea7856f589454`；本轮起始 clean，只改

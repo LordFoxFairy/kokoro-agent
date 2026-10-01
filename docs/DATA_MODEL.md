@@ -1,5 +1,14 @@
 # kokoro-agent 数据模型
 
+## AGENT-PROFILE-P1：纯内存值与零持久化变更（2026-10-01）
+
+D0基线75701413之后的P1仅产不可变选择计划、白名单metadata、canonical bytes与SHA256。
+显式包资源读取只计算代码来源，不访问数据库/Redis/owner网络，不写Run/checkpoint或业务文件。
+Toolbox记录无secret业务选项，profile投影拒缺metadata/实际挂载漂移；旧内部构造仍可按现行为build，
+这不是持久旧数据fallback，也不为未来retry补NULL digest。预算0关闭语义保留，不改运行限额。
+canonical SQL/列/索引/事务/retention及机器源无变化；生产scope/profile冻结/native fence均未由P1实现。
+源码资源fixture与wheel证据只证明纯配方/包装，不代替真实PG/Redis或生命周期释放验收。
+
 ## AGENT4-D0：当前 SQL、P1 零持久化边界与完整发布门（2026-10-01）
 
 当前 Agent main `224d0f19ff2199c38b95f621015ea7856f589454` canonical SQL 尚无 scope、lineage、baseline/head、

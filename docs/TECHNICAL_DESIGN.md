@@ -1,5 +1,32 @@
 # kokoro-agent 技术设计
 
+## AGENT-PROFILE-P1：纯配方与共享选择实现候选（2026-10-01）
+
+基线 `main 757014139cce9e6eb73a1b62e9420917a1e984a0`（D0 已由 Root 审查提交）。P1 只使用下方
+批准的 11 路径，新增 `execution/runtime_profile.py` 与对应 unit 测试，无新目录/依赖/SQL/机器源。
+`plan_toolbox`、`plan_toolset`、`plan_subagents` 产不可变有序选择；现工具 materialization 与 native subagent
+bundle 调同一函数。profile_tools/profile_subagents 直接按同一 plan 投影，未选项不参与 fingerprint。
+未知子代理校验随规则移入共享 plan，缺工具整项过滤、catalog 顺序、GP 覆盖/guards/declared 权限不变。
+MCP 当前授权/resolve 和 factory preflight 顺序未改；固定 wrapper 名与实际 materialization 精确比较，漂移失败。
+
+纯 `canonical_profile/profile_digest` 输入是显式完整内部 v1 白名单（不是 wire model）：root 为
+`profile_version/feature/runtime`；feature含key/entry_agent/handoffs/有序agents，agent含key/prompt/tools/
+implicit_tools/mcp/subagents/delivery/model/backend/permissions/pause_tools。backend为kind/policy_id/implementation；
+工具descriptor为name/description/input_schema/return_direct/response_format/implementation/options。
+implementation含source_id/package/symbol/distribution/version及有序resource path/SHA256；options仅批准的
+fetch_allow_private/search_provider/policy_id。runtime含run_token_budget/recursion_limit/三model布尔策略/toolbox/
+delivery_available；预算0沿现配置表示关闭，recursion_limit仍正数。除JSON Schema自身外，各对象拒未知/缺字段。
+`pause_tools`仅frozenset作集合排序，其余tuple/list保序，null保留；拒非有限数/孤立surrogate/绑定对象，无trim。
+内部配方字段不是新增HTTP/Redis字段，不将schema文本中合法的属性名当凭据对象进行猜测。
+
+ToolImplementationSource只接受不可变、显式登记的包资源闭包；implementation_descriptor核登记identity、
+重复/缺失/非法路径，从安装包读取原bytes与distribution版本，无Git/inspect/网络。P1并未发布完整生产manifest；
+完整handoff/native implicit来源覆盖、preflight前完整装配和持久freeze仍在后继，不以fixture descriptor冒充它们。
+ToolboxProfileOptions只由现build_toolbox明确记录fetch/search业务选项，key/URL不进入；直接构造且未给metadata的
+内部toolbox仍可按现行为build，但profile_toolbox拒绝为它猜profile。metadata与实际挂载名称/顺序不一致也拒绝。
+新纯函数不作为admission/lease/native/terminal gate，未半激活4.0。真实factory与现MCP/Skill preflight回归由现测试覆盖。
+实际RED/GREEN、架构门失败返修与完整离线证据见CURRENT的P1记录；Root独立复跑前仅为候选。
+
 ## AGENT4-D0：当前实现与分阶段实施门（2026-10-01）
 
 本节以 Agent `main 224d0f19ff2199c38b95f621015ea7856f589454` 为当前基线，优先于下方标明历史基线的实施记录。

@@ -87,3 +87,92 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
                 )
             },
         )
+
+
+def test_toolbox_plan_is_unbound_and_options_exclude_credentials() -> None:
+    from kokoro_agent.tools import toolbox as module
+    from kokoro_agent.tools.web_search import SearchProviderSettings
+    from pydantic import SecretStr
+
+    assert callable(getattr(module, "plan_toolbox", None)), (
+        "shared toolbox plan missing"
+    )
+    box = module.build_toolbox(
+        fetch_allow_private=False,
+        search=SearchProviderSettings(
+            provider="tavily",
+            api_key=SecretStr("private-key"),
+            base_url="https://private.example",
+        ),
+    )
+    plan = module.plan_toolbox(box)
+    assert plan.names == ("save_memory", "search_memory", "web_fetch", "web_search")
+    assert tuple(t.name for t in box.tools_for("namespace-not-profile")) == plan.names
+    assert box.profile_options is not None
+    assert box.profile_options.search_provider == "tavily"
+    assert "private-key" not in repr(plan) + repr(box.profile_options)
+    assert "private.example" not in repr(plan) + repr(box.profile_options)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "declared,available", [(False, False), (False, True), (True, False), (True, True)]
+)
+async def test_toolset_materialization_consumes_the_shared_plan(
+    monkeypatch: pytest.MonkeyPatch, declared: bool, available: bool
+) -> None:
+    from kokoro_agent.tools import toolset as module
+    from kokoro_agent.tools.toolbox import ProcessToolbox
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.protocol import (
+        RunRequest,
+        RunInput,
+        ExecutionIdentity,
+        IdentityRef,
+    )
+    from deepagents.backends.protocol import BackendProtocol
+    from unittest.mock import Mock
+    from kokoro_agent.clients.storage import DeliveryClient
+
+    assert callable(getattr(module, "plan_toolset", None)), (
+        "shared toolset plan missing"
+    )
+    planner = module.plan_toolset
+    plans: list[object] = []
+
+    def recording_plan(*args: object, **kwargs: object) -> object:
+        plan = planner(*args, **kwargs)
+        plans.append(plan)
+        return plan
+
+    monkeypatch.setattr(module, "plan_toolset", recording_plan)
+    box = ProcessToolbox(configured=(_tool("configured"),))
+    agent = Agent(key="base", prompt="base", tools=(_tool("core"),), delivery=declared)
+    request = RunRequest(
+        kind="run.request",
+        run_id="run",
+        session_id="session",
+        feature_key="chat",
+        selected_skill_source_refs=(),
+        execution_identity=ExecutionIdentity(
+            tenant_ref="tenant",
+            actor=IdentityRef(kind="user", opaque_ref="actor"),
+            subject=IdentityRef(kind="user", opaque_ref="subject"),
+            identity_assertion_ref="assertion",
+        ),
+        input=RunInput(message_id="message", content="hello"),
+    )
+    built = await module.build_toolset(
+        request,
+        agent=agent,
+        toolbox=box,
+        mcp_servers={},
+        mcp_client=None,
+        backend=Mock(spec=BackendProtocol),
+        delivery=Mock(spec=DeliveryClient) if available else None,
+    )
+    assert len(plans) == 1
+    expected = planner(agent=agent, toolbox=box, delivery_available=available)
+    assert tuple(t.name for t in built.tools) == expected.names
+    assert ("deliver" in expected.names) == (declared and available)
+    assert built.authorized >= frozenset(expected.names)

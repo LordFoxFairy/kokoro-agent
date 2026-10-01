@@ -930,3 +930,120 @@ async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutatin
         "skills_metadata": [],
         "skills_load_errors": ["old-error"],
     }
+
+
+def test_subagent_materialization_uses_the_same_pure_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.agents import subagents as module
+    from kokoro_agent.agents.subagent_catalog import RegisteredSubagent, SubagentCatalog
+    from kokoro_agent.tools.toolset import Toolset
+    from langchain_core.tools import StructuredTool
+
+    assert callable(getattr(module, "plan_subagents", None)), (
+        "shared subagent plan missing"
+    )
+    planner = module.plan_subagents
+    calls: list[object] = []
+
+    def record(
+        catalog: SubagentCatalog,
+        available_tools: frozenset[str],
+        *,
+        selected: frozenset[str] | None = None,
+    ) -> module.SubagentSelectionPlan:
+        plan = planner(catalog, available_tools, selected=selected)
+        calls.append(plan)
+        return plan
+
+    monkeypatch.setattr(module, "plan_subagents", record)
+    from pydantic import BaseModel
+
+    class NoArgs(BaseModel):
+        pass
+
+    def invoke() -> str:
+        return "ok"
+
+    tool = StructuredTool(
+        func=invoke, name="available", description="available", args_schema=NoArgs
+    )
+    catalog = SubagentCatalog(
+        (
+            RegisteredSubagent(
+                name="kept",
+                description="kept",
+                system_prompt="kept",
+                source="built-in",
+                tools=("available",),
+            ),
+            RegisteredSubagent(
+                name="missing",
+                description="missing",
+                system_prompt="missing",
+                source="built-in",
+                tools=("absent",),
+            ),
+            RegisteredSubagent(
+                name="unselected",
+                description="unselected",
+                system_prompt="unselected",
+                source="built-in",
+            ),
+        )
+    )
+    bundle = module.build_subagent_bundle(
+        Toolset.from_tools((tool,)), catalog, (), ("missing", "kept")
+    )
+    assert len(calls) == 1
+    plan = planner(
+        catalog, frozenset({"available"}), selected=frozenset({"missing", "kept"})
+    )
+    assert tuple(spec.name for spec in plan.specs) == ("kept",)
+    assert tuple(sub["name"] for sub in bundle.subagents) == ("general-purpose", "kept")
+    assert bundle.declared == frozenset({"kept"})
+    assert "tools" in bundle.subagents[1]
+    assert bundle.subagents[1]["tools"] == [tool]
+    assert plan.missing == (("missing", ("absent",)),)
+
+
+async def test_native_factory_build_uses_both_shared_planners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.tools import toolset as tool_module
+    from kokoro_agent.agents import subagents as sub_module
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.agents.subagent_catalog import SubagentCatalog
+
+    tool_planner = tool_module.plan_toolset
+    sub_planner = sub_module.plan_subagents
+    observed: list[str] = []
+
+    def tool_plan(
+        *, agent: Agent, toolbox: ProcessToolbox, delivery_available: bool
+    ) -> tool_module.ToolSelectionPlan:
+        observed.append("tools")
+        return tool_planner(
+            agent=agent, toolbox=toolbox, delivery_available=delivery_available
+        )
+
+    def sub_plan(
+        catalog: SubagentCatalog,
+        available_tools: frozenset[str],
+        *,
+        selected: frozenset[str] | None = None,
+    ) -> sub_module.SubagentSelectionPlan:
+        observed.append("subagents")
+        return sub_planner(catalog, available_tools, selected=selected)
+
+    monkeypatch.setattr(tool_module, "plan_toolset", tool_plan)
+    monkeypatch.setattr(sub_module, "plan_subagents", sub_plan)
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver)
+    request = _request("chat")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    built = await factory.build(request, lease)
+    assert built.runnable
+    assert resolver.calls
+    assert observed == ["tools", "subagents"]

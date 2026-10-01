@@ -1,5 +1,13 @@
 # kokoro-agent API 契约
 
+## AGENT-PROFILE-P1：内部纯配方候选，HTTP3不变（2026-10-01）
+
+在 D0 已提交基线75701413上，P1实现纯canonical profile/摘要、显式包来源descriptor与现build共用选择plan。
+完整字段形状只属于内部配方，见TECHNICAL_DESIGN的P1段落；ValueError是内部失败，不新增wire错误码。
+HTTP OpenAPI/provenance/generated、RunRequest/Redis/required字段、202/409、failure tuple和当前preflight顺序均未改。
+没有digest网络传输/持久freeze/授权gate；完整生产manifest与worker装配仍待后继。不把P1交付称4.0 artifact发布或激活。
+Root尚须独立复验；完整scope/native/retention与协调consumer发布门维持D0裁决。
+
 ## AGENT4-D0：当前 contract 与 P1 实施子门（2026-10-01）
 
 当前 Agent main `224d0f19ff2199c38b95f621015ea7856f589454` 的唯一机器源仍为 HTTP 3.0.0。

@@ -15,7 +15,7 @@ from langchain_core.tools import BaseTool
 
 from kokoro_agent.tools.toolset import Toolset
 
-from kokoro_agent.agents.subagent_catalog import SubagentCatalog
+from kokoro_agent.agents.subagent_catalog import RegisteredSubagent, SubagentCatalog
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +33,47 @@ def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent
     return sub
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SubagentSelectionPlan:
+    specs: tuple[RegisteredSubagent, ...]
+    missing: tuple[tuple[str, tuple[str, ...]], ...]
+
+    def as_profile(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "system_prompt": spec.system_prompt,
+                "source": spec.source,
+                "tools": spec.tools,
+            }
+            for spec in self.specs
+        )
+
+
+def plan_subagents(
+    catalog: SubagentCatalog,
+    available_tools: frozenset[str],
+    *,
+    selected: frozenset[str] | None = None,
+) -> SubagentSelectionPlan:
+    if selected is not None:
+        unknown = selected - catalog.names()
+        if unknown:
+            raise ValueError(f"unknown subagents declared by agent: {sorted(unknown)}")
+    mounted: list[RegisteredSubagent] = []
+    missing: list[tuple[str, tuple[str, ...]]] = []
+    for spec in catalog.specs():
+        if selected is not None and spec.name not in selected:
+            continue
+        absent = tuple(sorted(set(spec.tools) - available_tools))
+        if absent:
+            missing.append((spec.name, absent))
+        else:
+            mounted.append(spec)
+    return SubagentSelectionPlan(specs=tuple(mounted), missing=tuple(missing))
+
+
 def catalog_subagents(
     catalog: SubagentCatalog,
     tool_index: Mapping[str, BaseTool],
@@ -44,17 +85,14 @@ def catalog_subagents(
     返回 (定义, 实际可委派名集)——deny 声明集只含真挂载者。"""
     subs: list[SubAgent] = []
     mounted: set[str] = set()
-    for spec in catalog.specs():
-        if selected is not None and spec.name not in selected:
-            continue
-        missing = sorted(set(spec.tools) - set(tool_index))
-        if missing:
-            LOGGER.info(
-                "built-in subagent %r not mounted (tools unavailable: %s)",
-                spec.name,
-                missing,
-            )
-            continue
+    plan = plan_subagents(catalog, frozenset(tool_index), selected=selected)
+    for name, missing in plan.missing:
+        LOGGER.info(
+            "built-in subagent %r not mounted (tools unavailable: %s)",
+            name,
+            list(missing),
+        )
+    for spec in plan.specs:
         sub: SubAgent = {
             "name": spec.name,
             "description": spec.description,
@@ -86,9 +124,6 @@ def build_subagent_bundle(
     declared_subagents: tuple[str, ...] = (),
 ) -> SubagentBundle:
     selected = frozenset(declared_subagents)
-    unknown = selected - catalog.names()
-    if unknown:
-        raise ValueError(f"unknown subagents declared by agent: {sorted(unknown)}")
     catalog_defs, catalog_names = catalog_subagents(
         catalog,
         toolset.by_name,

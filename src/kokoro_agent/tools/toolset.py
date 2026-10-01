@@ -18,7 +18,7 @@ from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
-from kokoro_agent.tools.toolbox import ProcessToolbox
+from kokoro_agent.tools.toolbox import ProcessToolbox, plan_toolbox
 from kokoro_agent.mcp.config import McpServerConfig
 
 
@@ -69,6 +69,41 @@ class Toolset:
         return self.from_tools((*self.tools, *tools), implicit_authorized=implicit)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolSourceSelection:
+    kind: str
+    names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolSelectionPlan:
+    """One unbound ordered selection, shared by materialization and profile readers."""
+
+    sources: tuple[ToolSourceSelection, ...]
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(name for source in self.sources for name in source.names)
+
+
+def plan_toolset(
+    *, agent: Agent, toolbox: ProcessToolbox, delivery_available: bool
+) -> ToolSelectionPlan:
+    sources = [
+        ToolSourceSelection(
+            kind="core",
+            names=tuple(tool.name for tool in resolve_tools([], core=agent.tools)),
+        ),
+        ToolSourceSelection(kind="toolbox", names=plan_toolbox(toolbox).names),
+        ToolSourceSelection(
+            kind="mcp", names=("mcp_list_tools", "mcp_describe_tool", "mcp_call")
+        ),
+    ]
+    if agent.delivery and delivery_available:
+        sources.append(ToolSourceSelection(kind="delivery", names=("deliver",)))
+    return ToolSelectionPlan(sources=tuple(sources))
+
+
 async def build_toolset(
     request: RunRequest,
     *,
@@ -89,17 +124,31 @@ async def build_toolset(
     ⑤ peer handoff 只在 Feature 选择 official Swarm 时由 swarm.py 装配，不混入单 Agent 工具面。
     """
     scope = RunScope.of(request)
-    tools: list[BaseTool] = list(resolve_tools([], core=agent.tools))
-    tools.extend(toolbox.tools_for(scope.namespace))
+    plan = plan_toolset(
+        agent=agent, toolbox=toolbox, delivery_available=delivery is not None
+    )
+    bound: dict[str, Sequence[BaseTool]] = {
+        "core": resolve_tools([], core=agent.tools),
+        "toolbox": toolbox.tools_for(scope.namespace),
+    }
     mcp_names = list(agent.mcp)
     mcp_definitions = (
         resolved_mcp
         if resolved_mcp is not None
         else await resolve_declared_mcp(request, agent, mcp_client, mcp_servers)
     )
-    tools.extend(make_mcp_tools(mcp_names, mcp_definitions))
-    if agent.delivery and delivery is not None:
-        tools.append(_deliver_tool(request, backend, delivery, lease))
+    bound["mcp"] = make_mcp_tools(mcp_names, mcp_definitions)
+    tools: list[BaseTool] = []
+    for source in plan.sources:
+        if source.kind == "delivery":
+            if delivery is None:
+                raise ValueError("selected delivery requires its current owner client")
+            materialized = (_deliver_tool(request, backend, delivery, lease),)
+        else:
+            materialized = bound[source.kind]
+        if tuple(tool.name for tool in materialized) != source.names:
+            raise ValueError("tool materialization differs from selection plan")
+        tools.extend(materialized)
     return Toolset.from_tools(tools)
 
 

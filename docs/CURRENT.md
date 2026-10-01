@@ -1,4 +1,28 @@
+## AGENT-DURABLE-INGRESS-P0：Root fresh 门已验证（2026-10-01）
+
+仅备用 RunRequest 入口复用现 durable `_consume_request`；无intent不persist-user/claim/build，已有canonical覆盖Redis通知内容且duplicate不重复启动。无新SQL/wire/scope/409/retention/provider实现，resume/steer/cancel分支未改。本片不是完整Agent4或session FIFO。
+
+Root最终真实PG+HTTP135/135、0跳过（15.73s），自有DB `agent_terminal_atomic_b9312aeba3e448fe` 已回收；日志 `/tmp/kokoro-agent-durable-ingress-root-pg-r2.log`。首轮134/1 RED完整保留，acceptance仅先正式enqueue，terminal Chat异常注入及Run/outbox/Chat回滚断言未放宽。Root fresh默认1530通过/6既定跳过/192排除；lock、Ruff format/check、Pyright、contract、wheel/sdist均成功，日志 `/tmp/kokoro-agent-durable-ingress-root-full-gates-r2.log`；既有LangChain warnings仍记录，非真实provider/browser验收。独立冻结9hash静态审查0 P0/P1，Root检查额外tracked路径0；唯一Root提交。
+
 # kokoro-agent 当前实现
+
+## AGENT-DURABLE-INGRESS-P0：实施中（2026-10-01）
+
+基线 Agent main `64665cb0e5a0bca1cb4ff08147e0119aff769d6b`，起始 clean。正常 serve 已走
+`get_pending_dispatch -> claim_dispatch`；本片仅将备用 `dispatch(RunRequest)` 从直接 `try_claim`
+收敛到同一 durable consume 路径。不改 DDL、machine contract、scope/retry/retention、Provider 或
+其他 owner，不宣称 session FIFO/Agent4。三设计文档已先于源码明确该局部门。
+
+本 worker 已观测 tests-only RED：无 durable intent 的直接通知错误创建 Run；伪造 Redis
+envelope 未使用 canonical pending request（2 failed）。最小实现后聚焦两例 2 passed，
+`test_supervisor.py` 101 passed，`tests/unit/execution` 441 passed/12 deselected，全 `tests/unit`
+1137 passed/6 skipped/18 deselected。`uv lock --check`、Ruff format/check、Pyright（0 errors/0 warnings）、
+contract checker 与 wheel/sdist build 均 exit 0。测试输出含现有 LangChain deprecation/beta warnings，
+且 unit 运行中有一条未导致失败的 loopback request-handler stderr；真实 PostgreSQL 回归留给 Root。
+Root 首轮真实 PG+HTTP 为 134 passed/1 failed：旧 terminal Chat rollback acceptance fixture 直接
+`dispatch(RunRequest)` 且未持久 dispatch intent，因本片 fail-closed 而正确 no-op，未进入故障注入。
+现该现有用例已先 `enqueue_dispatch` 再 dispatch，保留 terminal rollback/outbox/Chat 断言；
+本 worker 未运行真实 PG，修正后 135 例 GREEN 由 Root 复验。
 
 ## AGENT-TERMINAL-ATOMIC/P0：本切片 Root 集成门通过，待 Root 提交（2026-10-01）
 

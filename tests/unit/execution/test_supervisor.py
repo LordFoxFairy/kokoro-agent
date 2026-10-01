@@ -77,6 +77,8 @@ def _supervisor(
     store: FakeRunRepository | None = None,
     heartbeat_s: float = 30.0,
     chat_repository: FakeChatRepository | None = None,
+    *,
+    seed_direct_requests: bool = True,
 ) -> tuple[RunSupervisor, FakeRunRepository]:
     state_store = store if store is not None else FakeRunRepository()
     if chat_repository is not None:
@@ -84,6 +86,12 @@ def _supervisor(
 
     class _AdmittedControlSupervisor(RunSupervisor):
         async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
+            if (
+                seed_direct_requests
+                and isinstance(msg, RunRequest)
+                and msg.run_id not in state_store.dispatches
+            ):
+                _seed_pending_dispatch(state_store, msg)
             if isinstance(msg, RunCancel):
                 await state_store.record_control_delivery(
                     msg.run_id,
@@ -171,6 +179,48 @@ async def test_request_dispatches_initial_invoke() -> None:
     assert initial == {
         "messages": [HumanMessage(content="hello", id="native-input:r1")]
     }
+
+
+async def test_direct_request_without_durable_dispatch_is_ignored() -> None:
+    agent = FakeAgent(run=text_run("unreachable"))
+    bus = FakeBus()
+    supervisor, store = _supervisor(agent, seed_direct_requests=False)
+
+    await supervisor.dispatch(bus, request("missing-dispatch"))
+    await _drain(supervisor)
+
+    assert "missing-dispatch" not in store.requests
+    assert agent.seen_payloads == []
+    assert bus.kinds("missing-dispatch") == []
+
+
+async def test_direct_request_uses_canonical_durable_dispatch_once() -> None:
+    canonical = request("direct-canonical")
+    forged = canonical.model_copy(
+        update={"input": canonical.input.model_copy(update={"content": "forged"})}
+    )
+    agent = FakeAgent(run=text_run("done"))
+    bus = FakeBus()
+    supervisor, store = _supervisor(agent, seed_direct_requests=False)
+    _seed_pending_dispatch(store, canonical)
+
+    await supervisor.dispatch(bus, forged)
+    await _drain(supervisor)
+    await supervisor.dispatch(bus, forged)
+    await _drain(supervisor)
+
+    assert store.dispatches[canonical.run_id] == "claimed"
+    assert store.requests[canonical.run_id] == canonical
+    assert agent.seen_payloads == [
+        {
+            "messages": [
+                HumanMessage(
+                    content=canonical.input.content,
+                    id=f"native-input:{canonical.run_id}",
+                )
+            ]
+        }
+    ]
 
 
 async def test_request_consumer_persists_user_message_and_safe_chat_events() -> None:
@@ -524,7 +574,9 @@ async def test_builder_failure_emits_run_failed_once() -> None:
         source_for=_source,
         consumer="t",
     )
-    await sup.dispatch(bus, request("rbf"))
+    run = request("rbf")
+    _seed_pending_dispatch(store, run)
+    await sup.dispatch(bus, run)
     await _drain(sup)
     failed = find_event(bus.run_events("rbf"), RunFailed)
     assert failed.payload.model_dump() == {
@@ -1258,7 +1310,9 @@ async def test_retention_expires_events_stream_on_terminal() -> None:
         consumer="t",
         events_ttl_s=3600,
     )
-    await sup.dispatch(bus, request("rr1"))
+    run = request("rr1")
+    _seed_pending_dispatch(store, run)
+    await sup.dispatch(bus, run)
     await _drain(sup)
     assert ("kokoro:run:rr1:events", 3600) in bus.expired_streams
 
@@ -1276,7 +1330,9 @@ async def test_retention_heartbeat_purges_terminal_runs() -> None:
         consumer="t",
         run_ttl_s=1,
     )
-    await sup.dispatch(bus, request("rr2"))
+    run = request("rr2")
+    _seed_pending_dispatch(store, run)
+    await sup.dispatch(bus, run)
     await _drain(sup)
     store.clock_ms = 10_000  # 终态已超龄
     await sup.heartbeat_once(bus)
@@ -1355,7 +1411,9 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
         heartbeat_s=30.0,
         sandbox_teardown=teardown,
     )
-    await sup.dispatch(bus, request("t1"))
+    run = request("t1")
+    _seed_pending_dispatch(store, run)
+    await sup.dispatch(bus, run)
     await _drain(sup)
     assert torn == [("custom", "sbx_123", "fixtures.sandbox:destroy")]
 
@@ -1440,7 +1498,9 @@ async def test_terminal_publish_failure_still_runs_durable_sandbox_cleanup() -> 
         sandbox_teardown=teardown,
     )
     bus = _TerminalPublishFailureBus()
-    await supervisor.dispatch(bus, request("terminal-publish-failure"))
+    run = request("terminal-publish-failure")
+    _seed_pending_dispatch(store, run)
+    await supervisor.dispatch(bus, run)
     tasks = tuple(supervisor.tasks.values())
     gate.set()
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1804,7 +1864,9 @@ async def test_failure_contract_initial_and_resume_preserve_typed_failure(
             ),
         )
     else:
-        await sup.dispatch(bus, request(run_id))
+        run = request(run_id)
+        _seed_pending_dispatch(store, run)
+        await sup.dispatch(bus, run)
     await _drain(sup)
     failed = find_event(bus.run_events(run_id), RunFailed)
     assert calls == 1

@@ -78,7 +78,7 @@ class SupervisorControlMixin(SupervisorContext):
 
     async def dispatch(self, bus: StreamProtocol, msg: InboundMessage) -> None:
         if isinstance(msg, RunRequest):
-            await self._on_request(bus, msg)
+            await self._consume_request(bus, msg)
         elif isinstance(msg, RunResume):
             await self._on_resume(bus, msg)
         elif isinstance(msg, RunSteer):
@@ -98,15 +98,6 @@ class SupervisorControlMixin(SupervisorContext):
                 LOGGER.exception("steer persist failed run_id=%s", msg.run_id)
         else:
             await self._on_cancel(bus, msg)
-
-    async def _on_request(self, bus: StreamProtocol, request: RunRequest) -> None:
-        # 原子认领 + TTL 租约：多 pod 消费同一请求时仅首个认领者起 run。
-        lease = await self._run_repository.try_claim(request, self._consumer)
-        if lease is None:
-            LOGGER.debug("skipping already-claimed run_id=%s", request.run_id)
-            return
-        self._leases[request.run_id] = lease
-        await self._start_run(bus, request, lease)
 
     async def _on_resume(self, bus: StreamProtocol, msg: RunResume) -> None:
         # 终态权威闸：cancel/自然完成后 stale resume 即使 checkpoint 仍有 interrupt 也不续跑。

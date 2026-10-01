@@ -1,5 +1,13 @@
 # kokoro-agent API 契约
 
+## AGENT-DURABLE-INGRESS-P0：3.0 wire 不变的 worker 内部门（2026-10-01）
+
+本片不编辑 OpenAPI、generated、provenance 或错误码。`POST /v1/runs` 仍先持久
+canonical dispatch intent，Redis `RunRequest` 只是通知。worker 的所有 `RunRequest` 入口都必须
+回读 `get_pending_dispatch(run_id)` 并仅用返回的 canonical request 调用 `claim_dispatch`；
+缺失/already-claimed intent 的通知为内部 no-op，不产生新 HTTP 响应或公开失败事件。
+resume/steer/cancel 契约不变。本片不是 session FIFO、queued/steer 新语义或 Agent 4.0。
+
 ## AGENT-TERMINAL-ATOMIC/P0：HTTP3.0 wire不变的内部一致性门（2026-10-01）
 
 基线dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3。本片不改OpenAPI/provenance/generated/公开字段、

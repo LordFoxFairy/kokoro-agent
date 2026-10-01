@@ -1777,6 +1777,12 @@ async def test_terminal_chat_write_failure_rolls_back_run_and_outbox(
         chat_repository=chat,
     )
     try:
+        namespace = runtime_namespace(current_request.execution_identity)
+        await runs.enqueue_dispatch(
+            current_request,
+            namespace,
+            f"acceptance:{current_request.run_id}",
+        )
         await supervisor.dispatch(bus, current_request)
         outcomes = await asyncio.gather(
             *tuple(supervisor.tasks.values()), return_exceptions=True

@@ -1,5 +1,18 @@
 # kokoro-agent 技术设计
 
+## AGENT-DURABLE-INGRESS-P0：备用入口收敛（2026-10-01）
+
+本片只收敛现 3.0 worker 的备用 `dispatch(RunRequest)` 入口，不改 HTTP/Redis wire、DDL、
+scope、retry、retention 或模型执行。正常 serve 已通过 `_consume_request` 以 Redis frame 中的
+`run_id` 回读 PostgreSQL `run_dispatch` 的 canonical `RunRequest`，再以 `claim_dispatch` 在同一事务
+完成 `pending -> claimed` 与 Run lease 建立。当前缺口是 `SupervisorControlMixin.dispatch ->
+_on_request -> try_claim`可跳过该 durable intent。
+
+收敛后两条调用路径共用 `_consume_request`：无 pending intent 的通知不持久 user message、
+不建 Run、不 build；Redis 伪造 envelope 不参与业务语义；真实 pending intent 只有一个
+consumer 赢得 claim/start，重放不重复执行。resume/steer/cancel 继续走现有 control 路径。
+`try_claim` 仍有测试与底层 fixture 用途，本片不扩大为 repository 全面删除。
+
 ## AGENT-TERMINAL-ATOMIC/P0：现有终态一致性前置切片（2026-10-01，本片 Root 验证门已通过，待 Root 提交）
 
 基线 `main dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3`，起始clean；只修已有HTTP3.0终态持久化，

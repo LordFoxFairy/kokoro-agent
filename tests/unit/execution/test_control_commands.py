@@ -251,7 +251,10 @@ async def test_cancel_via_control_loop_emits_two_receipts_and_applies() -> None:
     )
     run_repository = FakeRunRepository()
     sup = _supervisor(agent, run_repository)
-    await sup.dispatch(bus, request("cc"))
+    run = request("cc")
+    run_repository.dispatches[run.run_id] = "pending"
+    run_repository.dispatch_requests[run.run_id] = run
+    await sup.dispatch(bus, run)
     for _ in range(200):
         if run_control_stream("cc") in bus.deleted:
             break

@@ -1,5 +1,13 @@
 # kokoro-agent 数据模型
 
+## AGENT-DURABLE-INGRESS-P0：现 dispatch 事实的唯一入口（2026-10-01）
+
+本片不新增表、列、索引或 migration。`kokoro_agent_run_dispatch` 仍是 Run 启动前的
+durable admission 事实；worker 只能将其现有 `pending` 行与 `kokoro_agent_run` lease 在
+`claim_dispatch` 的单事务中收敛为 claimed。Redis frame 中除 `run_id` 外的字段不是该转换的
+持久事实源；无 pending dispatch 时禁止直接插入 Run。现 terminal、lease、control、purge 数据语义
+不变；本片不建立 scope/head/lineage 事实，不处理 retention 决策。
+
 ## AGENT-TERMINAL-ATOMIC/P0：现表原子终态切片（2026-10-01）
 
 基线dd5afc3528fe3a835756bc3ff55dfacaa8ca76d3，canonical schema原字节不变，无新字段/表/索引、

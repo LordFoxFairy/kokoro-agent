@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
+from dataclasses import dataclass
 import json
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import cast
 
 import pytest
 from langchain_core.tools import StructuredTool
@@ -68,14 +71,103 @@ def base_url():
     server = HTTPServer(("127.0.0.1", port), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
-    thread.join(timeout=5)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _coro(tool: StructuredTool):
     assert tool.coroutine is not None
     return tool.coroutine
+
+
+@dataclass(frozen=True)
+class _FixtureExitState:
+    listener_closed: bool
+    thread_stopped: bool
+    port_rebindable: bool
+
+
+def _port_can_rebind(port: int) -> bool:
+    with socket.socket() as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def _exercise_base_url_fixture(
+    monkeypatch: pytest.MonkeyPatch, *, throw_from_test: bool
+) -> _FixtureExitState:
+    servers: list[HTTPServer] = []
+    threads: list[threading.Thread] = []
+    real_server = HTTPServer
+    real_thread = threading.Thread
+
+    def observe_server(
+        address: tuple[str, int], handler: type[BaseHTTPRequestHandler]
+    ) -> HTTPServer:
+        server = real_server(address, handler)
+        servers.append(server)
+        return server
+
+    def observe_thread(*, target: Callable[[], None], daemon: bool) -> threading.Thread:
+        thread = real_thread(target=target, daemon=daemon)
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setitem(globals(), "HTTPServer", observe_server)
+    monkeypatch.setattr(threading, "Thread", observe_thread)
+    fixture_factory = cast(
+        Callable[[], Generator[str, None, None]], getattr(base_url, "__wrapped__")
+    )
+    generator = fixture_factory()
+    url = next(generator)
+    assert len(servers) == 1
+    assert len(threads) == 1
+    server = servers[0]
+    thread = threads[0]
+    port = int(url.rsplit(":", maxsplit=1)[1])
+
+    try:
+        if throw_from_test:
+            with pytest.raises(RuntimeError, match="test body failed"):
+                generator.throw(RuntimeError("test body failed"))
+        else:
+            generator.close()
+        return _FixtureExitState(
+            listener_closed=server.socket.fileno() == -1,
+            thread_stopped=not thread.is_alive(),
+            port_rebindable=_port_can_rebind(port),
+        )
+    finally:
+        # RED 阶段只回收本测试捕获的真实对象；上面的状态在补偿前冻结。
+        if thread.is_alive():
+            server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_base_url_fixture_closes_listener_and_thread_on_generator_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _exercise_base_url_fixture(monkeypatch, throw_from_test=False)
+    assert state.listener_closed
+    assert state.thread_stopped
+    assert state.port_rebindable
+
+
+def test_base_url_fixture_closes_listener_and_thread_when_test_throws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _exercise_base_url_fixture(monkeypatch, throw_from_test=True)
+    assert state.listener_closed
+    assert state.thread_stopped
+    assert state.port_rebindable
 
 
 @pytest.mark.parametrize(

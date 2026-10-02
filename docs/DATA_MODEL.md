@@ -497,7 +497,43 @@ late observer发现Run不存在零insert，不能创建孤儿或复活；observe
 连续invalid、invalid、valid的PG exact-payload例只读现checkpoint表，不新增或修改native SQL；Root尚待执行本轮新例。
 证据缺项进入unknown且不重调，不篡改保存的原intent或据最新输出补值；原Run terminal和有界retention规则保持。
 
- AGENT-PROFILE-P3A-R25：Run静态绑定已编码、真PG待验（2026-10-01）
+## AGENT-P3B-D0-R26：第二阶段Run持久目标（2026-10-01；仅设计）
+
+当前正式main `e977923ea9992cbddaf0cdbc6c8f8d23b3af120e`，HITL/HTTP4已发布；profile当前仅有assembly_recipe_bytes/fingerprint。
+`af45817260478f1ee755d8e6e6963051e2049062`及真实PG43/43是P3A历史验收证据，不是本D0新增验证；当前SQL没有以下effective字段。本D0不改SQL/adapter，历史候选段不表示P3A仍待验。
+第二阶段实施以TECH顶节明确observer、真实disarmed backend、Root依赖ADR与制品门通过为前提，不把静态配方重命名为effective。
+
+拟在唯一canonical `database/schema.sql` 的现Run增加 `effective_native_policy_bytes BYTEA NULL`、
+`effective_native_policy_digest TEXT NULL`，成对全NULL或全非NULL；非空bytes长度1..8388608、digest严格64小写hex。
+CHECK同时要求effective非空时static两列非空；不要独立profile表/索引/外键。catalog drift逐列及CHECK精确验证；
+fresh owner schema一次安装，拒旧schema，不迁移/补值/兼容。其他owner schema同库不影响本owner fresh检查。
+
+表示唯一复用现canonical_json，domain_tag为 `kokoro-agent:effective-native-policy:1`，SHA256为该canonical UTF8 bytes摘要。
+内容为所有peer及main/GP/catalog完整有序真实材料化政策，定义见TECH；不纳route revision/health/URL/凭据/运行对象，
+不把动态执行输入预先当最终prompt，也不漏实际模板、工具归一化/override/exclusion、GP或middleware source与无secret选项。
+两个阶段各存真实bytes与digest：完整profile是两阶段组合，不把static SHA当runtime_profile_digest。
+
+目标 `freeze_or_verify_effective_policy(request, lease, static_binding, effective_binding)` 在现PostgresRunProfiles完成：
+1. 校验输入canonical/domain/大小/digest与完整observation；全peer本地构造完后才调用，一次gate而非逐peer写。
+2. 同连接transaction内tenant+run锁FOR UPDATE，锁返回后另取clock_timestamp；核原owner/generation、nonterminal、有效expiry。
+   请求唯一比较 `request.model_dump_json().encode("utf-8")` 与stored原TEXT UTF8；不parse再序列化，不接受等价JSON。
+3. 同锁核static已存在、内部digest正确并与本次static_binding逐byte相同；缺失/损坏/不等拒绝，第二阶段不补第一阶段。
+4. effective已有则校验保存bytes/domain/digest并与本次逐byte比较，matched零UPDATE（updated_at不变）；任何差异typed拒绝，绝不覆盖。
+5. 两列均NULL仅表示fresh Run尚未首次绑定。正常claim已RUNNING而持久counter/usage/sandbox均无执行事实可首次写；
+   started/HITL/native已执行缺值是损坏。以真实现字段/记录判断，不只phase；未来native head存在也必须拒绝缺值。
+   部分NULL、未知domain、非canonical、错误digest、越界大小拒绝；不以NULL当相等/空政策。
+6. commit成功后才activation任何peer backend；网络/模型/connector不在SQL锁内。rollback/cancel零执行；ACK丢失重连后只verify。
+   typed不相容携原build fence终态，authority失效零写/零终态，不借新generation。commit后的lease变化继续执行侧校验。
+
+本片仅已有Run fence；没有scope表时不虚写scope已锁。后继完整scope/retry目标必须改为scope→有序dispatch→有序Run、核active_run/head/generation，
+新retry从origin复制齐备两阶段，worker比较；父阶段缺失拒retry、不补父。native Checkpoint lineage、terminal原子committed晋升/释放、
+retention DAG与Conversation最终引用释放门保持，不以永久免GC假闭环；这些目标未实施，不属于已发布HITL4的完成声明，后续若breaking按既定Agent5.0发布。
+真PG矩阵：首次RUNNING零事实/已执行缺值、static缺损/不同、effective缺损/不同、exact request变体/跨tenant、迟到generation、
+锁后过期、同异值两连接竞争、回滚/取消/ACK丢失与零UPDATE；沿现ownedDB精确PID rooted wait graph，包括soft queue，不增timeout。
+历史P3A PG43通过不等于这些新增矩阵通过；实施后由Root在fresh隔离owner schema实测。无外部wire变更，canonical fresh DDL仍须部署门。
+
+
+## 历史 AGENT-PROFILE-P3A-R25：Run静态绑定已编码、真PG待验（2026-10-01）
 
 基线main a37e8f1。现候选canonical schema在kokoro_agent_run新增assembly_recipe_bytes BYTEA与
 assembly_recipe_fingerprint TEXT，成对NULL/非NULL、1..8388608 bytes/小写64hex具名CHECK；无新表/索引/外键/迁移。

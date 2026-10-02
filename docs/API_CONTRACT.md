@@ -368,7 +368,40 @@ accepted/resuming与commit后的dispatch_started为不同内部事实；后一�
 内存对照完整向量已通过但不代表PG。若丢observation后仅有旧向量，保持unknown动作证据、零重投，
 不发active/native_consumed；terminal仍按原权威清集合，不倒推已消费。无新API/错误码/版本例外，4.0发布门不变。
 
- AGENT-PROFILE-P3A-R25：内部持久gate实现候选，HTTP3不变（2026-10-01）
+## AGENT-P3B-D0-R26：内部实际policy契约，待依赖/源码门（2026-10-01）
+
+当前正式main `e977923ea9992cbddaf0cdbc6c8f8d23b3af120e`：HITL/Agent HTTP 4.0.0已发布；
+P3A静态持久已验，`af45817260478f1ee755d8e6e6963051e2049062`仅为P3A历史验收基线。当前没有effective观察/持久gate。TECH顶节为当前P3B候选接口与30路径来源，以下候选/P2文字仅历史。
+本D0只四docs；受维护fork是待Root ADR/依赖门候选，上游现0.6.6/1.3.2没有本方案完整observer，未修改依赖或安装目录。
+
+目标只增内部 `EffectiveNativePolicyBinding(canonical_bytes, digest)` 与
+`RunProfilePort.freeze_or_verify_effective_policy(request, lease, static_binding, effective_binding)`。
+返回frozen/matched而不是可忽略bool；typed incompatibility携原build fence映射现contract_incompatible/false，authority lost零写且
+不借新adopt终态。HTTP admission不接受caller policy，HTTP-only不导入worker/private/native装配；不新增wire字段/错误码/Redis协议。
+P3B不改变已发布HTTP4，fresh schema/执行器须协调替换；正式retry/scope机器字段仍为后继owner-first发布目标，
+后续若breaking按既定Agent5.0发布，非本片偷偷激活。
+
+候选library contract必须覆盖每peer main/GP/catalog实际SystemMessage、真实ToolNode归一化后的有序工具schema/description/source、
+实际override/exclusion/GP决策与middleware顺序/模板/安全选项/source，并有完整路径清单与completed观测。
+单DeepAgents输入tools不是实际tool registry；Runtime hook不是构造期观察，禁止两次constructor/第二selector/闭包推断。
+原生runtime对状态/Skill/结果的动态变换仍是执行输入；冻结其**实际选中的政策、模板和规则**，不伪称提前得到每轮最终prompt。
+route revision/health/endpoint/凭据排除，真实路由引起的政策变化必须纳入；动态授权照常重验。未知runtime callable不执行而拒绝。
+
+唯一顺序为static commit→全peer preflight/System→全peer仅本地单次native材料化→完整effective一次事务commit→真实backend activation→
+原graph执行。所有peer绑定前零sandbox/provider/tool执行；disarmed正式BackendProtocol保Composite权限/能力语义，不走已弃用callable。
+缺观察、peer失败、SQL回滚或authority丢失均不得执行任何peer。current authority的失配只用原fence收口。
+同Run resume/takeover已有值同bytes验证不覆盖；首次effective尚缺且无执行事实可绑定，started/HITL缺值typed拒绝。
+请求身份仍唯一 `request.model_dump_json().encode("utf-8")` 对stored原TEXT UTF8 bytes；JSON解析等价不授权。
+
+后继完整scope/retry目标的retry admission仍scope锁内验证parent/origin两阶段齐备，缺阶段409 run_retry_conflict，不从新路由补父NULL；
+合法新Run复制origin两阶段，再由worker重算比较。scope key/head/generation、native checkpoint/terminal原子晋升/retention DAG目标保持。
+正式发布仍owner machine/runtime/schema→固定artifact→BFF全部Chat/Scheduled消费者→Web→协调激活；不新增3.0 run_scope_busy。
+Conversation最终释放未决只阻最终GC及完整scope/retry/native/retention目标闭环，不阻P3B独立片。
+当前无新的HTTP机器源变更；原D0的3.0 contract-check是历史证据，R64当前HTTP4的静态复验由Root后继执行，
+不证明候选library接口或第二阶段已实现。依赖primary证据、精确版本/hash、待验供应链与RED门见TECH顶节。
+
+
+## 历史 AGENT-PROFILE-P3A-R25：内部持久gate实现候选，HTTP3不变（2026-10-01）
 
 基线main a37e8f1；当前代码新增Run内部freeze_or_verify_static_recipe真实facade/adapter，非外部API。
 factory同plan在任何preflight/System前await事务commit；request比较唯一无参数model_dump_json原UTF8 bytes，

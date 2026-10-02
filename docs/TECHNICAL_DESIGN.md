@@ -796,7 +796,176 @@ unknown的三次协调上限仅适用于已失联且静止attempt的成功读取
 只阻最终GC/完整4；本HITL记录按Run生命周期处理并保未结intent/native证据引用，不能永久免GC。
 
 
- AGENT-PROFILE-P3A-R25：静态Run配方持久实现候选（2026-10-01）
+## AGENT-P3B-D0-R26：实际 native policy 材料化与执行前持久屏障（2026-10-01）
+
+**当前正式基线 main `e977923ea9992cbddaf0cdbc6c8f8d23b3af120e`，HITL/Agent HTTP 4.0.0已发布。**
+P3A历史验收基线为`af45817260478f1ee755d8e6e6963051e2049062`：默认1649/6/234、真实PG43/43、
+独立review 0/0/0、Root安装wheel230资源/115依赖/12动态边；这些是历史证据，不是本D0新增验证。profile当前只持久static recipe；
+没有effective列、材料化observer、全peer执行前第二阶段gate，也没有正式scope/retry/native/retention闭环。
+本D0唯一写入集为现TECH/API/DATA/CURRENT四文档；下列源码/SQL/依赖范围全部是待Root批准的后继，未实现。
+本节是当前P3B设计入口，以下P3A/P2候选段落保留为历史证据，不再表示当前未提交候选。
+
+### 真实边界证据与两案比较
+
+安装源码基准：仓内`.venv/lib/python3.14/site-packages/`，DeepAgents 0.6.6、LangChain 1.3.2。
+`deepagents/graph.py:538–558,577–739,790–820`真实选择harness、GP/catalog、middleware、tool override与基础prompt；
+`deepagents/middleware/subagents.py:697–711,743–764`在主构造中创建子graph并生成task描述；
+`langchain/agents/factory.py:893,937–966`将middleware工具与用户工具经实际ToolNode归一化，形成真实有序default_tools。
+现公开constructor只返回graph；仅DeepAgents输入快照会漏隐式工具与LangChain归一化，单主graph快照会漏GP/catalog。
+当前Agent `agent_factory.py:149–169,204–225,282–323`仍在每peer native构造前创建backend；
+`sandbox/backend.py:130–135,332–398`含mkdir与真实connector创建/重连，均须移到effective commit之后。
+
+| 可行位置/方案 | 裁决与成本 |
+| --- | --- |
+| 仅用当前公开create_deep_agent、middleware hooks、graph返回值 | 能构图，未提供满足本门的完整不可变observation；runtime wrap_model_call观察过晚，前面可能有middleware/backend效果。拒再调用resolver、两遍constructor、global monkeypatch和闭包/repr猜测。当前依赖原样保留时，只维持已验P3A，不冒effective完成。 |
+| 受维护、精确版本的dependency artifact增加显式单次observation | 推荐候选：由真实构造自己的局部值输出，在LangChain实际工具归一化点和DeepAgents主/子构造点贯通；不复制selector、不替换runtime。须先Root ADR/依赖/source门批准，当前未批准fork、新库目录或安装patch。 |
+
+### 有效政策与动态执行输入的精确分界
+
+第二阶段不是批准recipe集合，也不是未来每次provider请求的预测。它是**当前路由实际选中的完整装配政策**：
+每peer/main/GP/catalog的真实基础SystemMessage内容块、有序规范化工具schema/description/source、实际override/exclusion、
+GP enable/description/prompt、middleware顺序、真实模板/无secret选项/实现source。模型对象与路由凭据不序列化。
+
+`deepagents/middleware/filesystem.py:1623–1657`按真实backend能力筛execute并增加prompt；
+`deepagents/middleware/skills.py:913–939`按state中的Skill metadata注入内容。因此不能把构造基础prompt声称为
+每轮最终完整模型请求，也不能因动态行为而漏记其实际middleware模板、参数、source和工具变换规则。
+这些规则由**拥有实际runtime实现的库**显式描述当前实例，Agent不重写提示词算法或工具筛选算法。
+动态对话消息、工具结果、checkpoint状态、当前授权/Skill加载结果是执行输入，仍沿原来源/权限校验；
+route revision/health/endpoint/凭据不进digest。route引起选中harness或任何政策变化必须改变effective bytes。
+未知runtime callable、无法显式描述的middleware、opaque compiled subagent默认拒绝；不得静态执行hook探测政策。
+
+### 候选 library 接口及一次真实材料化
+
+以下名称为待实现接口要求，**不是上游现有API**：
+
+1. LangChain `ConstructionObservation`：在该次create_agent内部实际ToolNode归一化之后产生frozen值，包含真实
+   SystemMessage内容、ordered normalized tools（名称/description/公开schema）、ordered middleware安全政策和response-format政策。
+   同次创建的对象继续被原graph使用；不再构造ToolNode、不调用tool或middleware hook。未知动态schema实现默认拒绝。
+2. DeepAgents `MaterializationObservation`：把上项与该次已选harness、实际覆盖/exclusion、GP决策、实际middleware
+   政策合并；main与SubAgentMiddleware中每个GP/catalog的create_agent必须携带同一scoped collector。
+   路径为peer key + main或declared subagent identity；真实constructor产生完整子路径清单及completed记录，
+   Agent核预期peer集合、每条路径恰一次、父子闭合、无缺项/重复/未知项，而非在Agent再运行GP selector。
+3. 库owner安全投影白名单直接描述其实际实例的已知字段/模板/变换规则；工具schema读取公开元数据，回调只作本地
+   observation。不dump实例、model、backend、client、callable或凭据；Agent自有guards以同实际参数提供安全政策描述。
+   不以空descriptor、仅class名或所有批准sources替代实际选中政策；源身份必须从现manifest精确登记解析。
+4. 最小生产hook落点：DeepAgents的`deepagents/graph.py`、`deepagents/middleware/subagents.py`、
+   新`deepagents/materialization.py`及公开导出；LangChain的`langchain/agents/factory.py`、
+   新`langchain/agents/materialization.py`及公开导出。两个owner模块各自负责原生middleware明确安全投影，
+   若完整覆盖需改其他原生类，先向Root报告精确路径，不把“5个hook文件”冒称完整library发布范围。
+   版本元数据、库测试、许可证与artifact清单由独立library依赖任务批准；当前Agent后继文件集不授权这些库文件。
+
+### 真实 disarmed backend 与全peer屏障
+
+采用新`sandbox/deferred_backend.py`中的真实BackendProtocol实现；执行型准确继承SandboxBackendProtocol。
+该对象不是fake返回值或用于猜测能力的样本：声明来自已登记backend实现/配置，activation只绑定一次实际backend，
+并校验实际能力与声明一致。绑定前所有sync/async读写/execute/download等操作typed拒绝，不mkdir、不连接、不执行。
+仍使用真实CompositeBackend(default=deferred, routes=TypedSkillBackend)，故native的实例类型、permissions、routes、
+artifacts_root语义保持。工具继续接收正式BackendProtocol，不扩toolset/deliver签名，不添加可选gate。
+
+淘汰callable backend方案：`deepagents/middleware/filesystem.py:690–715`构造期按实例做权限/根路径判断，
+callable会改变这些语义；`:736–748`还标注0.7移除。state用非执行型，local/docker/e2b用登记执行型；
+未登记custom在任何import/factory调用前拒绝，不靠提前连sandbox获得descriptor。activation委托现
+make_backend_for_run的lease/CAS/自有loser清理，不复制生命周期；真实能力不符即停止，不启动graph。
+
+唯一顺序：同PreparedFeaturePlan → static事务commit → 全peer当前授权preflight/System路由 →
+全peer本地model和disarmed backend/native各一次构造 → 完整observation安全编码 → 同Run fence一次effective
+freeze/verify事务commit → activation现backend → 返回原来同一批graph。native构造期间禁止图调用、sandbox/provider/tool
+执行；如果某批准constructor有外部效果，该实现不满足门，先改其owner边界，不能以观察记录代替零效果证明。
+所有peer结果齐备才提交；第二peer异常、observer不完整或SQL失败时，第一peer也保持零执行。静态前置授权顺序不倒置。
+commit后lease仍可能失效，activation/执行继续现fence校验；本P3B不虚称补齐native checkpoint迟到写保护。
+
+### 第8节放置门与精确后继集合
+
+| 项 | 结论 |
+| --- | --- |
+| Owner/当前 | Agent Run执行政策，原唯一writer；Root管ADR、依赖批准、Git、schema隔离资源与最终复验。基线e977923，HITL/HTTP4已发布，P3A已验、P3B未实施。 |
+| 目标/API | 内部EffectiveNativePolicyBinding与freeze_or_verify_effective_policy；全peer一次绑定，匹配零更新。已发布HTTP4不变，无caller profile字段。 |
+| 两位置 | codec/observation放现execution普通文件，真实backend生命周期放现sandbox普通文件；淘汰塞入已有runtime_profile codec（其职责是纯静态recipe）或万能native模块/新服务。 |
+| 粒度 | 两生产普通文件＋两测试文件，均既有目录；其余沿已存在Run adapter/schema/factory/门禁。无新owner、runtime、目录。 |
+| 依赖 | factory→内部值/Run port；infra→domain，execution复用现canonical/source；HTTP不加载worker/private/native装配，domain不依赖SDK/psycopg。 |
+| SQL/失败 | 现Run成对effective列，同事务核static/tenant/request原bytes/fence/锁后clock；无跨owner SQL/外键/迁移/补值，现failure契约收口。 |
+| 删除项 | 不保第二selector、两次构造、闭包推断、optional gate、旧schema/旧profile fallback；不复制sandbox CAS。 |
+| 验证 | 下列RED→GREEN，真实native constructor与安装wheel闭包；Root真PG、默认全门及独立审查。D0只做文档与contract验证。 |
+
+以下是**拟议30条精确Agent路径，26现有+4新，无新目录**；只有D0四docs目前获写授权。
+依赖ADR未通过前不改pyproject/lock，不创建fork checkout；额外library文件集与发布版本须Root另批。
+
+```text
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/database/schema.sql
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/models.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repositories.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/domain/run/repository.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_profiles.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/postgres_run_repository.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/infrastructure/schema.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/agent_factory.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/failures.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/worker/supervisor_execution.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/runtime_profile_sources.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/support/fakes.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/agents/test_factory.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_supervisor.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/http/test_http_main.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_canonical_database_schema.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_schema_installation.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/integration/database/test_run_profiles.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/TECHNICAL_DESIGN.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/API_CONTRACT.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/DATA_MODEL.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/docs/CURRENT.md
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/execution/effective_native_policy.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/src/kokoro_agent/sandbox/deferred_backend.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_effective_native_policy.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/sandbox/test_deferred_backend.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/contract/test_deepagents.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/tests/unit/execution/test_runtime_profile_sources.py
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/pyproject.toml
+/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/uv.lock
+```
+
+### RED矩阵与发布顺序
+
+| RED场景 | 必须证明/真实验证位置 |
+| --- | --- |
+| main/GP/catalog/多peer完整性 | 真constructor每graph一次；缺/重/未知路径拒绝，任一peer失败全部零sandbox/provider/tool；test_deepagents、test_factory、新effective测试。 |
+| 实际政策漂移 | harness prompt/suffix、GP enable/override、middleware顺序/选项、隐式工具schema/description/重名覆盖/工具exclusion任一改变，bytes变化或显式拒绝；不观察输入list冒充ToolNode结果。 |
+| 动态输入排除 | 凭据/endpoint/route revision/health变化不污染digest；实际选中政策变化不能被排除。Skill等动态输入仍授权重验；未知runtime callable零执行拒绝。 |
+| backend保真 | state/执行型、Composite routes/permissions/artifacts_root与实际能力一致；绑定前所有方法拒绝、二次bind拒绝；local mkdir/connector/provider调用计数均为0直到commit。 |
+| 全peer提交屏障 | factory仅收齐后调用gate一次；cancel、构造失败、commit失败、lease丢失均不交出runnable；指纹辅助/normal/resume/takeover均走同factory。 |
+| 真PG/fault | static缺/损/不等、effective成对NULL/部分NULL/坏domain/非canonical/错digest、首次RUNNING零事实允许、started/HITL缺值拒绝；同/异值竞争、锁后expiry、迟到generation、tenant/原request变体、rollback/cancel/commitACK丢失、matched零UPDATE。沿test_run_profiles精确ownedDB/PID rooted wait graph。 |
+| 安装与边界 | 新库API缺失fail-closed、缺source拒绝、source/wheel全peer指纹一致、HTTP-only不导入worker；完整默认门、schema drift、独立安装轮验证。 |
+
+执行顺序：Root三设计审查→依赖ADR/artifact owner和精确scope批准→库observation tests RED/GREEN与可审查版本制品→
+Agent tests-only RED→30路径候选实现/默认门/安装wheel→冻结→Root真PG与独立审查/重跑→提交。
+不先发布缺gate的装配路径，不添加“observer存在才校验”兼容分支。P3B与完整scope/retry/native/retention仍是后继硬门，不属于已发布HITL4的完成声明；后续若breaking按既定Agent5.0发布。
+
+### 依赖核验、许可证、供应链与退出（2026-10-01）
+
+官方primary核验：[DeepAgents仓库](https://github.com/langchain-ai/deepagents)、
+[LangChain仓库](https://github.com/langchain-ai/langchain)均有正式源码/issue/security入口；存在发布记录不等于
+所锁版本仍是latest、无漏洞或已提供本方案接口。[官方定制文档](https://docs.langchain.com/oss/python/deepagents/customization)
+说明构造定制，完整observer缺口以本地固定版本实际源码为准，不靠浮动main推断。
+
+| 当前锁定制品 | 官方源身份 | 本地uv.lock wheel SHA256 / 许可证 |
+| --- | --- | --- |
+| deepagents 0.6.6 | [release commit f3e23cdba44cba02d92ab1558caec680fddb4225](https://github.com/langchain-ai/deepagents/commit/f3e23cdba44cba02d92ab1558caec680fddb4225)；官方release 2026-05-28 | c42a06b03945b750ae6d431cb67824843f4e87510b1a5fd50e2235a821423525；MIT，安装METADATA/许可证 |
+| langchain 1.3.2 | [release commit 7bb4130c7d460f14ec6391805cb47bf01637b5c5](https://github.com/langchain-ai/langchain/commit/7bb4130c7d460f14ec6391805cb47bf01637b5c5)；官方release 2026-05-26 | 900f6b3f4ee08b9ba3cdbe667dbf42525bd6f66a4a07a7f1db26262673e41ed6；MIT，安装METADATA/许可证 |
+
+这些hash来自当前lock（现registry为mirrors.aliyun.com），不是本D0重新下载验签或新fork制品证据；安装源码与release树逐文件
+对应、新制品可重复构建/provenance/漏洞与许可证扫描仍是依赖准入必验项。不得把官方release签名当本地wheel签名。
+候选受维护fork保留MIT copyright/license，独立版本、base commit、最小patch commit、源码/源码包/wheel hash、构建环境与SBOM
+完整登记；Root先指定维护owner与安全更新责任。仅在正规artifact源固定制品，不在Agent源码vendoring、不修改site-packages、
+不建隐藏runtime分叉。两库兼容关系、Python3.14、Pydantic/工具schema、LangGraph checkpoint兼容必须实测，现manifest重新登记
+真实新资源与版本闭包，不能沿用230/115数字冒证据。性能门测单次全peer构造时间/内存与observation大小，不事先声称零成本。
+
+退出路径：优先上游接受同接口；即使尚未接受，Root可批准有明确维护人的固定patch artifact推进，不无限等上游。
+上游正式版本满足同contract/负向测试后一次替换pin并删fork来源；不保两套运行分支。若artifact门失败则不发布P3B，维持已验P3A，
+不回退跳过校验来执行已绑定Run。新旧profile无数据兼容；代码回滚与fresh schema/Run处置由发布门裁决。
+未决仅Root依赖ADR/维护owner/精确新版本制品与接口证明；完整scope/retry/native/checkpoint/retention属于明确后继，
+Conversation最终引用释放产品决定只阻最终GC及上述完整目标闭环，不阻本片设计和经批准的独立实现。
+
+
+## 历史 AGENT-PROFILE-P3A-R25：静态Run配方持久实现候选（2026-10-01）
 
 基线main `a37e8f1e308286d922212f2d5365634fd3ff2c21`，Root已通过r2设计门；本片只批准22路径，
 20既有+2新（postgres_run_profiles.py、test_run_profiles.py），无新目录/依赖/机器契约/lock改动。

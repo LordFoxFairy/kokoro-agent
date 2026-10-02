@@ -438,6 +438,31 @@ P3B effective-native、scope/retry/checkpoint/retention功能目标均保留，�
 一次替换旧interaction/resume解释、无新/v2长期双轨、无兼容fallback；Agent4机器＋实现/schema/artifact验证提交后，
 BFF才固定pin并更新集合投影，再Web消费。HITL本身也必须完整实现、真门通过后发布，不发半contract。
 
+## AGENT-P3B-D0-R26：设计冻结待审（2026-10-01）
+
+当前正式已验基线 main `e977923ea9992cbddaf0cdbc6c8f8d23b3af120e`，HITL/Agent HTTP4已发布；R64仅修正现四文档新增P3B段的当前事实。
+P3A历史基线为`af45817260478f1ee755d8e6e6963051e2049062`，下节Root默认1649/6/234、真实PG43/43、独立review0/0/0与安装wheel均是历史证据，不是R64新增验证。
+原P3B D0收敛实际单次native材料化/GP/catalog/LangChain工具归一化、真实disarmed BackendProtocol、全peer一次effective持久gate；
+所有源码/SQL/机器contract/依赖/lock/安装目录未修改，effective尚未实现；已发布HITL4不表示P3B或完整scope/retry/native/retention目标完成。
+
+只读证据：固定安装DeepAgents0.6.6/LangChain1.3.2真实源码、factory/backend与三设计；官方primary仓库/定制文档/版本release commit
+已核，版本/hash/MIT与未验供应链项详见TECH顶节。不把官方签名推论为本地wheel验签，不声称锁定版本latest或无漏洞。
+当前公开API缺完整observation；维护fork最小接口是候选，尚待Root ADR、维护owner、新制品精确版本/commit/hash及库contract证明。
+不改site-packages、不vendor、不建library目录，不无限等待上游；Root可批准独立维护artifact后继续，当前不提前接入。
+
+设计明示：冻结实际装配政策和runtime模板/规则，不声称预先冻结每轮动态prompt；真实变化必须纳入digest，动态授权仍重验。
+执行顺序保持static commit→全peer preflight/System→本地单次材料化→一次effective commit→backend activation→原graph执行。
+SQL目标同Run fence/static同值/原request字节/锁后clock/无执行首次资格、matched零更新；现effective列尚不存在。
+TECH列拟议30路径（26既有+4新、无新目录）与RED/真PG/安装wheel矩阵，不是本轮代码授权。
+
+当前未决：Root依赖ADR/维护owner及精确artifact、候选observer接口实证；P3B源码/真实故障矩阵未运行。
+完整scope/retry/native/checkpoint/retention仍硬门；Conversation最终引用释放产品未决只阻最终GC及上述完整目标闭环，不阻本片独立推进；后续若breaking按既定Agent5.0发布。
+原P3B D0历史验证（非R64重跑）：`PYTHONDONTWRITEBYTECODE=1 uv run --frozen --offline --no-sync kokoro-agent-contract-check` exit0，
+输出`kokoro-agent contract: ok`，日志`/tmp/kokoro-agent-p3b-d0-contract.log`。只读hash范围检查确认仅四授权docs变化、
+20个监视的非文档文件byte不变；拟议30路径唯一、26现有/4新且父目录均存在，Markdown围栏/行尾空白/基线检查通过。
+四文件SHA交付`/tmp/kokoro-agent-p3b-d0-manifest.json`，实际diff为`/tmp/kokoro-agent-p3b-d0-doc.diff`。
+R64仅做文档事实修正与字节保护核验，当前HTTP4静态contract复验由Root后继执行。未运行未来native/SQL/PG矩阵，
+不把历史contract通过冒充P3B实现；Root独立审查后决定文档提交，源码实施仍须另行批准。
 
 ## P3A Root 正式代码验收（2026-10-01）
 

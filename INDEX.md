@@ -48,3 +48,7 @@ Redis `127.0.0.1:56380` 的 logical DB `9`；运行入口不负责创建重复�
 - `skills/backend.py`：base64url exact SkillId虚拟只读路径；每次访问current gate。
 - `skills/middleware.py`：复用原生 Skill loader/prompt，每次新 Run graph entry 刷新 checkpoint metadata，保持同 Run resume。
 - `worker/platform.py`：进程HTTP资源与`skills_for_run(LeasedRun)`装配。
+
+## 配置参考
+
+- `agent.example.full.yaml`：与 `.env`/secret 注入边界并列的完整非 secret 配置树参考；由 `KOKORO_AGENT_CONFIG` 读取。

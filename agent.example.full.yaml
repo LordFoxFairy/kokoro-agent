@@ -1,0 +1,55 @@
+# kokoro-agent configuration reference.
+# This file is parse-only documentation: inject secrets and deployment endpoints via env/secret.
+# Values here are safe examples and are not a runnable service profile.
+http:
+  host: 127.0.0.1
+  port: 4401
+model:
+  disable_streaming: false
+  openai_base_url: https://api.example.invalid/v1
+  openai_reasoning: false
+  anthropic_base_url: https://api.example.invalid/anthropic
+  litellm_enabled: false
+  litellm_base_url: https://litellm.example.invalid/v1
+stream:
+  redis_url: redis://redis.example.invalid:6380/5
+database:
+  url: postgresql://agent@postgres.example.invalid:5433/agent_config_test
+  schema: kokoro_agent_example
+run_repository:
+  lease_ttl_s: 90
+sandbox:
+  local_shell:
+    root: /tmp/kokoro-agent-workspace
+    inherit_env: false
+    timeout: 120
+    max_output_bytes: 100000
+  docker:
+    image: python:3.12-slim
+    ttl: 900
+  e2b:
+    template: example-template
+    timeout: 1800
+  custom:
+    factory: my_pkg.sandbox:make_backend
+    teardown: my_pkg.sandbox:destroy_backend
+mcp:
+  config: "{}"
+  egress_mode: strict
+web_tools:
+  fetch_allow_private: false
+  search:
+    provider: searxng
+    url: https://search.example.invalid
+subagents:
+  builtin: [web-researcher]
+  custom_json: "{}"
+limits:
+  lease_heartbeat_s: 30
+  recursion_limit: 100
+  drain_timeout_s: 60
+  run_token_budget: 0
+retention:
+  events_ttl_s: 0
+  run_ttl_s: 0
+# API keys, service credentials, storage signing material, and internal auth are env/secret-only.

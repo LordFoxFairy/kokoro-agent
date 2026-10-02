@@ -200,3 +200,8 @@ HTTP owner 的接口、fixture 要求和验收证据见 [`ACCEPTANCE.md`](ACCEPT
 固定Platform v4机器合同，`selected_skill_source_refs=[]`继续基础Chat；非空必须有worker Platform七项配置与
 `KOKORO_STORAGE_OBJECT_ORIGIN`。此origin可单独用于GET，不要求Storage写secret；产物写入另需原URL+secret+origin。
 当前包GET严格不带owner/用户凭据、不缓存包或授权。v4激活及用户安装/启用完整产品链仍待后续owner，见[当前实现](docs/CURRENT.md)。
+
+## 配置参考
+
+- `agent.example.full.yaml` 是安全的解析参考样本；通过 `KOKORO_AGENT_CONFIG` 指向它即可检查配置树映射。
+- API key、服务凭据、Storage 签名材料与内部认证字段只从环境变量或 secret 注入，不写入样本；样本中的域名仅用于解析示例。

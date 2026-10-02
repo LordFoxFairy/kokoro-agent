@@ -127,13 +127,11 @@ class TestConfigTree:
 class TestExamplesStayValid:
     """config/examples 防漂移：example 键漂出映射表即此处爆炸。"""
 
-    EXAMPLES = Path(__file__).parents[3] / "config" / "examples"
+    EXAMPLES = Path(__file__).parents[3]
 
-    @pytest.mark.skipif(
-        not EXAMPLES.exists(), reason="parent-repo examples not present"
-    )
     def test_agent_full_example_loads(self) -> None:
-        flat = load_config_file(str(self.EXAMPLES / "agent.example.full.yaml"))
+        example = self.EXAMPLES / "agent.example.full.yaml"
+        flat = load_config_file(str(example))
         assert flat["KOKORO_DOCKER_IMAGE"] == "python:3.12-slim"
         assert flat["KOKORO_CUSTOM_BACKEND"] == "my_pkg.sandbox:make_backend"
         assert (
@@ -141,3 +139,9 @@ class TestExamplesStayValid:
         )
         # 原生 yaml 列表直接落座（不再 CSV stringify）；AppConfig 再收窄成 frozenset。
         assert flat["KOKORO_BUILTIN_SUBAGENTS"] == ["web-researcher"]
+
+        config = AppConfig.from_env({"KOKORO_AGENT_CONFIG": str(example)})
+        assert config.sandbox.docker.image == "python:3.12-slim"
+        assert config.sandbox.custom.factory_ref == "my_pkg.sandbox:make_backend"
+        assert config.sandbox.custom.teardown_ref == "my_pkg.sandbox:destroy_backend"
+        assert config.enabled_builtin_subagents == frozenset({"web-researcher"})

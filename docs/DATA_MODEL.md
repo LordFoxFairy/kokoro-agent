@@ -1,3 +1,55 @@
+## R80-W03：逐模型 attempt 事实、usage证据与结算恢复 D0（2026-10-02）
+
+跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。
+
+基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`。本轮不改 `database/schema.sql`；以下是后继SQL设计要求，当前schema无这些新事实。Agent是唯一writer，Billing独占价格/金额/hold/ledger，System独占planned技术binding；全程无跨owner SQL、FK或数据库事务。
+
+### 1. 当前事实与目标关系
+
+当前Run保存request_json、lease、token_total、usage_input_total/output_total；`kokoro_agent_run_usage_segment`以(run_id,lease_generation)封存两项计数。它能避免同generation重复累加，却不表达一段内多个实际attempt、classification、unknown、actual provider或Billing admission。RunRequest当前只有可信execution_identity及Agent durable dispatch admission；不将逐attempt Billing admission提前设为launch必填，也不新增Run级预占。launch付款/消费授权上下文须IAM/Billing具名正式契约决定，新增引用是否导致breaking尚待该决定，身份本身不代替付款授权。
+
+目标唯一计量真源是逐attempt的不可变证据序列；Run/segment totals仅由该真源投影，不同时保留callback聚合和attempt累加两套writer。旧schema/code/data不做迁移导入或fallback，正式clean-slate切片一次替换调用、查询、测试及机器语义。token_total保留执行预算语义时也来自同一已知计量投影，不成为定价真源；unknown另有显式状态。
+
+统一发布顺序：共同冻结语义 → Agent strict evidence producer artifact先发布 → Billing固定消费该artifact并发布逐attempt admission/证据接收contract → Agent固定消费Billing → 必要BFF消费者切换。纯artifact不依赖运行服务已经启动；语义协作不等于循环等待对方先发布。
+
+### 2. 目标持久事实（具体DDL在授权SQL切片落地）
+
+| Agent-owned候选表 | 身份、数据与约束 | 生命周期/查询 |
+|---|---|---|
+| `kokoro_agent_model_call_attempt` | tenant/run/logical_call/provider_attempt opaque TEXT身份；attempt ordinal与原lease generation为正BIGINT；唯一(tenant_id,run_id,logical_call_id,attempt_ordinal)，attempt_id唯一。可信subject/actor、Agent admission/fence和受信付款上下文绑定、planned binding JSONB和digest、请求摘要；prepared尚无逐attempt Billing admission/authorization，获授后绑定本attempt且保持不可变，dispatch_started必须有合法许可，预占拒绝不得伪补引用；数量上限、执行状态、UTC TIMESTAMPTZ(3)、revision/CAS。JSON仅闭集校验，不存secret/全prompt；原fence不可变 | prepared→authorized→dispatch_started→observed/unknown，not_dispatched仅有零外发证据时；按run有序恢复及按状态/下次reconcile时间有界扫描。old started不因takeover重新授权外发 |
+| `kokoro_agent_model_usage_evidence` | 稳定evidence/source identity；(attempt_id,evidence_revision)唯一，前revision引用与canonical digest；原attempt绑定、actual attribution与来源digest、usage三态、严格分类数量/单位/完整性、outcome、UTC observed_at。append-only；非负BIGINT计数，缺失未知为NULL/显式状态，不用0占位；跨字段CHECK与应用profile双门 | 同identity同digest只读幂等，不同digest冲突。unknown可由新可信evidence revision收敛，原记录不覆盖；已知矛盾需冲突/更正流程，不latest-wins |
+| `kokoro_agent_usage_outbox` | 唯一source event identity，引用精确evidence identity/revision/digest；投递状态、有限attempt_count、next_attempt_at、delivery lease、Billing receipt opaque ref及UTC时间。不复制第二份可编辑usage，不借Run公开事件durable_seq | queued→delivering→acknowledged，ACK丢失按原identity重投；失败退避有界，per-attempt revision有序，Billing须拒漂移并幂等接收；终态后仍可独立投递/查询恢复 |
+
+三张表分别承载可变执行journal、不可变观测历史、可恢复投递生命周期，非机械DTO复制。索引仅为上述唯一性、run恢复、pending有界扫描与per-attempt revision读取；准确字段类型/长度/NULL组合、索引predicate和catalog drift矩阵随正式schema共同评审。所有读写带tenant范围，同库owner schema，不添加外键、跨owner表引用、价格/倍率表或任意dimensions垃圾桶。
+
+Run增加usage completeness/unknown attempt计数及有界汇总投影的实际表示，由同SQL切片锁定；已知部分总和不是最终总成本，也不把unknown显示成0。取消缺席段不补零。canonical schema仍唯一，installer/validator/测试必须同步，不靠Markdown证明fresh install/drift通过。
+
+### 3. 原事务与锁序
+
+1. 准备/dispatch CAS分阶段：沿现Run锁→attempt→evidence/outbox固定顺序，锁后取database clock。先核原owner/generation/expiry、Run及受信付款上下文，写prepared（无未来attempt admission）并提交；事务外申请该attempt Billing预占；再以原fence核精确call/attempt/主体/actualbinding/预算/期限，首次绑定admission进入authorized；外发前重验并CAS dispatch_started。每次实际attempt独立许可，不复用一次许可授权整Run。任何阶段都不持Run锁await provider/Billing。
+2. 观察：原fence有效时，单事务严格校验attempt、写不可变evidence、更新attempt状态、已知用量投影及outbox intent；重复callback不重复累加。网络完成但数据库提交失败保留unknown恢复，不用第二次provider调用“补证据”。
+3. 最终收口：现 `postgres_run_leases.finalize_terminal` 仍唯一协调器，同连接将最终attempt证据/remaining unknown分类、usage completeness和投递intent，与原terminal/Chat/outbox/control/cleanup一起提交或一起回滚。已独立提交的attempt evidence按identity引用，终态不再累加一次。
+4. pause/drain：所有本地native任务先drain，已观察证据seal后才释放原lease；未证明结果的started显式unknown，保留持久journal。模型/工具/HITL attempt命名空间分离，禁止复用resume attempt身份或清tool journal连带清模型证据。
+5. cancel/takeover与晚响应：旧worker失fence即停止改变Run、用量投影与授权；不借新lease补写旧闭包。Run已终态仍可能存在在途成本，终态事务保留started/unknown与后续reconcile意图，不自动释放全部Billing hold。
+6. 正式reconciler是现worker的恢复职责，不是新executor。以独立、期限有限的reconciliation claim、原attempt身份及owner可验证结果读取恢复；事务仍先Run→attempt→evidence/outbox，可在终态后追加证据revision/投递，但不重开Run、不改原终态事件及其当时usage汇总快照、不授予provider执行权；迟到完整计量通过独立usage revision查询，不把终态旧快照冒充当前结算材料。原worker任意晚callback不等于此权威查询。
+7. receipt/ACK丢失：预占请求保持原attempt/request identity查询，不生成新Run级预占；原event重投或查Billing原identity；Billing只返回受信状态，不由Agent计算capture/release金额。usage落库/结算ACK/Run终态是不同事实，分别恢复，禁止“先终态后无intent”窗口。
+
+PG commit与provider实际发送之间无共同事务；dispatch_started崩溃窗口保守unknown，provider不支持查询/幂等恢复时进入待核对队列。失败收费决策未答不阻落真实证据，但不据此自动收费或免费结案。已观测的错误/超额实际消耗完整保留，停止新增调用，Billing裁定财务处理。
+
+### 4. 保留、GC与隐私
+
+不持久provider凭据、Billing bearer/proof、原始prompt/response、OAuth数据；输入摘要和来源引用仍按私有执行证据授权访问，日志只白名单状态/引用，避免散列当匿名化保证。
+
+Run purge须感知未决attempt/证据投递/reconciliation引用；只有已取得Billing持久接收状态且恢复责任已交接、无在途/unknown与待决收费引用，并满足owner批准retention后才有界GC。不是永久免GC，也不沿当前terminal年龄直接删除未结证据。retention时长、法定保留及隐私删除由Root/Billing策略确认，不虚构天数。清除payload后仍须保留契约要求的幂等身份/digest到去重窗口结束，避免重投再次收费。
+
+### 5. 后继数据验证
+
+现schema保护不代表新DDL通过。正式切片必须覆盖fresh install+catalog列/类型/NULL/CHECK/索引drift；真实PG两个连接测试并发准备/attempt ordinal、同digest replay/不同digest rollback、所有故障注入点、旧lease写拒绝、cancel/terminal/late evidence所有顺序、outbox ACK丢失及重启、不重复Run terminal、不清unknown、同tenant-subject绑定、purge引用保护与到期有界释放。
+
+精确文件集及测试落点见TECH前缀；`model/call_repository.py` 只拥有这些Agent事实的SQL，并与原Run finalizer共用连接。Billing schema/ledger、System schema、shared Redis namespace均无本仓写权限。本D0三面候选等待owner机器契约与SQL细化，不宣称数据库门已通过。
+
+---
+
 ## R39 HTTP 4 owner 切换候选（当前解释覆盖下方历史 HITL 段落）
 
 本轮仍为 main0245a36 基线上的完整 HITL 候选工作树，未发布 artifact、未更新 BFF/Web pin。

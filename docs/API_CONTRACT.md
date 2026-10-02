@@ -1,3 +1,60 @@
+## R80-W03：逐 attempt 用量与 Billing admission 契约目标（2026-10-02）
+
+跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。
+
+基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`；当前 HTTP 4.0.0 与所有机器字节未修改。本节是待联审设计，不是已发布字段/RPC。它与 TECHNICAL_DESIGN、DATA_MODEL 的 R80-W03 前缀共同覆盖历史“段汇总即可收费/固定Feature quantity=1结算”解释；不维护新旧双默认链或旧数据迁移。
+
+### 1. Owner先行发布顺序
+
+统一发布顺序：共同冻结语义 → Agent strict evidence producer artifact先发布 → Billing固定消费该artifact并发布逐attempt admission/证据接收contract → Agent固定消费Billing → 必要BFF消费者切换。纯artifact不依赖运行服务已经启动；语义协作不等于循环等待对方先发布。
+
+下表为各owner的语义责任，不按表行顺序发布。launch只接收按IAM/Billing具名契约验证的付款/消费授权上下文，逐attempt预占在Agent准备actual call/attempt之后、provider之前申请；两者不得互代。当前不将逐attempt admission设为RunRequest必填，不新增Run级预占资源。
+
+| owner / 机器事实源 | 必须先发布的语义 | Agent消费边界 |
+|---|---|---|
+| Billing Metering/Credit；本仓唯一批准OpenAPI版本 | immutable采购费率、销售倍率7/5可配置版本、换算/舍入；quote、reserve、增额/重授权、严格usage接收、settlement/unknown查询、release/reconciliation与幂等错误 | Agent不复制价格表、不自报actualMicros；仅传严格事实和引用、校验执行权限。现有feature/quantity报价及调用方actualMicros类型不作为本目标最终契约 |
+| Agent；现 `contract/openapi/v1/openapi.json` 及 RunRequest边界 | 保持Agent durable launch与受信身份边界；若IAM/Billing具名正式契约要求新付款/消费授权引用，再决定RunRequest字段、绑定/缺失/冲突和breaking写集；逐attempt admission不在launch阶段必填 | 必要BFF普通/定时launch在Agent批准发布后串行消费；BFF不提前取得尚无attempt的预占引用。浏览器不自报付款资格/金额，request_id、execution_identity或Agent admission receipt都不是付款许可 |
+| Agent；拟新增 `contract/usage/v1/schema.json`、`vectors.json`、生成的 `manifest.json` | internal-owner event-protocol的完整attempt evidence，ordering/revision/digest、幂等、知识状态和恢复；独立于浏览器AG-UI | Billing消费固定Agent artifact，不复制可编辑DTO；Billing接收operation仍由Billing发布，引用该producer artifact |
+| System现model-catalog contract | model/provider/revision/digest/generation等planned技术binding及允许目标语义 | Agent原值冻结，不新增价格字段；planned不代替actual证明 |
+| 实际gateway/provider证据发布方（Root须具名确认） | 请求与真实provider/model、内部retry/fallback/各attempt用量的可信关联，来源认证、可查询恢复和完整性 | 也可使用已验证无静默fallback的固定供应商绑定profile；两类证明均缺失时actual attribution unknown，单次HTTP不虚报gateway内部attempt已覆盖 |
+
+usage artifact采用schema-first唯一可编辑schema与正负vectors；拟新增 `scripts/generate_model_usage_models.py` 单向生成运行时边界模型 `src/kokoro_agent/protocol/model_usage_generated.py`，manifest记录source/artifact digest；生成物只读，内部dataclass留model包。这一版本化契约目录有schema/vectors/manifest三项持续职责，不是新业务模块。具体发布版本、Billing operation名称与错误码由各owner批准，不在本D0预设已存在的RPC/字段tag。launch新增付款授权引用须先有IAM/Billing具名正式契约，再确定是否改变HTTP字段及所需breaking评审；本D0不先引入必填引用，也不默认补空或拿一次attempt admission代替整Run授权。
+
+### 2. Agent evidence的必需语义组（逻辑字段，不代表已发布wire）
+
+- 事件身份：schema版本、稳定source event identity、attempt identity、单调evidence revision、前版引用、canonical digest、UTC observed_at；精确同identity+digest重投幂等，漂移冲突不覆写。
+- 归属：可信tenant、subject、actor、run/session、Agent launch admission/fence、受信付款/消费授权上下文绑定、logical call、peer/node、provider attempt序号、原lease owner/generation。请求trace仅关联，不授信；evidence按生命周期分闭集变体：已获授/已派发attempt必有该attempt的Billing admission/authorization opaque refs；预占拒绝或从未获授且未派发的证据明确“未获授”、无虚构引用；若已申请则携原预占请求关联，尚未申请则明确未申请，不编造请求引用。不得用缺引用的not_dispatched变体接收实际已派发用量。与Billing已持有付款/attempt绑定比对后接收。
+- planned：System model/provider/revision_id/revision/digest/generation/tenant_generation、feature/label、gateway alias与planned provider model原值。不得把以后resolve的新revision改写旧attempt。
+- actual：provider/model observation、gateway/provider request与response引用、来源类型/证据digest、attribution状态。缺actual时明确unknown及原因，不复制planned作为实测值；敏感URL、key、原prompt/response不进入payload。
+- usage：known_zero / known_nonzero / unknown；单位、input/output totals、provider profile版本、分类维度及其完整性。本Agent新evidence wire的数量采用canonical十进制字符串（0或非零首位的数字串，范围0..9223372036854775807），内部解析为严格int；禁止JSON number/bool/浮点/负号/前导零/溢出、缺失或null补零。attempt/evidence序号同样采用正十进制字符串。schema/golden vectors锁定一种格式，不影响当前未变的HTTP 4两项TokenUsage表示。
+- outcome：not_dispatched、completed、failed、cancelled、unknown等执行事实与usage状态正交；若有已知部分，只作为partial evidence，不宣布最终总量。结束原因、请求是否可能发出、final/partial来源必须可区分。
+- settlement相关：仅发送Billing引用及观测知识，不发送自算用户金额、费率/倍率修改或“是否收费”的Agent决定。Billing ACK/rejected/pending/settled不等于Run completed；同一source evidence可待决，而Run仍有唯一终态。
+
+input/output总量与cache-read/write、reasoning、audio/image等维度的包含关系由每个provider profile声明。例如reasoning是output子集时不再加到output；cached input是input子集时保留子集用于Billing拆价，不增加总量。不同计量单位独立字段；未知分类不当普通token。完整profile要求的任何计价维度缺失则相关向量unknown，即使input/output总量已知。
+
+### 3. 预占、retry和重投协议边界
+
+- launch付款/消费授权上下文由IAM/Billing具名正式契约定义和验证，不等于预占。Agent在call/attempt准备后申请逐attempt Billing admission；其执行许可必须绑定同tenant/subject/run、付款上下文及确切call/attempt、计划或允许actual路由集合、不可变报价版本、数量上限/并发额度及有效期。每个actual attempt外发前独立校验，前次许可不覆盖后续调用/重试/动态子代理。
+- 预占请求/状态查询网络结果未知，保持同幂等identity查询/重投；未确认许可时不执行provider。预算变更是带前序authorization引用的新明确操作，不篡改旧请求重试body。
+- 新actual retry有新attempt identity并重新获授额度；usage事件/outbox重投保持旧attempt/source identity和字节，不触发新推理。未知外部效果先reconcile，不自动new key/retry。
+- 预占到期不证明已经dispatch的attempt零消耗；Billing须定义保留在途/unknown责任、查询及最终释放条件。Agent不自动release全部hold，不凭Run失败/超时/取消清账。
+- actual归属超出预授集合时保留真实证据，停止后续调用并进入Billing reconciliation；不追认planned价格、不伪造事后预授权。未来gateway应在实际fallback前执行同等预算控制，否则该收费profile不放行。
+- 各服务局部事务+outbox/inbox幂等组成恢复协议；不宣称跨服务/远端exactly-once。稳定拒绝不隐藏成成功或默认零。
+
+### 4. Run终态与公开投影
+
+现RunCompleted.token_usage只有input/output且全零时可为空，现RunFailed不携完整usage。目标Billing严格证据不依赖此简化浏览器投影；新Agent证据契约独立发布，BFF只转发其被授予的必要状态，不复制原始provider细节。
+
+需要向公开Run投影表达usage completeness时，由Agent OpenAPI先发布，再由BFF public/AG-UI和Web依次消费；不把旧null解释为known_zero。终态事件保持唯一，不为迟到usage再发第二个run.completed。终态后证据修订使用独立usage revision通道，拒绝旧worker直接改写终态；Billing按正式更正/reconciliation契约处理，不覆写已结账历史。
+
+### 5. 机器门与拒绝矩阵
+
+后继须覆盖launch不要求未来attempt admission、付款上下文验证失败零provider、准备attempt后才获授、前次attempt许可拒用于后续，以及锁定字段presence、身份容量、UTC/整数界、分类互斥/子集关系、unknown组合、同key相同/不同digest、late revision前序、planned/actual错绑、SDK/gateway多attempt、cancel/失败收费待决、ACK丢失、跨tenant/subject拒绝及脱敏vectors。Agent正式checker/生成器和Billing消费contract测试共同通过后才进入consumer实现。
+
+拟新增 `tests/contract/test_model_usage_contract.py`，扩现 `tests/contract/test_machine_contract.py`、`test_public_contract.py`；后继生成命令 `python scripts/generate_model_usage_models.py --check` 尚不存在、未执行。现有 `kokoro-agent-contract-check` 的通过也不证明此未发布目标通过。本轮全部contract/source只读。
+
+---
+
 ## R39 HTTP 4 owner 切换候选（当前解释覆盖下方历史 HITL 段落）
 
 本轮仍为 main0245a36 基线上的完整 HITL 候选工作树，未发布 artifact、未更新 BFF/Web pin。

@@ -1,3 +1,84 @@
+## R80-W03：逐实际模型调用/attempt 严格用量 D0（2026-10-02）
+
+跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。
+
+状态：设计候选，待 Root 与 Billing/System owner 联审；不是实现、机器契约发布或费用链验收。基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`。本节覆盖下方历史计量/固定 Feature 按次收费解释，旧正文仅保留证据。本卡仅四文档新前缀；源码、SQL、contract、依赖、原 P3B 均未改变，不建兼容/旧数据迁移路径。
+
+### 1. 唯一 owner 与当前真实差距
+
+Root R80 裁决：Billing Metering/Credit 独占不可变采购费率、可配置销售倍率（当前意图 7/5）、Credit 换算/舍入、quote/hold/capture/release/reconciliation。Agent 只生产实际执行和严格 usage 证据，不计算用户金额、赠送资格或费率；System 只拥有模型/provider/route 技术事实，不新增成本表/API。倍率7/5表示成本加价40%，不是净利润率；冻结费率计算成本也不等于供应商最终invoice，后者由Billing reconciliation核对。失败/取消是否向用户收费仍待用户答复；保留真实成本证据与待决状态，不默认收费也不默认免费，不阻断以下基础设计和 RED。
+
+当前：
+- `clients/system.py:ResolvedModel` 已有 model/provider/revision_id/revision/digest/generation/tenant_generation/provider_model_name/gateway_model_name；`agent_factory.py:build_deep_agent` resolve 后用 gateway alias 创建 SDK。它证明 planned route，不证明 gateway 实际底层 provider/model、隐藏重试或成本。
+- `execution/run_agent.py:invoke_once/_usage_totals` 用 SDK callback 按模型聚合一段 input/output；缺字段用 0。主/子代理、同模型多次调用与 provider 重试身份在段汇总中丢失。
+- `tools/middleware.py:TokenBudgetMiddleware` 是调用返回后的 total_tokens 熔断，不是 provider 前 Billing 预占；当前 model factory 未显式消除 SDK 内部重试。
+- `kokoro_agent_run_usage_segment` 的 PK 是 (run_id, lease_generation)，不是 actual call/attempt。原 `postgres_run_leases.finalize_terminal` 同事务处理 usage、Run terminal、Chat/outbox、control/cleanup；该唯一终态路径必须保留。
+- `RunRequest` 有可信 execution_identity，尚无正式付款/消费授权上下文契约与逐attempt Billing预占接线；身份本身不等于付款授权；现 HTTP 4 和两项 TokenUsage 不表达严格逐 attempt 用量、unknown 或定价归属。
+
+### 2. 身份与 planned/actual 分离
+
+每个逻辑模型调用在首次执行前取得稳定 call identity，绑定 run、可信 tenant/subject/actor、session、Agent durable launch admission（现run_id与canonical admission fence，不杜撰额外现有ID）、受信付款/消费授权上下文、peer/native节点路径、输入摘要和 planned System binding。付款/消费授权上下文与执行前逐attempt预占是不同生命周期；IAM/Billing尚须具名发布其语义、可信来源和验证契约，不能仅凭execution_identity/trace推定付款许可。当前不把逐attempt Billing admission设为launch RunRequest必填，也不虚构Run级预占；若launch确需新付款授权引用，待IAM/Billing正式契约决定后再确定Agent breaking写集。不得用 response.model、trace、最后一条消息或时间邻近猜归属；也不得复用 HITL resume attempt_id 为 provider attempt。
+
+每次实际外发产生不同 provider-attempt identity，关联同一 logical call、递增 attempt ordinal、原 owner/generation fence、UTC准备/派发/观察时间、provider request/response引用及证据 digest。Agent先持久准备attempt，再为该attempt向Billing申请预占；获批后才绑定该attempt的Billing admission/authorization opaque reference。prepared阶段尚无此引用，不预填、不借前次attempt许可。重投通知/usage event 保持原 attempt 与 evidence identity；真正重新外发才是新 attempt。lease takeover 不重编号旧调用，不凭 checkpoint 重入就认定可再次请求。
+
+planned binding 原值冻结，不被实际响应覆盖。actual identity 另记实际观测 provider/model、gateway执行引用、证据来源/可信等级及 attribution 状态；response.model 可能仍是 alias，单有名称或 planned provider_id 不算实际归属证明。gateway 应提供与该请求严格绑定、覆盖内部 attempt/fallback 的可验证执行证据；或采用经过验证、不可静默fallback的固定供应商绑定profile，并留存该请求与固定绑定的证据。两者均缺失时记 attribution unknown，保留已知 token，但不按 planned 价格默结。网关内部多次消耗需子 attempt 证据，Agent 单次 HTTP 次数不冒充全部 provider attempts。
+
+### 3. 单一执行路径与 provider 前门
+
+沿现 AgentFactory → 官方模型 SDK → invoke_once/原 worker，不增第二 executor。选用现 model 包承载调用生命周期及 SDK transport evidence 边界；反对把 Billing、usage parser、持久 SQL 都堆入 tools/middleware.py，亦反对新建通用 metering 服务。
+
+目标顺序：
+1. 从冻结 Run、按IAM/Billing正式契约验证的付款/消费授权上下文和System binding建立logical call；在Agent本仓事务准备attempt/journal及预算请求identity，提交后才申请该attempt的Billing预占。launch不要求尚未创建的attempt admission，不新增Run级预占。
+2. Billing 根据受信主体、计划路由允许的实际目标集合、不可变价格/倍率/换算版本和请求上限，返回可核验的预占/执行授权。Agent只验证绑定、许可状态、有效期和资源上限，不接受调用方填金额。请求输入上限、输出上限、重试/并发额度均在 owner 语义内；非模型付费工具另按其 owner 契约，不用 token 数假装覆盖。
+3. provider 前重新核原 lease和精确绑定当前attempt的Billing授权（可信主体、付款上下文、计划/允许actual目标、预算及期限）；前一attempt许可不授权后续attempt。当前 attempt占用独立额度，兄弟调用不得各自使用同一“剩余预算”快照。超出已授上限、route/输出上限变化或下一次实际 retry，先取得 Billing 原子增额/重新授权，失败或 unknown 时零新增外发；禁止事后扣到负值或静默截断实际 usage。
+4. 持久化 dispatch_started 后才进入官方 SDK。PG提交与网络外发之间非原子：崩溃留下 started 即保守 unknown，不假称一定发送或一定没发送。SDK 隐藏 retries 目标显式设为 0，由同一调用生命周期做已批准的有限 retry；若某SDK/网关做不到可观测与逐 attempt门控，该 profile 不进入正式收费链。
+5. 完整观察每个流/非流响应：request/response identity、finish/EOF、usage及错误独立解析。关闭/取消流并 drain 后持久化证据；响应已花费但写库失败，不伪造零消耗或自动重新请求。
+6. 当前 fence有效时同事务落 attempt终局观察、usage evidence、聚合投影和 usage outbox；终态收口仍由原 finalize_terminal完成。不在数据库事务内 await Billing/provider。
+7. 提交后由现 worker生命周期内的有界 outbox sender向 Billing 投递；ACK丢失同事件重投，不再调用 provider。终态与结算状态分离，Billing故障不改写第二个 Run终态。
+
+### 4. 严格 usage 与失败知识
+
+usage_state 为 known_zero / known_nonzero / unknown；独立记录 execution outcome、actual attribution以及 Billing settlement状态，失败不等于零，成功也不等于用量已知。
+
+- 严格非负整数、显式单位、上界和字段 presence；拒 bool/浮点/负数/溢出。缺失/null/非法/截断均不补 0，不用本地 tokenizer估算冒充 provider账单。
+- input/output 是各自总量；cache-read/cache-write、text/audio/image输入明细、reasoning及其他输出明细按 provider profile 明确是否子集或独立计量单位。子集不重复相加；cache分类缺失时允许保留总量证据，但相关可计价向量仍为 unknown。unsupported类别不悄悄归普通 token。
+- 累计流 usage 只记最终累计一次；增量profile按唯一序号去重累加，跨模型/attempt绝不混合。重复相同最终证据幂等，不同最终数值标冲突；不按帧重复加总。
+- known_zero须完整可信零用量证据，或持久未派发且可证明没有外发路径；HTTP错误、超时、取消、空callback和缺usage均不自动证明零。存在已派发unknown attempt时Run账单材料不是完整已知。
+- 明确失败重试若经过新授权可生成新attempt；原attempt证据继续保留。unknown外部结果默认不自动重试，先查询owner执行状态/幂等恢复；provider未承诺去重时不宣称exactly-once。
+- tool journal并不等于model call journal；现GraphInterrupt会清tool started的历史行为不证明provider未执行。模型attempt的started/unknown证据跨HITL保留；完成模型结果/checkpoint可按正式恢复契约复用，不能因重入再计费或再外发。
+
+### 5. 放置表与后继精确范围（均非本轮写许可）
+
+| 项 | 决定 |
+|---|---|
+| Owner | Agent model调用/usage事实唯一writer；Billing金额与预占；System计划路由 |
+| 当前事实 | 上述现入口、generation segment、唯一finalizer；本次基线及文件保护见CURRENT |
+| 目标职责 | 一个逻辑调用多个可审计实际attempt，provider前授权，严格证据与可恢复结算投递 |
+| 目录方案 | 采用已有model/业务包与现Run事务协作；淘汰第二executor、System成本模块及宽泛middleware万能文件 |
+| 粒度 | 现文件接线；新普通文件按模型用量解析、attempt状态、网络证据、持久化、Billing client各一变化原因；不建新一级目录 |
+| 依赖 | worker/factory装配 → model生命周期 → 最小repository/Billing client；SDK/HTTPX/generated/Row在边界终止；禁止跨owner SQL |
+| 数据/API | Agent新attempt/evidence/outbox事实及明确契约；三面与canonical schema在实施前对齐；无旧数据迁移 |
+| 删除项 | 缺usage补零、model-name聚合做计费真源、隐式retry、旧固定Feature按次最终收费接线；段/Run总量仅作同源投影而非第二writer |
+| 验证 | 下列纯RED、正式contract、PG竞争/故障及Root组合门，文档不代替实测 |
+
+相对路径均以 `/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro/apps/kokoro-agent/` 为根：
+- 现接线：`src/kokoro_agent/model/factory.py`、`agent_factory.py`、`execution/run_agent.py`、`tools/guards.py`、`tools/middleware.py`（仅预算/lease接点，不塞SQL）、`worker/dependencies.py`、`worker/main.py`、`worker/supervisor_execution.py`、`worker/supervisor_recovery.py`。
+- 新业务文件候选：`src/kokoro_agent/model/call_models.py`（内部不可变身份/状态）、`model/usage.py`（严格provider profile解析）、`model/call_runtime.py`（准备/授权/dispatch/恢复）、`model/call_transport.py`（官方SDK注入transport的逐次证据，透传不重写推理器）、`model/call_repository.py`（Agent SQL与同cursor原子协作）、`clients/billing.py`（仅消费已发布owner契约）。这是最小职责分组，非先建空脚手架。
+- 现持久化协作：`domain/run/models.py`、`domain/run/repositories.py`、`infrastructure/postgres_run_repository.py`、`infrastructure/postgres_run_leases.py`、`infrastructure/postgres_run_context.py`、`infrastructure/schema.py`、`database/schema.sql`；model/call_repository.py与原finalizer共用现连接/事务，不另建连接池或第二终态器，不扩大旧technical层目录。
+- 现入站/机器候选（launch字段修改以IAM/Billing先确定具名付款授权契约为前置；不预授逐attempt admission必填或任何Run级预占）：`protocol/control.py`、`protocol/events.py`、`interfaces/http/ingress.py`、`contract/openapi/v1/openapi.json`、`contract/provenance.json`、`contract_check.py`；新usage artifact位置/方向见API前缀。生成输入/输出按发布结果再核准，不手改generated。
+- 现静态装配来源：`execution/runtime_profile_plan.py`、`execution/runtime_profile_sources.py`同步新增实际安全依赖；不把动态price/credential或attempt实例塞入静态recipe。
+
+### 6. RED与放行顺序
+
+1. 统一发布顺序：共同冻结语义 → Agent strict evidence producer artifact先发布 → Billing固定消费该artifact并发布逐attempt admission/证据接收contract → Agent固定消费Billing → 必要BFF消费者切换。纯artifact不依赖运行服务已经启动；语义协作不等于循环等待对方先发布。 System技术binding保持唯一源，实际gateway证据owner明确后再接收费profile。IAM/Billing先具名确定付款/消费授权上下文的语义与验证契约；只有该决定要求新增launch引用时，才由Agent单独发布相应breaking契约并安排必要BFF消费。版本由owner发布，不在本文虚构已完成升级。
+2. 现 `tests/unit/model/test_model_selection.py`、`test_system_client.py`：planned原值与actual分离、alias不推断、profile禁止隐藏retry；新同目录 `test_usage.py`、`test_call_runtime.py`、`test_call_transport.py`：严格分类/零与unknown/重复累计、并发attempt、SDK重试次数、授权拒绝/过期/额度不足零外发、重授权/超界、响应后失lease、原request关联及secret脱敏。用受控transport真实经过官方SDK，不以单次callback伪造底层重试覆盖。
+3. 新 `tests/unit/clients/test_billing.py`：fixed artifact、可信付款上下文、先prepared后取得独立attempt admission、前次attempt许可拒用于后续、幂等请求重投、ACK丢失查询、拒绝不换key；现 `tests/unit/execution/test_invoke.py`、`test_supervisor.py`、`tests/unit/tools/test_tool_journal.py`保留原终态/HITL断言，新增无usage不等于零、子代理多attempt、post-dispatch unknown不清journal。
+4. 现 `tests/contract/test_machine_contract.py`、`test_public_contract.py`、`test_canonical_database_schema.py`、`test_architecture.py`及新 `tests/contract/test_model_usage_contract.py`：闭集schema、presence/整数/身份边界、golden vectors、生成drift、无跨owner类型和SQL；变更旧null预期须绑定新发布契约，不直接删断言造绿。
+5. 新 `tests/integration/database/test_model_call_usage.py`及现 `test_delivery_outbox.py`、`test_run_interaction_transactions.py`：两个独立连接验证同attempt CAS/重复callback、不同digest冲突、Run→attempt→evidence/outbox锁序、终态全rollback/ACK丢失、cancel/takeover先后序、pause前seal、终态后受限reconciliation、GC保护。Root持有隔离资源。
+6. 后继纯门：`uv run pytest tests/unit/model tests/unit/clients/test_billing.py tests/unit/execution/test_invoke.py tests/unit/execution/test_supervisor.py tests/unit/tools/test_tool_journal.py tests/contract`；再Ruff/Pyright/lock/build、canonical schema drift、真实PG和Root已发布owner组合。新增路径尚不存在，本轮不执行该命令。完整收费上线仍等待失败收费规则及真实gateway归属证据，文档门不等于运行门。
+
+---
+
 ## R39 HTTP 4 owner 切换候选（当前解释覆盖下方历史 HITL 段落）
 
 本轮仍为 main0245a36 基线上的完整 HITL 候选工作树，未发布 artifact、未更新 BFF/Web pin。

@@ -1,3 +1,47 @@
+## R80-W03：逐 actual call/attempt 严格 usage 设计交付（2026-10-02）
+
+跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。
+
+状态：四文档D0候选，待Root/owner联审及后继机器契约；不是生产实现、schema发布或收费全链通过。基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`。本节与TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL的R80-W03前缀同步，旧全文完整保留；R71历史回归不转记为本卡测试通过。
+
+### 已收敛设计
+
+- Billing Metering/Credit是唯一采购费率、可配置销售倍率7/5、Credit换算/舍入、预占和结算owner；System仅planned模型/provider/route事实；Agent记录实际逐call/attempt严格usage，不算用户金额。
+- 区分launch受信付款/消费授权上下文与Agent durable admission；逐attempt Billing admission在Agent准备call/attempt后取得，不是RunRequest提前必填，不虚构Run级预占，前次attempt许可不覆盖后续。launch若需新付款授权引用，先由IAM/Billing具名正式契约决定再列breaking写集。另区分logical call、provider attempt、原lease与planned System revision/digest、actual provider/model。gateway alias和单次HTTP不证明真实底层归属/内部重试。
+- known_zero / known_nonzero / unknown与执行结果、actual attribution、结算状态正交；缺usage不补零，缓存/推理等子集不重复相加；重投保原事件、实际retry新attempt并先获授额度。
+- provider前Billing预占/超预算重授权；并发额度由owner原子裁定。沿官方SDK和原唯一Run终态事务，新增模型attempt journal/append-only evidence/usage outbox目标；unknown跨取消、HITL、takeover保留，恢复不再次自动推理。
+- 统一发布顺序：共同冻结语义 → Agent strict evidence producer artifact先发布 → Billing固定消费该artifact并发布逐attempt admission/证据接收contract → Agent固定消费Billing → 必要BFF消费者切换。纯artifact不依赖运行服务已经启动；语义协作不等于循环等待对方先发布。
+- 精确现/新源码候选、contract与纯/PG RED矩阵、无旧数据兼容及GC引用条件已写入三面。不增第二executor或System成本事实。
+
+### 独立审查退回与定点修订
+
+Root接收上一候选独立Astra结论0P0/1P1/1P2：四旧正文4/4精确保留，但launch提前要求逐attempt admission造成生命周期冲突，双方artifact发布顺序倒置。本轮按Root同卡裁决修正上述两项；此前外围370项只属worker自检，独立审查员未取得可复核manifest，不声称已获独立外围验证。修后仍待Root/Astra复审，不沿用旧候选通过结论。
+
+### 本轮事实核对与保护
+
+实际只读检查现RunRequest、System client/factory、SDK callback聚合、TokenBudgetMiddleware、Run usage segment、原finalize_terminal、tool journal及现测试入口。当前仍只有generation粒度input/output汇总；缺少本D0目标持久事实与Billing admission，不将设计写成实现。
+
+本轮只允许四现文档新前缀；开始时记录374个非缓存工作文件的SHA-256/长度（排除.git、.venv、__pycache__及测试/构建缓存），其中四目标原字节：
+- TECHNICAL_DESIGN：286562 bytes，`1f8a2a5852397231b6e50608729141ea644bbc073fd20b689864afd5e8b16db9`
+- API_CONTRACT：108240 bytes，`8880166791e7bb670e3887017e5e3080c67662982d3fb2cfeae2c273f088e103`
+- DATA_MODEL：112829 bytes，`883771d74ee913011d197a3ef1971e17564b56f9d2305b05bf4e99bdebe581a3`
+- CURRENT：127463 bytes，`790f74555dd498abc49a92a191013e7dba5b012311a341818145a054ac42282a`
+
+交接执行纯文档断言：四目标后缀与原长度/SHA相等、其余370文件SHA及文件集合保持、HEAD与Git index摘要保持、四前缀R80标记/必要语义/Markdown围栏/后继现路径核对。上一候选worker文档检查为79项通过/0失败（含35个现源码/测试路径存在性），不是本修订的独立审查结论。本修订重新核对四原正文及370外围实际digest，完整清单与新前缀/整文件SHA、文件集合和HEAD/index检查写入 `/tmp/kokoro-agent-r80-w03-d0-repair-20261002/manifest.json`。Root可据此逐文件复核，实际命令及结果见交接；这些是文档/范围断言，不是业务测试。
+
+本轮pytest/Ruff/Pyright/build/schema/真实provider/浏览器/PG/Redis/ObjectStore运行数均0；原因是授权仅文档前缀、source/SQL/wire只读且共享资源归Root。没有写新计划中心、Root台账或其他仓文件，也没有Git命令/index/commit操作。
+
+### 具体未完成与后续owner
+
+1. Agent原WIN03先发布strict evidence producer artifact；Billing原WIN06固定消费后发布逐attempt预占/增额/接收/查询/unknown恢复机器契约，Agent再固定消费，必要时BFF后继切换；不是现feature quantity=1/调用方actualMicros的临时接线。
+2. System原WIN05与Root：明确planned binding消费以及真实gateway执行证据owner；actual归属/内部attempt证据缺失仍阻正式收费profile，Agent不以planned填空。
+3. Agent原WIN03：Root联审后按共同冻结语义及上述producer先行顺序推进机器契约/SQL门与行为RED，再授权精确源码集；模型journal/终态后reconciler和outbox仅设计，未实现。
+4. 用户待答的失败/取消收费规则继续待决；不阻真实成本/证据基础研发，不默认扣费或免费。
+5. 后继文档清理：现README仍写“按provider accepted invocation次数、非token计费”；该历史入口在本卡四文件写集外，原字节保持。正式实现切片需同步README/INDEX相关入口，不把它作为R80目标依据。
+6. Root：统一独立审查、主工作树复验、发布顺序和同卡台账/Git；本窗口freeze后停止写入。
+
+---
+
 ## R71：R70-03 内存执行回归收口证据（2026-10-02）
 
 本节仅记录 Agent 既有两份执行单测的 EOF 回归，源基线为

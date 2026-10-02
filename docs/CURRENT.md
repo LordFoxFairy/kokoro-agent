@@ -1,3 +1,44 @@
+## R71：R70-03 内存执行回归收口证据（2026-10-02）
+
+本节仅记录 Agent 既有两份执行单测的 EOF 回归，源基线为
+`d131c3f4f61b46ed1cca1b8a44fe18e42c8522de`。没有生产源码、机器契约、Schema、依赖或 P3B 变更；
+下方原正文完整保留。本切片待 Root 最终三路径审查、index 与提交，不表示整体 HITL 或完整用户链完成。
+
+### 回归范围与证据边界
+
+- Live stale delivery 使用继承正式 `_consume_control_frame` / `_apply_recorded_control` 的窄测试入口：
+  旧 revision 被拒绝，原 Run、waiting pause 与 lease 保持，native 零执行；后续 bookkeeping、重复 delivery
+  与 admission replay 保留原 `failed / interaction_conflict` 回执，不发 applied 回执。
+- Mixed batch 使用正式 checkpoint bridge、官方 `InMemorySaver` 与实际 SDK root/child graph，
+  三组四项（两 tool approvals、一 result review、一 input）完整映射后实际消费一次。
+  独立 memory reader 得到 `ConsumedPauseEvidence`，核 command、attempt/generation、原 pause revision/ref/digest；
+  保存 observation 后 reconcile 为 active，重复 start、accept 与 bridge replay 不再授予 dispatch 权限，native effects 保持三项。
+- 以上 repository 与 saver backing 均为内存测试；独立 reader 不等于独立 PostgreSQL 持久证据，
+  不证明外部副作用 exactly-once，也不扩大 P3B、scope、retry、retention 等原未决范围。
+
+### 实际验证归属
+
+- **Root 主工作树复验**：Root 在 R71 放行消息确认原句柄 `51399` 已完成两份完整测试文件，
+  **52 passed / 0 failed，0.66s**；这与 worker 同一测试集合，不重复累计。
+- **独立审查**：Root 确认 native Sol 对 R70 冻结测试切片审查 **0 P0 / 0 P1 / 0 P2**；
+  此结论不替代本次 CURRENT 前缀的最终三路径审查。
+- **Worker R70 定点检查**：新两例 **2 passed / 50 deselected**；两份完整文件 **52 passed，0.56s**；
+  Ruff `format --check --no-cache`、`check --no-cache` 均 exit 0；定点 Pyright **0 errors / 0 warnings**。
+  精确命令、输出与 SHA 记录在 `/tmp/kokoro-agent-r70-win03/freeze.json`，
+  日志为同目录 `new-tests-final.log`、`full-files-final.log`、`ruff-format-final.log`、`ruff-check-final.log`、`pyright-final.log`。
+  首次新增测试对象引用及类型收窄错误仅在追加段修正，不计业务 RED，不改旧断言或检查规则。
+- **本轮未执行**：PostgreSQL、Redis、provider、browser 与完整用户链验收；不以以上内存纯门覆盖这些门。
+  R71 只追加本节并检查字节保护，不重跑或推算全仓 pure/build/contract/resource 结果，不操作 Git、服务或共享数据。
+
+### 冻结测试字节
+
+| 文件 | R70 完整 SHA-256（R71 保持） |
+|---|---|
+| `tests/unit/execution/test_control_commands.py` | `21ce2359e9903ccb2daae60a3eef3ca0eab8266b29728bf8e75492fd4d2da23b` |
+| `tests/unit/execution/test_hitl.py` | `5b5d0ccd48ee4d908a9105a9bddb2bd4f4a574d764b21b4bf56080276a243bc1` |
+
+---
+
 ## Root R43：本 HITL/HTTP4 切片验收证据（2026-10-01）
 
 本提交仅收敛完整66路径的HITL/HTTP4业务切片，不表示全Agent外部能力或Wave0–7闭环。Root冻结复验：Ruff267文件format/check通过、Pyright0 errors；contract/check及failure生成检查通过；完整pure1799passed/6skipped/288deselected（96.81s，364 warnings），uv lock --check与wheel/sdist build通过。真实owner资源：完整database196passed/0skip；HTTP4邻接45PG+35HTTP=80passed；unit资源18passed/1356deselected（3.32s，1034 warnings）。每轮自有临时库created/closed=true，unit Redis15 reservation后仅精确删除本次17stream、remaining0；无清理共享数据。官方saver的persisted list[Interrupt]严格验证后与snapshot tuple比较，root→child精确因果/locator/完整ID与value、approval0→1/review1→1及终态保持。日志 /tmp/kokoro-agent-r43-root-final-pure.log、/tmp/kokoro-agent-hitl-r41-root-all-database-r2.log、/tmp/kokoro-agent-http4-r40-root-real-pg-http-r2.log、/tmp/kokoro-agent-r42-root-unit-resources-r4.log。

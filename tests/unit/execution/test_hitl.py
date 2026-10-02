@@ -479,3 +479,123 @@ def test_bridge_r35_full_state_requires_explicit_action_result_even_when_null() 
                 "groups": [],
             }
         )
+
+
+async def test_r70_mixed_batch_consumes_native_once_reconciles_and_replays() -> None:
+    from kokoro_agent.domain.run.interactions import (
+        ConsumedPauseEvidence,
+        IntentStatus,
+        Phase,
+        ReplayedResume,
+        StartedResume,
+    )
+    from kokoro_agent.infrastructure.checkpoint_interactions import ObservedNativeResume
+    from kokoro_agent.infrastructure.postgres_run_interactions import (
+        canonical_interaction_bytes,
+    )
+
+    fx = await _fixture((_approval(), _human("review"), _human("input")))
+    waiting = await fx.repository.read_interaction(fx.run)
+    assert waiting is not None and waiting.state.phase is Phase.WAITING
+    assert waiting.pause == fx.paused.pause
+    pause = decode_pause_snapshot(fx.paused.pause)
+    items = [item for group in pause.groups for item in group.items]
+    assert len(pause.groups) == 3 and len(items) == 4
+    assert {item.kind for item in items} == {"tool_approval", "result_review", "input"}
+    assert any(group.checkpoint_ns for group in pause.locator.groups)
+    assert any(not group.checkpoint_ns for group in pause.locator.groups)
+    decisions: list[dict[str, JsonValue]] = [
+        {"item_id": item.item_id, "type": "submit", "value": {"otp": "1"}}
+        if item.kind == "input"
+        else {"item_id": item.item_id, "type": "approve"}
+        for item in reversed(items)
+    ]
+    prepared = await _prepare(fx, decisions)
+    mapping = _JSON.validate_python(prepared.command.resume)
+    assert isinstance(mapping, dict) and len(mapping) == 3
+    assert fx.effects == []
+    lease = await fx.repository.get_fence(fx.run.run_id)
+    assert lease is not None
+    started = await fx.repository.start_resume(fx.run, lease, "decision", prepared.plan)
+    assert isinstance(started, StartedResume)
+    second_start = await fx.repository.start_resume(
+        fx.run, lease, "decision", prepared.plan
+    )
+    assert isinstance(second_start, ReplayedResume)
+    context = await fx.repository.read_resume_context(fx.run, "decision")
+    assert context is not None and context.dispatch_plan == prepared.plan
+    assert context.intent.status is IntentStatus.DISPATCH_STARTED
+    # Execute the actual SDK graph, including its child checkpoint namespace.
+    await _r70_invoke_native_batch(fx, prepared, lease, started.attempt_id)
+    assert len(fx.effects) == 3
+    assert sorted(canonical_interaction_bytes(value) for value in fx.effects) == sorted(
+        canonical_interaction_bytes(value) for value in mapping.values()
+    )
+    observed = await fx.bridge.read_interaction(
+        request=fx.run,
+        lease=lease,
+        handle=fx.handle,
+        target=ResumeReadTarget(command_id="decision"),
+    )
+    assert isinstance(observed, ObservedNativeResume)
+    evidence = observed.evidence
+    assert isinstance(evidence, ConsumedPauseEvidence)
+    assert (evidence.command_id, evidence.attempt_id, evidence.attempt_generation) == (
+        "decision",
+        started.attempt_id,
+        lease.generation,
+    )
+    assert (
+        evidence.pause_revision,
+        evidence.pause_ref,
+        evidence.collection_digest,
+    ) == (
+        waiting.state.pause_revision,
+        fx.paused.pause.pause_ref,
+        fx.paused.pause.digest,
+    )
+    assert evidence.disposition == "active" and evidence.next_pause is None
+    assert evidence.observation_digests
+    for observation in observed.observations:
+        await fx.repository.record_checkpoint_observation(fx.run, lease, observation)
+    reconciled = await fx.repository.reconcile_resume(fx.run, lease, evidence)
+    assert reconciled.snapshot.state.phase is Phase.ACTIVE
+    assert reconciled.snapshot.state.groups == ()
+    replay = await fx.repository.accept_resume(fx.run, "decision", "test-consumer")
+    assert isinstance(replay, ReplayedResume)
+    assert replay.original_intent is not None
+    assert replay.original_intent.status is IntentStatus.RECONCILED
+    read = await fx.bridge.read_interaction(
+        request=fx.run,
+        lease=lease,
+        handle=fx.handle,
+        target=ResumeReadTarget(command_id="decision"),
+    )
+    assert isinstance(read, ReplayedResume)
+    assert read.snapshot == replay.snapshot == reconciled.snapshot
+    assert isinstance(
+        await fx.repository.start_resume(fx.run, lease, "decision", prepared.plan),
+        ReplayedResume,
+    )
+    assert await fx.repository.read_interaction(fx.run) == reconciled.snapshot
+    assert len(fx.effects) == 3
+
+
+async def _r70_invoke_native_batch(
+    fx: _NativeFixture,
+    prepared: PreparedNativeResume,
+    lease: LeaseFence,
+    attempt_id: str,
+) -> None:
+    graph = fx.handle.runnable
+    assert isinstance(graph, _CompiledGraph)
+    config: RunnableConfig = {
+        "configurable": {"thread_id": RunScope.of(fx.run).scoped_thread_id},
+        "metadata": {
+            "kokoro_run_id": fx.run.run_id,
+            "kokoro_generation": lease.generation,
+            "kokoro_command_id": "decision",
+            "kokoro_attempt_id": attempt_id,
+        },
+    }
+    await graph.ainvoke(prepared.command, config)

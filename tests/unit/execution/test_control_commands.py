@@ -510,3 +510,81 @@ async def test_resume_operational_failures_are_not_interaction_conflicts(
     assert not await repository.is_terminal(run.run_id)
     assert agent.seen_payloads == []
     assert bus.run_events(run.run_id) == []
+
+
+async def test_r70_live_stale_resume_preserves_pause_and_failed_receipt_on_replay() -> (
+    None
+):
+    repository = FakeRunRepository()
+    run = request("r70-live-stale")
+    lease = await repository.try_claim(run)
+    assert lease is not None
+    await repository.record_pause(run, lease, interaction_pause_fixture(run))
+    before = await repository.read_interaction(run)
+    assert before is not None and before.state.phase.value == "waiting"
+    command = await admit_resume_fixture(
+        repository,
+        run,
+        command_id="stale-decision",
+        revision=2,
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+    agent, bus = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE), FakeBus()
+    supervisor = _R70LiveControlSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=_builder(agent),
+        run_repository=repository,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="test-consumer",
+    )
+    assert command.request_digest is not None
+
+    # Live delivery, not the restart scanner: persist/ACK then reject acceptance.
+    await supervisor.consume_live_resume(bus, command, "1")
+    failed = dict(repository.control_commands[(run.run_id, command.command_id)])
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "interaction_conflict"
+    assert await repository.read_interaction(run) == before
+    assert not await repository.is_terminal(run.run_id)
+    assert agent.seen_payloads == []
+    receipts = find_events(bus.run_events(run.run_id), RunControlReceipt)
+    assert [r.payload.control_status for r in receipts] == ["persisted"]
+    assert [r.payload.command_id for r in receipts] == [command.command_id]
+    events = list(bus.run_events(run.run_id))
+
+    # Later apply bookkeeping must not replace the original terminal failure.
+    await supervisor.reapply_recorded_resume(bus, command)
+    await supervisor.consume_live_resume(bus, command, "2")
+    replay = await repository.admit_control(
+        run.run_id,
+        command.command_id,
+        command.request_digest,
+        command.model_dump_json(),
+    )
+    assert replay.replayed and not replay.publish_required
+    assert replay.receipt.status == "failed"
+    assert replay.receipt.error_code == "interaction_conflict"
+    assert repository.control_commands[(run.run_id, command.command_id)] == failed
+    assert await repository.read_interaction(run) == before
+    assert await repository.get_fence(run.run_id) == lease
+    assert await repository.read_resume_context(run, command.command_id) is None
+    assert not await repository.is_terminal(run.run_id)
+    assert agent.seen_payloads == []
+    assert bus.run_events(run.run_id) == events
+    assert bus.acked == ["1", "2"]
+
+
+class _R70LiveControlSupervisor(RunSupervisor):
+    """Expose inherited live entry points without replacing their implementation."""
+
+    async def consume_live_resume(
+        self, bus: FakeBus, command: RunResume, cursor: str
+    ) -> None:
+        await self._consume_control_frame(
+            bus, command.run_id, command, run_control_stream(command.run_id), cursor
+        )
+
+    async def reapply_recorded_resume(self, bus: FakeBus, command: RunResume) -> None:
+        await self._apply_recorded_control(bus, command.run_id, command)

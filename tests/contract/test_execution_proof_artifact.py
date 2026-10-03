@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 import pytest
 
 from kokoro_agent import contract_check
+from kokoro_agent.model_usage_contract import USAGE_SOURCE_FILES
 import kokoro_agent.execution_proof_negative_specs as negative_specs
 from kokoro_agent.execution_proof_negative_specs import (
     NEGATIVE_SPEC_INDEX,
@@ -77,7 +78,7 @@ def _combined_digest(root: Path, sources: list[str]) -> str:
 def _copy_contract_repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repository"
     shutil.copytree(ROOT / "contract", repository / "contract")
-    for relative in OWNER_INVENTORY:
+    for relative in (*OWNER_INVENTORY, *USAGE_SOURCE_FILES):
         target = repository / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, target)

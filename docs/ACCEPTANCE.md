@@ -1,5 +1,11 @@
 # kokoro-agent 验收矩阵
 
+## R145 strict usage离线artifact验收
+
+R145实测：42项usage行为、2174项默认纯测试通过，301资源节点未选、0 skip；正规生成、lock、Ruff、Pyright、build均exit0。仓外wheel实际installed checker正常/恢复exit0，缺manifest、篡改vectors、篡改runtime均exit1；详细失败历史、manifest与边界见CURRENT顶部。已知非null raw_usage_digest不得改写或抹除（含unresolved→normalized），已知normalized profile_assessment精确保持，null→known合法；本片不证明provider/runtime/Billing结算。
+
+初始generator前置失败、9项语义RED、工程门失败与known事实3 RED/1正控均保留，未削弱阈值或golden；Root最终manifest与实际wheel身份见CURRENT顶部。本门仅离线producer artifact，301资源节点未选，不能关闭T-B07、运行journal/provider/Billing或整个Agent。提交发布和后继消费者pin由Root执行。
+
 ## W3 OAuth 响应扩展返修（2026-09-30）
 
 基线 `e728fe24d9528efe02a53282f1dfd8328a122f9a`。验收覆盖实际 IAM 五字段 shape、任意未知成员丢弃、

@@ -14,7 +14,7 @@
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py"
   ],
-  "combined_sha256": "8f5e8fc1871eefd110cc7476679b3d654e4aa0a03e770156a348121f3da6a440",
+  "combined_sha256": "f4a580974aa7f73db7355243f849cd45aae273259c7768674362fd1246462386",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",

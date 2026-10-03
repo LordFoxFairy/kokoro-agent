@@ -104,15 +104,26 @@ kokoro_agent = ["prompts/*.md"]
   "contract/platform/v1/execution-operations/v4/vectors/positive.json",
   "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json",
 ]
+"share/kokoro-agent/audit/contract/usage/v1" = [
+  "contract/usage/v1/schema.json",
+  "contract/usage/v1/vectors.json",
+  "contract/usage/v1/manifest.json",
+]
+"share/kokoro-agent/audit/src/kokoro_agent/model" = [
+  "src/kokoro_agent/model/usage_evidence.py",
+]
 "share/kokoro-agent/audit/scripts" = [
+  "scripts/generate_model_usage_models.py",
   "scripts/generate_failure_models.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent" = [
+  "src/kokoro_agent/model_usage_contract.py",
   "src/kokoro_agent/chat_contract_check.py",
   "src/kokoro_agent/contract_check.py",
   "src/kokoro_agent/distribution_assets.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent/protocol" = [
+  "src/kokoro_agent/protocol/model_usage_generated.py",
   "src/kokoro_agent/protocol/control.py",
   "src/kokoro_agent/protocol/events.py",
   "src/kokoro_agent/protocol/run_failure_generated.py",

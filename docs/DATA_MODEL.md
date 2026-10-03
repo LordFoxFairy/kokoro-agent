@@ -130,7 +130,7 @@ Root闭集已落定，剩余为代码/机器/真实PG证明、正式历史数据
 
 跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。
 
-基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`。本轮不改 `database/schema.sql`；以下是后继SQL设计要求，当前schema无这些新事实。Agent是唯一writer，Billing独占价格/金额/hold/ledger，System独占planned技术binding；全程无跨owner SQL、FK或数据库事务。
+原R80设计基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`；R143当前实现基线 main `79bf98c`。本轮不改 `database/schema.sql`；以下是后继SQL设计要求，当前schema无这些新事实。Agent是唯一writer，Billing独占价格/金额/hold/ledger，System独占planned技术binding；全程无跨owner SQL、FK或数据库事务。
 
 ### 1. 当前事实与目标关系
 
@@ -139,6 +139,16 @@ Root闭集已落定，剩余为代码/机器/真实PG证明、正式历史数据
 目标唯一计量真源是逐attempt的不可变证据序列；Run/segment totals仅由该真源投影，不同时保留callback聚合和attempt累加两套writer。旧schema/code/data不做迁移导入或fallback，正式clean-slate切片一次替换调用、查询、测试及机器语义。token_total保留执行预算语义时也来自同一已知计量投影，不成为定价真源；unknown另有显式状态。
 
 统一发布顺序：共同冻结语义 → Agent strict evidence producer artifact先发布 → Billing固定消费该artifact并发布逐attempt admission/证据接收contract → Agent固定消费Billing → 必要BFF消费者切换。纯artifact不依赖运行服务已经启动；语义协作不等于循环等待对方先发布。
+
+### 1.1 R143-A 离线 artifact 先行的数据界限
+
+当前基线 Agent79bf98c；本片仅严格 evidence schema/vectors/生成模型/codec/checker及安装资产，不修改 canonical database/schema.sql，不增加 attempt表、索引、outbox、receipt或reconciliation进程。当前 Run/usage_segment/finalize_terminal 不被改称逐attempt权威真源；本节后续SQL仍是运行目标，须在 runtime 实施前精化DDL/锁序/GC并经真实PG验证。
+
+artifact 有完整主体/Run/call/attempt与原lease/planned绑定、知识状态、outcome/seal和revision链；canonical数量、presence/unknown、有限profile与R144已批准十二行参数以 API §2.1 为唯一精确定义（技术未决0，R145离线contract已落实并验证，待提交发布）。原始非法/缺席用量不补0；known totals/classification/actual/settlement分别判断，不用known_zero证明未外发或免收费。当前仅规范化对象校验，不假造已持久 journal、已认证付款引用或已存在Billing ACK。 UTC固定毫秒YYYY-MM-DDTHH:mm:ss.SSSZ，未改现SQL；seal封存单revision观察，unknown可由相邻新revision补知识、已知矛盾拒绝，不覆盖旧bytes或再发Run终态。
+
+schema/vectors是唯一编辑源，manifest/generated/audit副本为生成/构建产物；使用现distribution_assets验证exact inventory、RECORD和实际installed Python bytes，同源审计副本不建立第二数据owner。TECH §5.1列14路径，现pyproject data-files已闭合新usage资产，Root实际installed checker缺失/篡改门通过（证据见CURRENT顶部）；DATA无新增文件/DDL权限。
+
+本片验收为真实contract行为、跨字段/revision/digest故障、生成漂移/零写及仓外实际installed checker的资产缺失/篡改拒绝；不执行PG/Redis/provider也不据此宣称资源通过。后继运行片才证明Run→attempt→evidence/outbox同事务、失lease拒写、重复/漂移/ACK丢失、未知派发恢复与引用感知GC。Billing只固定已发布artifact跨owner消费，不访问本仓SQL；用户已批准仅核实实际消耗结算/释放确认未用部分，unknown持久待核实；由Billing实施，不阻当前事实规范生产。
 
 ### 2. 目标持久事实（具体DDL在授权SQL切片落地）
 
@@ -162,7 +172,7 @@ Run增加usage completeness/unknown attempt计数及有界汇总投影的实际�
 6. 正式reconciler是现worker的恢复职责，不是新executor。以独立、期限有限的reconciliation claim、原attempt身份及owner可验证结果读取恢复；事务仍先Run→attempt→evidence/outbox，可在终态后追加证据revision/投递，但不重开Run、不改原终态事件及其当时usage汇总快照、不授予provider执行权；迟到完整计量通过独立usage revision查询，不把终态旧快照冒充当前结算材料。原worker任意晚callback不等于此权威查询。
 7. receipt/ACK丢失：预占请求保持原attempt/request identity查询，不生成新Run级预占；原event重投或查Billing原identity；Billing只返回受信状态，不由Agent计算capture/release金额。usage落库/结算ACK/Run终态是不同事实，分别恢复，禁止“先终态后无intent”窗口。
 
-PG commit与provider实际发送之间无共同事务；dispatch_started崩溃窗口保守unknown，provider不支持查询/幂等恢复时进入待核对队列。失败收费决策未答不阻落真实证据，但不据此自动收费或免费结案。已观测的错误/超额实际消耗完整保留，停止新增调用，Billing裁定财务处理。
+PG commit与provider实际发送之间无共同事务；dispatch_started崩溃窗口保守unknown，provider不支持查询/幂等恢复时进入待核对队列。ADR033失败/取消规则已获用户批准：只结算核实消耗、释放确认未用部分，unknown保留待核实；不能自动整笔release或免费结案，具体账务由Billing处理。已观测的错误/超额实际消耗完整保留，停止新增调用，Billing裁定财务处理。
 
 ### 4. 保留、GC与隐私
 
@@ -174,7 +184,7 @@ Run purge须感知未决attempt/证据投递/reconciliation引用；只有已取
 
 现schema保护不代表新DDL通过。正式切片必须覆盖fresh install+catalog列/类型/NULL/CHECK/索引drift；真实PG两个连接测试并发准备/attempt ordinal、同digest replay/不同digest rollback、所有故障注入点、旧lease写拒绝、cancel/terminal/late evidence所有顺序、outbox ACK丢失及重启、不重复Run terminal、不清unknown、同tenant-subject绑定、purge引用保护与到期有界释放。
 
-精确文件集及测试落点见TECH前缀；`model/call_repository.py` 只拥有这些Agent事实的SQL，并与原Run finalizer共用连接。Billing schema/ledger、System schema、shared Redis namespace均无本仓写权限。本D0三面候选等待owner机器契约与SQL细化，不宣称数据库门已通过。
+精确文件集及测试落点见TECH前缀；`model/call_repository.py` 只拥有这些Agent事实的SQL，并与原Run finalizer共用连接。Billing schema/ledger、System schema、shared Redis namespace均无本仓写权限。离线artifact参数已由Root批准、待机器契约落实；本节runtime目标仍等待SQL细化，不宣称数据库门已通过。
 
 ---
 

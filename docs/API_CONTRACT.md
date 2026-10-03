@@ -134,7 +134,7 @@ Agent5只在明确fresh批准测试或正式已批准数据处置cutover启用�
 
 跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。
 
-基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`；当前 HTTP 4.0.0 与所有机器字节未修改。本节是待联审设计，不是已发布字段/RPC。它与 TECHNICAL_DESIGN、DATA_MODEL 的 R80-W03 前缀共同覆盖历史“段汇总即可收费/固定Feature quantity=1结算”解释；不维护新旧双默认链或旧数据迁移。
+原R80设计基线 main `444684d32473c96ddbb70247081b1d1cdb8558f1`；R143当前实现基线 main `79bf98c`；当前 HTTP 5.0.0 与所有机器字节未修改。本节沿已批准owner/发布顺序，R144有限artifact参数已由Root裁决、待contract落实，见§2.1；不是已发布字段/RPC。它与 TECHNICAL_DESIGN、DATA_MODEL 的 R80-W03 前缀共同覆盖历史“段汇总即可收费/固定Feature quantity=1结算”解释；不维护新旧双默认链或旧数据迁移。
 
 ### 1. Owner先行发布顺序
 
@@ -158,11 +158,48 @@ usage artifact采用schema-first唯一可编辑schema与正负vectors；拟新�
 - 归属：可信tenant、subject、actor、run/session、Agent launch admission/fence、受信付款/消费授权上下文绑定、logical call、peer/node、provider attempt序号、原lease owner/generation。请求trace仅关联，不授信；evidence按生命周期分闭集变体：已获授/已派发attempt必有该attempt的Billing admission/authorization opaque refs；预占拒绝或从未获授且未派发的证据明确“未获授”、无虚构引用；若已申请则携原预占请求关联，尚未申请则明确未申请，不编造请求引用。不得用缺引用的not_dispatched变体接收实际已派发用量。与Billing已持有付款/attempt绑定比对后接收。
 - planned：System model/provider/revision_id/revision/digest/generation/tenant_generation、feature/label、gateway alias与planned provider model原值。不得把以后resolve的新revision改写旧attempt。
 - actual：provider/model observation、gateway/provider request与response引用、来源类型/证据digest、attribution状态。缺actual时明确unknown及原因，不复制planned作为实测值；敏感URL、key、原prompt/response不进入payload。
-- usage：known_zero / known_nonzero / unknown；单位、input/output totals、provider profile版本、分类维度及其完整性。本Agent新evidence wire的数量采用canonical十进制字符串（0或非零首位的数字串，范围0..9223372036854775807），内部解析为严格int；禁止JSON number/bool/浮点/负号/前导零/溢出、缺失或null补零。attempt/evidence序号同样采用正十进制字符串。schema/golden vectors锁定一种格式，不影响当前未变的HTTP 4两项TokenUsage表示。
+- usage：inclusive token totals 的 known_zero / known_nonzero / unknown；分类知识独立；单位、input/output totals、provider profile版本、分类维度及其完整性。本Agent新evidence wire的数量采用canonical十进制字符串（0或非零首位的数字串，范围0..9223372036854775807），内部解析为严格int；禁止JSON number/bool/浮点/负号/前导零/溢出、缺失或null补零。attempt/evidence序号同样采用正十进制字符串。schema/golden vectors锁定一种格式，不影响当前未变的HTTP 5两项TokenUsage表示。
 - outcome：not_dispatched、completed、failed、cancelled、unknown等执行事实与usage状态正交；若有已知部分，只作为partial evidence，不宣布最终总量。结束原因、请求是否可能发出、final/partial来源必须可区分。
 - settlement相关：仅发送Billing引用及观测知识，不发送自算用户金额、费率/倍率修改或“是否收费”的Agent决定。Billing ACK/rejected/pending/settled不等于Run completed；同一source evidence可待决，而Run仍有唯一终态。
 
 input/output总量与cache-read/write、reasoning、audio/image等维度的包含关系由每个provider profile声明。例如reasoning是output子集时不再加到output；cached input是input子集时保留子集用于Billing拆价，不增加总量。不同计量单位独立字段；未知分类不当普通token。完整profile要求的任何计价维度缺失则相关向量unknown，即使input/output总量已知。
+
+### 2.1 R143-A 有限 token profile 与 artifact 边界
+
+本片沿 R81 已裁：canonical decimal string 是唯一 Agent wire count（0..9223372036854775807）；正 ordinal/revision 同格式正数域。provider raw JSON integer 与 wire string 是两个边界，raw adapter 后继才接；不能从已补0的 SDK callback 反推 presence。类型/闭集由 schema-first 生成模型承接，跨字段/严格原始 JSON/修订由 model 纯 codec 承接。
+
+`token_usage_v1` 在同一 evidence schema 的 `$defs` 中，单位 token、聚合 final_cumulative；source 仅 openai_chat_completions / ollama_openai_chat_completions。六项 input_total/output_total/total/input_cache_read/input_cache_write/output_reasoning 均显式 observation：reported 必有 count；unreported 无 count；not_applicable 词汇不授予使用权，当前两 source 均拒该分支。缺失/null 不转换为 observation 或0。
+
+三 totals 全 reported 且 T=I+O 才 known_zero/known_nonzero；缺任一项为 unknown，不派生缺T；非法算术拒 normalized payload。cache-read 是 input 子集、reasoning 是 output 子集，双方 reported 时分别 C≤I、R≤O，不重复加总。当前两 source cache-write 固定 unreported；Ollama 当前保守 source 的 C/R 亦 unreported，意外原始明细不能擦除后伪称支持。分类与 totals 分轴：supported 且 totals known 为 partial，totals unknown 或 unsupported 为 classification unknown；当前 profile 不可达 complete，不造假正例。known_zero 只表示 inclusive totals，不等于未调用/供应商成本0/用户免费。
+
+完整 artifact 仍包含 §2 的主体、Run/call/attempt、原lease、planned/actual、授权观察、outcome/seal、revision/前序/digest，不缩成孤立 totals JSON。actual unknown 与有效 token totals 可以并存，sealed unknown 不等于结清；付款语义未经 IAM/Billing 发布不自创 claims，prepared/not_requested 不编造 refs。Billing 可固定 totals-only 价目投影，但是否足以计价由其已冻结投影所需输入决定，不由 Agent classification 字段授予收费资格。
+
+canonical 方向沿 R81：严格 UTF-8/重复 member 拒绝→typed与跨字段校验→排除顶层digest→RFC8785→固定 domain separator `kokoro-agent:model-usage-evidence:v1\n`（末尾 LF）→SHA256；保留 Unicode、不 trim/NFC，数组顺序保留。raw receipt digest 与 normalized evidence digest 分栏；同 attempt/revision 同 digest 重投，漂移冲突，原lease/planned不被新revision改写。以下技术参数已由Root锁定，正式机器/golden已在R145实现并通过Root限定验证，提交发布仍由Root执行，不把文本当发布凭据。
+
+**R144 Root 已裁参数（2026-10-03，R145 contract 已落实并验证，待提交发布）：**下表是当前离线 artifact 唯一技术参数表，不是已发布 wire。原 R143 一页建议经 Root 接受，唯一修订为 UTC 固定毫秒，与 TIMESTAMPTZ(3) 精度一致；本片不改 SQL 或 HTTP5/public7 入域。规则实现与 golden/schema 一致后才发布，既有付款 owner 不变。
+
+| 已批准参数 | R144 精确约束（沿 R81 / ADR033） | 已发布消费者影响 |
+|---|---|---|
+| 版本/闭集 | R81单schema：artifact_version=`1.0.0`，profile_id=`token_usage_v1`；所有object extra forbidden、所列分支必填，不加平行schema_version。顶层固定 identity、planned、actual、authorization_observation、execution、usage、revision、predecessor、observed_at、digest；具体nested按以下组展开，无任意dimensions | 新artifact，Billing发布后才pin；不改HTTP |
+| 身份字段与容量 | 沿现ExecutionIdentity原结构+run_id/session_id/call_id/attempt_id/原lease owner；owner opaque串1..512 UTF-8 bytes、保原Unicode不trim/NFC，拒非法Unicode与控制字符；不得复制token/assertion正文。现HTTP可接更长值，artifact拒绝并报边界错误而非截断/改身份；此上限已由Root批准 | 不改旧入站接受域；后继运行接线须处理超界，不假称所有既有Run可直接编码 |
+| 唯一tuple | R80/R81：attempt键=(tenant_ref,run_id,call_id,attempt_id)，版本键再加revision；session、actor、subject、identity_assertion_ref、原lease、planned、attempt_ordinal均不可变绑定，比较不匹配拒绝。call_id/attempt_id/event_id固定新生成标准小写UUID串（36字符），event_id每revision一个，重投不换；ordinal是同call实际尝试序号，不复用HITL ID | 无旧字段迁移；Billing按完整tuple而非raw digest去重 |
+| 数量/序号 | R81已裁：count为0..2^63−1 canonical decimal string，ordinal/revision/lease_generation为1..2^63−1；内部任意精度算术再验界。manifest文件size是构建数值，不与业务token混淆 | 新wire；不改旧TokenUsage |
+| revision/predecessor | R81单调/前序：首revision=`1`、predecessor=null；后续恰+1，predecessor={event_id,digest}指紧邻已接受版本。先识别同tuple/revision完整digest精确重投；新revision必须核前序，跳号/分叉拒绝，不以时间排序；无本地前序时不假称验证通过 | 无游标服务/新表；codec提供成对比较，持久并发后继 |
+| UTC/时序 | Root依SQL手册批准：RFC3339固定UTC `YYYY-MM-DDTHH:mm:ss.SSSZ`，有效日历、年0001..9999、不闰秒/offset变体。prepared_at必有，dispatch_started_at/observed_at按执行变体presence；不靠跨主机时钟先后推断revision或“未发送” | 新artifact；不强改Chat毫秒时间戳 |
+| planned/actual | System既有ResolvedModel字段原值固定；沿model/provider/revision_id/revision/digest/generation/tenant_generation/provider_model_name/gateway_model_name，数值采用本artifact十进制串。actual={state:unknown,reason}或{state:verified,provider_ref,model_ref,evidence_ref,evidence_digest}；verified仅表示上游具名认证凭据已核，不靠schema/response.model自证。unknown reason固定 `not_observed / unverified_binding / incomplete_attempt_coverage` | 不增System价格字段；真正verified来源认证仍runtime门 |
+| 授权/执行观察 | D0已有生命周期：not_requested无refs；requested_unknown/denied必request_ref；granted必request_ref+admission_ref（opaque，绑定当前attempt）。未granted不得标dispatched；outcome闭集not_dispatched/completed/failed/cancelled/unknown，seal布尔仅不可变观察封存。schema合法不代表授权有效，不加入wallet/payer claims；payer上下文待IAM/Billing正式契约 | 不强制launch新增attempt admission；不发明付款API |
+| usage与reason闭集 | R81：normalized token_usage_v1或unresolved；unsupported reason=`unsupported_usage_category / unsupported_service_tier / unverified_source_semantics`；首版未支持类别出现即隔离，显式0不例外。unresolved固定=`missing_usage / invalid_usage / incomplete_response / unsupported_source`，可携raw_usage_digest（未取得raw则明确null），无raw正文/非法计数。有效totals可保留在unsupported normalized分支，非法算术不可伪装unreported | Billing不可把unresolved/unknown补0；classification partial不自动阻/授收费 |
+| 内容/byte预算 | R81有限profile：整个输入JSON≤65536 UTF-8 bytes（含空白），最大嵌套16；peer/node路径最多32个非空组件，每个≤128 UTF-8 bytes；其他不引入可扩展数组或任意map。无单Run调用总数上限。先预算/严格decode/duplicate-key拒绝再typed；超界不裁剪 | 仅单evidence安全边界，不限制HTTP过程分页或整个Run |
+| digest/manifest | R81：evidence去顶层digest后RFC8785＋`kokoro-agent:model-usage-evidence:v1\n`（LF）SHA256小写64hex；不混raw摘要。manifest固定{artifact_version,owner:`kokoro-agent`,files:[{path,sha256}],aggregate_sha256}，path仓相对POSIX、按path排序且唯一，无..或绝对路径；inventory固定schema/vectors/CLI/compiler/codec/generated，不列自身/时间/commit；aggregate=对排序files RFC8785字节加独立domain `kokoro-agent:model-usage-artifact:v1\n` 后SHA256。消费者另外pinGit commit+manifest原bytes摘要，无自引用 | 同既有failure/proof manifest隔离；14路径安装assets闭包仍必须过实际installed门 |
+
+seal 仅封存该 revision 的不可变观察；unknown 可由下一 revision 增补可信知识，旧 bytes 永不覆盖；已知计数或已核事实矛盾拒绝，不以 latest-wins 覆盖。纯 codec 的成对前序验证不假称已实现数据库原子 CAS 或消息认证。付款观察仅事实类型，schema/granted 字样不证明真实授权，不新增 payer/价格/launch 付款字段。
+
+合法边界：revision="1"/predecessor=null，时间 `2026-10-03T12:34:56.001Z`；下一revision="2"引用前版event/digest且不可变身份不变。I/O/T="100"/"50"/"150"、C="20"、R="15"、W=unreported 为known_nonzero/partial，可同时actual unknown及outcome failed。非法：跳revision3引用1、同revision换event/digest、改原actor/planned、数字JSON count、缺T后补派生总数、微秒或非Z时区时间、未支持类别显式0当supported。unknown不是零，取消不授权整笔释放。
+
+用户已批准 ADR033 的失败/取消规则：仅结算已核实实际消耗，释放可确认未用预占；unknown 持久待核实，不自动免费或整笔release。此业务规则由 Billing 实施，Agent本片只严格表达知识，不执行计价。上述离线参数未决项为0；实际认证/付款上下文契约、runtime SQL/恢复、费率及资源证明仍后继，不构成本片技术参数等待。
+
+
+R145限定验证结果见CURRENT顶部；已知非null raw_usage_digest不可改写/抹除，已有normalized profile_assessment不可替换，null→known允许。独立 usage manifest/checker 与 installed 资产闭包已沿 TECH §5.1 的14路径实现；HTTP5、公有public7、RunRequest、AG-UI与原failure inventory保护。Billing 未运行不阻 artifact 发布；实际 provider/outbox/接收操作和按 attempt 的预占另行串接，不能以离线校验声称真费用链。
 
 ### 3. 预占、retry和重投协议边界
 
@@ -181,7 +218,7 @@ input/output总量与cache-read/write、reasoning、audio/image等维度的包�
 
 ### 5. 机器门与拒绝矩阵
 
-后继须覆盖launch不要求未来attempt admission、付款上下文验证失败零provider、准备attempt后才获授、前次attempt许可拒用于后续，以及锁定字段presence、身份容量、UTC/整数界、分类互斥/子集关系、unknown组合、同key相同/不同digest、late revision前序、planned/actual错绑、SDK/gateway多attempt、cancel/失败收费待决、ACK丢失、跨tenant/subject拒绝及脱敏vectors。Agent正式checker/生成器和Billing消费contract测试共同通过后才进入consumer实现。
+后继须覆盖launch不要求未来attempt admission、付款上下文验证失败零provider、准备attempt后才获授、前次attempt许可拒用于后续，以及锁定字段presence、身份容量、UTC/整数界、分类互斥/子集关系、unknown组合、同key相同/不同digest、late revision前序、planned/actual错绑、SDK/gateway多attempt、cancel/失败仅核实消耗与unknown待核实规则、ACK丢失、跨tenant/subject拒绝及脱敏vectors。Agent正式checker/生成器和Billing消费contract测试共同通过后才进入consumer实现。
 
 拟新增 `tests/contract/test_model_usage_contract.py`，扩现 `tests/contract/test_machine_contract.py`、`test_public_contract.py`；后继生成命令 `python scripts/generate_model_usage_models.py --check` 尚不存在、未执行。现有 `kokoro-agent-contract-check` 的通过也不证明此未发布目标通过。本轮全部contract/source只读。
 

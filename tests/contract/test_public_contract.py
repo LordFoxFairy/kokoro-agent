@@ -271,6 +271,9 @@ def test_run_request_parses() -> None:
     msg = inbound_adapter.validate_python(_request())
     assert msg.kind == "run.request"
     assert msg.selected_skill_source_refs == ()
+    assert not {"payer", "billing_admission", "model_usage_evidence"} & set(
+        msg.model_dump()
+    )
 
 
 @pytest.mark.parametrize(

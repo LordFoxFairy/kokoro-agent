@@ -1,3 +1,16 @@
+## R145：strict usage离线artifact限定验收（2026-10-03）
+
+基线Agent main `79bf98c` 加本片14路径候选，源码/机器已冻结，当前仅文档收口，待Root提交发布。schema-first `contract/usage/v1`、有限compiler、生成Pydantic、纯codec、独立manifest及既有installed audit闭包已实现；HTTP5/public7、SQL、依赖锁与运行producer保持不变。下方旧R80/R104/R122记录保留历史，不覆盖本节当前切片证据。
+
+- Root最终13169：正规usage/aggregate生成、lock、Ruff format（274文件）/lint、Pyright、build全部exit0；usage **42 passed**，默认纯门 **2174 passed / 301 deselected / 0 skipped**。manifest `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r145-agent-final-gates-gl3z_mih/manifest.json` SHA256 `b238a10fa180dc6cfeffe07c01d4fe2f2f5bdbca332a19df021bb90c4fe9bff4`。
+- Root70871仓外安装wheel SHA256 `f870f9a20a08995a306dd39f94923162c3a93605cb85c8f6de9311c978e444e6`：origin核验与clean checker exit0；missing manifest、tampered vectors、tampered runtime分别exit1；恢复后exit0。manifest-v2 `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r145-installed-usage-2v5vn3tm/manifest-v2.json` SHA256 `07a5c87977834e0e92dd951de00809ad0ab5c3a37ecd5924af11b057f27326c4`。这是本次wheel的实际安装检查，不代替HTTP/PG/provider或其他布局全部验收。
+- 初始失败保留：model_字段保护误拒导致generator前置失败，不是行为RED；修正后17行为9失败/8通过。随后function-level import、6文件format、7项strict类型与checker202行触发<200架构门均实际失败后窄修，未改阈值。R01合法unknown→known原fixture错误outcome仅经Root授权修正该叶与独立digest，不放宽生产矛盾规则。
+- 独立review发现已知raw digest/profile assessment可覆盖的真实P1；Root92067追加4pairs实测 **3 failed / 1 passed / 38 deselected**（拒绝例DID NOT RAISE），修复后纳入上述42行为。RED manifest SHA256 `8b327e3c384f68c67c47908758bf133069e8b64358e58e108310396034f9ca92`；最终独立复审Root已接收审0。原负例/正控保持，known事实不可改写，unknown可增补。
+
+离线artifact完成不等于runtime producer、provider真实receipt、attempt journal/outbox/恢复、Billing admission/计价/结算、T-B07或整Agent通过。用户已批准失败/取消仅结算核实实际消耗、释放确认未用预占，unknown持久待核实而非补0或整笔释放；政策实施归Billing。后继按Agent artifact先发布→Billing固定消费并发布admission/接收契约→Agent runtime接线，必要BFF消费者随后；真实资源301未选不得记通过。既有完整retention、S3/Docker/provider/用户费用链仍分别待验。
+
+---
+
 ## R122 实现与验收当前态（2026-10-02）
 
 当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。

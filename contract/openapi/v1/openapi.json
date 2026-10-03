@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "4.0.0"
+    "version": "5.0.0"
   },
   "servers": [
     {
@@ -848,6 +848,7 @@
               "assistant.delta",
               "assistant.completed",
               "activity",
+              "todo.updated",
               "interaction.state",
               "delivery",
               "run.completed",
@@ -875,7 +876,9 @@
           "property": "payload_json",
           "mapping": {
             "run.failed": "#/components/schemas/ChatFailure",
-            "interaction.state": "#/components/schemas/ChatInteractionState"
+            "interaction.state": "#/components/schemas/ChatInteractionState",
+            "activity": "#/components/schemas/ChatActivity",
+            "todo.updated": "#/components/schemas/ChatTodo"
           }
         }
       },
@@ -1474,6 +1477,211 @@
           }
         ],
         "description": "Complete replacement of the pending collection, never a delta. Runtime additionally enforces globally unique group/item IDs, pause_revision <= interaction_revision, action_result.pause_revision <= pause_revision, exact current revision for resuming, and an earlier action revision for validation_failed waiting. Locator, arguments and submitted values are private and absent."
+      },
+      "ChatTodo": {
+        "type": "object",
+        "required": [
+          "todos"
+        ],
+        "properties": {
+          "todos": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": [
+                "content",
+                "status"
+              ],
+              "properties": {
+                "content": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^[^\\uD800-\\uDFFF]*(?![\\s\\S])"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false,
+        "x-kokoro-json-byte-limit": 65536
+      },
+      "ChatActivity": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "activity",
+              "activity_id",
+              "segment_id",
+              "status",
+              "display_code"
+            ],
+            "properties": {
+              "activity": {
+                "type": "string",
+                "const": "tool"
+              },
+              "activity_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])"
+              },
+              "segment_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^seg_[0-9a-f]{64}(?![\\s\\S])"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "completed",
+                  "failed"
+                ]
+              },
+              "display_code": {
+                "type": "string",
+                "const": "tool.execution"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "activity",
+              "activity_id",
+              "segment_id",
+              "status",
+              "display_code"
+            ],
+            "properties": {
+              "activity": {
+                "type": "string",
+                "const": "subagent"
+              },
+              "activity_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])"
+              },
+              "segment_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^seg_[0-9a-f]{64}(?![\\s\\S])"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "completed",
+                  "failed"
+                ]
+              },
+              "display_code": {
+                "type": "string",
+                "const": "subagent.execution"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "activity",
+              "activity_id",
+              "preflight_id",
+              "source_refs",
+              "phase"
+            ],
+            "properties": {
+              "activity": {
+                "type": "string",
+                "const": "skill"
+              },
+              "activity_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])"
+              },
+              "preflight_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^spf_[0-9a-f]{64}(?![\\s\\S])"
+              },
+              "source_refs": {
+                "type": "array",
+                "maxItems": 16,
+                "uniqueItems": true,
+                "x-kokoro-json-byte-limit": 4096,
+                "description": "Exact Platform SkillSourceRef values for this Run, in caller-selected order; explicit [] means no external Skill. The JSON array must encode to at most 4096 bytes.",
+                "items": {
+                  "type": "string",
+                  "minLength": 7,
+                  "maxLength": 197,
+                  "pattern": "^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                },
+                "minItems": 1
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "resolving",
+                  "loading",
+                  "ready",
+                  "failed"
+                ]
+              },
+              "error_code": {
+                "type": "string",
+                "enum": [
+                  "skill_resolve_failed",
+                  "skill_load_failed"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "if": {
+              "properties": {
+                "phase": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "phase"
+              ]
+            },
+            "then": {
+              "required": [
+                "error_code"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "error_code"
+                ]
+              }
+            }
+          }
+        ]
       }
     },
     "responses": {

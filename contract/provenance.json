@@ -11,15 +11,16 @@
     "scripts/generate_failure_models.py",
     "src/kokoro_agent/contract_check.py",
     "src/kokoro_agent/chat_contract_check.py",
-    "src/kokoro_agent/protocol/run_failure_generated.py"
+    "src/kokoro_agent/protocol/run_failure_generated.py",
+    "src/kokoro_agent/distribution_assets.py"
   ],
-  "combined_sha256": "7710ec0e88b55c15279503d6d4aa9494f3ee91c5411284f255df8f107fdc5806",
+  "combined_sha256": "8f5e8fc1871eefd110cc7476679b3d654e4aa0a03e770156a348121f3da6a440",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
-      "sha256": "c9be05fc4d017ec2aebf8a3e042f52893239a206cdccf13ed66b250df3756d7b",
+      "sha256": "21ceb086c18f9b386f1049a1e16131be4a4e9fa8f6f2e7d9e1e4d06bb7104e83",
       "source": "contract/openapi/v1/openapi.json",
-      "source_sha256": "763ff7a9cf668eb59ae7cfb59b2fd4f84fafde124063d9a365f138b6a30cf04f",
+      "source_sha256": "bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2",
       "generator": "scripts/generate_failure_models.py"
     }
   ],
@@ -48,8 +49,8 @@
     }
   },
   "http_contract": {
-    "version": "4.0.0",
+    "version": "5.0.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "763ff7a9cf668eb59ae7cfb59b2fd4f84fafde124063d9a365f138b6a30cf04f"
+    "sha256": "bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2"
   }
 }

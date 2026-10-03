@@ -30,6 +30,7 @@ from kokoro_agent.protocol import (
     RunResume,
     RunSteer,
     SubagentSource,
+    SkillProgressSink,
 )
 from kokoro_agent.streams.protocol import StreamProtocol
 
@@ -39,7 +40,9 @@ SANDBOX_CLEANUP_CLAIM_LEASE_MS = 30_000
 SANDBOX_CLEANUP_RETRY_BASE_MS = 1_000
 SANDBOX_CLEANUP_RETRY_MAX_MS = 60_000
 
-AgentBuilder = Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]
+AgentBuilder = Callable[
+    [RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]
+]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
 TraceFactory = Callable[[RunRequest], RunnableConfig | None]
 SourceResolver = Callable[[str], SubagentSource]
@@ -72,6 +75,11 @@ class SupervisorContext:
     _chat_repository: ChatRepository | None
     _sem: asyncio.Semaphore
     _tasks: dict[str, asyncio.Task[None]]
+    _assembly_tasks: set[asyncio.Task[None]]
+    _assembly_handles: dict[int, asyncio.Task[None]]
+    _assembly_errors: list[BaseException]
+    _resource_cleanup_tasks: set[asyncio.Task[None]]
+    _resource_cleanup_errors: list[BaseException]
     _task_leases: dict[str, LeaseFence]
     _control: dict[str, asyncio.Task[None]]
     _emitters: dict[str, RunEmitter]
@@ -136,6 +144,21 @@ class SupervisorContext:
     ) -> None: ...
 
     async def _guarded_entry_gate(self, run_id: str, lease: LeaseFence) -> bool: ...
+
+    async def _close_handle(self, handle: AgentHandle) -> None: ...
+
+    def _release_assembly_handle(self, handle: AgentHandle) -> None: ...
+
+    async def _close_handle_after_primary(
+        self, handle: AgentHandle, primary: BaseException | None
+    ) -> None: ...
+
+    async def _build_owned(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        progress: SkillProgressSink,
+    ) -> AgentHandle: ...
 
     async def _guarded(
         self,

@@ -9,6 +9,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+from kokoro_agent.protocol import SkillProgressSink
+
 from support.fakes import read_unpaused_interaction, settled_state_callback
 
 from support.fakes import repository_terminal_callback
@@ -47,8 +51,10 @@ from kokoro_agent.worker.supervisor import RunSupervisor
 
 def _builder(
     agent: FakeAgent,
-) -> Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]:
-    async def _build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+) -> Callable[[RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]]:
+    async def _build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     return _build
@@ -154,7 +160,10 @@ async def test_stale_generation_emitter_drops_live_and_durable_events() -> None:
     payload = message_delta_payload("must-not-publish", segment_id="segment")
     assert payload is not None
 
-    await emitter.emit(payload)
+    from kokoro_agent.execution.events import ProgressAuthorityLost
+
+    with pytest.raises(ProgressAuthorityLost):
+        await emitter.emit(payload)
 
     assert bus.run_events(run.run_id) == []
     assert await store.list_unpublished_outbox() == []
@@ -179,6 +188,7 @@ async def test_terminal_frame_republished_from_outbox_on_publish_failure() -> No
         (settlement_agent := FakeAgent(run=text_run("hi"))),
         "c1",
         {"messages": []},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_source,
         finalize_terminal=repository_terminal_callback(store, bus, "term-drop", lease),
@@ -233,6 +243,7 @@ async def test_terminal_failure_publish_failure_leaves_recoverable_outbox() -> N
         (settlement_agent := FakeAgent(raise_on_stream=RuntimeError("boom"))),
         "c1",
         {"messages": []},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_source,
         finalize_terminal=repository_terminal_callback(store, bus, "term-fail", lease),

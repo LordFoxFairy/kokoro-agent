@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from threading import RLock
+from typing import Any, Literal
 
 import boto3
 import yaml
@@ -73,6 +75,8 @@ class S3Archiver:
         secret_key: SecretStr,
     ) -> None:
         self._bucket = config.bucket
+        self._lock = RLock()
+        self._closed = False
         self._client: S3Client = boto3.client(
             "s3",
             endpoint_url=config.endpoint,
@@ -89,20 +93,38 @@ class S3Archiver:
         )
 
     def upload_one(self, local_file: Path, key: str) -> None:
-        self._client.upload_file(str(local_file), self._bucket, key)
+        with self._lock:
+            self._require_open()
+            self._client.upload_file(str(local_file), self._bucket, key)
 
     def archive_tree(self, root: Path, prefix: str) -> int:
         """全量归档（幂等覆盖）：返回上传数。杂物与隐藏文件不推，对齐清单语义。"""
-        count = 0
-        for file in sorted(root.rglob("*")):
-            if not file.is_file():
-                continue
-            rel = file.relative_to(root)
-            if any(part.startswith(".") or part in _IGNORED_DIRS for part in rel.parts):
-                continue
-            self.upload_one(file, f"{prefix}/{rel.as_posix()}")
-            count += 1
-        return count
+        with self._lock:
+            self._require_open()
+            count = 0
+            for file in sorted(root.rglob("*")):
+                if not file.is_file():
+                    continue
+                rel = file.relative_to(root)
+                if any(
+                    part.startswith(".") or part in _IGNORED_DIRS for part in rel.parts
+                ):
+                    continue
+                self.upload_one(file, f"{prefix}/{rel.as_posix()}")
+                count += 1
+            return count
+
+    def close(self) -> None:
+        """Close the client exactly once after all guarded operations finish."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._client.close()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("workspace archiver is closed")
 
 
 class ArchivingWritesMixin(LocalShellBackend):
@@ -114,6 +136,66 @@ class ArchivingWritesMixin(LocalShellBackend):
     _archive_root: Path
     _archiver: S3Archiver
     _prefix: str
+    _archive_operations: set[asyncio.Task[object]]
+    _archive_close_task: asyncio.Task[None] | None
+    _archive_state_lock: RLock
+    _archive_closing: bool
+
+    def _init_archive_resources(self) -> None:
+        self._archive_operations = set()
+        self._archive_close_task = None
+        self._archive_state_lock = RLock()
+        self._archive_closing = False
+
+    def _ensure_archive_resources(self) -> None:
+        # Docker's archiving subclass lives in its existing owner module; lazy
+        # initialization keeps this mixin self-contained for every composition.
+        if not hasattr(self, "_archive_state_lock"):
+            self._init_archive_resources()
+
+    async def _run_owned_operation(
+        self,
+        operation: Callable[..., Any],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> Any:
+        self._ensure_archive_resources()
+        with self._archive_state_lock:
+            if self._archive_closing:
+                raise RuntimeError("workspace archive backend is closing")
+            task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+            self._archive_operations.add(task)
+
+        def settled(done: asyncio.Task[object]) -> None:
+            self._archive_operations.discard(done)
+            # A cancelled caller no longer retrieves the thread task's exception.
+            # Reading it here prevents an unowned "never retrieved" failure.
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(settled)
+        return await asyncio.shield(task)
+
+    async def aclose_resources(self) -> None:
+        """Reject new work, wait real thread completion, then close the client."""
+        self._ensure_archive_resources()
+        with self._archive_state_lock:
+            self._archive_closing = True
+            task = self._archive_close_task
+            if task is None:
+                task = asyncio.create_task(self._close_resources())
+                self._archive_close_task = task
+        await asyncio.shield(task)
+
+    async def _close_resources(self) -> None:
+        while True:
+            with self._archive_state_lock:
+                pending = tuple(self._archive_operations)
+            if not pending:
+                break
+            await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.to_thread(self._archiver.close)
 
     def _archive_file(self, file_path: str) -> None:
         rel = file_path.lstrip("/")
@@ -137,8 +219,7 @@ class ArchivingWritesMixin(LocalShellBackend):
         return result
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
-        result = await super().awrite(file_path, content)
-        await asyncio.to_thread(self._archive_file, file_path)
+        result = await self._run_owned_operation(self.write, file_path, content)
         return result
 
     def edit(
@@ -159,8 +240,9 @@ class ArchivingWritesMixin(LocalShellBackend):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        result = await super().aedit(file_path, old_string, new_string, replace_all)
-        await asyncio.to_thread(self._archive_file, file_path)
+        result = await self._run_owned_operation(
+            self.edit, file_path, old_string, new_string, replace_all
+        )
         return result
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
@@ -171,8 +253,7 @@ class ArchivingWritesMixin(LocalShellBackend):
     async def aexecute(
         self, command: str, *, timeout: int | None = None
     ) -> ExecuteResponse:
-        result = await super().aexecute(command, timeout=timeout)
-        await asyncio.to_thread(self._archive_all)
+        result = await self._run_owned_operation(self.execute, command, timeout=timeout)
         return result
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
@@ -183,8 +264,7 @@ class ArchivingWritesMixin(LocalShellBackend):
     async def aupload_files(
         self, files: list[tuple[str, bytes]]
     ) -> list[FileUploadResponse]:
-        result = await super().aupload_files(files)
-        await asyncio.to_thread(self._archive_all)
+        result = await self._run_owned_operation(self.upload_files, files)
         return result
 
 
@@ -210,3 +290,4 @@ class ArchivingLocalShellBackend(ArchivingWritesMixin):
         self._archive_root = root
         self._archiver = archiver
         self._prefix = prefix
+        self._init_archive_resources()

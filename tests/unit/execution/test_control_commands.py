@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from kokoro_agent.protocol import SkillProgressSink
+
 from support.fakes import (
     read_unpaused_interaction,
     InitialPauseThenUnknownReader,
@@ -87,8 +89,10 @@ _PENDING_STATE = FakeState(
 
 def _builder(
     agent: FakeAgent,
-) -> Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]:
-    async def _build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+) -> Callable[[RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]]:
+    async def _build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     return _build

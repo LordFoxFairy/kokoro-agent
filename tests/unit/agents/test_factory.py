@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -16,7 +17,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.stream import CustomTransformer
+from langgraph.stream import CustomTransformer, StreamTransformer
 from langgraph.store.memory import InMemoryStore
 
 import kokoro_agent.agent_factory as agent_factory_module
@@ -24,7 +25,14 @@ from kokoro_agent.agent_factory import AgentFactory
 from kokoro_agent.features.catalog import FeatureCatalog, FEATURE_CATALOG
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.config import AppConfig
-from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
+from kokoro_agent.protocol import (
+    ExecutionIdentity,
+    IdentityRef,
+    RunInput,
+    RunRequest,
+    SkillProgressSink,
+)
+from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
@@ -99,6 +107,7 @@ def _factory(
     resolver: ModelResolver | None,
     catalog: FeatureCatalog = FEATURE_CATALOG,
     *,
+    config: AppConfig | None = None,
     delivery: DeliveryClient | None = None,
     platform: WorkerPlatformRuntime | None = None,
 ) -> tuple[AgentFactory, FakeRunRepository]:
@@ -110,18 +119,18 @@ def _factory(
         return LocalFakeChatModel()
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", test_model)
-    config = AppConfig.from_env({})
+    active_config = config or AppConfig.from_env({})
     clients = WorkerClients()
     repository = FakeRunRepository()
     return AgentFactory(
         WorkerDependencies(
-            model=config.model,
-            sandbox=config.sandbox,
+            model=active_config.model,
+            sandbox=active_config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
-                run_token_budget=config.run_token_budget,
-                recursion_limit=config.recursion_limit,
-                model=config.model,
-                sandbox=config.sandbox,
+                run_token_budget=active_config.run_token_budget,
+                recursion_limit=active_config.recursion_limit,
+                model=active_config.model,
+                sandbox=active_config.sandbox,
             ),
             manifest=production_manifest(),
             subagent_catalog=build_subagent_catalog(None),
@@ -138,6 +147,26 @@ def _factory(
     ), repository
 
 
+async def _r93_progress(
+    repository: FakeRunRepository, request: RunRequest, lease: LeaseFence
+) -> SkillProgressSink:
+    from support.fakes import FakeBus
+    from kokoro_agent.execution.events import RunEmitter
+    from kokoro_agent.domain.run.scope import RunScope
+
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        request.run_id,
+        outbox=repository,
+        lease=lease,
+        tenant_id=request.execution_identity.tenant_ref,
+        namespace=RunScope.of(request).namespace,
+        session_id=request.session_id,
+        chat_repository=repository.chat_repository,
+    )
+    return emitter.skill_progress(request.selected_skill_source_refs)
+
+
 @pytest.mark.parametrize("feature_key", ["chat"])
 async def test_builds_native_agent_without_external_clients(
     feature_key: str, monkeypatch: pytest.MonkeyPatch
@@ -147,7 +176,9 @@ async def test_builds_native_agent_without_external_clients(
     run_request = _request(feature_key)
     lease = await repository.try_claim(run_request)
     assert lease is not None
-    handle = await factory.build(run_request, lease)
+    handle = await factory.build(
+        run_request, lease, await _r93_progress(repository, run_request, lease)
+    )
 
     assert callable(handle.runnable.astream_events)
     assert callable(handle.runnable.aget_state)
@@ -175,7 +206,9 @@ async def test_selected_skill_source_fails_before_any_external_construction(
     monkeypatch.setattr(agent_factory_module, "make_backend_for_run", forbidden)
     monkeypatch.setattr(agent_factory_module, "build_toolset", forbidden)
     with pytest.raises(SkillClientError, match="typed skill source reader unavailable"):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
     assert resolver.calls == []
     assert called == []
 
@@ -188,7 +221,9 @@ async def test_invokes_native_agent_with_model_resolver_without_optional_clients
     run_request = _request("chat")
     lease = await repository.try_claim(run_request)
     assert lease is not None
-    handle = await factory.build(run_request, lease)
+    handle = await factory.build(
+        run_request, lease, await _r93_progress(repository, run_request, lease)
+    )
 
     run = await handle.runnable.astream_events(
         {"messages": [HumanMessage(content="hello")]},
@@ -230,7 +265,9 @@ async def test_missing_resolver_fails_before_backend_creation(
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(ModelResolutionError, match="MODEL_RESOLVER_NOT_CONFIGURED"):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
 
 
 async def test_requested_label_is_resolved_and_not_interpreted_locally(
@@ -244,7 +281,9 @@ async def test_requested_label_is_resolved_and_not_interpreted_locally(
     lease = await repository.try_claim(request)
     assert lease is not None
     with caplog.at_level("INFO", logger="kokoro_agent.agent_factory"):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
     assert resolver.calls == [("tenant", "chat", "opaque-label", "request-1")]
     record = next(
         record for record in caplog.records if record.message == "model route resolved"
@@ -272,7 +311,9 @@ async def test_owner_failure_is_not_replaced_by_a_local_model(
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(ModelResolutionError, match="MODEL_UNAVAILABLE"):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
 
 
 async def _drain(values: AsyncIterable[object]) -> None:
@@ -313,7 +354,9 @@ async def test_all_peers_preflight_before_any_backend_or_model(
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(SkillClientError):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
     assert calls == []
 
 
@@ -331,7 +374,9 @@ async def test_selected_features_require_external_clients(
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(SkillClientError):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
     assert resolver.calls == []
 
 
@@ -376,7 +421,9 @@ async def _native_script(
     request = _request("chat")
     lease = await repository.try_claim(request)
     assert lease is not None
-    handle = await factory.build(request, lease)
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
     config: RunnableConfig = {"configurable": {"thread_id": request.session_id}}
     run = await handle.runnable.astream_events(
         {"messages": [HumanMessage(content="Create and deliver a workspace file.")]},
@@ -645,7 +692,9 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
     )
     lease = await repository.try_claim(request)
     assert lease is not None
-    handle = await factory.build(request, lease)
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
     assert handle.runnable is not None
 
 
@@ -741,7 +790,9 @@ async def test_factory_skill_metadata_is_current_run_not_session(
         )
         lease = await repository.try_claim(request)
         assert lease is not None
-        handle = await factory.build(request, lease)
+        handle = await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
         native: Any = handle.runnable  # Public LangGraph invocation/update boundary.
         if index:
             await native.aupdate_state(
@@ -811,7 +862,9 @@ async def test_factory_skill_metadata_survives_same_run_hitl_with_guard(
     )
     lease = await repository.try_claim(request)
     assert lease is not None
-    handle = await factory.build(request, lease)
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
     native: Any = handle.runnable
     config: RunnableConfig = {"configurable": {"thread_id": "same-run-hitl"}}
     await native.ainvoke({"messages": [HumanMessage(content="write")]}, config)
@@ -821,7 +874,9 @@ async def test_factory_skill_metadata_survives_same_run_hitl_with_guard(
     calls_before = list(platform.reader.calls)
     model_calls_before = len(model.observed)
     # Worker reconstructs the production graph for the same Run on resume.
-    resumed = await factory.build(request, lease)
+    resumed = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
     assert len(platform.reader.calls) > len(
         calls_before
     )  # fresh preflight authorization
@@ -869,7 +924,9 @@ async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
         )
         lease = await repository.try_claim(request)
         assert lease is not None
-        handle = await factory.build(request, lease)
+        handle = await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
         native: Any = handle.runnable
         if not index:
             await native.ainvoke({"messages": [HumanMessage(content="start")]}, config)
@@ -1055,7 +1112,9 @@ async def test_native_factory_build_uses_both_shared_planners(
     request = _request("chat")
     lease = await repository.try_claim(request)
     assert lease is not None
-    built = await factory.build(request, lease)
+    built = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
     assert built.runnable
     assert resolver.calls
     assert observed == ["tools", "subagents"]
@@ -1095,7 +1154,9 @@ async def test_all_peer_guard_validation_precedes_any_preflight(
     lease = await repository.try_claim(request)
     assert lease is not None
     with pytest.raises(ValueError, match="result-review"):
-        await factory.build(request, lease)
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
     assert calls == []
 
 
@@ -1145,7 +1206,7 @@ async def test_real_factory_materializers_consume_exact_prepared_objects(
     request = _request("chat")
     lease = await repository.try_claim(request)
     assert lease is not None
-    await factory.build(request, lease)
+    await factory.build(request, lease, await _r93_progress(repository, request, lease))
     assert len(observed) == 1
 
 
@@ -1172,7 +1233,9 @@ async def test_static_recipe_must_commit_before_any_external_preflight(
     )
     monkeypatch.setattr(agent_factory_module, "_preflight", external)
     with pytest.raises(RuntimeError, match="recipe transaction rejected"):
-        await factory.build(run_request, lease)
+        await factory.build(
+            run_request, lease, await _r93_progress(repository, run_request, lease)
+        )
     assert calls == ["freeze"]
 
 
@@ -1204,7 +1267,7 @@ async def test_static_request_identity_is_original_text_not_json_equivalence(
         raw = json.dumps(value, separators=(",", ":"))
     repository.request_json[req.run_id] = raw
     with pytest.raises(StaticRecipeIncompatible):
-        await factory.build(req, lease)
+        await factory.build(req, lease, await _r93_progress(repository, req, lease))
     assert resolver.calls == []
     assert repository.static_recipes == {}
 
@@ -1219,19 +1282,21 @@ async def test_static_recipe_same_run_restore_and_drift(
     req = _request("chat")
     lease = await repository.try_claim(req)
     assert lease is not None
-    await factory.build(req, lease)
+    await factory.build(req, lease, await _r93_progress(repository, req, lease))
     original = repository.static_recipes[req.run_id]
     assert await repository.pause(req.run_id, lease)
     restored = await repository.adopt(req.run_id, "next")
     assert restored is not None
-    await factory.build(req, restored)
+    await factory.build(req, restored, await _r93_progress(repository, req, restored))
     assert repository.static_recipes[req.run_id] is original
     repository.static_recipes[req.run_id] = type(original)(
         canonical_bytes=original.canonical_bytes, fingerprint="0" * 64
     )
     resolver.calls.clear()
     with pytest.raises(StaticRecipeIncompatible):
-        await factory.build(req, restored)
+        await factory.build(
+            req, restored, await _r93_progress(repository, req, restored)
+        )
     assert not resolver.calls
 
 
@@ -1253,7 +1318,7 @@ async def test_executed_run_with_missing_static_binding_is_rejected(
     else:
         repository.sandbox_ids[req.run_id] = "box"
     with pytest.raises(StaticRecipeIncompatible):
-        await factory.build(req, lease)
+        await factory.build(req, lease, await _r93_progress(repository, req, lease))
     assert not resolver.calls
 
 
@@ -1261,7 +1326,6 @@ async def test_external_preflight_waits_for_the_successful_recipe_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from kokoro_agent.domain.run.models import StaticRecipeBinding
-    from kokoro_agent.domain.run.repository import LeaseFence
 
     factory, repository = _factory(monkeypatch, RouteResolver())
     req = _request("chat")
@@ -1286,7 +1350,9 @@ async def test_external_preflight_waits_for_the_successful_recipe_commit(
 
     monkeypatch.setattr(repository, "freeze_or_verify_static_recipe", delayed_commit)
     monkeypatch.setattr(agent_factory_module, "_preflight", preflight)
-    task = asyncio.create_task(factory.build(req, lease))
+    task = asyncio.create_task(
+        factory.build(req, lease, await _r93_progress(repository, req, lease))
+    )
     try:
         await entered.wait()
         assert not events
@@ -1299,3 +1365,559 @@ async def test_external_preflight_waits_for_the_successful_recipe_commit(
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def _r91_dispatch_real_factory(
+    factory: AgentFactory,
+    repository: FakeRunRepository,
+    request: RunRequest,
+) -> tuple[list[str], Exception | None]:
+    from support.fakes import FakeBus, read_unpaused_interaction
+    from kokoro_agent.worker.supervisor import RunSupervisor
+
+    bus = FakeBus()
+    supervisor = RunSupervisor(
+        agent_builder=factory.build,
+        run_repository=repository,
+        interaction_reader=read_unpaused_interaction,
+        approval_tool_names=lambda _request: frozenset(),
+        trace_factory=lambda _request: None,
+        source_for=lambda _name: "runtime-custom",
+        consumer="r91-factory",
+        chat_repository=repository.chat_repository,
+    )
+    repository.dispatches[request.run_id] = "pending"
+    repository.dispatch_requests[request.run_id] = request
+    caught: Exception | None = None
+    try:
+        await supervisor.dispatch(bus, request)
+        for task in tuple(supervisor.tasks.values()):
+            await task
+    except Exception as error:
+        caught = error
+    finally:
+        assert await supervisor.drain(timeout_s=1)
+    return bus.kinds(request.run_id), caught
+
+
+@pytest.mark.parametrize("selected", [False, True])
+async def test_r91_real_factory_skill_io_observes_durable_phase(
+    selected: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    observations: list[tuple[str, list[str]]] = []
+
+    def phases() -> list[str]:
+        return [
+            json.loads(row.payload_json)["phase"]
+            for row in repository.chat_repository.records
+            if row.event_type == "activity"
+            and json.loads(row.payload_json).get("activity") == "skill"
+        ]
+
+    class ObservedReader(CheckpointSkillReader):
+        async def resolve(
+            self, source_refs: Sequence[str]
+        ) -> tuple[ResolvedSkill, ...]:
+            if not any(
+                row.event_type == "run.started"
+                for row in repository.chat_repository.records
+            ):
+                observations.append(("resolve", phases()))
+            return await super().resolve(source_refs)
+
+        async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+            if not any(
+                row.event_type == "run.started"
+                for row in repository.chat_repository.records
+            ):
+                observations.append(("load", phases()))
+            return await super().load_package(skill)
+
+    object.__setattr__(platform, "reader", ObservedReader())
+    request = _request("chat").model_copy(
+        update={
+            "selected_skill_source_refs": ("skill:alpha",) if selected else (),
+        }
+    )
+    kinds, caught = await _r91_dispatch_real_factory(factory, repository, request)
+    assert caught is None
+    assert kinds.count("run.started") == 1
+    assert "run.failed" not in kinds
+    if not selected:
+        assert observations == []
+        assert phases() == []
+    else:
+        assert observations == [
+            ("resolve", ["resolving"]),
+            ("load", ["resolving", "loading"]),
+        ], "real Skill I/O must see its phase already committed"
+        assert phases() == ["resolving", "loading", "ready"]
+        facts = repository.chat_repository.records
+        assert next(
+            i for i, row in enumerate(facts) if row.event_type == "run.started"
+        ) > max(i for i, row in enumerate(facts) if row.event_type == "activity")
+
+
+@pytest.mark.parametrize("failure", ["write_error", "fence_rejected"])
+async def test_r91_factory_does_no_skill_io_without_first_durable_phase(
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from support.chat import FakeChatRepository
+    from kokoro_agent.domain.chat.models import ChatEventRecord, ChatProjection
+    from kokoro_agent.domain.chat.repositories import ChatFenceMode
+
+    attempts: list[str] = []
+
+    class RejectProgress(FakeChatRepository):
+        async def append_fenced(
+            self,
+            projection: ChatProjection,
+            lease: LeaseFence,
+            *,
+            mode: ChatFenceMode,
+        ) -> ChatEventRecord | None:
+            if projection.event.event_type == "activity":
+                attempts.append("progress")
+                if failure == "write_error":
+                    raise OSError("r91 phase persistence unavailable")
+                return None
+            return await super().append_fenced(projection, lease, mode=mode)
+
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    repository.chat_repository = RejectProgress()
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:alpha",)}
+    )
+    kinds, caught = await _r91_dispatch_real_factory(factory, repository, request)
+    assert platform.reader.calls == [], (
+        "no resolve/package read before durable resolving"
+    )
+    assert attempts == ["progress"]
+    assert not set(kinds) & {"run.started", "run.failed", "run.completed"}
+    assert request.run_id not in repository.terminals
+    assert caught is not None
+    assert not isinstance(caught, (TypeError, AttributeError, ImportError))
+    from kokoro_agent.execution.events import ProgressPersistenceError
+
+    assert isinstance(caught, ProgressPersistenceError)
+
+
+async def test_r91_mcp_failure_does_not_relabel_successful_skill_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+
+    async def unavailable_mcp(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("r91 MCP unavailable")
+
+    monkeypatch.setattr(agent_factory_module, "resolve_declared_mcp", unavailable_mcp)
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:alpha",)}
+    )
+    kinds, caught = await _r91_dispatch_real_factory(factory, repository, request)
+    assert caught is None
+    assert platform.reader.calls == ["resolve", "alpha"]
+    assert kinds.count("run.failed") == 1
+    assert "run.started" not in kinds
+    skills = [
+        json.loads(row.payload_json)
+        for row in repository.chat_repository.records
+        if row.event_type == "activity"
+        and json.loads(row.payload_json).get("activity") == "skill"
+    ]
+    assert [item["phase"] for item in skills] == ["resolving", "loading", "ready"]
+    assert all("error_code" not in item for item in skills)
+
+
+@pytest.mark.parametrize("failure", ["resolve", "load"])
+async def test_r93_second_peer_skill_failure_has_no_ready(
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+
+    feature = Feature(
+        key="peer_progress",
+        agents=(
+            Agent(key="first", prompt="first"),
+            Agent(key="second", prompt="second"),
+        ),
+        entry_agent="first",
+        handoffs=(("first", "second"),),
+    )
+    platform = CheckpointSkillPlatform()
+
+    class Reader(CheckpointSkillReader):
+        resolutions = 0
+
+        async def resolve(
+            self, source_refs: Sequence[str]
+        ) -> tuple[ResolvedSkill, ...]:
+            self.resolutions += 1
+            if self.resolutions == 2 and failure == "resolve":
+                raise SkillClientError("private second peer resolution failed")
+            return await super().resolve(source_refs)
+
+        async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+            if self.resolutions == 2 and failure == "load":
+                raise SkillClientError("private second peer package failed")
+            return await super().load_package(skill)
+
+    object.__setattr__(platform, "reader", Reader())
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,)), platform=platform
+    )
+    req = _request("peer_progress").model_copy(
+        update={"selected_skill_source_refs": ("skill:alpha",)}
+    )
+    kinds, caught = await _r91_dispatch_real_factory(factory, repository, req)
+    assert caught is None
+    assert kinds.count("run.failed") == 1
+    assert "run.started" not in kinds
+    phases = [
+        json.loads(row.payload_json)
+        for row in repository.chat_repository.records
+        if row.event_type == "activity"
+    ]
+    assert [item["phase"] for item in phases] == ["resolving", "loading", "failed"]
+    assert phases[-1]["error_code"] == (
+        "skill_resolve_failed" if failure == "resolve" else "skill_load_failed"
+    )
+    assert len({item["preflight_id"] for item in phases}) == 1
+
+
+async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """正式 factory→supervisor 终态链必须释放 factory 自建的 S3 client。"""
+    from dataclasses import replace
+
+    import kokoro_agent.sandbox.archive as archive_module
+    from kokoro_agent.agent_factory import AgentHandle
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.execution.protocols import AgentRunStream, AgentRunnable
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.policy import Permissions
+    from kokoro_agent.protocol import SubagentSource
+    from kokoro_agent.worker.supervisor import RunSupervisor
+    from support.fakes import FakeBus, read_unpaused_interaction
+
+    bus = FakeBus()
+    feature = Feature(
+        key="archiver_lifecycle",
+        agents=(
+            Agent(
+                key="archiver_lifecycle",
+                prompt="Exercise the production local-shell assembly path.",
+                backend="local_shell",
+                permissions=Permissions(filesystem="workspace_write"),
+            ),
+        ),
+        entry_agent="archiver_lifecycle",
+    )
+    run_request = _request(feature.key)
+    workspace_config = tmp_path / "workspace.yaml"
+    workspace_config.write_text(
+        "workspace:\n"
+        "  type: s3\n"
+        "  endpoint: http://s3.invalid\n"
+        "  bucket: factory-owned\n",
+        encoding="utf-8",
+    )
+    config = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path / "workspaces"),
+            "KOKORO_WORKSPACE_CONFIG": str(workspace_config),
+            "KOKORO_WORKSPACE_S3_ACCESS_KEY": "test-access",
+            "KOKORO_WORKSPACE_S3_SECRET_KEY": "test-secret",
+        }
+    )
+    native_drained = asyncio.Event()
+
+    class RecordingS3Client:
+        def __init__(self) -> None:
+            self.close_snapshots: list[tuple[bool, tuple[str, ...]]] = []
+
+        def close(self) -> None:
+            self.close_snapshots.append(
+                (native_drained.is_set(), tuple(bus.kinds(run_request.run_id)))
+            )
+
+    owned_client = RecordingS3Client()
+
+    def recording_client(*args: object, **kwargs: object) -> RecordingS3Client:
+        return owned_client
+
+    monkeypatch.setattr(
+        archive_module.boto3,
+        "client",
+        recording_client,
+    )
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        FeatureCatalog((feature,)),
+        config=config,
+    )
+
+    class DrainWitnessRun:
+        def __init__(self, delegate: AgentRunStream) -> None:
+            self._delegate = delegate
+
+        @property
+        def messages(self) -> AsyncIterable[Any]:
+            return self._delegate.messages
+
+        @property
+        def tool_calls(self) -> AsyncIterable[Any]:
+            return self._delegate.tool_calls
+
+        @property
+        def subagents(self) -> AsyncIterable[Any]:
+            return self._delegate.subagents
+
+        @property
+        def custom(self) -> AsyncIterable[object]:
+            return self._delegate.custom
+
+        async def interrupted(self) -> bool:
+            return await self._delegate.interrupted()
+
+        async def __aenter__(self) -> DrainWitnessRun:
+            await self._delegate.__aenter__()
+            return self
+
+        async def __aexit__(
+            self, exc_type: object, exc: object, tb: object
+        ) -> bool | None:
+            try:
+                return await self._delegate.__aexit__(exc_type, exc, tb)
+            finally:
+                native_drained.set()
+
+    class DrainWitnessRunnable:
+        def __init__(self, delegate: AgentRunnable) -> None:
+            self._delegate = delegate
+
+        async def astream_events(
+            self,
+            payload: object,
+            *,
+            version: str,
+            config: RunnableConfig,
+            transformers: Sequence[type[StreamTransformer]],
+        ) -> AgentRunStream:
+            run = await self._delegate.astream_events(
+                payload,
+                version=version,
+                config=config,
+                transformers=transformers,
+            )
+            return DrainWitnessRun(run)
+
+        async def aget_state(
+            self, config: RunnableConfig, *, subgraphs: bool = False
+        ) -> Any:
+            return await self._delegate.aget_state(config, subgraphs=subgraphs)
+
+    async def build_with_drain_witness(
+        request: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+    ) -> AgentHandle:
+        handle = await factory.build(request, lease, progress)
+        return replace(handle, runnable=DrainWitnessRunnable(handle.runnable))
+
+    def approval_names(_request: RunRequest) -> frozenset[str]:
+        return frozenset()
+
+    def trace(_request: RunRequest) -> None:
+        return None
+
+    def source_for(_name: str) -> SubagentSource:
+        return "runtime-custom"
+
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=build_with_drain_witness,
+        run_repository=repository,
+        approval_tool_names=approval_names,
+        trace_factory=trace,
+        source_for=source_for,
+        consumer="archiver-lifecycle-test",
+    )
+    repository.dispatches[run_request.run_id] = "pending"
+    repository.dispatch_requests[run_request.run_id] = run_request
+
+    await supervisor.dispatch(bus, run_request)
+    await asyncio.gather(*tuple(supervisor.tasks.values()))
+
+    assert bus.kinds(run_request.run_id)[-1] == "run.completed"
+    assert native_drained.is_set()
+    assert len(owned_client.close_snapshots) == 1
+    assert owned_client.close_snapshots[0][0] is True
+    assert owned_client.close_snapshots[0][1][-1] == "run.completed"
+
+
+async def test_terminal_state_backend_runs_without_constructing_s3_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """无资源的 state backend 是实际可运行正控，不借不存在的 client 注入面。"""
+    import kokoro_agent.sandbox.archive as archive_module
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.protocol import SubagentSource
+    from kokoro_agent.worker.supervisor import RunSupervisor
+    from support.fakes import FakeBus, read_unpaused_interaction
+
+    feature = Feature(
+        key="state_lifecycle_control",
+        agents=(Agent(key="state_control", prompt="Run the state control."),),
+        entry_agent="state_control",
+    )
+    request = _request(feature.key)
+    bus = FakeBus()
+    client_constructions: list[str] = []
+
+    def forbidden_client(*args: object, **kwargs: object) -> None:
+        client_constructions.append("s3")
+        raise AssertionError("state backend must not construct an S3 client")
+
+    monkeypatch.setattr(archive_module.boto3, "client", forbidden_client)
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+
+    def approval_names(_request: RunRequest) -> frozenset[str]:
+        return frozenset()
+
+    def trace(_request: RunRequest) -> None:
+        return None
+
+    def source_for(_name: str) -> SubagentSource:
+        return "runtime-custom"
+
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=factory.build,
+        run_repository=repository,
+        approval_tool_names=approval_names,
+        trace_factory=trace,
+        source_for=source_for,
+        consumer="state-lifecycle-control",
+    )
+    repository.dispatches[request.run_id] = "pending"
+    repository.dispatch_requests[request.run_id] = request
+
+    await supervisor.dispatch(bus, request)
+    await asyncio.gather(*tuple(supervisor.tasks.values()))
+
+    assert bus.kinds(request.run_id)[-1] == "run.completed"
+    assert client_constructions == []
+
+
+async def test_partial_swarm_failure_closes_already_built_s3_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """第二个 peer 构造失败时，第一个 peer 的 factory-owned client 仍须释放。"""
+    import kokoro_agent.sandbox.archive as archive_module
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.policy import Permissions
+
+    feature = Feature(
+        key="archiver_partial_swarm",
+        agents=(
+            Agent(
+                key="first",
+                prompt="first",
+                backend="local_shell",
+                permissions=Permissions(filesystem="workspace_write"),
+            ),
+            Agent(
+                key="second",
+                prompt="second",
+                backend="local_shell",
+                permissions=Permissions(filesystem="workspace_write"),
+            ),
+        ),
+        entry_agent="first",
+        handoffs=(("first", "second"),),
+    )
+    workspace_config = tmp_path / "workspace.yaml"
+    workspace_config.write_text(
+        "workspace:\n"
+        "  type: s3\n"
+        "  endpoint: http://s3.invalid\n"
+        "  bucket: factory-owned\n",
+        encoding="utf-8",
+    )
+    config = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path / "workspaces"),
+            "KOKORO_WORKSPACE_CONFIG": str(workspace_config),
+            "KOKORO_WORKSPACE_S3_ACCESS_KEY": "test-access",
+            "KOKORO_WORKSPACE_S3_SECRET_KEY": "test-secret",
+        }
+    )
+
+    class RecordingS3Client:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    clients: list[RecordingS3Client] = []
+
+    def recording_client(*args: object, **kwargs: object) -> RecordingS3Client:
+        client = RecordingS3Client()
+        clients.append(client)
+        return client
+
+    class SecondPeerFails(RouteResolver):
+        async def resolve(
+            self,
+            *,
+            tenant_id: str,
+            feature_key: str,
+            label: str | None,
+            request_id: str | None,
+        ) -> ResolvedModel:
+            if self.calls:
+                raise ModelResolutionError("SECOND_PEER_UNAVAILABLE", retryable=True)
+            return await super().resolve(
+                tenant_id=tenant_id,
+                feature_key=feature_key,
+                label=label,
+                request_id=request_id,
+            )
+
+    monkeypatch.setattr(archive_module.boto3, "client", recording_client)
+    factory, repository = _factory(
+        monkeypatch,
+        SecondPeerFails(),
+        FeatureCatalog((feature,)),
+        config=config,
+    )
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+
+    with pytest.raises(ModelResolutionError, match="SECOND_PEER_UNAVAILABLE"):
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
+
+    assert len(clients) == 1
+    assert clients[0].close_calls == 1

@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import Annotated, Any, Callable, Protocol
 
 from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import BackendProtocol
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from kokoro_agent.policy import Backend, FilesystemPerm
 from kokoro_agent.sandbox.archive import (
     ArchivingLocalShellBackend,
+    ArchivingWritesMixin,
     LocalWorkspace,
     S3Archiver,
     S3Workspace,
@@ -46,6 +47,28 @@ from kokoro_agent.domain.run.repository import (
 LOGGER = logging.getLogger("kokoro_agent.sandbox")
 DOCKER_TEARDOWN_REF = "kokoro-agent:builtin:docker:v1"
 E2B_TEARDOWN_REF = "kokoro-agent:builtin:e2b:v1"
+
+
+async def _to_thread_owned(operation: Callable[..., Any], /, *args: object) -> Any:
+    """Delay cancellation until the blocking operation really leaves its thread."""
+    task = asyncio.create_task(asyncio.to_thread(operation, *args))
+    cancelled: asyncio.CancelledError | None = None
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError as error:
+            cancelled = cancelled or error
+            if task.done():
+                try:
+                    result = task.result()
+                except BaseException as operation_error:
+                    raise cancelled from operation_error
+                break
+            continue
+    if cancelled is not None:
+        raise cancelled
+    return result
 
 
 class SandboxSettings(BaseModel):
@@ -192,6 +215,97 @@ class SandboxConnector(Protocol):
     def __call__(self, context: SandboxContext) -> BackendProtocol | None: ...
 
 
+def backend_resource(
+    backend: BackendProtocol | None,
+) -> ArchivingWritesMixin | None:
+    """Return only the concrete local resource type created by this module."""
+    return backend if isinstance(backend, ArchivingWritesMixin) else None
+
+
+async def close_backend_resource(backend: BackendProtocol | None) -> None:
+    resource = backend_resource(backend)
+    if resource is not None:
+        await resource.aclose_resources()
+
+
+async def _close_backend_after_failure(
+    backend: BackendProtocol | None, primary: BaseException
+) -> None:
+    task = asyncio.create_task(close_backend_resource(backend))
+    cleanup_error: BaseException | None = None
+    while True:
+        try:
+            await asyncio.shield(task)
+            break
+        except asyncio.CancelledError:
+            if task.done():
+                if not task.cancelled():
+                    cleanup_error = task.exception()
+                break
+            continue
+        except BaseException as error:
+            cleanup_error = error
+            break
+    if cleanup_error is not None:
+        primary.add_note(
+            "local backend cleanup also failed: " + type(cleanup_error).__name__
+        )
+        LOGGER.error(
+            "local backend cleanup failed while preserving assembly error",
+            extra={"cleanup_error_type": type(cleanup_error).__name__},
+        )
+
+
+async def _settle_connector_task(
+    task: asyncio.Task[BackendProtocol | None],
+) -> BackendProtocol | None:
+    """Wait through repeated caller cancellation without abandoning its thread."""
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
+            continue
+
+
+async def _cleanup_cancelled_construction(
+    backend: BackendProtocol | None,
+    *,
+    kind: Backend,
+    settings: SandboxSettings,
+    run_id: str,
+    lease: LeaseFence,
+    prior: str | None,
+    sandbox_store: RunSandboxStore,
+) -> BaseException | None:
+    """Finish every owned cleanup step and report, rather than raise, its error."""
+    bound = getattr(backend, "sandbox_id", None)
+    errors: list[BaseException] = []
+    if isinstance(bound, str) and bound and bound != prior:
+        teardown_ref = sandbox_teardown_ref(kind, settings)
+        if teardown_ref is not None:
+            try:
+                await _cleanup_abandoned_sandbox(
+                    _managed_backend_kind(kind),
+                    settings,
+                    run_id=run_id,
+                    lease=lease,
+                    sandbox_id=bound,
+                    teardown_ref=teardown_ref,
+                    sandbox_store=sandbox_store,
+                )
+            except BaseException as error:
+                errors.append(error)
+    try:
+        await close_backend_resource(backend)
+    except BaseException as error:
+        errors.append(error)
+    if errors:
+        return BaseExceptionGroup("cancelled sandbox assembly cleanup failed", errors)
+    return None
+
+
 def _connect_state(context: SandboxContext) -> BackendProtocol | None:
     return None
 
@@ -219,18 +333,49 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
         and settings.workspace_s3_access_key is not None
         and settings.workspace_s3_secret_key is not None
     ):
-        return ArchivingDockerShellBackend(
-            root=Path(root),
-            container_id=backend.container_id,
-            archiver=S3Archiver(
+        archiver: S3Archiver | None = None
+        try:
+            archiver = S3Archiver(
                 settings.workspace,
                 access_key=settings.workspace_s3_access_key,
                 secret_key=settings.workspace_s3_secret_key,
-            ),
-            prefix=context.workspace,
-            timeout=settings.local_shell_timeout,
-            max_output_bytes=settings.local_shell_max_output_bytes,
-        )
+            )
+            return ArchivingDockerShellBackend(
+                root=Path(root),
+                container_id=backend.container_id,
+                archiver=archiver,
+                prefix=context.workspace,
+                timeout=settings.local_shell_timeout,
+                max_output_bytes=settings.local_shell_max_output_bytes,
+            )
+        except BaseException as primary:
+            cleanup_errors: list[BaseException] = []
+            if archiver is not None:
+                try:
+                    archiver.close()
+                except BaseException as error:
+                    cleanup_errors.append(error)
+            if backend.container_id != context.prior_sandbox_id:
+                try:
+                    destroy_docker_sandbox(backend.container_id)
+                except BaseException as error:
+                    cleanup_errors.append(error)
+            for error in cleanup_errors:
+                primary.add_note(
+                    "docker archive assembly cleanup also failed: "
+                    + type(error).__name__
+                )
+            if cleanup_errors:
+                LOGGER.error(
+                    "docker archive assembly cleanup failed run_id=%s",
+                    context.run_id,
+                    extra={
+                        "cleanup_error_types": [
+                            type(error).__name__ for error in cleanup_errors
+                        ]
+                    },
+                )
+            raise
     return backend
 
 
@@ -354,11 +499,56 @@ async def make_backend_for_run(
             run_id=run_id,
             prior_sandbox_id=prior,
         )
-        # 连接器一律 sync（docker CLI / SDK 网络调用秒级阻塞）：to_thread 让出事件循环。
-        backend = await asyncio.to_thread(connector, context)
+        # 连接器一律 sync（docker CLI / SDK 网络调用秒级阻塞）。显式 task 在取消后仍由
+        # 当前构造协程持有，直到真实 thread 返回并完成必要回收，绝不孤立 fire-and-forget。
+        connector_task = asyncio.create_task(asyncio.to_thread(connector, context))
+        cancelled: asyncio.CancelledError | None = None
+        try:
+            backend = await asyncio.shield(connector_task)
+        except asyncio.CancelledError as error:
+            cancelled = error
+            try:
+                backend = await _settle_connector_task(connector_task)
+            except BaseException as connector_error:
+                raise error from connector_error
+        if cancelled is not None:
+            cleanup_task = asyncio.create_task(
+                _cleanup_cancelled_construction(
+                    backend,
+                    kind=kind,
+                    settings=settings,
+                    run_id=run_id,
+                    lease=lease,
+                    prior=prior,
+                    sandbox_store=sandbox_store,
+                )
+            )
+            while True:
+                try:
+                    cleanup_error = await asyncio.shield(cleanup_task)
+                    break
+                except asyncio.CancelledError:
+                    if cleanup_task.done():
+                        cleanup_error = cleanup_task.result()
+                        break
+                    continue
+            if cleanup_error is not None:
+                LOGGER.error(
+                    "cancelled sandbox assembly cleanup failed kind=%s run_id=%s",
+                    kind,
+                    run_id,
+                    extra={"cleanup_error_type": type(cleanup_error).__name__},
+                )
+            raise cancelled
         bound = getattr(backend, "sandbox_id", None)
         if not isinstance(bound, str) or not bound:
-            if not await sandbox_store.is_lease_current(run_id, lease):
+            try:
+                current = await sandbox_store.is_lease_current(run_id, lease)
+            except BaseException as primary:
+                await _close_backend_after_failure(backend, primary)
+                raise
+            if not current:
+                await close_backend_resource(backend)
                 raise SandboxLeaseSuperseded(
                     f"run {run_id!r} lease was superseded during sandbox assembly"
                 )
@@ -366,21 +556,51 @@ async def make_backend_for_run(
 
         teardown_ref = sandbox_teardown_ref(kind, settings)
         if teardown_ref is None:
+            await close_backend_resource(backend)
             raise RuntimeError(
                 f"backend {kind!r} exposed sandbox_id without a teardown identity"
             )
         managed_kind = _managed_backend_kind(kind)
-        authoritative = await sandbox_store.bind_sandbox_id(
-            run_id,
-            lease,
-            expected_sandbox_id=prior,
-            sandbox_id=bound,
-            backend_kind=managed_kind,
-            teardown_ref=teardown_ref,
-        )
+        try:
+            authoritative = await sandbox_store.bind_sandbox_id(
+                run_id,
+                lease,
+                expected_sandbox_id=prior,
+                sandbox_id=bound,
+                backend_kind=managed_kind,
+                teardown_ref=teardown_ref,
+            )
+        except BaseException as primary:
+            await _close_backend_after_failure(backend, primary)
+            raise
         if authoritative is None:
             # Only a newly created loser belongs to this worker. Never destroy a
             # reconnected prior id that a newer generation may already own.
+            try:
+                if bound != prior:
+                    await _cleanup_abandoned_sandbox(
+                        managed_kind,
+                        settings,
+                        run_id=run_id,
+                        lease=lease,
+                        sandbox_id=bound,
+                        teardown_ref=teardown_ref,
+                        sandbox_store=sandbox_store,
+                    )
+            except BaseException as primary:
+                await _close_backend_after_failure(backend, primary)
+                raise
+            await close_backend_resource(backend)
+            raise SandboxLeaseSuperseded(
+                f"run {run_id!r} lease was superseded during sandbox assembly"
+            )
+        if authoritative == bound:
+            return backend
+
+        # Another same-generation assembler won the CAS. Dispose our fresh
+        # loser and reconnect the authoritative id instead of returning an
+        # untracked backend.
+        try:
             if bound != prior:
                 await _cleanup_abandoned_sandbox(
                     managed_kind,
@@ -391,25 +611,10 @@ async def make_backend_for_run(
                     teardown_ref=teardown_ref,
                     sandbox_store=sandbox_store,
                 )
-            raise SandboxLeaseSuperseded(
-                f"run {run_id!r} lease was superseded during sandbox assembly"
-            )
-        if authoritative == bound:
-            return backend
-
-        # Another same-generation assembler won the CAS. Dispose our fresh
-        # loser and reconnect the authoritative id instead of returning an
-        # untracked backend.
-        if bound != prior:
-            await _cleanup_abandoned_sandbox(
-                managed_kind,
-                settings,
-                run_id=run_id,
-                lease=lease,
-                sandbox_id=bound,
-                teardown_ref=teardown_ref,
-                sandbox_store=sandbox_store,
-            )
+        except BaseException as primary:
+            await _close_backend_after_failure(backend, primary)
+            raise
+        await close_backend_resource(backend)
         prior = authoritative
 
     raise RuntimeError(f"sandbox binding did not converge for run {run_id!r}")
@@ -430,18 +635,18 @@ async def teardown_backend_for_run(
         if kind == "docker":
             if teardown_ref not in {None, DOCKER_TEARDOWN_REF}:
                 raise ValueError("docker sandbox teardown identity is invalid")
-            await asyncio.to_thread(destroy_docker_sandbox, sandbox_id)
+            await _to_thread_owned(destroy_docker_sandbox, sandbox_id)
         elif kind == "e2b":
             if teardown_ref not in {None, E2B_TEARDOWN_REF}:
                 raise ValueError("e2b sandbox teardown identity is invalid")
-            await asyncio.to_thread(kill_e2b_sandbox, settings.e2b, sandbox_id)
+            await _to_thread_owned(kill_e2b_sandbox, settings.e2b, sandbox_id)
         elif kind == "custom":
             if teardown_ref is None:
-                await asyncio.to_thread(
+                await _to_thread_owned(
                     teardown_custom_sandbox, settings.custom, sandbox_id
                 )
             else:
-                await asyncio.to_thread(
+                await _to_thread_owned(
                     teardown_custom_sandbox_ref, teardown_ref, sandbox_id
                 )
     except Exception:

@@ -62,6 +62,37 @@ class PostgresRunEvents:
                     )
                     if not lease_current:
                         return None
+                    if kind == "run.started":
+                        await execute_sql(
+                            cur,
+                            """
+                            SELECT durable_seq, event_id, index_value, occurred_at,
+                                   status, payload_json
+                            FROM {} WHERE run_id = %s AND kind = 'run.started'
+                              AND status IN ('queued', 'published')
+                            ORDER BY durable_seq ASC LIMIT 2
+                        """.format(qualified(self._context.schema, RUN_OUTBOX_TABLE)),
+                            (run_id,),
+                        )
+                        rows = await fetch_all(cur)
+                        if len(rows) > 1:
+                            raise RuntimeError("duplicate durable run.started facts")
+                        if rows:
+                            existing = rows[0]
+                            if existing["index_value"] is None or json.loads(
+                                existing["payload_json"]
+                            ) != json.loads(payload_json):
+                                raise RuntimeError("run.started identity drift")
+                            return StagedFrame(
+                                durable_seq=int(existing["durable_seq"]),
+                                event_id=str(existing["event_id"]),
+                                index=int(existing["index_value"]),
+                                timestamp=int(
+                                    existing["occurred_at"].timestamp() * 1000
+                                ),
+                                published=existing["status"] == "published",
+                                newly_staged=False,
+                            )
                     if kind == "delivery.created":
                         await execute_sql(
                             cur,

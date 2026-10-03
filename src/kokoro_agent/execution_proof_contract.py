@@ -38,6 +38,7 @@ OWNER_SOURCE_FILES = (
     "src/kokoro_agent/contract_check.py",
     "src/kokoro_agent/chat_contract_check.py",
     "src/kokoro_agent/protocol/run_failure_generated.py",
+    "src/kokoro_agent/distribution_assets.py",
 )
 HEADER_FIELDS = {"typ", "alg", "kid"}
 TAMPER_FIELDS = set(
@@ -51,11 +52,50 @@ CLAIM_FIELDS: set[str] = set(
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 JTI_PATTERN = "^[A-Za-z0-9_-]{21}[AQgw]$"
 _OBJECT: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+_JWK_SET_SCHEMA = _OBJECT.validate_json(
+    b'{"type":"object","additionalProperties":false,"required":["keys"],'
+    b'"properties":{"keys":{"type":"array","minItems":1,"items":{"type":"object",'
+    b'"additionalProperties":false,"required":["kty","crv","use","alg","kid","x"],'
+    b'"properties":{"kty":{"type":"string","const":"OKP"},"crv":{"type":"string",'
+    b'"const":"Ed25519"},"use":{"type":"string","const":"sig"},"alg":{"type":"string",'
+    b'"const":"EdDSA"},"kid":{"type":"string","minLength":1},"x":{"type":"string",'
+    b'"pattern":"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}}}}}}'
+)
 _STRINGS: TypeAdapter[list[str]] = TypeAdapter(list[str])
 _OBJECTS: TypeAdapter[list[object]] = TypeAdapter(list[object])
 _BASE64URL = re.compile(r"^[A-Za-z0-9_-]+$")
 JsonScalar: TypeAlias = bool | int | float | str | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+def _http_contract_object(value: object, *, source: str) -> dict[str, object]:
+    try:
+        return _OBJECT.validate_python(value)
+    except ValidationError as error:
+        raise ValueError(
+            f"{source} must contain a JSON object with string keys"
+        ) from error
+
+
+def validate_execution_proof_jwk_set_component(document: dict[str, object]) -> None:
+    components = _http_contract_object(document.get("components"), source="components")
+    schemas = _http_contract_object(components.get("schemas"), source="schemas")
+    actual = _http_contract_object(
+        schemas.get("ExecutionProofJwkSet"), source="ExecutionProofJwkSet"
+    )
+    if actual != _JWK_SET_SCHEMA:
+        raise ValueError("execution-proof JWK-set component is not exact")
+
+
+def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
+    record = _http_contract_object(
+        provenance.get("http_contract"), source="HTTP provenance"
+    )
+    if record.get("version") != "5.0.0" or record.get("path") != OPENAPI_RELATIVE:
+        raise ValueError("HTTP direct provenance identity is invalid")
+    expected = hashlib.sha256((root / OPENAPI_RELATIVE).read_bytes()).hexdigest()
+    if record.get("sha256") != expected:
+        raise ValueError("HTTP direct provenance digest is stale")
 
 
 class _DuplicateMemberError(ValueError):

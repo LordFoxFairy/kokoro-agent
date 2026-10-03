@@ -143,6 +143,7 @@ infrastructure/postgres_run_interactions.py
 infrastructure/postgres_run_sandbox.py
 infrastructure/schema.py
 infrastructure/sql.py
+distribution_assets.py
 mcp/__init__.py
 metrics.py
 model/__init__.py

@@ -40,6 +40,7 @@ OWNER_INVENTORY = [
     "src/kokoro_agent/contract_check.py",
     "src/kokoro_agent/chat_contract_check.py",
     "src/kokoro_agent/protocol/run_failure_generated.py",
+    "src/kokoro_agent/distribution_assets.py",
 ]
 HEADER_FIELDS = {"typ", "alg", "kid"}
 CLAIMS_OBJECT_PATH = ("properties", "claims")

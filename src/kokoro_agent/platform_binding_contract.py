@@ -25,6 +25,7 @@ from kokoro_agent.execution.platform_request_binding_values import (
 
 
 JsonObject: TypeAlias = dict[str, object]
+PLATFORM_PROVENANCE_RELATIVE = "contract/platform/v1/provenance.json"
 EXPECTED_OWNER_COMMIT = "6a09913a96c686b316bfe707b823d039e625607a"
 EXPECTED_OWNER_REPOSITORY = "apps/kokoro-capability"
 EXPECTED_AGGREGATE = "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
@@ -447,7 +448,7 @@ def _validate_command_admission(projection: Mapping[str, object]) -> None:
 def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
     """Validate the exact v3 owner tree, registry closure, and published vectors."""
 
-    pin_path = root / "contract/platform/v1/provenance.json"
+    pin_path = root / PLATFORM_PROVENANCE_RELATIVE
     pin = _object(strict_parse_raw_json(pin_path.read_bytes()), label="Platform pin")
     execution = _object(pin.get("execution_operations"), label="execution pin")
     if (

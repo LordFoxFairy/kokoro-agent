@@ -11,13 +11,14 @@ from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig
 from kokoro_agent.infrastructure.postgres import connect_pg
-from kokoro_agent.infrastructure.schema import apply_agent_schema
+from kokoro_agent.infrastructure.schema import apply_agent_schema, canonical_schema_sql
 
 
 async def apply_database_schema(environment: Mapping[str, str]) -> None:
     """Install the checked-in Agent schema into one empty configured namespace."""
 
     config = AppConfig.from_env(environment)
+    canonical_schema_sql()  # Asset failures must precede the first DB connection.
     async with connect_pg(config.database_url) as connection:
         await apply_agent_schema(
             connection,

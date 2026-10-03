@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from kokoro_agent.execution.events import ProgressPersistenceError
+
 from kokoro_agent.domain.run.models import (
     CancelTerminalAuthority,
     QuarantineTerminalAuthority,
@@ -142,51 +144,70 @@ class SupervisorControlMixin(SupervisorContext):
                 return
         self._leases[request.run_id] = lease
         try:
-            built = await self._build(request, lease)
+            emitter = await self._emitter(bus, request.run_id, lease)
+            built = await self._build_owned(
+                request,
+                lease,
+                emitter.skill_progress(request.selected_skill_source_refs),
+            )
+        except ProgressPersistenceError:
+            raise
         except Exception as error:  # noqa: BLE001 — preserve typed build failure with its original fence
             await self._fail_terminal(
                 bus, request.run_id, error, code="assembly_failed", build_lease=lease
             )
             return
-        read = await self._interaction_reader(
-            request=request,
-            lease=lease,
-            handle=built,
-            target=ResumeReadTarget(command_id=command_id),
-        )
-        if isinstance(read, ReplayedResume):
-            return
-        if isinstance(read, ObservedNativeResume):
-            for observation in read.observations:
-                await self._run_repository.record_checkpoint_observation(
-                    request, lease, observation
+        transferred = False
+        primary: BaseException | None = None
+        try:
+            read = await self._interaction_reader(
+                request=request,
+                lease=lease,
+                handle=built,
+                target=ResumeReadTarget(command_id=command_id),
+            )
+            if isinstance(read, ReplayedResume):
+                return
+            if isinstance(read, ObservedNativeResume):
+                for observation in read.observations:
+                    await self._run_repository.record_checkpoint_observation(
+                        request, lease, observation
+                    )
+                await self._run_repository.reconcile_resume(
+                    request, lease, read.evidence
                 )
-            await self._run_repository.reconcile_resume(request, lease, read.evidence)
-            return
-        if not isinstance(read, PreparedNativeResume):
-            raise RuntimeError("unexpected resume reader result")
-        started = await self._run_repository.start_resume(
-            request, lease, command_id, read.plan
-        )
-        if not isinstance(started, StartedResume):
-            return
-        self._drained_attempts = {
-            key: value
-            for key, value in self._drained_attempts.items()
-            if key[0] != request.run_id
-        }
-        self._resume_attempts[request.run_id] = (command_id, started)
-        self._spawn_agent(
-            bus,
-            built,
-            request.run_id,
-            RunScope.of(request).scoped_thread_id,
-            read.command,
-            self._approval_tool_names(request),
-            trace=self._trace(request),
-            lease=lease,
-        )
-        self._ensure_control_listener(bus, request.run_id)
+                return
+            if not isinstance(read, PreparedNativeResume):
+                raise RuntimeError("unexpected resume reader result")
+            started = await self._run_repository.start_resume(
+                request, lease, command_id, read.plan
+            )
+            if not isinstance(started, StartedResume):
+                return
+            self._drained_attempts = {
+                key: value
+                for key, value in self._drained_attempts.items()
+                if key[0] != request.run_id
+            }
+            self._resume_attempts[request.run_id] = (command_id, started)
+            self._spawn_agent(
+                bus,
+                built,
+                request.run_id,
+                RunScope.of(request).scoped_thread_id,
+                read.command,
+                self._approval_tool_names(request),
+                trace=self._trace(request),
+                lease=lease,
+            )
+            transferred = True
+            self._ensure_control_listener(bus, request.run_id)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            if not transferred:
+                await self._close_handle_after_primary(built, primary)
 
     async def _on_cancel(self, bus: StreamProtocol, msg: RunCancel) -> None:
         request = await self._control_request(msg.run_id)

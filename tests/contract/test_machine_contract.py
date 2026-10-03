@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "4.0.0"
+    assert _object(document["info"])["version"] == "5.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -225,6 +225,8 @@ def test_failure_contract_http_payload_string_has_explicit_failed_discriminator(
         "mapping": {
             "run.failed": "#/components/schemas/ChatFailure",
             "interaction.state": "#/components/schemas/ChatInteractionState",
+            "activity": "#/components/schemas/ChatActivity",
+            "todo.updated": "#/components/schemas/ChatTodo",
         },
     }
 
@@ -533,3 +535,251 @@ def test_owner_checker_rejects_relaxed_hitl_required_fields(
     document["components"] = {**_object(document["components"]), "schemas": schemas}
     with pytest.raises(ValueError, match="HITL"):
         validate_openapi_document(document)
+
+
+# R95 HTTP5 target assertions are additive: HTTP4 baseline assertions above remain.
+def test_r95_http5_version_is_explicit_without_changing_proof_version() -> None:
+    document = _document()
+    proof = _object(
+        json.loads((ROOT / "contract/execution-proof/v1/schema.json").read_text())
+    )
+    assert proof["x-kokoro-contract-version"] == "1.0.0"
+    assert _object(document["info"])["version"] == "5.0.0"
+
+
+def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
+    schemas = _object(_object(_document()["components"])["schemas"])
+    event = _object(schemas["ChatEvent"])
+    values = TypeAdapter(list[str]).validate_python(
+        _object(_object(event["properties"])["event_type"])["enum"]
+    )
+    assert len(values) == len(set(values))
+    assert set(values) == {
+        "run.started",
+        "assistant.delta",
+        "assistant.completed",
+        "activity",
+        "todo.updated",
+        "interaction.state",
+        "delivery",
+        "run.completed",
+        "run.failed",
+    }
+    decoded = _object(event["x-kokoro-decoded-payloads"])
+    assert decoded["discriminator"] == "event_type"
+    assert decoded["property"] == "payload_json"
+    mapping = _object(decoded["mapping"])
+    assert set(mapping) == {
+        "run.failed",
+        "interaction.state",
+        "activity",
+        "todo.updated",
+    }
+    assert mapping["run.failed"] == "#/components/schemas/ChatFailure"
+    assert mapping["interaction.state"] == "#/components/schemas/ChatInteractionState"
+    for kind in ("activity", "todo.updated"):
+        ref = mapping[kind]
+        assert isinstance(ref, str) and ref.startswith("#/components/schemas/")
+        assert ref.rsplit("/", 1)[1] in schemas
+    assert mapping["activity"] != mapping["todo.updated"]
+
+
+def _r95_todo_component(document: dict[str, object]) -> tuple[str, dict[str, object]]:
+    schemas = _object(_object(document["components"])["schemas"])
+    event = _object(schemas["ChatEvent"])
+    mapping = _object(_object(event["x-kokoro-decoded-payloads"])["mapping"])
+    ref = mapping.get("todo.updated")
+    assert isinstance(ref, str) and ref.startswith("#/components/schemas/"), (
+        "HTTP5 must register strict decoded Todo, not leave payload_json untyped"
+    )
+    name = ref.rsplit("/", 1)[1]
+    return name, _object(schemas[name])
+
+
+@pytest.mark.parametrize("invalid_limit", [None, 65537, "65536", True])
+def test_r95_checker_rejects_missing_or_drifted_complete_todo_byte_limit(
+    invalid_limit: object,
+) -> None:
+    from kokoro_agent.contract_check import validate_openapi_document
+
+    document = _document()
+    # Existing document-only entry: no provenance/hash check in this test.
+    validate_openapi_document(document)
+    name, shape = _r95_todo_component(document)
+    assert shape.get("x-kokoro-json-byte-limit") == 65536
+    if invalid_limit is None:
+        del shape["x-kokoro-json-byte-limit"]
+    else:
+        shape["x-kokoro-json-byte-limit"] = invalid_limit
+    schemas = _object(_object(document["components"])["schemas"])
+    schemas[name] = shape
+    document["components"] = {**_object(document["components"]), "schemas": schemas}
+    with pytest.raises(ValueError):
+        validate_openapi_document(document)
+
+
+@pytest.mark.parametrize("extra_byte", [False, True])
+def test_r95_machine_byte_annotation_agrees_with_real_runtime_canonical_budget(
+    extra_byte: bool,
+) -> None:
+    from kokoro_agent.protocol import TodoUpdatedPayload
+
+    value = {
+        "todos": [{"content": "😀" * 1024, "status": "pending"} for _ in range(16)]
+    }
+
+    def canonical() -> bytes:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+
+    excess = len(canonical()) - 65536
+    count, remainder = divmod(excess, 3)
+    tail = "" if remainder == 0 else "汉" if remainder == 1 else "é"
+    value["todos"][0]["content"] = (
+        "a" * count + tail + "😀" * (1024 - count - bool(remainder))
+    )
+    if extra_byte:
+        value["todos"][0]["content"] = "é" + value["todos"][0]["content"][1:]
+    assert len(canonical()) == 65536 + int(extra_byte)
+    assert all(len(item["content"]) == 1024 for item in value["todos"])
+    if extra_byte:
+        with pytest.raises(ValidationError, match="UTF-8 budget"):
+            TodoUpdatedPayload.model_validate(value)
+    else:
+        assert TodoUpdatedPayload.model_validate(value).canonical_bytes() == canonical()
+    _, shape = _r95_todo_component(_document())
+    assert shape.get("x-kokoro-json-byte-limit") == 65536
+
+
+def test_distribution_declares_complete_checker_asset_closure() -> None:
+    """Declaration RED is distinct from Root's real installed-wheel E49 RED."""
+    import tomllib
+
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.platform_binding_contract import EXPECTED_EXECUTION_SOURCES
+
+    with (ROOT / "pyproject.toml").open("rb") as source:
+        package = tomllib.load(source)
+    declared: dict[str, Path] = {}
+    for destination, patterns in package["tool"]["setuptools"]["data-files"].items():
+        for pattern in patterns:
+            for path in ROOT.glob(pattern):
+                key = f"{destination}/{path.name}"
+                assert key not in declared, f"duplicate data-file destination: {key}"
+                declared[key] = path
+    required = {
+        *OWNER_SOURCE_FILES,
+        "contract/provenance.json",
+        "contract/platform/v1/provenance.json",
+        *(record[0] for record in EXPECTED_EXECUTION_SOURCES),
+    }
+    missing = sorted(
+        relative
+        for relative in required
+        if declared.get(f"share/kokoro-agent/audit/{relative}") != ROOT / relative
+    )
+    assert not missing, (
+        f"checker assets missing from distribution declaration: {missing}"
+    )
+    platform_prefix = (
+        "share/kokoro-agent/audit/contract/platform/v1/execution-operations/v4/"
+    )
+    assert {key for key in declared if key.startswith(platform_prefix)} == {
+        f"share/kokoro-agent/audit/{record[0]}" for record in EXPECTED_EXECUTION_SOURCES
+    }
+    assert declared["share/kokoro-agent/schema.sql"] == ROOT / "database/schema.sql"
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "contract/openapi/v1/openapi.json",
+        "contract/provenance.json",
+        "contract/execution-proof/v1/vectors.json",
+        "contract/platform/v1/execution-operations/v4/command-identities.json",
+        "src/kokoro_agent/protocol/run_failure_generated.py",
+        "scripts/generate_failure_models.py",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["missing", "drift"])
+def test_explicit_checker_rejects_incomplete_assets_without_repair_or_fallback(
+    tmp_path: Path, relative: str, mutation: str
+) -> None:
+    """Explicit source fixture, not an installation or a patched wheel target."""
+    from kokoro_agent import contract_check
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+
+    root = tmp_path / "explicit-source-fixture"
+    shutil.copytree(ROOT / "contract", root / "contract")
+    for source in OWNER_SOURCE_FILES:
+        path = root / source
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((ROOT / source).read_bytes())
+    contract_check.validate(root)  # Complete real validation is the legal control.
+    asset = root / relative
+    if mutation == "missing":
+        asset.unlink()
+    elif relative == "contract/provenance.json":
+        provenance = json.loads(asset.read_text(encoding="utf-8"))
+        provenance["combined_sha256"] = "0" * 64
+        asset.write_text(json.dumps(provenance), encoding="utf-8")
+    else:
+        asset.write_bytes(asset.read_bytes() + b"\n ")
+    before = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises((ValueError, FileNotFoundError)):
+        contract_check.validate(root)
+    assert {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    } == before
+
+
+def test_console_checker_accepts_matching_editable_source_control() -> None:
+    from kokoro_agent import contract_check
+
+    # Current environment is the declared editable source checkout. Real wheel
+    # venv/target controls belong to Root's later installed gate, not this test.
+    assert contract_check.main() == 0
+
+
+@pytest.mark.parametrize(
+    "metadata_fault", ["missing_record_noneditable", "foreign_editable", "noneditable"]
+)
+def test_console_checker_rejects_metadata_mismatch_without_source_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, metadata_fault: str
+) -> None:
+    from importlib import metadata
+
+    from kokoro_agent import contract_check
+
+    read_text = metadata.PathDistribution.read_text
+
+    def altered_metadata(
+        distribution: metadata.PathDistribution, name: str
+    ) -> str | None:
+        identity = read_text(distribution, "METADATA") or ""
+        if "Name: kokoro-agent\n" not in identity:
+            return read_text(distribution, name)
+        if name == "direct_url.json":
+            if metadata_fault == "foreign_editable":
+                return json.dumps(
+                    {"url": tmp_path.as_uri(), "dir_info": {"editable": True}}
+                )
+            return None  # Not editable: source __file__ is not installation proof.
+        if name == "RECORD" and metadata_fault == "missing_record_noneditable":
+            return None
+        return read_text(distribution, name)
+
+    monkeypatch.setattr(metadata.PathDistribution, "read_text", altered_metadata)
+    with pytest.raises((ValueError, FileNotFoundError, RuntimeError)):
+        contract_check.main()  # Existing real entrypoint; no future-helper import.

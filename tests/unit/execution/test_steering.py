@@ -103,6 +103,7 @@ async def test_steer_reaches_model_in_real_graph(
         agent,
         "t-graph",
         {"messages": [HumanMessage(content="写调研报告", id="m0")]},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=lambda _n: "built-in",
         finalize_terminal=terminal_emitter(

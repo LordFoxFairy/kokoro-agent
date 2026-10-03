@@ -1,3 +1,135 @@
+## R122 契约当前态（2026-10-02）
+
+当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。
+
+Root E95实际1960纯节点全部通过/零skip、七静态门通过；E96当前源码新wheel/sdist与完整runtime安装、四布局64负向/219步骤通过；E97同包installed CLI真实PG首次安装/重复拒绝、canonical catalog与六漂移回滚通过；E98同包仓外安装态现HTTP acceptance实际36通过/0失败/0跳过（36 setup/call/teardown），151 loaded模块在collection/finish对应本次site-packages/RECORD。当前wheel SHA256 `4d0e7c8d1455fa395faaebc5e0de123f7131a31d02c413f04266ec67bad78fc3`；Root运行/manifest详见Root `docs/progress.md` E95–98。自有库精确回收/Redis测试区空/owned进程自然终态、371冻结路径保持；七固定测试工具按当前lock URL/hash单独供应，资源测试不出localhost。
+
+这些是限定源码/安装/资源门，不是完整Agent或用户链闭环：真实console启动/SIGTERM、S3/Docker/E2B/custom/provider、完整retention、全部数据owner同库组合，以及正式BFF/Web过程消费与浏览器仍未验；T-Q03/T-R02继续开放。此四文档前缀只修正当前态，不改源码、SQL、协议、生成物、依赖或锁；发布前Root须重建当前最终文档集合的wheel/sdist并核与已测包的全部entry/RECORD一致性，差异则重新验证。
+
+---
+
+## R118：构造期资源收束仍不改变 wire contract（2026-10-02）
+
+**当前裁决：R119 九源 GREEN 候选仅改变 Agent 内部 ownership 与 shutdown 时序；HTTP/RPC/event/schema/version 字节面继续冻结，待 Root 最终复验。** R118 的真实 RED 已转为本地 GREEN；这不是机器 contract 或消费者发布完成声明。
+
+- initial、resume、recovery 统一的 assembly ownership、未转交 handle close 与 Docker 半构造 cleanup 都不是公开 endpoint、payload、header、event 或 error code。
+- caller cancellation 继续以原 `CancelledError` 传播；Supervisor 强持有仍在真实 connector/thread 中的 assembly。`drain_timeout_s` 覆盖 run、assembly、cleanup 的同一绝对停机预算，超时只形成进程级非零失败，不新增第二个 Run terminal 或网络重试协议。
+- resume 只有成功 `_spawn_agent` 才转交 handle；转交前 replay、observed、非 Started、异常和取消均内部关闭。recovery probe handle 永不转交。close/cleanup secondary 不替换 primary，也不得把 secret、endpoint 或 payload写入日志/wire。
+- Docker wrapper 后半失败只清本次自建 client 与本次新建 container；复用 sandbox 继续受原 durable cleanup identity 管理。该区别不新增请求字段或 cleanup event。
+
+机器 OpenAPI、proof、Platform/Storage pins、generated Failure、contract provenance、SQL 与依赖锁保持未编辑；本地 contract/failure check 仍须与最终 evidence 一并记录。任何后继机械差异必须停止并交 Root 重新授权，不手填生成物。
+
+---
+
+## R117：资源关闭不改变 wire contract（2026-10-02）
+
+**当前裁决：无 HTTP/RPC/event/schema/version 变化；生产实现尚未授权。** 基线 Agent `2653bcc723da5366fd877db73d701410e7bdc3a8`。本节与同轮 TECHNICAL_DESIGN、DATA_MODEL 及 Root R117 生命周期实施卡共同构成文档门，并遵循 [Python 后端工程规范](../../../docs/kokoro-handbook/standards/09-python-backend-engineering.md)。
+
+- 现有 `RunRequest`、Feature/Agent 声明、AG-UI/Chat 投影、terminal payload、error code、sandbox durable cleanup record 与公开 HTTP 版本全部保持；不新增 client ownership、close 状态、timeout 或 endpoint 字段。
+- 新增能力仅为 Agent 内部 Python 生命周期：Factory 创建的归档资源在成功时随 `AgentHandle` 转交给 Supervisor；plain/state 无资源时 close 为具名 no-op。不存在可供调用方注入任意 S3 client 的公开面，因此不以虚构 caller-owned 注入断言定义契约。
+- native stream 排空、归档 operation 排空和 client close 是内部先后条件；终态 wire 仍由原 durable terminal transaction 决定。close/cleanup 错误必须可观察，但不得把 secret、endpoint、payload 或原始工具结果写入公开错误/日志。
+- 顶层取消仍传播 `CancelledError`；普通 primary 不被 close 错误替换。shutdown 超过现 `drain_timeout_s` 是进程级非零失败，不生成第二种 Run terminal、不增加网络重试协议，也不声称资源已关闭。
+- S3 workspace archiver 的本地 boto client 与 Docker/E2B/custom 的 durable sandbox teardown 是不同 ownership；后者继续使用现 repository cleanup intent/teardown contract，前者不发布为 Storage Artifact API。
+
+机器 OpenAPI、proof、Platform/Storage pins、generated Failure、contract provenance、SQL 与依赖锁当前预期字节变更为零；runtime descriptor 摘要由现 codec 对实际源码自然计算，新 wheel RECORD 仅由 build 派生。任何实际机械生成文件差异须先由 Root 另行授权；若后继实现出现 wire 差异，须停止并重新通过 owner/版本设计门，不能以本节预先授权或手填生成物。
+
+---
+
+## R104：安装契约资源闭包 D0（2026-10-02）
+
+**仅方案候选，待 Root 裁决；本轮机器文件全部冻结。** Agent main `17c73541ae5d9f123d85cf531a79503df5c463bd` 加冻结候选，Root `264de6b8`。实际 installed checker RED为 `/tmp/kokoro-r104b-installed-checker-red.json/.log`：安装exit0、checker exit1 / missing-installed-openapi、network_attempts0、临时安装已删除。HTTP36真实通过不代替安装门；下方R90的“当前/目标”属于当时设计，本节不重开HTTP5字段决定。
+
+### Owner、版本与单一编辑方向
+
+Agent canonical OpenAPI仍是 `contract/openapi/v1/openapi.json`，proof仍是 `contract/execution-proof/v1/`；`contract/provenance.json` 保留其现角色，派生digest由现 generator产出。Platform/Storage consumer pins只是各自owner发布的只读输入，不由Agent重写。安装目录不是第二可编辑contract中心，也不加入Root/BFF副本。
+当前冻结候选的HTTP机器版本为5.0.0；Python distribution版本2.0.0、proof自身1.0.0是独立身份。本片不改HTTP方法/路径、decoded payload映射、Todo预算/空表语义、failure tuple、JWKS、完整HITL、签名或租户规则，不用安装布局变更制造协议升级或宣称正式发布。
+
+### 建议方案B的安装资源清单
+
+所有相对路径以Agent仓为源；目标是该wheel只读 `share/kokoro-agent/audit/` 下相同逻辑路径。完整方案比较与定位规则见本轮TECHNICAL_DESIGN；最终采用仍待Root批准。
+
+| 输入闭包 | 安装与校验要求 |
+|---|---|
+| `contract/openapi/v1/openapi.json`、`contract/provenance.json` | 字节与canonical构建输入相同；仍核HTTP版本、exact route/governance/JWKS、decoded mapping、直接digest与generated provenance。 |
+| `contract/execution-proof/v1/schema.json`、`vectors.json` | 保留schema、raw/canonical JSON、整数token、重复键、签名/JWK、正负向向量和owner aggregate全部既有门。 |
+| `contract/platform/v1/provenance.json` 及 `execution-operations/v4/` 完整21文件树 | 输入集合以现 `EXPECTED_EXECUTION_SOURCES` 为准，含原owner provenance和20个payload文件；精确目录/无symlink/owner commit/digest/aggregate/inactive状态及原schema/ZIP/正负向/command向量均不削弱，不按旧README的v3历史清单打包。 |
+| `scripts/generate_failure_models.py` | 作为现owner provenance的原始bytes资源；安装checker不执行该脚本、不联网装工具，不移除该来源记录。 |
+| `OWNER_SOURCE_FILES` 中所有 `src/kokoro_agent/…` 文件 | 原10项inventory不删减；建议末尾追加新定位模块 `src/kokoro_agent/distribution_assets.py` 后，由现generator机械更新provenance。审计副本先逐字节对应实际安装module，再参加原有顺序aggregate。 |
+| 已安装 `kokoro_agent/protocol/run_failure_generated.py` | 必须等于同wheel OpenAPI 经现 `failure_model_bytes` 派生的完整bytes，并等于审计副本；OpenAPI未变时本片不应改生成物。 |
+
+这里21是当前读取到的固定v4集合，不是未来浮动latest；后继测试需核清单而非只核数量。Storage/Platform其余Proto/codegen原生成一致性门继续按owner pin运行，不把installed checker未承诺的生成工具执行伪装成已覆盖；不删既有5模块projector smoke，只将其归回安装门的一部分。
+
+### 读取、生成与失败语义
+
+- 既有显式 `validate(root: Path)` 仍验证调用者明确给定的源码/fixture事实；已注册 `kokoro-agent-contract-check` 必须在正常安装下默认绑定自身distribution，不搜索cwd/父级checkout、不接受缺包后从源树补齐。
+- `importlib.metadata` 定位必须核该distribution的实际module origin、文件清单和唯一资源根，支持受验venv及`--target`；资源缺失/路径越界/混装/审计源与运行源不一致立即非零退出。只读资产不得自动重生成、下载或写回安装目录。
+- 原完整 `validate_openapi_document`、`generate_failure_models(check=True)`、`validate_execution_proof_contract`、`validate_platform_binding_artifact` 顺序与语义保留；“安装模式”不得跳过任一分支、降低向量集合或删除console entrypoint。
+- schema operator不是新HTTP/API：后继精确范围补入 `src/kokoro_agent/application/schema.py`，现入口先纯定位/读取/校验DDL再 `connect_pg`；现 `src/kokoro_agent/infrastructure/schema.py` installer在 `ensure_schema` 前取得已验SQL，事务内执行该已捕获值，不改现事务、require_blank或catalog语义、不新installer。初始缺失/漂移在连接前失败；直接installer面对既有连接时在任何schema创建前失败。
+- 写模式只属于显式源码维护入口；source inventory机械变化须由Root另准后调用现generator，审查diff仅限清单/摘要。HTTP/proof/schema/vector/pin字节保持，不手填provenance、也不把RECORD当owner签名。
+
+### 后继验收与消费者边界
+
+先在现 `test_machine_contract.py`、`test_execution_proof_artifact.py`、`test_platform_generated_consumer.py` 和 `scripts/check_platform_wheel.py` 固化r104b真实缺资源RED与缺包/篡改/源回退负例；路径均位于本仓既有tests/contract或scripts，精确授权见TECH。缺生成文件、改实际module但不改审计副本、反向篡改副本、完整Platform子树缺文件、错误provenance、无/多RECORD定位均应非零；保留raw duplicate/canonical/边界负例，不只测文件存在。
+DDL顺序负例扩现 `tests/unit/test_cli.py`（现仅CLI委派测试，须补application入口）与 `tests/contract/test_canonical_database_schema.py`：缺失/漂移时入口connect调用0、schema创建0，直接installer ensure_schema/DDL调用0；合法control维持原事务顺序。源码与测试路径均仅后继候选，本轮不实现。
+Root再用新wheel SHA在无checkout导入的隔离环境验证CLI完整checker、原生成门与安装HTTP Todo精确bytes/identity/毫秒/cursor/watermark/跨tenant和subject隔离；全部是待验条件，本轮没有执行。Agent安装通过仍不等于owner已发布；BFF/Web只在Root正式commit/digest发布后固定消费，不把目录里出现HTTP5当已上线。retention与正式数据处置门继续保留。
+
+---
+
+## R90-W03：安全过程 Chat 契约 D0 闭集（2026-10-02）
+
+Agent main基线17c73541ae5d9f123d85cf531a79503df5c463bd；本节替换未提交R87前缀，原HEAD正文保留。当前正式HTTP **4.0.0** 与机器artifact原字节不变；目标breaking **5.0.0** 待实施/验证/发布，不原位覆盖4的digest。
+调用方向仍Agent internal-owner Chat→BFF durable AG-UI/snapshot→Web同源adapter；原/v1与payload_json载体不变，不新endpoint/浏览器Redis协议/跨仓可编辑schema。本文是已决定的实现约束；实施后唯一机器事实源仍contract/openapi/v1/openapi.json，不另建schema副本。
+
+### decoded payload闭集与presence
+
+| event_type / 分支 | 唯一字段与约束；以下列出的字段均必填，注明条件者除外 |
+|---|---|
+| todo.updated | 仅todos有序数组；每项仅content/status；status仅pending/in_progress/completed。主Run完整替换，显式[]清空。 |
+| activity / tool | activity="tool"、activity_id、segment_id、status∈{running,completed,failed}、display_code="tool.execution"。 |
+| activity / subagent | activity="subagent"、activity_id、segment_id、status∈{running,completed,failed}、display_code="subagent.execution"。 |
+| activity / skill | activity="skill"、activity_id、preflight_id、source_refs（本Run canonical selected_skill_source_refs原有精确refs，不改其内部结构）、phase∈{resolving,loading,ready,failed}。 |
+| skill失败presence | phase=failed **必须**有error_code∈{skill_resolve_failed,skill_load_failed}；其余phase **禁止**error_code（含null），无默认失败码。 |
+| interaction.state / delivery | 原完整durable pause/revision/全部未决项、成功owner receipt与作品字段保持；不是上述activity分支，不施加其删字段规则。 |
+
+对象均严格extra=forbid、不做类型强转；未知event/phase/status/code与错分支字段拒绝。安全activity没有truncated、name、args、result、error、description、source、subagent_type、tool_id、subagent_id或task_input；禁止可选raw字段/fallback。
+未知内部工具/子agent名字仍映射上述唯一通用display_code；不把原名拼进code，不从模型文本猜调用身份。原私有执行payload的诊断/raw字段可保留，禁止借此进入公开Chat/AG-UI/snapshot；HITL与Delivery有各自既有授权语义。
+
+### Todo边界与唯一字节预算
+
+完整表0..100项；每项content为1..1024 **Unicode码点**的纯文本（不是UTF-16 code unit或grapheme计数），status仅上表三值。拒绝孤立surrogate U+D800..U+DFFF；有效补充平面字符解码成一个码点再计数。禁止trim、Unicode normalization或替换非法码点后偷偷通过。
+容量计量对象明确为**整个decoded payload对象** {"todos":[{"content":…,"status":…},…]}，不是仅数组/单项，也不计外层ChatEvent、payload_json二次转义或HTTP envelope。确定性序列化后的UTF-8字节数≤65536（等号合法）。
+定义C(x)：Python参考 json.dumps(x, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode("utf-8", errors="strict")。这里对象键均固定ASCII，字典键按升序，数组原顺序；无BOM、空白缩进或末尾换行。Todo键顺序因此固定content再status，顶层仅todos。
+跨语言C必须同字节：引号/反斜杠分别为\"/\\；U+0008/0009/000A/000C/000D用\b/\t/\n/\f/\r，其余U+0000..001F用小写\u00xx；斜杠不转义，其余Unicode含U+2028/U+2029直接UTF-8。输入解析仍严格拒绝重复对象键/未知字段，不用最后值覆盖伪装合法表。
+先校验类型、字段、码点/项数，再按C计量；缺todos、null、任一非法项/超限均拒**整表**，不默补[]、不截断/删项、不发布旧值冒充新成功。显式[]是唯一空表更新；不存在计划与空表事实分开。
+纯文本只按text渲染，不执行HTML；Todo应为面向用户任务摘要，不复制工具参数dump/包路径/隐藏推理。结构/容量校验不宣称通用自然语言脱敏；sentinel负例必须验证投影来源约束。
+
+### opaque身份的确定编码（不改原Chat身份）
+
+所有身份输入仅来自已批准执行域：受信request的tenant_id、namespace、session_id、run_id，以及现ToolInvoked/Returned的tool_id/segment_id、SubagentStarted/Finished的subagent_id/segment_id或RunEmitter预留的source_index。禁止从name、result、错误、模型文本、当前时间/随机UI key补身份；缺真实必需身份即拒投影。
+设R=[tenant_id,namespace,session_id,run_id]，每项保持原字符串、无trim/归一化；H(tag,parts)=SHA256(C(["kokoro-agent.safe-progress.v1",tag,*R,*parts]))的**完整256位、64个小写hex**，不截短、不用base64。C即上节编码，parts只含字符串；不同tag做域分隔。digest只用于opaque归组，不是授权凭据/加密或任意文本匿名化保证。
+tool activity_id="act_"+H("tool-activity",[segment_id,tool_id])；subagent activity_id="act_"+H("subagent-activity",[segment_id,subagent_id])；两者segment_id="seg_"+H("segment",[原segment_id])。这里右侧为真实原身份，左侧为公开opaque值；same source identity的start/finish保持同ID。
+skill activity_id="act_"+H("skill-activity",[])（同Run稳定归组）；preflight_id="spf_"+H("skill-preflight",[str(anchor_source_index)])。anchor为首条**durable resolving**的非负Run source_index；十进制字符串，无前导零，0编码"0"。不得把未持久reserve当已确认轮次。
+三种公开ID均固定68个ASCII字符；分别匹配 ^act_[0-9a-f]{64}$、^seg_[0-9a-f]{64}$、^spf_[0-9a-f]{64}$。不转发上述原tool/subagent/segment身份；原ChatEvent外层scope与chat_event_id/seq算法保持，不借本轮重写消息/HITL/Delivery身份。
+
+### 真实阶段、发射与恢复
+
+1. 先冻结static recipe；非空selected refs时首resolving reserve→构造ID→同原lease append_fenced成功确认，才可执行Skill I/O。Factory typed回调传阶段观察，emitter保管anchor/派生；同轮loading/ready/failed重用preflight_id。空选择不发假ready。
+2. resolving在真实resolve前；loading在首真实包load前；ready仅全部所需peer的Skill resolve/load成功。多peer聚合一轮；MCP或model失败不制造skill.failed；failed的两个error_code严格对应resolve或load/包校验失败。
+3. 回调未持久/失fence必须停止后续I/O并作为持久化/authority错误传播，不转换Skill/assembly失败、取消失败或第二terminal。initial/control/recovery与invoke catch一起承接；Chat成功而live失败由durable replay恢复，不重做外部操作。
+4. 已提交事件replay保原identity/created_at/payload；崩溃后重新授权或包读取是**新真实轮次**，以新首resolving source_index为anchor，绝不复用旧ready。单纯再emit分配新index不是旧事件重放；未提交阶段不补造。
+5. build成功后initial invoke调用Run锁内started幂等入口；resume不新started，恢复probe不自行产生started；next_index==0不再是资格。started原event/index/timestamp重取规则见DATA；Skill ready不是run.started或永久授权。
+
+### replay、发布与消费者门
+
+原tenant/namespace/session授权分页、Chat seq与namespace/run/source_index派生chat_event_id不变。source_index可有private/预留崩溃间隙；同源不同payload/时间冲突，禁止覆盖或伪造连续+1 Chat cursor。
+BFF独占durable AG-UI与compact snapshot：同event_watermark边界上的最新Todo/activities/消息/HITL/作品，一致快照后只replay更晚事件；无计划、显式空表、历史缺失/过期须分开。保留active/waiting与cursor-expired恢复由BFF后继owner切片明确，不以Redis TTL冒充durable retention。
+Agent5只在明确fresh批准测试或正式已批准数据处置cutover启用；不自动销毁用户数据，不双读旧raw，不把历史raw重标safe。Run purge未清Chat/Chat-BFF retention不足仍是发布/整链门，**不阻挡本轮闭集的纯RED**；不杜撰保留天数。
+先Agent5发布commit/digest→BFF在direct/public6闭环后另定过程/snapshot版本并固定artifact→Web正规pin/复用既有组件；审批仍全集幂等、作品仍成功receipt，终态折叠不等于删除事实。R80 usage/v1独立后继，同writer串行，不占HTTP5、不以Billing/付款展示为前置。
+机器/生成精确写集及全部caller见TECH本节；尤其contract_check.py、chat_contract_check.py的HTTP4断言/decoded mapping、现scripts/generate_failure_models.py及provenance必须一起闭环；生成物只收实际生成变化。proof自身1.0.0/签名tuple/JWKS及ChatFailure/interaction.state语义不改。
+后继RED须覆盖合法/空/缺失/extra/raw、100/101项、1024/1025码点、补充平面/孤立surrogate、65536/65537 bytes与转义、全部phase/presence、无I/O失权、started/resume/replay漂移；Root另验真实PG/owner/刷新。闭集已锁，本轮业务测试、生成、HTTP调用均0。
+
+---
+
 ## R80-W03：逐 attempt 用量与 Billing admission 契约目标（2026-10-02）
 
 跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。

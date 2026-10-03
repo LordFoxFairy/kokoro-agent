@@ -9,6 +9,8 @@ claim that a LangGraph checkpoint was actually observed.
 
 from __future__ import annotations
 
+from kokoro_agent.protocol import SkillProgressSink
+
 import asyncio
 import base64
 import hashlib
@@ -1373,7 +1375,9 @@ async def _bridge_environment(
         await repository.record_pause(run, lease, materialized.pause)
 
         async def build(
-            request_value: RunRequest, lease_value: LeaseFence
+            request_value: RunRequest,
+            lease_value: LeaseFence,
+            _progress: SkillProgressSink,
         ) -> AgentHandle:
             assert request_value.model_dump_json() == run.model_dump_json()
             assert lease_value.generation >= lease.generation
@@ -2205,7 +2209,9 @@ async def test_first_worker_dispatch_seals_usage_before_durable_initial_pause(
         )
         handle = AgentHandle(runnable=graph, tool_descriptions={"input": "Input"})
 
-        async def build(run: RunRequest, lease: LeaseFence) -> AgentHandle:
+        async def build(
+            run: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+        ) -> AgentHandle:
             assert run.model_dump_json() == request_value.model_dump_json()
             assert lease.owner == "first-worker"
             return handle

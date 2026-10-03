@@ -52,6 +52,7 @@ async def _invoke(bus: FakeBus, run: FakeRunStream) -> None:
         (settlement_agent := FakeAgent(run=run)),
         "c1",
         {"messages": []},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),

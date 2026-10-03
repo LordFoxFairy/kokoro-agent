@@ -7,7 +7,7 @@ import hashlib
 import logging
 import time
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
@@ -29,8 +29,11 @@ from kokoro_agent.protocol import (
     SubagentToolInvokedPayload,
     SubagentToolReturnedPayload,
     ThinkingDeltaPayload,
-    Todo,
     TodoUpdatedPayload,
+    SkillPhase,
+    SkillProgressPayload,
+    SkillProgressCommitted,
+    SkillProgressSink,
     ToolAwaitingApprovalPayload,
     ToolInvokedPayload,
     ToolOutputDeltaPayload,
@@ -82,6 +85,7 @@ AgentEventPayload = (
     | ToolAwaitingApprovalPayload
     | ToolReturnedPayload
     | TodoUpdatedPayload
+    | SkillProgressPayload
     | SubagentStartedPayload
     | SubagentFinishedPayload
     | SubagentThinkingDeltaPayload
@@ -105,6 +109,7 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
     ToolAwaitingApprovalPayload: "tool.awaiting_approval",
     ToolReturnedPayload: "tool.returned",
     TodoUpdatedPayload: "todo.updated",
+    SkillProgressPayload: "skill.progress",
     SubagentStartedPayload: "subagent.started",
     SubagentThinkingDeltaPayload: "subagent.thinking.delta",
     SubagentFinishedPayload: "subagent.finished",
@@ -121,6 +126,14 @@ _KIND_BY_PAYLOAD: Mapping[type[BaseModel], str] = {
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+class ProgressPersistenceError(RuntimeError):
+    """A durable progress write is unconfirmed; never a business failure."""
+
+
+class ProgressAuthorityLost(ProgressPersistenceError):
+    """The original execution lease no longer permits ordinary progress."""
 
 
 class RunEmitter:
@@ -140,6 +153,7 @@ class RunEmitter:
         chat_repository: ChatRepository | None = None,
         tenant_id: str | None = None,
     ) -> None:
+        self._emit_lock = asyncio.Lock()
         self._bus = bus
         self._run_id = run_id
         self._next_index = next_index
@@ -177,11 +191,6 @@ class RunEmitter:
     @property
     def run_id(self) -> str:
         return self._run_id
-
-    @property
-    def at_start(self) -> bool:
-        # index==0 才是 run 真起点：resume/重启/重拾续段不重复宣告 run.started。
-        return self._next_index == 0
 
     @property
     def lease(self) -> LeaseFence | None:
@@ -269,7 +278,65 @@ class RunEmitter:
                 return payload.model_copy(update={"segment_id": owner})
         return payload
 
+    def skill_progress(self, source_refs: Sequence[str]) -> SkillProgressSink:
+        """One real build round; committed anchor is never borrowed from old ready."""
+        refs = list(source_refs)
+        anchor: int | None = None
+
+        async def report(observation: SkillPhase) -> SkillProgressCommitted:
+            nonlocal anchor
+            if self._chat_repository is None or self._outbox is None:
+                raise ProgressPersistenceError(
+                    "Skill progress requires fenced durable Chat"
+                )
+            async with self._emit_lock:
+                if anchor is None and observation.phase != "resolving":
+                    raise ValueError("a Skill round must begin with resolving")
+                if anchor is not None and observation.phase == "resolving":
+                    raise ValueError("a new resolving phase requires a new round")
+                await self._require_progress_lease("skill.progress")
+                index = await self._reserve_index()
+                payload = SkillProgressPayload(
+                    **observation.model_dump(exclude_none=True),
+                    anchor_source_index=index if anchor is None else anchor,
+                    source_refs=refs,
+                )
+                await self._emit_ordinary(payload, index, _now_ms())
+                if anchor is None:
+                    anchor = index
+                return SkillProgressCommitted(source_index=index)
+
+        return report
+
+    async def _require_progress_lease(self, kind: str) -> None:
+        try:
+            allowed = await self._lease_allows(kind)
+        except Exception as error:
+            raise ProgressPersistenceError(
+                "progress lease check unconfirmed"
+            ) from error
+        if not allowed:
+            raise ProgressAuthorityLost("original progress lease lost")
+
+    async def _reserve_index(self) -> int:
+        if self._outbox is None:
+            return self._next_index
+        assert self._lease is not None
+        try:
+            index = await self._outbox.reserve_event_index(self._run_id, self._lease)
+        except Exception as error:
+            raise ProgressPersistenceError(
+                "progress index reservation unconfirmed"
+            ) from error
+        if index is None:
+            raise ProgressAuthorityLost("original progress lease lost")
+        return index
+
     async def emit(self, payload: AgentEventPayload) -> None:
+        async with self._emit_lock:
+            await self._emit(payload)
+
+    async def _emit(self, payload: AgentEventPayload) -> None:
         if (
             isinstance(payload, ToolReturnedPayload)
             and payload.name in self._review_tool_names
@@ -281,7 +348,9 @@ class RunEmitter:
         payload = self._with_owner_segment(payload)
         kind = _KIND_BY_PAYLOAD[type(payload)]
         lease = self._lease
-        if not await self._lease_allows(kind):
+        if kind not in CRITICAL_KINDS or kind == "run.started":
+            await self._require_progress_lease(kind)
+        elif not await self._lease_allows(kind):
             return
         timestamp = _now_ms()
         if self._outbox is not None and kind in CRITICAL_KINDS:
@@ -307,6 +376,8 @@ class RunEmitter:
                 ),
             )
             if staged is None:
+                if kind == "run.started":
+                    raise ProgressAuthorityLost("original started lease lost")
                 # post-fence superseded：永不发布；index 不前进（保 live 序连续、浏览器面透明）。
                 return
             if staged.published:
@@ -348,28 +419,32 @@ class RunEmitter:
             await self._outbox.mark_critical_published(self._run_id, staged.durable_seq)
             metrics.record_outbox("published")
             return
-        if self._outbox is not None:
-            assert lease is not None
-            reserved = await self._outbox.reserve_event_index(self._run_id, lease)
-            if reserved is None:
-                return
-            index = reserved
-        else:
-            index = self._next_index
-        base = {
-            "kind": kind,
-            "run_id": self._run_id,
-            "index": index,
-            "timestamp": timestamp,
-            "payload": payload,
-        }
-        event = agent_event_adapter.validate_python(base)
+        index = await self._reserve_index()
+        await self._emit_ordinary(payload, index, timestamp)
+
+    async def _emit_ordinary(
+        self, payload: AgentEventPayload, index: int, timestamp: int
+    ) -> None:
+        kind = _KIND_BY_PAYLOAD[type(payload)]
+        event = agent_event_adapter.validate_python(
+            {
+                "kind": kind,
+                "run_id": self._run_id,
+                "index": index,
+                "timestamp": timestamp,
+                "payload": payload,
+            }
+        )
         chat_mode: ChatFenceMode | None = "active" if self._outbox is not None else None
         if not await self._persist_chat(payload, index, timestamp, mode=chat_mode):
-            return
+            raise ProgressAuthorityLost("original progress append fence lost")
         self._next_index = max(self._next_index, index + 1)
-        wire_event = event.model_dump(exclude_none=True)
-        await self._publish_event(wire_event)
+        try:
+            await self._publish_event(event.model_dump(exclude_none=True))
+        except Exception:
+            if self._chat_repository is None:
+                raise
+            LOGGER.warning("live progress deferred to durable Chat replay")
 
     async def _lease_allows(self, kind: str) -> bool:
         if self._outbox is None:
@@ -409,16 +484,21 @@ class RunEmitter:
         )
         if projection is None:
             return True
-        if mode is not None:
-            assert self._lease is not None
-            return (
-                await self._chat_repository.append_fenced(
-                    projection, self._lease, mode=mode
+        try:
+            if mode is not None:
+                assert self._lease is not None
+                return (
+                    await self._chat_repository.append_fenced(
+                        projection, self._lease, mode=mode
+                    )
+                    is not None
                 )
-                is not None
-            )
-        await self._chat_repository.append(projection)
-        return True
+            await self._chat_repository.append(projection)
+            return True
+        except ProgressPersistenceError:
+            raise
+        except Exception as error:
+            raise ProgressPersistenceError("Chat progress write unconfirmed") from error
 
     async def _publish_event(self, event: Mapping[str, JsonValue]) -> None:
         # Redis is a bounded live transport. Critical recovery comes from the
@@ -470,8 +550,6 @@ async def persist_outbox_chat_event(
 
 
 # --- 投影 → payload 映射（v3 typed projection 元素转 contract 载荷的唯一地点） ---
-
-_TODOS_ADAPTER: TypeAdapter[list[Todo]] = TypeAdapter(list[Todo])
 
 
 def message_delta_payload(text: str, *, segment_id: str) -> MessageDeltaPayload | None:
@@ -606,17 +684,20 @@ def subagent_tool_returned_payload(
 
 def todo_payload(tc: ToolCallInfo) -> TodoUpdatedPayload:
     # todos 来自 LLM 工具入参（不可信载荷）：strict 洗净后进 wire。
-    todos = (tc.input or {}).get("todos", [])
-    return TodoUpdatedPayload(todos=_TODOS_ADAPTER.validate_python(todos))
+    if tc.input is None or "todos" not in tc.input:
+        raise ValueError("complete todos table is required")
+    return TodoUpdatedPayload.model_validate(tc.input)
 
 
 def subagent_started_payload(
     sub: SubagentInfo, *, source: SubagentSource
 ) -> SubagentStartedPayload:
+    if not sub.trigger_call_id:
+        raise ValueError("subagent activity requires real call identity")
     name = sub.name or "subagent"
     return SubagentStartedPayload(
-        segment_id=sub.trigger_call_id or "subagent",
-        subagent_id=sub.trigger_call_id or "subagent",
+        segment_id=sub.trigger_call_id,
+        subagent_id=sub.trigger_call_id,
         name=name,
         description=sub.task_input or "",
         subagent_type=name,
@@ -627,12 +708,14 @@ def subagent_started_payload(
 def subagent_finished_payload(
     sub: SubagentInfo, *, source: SubagentSource
 ) -> SubagentFinishedPayload:
+    if not sub.trigger_call_id:
+        raise ValueError("subagent activity requires real call identity")
     name = sub.name or "subagent"
     # SubgraphStatus=="failed" → 子代理内部异常：失败有归属，不被吞成顶层 run.failed。
     failed = sub.status == "failed"
     return SubagentFinishedPayload(
-        segment_id=sub.trigger_call_id or "subagent",
-        subagent_id=sub.trigger_call_id or "subagent",
+        segment_id=sub.trigger_call_id,
+        subagent_id=sub.trigger_call_id,
         name=name,
         subagent_type=name,
         source=source,

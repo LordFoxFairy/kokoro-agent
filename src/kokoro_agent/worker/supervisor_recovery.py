@@ -291,46 +291,60 @@ class SupervisorRecoveryMixin(SupervisorContext):
             if invocation is None:
                 # Restart/remote absence never invents a local-drained token.
                 continue
-            built = await self._build(request, lease)
-            observed = await self._interaction_reader(
-                request=request,
-                lease=lease,
-                handle=built,
-                target=ResumeReadTarget(command_id=target.command_id),
+            emitter = await self._emitter(bus, request.run_id, lease)
+            built = await self._build_owned(
+                request,
+                lease,
+                emitter.skill_progress(request.selected_skill_source_refs),
             )
-            if not isinstance(observed, ObservedNativeResume) or not isinstance(
-                observed.evidence, UnknownResumeEvidence
-            ):
-                await self._run_repository.reset_reconcile_probe(
-                    request, lease, target.command_id, context.intent.attempt_id
+            primary: BaseException | None = None
+            try:
+                observed = await self._interaction_reader(
+                    request=request,
+                    lease=lease,
+                    handle=built,
+                    target=ResumeReadTarget(command_id=target.command_id),
                 )
-                continue
-            probe = make_quiescent_probe(
-                observed,
-                request=request,
-                worker_boot_id=self._boot_id,
-                invocation_id=invocation,
-            )
-            result = await self._run_repository.record_reconcile_probe(
-                request, lease, probe
-            )
-            if result.exhausted:
-                committed = await self._run_repository.finalize_terminal(
-                    target.run_id,
-                    ExecutionTerminalAuthority(lease=lease),
-                    RunTerminalOutcome(
-                        payload=RunFailedPayload(
-                            code="internal_error", retryable=False
+                if not isinstance(observed, ObservedNativeResume) or not isinstance(
+                    observed.evidence, UnknownResumeEvidence
+                ):
+                    await self._run_repository.reset_reconcile_probe(
+                        request, lease, target.command_id, context.intent.attempt_id
+                    )
+                    continue
+                probe = make_quiescent_probe(
+                    observed,
+                    request=request,
+                    worker_boot_id=self._boot_id,
+                    invocation_id=invocation,
+                )
+                result = await self._run_repository.record_reconcile_probe(
+                    request, lease, probe
+                )
+                if result.exhausted:
+                    committed = await self._run_repository.finalize_terminal(
+                        target.run_id,
+                        ExecutionTerminalAuthority(lease=lease),
+                        RunTerminalOutcome(
+                            payload=RunFailedPayload(
+                                code="internal_error", retryable=False
+                            ),
+                            usage=None,
                         ),
-                        usage=None,
-                    ),
-                    tuple(
-                        await self._run_repository.list_delivery_journal(target.run_id)
-                    ),
-                )
-                if committed.status in ("committed", "replayed"):
-                    await self._republish_outbox(bus)
-                    await self._teardown_control(bus, target.run_id)
+                        tuple(
+                            await self._run_repository.list_delivery_journal(
+                                target.run_id
+                            )
+                        ),
+                    )
+                    if committed.status in ("committed", "replayed"):
+                        await self._republish_outbox(bus)
+                        await self._teardown_control(bus, target.run_id)
+            except BaseException as error:
+                primary = error
+                raise
+            finally:
+                await self._close_handle_after_primary(built, primary)
 
     async def _retry_sandbox_cleanups(self, run_id: str | None = None) -> None:
         if self._sandbox_teardown is None:

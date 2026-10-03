@@ -95,6 +95,7 @@ async def _invoke(
         agent,
         "c1",
         {"messages": []},
+        initial="run.started" not in bus.kinds(run_id),
         approval_tool_names=approval_tool_names,
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, claim, usage_recorder()[0]),
@@ -139,10 +140,10 @@ async def test_resumed_segment_does_not_repeat_run_started(stream: RedisStream) 
     # resume/重拾续段：index>0 时不再宣告 run.started（wire 噪音，真栈 dump 抓获）。
     run_id = f"rn-{uuid4().hex}"
     first = RunEmitter(stream, run_id)
-    assert first.at_start is True
+    assert await stream.read_all(run_events_stream(run_id)) == []
     await first.emit(RunStartedPayload())
     resumed = await RunEmitter.attach(stream, run_id)
-    assert resumed.at_start is False
+    assert len(await stream.read_all(run_events_stream(resumed.run_id))) == 1
 
 
 def test_clip_result_boundary_matrix() -> None:
@@ -334,6 +335,7 @@ async def test_text_tool_and_empty_final_segment_are_replayable_in_order() -> No
         agent,
         "thread-1",
         {"messages": []},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),
@@ -740,6 +742,7 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
         agent,
         "native-thread",
         {"messages": [HumanMessage(content="go")]},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(
@@ -811,6 +814,7 @@ async def test_runaway_loop_hits_recursion_limit_and_fails_loud(
         agent,
         "tloop",
         {"messages": [HumanMessage(content="go")]},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(
@@ -918,6 +922,7 @@ async def test_run_completed_reports_cumulative_usage_not_segment() -> None:
         (settlement_agent := FakeAgent(run=text_run("hi"))),
         "c1",
         {"messages": []},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, preloaded_recorder),
@@ -949,6 +954,7 @@ async def test_pause_segment_records_usage_too() -> None:
         agent,
         "c1",
         {"messages": []},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, recorder),
@@ -1057,6 +1063,7 @@ async def test_native_settlement_is_after_context_drain_before_terminal(
         agent,
         "c1",
         {},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=finalize,
@@ -1090,6 +1097,7 @@ async def test_settlement_persistence_failure_propagates_without_second_terminal
             agent,
             "c1",
             {},
+            initial=True,
             approval_tool_names=frozenset(),
             source_for=_runtime_custom,
             finalize_terminal=terminal_emitter(
@@ -1136,6 +1144,7 @@ async def test_waiting_settlement_seals_usage_before_releasing_lease(
         agent,
         "c1",
         {},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, record_usage),
@@ -1176,6 +1185,7 @@ async def test_usage_seal_failure_propagates_without_settlement_or_terminal() ->
             agent,
             "c1",
             {},
+            initial=True,
             approval_tool_names=frozenset(),
             source_for=_runtime_custom,
             finalize_terminal=terminal_emitter(emitter, _always_claim, record_usage),
@@ -1210,6 +1220,7 @@ async def test_interrupted_active_reader_keeps_usage_without_terminal() -> None:
         agent,
         "c1",
         {},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=_runtime_custom,
         finalize_terminal=terminal_emitter(emitter, _always_claim, record_usage),
@@ -1226,3 +1237,421 @@ async def test_interrupted_active_reader_keeps_usage_without_terminal() -> None:
 def isolate_sdk_profile_side_effects() -> Iterator[None]:
     with isolated_native_registry():
         yield
+
+
+async def test_r91_non_started_durable_progress_does_not_suppress_initial_started() -> (
+    None
+):
+    bus = FakeBus()
+    chat = FakeChatRepository()
+    emitter = await RunEmitter.attach(
+        bus,
+        "r91-start",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session",
+        chat_repository=chat,
+    )
+    # Existing projectable progress exercises the index trap without inventing a
+    # nonexistent Skill class or passing a not-yet-supported invoke keyword.
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="pre-invoke",
+            tool_id="prepare",
+            name="prepare",
+            args={},
+        )
+    )
+    assert len(chat.records) == 1
+    assert bus.kinds("r91-start") == ["tool.invoked"]
+    agent = FakeAgent(run=text_run("answer"))
+    await invoke_once(
+        emitter,
+        agent,
+        "thread",
+        {"messages": []},
+        initial=True,
+        approval_tool_names=frozenset(),
+        source_for=_runtime_custom,
+        finalize_terminal=terminal_emitter(emitter, _always_claim, usage_recorder()[0]),
+        record_usage=usage_recorder()[0],
+        on_native_settled=settled_state_callback(agent, "thread"),
+    )
+    assert bus.kinds("r91-start").count("run.started") == 1
+    assert bus.kinds("r91-start").index("run.started") < bus.kinds("r91-start").index(
+        "message.delta"
+    )
+
+
+async def test_r91_existing_started_is_not_repeated_by_next_invocation_control() -> (
+    None
+):
+    bus = FakeBus()
+    await _invoke(bus, FakeAgent(run=FakeRunStream(is_interrupted=True)), "r91-resume")
+    assert bus.kinds("r91-resume").count("run.started") == 1
+    assert "run.completed" not in bus.kinds("r91-resume")
+    await _invoke(bus, FakeAgent(run=text_run("resumed")), "r91-resume")
+    assert bus.kinds("r91-resume").count("run.started") == 1
+
+
+@pytest.mark.parametrize("include_main", [False, True])
+async def test_r91_main_todo_persists_but_subagent_todo_never_replaces_it(
+    include_main: bool,
+) -> None:
+    from kokoro_agent.execution.publish_agent_events import pump_run
+
+    bus = FakeBus()
+    chat = FakeChatRepository()
+    emitter = await RunEmitter.attach(
+        bus,
+        "r91-todos",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session",
+        chat_repository=chat,
+    )
+    main = [{"content": "主任务", "status": "in_progress"}]
+    child = [{"content": "SENTINEL_CHILD_PRIVATE_PLAN", "status": "completed"}]
+    run = FakeRunStream(
+        tool_views=(FakeToolCall("main-todo", "write_todos", input={"todos": main}),)
+        if include_main
+        else (),
+        subagent_runs=(
+            FakeSubagentRun(
+                tool_views=(
+                    FakeToolCall("child-todo", "write_todos", input={"todos": child}),
+                ),
+            ),
+        ),
+    )
+    from kokoro_agent.execution.protocols import AgentRunStream
+
+    assert isinstance(run, AgentRunStream)
+    await pump_run(emitter, run, source_for=_runtime_custom)
+    raw_todos = [
+        event for event in bus.run_events("r91-todos") if event.kind == "todo.updated"
+    ]
+    assert len(raw_todos) == int(include_main)
+    if include_main:
+        assert raw_todos[0].payload.model_dump() == {"todos": main}
+    chat_todos = [
+        record for record in chat.records if record.event_type == "todo.updated"
+    ]
+    assert len(chat_todos) == int(include_main), (
+        "main Todo must survive the real pump/projector chain"
+    )
+    if include_main:
+        assert json.loads(chat_todos[0].payload_json) == {"todos": main}
+    assert all(
+        "SENTINEL_CHILD_PRIVATE_PLAN" not in record.payload_json
+        for record in chat.records
+    )
+
+
+async def test_r91_progress_commit_error_does_not_become_completed_or_failed() -> None:
+    from kokoro_agent.domain.chat.models import ChatEventRecord, ChatProjection
+
+    class FailingProgressStore(FakeChatRepository):
+        async def append(self, projection: ChatProjection) -> ChatEventRecord:
+            if projection.event.event_type == "activity":
+                raise OSError("r91 progress durable write unavailable")
+            return await super().append(projection)
+
+    bus = FakeBus()
+    chat = FailingProgressStore()
+    emitter = await RunEmitter.attach(
+        bus,
+        "r91-write-error",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session",
+        chat_repository=chat,
+    )
+    agent = FakeAgent(
+        run=FakeRunStream(
+            tool_views=(FakeToolCall("tool", "lookup", input={}, output="done"),),
+        )
+    )
+    caught: Exception | None = None
+    try:
+        await invoke_once(
+            emitter,
+            agent,
+            "thread",
+            {"messages": []},
+            initial=True,
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=terminal_emitter(
+                emitter, _always_claim, usage_recorder()[0]
+            ),
+            record_usage=usage_recorder()[0],
+            on_native_settled=settled_state_callback(agent, "thread"),
+        )
+    except Exception as error:
+        caught = error
+    assert not set(bus.kinds("r91-write-error")) & {"run.completed", "run.failed"}
+    assert caught is not None, (
+        "durable write errors must escape the ordinary event pump"
+    )
+    assert not isinstance(caught, (TypeError, AttributeError, ImportError))
+    from kokoro_agent.execution.events import ProgressPersistenceError
+
+    assert isinstance(caught, ProgressPersistenceError)
+
+
+async def test_r93_persistence_error_cancels_still_running_native_producer() -> None:
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.execution.publish_agent_events import pump_run
+    from kokoro_agent.domain.chat.models import ChatEventRecord, ChatProjection
+
+    closed = asyncio.Event()
+    never = asyncio.Event()
+
+    class FailingChat(FakeChatRepository):
+        async def append(self, projection: ChatProjection) -> ChatEventRecord:
+            raise OSError("progress database unavailable")
+
+    class RunningNative(FakeRunStream):
+        @property
+        def tool_calls(self):
+            async def calls():
+                try:
+                    yield FakeToolCall("call", "lookup", input={})
+                    await never.wait()
+                finally:
+                    closed.set()
+
+            return calls()
+
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "cancel-progress",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session",
+        chat_repository=FailingChat(),
+    )
+    from kokoro_agent.execution.protocols import AgentRunStream
+
+    native = RunningNative()
+    assert isinstance(native, AgentRunStream)
+    task = asyncio.create_task(pump_run(emitter, native, source_for=_runtime_custom))
+    try:
+        done, _ = await asyncio.wait({task}, timeout=1)
+        assert task in done, (
+            "durable failure must stop producer without timeout cancellation"
+        )
+        with pytest.raises(ProgressPersistenceError):
+            await task
+        assert closed.is_set()
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("failure_source", ["todo", "text", "durable"])
+async def test_r94_native_projection_failure_joins_started_leaf_consumers(
+    failure_source: str,
+) -> None:
+    from collections.abc import AsyncIterable, AsyncIterator
+
+    from langgraph.stream import CustomTransformer
+    from pydantic import ValidationError
+
+    from kokoro_agent.domain.chat.models import ChatEventRecord, ChatProjection
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.execution.protocols import (
+        ModelStream,
+        SubagentRunStream,
+        ToolCallView,
+    )
+    from kokoro_agent.execution.publish_agent_events import pump_run
+
+    # Use the real SDK graph/tool projection and real strict Todo conversion.
+    # Instrument only iterator timing, never the pump, validator or emitter.
+    todos = [
+        {
+            "content": "x" * (1025 if failure_source == "todo" else 1),
+            "status": "pending",
+        }
+    ]
+    agent = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="draft",
+                    id="r94-model",
+                    tool_calls=[
+                        {
+                            "name": "write_todos",
+                            "args": {"todos": todos},
+                            "id": "r94-todo",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        ),
+        tools=[],
+        system_prompt="x",
+        subagents=[],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on={},
+    )
+    native = await agent.astream_events(
+        {"messages": [HumanMessage(content="go")]},
+        version="v3",
+        config={"configurable": {"thread_id": "r94-failure"}},
+        transformers=[CustomTransformer],
+    )
+    started: set[str] = set()
+    closed: set[str] = set()
+    leaf_tasks: set[asyncio.Task[object]] = set()
+    all_started = asyncio.Event()
+    never = asyncio.Event()
+    original_text_error = RuntimeError("r94 native text iterator failed")
+    original_store_error = OSError("r94 durable store failed")
+    observed_todos: list[dict[str, object] | None] = []
+    expected_leaves = {"text", "reasoning", "custom"}
+
+    async def held_projection(
+        source: AsyncIterable[str], label: str
+    ) -> AsyncIterator[str]:
+        task = asyncio.current_task()
+        assert task is not None
+        leaf_tasks.add(task)
+        started.add(label)
+        if started == expected_leaves:
+            all_started.set()
+        try:
+            await all_started.wait()
+            if failure_source == "text" and label == "text":
+                raise original_text_error
+            await never.wait()
+            async for item in source:
+                yield item
+        finally:
+            # An awaited finalizer proves join, not merely a cancellation request.
+            await asyncio.sleep(0)
+            closed.add(label)
+
+    class HeldModel:
+        def __init__(self, model: ModelStream) -> None:
+            self.model = model
+            self.namespace = model.namespace
+            self.node = model.node
+
+        @property
+        def message_id(self) -> str | None:
+            return self.model.message_id
+
+        @property
+        def output_message(self) -> AIMessage | None:
+            return self.model.output_message
+
+        @property
+        def text(self) -> AsyncIterable[str]:
+            return held_projection(self.model.text, "text")
+
+        @property
+        def reasoning(self) -> AsyncIterable[str]:
+            return held_projection(self.model.reasoning, "reasoning")
+
+    class InstrumentedRun:
+        async def interrupted(self) -> bool:
+            return await native.interrupted()
+
+        async def __aenter__(self) -> InstrumentedRun:
+            await native.__aenter__()
+            return self
+
+        async def __aexit__(
+            self, exc_type: object, exc: object, tb: object
+        ) -> bool | None:
+            return await native.__aexit__(exc_type, exc, tb)
+
+        @property
+        def subagents(self) -> AsyncIterable[SubagentRunStream]:
+            return native.subagents
+
+        @property
+        def messages(self) -> AsyncIterator[ModelStream]:
+            async def models() -> AsyncIterator[ModelStream]:
+                async for model in native.messages:
+                    yield HeldModel(model)
+
+            return models()
+
+        @property
+        def tool_calls(self) -> AsyncIterator[ToolCallView]:
+            async def calls() -> AsyncIterator[ToolCallView]:
+                async for call in native.tool_calls:
+                    await all_started.wait()
+                    observed_todos.append(call.input)
+                    yield call
+
+            return calls()
+
+        @property
+        def custom(self) -> AsyncIterable[str]:
+            async def values() -> AsyncIterator[str]:
+                async for _ in native.custom:
+                    yield "ignored"
+
+            return held_projection(values(), "custom")
+
+    class FailingChat(FakeChatRepository):
+        async def append(self, projection: ChatProjection) -> ChatEventRecord:
+            raise original_store_error
+
+    bus = FakeBus()
+    chat = FailingChat() if failure_source == "durable" else FakeChatRepository()
+    emitter = await RunEmitter.attach(
+        bus,
+        "r94-failure",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="session",
+        chat_repository=chat,
+    )
+    async with native:
+        task = asyncio.create_task(
+            pump_run(emitter, InstrumentedRun(), source_for=_runtime_custom)
+        )
+        try:
+            # wait() never cancels on timeout. Assertions precede ALL test cleanup
+            # and native.__aexit__, so neither can disguise leaked consumers.
+            done, _ = await asyncio.wait({task}, timeout=3)
+            assert task in done, (
+                "pump must settle from its own failure, not timeout cancellation"
+            )
+            error = task.exception()
+            if failure_source == "todo":
+                assert isinstance(error, ValidationError)
+                assert error.title == "TodoUpdatedPayload"
+                assert error.errors()[0]["loc"] == ("todos", 0, "content")
+                assert observed_todos == [{"todos": todos}]
+            elif failure_source == "text":
+                assert error is original_text_error
+            else:
+                assert isinstance(error, ProgressPersistenceError)
+                assert error.__cause__ is original_store_error
+                assert observed_todos == [{"todos": todos}]
+            assert started == expected_leaves
+            assert not set(bus.kinds("r94-failure")) & {"run.completed", "run.failed"}
+            assert closed == started, (
+                f"pump returned with unjoined leaves: {started - closed}"
+            )
+            assert all(leaf.done() for leaf in leaf_tasks)
+        finally:
+            # Test-owned cleanup AFTER the observation, including RED failures.
+            if not task.done():
+                task.cancel()
+            for leaf in leaf_tasks:
+                if not leaf.done():
+                    leaf.cancel()
+            await asyncio.gather(task, *leaf_tasks, return_exceptions=True)

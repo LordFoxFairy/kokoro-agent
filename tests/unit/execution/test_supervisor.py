@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from kokoro_agent.protocol import SkillProgressSink
+
 from support.fakes import read_unpaused_interaction
 
 from support.fakes import (
@@ -13,6 +15,7 @@ from support.fakes import (
 )
 
 import asyncio
+from typing import cast
 
 import pytest
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -48,6 +51,7 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.sandbox.archive import ArchivingWritesMixin
 from kokoro_agent.domain.run.models import (
     TerminalAuthority,
     RunTerminalOutcome,
@@ -60,6 +64,10 @@ from kokoro_agent.domain.run.interactions import (
     ReplayedResume,
 )
 from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.infrastructure.checkpoint_interactions import (
+    PauseReadTarget,
+    ResumeReadTarget,
+)
 from kokoro_agent.streams.protocol import StreamItem, StreamProtocol
 from kokoro_agent.worker.messages import parse_inbound
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -73,8 +81,10 @@ _CHAT_TENANT = request("scope").execution_identity.tenant_ref
 
 def _builder(
     agent: FakeAgent,
-) -> Callable[[RunRequest, LeaseFence], Awaitable[AgentHandle]]:
-    async def _build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+) -> Callable[[RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]]:
+    async def _build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     return _build
@@ -610,7 +620,9 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 
 
 async def test_builder_failure_emits_run_failed_once() -> None:
-    async def boom(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+    async def boom(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         raise ValueError("bad model")
 
     bus = FakeBus()
@@ -1023,7 +1035,10 @@ async def test_stale_completion_does_not_teardown_new_generation_resources() -> 
     reclaimed = await store.reclaim_expired("worker-b")
     assert reclaimed[0].lease.generation == 2
     gate.set()
-    await _drain(sup)
+    from kokoro_agent.execution.events import ProgressAuthorityLost
+
+    with pytest.raises(ProgressAuthorityLost):
+        await _drain(sup)
 
     assert await store.is_terminal(run.run_id) is False
     assert run_control_stream(run.run_id) not in bus.deleted
@@ -1302,6 +1317,194 @@ async def test_drain_times_out_on_stuck_run() -> None:
     await _drain(sup)
 
 
+async def test_drain_waits_for_cleanup_created_by_finishing_run() -> None:
+    run_gate = asyncio.Event()
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            cleanup_entered.set()
+            await cleanup_release.wait()
+
+    resource = Resource()
+    agent = FakeAgent(run=text_run("two-stage"), gates=[run_gate])
+
+    async def builder(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=agent,
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    store = FakeRunRepository()
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=builder,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="two-stage-drain",
+    )
+    bus = FakeBus()
+    run = request("two-stage-drain")
+    _seed_pending_dispatch(store, run)
+    await supervisor.dispatch(bus, run)
+    draining = asyncio.create_task(supervisor.drain(timeout_s=2))
+    run_gate.set()
+    await asyncio.wait_for(cleanup_entered.wait(), 1)
+    assert not draining.done()
+    assert supervisor.resource_cleanup_tasks
+    cleanup_release.set()
+    assert await draining is True
+
+
+async def test_cleanup_timeout_retains_task_and_later_drain_succeeds() -> None:
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    close_calls = 0
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+            cleanup_entered.set()
+            await cleanup_release.wait()
+
+    resource = Resource()
+
+    async def builder(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("done")),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    store = FakeRunRepository()
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=builder,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="cleanup-timeout",
+    )
+    bus = FakeBus()
+    run = request("cleanup-timeout")
+    _seed_pending_dispatch(store, run)
+    await supervisor.dispatch(bus, run)
+    await asyncio.wait_for(cleanup_entered.wait(), 1)
+
+    assert await supervisor.drain(timeout_s=0.01) is False
+    retained = supervisor.resource_cleanup_tasks
+    assert len(retained) == 1
+    assert retained[0].cancelled() is False
+    cleanup_release.set()
+    assert await supervisor.drain(timeout_s=1) is True
+    assert close_calls == 1
+
+
+async def test_cleanup_error_is_observed_and_makes_drain_fail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Resource:
+        async def aclose_resources(self) -> None:
+            raise RuntimeError("close-sentinel")
+
+    resource = Resource()
+
+    async def builder(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("done")),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    store = FakeRunRepository()
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=builder,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="cleanup-error",
+    )
+    bus = FakeBus()
+    run = request("cleanup-error")
+    _seed_pending_dispatch(store, run)
+    with caplog.at_level("ERROR", logger="kokoro_agent.worker.supervisor"):
+        await supervisor.dispatch(bus, run)
+        results = await asyncio.gather(
+            *tuple(supervisor.tasks.values()), return_exceptions=True
+        )
+
+    assert len(results) == 1
+    assert isinstance(results[0], BaseExceptionGroup)
+    assert await supervisor.drain(timeout_s=1) is False
+    assert "agent resource cleanup failed" in caplog.text
+    assert "http://" not in caplog.text
+
+
+async def test_repeated_run_cancellation_keeps_cleanup_owned() -> None:
+    run_gate = asyncio.Event()
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            cleanup_entered.set()
+            await cleanup_release.wait()
+
+    resource = Resource()
+    agent = FakeAgent(run=text_run("cancelled"), gates=[run_gate])
+
+    async def builder(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=agent,
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    store = FakeRunRepository()
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=builder,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="repeated-cancel",
+    )
+    bus = FakeBus()
+    run = request("repeated-cancel")
+    _seed_pending_dispatch(store, run)
+    await supervisor.dispatch(bus, run)
+    run_task = supervisor.tasks[run.run_id]
+    await asyncio.sleep(0)
+    run_task.cancel()
+    await asyncio.wait_for(cleanup_entered.wait(), 1)
+    run_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    retained = supervisor.resource_cleanup_tasks
+    assert len(retained) == 1
+    assert retained[0].cancelled() is False
+    cleanup_release.set()
+    assert await supervisor.drain(timeout_s=1) is True
+
+
 # ⑪ 收养监听自退出必须出表：他处终态删流后 NOGROUP 收束，_control 不得无界泄漏。
 async def test_adopted_listener_pops_after_remote_teardown() -> None:
     agent = FakeAgent(run=text_run("unused"))
@@ -1485,7 +1688,9 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
     bus = FakeBus()
     store = FakeRunRepository()
 
-    async def builder(current: RunRequest, lease: LeaseFence) -> AgentHandle:
+    async def builder(
+        current: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         await store.bind_sandbox_id(
             current.run_id,
             lease,
@@ -1571,7 +1776,9 @@ async def test_terminal_publish_failure_still_runs_durable_sandbox_cleanup() -> 
     store = FakeRunRepository()
     torn: list[tuple[str, str, str]] = []
 
-    async def builder(current: RunRequest, lease: LeaseFence) -> AgentHandle:
+    async def builder(
+        current: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         await store.bind_sandbox_id(
             current.run_id,
             lease,
@@ -1930,7 +2137,9 @@ async def test_failure_contract_initial_and_resume_preserve_typed_failure(
 ) -> None:
     calls = 0
 
-    async def fail_build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+    async def fail_build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         nonlocal calls
         calls += 1
         raise ModelResolutionError(owner_code, retryable=retryable)
@@ -2222,7 +2431,9 @@ async def test_every_worker_build_entry_reaches_the_same_profile_gate(
 
     calls: list[LeaseFence] = []
 
-    async def rejected_build(_request: RunRequest, lease: LeaseFence) -> AgentHandle:
+    async def rejected_build(
+        _request: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         calls.append(lease)
         raise StaticRecipeIncompatible(lease)
 
@@ -2283,7 +2494,9 @@ async def test_delayed_build_failure_uses_only_captured_execution_fence(
     adopts: list[str] = []
     finalized: list[str] = []
 
-    async def build(_request: RunRequest, lease: LeaseFence) -> AgentHandle:
+    async def build(
+        _request: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         captured.append(lease)
         entered.set()
         await release.wait()
@@ -2355,3 +2568,656 @@ async def test_delayed_build_failure_uses_only_captured_execution_fence(
     if entry == "resume":
         assert context is not None and context.intent.status.value == "accepted"
         assert context.dispatch_plan is None and context.attempt_generation is None
+
+
+@pytest.mark.parametrize("entry", ["initial", "resume"])
+async def test_r91_build_progress_write_error_is_not_assembly_failure(
+    entry: str,
+) -> None:
+    from kokoro_agent.domain.chat.models import ChatEventRecord, ChatProjection
+    from kokoro_agent.execution.events import RunEmitter
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    attempts: list[str] = []
+
+    class FailingProgressStore(FakeChatRepository):
+        async def append(self, projection: ChatProjection) -> ChatEventRecord:
+            if projection.event.event_type == "activity":
+                attempts.append("write")
+                raise OSError("r91 pre-invoke progress write unavailable")
+            return await super().append(projection)
+
+    store = FakeRunRepository()
+    store.chat_repository = FailingProgressStore()
+    bus = FakeBus()
+
+    async def build(
+        current: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        # Exercise the real emitter/store failure through both existing build
+        # catches, without adding an unsupported progress callback argument.
+        emitter = await RunEmitter.attach(
+            bus,
+            current.run_id,
+            outbox=store,
+            lease=lease,
+            tenant_id=current.execution_identity.tenant_ref,
+            namespace=RunScope.of(current).namespace,
+            session_id=current.session_id,
+            chat_repository=store.chat_repository,
+        )
+        await emitter.emit(
+            ToolInvokedPayload(
+                segment_id="pre-build",
+                tool_id="prepare",
+                name="prepare",
+                args={},
+            )
+        )
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("done")), tool_descriptions={}
+        )
+
+    supervisor = RunSupervisor(
+        agent_builder=build,
+        run_repository=store,
+        interaction_reader=read_unpaused_interaction,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="r91-build",
+        chat_repository=store.chat_repository,
+    )
+    run = request("r91-build-" + entry)
+    message: InboundMessage = run
+    if entry == "initial":
+        _seed_pending_dispatch(store, run)
+    else:
+        lease = await store.try_claim(run, "old")
+        assert lease is not None
+        await store.record_pause(run, lease, interaction_pause_fixture(run))
+        message = await admit_resume_fixture(
+            store,
+            run,
+            command_id="r91-resume",
+            decisions=[{"type": "approve", "item_id": "item-A"}],
+        )
+    caught: Exception | None = None
+    try:
+        await supervisor.dispatch(bus, message)
+        await _drain(supervisor)
+    except Exception as error:
+        caught = error
+    finally:
+        assert await supervisor.drain(timeout_s=1)
+    assert attempts == ["write"], "setup must reach the actual durable append"
+    assert not set(bus.kinds(run.run_id)) & {
+        "run.started",
+        "run.failed",
+        "run.completed",
+    }
+    assert await store.is_terminal(run.run_id) is False
+    assert caught is not None
+    assert not isinstance(caught, (TypeError, AttributeError, ImportError))
+    from kokoro_agent.execution.events import ProgressPersistenceError
+
+    assert isinstance(caught, ProgressPersistenceError)
+
+
+@pytest.mark.parametrize("entry", ["initial", "resume", "recovery", "takeover"])
+async def test_r93_all_build_entries_propagate_typed_progress_failure(
+    entry: str,
+) -> None:
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import SkillPhase
+    from kokoro_agent.domain.chat.models import ChatProjection, ChatEventRecord
+
+    writes: list[str] = []
+
+    class RejectPhase(FakeChatRepository):
+        async def append(self, projection: ChatProjection) -> ChatEventRecord:
+            if projection.event.event_type == "activity":
+                writes.append("phase")
+                raise OSError("phase store offline")
+            return await super().append(projection)
+
+    store = FakeRunRepository()
+    store.chat_repository = RejectPhase()
+
+    async def build(
+        req: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+    ) -> AgentHandle:
+        await progress(SkillPhase(phase="resolving"))
+        raise AssertionError("no external build after unconfirmed phase")
+
+    sup = RunSupervisor(
+        agent_builder=build,
+        run_repository=store,
+        interaction_reader=read_unpaused_interaction,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="r93-entries",
+        chat_repository=store.chat_repository,
+    )
+    bus = FakeBus()
+    run = request("r93-entries-" + entry).model_copy(
+        update={"selected_skill_source_refs": ("skill:one",)}
+    )
+    with pytest.raises(ProgressPersistenceError):
+        if entry == "initial":
+            _seed_pending_dispatch(store, run)
+            await sup.dispatch(bus, run)
+        else:
+            lease = await store.try_claim(run, "old")
+            assert lease is not None
+            if entry == "takeover":
+                store.expired.append(run)
+                store.leases[run.run_id] = -1
+                await sup.heartbeat_once(bus)
+            else:
+                await store.record_pause(run, lease, interaction_pause_fixture(run))
+                command = await admit_resume_fixture(
+                    store,
+                    run,
+                    command_id="r93-resume",
+                    decisions=[{"type": "approve", "item_id": "item-A"}],
+                )
+                if entry == "recovery":
+                    await store.accept_resume(run, command.command_id, "r93-entries")
+                    await sup.heartbeat_once(bus)
+                else:
+                    await sup.dispatch(bus, command)
+    assert writes == ["phase"]
+    assert run.run_id not in store.terminals
+    assert not set(bus.kinds(run.run_id)) & {
+        "run.started",
+        "run.failed",
+        "run.completed",
+    }
+
+
+async def test_r93_local_drained_recovery_probe_uses_fenced_progress_callback() -> None:
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import SkillPhase
+    from kokoro_agent.domain.chat.models import ChatProjection, ChatEventRecord
+    from kokoro_agent.domain.run.interactions import AcceptedResume
+    from kokoro_agent.infrastructure.checkpoint_interactions import (
+        PreparedNativeResume,
+        ResumeReadTarget,
+    )
+
+    writes: list[str] = []
+
+    class SecondRoundWriteFailure(FakeChatRepository):
+        async def append(self, projection: ChatProjection) -> ChatEventRecord:
+            if projection.event.event_type == "activity":
+                writes.append("phase")
+                if len(writes) == 2:
+                    raise OSError("probe round durable write unavailable")
+            return await super().append(projection)
+
+    store = FakeRunRepository()
+    store.chat_repository = SecondRoundWriteFailure()
+    run = request("r93-local-probe").model_copy(
+        update={"selected_skill_source_refs": ("skill:one",)}
+    )
+    lease = await store.try_claim(run, "old")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="probe-resume",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+    accepted = await store.accept_resume(run, command.command_id, "probe-worker")
+    assert isinstance(accepted, AcceptedResume)
+    reader = InitialPauseThenUnknownReader(
+        store, native_value={"decisions": [{"type": "approve"}]}
+    )
+    handle = AgentHandle(runnable=FakeAgent(), tool_descriptions={})
+    plan = await reader(
+        request=run,
+        lease=accepted.lease,
+        handle=handle,
+        target=ResumeReadTarget(command_id=command.command_id),
+    )
+    assert isinstance(plan, PreparedNativeResume)
+    started = await store.start_resume(
+        run, accepted.lease, command.command_id, plan.plan
+    )
+    assert isinstance(started, StartedResume)
+    await store.mark_resume_unknown(
+        run, accepted.lease, command.command_id, started.attempt_id
+    )
+    builds: list[LeaseFence] = []
+
+    async def build(
+        req: RunRequest, fence: LeaseFence, progress: SkillProgressSink
+    ) -> AgentHandle:
+        builds.append(fence)
+        await progress(SkillPhase(phase="resolving"))
+        return handle
+
+    class ProbeSupervisor(RunSupervisor):
+        async def probe(self, bus: FakeBus) -> None:
+            self._drained_attempts[
+                (run.run_id, accepted.lease.generation, started.attempt_id)
+            ] = "unit-local-drained"
+            await self._reconcile_interactions(bus)
+
+    sup = ProbeSupervisor(
+        agent_builder=build,
+        run_repository=store,
+        interaction_reader=reader,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="probe-worker",
+        chat_repository=store.chat_repository,
+    )
+    bus = FakeBus()
+    with pytest.raises(ProgressPersistenceError):
+        await sup.probe(bus)
+    assert builds == [accepted.lease, accepted.lease]
+    assert writes == ["phase", "phase"]
+    assert store.reconcile_probes == {}
+    assert run.run_id not in store.terminals
+    assert not set(bus.kinds(run.run_id)) & {
+        "run.started",
+        "run.failed",
+        "run.completed",
+    }
+
+
+async def test_resume_replay_after_build_closes_untransferred_handle() -> None:
+    close_calls = 0
+    reader_called = False
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    resource = Resource()
+    store = FakeRunRepository()
+    run = request("resume-replay-close")
+    lease = await store.try_claim(run, "old-owner")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="resume-replay-close-command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("unused")),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    async def replay_reader(
+        *,
+        request: RunRequest,
+        lease: LeaseFence,
+        handle: AgentHandle,
+        target: PauseReadTarget | ResumeReadTarget,
+    ) -> ReplayedResume:
+        nonlocal reader_called
+        del lease, handle
+        reader_called = True
+        assert isinstance(target, ResumeReadTarget)
+        context = await store.read_resume_context(request, target.command_id)
+        assert context is not None
+        return ReplayedResume(
+            snapshot=context.snapshot,
+            original_intent=context.intent,
+            accepted_source_index=context.snapshot.source_index,
+        )
+
+    supervisor = RunSupervisor(
+        interaction_reader=replay_reader,
+        agent_builder=build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="resume-replay-close-worker",
+    )
+    await supervisor.dispatch(FakeBus(), command)
+
+    assert reader_called is True
+    assert supervisor.tasks == {}
+    assert close_calls == 1
+
+
+async def test_resume_reader_failure_preserves_primary_and_closes_handle() -> None:
+    close_calls = 0
+    primary = RuntimeError("resume-reader-primary")
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    resource = Resource()
+    store = FakeRunRepository()
+    run = request("resume-reader-failure-close")
+    lease = await store.try_claim(run, "old-owner")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="resume-reader-failure-command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("unused")),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    async def failing_reader(
+        *,
+        request: RunRequest,
+        lease: LeaseFence,
+        handle: AgentHandle,
+        target: PauseReadTarget | ResumeReadTarget,
+    ) -> ReplayedResume:
+        del request, lease, handle, target
+        raise primary
+
+    supervisor = RunSupervisor(
+        interaction_reader=failing_reader,
+        agent_builder=build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="resume-reader-failure-worker",
+    )
+    with pytest.raises(RuntimeError) as captured:
+        await supervisor.dispatch(FakeBus(), command)
+
+    assert captured.value is primary
+    assert close_calls == 1
+
+
+async def test_shutdown_cancellation_wins_while_failed_resume_cleanup_is_owned() -> (
+    None
+):
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            cleanup_entered.set()
+            await cleanup_release.wait()
+
+    resource = Resource()
+    store = FakeRunRepository()
+    run = request("resume-failure-shutdown-cancel")
+    lease = await store.try_claim(run, "old-owner")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="resume-failure-shutdown-command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("unused")),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    async def failing_reader(
+        *,
+        request: RunRequest,
+        lease: LeaseFence,
+        handle: AgentHandle,
+        target: PauseReadTarget | ResumeReadTarget,
+    ) -> ReplayedResume:
+        del request, lease, handle, target
+        raise RuntimeError("resume-reader-primary-before-shutdown")
+
+    supervisor = RunSupervisor(
+        interaction_reader=failing_reader,
+        agent_builder=build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="resume-failure-shutdown-worker",
+    )
+    dispatch = asyncio.create_task(supervisor.dispatch(FakeBus(), command))
+    await asyncio.wait_for(cleanup_entered.wait(), 1)
+
+    dispatch.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dispatch
+    assert await supervisor.drain(timeout_s=0.01) is False
+    retained = supervisor.resource_cleanup_tasks
+    assert len(retained) == 1
+    assert retained[0].cancelled() is False
+    cleanup_release.set()
+    assert await supervisor.drain(timeout_s=1) is True
+
+
+async def test_drain_waits_for_post_build_resume_owner_until_handle_closes() -> None:
+    reader_entered = asyncio.Event()
+    reader_release = asyncio.Event()
+    close_calls = 0
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    resource = Resource()
+    store = FakeRunRepository()
+    run = request("resume-post-build-drain")
+    lease = await store.try_claim(run, "old-owner")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="resume-post-build-drain-command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=FakeAgent(run=text_run("unused")),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    async def blocking_reader(
+        *,
+        request: RunRequest,
+        lease: LeaseFence,
+        handle: AgentHandle,
+        target: PauseReadTarget | ResumeReadTarget,
+    ) -> ReplayedResume:
+        del lease, handle
+        assert isinstance(target, ResumeReadTarget)
+        reader_entered.set()
+        await reader_release.wait()
+        context = await store.read_resume_context(request, target.command_id)
+        assert context is not None
+        return ReplayedResume(
+            snapshot=context.snapshot,
+            original_intent=context.intent,
+            accepted_source_index=context.snapshot.source_index,
+        )
+
+    supervisor = RunSupervisor(
+        interaction_reader=blocking_reader,
+        agent_builder=build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="resume-post-build-drain-worker",
+    )
+    dispatch = asyncio.create_task(supervisor.dispatch(FakeBus(), command))
+    await asyncio.wait_for(reader_entered.wait(), 1)
+
+    assert await supervisor.drain(timeout_s=0.01) is False
+    reader_release.set()
+    await dispatch
+    assert await supervisor.drain(timeout_s=1) is True
+    assert close_calls == 1
+
+
+async def test_resume_spawn_transfers_handle_for_exactly_one_close() -> None:
+    close_calls = 0
+
+    class Resource:
+        async def aclose_resources(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    resource = Resource()
+    store = FakeRunRepository()
+    run = request("resume-transfer-close")
+    lease = await store.try_claim(run, "old-owner")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="resume-transfer-command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+    agent = FakeAgent(run=text_run("resumed"))
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(
+            runnable=agent,
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    supervisor = RunSupervisor(
+        interaction_reader=InitialPauseThenUnknownReader(
+            store, native_value={"decisions": [{"type": "approve"}]}
+        ),
+        agent_builder=build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="resume-transfer-worker",
+    )
+    await supervisor.dispatch(FakeBus(), command)
+    await _drain(supervisor)
+
+    assert len(agent.seen_payloads) == 1
+    assert isinstance(agent.seen_payloads[0], Command)
+    assert close_calls == 1
+
+
+async def test_recovery_probe_closes_every_untransferred_handle() -> None:
+    from kokoro_agent.domain.run.interactions import AcceptedResume
+    from kokoro_agent.infrastructure.checkpoint_interactions import (
+        PreparedNativeResume,
+        ResumeReadTarget,
+    )
+
+    close_calls: list[int] = []
+
+    class Resource:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        async def aclose_resources(self) -> None:
+            close_calls[self.index] += 1
+
+    store = FakeRunRepository()
+    run = request("recovery-probe-close")
+    lease = await store.try_claim(run, "old-owner")
+    assert lease is not None
+    await store.record_pause(run, lease, interaction_pause_fixture(run))
+    command = await admit_resume_fixture(
+        store,
+        run,
+        command_id="recovery-probe-close-command",
+        decisions=[{"type": "approve", "item_id": "item-A"}],
+    )
+    accepted = await store.accept_resume(run, command.command_id, "recovery-worker")
+    assert isinstance(accepted, AcceptedResume)
+    reader = InitialPauseThenUnknownReader(
+        store, native_value={"decisions": [{"type": "approve"}]}
+    )
+    plan = await reader(
+        request=run,
+        lease=accepted.lease,
+        handle=AgentHandle(runnable=FakeAgent(), tool_descriptions={}),
+        target=ResumeReadTarget(command_id=command.command_id),
+    )
+    assert isinstance(plan, PreparedNativeResume)
+    started = await store.start_resume(
+        run, accepted.lease, command.command_id, plan.plan
+    )
+    assert isinstance(started, StartedResume)
+    await store.mark_resume_unknown(
+        run, accepted.lease, command.command_id, started.attempt_id
+    )
+    builds: list[LeaseFence] = []
+
+    async def build(
+        _request: RunRequest, fence: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        builds.append(fence)
+        close_calls.append(0)
+        resource = Resource(len(close_calls) - 1)
+        return AgentHandle(
+            runnable=FakeAgent(),
+            tool_descriptions={},
+            resources=(cast(ArchivingWritesMixin, resource),),
+        )
+
+    class ProbeSupervisor(RunSupervisor):
+        async def probe(self, bus: FakeBus) -> None:
+            self._drained_attempts[
+                (run.run_id, accepted.lease.generation, started.attempt_id)
+            ] = "local-drained-probe"
+            await self._reconcile_interactions(bus)
+
+    supervisor = ProbeSupervisor(
+        interaction_reader=reader,
+        agent_builder=build,
+        run_repository=store,
+        approval_tool_names=_gated_names,
+        trace_factory=_no_trace,
+        source_for=_source,
+        consumer="recovery-worker",
+    )
+    await supervisor.probe(FakeBus())
+
+    assert builds == [accepted.lease, accepted.lease]
+    assert len(close_calls) == 2
+    assert close_calls == [1, 1]

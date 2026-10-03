@@ -1,16 +1,17 @@
 """docker 沙箱规格（ADR-009）：执行进容器、文件面留宿主、run 级容器生命周期。
 
-真 docker 实测（不可达整组干净 skip）；镜像用 busybox（拉取一次，毫秒级起动）。
+真实资源用例按需检查 Docker/MinIO；显式选择时缺资源直接失败，不在导入期探测。
 """
 
 from __future__ import annotations
 
 import subprocess
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from support.dev_minio import MINIO_URL, SKIP_REASON, minio_creds
+from support.dev_minio import MINIO_URL, minio_creds
 from support.fakes import request
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.docker_backend import (
@@ -19,9 +20,6 @@ from kokoro_agent.sandbox.docker_backend import (
     connect_docker_sandbox,
 )
 from kokoro_agent.domain.run.repository import RunRepository
-
-_CREDS_RAW = minio_creds()
-_ACCESS, _SECRET = _CREDS_RAW if _CREDS_RAW else ("", "")
 
 IMAGE = "busybox"
 
@@ -38,9 +36,21 @@ def _docker_available() -> bool:
         return False
 
 
-needs_docker = pytest.mark.skipif(
-    not _docker_available(), reason="docker daemon unreachable"
-)
+@pytest.fixture(scope="module")
+def docker_ready() -> None:
+    if not _docker_available():
+        raise RuntimeError("Docker integration requires a reachable daemon")
+
+
+@pytest.fixture
+def minio_credentials() -> tuple[str, str]:
+    credentials = minio_creds()
+    if not MINIO_URL or credentials is None or not credentials[0] or not credentials[1]:
+        raise RuntimeError(
+            "Docker/S3 integration requires MinIO credentials and endpoint"
+        )
+    return credentials
+
 
 _SPAWNED: list[str] = []
 
@@ -81,8 +91,9 @@ def _connect(
     return backend
 
 
-@pytest.fixture(scope="module", autouse=True)
-def cleanup_containers():
+@pytest.fixture(scope="module")
+def cleanup_containers(docker_ready: None) -> Iterator[None]:
+    del docker_ready
     yield
     for cid in _SPAWNED:
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, check=False)
@@ -100,7 +111,8 @@ def test_missing_image_fail_loud(tmp_path: Path) -> None:
         )
 
 
-@needs_docker
+@pytest.mark.integration
+@pytest.mark.usefixtures("docker_ready", "cleanup_containers")
 class TestDockerSandbox:
     def test_execute_runs_inside_container(self, tmp_path: Path) -> None:
         backend = _connect(tmp_path)
@@ -186,9 +198,12 @@ def test_connectors_cover_backend_enum() -> None:
     assert registered_backends() == frozenset(get_args(Backend))
 
 
-@needs_docker
+@pytest.mark.integration
+@pytest.mark.usefixtures("docker_ready", "cleanup_containers")
 class TestDockerWithS3Archive:
-    def test_docker_execute_archives_to_s3(self, tmp_path: Path) -> None:
+    def test_docker_execute_archives_to_s3(
+        self, tmp_path: Path, minio_credentials: tuple[str, str]
+    ) -> None:
         # docker 隔离 + S3 文件面组合档：容器写 → 宿主挂载 → 全量归档推 S3。
         import boto3
         from botocore.config import Config as BotoConfig
@@ -197,12 +212,13 @@ class TestDockerWithS3Archive:
         from kokoro_agent.sandbox.archive import S3Archiver, S3Workspace
         from kokoro_agent.sandbox.docker_backend import ArchivingDockerShellBackend
 
+        access, secret = minio_credentials
         minio = boto3.client(
             "s3",
             endpoint_url=MINIO_URL,
             region_name="us-east-1",
-            aws_access_key_id=_ACCESS,
-            aws_secret_access_key=_SECRET,
+            aws_access_key_id=access,
+            aws_secret_access_key=secret,
             config=BotoConfig(
                 s3={"addressing_style": "path"},
                 connect_timeout=1,
@@ -210,18 +226,15 @@ class TestDockerWithS3Archive:
             ),
         )
         bucket = f"kokoro-docker-s3-{uuid.uuid4().hex[:6]}"
-        try:
-            minio.create_bucket(Bucket=bucket)
-        except Exception:
-            pytest.skip(SKIP_REASON)
+        minio.create_bucket(Bucket=bucket)
         plain = _connect(tmp_path, run_id="run_ds3")
         backend = ArchivingDockerShellBackend(
             root=tmp_path,
             container_id=plain.container_id,
             archiver=S3Archiver(
                 S3Workspace(type="s3", endpoint=MINIO_URL, bucket=bucket),
-                access_key=SecretStr(_ACCESS),
-                secret_key=SecretStr(_SECRET),
+                access_key=SecretStr(access),
+                secret_key=SecretStr(secret),
             ),
             prefix="ns:ds3",
             timeout=30,

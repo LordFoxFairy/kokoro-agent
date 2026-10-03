@@ -1,6 +1,8 @@
 # Agent-owned event protocol. Keep changes within this repository.
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal, Union, Self
 
 from pydantic import (
@@ -11,6 +13,7 @@ from pydantic import (
     StringConstraints,
     TypeAdapter,
     model_validator,
+    field_validator,
 )
 
 from kokoro_agent.protocol.run_failure_generated import RunFailedPayload
@@ -34,8 +37,15 @@ class StrictModel(BaseModel):
 
 
 class Todo(StrictModel):
-    content: NonEmptyStr
+    content: Annotated[str, StringConstraints(min_length=1, max_length=1024)]
     status: TodoStatus
+
+    @field_validator("content")
+    @classmethod
+    def unicode_scalar_text(cls, value: str) -> str:
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise ValueError("Todo content must contain Unicode scalar values")
+        return value
 
 
 class TokenUsage(StrictModel):
@@ -118,7 +128,48 @@ class ToolReturnedPayload(StrictModel):
 
 
 class TodoUpdatedPayload(StrictModel):
-    todos: list[Todo]
+    todos: Annotated[list[Todo], Field(max_length=100)]
+
+    @model_validator(mode="after")
+    def complete_payload_budget(self) -> Self:
+        if len(self.canonical_bytes()) > 65536:
+            raise ValueError("complete Todo payload exceeds UTF-8 budget")
+        return self
+
+    def canonical_bytes(self) -> bytes:
+        return json.dumps(
+            self.model_dump(mode="json"),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+
+
+class SkillPhase(StrictModel):
+    phase: Literal["resolving", "loading", "ready", "failed"]
+    error_code: Literal["skill_resolve_failed", "skill_load_failed"] | None = None
+
+    @model_validator(mode="after")
+    def failure_presence(self) -> Self:
+        if self.phase == "failed":
+            if self.error_code is None:
+                raise ValueError("failed Skill phase requires error_code")
+        elif "error_code" in self.model_fields_set:
+            raise ValueError("only failed Skill phase accepts error_code")
+        return self
+
+
+class SkillProgressPayload(SkillPhase):
+    anchor_source_index: NonNegInt
+    source_refs: Annotated[list[NonEmptyStr], Field(min_length=1)]
+
+
+class SkillProgressCommitted(StrictModel):
+    source_index: NonNegInt
+
+
+SkillProgressSink = Callable[[SkillPhase], Awaitable[SkillProgressCommitted]]
 
 
 class SubagentStartedPayload(StrictModel):
@@ -303,6 +354,16 @@ class TodoUpdated(StrictModel):
     payload: TodoUpdatedPayload
 
 
+class SkillProgress(StrictModel):
+    kind: Literal["skill.progress"]
+    run_id: NonEmptyStr
+    index: NonNegInt
+    timestamp: int
+    durable_seq: Annotated[int, Field(ge=1)] | None = None
+    event_id: NonEmptyStr | None = None
+    payload: SkillProgressPayload
+
+
 class SubagentStarted(StrictModel):
     kind: Literal["subagent.started"]
     run_id: NonEmptyStr
@@ -435,6 +496,7 @@ AgentEvent = Annotated[
         ToolAwaitingApproval,
         ToolReturned,
         TodoUpdated,
+        SkillProgress,
         SubagentStarted,
         SubagentFinished,
         SubagentThinkingDelta,

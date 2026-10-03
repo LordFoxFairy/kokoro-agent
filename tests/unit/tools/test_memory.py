@@ -57,6 +57,7 @@ async def _run(
         agent,
         scope.scoped_thread_id,
         {"messages": [HumanMessage(content="hi")]},
+        initial=True,
         approval_tool_names=frozenset(),
         source_for=lambda _name: "built-in",
         finalize_terminal=terminal_emitter(

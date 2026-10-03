@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import socket
+from typing import Protocol
 
 from dotenv import load_dotenv
 
@@ -52,6 +53,11 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _WorkerDrainer(Protocol):
+    async def drain(self, *, timeout_s: float) -> bool: ...
+
 
 __all__ = [
     "apply_database_schema",
@@ -97,6 +103,31 @@ def _sandbox_teardown(
 def _consumer_name() -> str:
     # consumer-group 内的子代理身份：主机+pid 保多 pod/多进程不撞名。
     return f"{socket.gethostname()}-{os.getpid()}"
+
+
+async def require_worker_drain(supervisor: _WorkerDrainer, *, timeout_s: float) -> None:
+    drained = await supervisor.drain(timeout_s=timeout_s)
+    if not drained:
+        LOGGER.error("graceful shutdown failed: run or resource cleanup did not drain")
+        raise RuntimeError("kokoro-agent worker shutdown drain failed")
+    LOGGER.info("graceful shutdown: drained=true")
+
+
+class ShutdownBudget:
+    """One process-shutdown deadline shared by serve cancellation and drain."""
+
+    def __init__(self, timeout_s: float) -> None:
+        self._timeout_s = timeout_s
+        self._deadline: float | None = None
+
+    def begin(self, now: float) -> None:
+        if self._deadline is None:
+            self._deadline = now + self._timeout_s
+
+    def remaining(self, now: float) -> float:
+        self.begin(now)
+        assert self._deadline is not None
+        return max(0.0, self._deadline - now)
 
 
 @asynccontextmanager
@@ -241,13 +272,20 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         )
         serve_task = asyncio.create_task(supervisor.serve(bus))
         loop = asyncio.get_running_loop()
+        shutdown_budget = ShutdownBudget(config.drain_timeout_s)
+
+        def request_shutdown() -> None:
+            shutdown_budget.begin(loop.time())
+            serve_task.cancel()
+
         # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。
-        loop.add_signal_handler(signal.SIGTERM, serve_task.cancel)
+        loop.add_signal_handler(signal.SIGTERM, request_shutdown)
         try:
             await serve_task
         except asyncio.CancelledError:
-            drained = await supervisor.drain(timeout_s=config.drain_timeout_s)
-            LOGGER.info("graceful shutdown: drained=%s", drained)
+            await require_worker_drain(
+                supervisor, timeout_s=shutdown_budget.remaining(loop.time())
+            )
 
 
 def main() -> None:

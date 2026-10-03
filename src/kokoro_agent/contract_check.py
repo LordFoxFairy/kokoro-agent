@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
@@ -13,8 +12,18 @@ from kokoro_agent.chat_contract_check import (
     read_contract_document,
     validate_chat_response_contract,
 )
-from kokoro_agent.execution_proof_contract import validate_execution_proof_contract
-from kokoro_agent.platform_binding_contract import validate_platform_binding_artifact
+from kokoro_agent.distribution_assets import contract_audit_root
+from kokoro_agent.execution_proof_contract import (
+    OWNER_SOURCE_FILES,
+    validate_execution_proof_contract,
+    validate_execution_proof_jwk_set_component,
+    validate_http_provenance,
+)
+from kokoro_agent.platform_binding_contract import (
+    EXPECTED_EXECUTION_SOURCES,
+    PLATFORM_PROVENANCE_RELATIVE,
+    validate_platform_binding_artifact,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
@@ -37,9 +46,6 @@ REQUIRED_EXTENSIONS = {
     "x-kokoro-permission",
 }
 _OBJECT = TypeAdapter(dict[str, object])
-_JWK_SET_SCHEMA = _OBJECT.validate_json(
-    b'{"type":"object","additionalProperties":false,"required":["keys"],"properties":{"keys":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["kty","crv","use","alg","kid","x"],"properties":{"kty":{"type":"string","const":"OKP"},"crv":{"type":"string","const":"Ed25519"},"use":{"type":"string","const":"sig"},"alg":{"type":"string","const":"EdDSA"},"kid":{"type":"string","minLength":1},"x":{"type":"string","pattern":"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"}}}}}}'
-)
 
 
 def _object(value: object, *, source: str) -> dict[str, object]:
@@ -56,8 +62,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "4.0.0":
-        raise ValueError("Agent HTTP contract version must be 4.0.0")
+    if info.get("version") != "5.0.0":
+        raise ValueError("Agent HTTP contract version must be 5.0.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -77,7 +83,7 @@ def validate_openapi_document(document: dict[str, object]) -> None:
             if operation_object["x-kokoro-owner"] != "kokoro-agent":
                 raise ValueError("operation owner must be kokoro-agent")
     _validate_jwks(paths)
-    _validate_jwk_set_component(document)
+    validate_execution_proof_jwk_set_component(document)
     validate_chat_response_contract(document, paths)
     failure_model_bytes(document)
 
@@ -130,14 +136,6 @@ def _validate_jwks(paths: dict[str, object]) -> None:
         _validate_representation_headers(success, allow=False)
 
 
-def _validate_jwk_set_component(document: dict[str, object]) -> None:
-    components = _object(document.get("components"), source="components")
-    schemas = _object(components.get("schemas"), source="schemas")
-    actual = _object(schemas.get("ExecutionProofJwkSet"), source="ExecutionProofJwkSet")
-    if actual != _JWK_SET_SCHEMA:
-        raise ValueError("execution-proof JWK-set component is not exact")
-
-
 def _validate_representation_headers(
     response: dict[str, object], *, allow: bool
 ) -> None:
@@ -168,15 +166,6 @@ def _validate_representation_headers(
             raise ValueError("JWKS Allow header is invalid")
 
 
-def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
-    record = _object(provenance.get("http_contract"), source="HTTP provenance")
-    if record.get("version") != "4.0.0" or record.get("path") != OPENAPI_RELATIVE:
-        raise ValueError("HTTP direct provenance identity is invalid")
-    expected = hashlib.sha256((root / OPENAPI_RELATIVE).read_bytes()).hexdigest()
-    if record.get("sha256") != expected:
-        raise ValueError("HTTP direct provenance digest is stale")
-
-
 def validate(root: Path = ROOT) -> None:
     """Validate all Agent-owned machine facts rooted at ``root``."""
 
@@ -190,7 +179,15 @@ def validate(root: Path = ROOT) -> None:
 
 
 def main() -> int:
-    validate()
+    root = contract_audit_root(
+        {
+            *OWNER_SOURCE_FILES,
+            "contract/provenance.json",
+            PLATFORM_PROVENANCE_RELATIVE,
+            *(record[0] for record in EXPECTED_EXECUTION_SOURCES),
+        }
+    )
+    validate(root)
     print("kokoro-agent contract: ok")
     return 0
 

@@ -1,3 +1,171 @@
+## R122 技术方案当前态（2026-10-02）
+
+当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。
+
+Root E95实际1960纯节点全部通过/零skip、七静态门通过；E96当前源码新wheel/sdist与完整runtime安装、四布局64负向/219步骤通过；E97同包installed CLI真实PG首次安装/重复拒绝、canonical catalog与六漂移回滚通过；E98同包仓外安装态现HTTP acceptance实际36通过/0失败/0跳过（36 setup/call/teardown），151 loaded模块在collection/finish对应本次site-packages/RECORD。当前wheel SHA256 `4d0e7c8d1455fa395faaebc5e0de123f7131a31d02c413f04266ec67bad78fc3`；Root运行/manifest详见Root `docs/progress.md` E95–98。自有库精确回收/Redis测试区空/owned进程自然终态、371冻结路径保持；七固定测试工具按当前lock URL/hash单独供应，资源测试不出localhost。
+
+这些是限定源码/安装/资源门，不是完整Agent或用户链闭环：真实console启动/SIGTERM、S3/Docker/E2B/custom/provider、完整retention、全部数据owner同库组合，以及正式BFF/Web过程消费与浏览器仍未验；T-Q03/T-R02继续开放。此四文档前缀只修正当前态，不改源码、SQL、协议、生成物、依赖或锁；发布前Root须重建当前最终文档集合的wheel/sdist并核与已测包的全部entry/RECORD一致性，差异则重新验证。
+
+---
+
+## R118：assembly、resume 与 recovery 的完整资源所有权（2026-10-02）
+
+**状态：R119 九源 GREEN 候选已实现并完成本地纯测试；仍待 Root 独立复验、资源门与提交。** R117 handoff 为 `/tmp/kokoro-r117-archiver-green-partial.json`，R118 RED 为 `/tmp/kokoro-r118-agent-lifecycle-red.json`；本轮不改变 Agent、Run、sandbox 或 Storage 的 owner，只补齐成功构造到 handle 转交之间的生命周期空隙。
+
+| 项 | 当前事实与目标裁决 |
+|---|---|
+| Owner | Agent worker 唯一拥有本进程 assembly task、未转交 `AgentHandle` 及其本地 client；durable sandbox cleanup 仍由既有 Agent repository 事实恢复。 |
+| 当前事实 | R118 的六个目标失败已转绿：initial、resume、recovery 统一走 `_build_owned`；resume/recovery 未转交 handle 已关闭；构造取消可及时返回而底层 operation 继续受 Supervisor 持有；Docker archiver/wrapper 后半失败已收束本次资源。真实 SIGTERM、S3、Docker 与发布安装门仍待 Root。 |
+| 放置 | 目标仍只扩展现九源：`sandbox/archive.py`、`sandbox/backend.py`、`agent_factory.py`、`worker/supervisor_execution.py`、`worker/supervisor_control.py`、`worker/supervisor_recovery.py`、`worker/supervisor_context.py`、`worker/supervisor.py`、`worker/main.py`。不新建 resource 模块、cleanup 服务或 timeout 配置。 |
+| Assembly | Supervisor 以强引用 registry 运行唯一 `_build_owned` 入口，initial/resume/recovery 都通过该入口。manager 使用只承载 outcome 的 ready future 与 claimed/abandoned decision 握手：调用方取消及时传播，真实 thread/connector 不被假取消；late success 自动登记 cleanup，late failure 只记录安全类型并令 drain 失败。成功 build 的 registry ownership 持续到 spawn 转交或 close 登记，避免 post-build reader 窗口提前 drain。 |
+| 转交边界 | resume 以 `_spawn_agent` 成功返回为唯一 transferred 边界；此前所有 return、异常和取消关闭 handle 并保留 primary/cancel，之后只由 `_guarded` 关闭，禁止双关。recovery probe 永不转交，其 build 成功后无条件 finally close。 |
+| Shutdown | `drain(timeout_s)` 从 shutdown 开始使用同一绝对 deadline，动态等待 run、assembly 与 cleanup 三类强持有 task；超时返回 false、保留 task 且 worker 非零。不得取消 `to_thread` 后冒称排空，也不得新增 connector/client 私有预算。 |
+| Docker 半构造 | S3 archiver 或 archiving wrapper 后半构造失败时关闭本次自建 client；仅销毁本次新建 container。复用的 `prior_sandbox_id` 不由失败尝试销毁，原异常保持主异常。 |
+| API/数据 | 仅内部 Python 生命周期与停机次序；HTTP/RPC/event、error code、SQL、contract、generated、provenance、依赖和 lock 均不变。 |
+
+现测试使用 `RunSupervisor.dispatch`/`_reconcile_interactions`、真实 `make_backend_for_run` 与 worker shutdown 次序，不以缺失 helper 或未执行 fake 制造失败。已锁定 replay 与 reader primary 后 close=1、resume 成功转交只 close 一次、两次 recovery build 均 close、post-build reader 仍阻止 drain、构造阻塞时 timeout=false、late handle/error 可观察、shutdown cancel 优先于先前普通异常、首次信号 deadline 不被重复信号重置、Docker 新建/复用 container 差异 cleanup，以及 cleanup secondary 不覆盖 wrapper primary。Root 仍须重跑四文件回归、Ruff、Pyright、contract/failure/architecture 门，并另做真实资源与 SIGTERM 验收。
+
+---
+
+## R117：本地归档资源生命周期裁决（2026-10-02）
+
+**状态：设计门已裁决；当前仅文档与 RED 测试，生产实现仍待 Root 单独授权。** 基线 Agent `2653bcc723da5366fd877db73d701410e7bdc3a8`；依据 Root R117 生命周期实施卡、`/tmp/kokoro-r117-lifecycle-design-gate-r2.md` 与 [Python 后端工程规范](../../../docs/kokoro-handbook/standards/09-python-backend-engineering.md)。本节只收敛 Agent 进程内资源所有权，不改变既有 Feature、sandbox 选择或跨仓 owner。
+
+| 项 | 当前事实与已定目标 |
+|---|---|
+| Owner | Agent 的 sandbox、Agent assembly 与 worker shutdown 共同拥有本地运行资源；Root 负责审查、集成与最终资源验收。S3 workspace 归档仍是 Agent 文件面的旁路，不成为 Storage Artifact owner。 |
+| 当前事实 | `S3Archiver` 自建 boto client 但没有释放入口；归档与 connector 的裸 `to_thread` 在 await 被取消后仍可能运行；Factory 在成功返回前没有显式回收部分构造；Supervisor 只等待 run task，未持有后续资源 cleanup。 |
+| 目标职责 | `archive.py` 强持有归档线程操作并实施 `open → closing → closed`：closing 后拒绝新操作，等待真实 blocking operation 完成后再幂等关闭自建 client。`backend.py` 持有未返回 connector task；`agent_factory.py` 在成功转交 `AgentHandle` 前拥有全部 backend，成功后由 handle 转交给 Supervisor。 |
+| 放置与粒度 | 采用现 `sandbox/archive.py`、`sandbox/backend.py`、`agent_factory.py`、`worker/supervisor_execution.py`、`worker/supervisor_context.py`、`worker/supervisor.py`、`worker/main.py` 七文件内部扩展；淘汰新通用 resource 模块、第二 cleanup 服务或第二 close timeout 配置。 |
+| 依赖与取消 | 归档 async override 登记并 shield 本仓创建的 thread task；取消保留顶层 `CancelledError`，不宣称线程已取消。无 primary 时 close 错误使任务失败；有 primary 时保留原异常，close 错误作为可观察附属证据；所有已构造 peer 仍逐一尝试释放。 |
+| Run/shutdown | Supervisor 强持有 cleanup task 并读取异常。`drain(timeout_s)` 以现唯一预算循环等待 run task 及运行中新增的 cleanup；超时/cleanup 失败返回 false，任务仍受持有且不被取消，`main.py` 必须 ERROR/非零退出。构造尚未返回时由 connector/Factory 当前协程保持 owner，不允许孤立 shield task。 |
+| API/数据 | 仅内部 Python 生命周期接口；HTTP/RPC/event wire、机器 contract、SQL、tenant、事务、缓存、依赖和 lock 均不变。durable sandbox cleanup 与本地 boto client close 是两个责任，不能互相代替。 |
+| 删除项 | 后继实现删除裸 `to_thread` 取消后失去归属的路径，以及未连接真实注入面的 caller-owned 空正控；plain/state 无本地资源是明确合法 no-op，不是 fallback。 |
+
+关闭次序锁定为：原生 iterator/child writer 真实排空 → 已登记归档操作真实完成 → client close → cleanup task 完成并从 Supervisor registry 移除。Factory 的 native constructor 失败、partial swarm、CAS loser、connector 取消均在资源转交前回收全部成功部分，并保留原 primary/cancel 语义。现 `drain_timeout_s` 是 run 与 cleanup 的共享总预算；不新增逐 client 计时，也不在超时后取消仍运行的 thread。
+
+当前 RED 只使用记录型 boto double，明确不是 S3 integration。后继 GREEN 后必须覆盖正常终态、等待/取消、stale/missing request、构造失败/partial peer、阻塞线程关闭顺序、重复 close、cleanup 错误、两阶段 drain、timeout false 与 worker 非零；再由 Root 运行真实 S3/Docker/E2B/custom 和完整 T-Q03/T-R01。现 runtime descriptor 摘要由既有 codec 按源码字节自然计算，新 wheel 的 RECORD 由 build 派生；wire、consumer pins、provenance、generated 与 SQL 文件当前预期不变。任何实际机械生成文件差异须由 Root 另行授权，owner 不手填摘要、inventory 或生成物。
+
+---
+
+## R104：已安装 distribution 资源与发布门 D0（2026-10-02）
+
+**状态：方案候选，待 Root 裁决与独立审查；本轮仅四文档，不授权实现。** Root 基线 `264de6b8`，Agent main `17c73541ae5d9f123d85cf531a79503df5c463bd` 加已冻结源码、机器与测试候选。下方 R90/R80 等正文保留历史语境；本节只补安装发布边界，不改 HTTP5/Todo/proof/SQL 业务语义。
+
+### 已证当前态
+
+Root 将实际 wheel `kokoro_agent-2.0.0-py3-none-any.whl`（SHA256 `230b41bc0038927f5ad5abf588c6ffa6f5fd22dbe7c78472fd810749e4692c25`）装入自有临时 target：安装 exit0，仓外 cwd、Python `-I`、已安装 distribution console entrypoint、无源码回退与网络守卫下，checker exit1 / `missing-installed-openapi`，network_attempts=0，临时安装已删除。证据 `/tmp/kokoro-r104b-installed-checker-red.json` 与 `.log`；这是实际 RED，不是本窗口推测或复跑。
+只读报告 `/tmp/kokoro-r104-agent-publish-gap.md` 核对该 wheel 的167个 Python 模块与当前源码一致、已有 share DDL 字节一致。缺口是 `contract_check.ROOT` 依赖源码树，且后续完整校验还读取 contract、scripts、src 的逻辑路径；只补 OpenAPI 仍不闭环。源树 HTTP36/PG65/contract 门与 installed 发布门分开。
+
+### 放置表
+
+| 项 | 当前事实与建议目标（待批） |
+|---|---|
+| Owner | Agent 拥有本 distribution 的装配、资源定位和校验；OpenAPI/proof/DDL 的唯一编辑点仍在本仓，Platform/Storage pin 仍是对方 owner 的只读输入。Root 独占构建、安装、共享资源和最终发布验收。 |
+| 当前事实 | setuptools.build_meta；package-data 只有 prompts，data-files 只有 `share/kokoro-agent/schema.sql`；checker 已注册且必须保留；完整 frozen 清单见本轮 manifest。 |
+| 目标职责/API | 新窄 `src/kokoro_agent/distribution_assets.py` 只绑定当前 distribution 的安装资源与源码开发布局；提供具名 contract audit root / canonical DDL path 获取，不提供任意路径搜索。既有 `validate(root: Path)` 继续是显式离线校验入口，console 默认入口验证实际运行包。 |
+| 目录方案 | 采用下表方案 B 的现有 data-files 扩展；源码 helper 平铺于 package，服务 checker 与 schema 两个真实调用方。把定位逻辑塞入 SQL repository 会倒置依赖；建 resources 服务、通用 utils 或新单文件目录均淘汰。 |
+| 粒度 | 一个新普通模块承担安装资产定位这个变化原因；既有 pyproject 声明打包清单，checker 承担 runtime/audit 字节一致性，schema 仍只负责 DDL。安装审计树仅存在构建物，不在源码增加可编辑镜像树。 |
+| 依赖/生命周期 | checker、schema → distribution_assets → 标准库 metadata/path；helper 不导入 worker、provider、Platform 校验器或业务模型。定位只读、无导入时 I/O/服务；资源有效期属于当前安装，不从网络拉取或写回修补。 |
+| 数据/API | 无新表、事务、缓存、租户规则、HTTP/RPC 字段或版本变化；只可能机械更新 Agent provenance 的受审源码清单/摘要。详见同轮 API/DATA 前缀。 |
+| 删除项 | 删除 installed 模式以 parents/cwd 猜 checkout 以及缺资产后寻找源码的路径；不删除 checker/向量/生成漂移门，不把旧错误路径保为 fallback。 |
+| 验证 | tests-only 固化已证安装 RED及篡改负例 → 精确源码授权 → 原源树全门 → 同一新 wheel 的安装 CLI/checker/DDL/HTTP门。后继命令及文件门如下；本轮不运行。 |
+
+### 两种可行资源与定位方案
+
+| 方案 | 资源布局 / 定位 | 收益、代价与取舍 |
+|---|---|---|
+| A：包内资源＋逻辑路径 reader | 构建时从 canonical 源派生 `kokoro_agent/_artifacts/`；`importlib.resources` 读 contract/scripts，`src/kokoro_agent/…` 映射实际安装模块。 | 不重复审计 Python 源，适合 package-resource API；但需新增构建复制步骤并调整多个现 Path/rglob 校验入口、临时文件生命周期及生成写/读接口。本轮不选，非不可行。 |
+| B：distribution 只读审计树（建议） | 扩现 setuptools data-files 到 `share/kokoro-agent/audit/`，保持 checker 所需 contract/scripts/src 相对树；DDL保留现 `share/kokoro-agent/schema.sql`。以当前 distribution 的 RECORD/files/locate_file 绑定位置，而非只猜 sys.prefix。 | 保留现 `validate(root)`、Platform 精确树与 raw vector/生成算法；无新构建后端/依赖。代价是少量审计 Python 副本，必须逐字节比对实际安装模块，且测试 venv 与 `--target` 两种布局。这不是第二可编辑源码。 |
+
+### 建议的确定定位与完整性规则
+
+1. 在读资源前选定布局，不做“读失败再试另一个根”。正常已安装模块优先绑定与其实际 `__file__` 一致的 distribution 记录；venv 与 `--target` 均须通过真实安装门。零/多匹配、缺记录、缺文件、非预期位置、symlink/路径越界一律失败，不靠 cwd、PYTHONPATH 或相邻 checkout 补齐。
+2. console的源码开发分支只在distribution的editable元数据明确指向受管源码项目、模块origin确实匹配该项目 `src/kokoro_agent/` 与项目身份时成立；缺RECORD的非editable安装不得转源码分支。保留现 `validate(root)` 的显式 fixture/源码入口。installed entrypoint 不接受资源缺失后转源码模式；开发/安装只是布局，不是两套校验算法或新旧 wire 双读。
+3. helper 用本 distribution 元数据映射已知逻辑资产；安装记录合法的相对安装前缀跳转按安装布局解析，禁止由外部输入拼任意路径。必须将定位到的资产与当前运行包归到同一安装，不能拾取另一版本 share 目录。installed wheel 文件清单、长度/digest、安装模块 origin 由门禁绑定到该 wheel SHA。
+4. `audit/contract` 只含现完整 checker 的输入闭包；Platform v4 子树必须保持 `EXPECTED_EXECUTION_SOURCES` 精确集合（含原 provenance），不往该子树塞自定义 metadata。审计脚本只是 digest 输入，不在安装校验时执行/安装代码生成器。
+5. `audit/src/kokoro_agent/…` 必须覆盖现 owner source inventory 的每个 Python 文件；安装 checker 先将其与同 distribution 实际安装模块字节比对，再运行现全套校验。生成 Failure 同样比对实际安装文件与 OpenAPI 派生 bytes；不能只证明一套无关审计副本自洽。
+6. 建议将新 `distribution_assets.py` 追加到 owner source inventory，保留所有既有条目及既有相对顺序；pyproject 同步收录其审计副本。仅此新增定位逻辑纳入 provenance，Root另准后由现 generator 重算摘要，不手填 digest、不改 proof1.0/HTTP5机器语义。generator 的写模式限显式源码根；installed checker 永远只读 `check=True`。
+7. 打包声明以 canonical 输入为唯一源，wheel 与 sdist→wheel 均核 exact bytes、资源闭包和安装运行源一致。构建时不静默“修好”过期 generated/provenance：先检查再构建，缺失/漂移停止。RECORD 不是签名或外部信任根，发布仍需 Root 绑定 commit、wheel SHA 与既有 provenance。
+8. R105审查修正资源顺序：当前 `application/schema.py` 先连接、`infrastructure/schema.py` 先 `ensure_schema` 后读DDL，尚不满足目标。后继现 `apply_database_schema` 必须先通过同一canonical loader纯定位、读取并校验DDL，再调用 `connect_pg`；现 `apply_agent_schema` 自身也必须在 `ensure_schema` 前取得已验SQL并捕获为本次执行值，之后不重新读文件。保留现installer及其 `ensure_schema`、transaction、require_blank、SET LOCAL与DDL执行的原事务边界，不新installer/API。入口初始缺失/漂移应零连接、零schema创建；外部已提供连接的直接installer调用只承诺零ensure_schema/DDL，不冒称该连接未建立。
+
+### 后继限定文件门（不是本轮授权）
+
+- D0：仅本四文档；Root裁方案/独立审后才进入下一阶段。
+- tests-only 候选：`scripts/check_platform_wheel.py`、`tests/contract/test_machine_contract.py`、`test_execution_proof_artifact.py`、`test_canonical_database_schema.py`、`test_platform_generated_consumer.py`、`test_architecture.py`，以及现 `tests/unit/test_cli.py`（已有operator委派测试，后继补真实application入口顺序断言）。扩现文件，不新发布中心；资源测试只由Root调用。当前 `check_platform_wheel.py` 的少量宽版本依赖安装与 ROOT cwd 不能冒充目标隔离门，应由既有锁/离线缓存提供明确依赖闭包、仓外 cwd、`-I`、无源码路径且完整模块来源断言。
+- GREEN 候选：`pyproject.toml`、新增 `src/kokoro_agent/distribution_assets.py`、现 `contract_check.py`、`src/kokoro_agent/application/schema.py`（仅现operator连接前DDL预检）、`src/kokoro_agent/infrastructure/schema.py`（同一loader绑定与ensure_schema前取得已验SQL）、`execution_proof_contract.py`（只增上述 provenance inventory 项）、`contract/provenance.json`（现 generator 派生）。`chat_contract_check.py`、`scripts/generate_failure_models.py` 仅核对只读/写根边界；如需更改先向Root申请，不默认扩大写集。
+- OpenAPI、proof schema/vectors、Platform/Storage pins、canonical SQL、`run_failure_generated.py`、HTTP/Todo测试、依赖/锁与其他生产模块继续冻结；本片预期 Failure 生成 bytes不变。定位新模块不得引入 runtime → Platform checker 依赖或放宽架构门。README/INDEX/ACCEPTANCE 的安装说明在最终文档收口单独授权，不借本轮改写旧历史。
+
+### 分阶段验收（全部是后继待运行）
+
+| 门 | 入口与必需证据 |
+|---|---|
+| 原源树门 | 固定依赖下 Ruff/Pyright、相关 contract tests、`uv run kokoro-agent-contract-check`、`uv run python scripts/generate_failure_models.py --check`，原 Platform generator/check 回归保留；完整 unit 收集前排除有模块级 MinIO I/O 的 archive 测试并单列资源门，不降低断言。 |
+| 构建/安装 | Root另准 `uv build --wheel --sdist` 与 `uv run python scripts/check_platform_wheel.py <wheel>`；对 wheel/由sdist重建wheel使用新隔离安装，固定离线依赖、记录SHA/安装日志；资源不得从checkout手工复制补齐。 |
+| 安装 CLI/checker | 仓外 cwd、清PYTHONPATH、`-I`，通过已装 distribution.entry_points 调用 `kokoro-agent inspect --json`、`kokoro-agent inspect chat --json` 与 `kokoro-agent-contract-check`；先验证实际模块来源，prompts与完整校验均成功、网络尝试0。缺任一资源/实际模块或审计副本篡改/混装/缺RECORD负例必须失败，无写回。 |
+| 安装 DDL | 同一 wheel，先无设施核DDL origin/digest；在现 `tests/unit/test_cli.py` 与 `tests/contract/test_canonical_database_schema.py` 补缺失/漂移负例：operator入口connect调用0且schema创建0，直接installer ensure_schema/DDL调用0，并保留合法输入原顺序control。再Root自有临时PG库：已装 `kokoro-agent-db-apply-schema` fresh安装、重复拒绝和catalog drift门；不得把源码schema7挪称安装结果。 |
+| 安装 HTTP | 同一 wheel 的 server/handler/emitter，Root独占PG及经复核空闲Redis、准确key登记/drain；复用现HTTP36中的Todo真实非空→[]→PG→HTTP分页/重放/隔离语义。harness只提供测试输入，禁止pytest `pythonpath=src`、editable或模块回退；测试依赖可来自锁定环境，但所有kokoro_agent模块必须来自目标安装。 |
+
+安装后 worker/HTTP 不是无资源 `--help` 探针，不在未配环境时随意启动。所有门记录命令、退出码、counts、模块/资产 origin、SHA、负例及精确清理；不以文件存在、源码绿色或checker部分成功宣称发布完成。Root保留原r104b RED日志；缺失任一验收仍标待验。retention、正式数据处置、消费者repin与BFF/Web整链是独立后继，不因修好安装资源自动关闭。
+
+---
+
+## R90-W03：用户安全过程状态链 D0 闭集（2026-10-02）
+
+归属 Root 现 R90 / T-A01–06；Agent main 基线 `17c73541ae5d9f123d85cf531a79503df5c463bd`，Root任务卡已记 `030c6b89`。本节替换未提交R87前缀，原HEAD正文保留；当前HTTP4、源码/SQL/机器/生成字节不变。HTTP5是后继实施/发布目标，不是已上线能力。
+依据：Root AGENTS、Python/SQL手册、R90闭集与R89独立审查；本节细化Todo/Skills/tool过程，不覆盖原HITL、Delivery、proof及R80 strict usage未完成门。
+
+### 放置与三面一致性
+
+| 项 | 当前事实 / 已确定目标 |
+|---|---|
+| Owner | Agent唯一写执行/安全Chat事实；BFF唯一写durable AG-UI与同水位compact snapshot；Web只呈现；Platform/Storage仍拥有授权/包/作品。 |
+| 当前事实 | Todo producer已有但Chat未接；tool/subagent投影仍含raw；Skill preflight在build内无安全phase；at_start依赖index==0。370外围文件与四份原正文保护。 |
+| 目标职责 | 同Run真实queued→能力准备→计划/工具→HITL→作品/终态；用户摘要不是隐藏推理、付款许可或新业务任务。 |
+| 目录A（采用） | 扩现execution/events、domain/chat、agent_factory、worker装配与postgres_run_events；沿现边界局部收口，不新目录/表/进程/依赖。 |
+| 目录B（淘汰） | Factory直写Chat/Redis、第二executor/进度服务与UI本地事实造成双writer；不新建单文件activity目录。 |
+| 粒度/依赖 | Factory接受受信typed异步progress回调，不依赖存储；supervisor先取同原lease的RunEmitter；emitter独占index/fence/投影/发布与轮次anchor。 |
+| 数据/API | 现Chat TEXT payload/身份/seq承接；现stage_critical_frame锁内幂等；API本前缀锁定唯一JSON/ID编码。HTTP5先owner发布再BFF/Web固定artifact。 |
+| 删除项 | 实施时删除公开activity raw字段、可选truncated、index==0 started资格与todos缺省[]；无双读/fallback；私有诊断、完整HITL、成功Delivery不删。 |
+| 验证 | 先现测试合法control/真实行为RED，再生产/机器/生成门；Root独占真实PG、两轮/刷新/作品/隐私组合。D0不计运行通过。 |
+
+### 发射、preflight与started执行决定
+
+1. initial、resume、recovery probe的每个实际build入口传同原lease-fenced、按Run串行的progress回调；旧回调不借新lease补写。static recipe冻结必须仍先于任何外部I/O。
+2. 非空canonical selected_skill_source_refs：首resolving先reserve source_index→按API派生preflight_id→append_fenced确认durable→才做Skill resolve；首次真实包load前loading；全部所需peer的Skill resolve/load成功才ready。多peer同一轮，loading不声称全peer已resolve；空选择无伪ready。
+3. Factory目前逐peer混合Skill/MCP preflight；改为只观察Skill操作的阶段/聚合。resolve异常只对应skill_resolve_failed，load/包校验异常只对应skill_load_failed；MCP/model异常不制造Skill failed。每次真实读取继续原owner授权重验。
+4. progress回调必须显式返回durable确认或抛出typed持久化/失权错误；现emit静默None不作为成功凭据。回调await不包在Skill业务失败转换catch内；未确认就停止后续外部I/O。initial/control/recovery及invoke/pump catch均不得将此类错误转assembly_failed、Skill failed或第二terminal；取消保持取消语义。
+5. 同已提交事件replay保原source_index/时间/payload；crash后重新授权/包读必开新resolving anchor，不重用旧ready。Chat已durable但live失败只走既有replay，不重做工具/provider或假造终态。
+6. build成功后invoke进入started门；删除at_start/index==0资格。invoke显式接收由supervisor现resume上下文给出的initial/resume模式（而非计数推断）：initial调用现stage_critical_frame，resume不分配started，恢复probe不自行invoke；initial重拾仍调用幂等入口。
+7. started检查只在stage_critical_frame原Run active-lease锁内：先查同Run queued/published run.started，存在返原StagedFrame/newly_staged=false，否则才分配durable_seq/index；准确字段/查询见DATA。锁外SELECT→emit、内存bool或重置index均淘汰。
+
+### 用户投影与职责保护
+
+Todo是主Run完整有序替换表，0..100项、content 1..1024 Unicode码点、完整payload确定UTF-8 JSON≤65536 bytes；精确序列化、闭集字段/presence和opaque digest见API本节。缺todos/超限整表拒绝，显式[]才清空，不截断、不混子agent Todo、不从tool result猜计划。
+tool/subagent仅固定tool.execution/subagent.execution及running/completed/failed与opaque IDs；Skill failed必须指定闭集error_code，其他phase禁止。Thinking、tool output delta、subagent thinking仍private，模型文本不充当身份来源；结构校验不宣称任意自然语言自动脱敏。
+HITL仍完整durable interaction.state/全部未决项/幂等resume；Delivery仍仅成功owner receipt出作品，tool completed不等于发布成功。BFF同一event_watermark收集Todo/compact activities/消息/HITL/作品；Web复用TodoBar/SegmentProcess/HITL/Delivery。
+source_index可能有private/预留崩溃间隙，原Chat identity/seq不改，不作为连续+1浏览器cursor。fresh测试与正式数据处置发布门见DATA；retention不足不阻挡纯RED，但仍阻挡未获批准的发布/整链宣称。
+
+### 后继精确路径清单（候选范围，不是本轮写入授权）
+
+下列路径均相对Agent仓；S=`src/kokoro_agent/`。本轮仅四docs；后继Root先授tests-only，复跑RED后才授production，不以本表获得整树写权。
+生产必须审改：S`protocol/events.py`、`protocol/__init__.py`、`domain/chat/models.py`、`domain/chat/projection.py`、`execution/events.py`、`execution/publish_agent_events.py`、`execution/run_agent.py`、`agent_factory.py`；各文件维持原变化原因。
+全部build生产调用/装配：S`worker/supervisor_context.py`（AgentBuilder）、`worker/supervisor_execution.py`（initial与唯一invoke调用）、`worker/supervisor_control.py`（resume）、`worker/supervisor_recovery.py`（probe）、`worker/supervisor.py`（注入类型）、`worker/main.py`（factory.build绑定）。
+started生产必改S`infrastructure/postgres_run_events.py`；现签名可复用，S`domain/run/repositories.py`、`infrastructure/postgres_run_repository.py`为port/转发核对路径，不无故增新port；S`infrastructure/postgres_chat_repository.py`、`infrastructure/postgres_run_context.py`为fence/retention只读基线。
+factory全部直接build测试位于`tests/unit/agents/test_factory.py`；builder签名/fakes适配在`tests/unit/execution/test_supervisor.py`、`test_control_commands.py`、`test_r0_fault_matrix.py`、`tests/acceptance/test_http_ingress.py`、`tests/integration/database/test_run_interaction_transactions.py`；不得漏内部boom/fail_build/rejected_build等局部builder。
+共享outbox fake只在`tests/support/fakes.py`同步锁内started语义；它的内存成功不证明PG恢复。装配回归另核`tests/unit/worker/test_dependencies.py`。
+invoke全部直接测试caller：`tests/unit/execution/test_invoke.py`、`test_subagent_hitl.py`、`test_deliver_event.py`、`test_steering.py`、`test_r0_fault_matrix.py`、`tests/unit/tools/test_memory.py`、`tests/acceptance/test_http_ingress.py`；原at_start断言只在test_invoke/test_http_ingress，替换语义断言而非删覆盖。
+聚焦新行为RED：`tests/unit/chat/test_projection.py`、`test_emitter.py`、`tests/unit/agents/test_factory.py`、`tests/unit/execution/test_invoke.py`、`test_supervisor.py`。先collect/合法control，再Todo缺失/边界、raw拒绝、真实phase/无I/O失权、preflight先占index及initial/resume/recovery；missing import不算行为RED。
+机器写集：`contract/openapi/v1/openapi.json`、`contract/provenance.json`、S`contract_check.py`、`chat_contract_check.py`、`scripts/generate_failure_models.py`；版本/decoded mapping/严格shape及provenance一起更新。S`execution_proof_contract.py`的OWNER_SOURCE_FILES只按真实依赖变化调整，不改proof语义；S`protocol/run_failure_generated.py`仅收现generator实际生成差异（其OpenAPI摘要可变化）。
+机器回归：`tests/contract/test_public_contract.py`、`test_machine_contract.py`、`test_chat_response_envelopes.py`、`test_execution_proof_artifact.py`、`test_execution_proof_jwks_http.py`、`test_canonical_database_schema.py`、`test_chat_tenant_time_boundary.py`及HTTP acceptance；HTTP overall4→5断言与proof自身1.0.0/JWKS/tuple语义严格分开。
+Root真实PG扩现`tests/integration/database/test_run_outbox_filter.py`、`test_run_interaction_transactions.py`、`test_delivery_outbox.py`；两连接/丢ACK/reclaim、重复漂移/回滚/终态拒写、tenant/session排序。新增Chat PG文件须另准路径；不改旧数据、不自行起服务。
+后继命令：`uv run pytest tests/unit/chat tests/unit/agents/test_factory.py tests/unit/execution tests/unit/tools/test_memory.py tests/unit/worker/test_dependencies.py tests/contract`；再`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run kokoro-agent-contract-check`、`uv run python scripts/generate_failure_models.py --check`、`uv build`。HTTP/PG由Root隔离运行，完整仓门另行放行。
+
+串行：四D0闭集快审→Agent tests-only/实现/5发布→BFF在direct/public6闭环后固定Agent5并承接snapshot/retention→Web正式pin→Root整链；不混版本、不双读raw。R80/R81 usage/v1仍独立后继、同writer串行，不占HTTP5、不以Billing或付款展示为前置。
+Root已裁枚举/presence/容量/身份/started，不再列为待定；剩余是实施和真实验证，以及正式数据处置/Chat-BFF retention/消费者发布门。本轮没有新RED、生成、PG或浏览器结果。
+
+---
+
 ## R80-W03：逐实际模型调用/attempt 严格用量 D0（2026-10-02）
 
 跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。

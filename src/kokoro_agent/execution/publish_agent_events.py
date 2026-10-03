@@ -15,6 +15,7 @@ from kokoro_agent.execution.protocols import (
 from kokoro_agent.execution.events import (
     AgentEventPayload,
     RunEmitter,
+    ProgressPersistenceError,
     SourceResolver,
     delivery_created_payload,
     message_completed_payload,
@@ -51,12 +52,22 @@ async def pump_run(
     try/finally 保证 None 哨兵必达、drainer 必被收束：上游崩溃也不泄漏后台协程。
     """
     queue: _EventQueue = asyncio.Queue()
+
+    async def produce() -> None:
+        try:
+            await _consume(run, queue, subagent_id=None, source_for=source_for)
+        finally:
+            await queue.put(None)
+
+    producer = asyncio.create_task(produce())
     drainer = asyncio.create_task(_drain(emitter, queue))
     try:
-        await _consume(run, queue, subagent_id=None, source_for=source_for)
+        await asyncio.gather(producer, drainer)
     finally:
-        await queue.put(None)
-        await drainer
+        for task in (producer, drainer):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(producer, drainer, return_exceptions=True)
 
 
 async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
@@ -67,6 +78,8 @@ async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
             return
         try:
             await emitter.emit(payload)
+        except ProgressPersistenceError:
+            raise
         except Exception:  # noqa: BLE001 — 局部容错：单事件发布失败隔离，不毁整条流
             LOGGER.warning(
                 "dropping event on publish failure: %s", type(payload).__name__
@@ -80,13 +93,22 @@ async def _consume(
     subagent_id: str | None,
     source_for: SourceResolver,
 ) -> None:
-    await asyncio.gather(
-        _consume_messages(run.messages, queue, subagent_id),
-        _consume_tools(run.tool_calls, queue, subagent_id),
-        _consume_subagents(run.subagents, queue, source_for),
+    tasks = (
+        asyncio.create_task(_consume_messages(run.messages, queue, subagent_id)),
+        asyncio.create_task(_consume_tools(run.tool_calls, queue, subagent_id)),
+        asyncio.create_task(_consume_subagents(run.subagents, queue, source_for)),
         # custom 遥测无 wire kind：仍须抽干防回压，内容弃置。
-        _drain_aiter(run.custom),
+        asyncio.create_task(_drain_aiter(run.custom)),
     )
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        # gather propagates the first error without stopping siblings. Each
+        # recursive run owns and joins its children before that error escapes.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _consume_messages(
@@ -96,16 +118,33 @@ async def _consume_messages(
         if model.node != "model":
             # 非模型节点的消息投影（如 before_model 注入的 steer HumanMessage、
             # summarization 改写）：绝不冒充正文上 wire；仍抽干防回压。
-            await asyncio.gather(
-                _drain_aiter(model.text), _drain_aiter(model.reasoning)
+            drains = (
+                asyncio.create_task(_drain_aiter(model.text)),
+                asyncio.create_task(_drain_aiter(model.reasoning)),
             )
+            try:
+                await asyncio.gather(*drains)
+            finally:
+                for drain in drains:
+                    if not drain.done():
+                        drain.cancel()
+                await asyncio.gather(*drains, return_exceptions=True)
             continue
         segment_id = model.message_id or ""
         # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全）。
-        text_full, _ = await asyncio.gather(
-            _pump_text(model.text, queue, segment_id, subagent_id),
-            _pump_reasoning(model.reasoning, queue, segment_id, subagent_id),
+        text_task = asyncio.create_task(
+            _pump_text(model.text, queue, segment_id, subagent_id)
         )
+        reasoning_task = asyncio.create_task(
+            _pump_reasoning(model.reasoning, queue, segment_id, subagent_id)
+        )
+        try:
+            text_full, _ = await asyncio.gather(text_task, reasoning_task)
+        finally:
+            for projection_task in (text_task, reasoning_task):
+                if not projection_task.done():
+                    projection_task.cancel()
+            await asyncio.gather(text_task, reasoning_task, return_exceptions=True)
         final = model.output_message
         seg = final.id if (final is not None and final.id) else segment_id
         if final is None and not text_full:

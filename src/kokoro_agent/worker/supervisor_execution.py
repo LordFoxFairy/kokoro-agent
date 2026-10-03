@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from kokoro_agent.execution.events import ProgressPersistenceError
+
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
@@ -82,56 +84,73 @@ class SupervisorExecutionMixin(SupervisorContext):
         lease: LeaseFence,
     ) -> None:
         try:
-            built = await self._build(request, lease)
+            emitter = await self._emitter(bus, request.run_id, lease)
+            built = await self._build_owned(
+                request,
+                lease,
+                emitter.skill_progress(request.selected_skill_source_refs),
+            )
+        except ProgressPersistenceError:
+            raise
         except Exception as error:  # noqa: BLE001 — 构建失败收口为 run.failed
             await self._fail_terminal(
                 bus, request.run_id, error, code="assembly_failed", build_lease=lease
             )
             return
-        scope = RunScope.of(request)
-        # A committed native pause may precede the Run/Chat pause transaction.
-        # Recover that fact without another graph invocation.
+        transferred = False
+        primary: BaseException | None = None
         try:
-            recovered = await self._interaction_reader(
-                request=request,
-                lease=lease,
-                handle=built,
-                target=PauseReadTarget(command_id=None, attempt_id=None),
-            )
-        except InteractionConflict as error:
-            if error.code != "native_not_paused":
-                raise
-        else:
-            if not isinstance(recovered, NativePauseRead):
-                raise RuntimeError("unexpected initial recovery evidence")
-            await self._run_repository.record_checkpoint_observation(
-                request, lease, recovered.observation
-            )
-            await self._run_repository.record_pause(request, lease, recovered.pause)
-            self._ensure_control_listener(bus, request.run_id)
-            return
-        payload: dict[str, object] = {
-            # Native message ID 只服务 LangGraph 重放去重，绝不复用 GA/外部 chat_message_id。
-            # run_id 内确定性派生让 TTL 重拾仍命中同一 native message。
-            "messages": [
-                HumanMessage(
-                    content=request.input.content,
-                    id=f"native-input:{request.run_id}",
+            scope = RunScope.of(request)
+            # A committed native pause may precede the Run/Chat pause transaction.
+            # Recover that fact without another graph invocation.
+            try:
+                recovered = await self._interaction_reader(
+                    request=request,
+                    lease=lease,
+                    handle=built,
+                    target=PauseReadTarget(command_id=None, attempt_id=None),
                 )
-            ],
-        }
-        self._spawn_agent(
-            bus,
-            built,
-            request.run_id,
-            scope.scoped_thread_id,
-            payload,
-            self._approval_tool_names(request),
-            trace=self._trace(request),
-            lease=lease,
-        )
-        # agent 就位后订阅该 run 的独立 control 流：resume/cancel 从此来，与请求流解耦。
-        self._ensure_control_listener(bus, request.run_id)
+            except InteractionConflict as error:
+                if error.code != "native_not_paused":
+                    raise
+            else:
+                if not isinstance(recovered, NativePauseRead):
+                    raise RuntimeError("unexpected initial recovery evidence")
+                await self._run_repository.record_checkpoint_observation(
+                    request, lease, recovered.observation
+                )
+                await self._run_repository.record_pause(request, lease, recovered.pause)
+                self._ensure_control_listener(bus, request.run_id)
+                return
+            payload: dict[str, object] = {
+                # Native message ID 只服务 LangGraph 重放去重，绝不复用 GA/外部 chat_message_id。
+                # run_id 内确定性派生让 TTL 重拾仍命中同一 native message。
+                "messages": [
+                    HumanMessage(
+                        content=request.input.content,
+                        id=f"native-input:{request.run_id}",
+                    )
+                ],
+            }
+            self._spawn_agent(
+                bus,
+                built,
+                request.run_id,
+                scope.scoped_thread_id,
+                payload,
+                self._approval_tool_names(request),
+                trace=self._trace(request),
+                lease=lease,
+            )
+            transferred = True
+            # agent 就位后订阅该 run 的独立 control 流：resume/cancel 从此来，与请求流解耦。
+            self._ensure_control_listener(bus, request.run_id)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            if not transferred:
+                await self._close_handle_after_primary(built, primary)
 
     def _spawn_agent(
         self,
@@ -161,6 +180,7 @@ class SupervisorExecutionMixin(SupervisorContext):
         )
         self._tasks[run_id] = task
         self._task_leases[run_id] = lease
+        self._release_assembly_handle(built)
 
         def _pop(_done: asyncio.Task[None]) -> None:
             # 按任务身份弹出：resume 已覆盖同 run_id 的新任务句柄时，旧回调不误删新句柄。
@@ -179,6 +199,35 @@ class SupervisorExecutionMixin(SupervisorContext):
             return False
 
     async def _guarded(
+        self,
+        bus: StreamProtocol,
+        built: AgentHandle,
+        run_id: str,
+        thread_id: str,
+        payload: object,
+        approval_tool_names: frozenset[str],
+        trace: RunnableConfig | None,
+        lease: LeaseFence,
+    ) -> None:
+        primary: BaseException | None = None
+        try:
+            await self._guarded_body(
+                bus,
+                built,
+                run_id,
+                thread_id,
+                payload,
+                approval_tool_names,
+                trace,
+                lease,
+            )
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            await self._close_handle_after_primary(built, primary)
+
+    async def _guarded_body(
         self,
         bus: StreamProtocol,
         built: AgentHandle,
@@ -314,6 +363,7 @@ class SupervisorExecutionMixin(SupervisorContext):
                     built.runnable,
                     thread_id,
                     payload,
+                    initial=resume is None,
                     approval_tool_names=approval_tool_names,
                     # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
                     describe_tool=built.describe_tool,

@@ -17,7 +17,11 @@ from kokoro_agent.protocol import (
     RunFailedPayload,
     RunStartedPayload,
 )
-from kokoro_agent.execution.events import RunEmitter, SourceResolver
+from kokoro_agent.execution.events import (
+    RunEmitter,
+    SourceResolver,
+    ProgressPersistenceError,
+)
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
@@ -31,6 +35,7 @@ async def invoke_once(
     thread_id: str,
     payload: object,
     *,
+    initial: bool,
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
@@ -51,8 +56,8 @@ async def invoke_once(
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
     config = _config(thread_id, trace, recursion_limit)
-    if emitter.at_start:
-        # run.started 收编进 critical outbox（emitter 内分配 durable_seq=1、落 queued、发布后 published）。
+    if initial:
+        # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.
         await emitter.emit(RunStartedPayload())
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
     with get_usage_metadata_callback() as usage_cb:
@@ -69,6 +74,8 @@ async def invoke_once(
             outcome: RunCompletedPayload | RunFailedPayload = RunCompletedPayload(
                 status="completed"
             )
+        except ProgressPersistenceError:
+            raise
         except Exception as error:  # noqa: BLE001 — execution failures become safe facts
             outcome = run_failed_payload(error)
         else:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Literal
 
@@ -27,6 +29,8 @@ from kokoro_agent.protocol import (
     ToolAwaitingApprovalPayload,
     ToolInvokedPayload,
     ToolReturnedPayload,
+    TodoUpdatedPayload,
+    SkillProgressPayload,
 )
 
 
@@ -46,21 +50,29 @@ class _AssistantCompleted(_Payload):
     content: str
 
 
-class _Activity(_Payload):
-    activity: Literal["tool", "subagent"]
+class _ToolActivity(_Payload):
+    activity: Literal["tool"] = "tool"
+    activity_id: str
     segment_id: str
-    tool_id: str | None = None
-    subagent_id: str | None = None
-    name: str
-    status: Literal["started", "completed", "failed"]
-    description: str | None = None
-    subagent_type: str | None = None
-    source: str | None = None
-    args: dict[str, JsonValue] | None = None
-    result: str | None = None
-    is_error: bool | None = None
-    truncated: bool | None = None
-    error: str | None = None
+    status: Literal["running", "completed", "failed"]
+    display_code: Literal["tool.execution"] = "tool.execution"
+
+
+class _SubagentActivity(_Payload):
+    activity: Literal["subagent"] = "subagent"
+    activity_id: str
+    segment_id: str
+    status: Literal["running", "completed", "failed"]
+    display_code: Literal["subagent.execution"] = "subagent.execution"
+
+
+class _SkillActivity(_Payload):
+    activity: Literal["skill"] = "skill"
+    activity_id: str
+    preflight_id: str
+    source_refs: list[str]
+    phase: Literal["resolving", "loading", "ready", "failed"]
+    error_code: Literal["skill_resolve_failed", "skill_load_failed"] | None = None
 
 
 class _Delivery(_Payload):
@@ -111,9 +123,44 @@ def project_chat_fact(
 
     event_type: str
     chat_message_id: str | None = None
-    safe_payload: _Payload | ChatFailure
+    safe_payload: _Payload | ChatFailure | TodoUpdatedPayload
     message: ChatMessageDraft | None = None
-    if isinstance(payload, RunStartedPayload):
+
+    def opaque(tag: str, *parts: str) -> str:
+        value = [
+            "kokoro-agent.safe-progress.v1",
+            tag,
+            tenant_id,
+            namespace,
+            session_id,
+            run_id,
+            *parts,
+        ]
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+        return hashlib.sha256(encoded).hexdigest()
+
+    if isinstance(payload, TodoUpdatedPayload):
+        event_type = "todo.updated"
+        safe_payload = TodoUpdatedPayload.model_validate(
+            payload.model_dump(mode="json")
+        )
+    elif isinstance(payload, SkillProgressPayload):
+        event_type = "activity"
+        safe_payload = _SkillActivity(
+            activity_id="act_" + opaque("skill-activity"),
+            preflight_id="spf_"
+            + opaque("skill-preflight", str(payload.anchor_source_index)),
+            source_refs=payload.source_refs,
+            phase=payload.phase,
+            error_code=payload.error_code,
+        )
+    elif isinstance(payload, RunStartedPayload):
         event_type = "run.started"
         safe_payload = _RunPhase(status="running")
     elif isinstance(payload, MessageDeltaPayload):
@@ -136,54 +183,33 @@ def project_chat_fact(
             created_at=created_at,
             updated_at=created_at,
         )
-    elif isinstance(payload, ToolInvokedPayload):
+    elif isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
         event_type = "activity"
-        safe_payload = _Activity(
-            activity="tool",
-            segment_id=payload.segment_id,
-            tool_id=payload.tool_id,
-            name=payload.name,
-            status="started",
-        )
-    elif isinstance(payload, ToolReturnedPayload):
-        event_type = "activity"
-        safe_payload = _Activity(
-            activity="tool",
-            segment_id=payload.segment_id,
-            tool_id=payload.tool_id,
-            name=payload.name,
-            status="failed" if payload.is_error else "completed",
-            result=payload.result,
-            is_error=payload.is_error,
-            truncated=payload.truncated,
+        safe_payload = _ToolActivity(
+            activity_id="act_"
+            + opaque("tool-activity", payload.segment_id, payload.tool_id),
+            segment_id="seg_" + opaque("segment", payload.segment_id),
+            status="running"
+            if isinstance(payload, ToolInvokedPayload)
+            else "failed"
+            if payload.is_error
+            else "completed",
         )
     elif isinstance(payload, ToolAwaitingApprovalPayload):
         # Partial execution notifications cannot supply the committed collection,
         # pause identity or revision. Only the Run transaction writes this source.
         raise ValueError("interaction source requires a complete durable pause")
-    elif isinstance(payload, SubagentStartedPayload):
+    elif isinstance(payload, SubagentStartedPayload | SubagentFinishedPayload):
         event_type = "activity"
-        safe_payload = _Activity(
-            activity="subagent",
-            segment_id=payload.segment_id,
-            subagent_id=payload.subagent_id,
-            name=payload.name,
-            status="started",
-            description=payload.description,
-            subagent_type=payload.subagent_type,
-            source=payload.source,
-        )
-    elif isinstance(payload, SubagentFinishedPayload):
-        event_type = "activity"
-        safe_payload = _Activity(
-            activity="subagent",
-            segment_id=payload.segment_id,
-            subagent_id=payload.subagent_id,
-            name=payload.name,
-            status="failed" if payload.failed else "completed",
-            subagent_type=payload.subagent_type,
-            source=payload.source,
-            error=payload.error,
+        safe_payload = _SubagentActivity(
+            activity_id="act_"
+            + opaque("subagent-activity", payload.segment_id, payload.subagent_id),
+            segment_id="seg_" + opaque("segment", payload.segment_id),
+            status="running"
+            if isinstance(payload, SubagentStartedPayload)
+            else "failed"
+            if payload.failed
+            else "completed",
         )
     elif isinstance(payload, DeliveryCreatedPayload):
         event_type = "delivery"
@@ -212,7 +238,9 @@ def project_chat_fact(
             source_index=source_index,
             chat_message_id=chat_message_id,
             event_type=event_type,
-            payload_json=safe_payload.model_dump_json(exclude_none=True),
+            payload_json=safe_payload.canonical_bytes().decode("utf-8")
+            if isinstance(safe_payload, TodoUpdatedPayload)
+            else safe_payload.model_dump_json(exclude_none=True),
             created_at=created_at,
         ),
         message=message,

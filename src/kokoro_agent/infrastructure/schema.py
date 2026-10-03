@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-import sys
 from typing import Any
 
 import psycopg
 
+from kokoro_agent.distribution_assets import canonical_ddl_path, read_canonical_ddl
 from kokoro_agent.infrastructure.postgres import ensure_schema
 
 RUN_CLAIMS_TABLE = "kokoro_agent_run"
@@ -61,20 +61,11 @@ class SchemaNotReadyError(RuntimeError):
 def canonical_schema_path() -> Path:
     """Return the sole DDL asset in a source checkout or installed distribution."""
 
-    source_path = Path(__file__).resolve().parents[3] / "database" / "schema.sql"
-    if source_path.is_file():
-        return source_path
-    installed_path = Path(sys.prefix) / "share" / "kokoro-agent" / "schema.sql"
-    if installed_path.is_file():
-        return installed_path
-    raise FileNotFoundError(
-        "canonical database/schema.sql is not present in the source checkout "
-        "or installed share/kokoro-agent asset"
-    )
+    return canonical_ddl_path()
 
 
 def canonical_schema_sql() -> str:
-    return canonical_schema_path().read_text(encoding="utf-8")
+    return read_canonical_ddl(canonical_schema_path())
 
 
 async def apply_agent_schema(
@@ -85,6 +76,7 @@ async def apply_agent_schema(
 ) -> None:
     """Install the current V1 schema into one validated empty namespace."""
 
+    schema_sql = canonical_schema_sql()
     await ensure_schema(conn, schema)
     async with conn.transaction():
         async with conn.cursor() as cur:
@@ -110,7 +102,7 @@ async def apply_agent_schema(
             await dynamic_cursor.execute(
                 f'SET LOCAL search_path TO "{_quote_ident(schema)}", public, pg_catalog'
             )
-            await dynamic_cursor.execute(canonical_schema_sql())
+            await dynamic_cursor.execute(schema_sql)
 
 
 async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -> None:

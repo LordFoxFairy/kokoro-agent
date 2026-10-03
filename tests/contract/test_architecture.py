@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
+import subprocess
+import sys
+import uuid
+
+import boto3
+import pytest
+from support import dev_minio
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "kokoro_agent"
 
@@ -450,3 +458,68 @@ def test_run_skill_lifecycle_reuses_only_public_native_loader_and_prompt() -> No
     )
     assert isinstance(keywords["checkpointer"], ast.Attribute)
     assert keywords["checkpointer"].attr == "checkpointer"
+
+
+def test_workspace_archive_import_has_no_resource_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collection must not read MinIO credentials or construct an S3 client."""
+    calls: list[str] = []
+
+    def record_credentials() -> None:
+        calls.append("minio_creds")
+        return None
+
+    def record_client(*_args: object, **_kwargs: object) -> object:
+        calls.append("boto3.client")
+        return object()
+
+    monkeypatch.setattr(dev_minio, "minio_creds", record_credentials)
+    monkeypatch.setattr(boto3, "client", record_client)
+    path = _SRC.parents[1] / "tests/unit/sandbox/test_workspace_archive.py"
+    module_name = f"_kokoro_archive_import_probe_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    assert module_name not in sys.modules
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        assert calls == [], f"archive import performed resource calls: {calls}"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_docker_backend_import_has_no_resource_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collection must not read MinIO credentials or invoke Docker probes."""
+    calls: list[str | list[str]] = []
+
+    def record_credentials() -> None:
+        calls.append("minio_creds")
+        return None
+
+    def record_run(
+        args: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append(list(args))
+        assert args == ["docker", "info"]
+        return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(dev_minio, "minio_creds", record_credentials)
+    monkeypatch.setattr(subprocess, "run", record_run)
+    path = _SRC.parents[1] / "tests/integration/sandbox/test_docker_backend.py"
+    module_name = f"_kokoro_docker_import_probe_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    assert module_name not in sys.modules
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        assert calls == [], f"Docker test import performed resource calls: {calls}"
+    finally:
+        sys.modules.pop(module_name, None)

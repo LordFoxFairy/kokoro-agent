@@ -715,6 +715,29 @@ class FakeRunRepository:
                         published=existing["status"] == "published",
                         newly_staged=False,
                     )
+        if kind == "run.started":
+            existing_rows = [
+                row
+                for row in self.outbox.get(run_id, [])
+                if row["kind"] == kind and row["status"] in {"queued", "published"}
+            ]
+            if len(existing_rows) > 1:
+                raise RuntimeError("duplicate durable run.started facts")
+            if existing_rows:
+                existing = existing_rows[0]
+                if (
+                    existing.get("index") is None
+                    or existing["payload_json"] != payload_json
+                ):
+                    raise RuntimeError("run.started identity drift")
+                return StagedFrame(
+                    durable_seq=cast(int, existing["durable_seq"]),
+                    event_id=cast(str, existing["event_id"]),
+                    index=cast(int, existing["index"]),
+                    timestamp=cast(int, existing["timestamp"]),
+                    published=existing["status"] == "published",
+                    newly_staged=False,
+                )
         seq = self.durable_counter.get(run_id, 0) + 1
         self.durable_counter[run_id] = seq
         if terminal and run_id not in self.terminal_fence:

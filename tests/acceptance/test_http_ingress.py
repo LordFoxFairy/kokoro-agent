@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from kokoro_agent.protocol import SkillProgressSink
+
 from support.fakes import read_unpaused_interaction, settled_state_callback
 
 from support.fakes import finish_run
@@ -14,9 +16,9 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
-from typing import Any, LiteralString
+from collections.abc import AsyncIterator, Awaitable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, LiteralString, Protocol
 
 import httpx
 import psycopg
@@ -59,6 +61,7 @@ from kokoro_agent.protocol import (
     RunStarted,
     RunStartedPayload,
     REQUESTS_STREAM,
+    TodoUpdatedPayload,
     run_control_stream,
     run_events_stream,
 )
@@ -67,6 +70,7 @@ from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.execution.events import (
+    ProgressAuthorityLost,
     RunEmitter,
     message_completed_payload,
     message_delta_payload,
@@ -96,13 +100,18 @@ from kokoro_agent.streams.factory import StreamSettings
 from kokoro_agent.streams.redis import RedisStream
 from kokoro_agent.streams.protocol import StreamItem
 
-_DATABASE_URL = os.environ.get(
-    "KOKORO_AGENT_DATABASE_URL",
-    "postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent",
-)
-_REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "redis://127.0.0.1:56380/9")
+_DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "")
+_REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "")
 _INTERNAL_SECRET = "acceptance-internal-secret"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
+
+
+class _RedisDbSize(Protocol):
+    def dbsize(self) -> Awaitable[int]: ...
+
+
+async def _redis_dbsize(client: _RedisDbSize) -> int:
+    return await client.dbsize()
 
 
 class _LookupArgs(PydanticBaseModel):
@@ -122,6 +131,14 @@ class _AcceptanceConfig:
 class _AcceptanceState:
     config: _AcceptanceConfig
     redis_url: str
+    owned_redis_keys: set[str] = field(default_factory=set[str])
+    active_http_servers: set[int] = field(default_factory=set[int])
+
+    def register_run(self, run_id: str) -> None:
+        # Registration precedes launch/seed/emitter I/O, including uncertain ACKs.
+        self.owned_redis_keys.update(
+            (run_events_stream(run_id), run_control_stream(run_id))
+        )
 
 
 def _json_object(value: object) -> dict[str, JsonValue]:
@@ -189,22 +206,56 @@ async def _require_postgres(database_url: str) -> None:
 
 
 async def _require_redis(redis_url: str) -> None:
-    port = RedisStream(redis_url, block_ms=100)
+    from redis.asyncio import from_url
+
+    client = from_url(redis_url, socket_connect_timeout=2, socket_timeout=2)
     try:
-        await asyncio.wait_for(
-            port.read_all(f"kokoro-acceptance-probe:{uuid.uuid4().hex}"), 2.0
-        )
-    except Exception as error:  # noqa: BLE001 - fixture preflight must fail loudly
-        raise RuntimeError(f"Redis required but unreachable at {redis_url}") from error
+        async with asyncio.timeout(2):
+            # Root must attest exclusive allocation; emptiness alone is not a
+            # concurrency lock. Never scan or adopt an unknown key for cleanup.
+            # redis-py types the int result but leaves optional **kwargs untyped.
+            key_count = await _redis_dbsize(client)
+            if key_count != 0 or await client.exists(REQUESTS_STREAM):
+                raise RuntimeError(
+                    "HTTP acceptance requires an empty exclusive Redis DB"
+                )
     finally:
-        await port.aclose()
+        await client.aclose()
+
+
+async def _cleanup_owned_redis(state: _AcceptanceState) -> None:
+    from redis.asyncio import from_url
+
+    client = from_url(state.redis_url, socket_connect_timeout=2, socket_timeout=2)
+    try:
+        async with asyncio.timeout(5):
+            keys = tuple(sorted(state.owned_redis_keys))
+            if keys:
+                await client.delete(*keys)
+                assert await client.exists(*keys) == 0, "owned Redis keys remain"
+            # Unknown leftovers fail the gate but are deliberately not deleted.
+            # The narrow dbsize protocol leaves all result checks intact.
+            key_count = await _redis_dbsize(client)
+            assert key_count == 0, "unregistered Redis keys remain"
+    finally:
+        await client.aclose()
 
 
 @pytest.fixture
 async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
-    """Create one isolated Agent-owned PostgreSQL schema and verify both services first."""
-    await _require_postgres(_DATABASE_URL)
+    """Root-owned resources only; preflight precedes all persistent side effects."""
+    if (
+        not _DATABASE_URL
+        or not _REDIS_URL
+        or os.environ.get("KOKORO_AGENT_HTTP_TEST_EXCLUSIVE_REDIS") != "1"
+        or os.environ.get("PYTEST_XDIST_WORKER") is not None
+    ):
+        raise RuntimeError(
+            "HTTP acceptance requires explicit PostgreSQL/Redis URLs, "
+            "KOKORO_AGENT_HTTP_TEST_EXCLUSIVE_REDIS=1 and serial execution"
+        )
     await _require_redis(_REDIS_URL)
+    await _require_postgres(_DATABASE_URL)
     schema = f"kokoro_acceptance_{uuid.uuid4().hex}"
     config = _AcceptanceConfig(
         stream=StreamSettings(redis_url=_REDIS_URL),
@@ -217,6 +268,10 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
         database_schema=schema,
         internal_secret_agent=SecretStr(_INTERNAL_SECRET),
     )
+    state = _AcceptanceState(config=config, redis_url=_REDIS_URL)
+    # The exact fixed stream was absent during the exclusive preflight. Register
+    # before any launch can publish; never claim a pre-existing requests stream.
+    state.owned_redis_keys.add(REQUESTS_STREAM)
     try:
         async with connect_pg(_DATABASE_URL) as connection:
             await apply_agent_schema(connection, schema, require_blank=True)
@@ -228,15 +283,21 @@ async def acceptance_state() -> AsyncIterator[_AcceptanceState]:
             )
         ):
             pass
-        yield _AcceptanceState(config=config, redis_url=_REDIS_URL)
+        yield state
     finally:
-        async with connect_pg(_DATABASE_URL) as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(
-                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-                        sql.Identifier(schema)
+        # Do not drop data under an HTTP handler that failed to quiesce. Root's
+        # outer owned-resource wrapper handles this exceptional cleanup case.
+        assert not state.active_http_servers, "HTTP server or handlers still active"
+        try:
+            await _cleanup_owned_redis(state)
+        finally:
+            async with connect_pg(_DATABASE_URL) as connection:
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                            sql.Identifier(schema)
+                        )
                     )
-                )
 
 
 @pytest.fixture
@@ -259,20 +320,38 @@ async def http_client(
     thread = threading.Thread(
         target=server.serve_forever, name="agent-http-acceptance", daemon=True
     )
-    thread.start()
-    port = int(server.server_address[1])
+    acceptance_state.active_http_servers.add(id(server))
+    started = False
+    drained = False
     try:
+        thread.start()
+        started = True
+        port = int(server.server_address[1])
         async with httpx.AsyncClient(
             base_url=f"http://127.0.0.1:{port}", timeout=10.0
         ) as client:
             yield client
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        try:
+            server.start_draining()
+            if started:
+                await asyncio.wait_for(asyncio.to_thread(server.shutdown), timeout=5)
+            drained = await asyncio.to_thread(server.wait_for_active_handlers, 5)
+        finally:
+            try:
+                server.server_close()
+            finally:
+                if started:
+                    await asyncio.to_thread(thread.join, 5)
+                stopped = not thread.is_alive()
+                if drained and stopped:
+                    acceptance_state.active_http_servers.remove(id(server))
+                assert stopped, "HTTP listener thread did not stop"
+        assert drained, "HTTP handlers did not drain within 5 seconds"
 
 
 async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> None:
+    state.register_run(request.run_id)
     async with make_run_repository(state.config.run_repository) as run_repository:
         await run_repository.enqueue_dispatch(
             request,
@@ -323,6 +402,7 @@ async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
 
 
 async def _seed_events(state: _AcceptanceState, run_id: str) -> None:
+    state.register_run(run_id)
     port = RedisStream(state.redis_url)
     started = RunStarted(
         kind="run.started",
@@ -385,6 +465,7 @@ async def test_launch_is_durable_and_idempotent_over_http(
     http_client: httpx.AsyncClient,
 ) -> None:
     run_id = f"launch-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
     refs = ("skill:revision-a", "skill:revision-b")
     body = _launch_body(run_id, refs)
 
@@ -1143,7 +1224,7 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
         lease=current,
     )
 
-    assert emitter.at_start is False
+    assert await repository.next_event_index(current_request.run_id) > 0
     payload = message_delta_payload("continued", segment_id="segment")
     assert payload is not None
     await emitter.emit(payload)
@@ -1216,7 +1297,9 @@ async def test_dispatch_claim_conflict_keeps_durable_intent_pending(
 @pytest.mark.asyncio
 async def test_auth_and_invalid_launch_fail_with_stable_http_errors(
     http_client: httpx.AsyncClient,
+    acceptance_state: _AcceptanceState,
 ) -> None:
+    acceptance_state.register_run("denied")
     denied = await http_client.post("/v1/runs", json=_launch_body("denied"))
     assert denied.status_code == 401
     denied_error = _nested(_json_object(denied.json()), "error")
@@ -1228,6 +1311,9 @@ async def test_auth_and_invalid_launch_fail_with_stable_http_errors(
     assert invalid_error["code"] == "invalid_launch_request"
 
     old_body = _launch_body(f"old-bff-{uuid.uuid4().hex}")
+    old_run_id = old_body["run_id"]
+    assert isinstance(old_run_id, str)
+    acceptance_state.register_run(old_run_id)
     del old_body["selected_skill_source_refs"]
     old_body["trace"] = {"pinned_skills": ["skill:revision-a"]}
     old_response = await http_client.post("/v1/runs", headers=_headers(), json=old_body)
@@ -1372,6 +1458,7 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
     from kokoro_agent.protocol.events import ChatInteractionState
 
     run_id = f"empty-final-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
     namespace = runtime_namespace(_identity())
     stream_name = run_events_stream(run_id)
     stream = RedisStream(acceptance_state.redis_url)
@@ -1457,6 +1544,7 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
                 agent,
                 thread_id,
                 {"messages": [HumanMessage(content="go")]},
+                initial=True,
                 approval_tool_names=frozenset(),
                 source_for=lambda _name: "runtime-custom",
                 finalize_terminal=repository_terminal_callback(
@@ -1562,7 +1650,6 @@ async def test_empty_final_segment_persists_and_replays_after_tool(
             seq for seq, _content in completed
         ]
     finally:
-        await stream.delete(stream_name)
         await stream.aclose()
 
 
@@ -1572,6 +1659,7 @@ async def test_stale_lease_cannot_publish_or_persist_empty_completion(
 ) -> None:
     clock_ms = [int(time.time() * 1000)]
     run_id = f"stale-empty-final-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
     namespace = runtime_namespace(_identity())
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
@@ -1608,9 +1696,10 @@ async def test_stale_lease_cannot_publish_or_persist_empty_completion(
         current = reclaimed[0].lease
         assert current.generation == stale.generation + 1
 
-        await stale_emitter.emit(
-            message_completed_payload("", segment_id="stale-empty")
-        )
+        with pytest.raises(ProgressAuthorityLost, match="original progress lease lost"):
+            await stale_emitter.emit(
+                message_completed_payload("", segment_id="stale-empty")
+            )
         assert await repository.next_event_index(run_id) == 0
         assert await stream.read_all(stream_name) == []
         assert await chat.replay("tenant", namespace, "session-1") == ()
@@ -1637,7 +1726,6 @@ async def test_stale_lease_cannot_publish_or_persist_empty_completion(
         assert wire[0].event["kind"] == "message.completed"
         assert wire[0].event["index"] == replay[0].source_index == 0
     finally:
-        await stream.delete(stream_name)
         await stream.aclose()
 
 
@@ -1659,6 +1747,7 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
         "action_result": None,
     }
     run_id = f"safe-failure-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
     current_request = _request(run_id)
     namespace = runtime_namespace(current_request.execution_identity)
     stream_name = run_events_stream(run_id)
@@ -1815,10 +1904,7 @@ async def test_safe_model_failure_is_durable_and_replayed_over_http(
             assert "ModelResolutionError" not in representation
             assert "error_kind" not in representation
     finally:
-        try:
-            await stream.delete(stream_name)
-        finally:
-            await stream.aclose()
+        await stream.aclose()
 
 
 @pytest.mark.asyncio
@@ -1850,7 +1936,9 @@ async def test_terminal_chat_write_failure_rolls_back_run_and_outbox(
 
     monkeypatch.setattr(PostgresChatRepository, "append_on_cursor", fail_terminal_chat)
 
-    async def build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
     supervisor = RunSupervisor(
@@ -2118,6 +2206,7 @@ async def test_http4_resume_full_identity_and_conflict_receipt_preserve_waiting(
     from kokoro_agent.infrastructure.schema import RUN_CONTROL_COMMANDS_TABLE
 
     run_id = f"http4-resume-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
     launched = await http_client.post(
         "/v1/runs", headers=_headers(), json=_launch_body(run_id)
     )
@@ -2187,7 +2276,9 @@ async def test_http4_resume_full_identity_and_conflict_receipt_preserve_waiting(
             next(frame for frame in frames if frame.get("command_id") == "stale")
         )
 
-        async def build(_request: RunRequest, _lease: LeaseFence) -> AgentHandle:
+        async def build(
+            _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        ) -> AgentHandle:
             raise AssertionError("stale collection must not build")
 
         def source_for(_name: str) -> SubagentSource:
@@ -2270,3 +2361,176 @@ async def test_http4_resume_full_identity_and_conflict_receipt_preserve_waiting(
     )
     assert replay_after.status_code == 200
     assert _nested(_json_object(replay_after.json()), "data") == source_before
+
+
+@pytest.mark.asyncio
+async def test_todo_complete_replacement_replays_over_http_with_scoped_cursor(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+) -> None:
+    from datetime import UTC, datetime
+
+    from kokoro_agent.domain.chat.models import chat_event_id
+
+    run_id = f"http-todo-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
+    request = _request(run_id)
+    namespace = runtime_namespace(request.execution_identity)
+    settings = PostgresChatRepositorySettings(
+        database_url=acceptance_state.config.database_url,
+        schema_name=acceptance_state.config.database_schema,
+    )
+    expected_payloads = (
+        (
+            '{"todos":[{"content":"计划 🦊","status":"completed"},'
+            '{"content":"核对 é / é","status":"in_progress"},'
+            '{"content":"计划 🦊","status":"pending"}]}'
+        ).encode("utf-8"),
+        b'{"todos":[]}',
+    )
+    stream = RedisStream(acceptance_state.redis_url)
+    try:
+        async with (
+            make_run_repository(acceptance_state.config.run_repository) as runs,
+            make_chat_repository(settings) as chat,
+        ):
+            await runs.enqueue_dispatch(request, namespace, f"acceptance:{run_id}")
+            lease = await runs.claim_dispatch(request, "http-todo-worker")
+            assert lease is not None
+            emitter = await RunEmitter.attach(
+                stream,
+                run_id,
+                outbox=runs,
+                lease=lease,
+                tenant_id=request.execution_identity.tenant_ref,
+                namespace=namespace,
+                session_id=request.session_id,
+                chat_repository=chat,
+            )
+            for payload in expected_payloads:
+                await emitter.emit(TodoUpdatedPayload.model_validate_json(payload))
+            source_watermark = await runs.next_event_index(run_id)
+
+        # New repository/connection and production row decoder, not an HTTP mapper
+        # or a direct ChatDraft standing in for the real emitter/projection path.
+        fresh = PostgresChatRepository(settings.database_url, settings.schema_name)
+        records = await fresh.replay("tenant", namespace, request.session_id)
+        assert len(records) == 2
+        assert [record.seq for record in records] == [1, 2]
+        assert (
+            tuple(record.payload_json.encode("utf-8") for record in records)
+            == expected_payloads
+        )
+        watermark = await fresh.watermark("tenant", namespace, request.session_id)
+        assert watermark == records[-1].seq
+        live = await stream.read_all(run_events_stream(run_id))
+        assert len(live) == len(records)
+        expected_events: list[dict[str, JsonValue]] = []
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        for record, frame in zip(records, live, strict=True):
+            assert (
+                record.tenant_id,
+                record.namespace,
+                record.session_id,
+                record.run_id,
+            ) == ("tenant", namespace, request.session_id, run_id)
+            assert record.event_type == frame.event["kind"] == "todo.updated"
+            assert record.chat_message_id is None
+            assert record.source_index == frame.event["index"]
+            assert record.chat_event_id == chat_event_id(
+                namespace, run_id, record.source_index
+            )
+            assert record.created_at.microsecond % 1000 == 0
+            elapsed = record.created_at - epoch
+            created_at_ms = (
+                elapsed.days * 86_400_000
+                + elapsed.seconds * 1000
+                + elapsed.microseconds // 1000
+            )
+            assert created_at_ms == frame.event["timestamp"]
+            expected_events.append(
+                {
+                    "chat_event_id": record.chat_event_id,
+                    "session_id": record.session_id,
+                    "run_id": record.run_id,
+                    "source_index": record.source_index,
+                    "chat_message_id": None,
+                    "event_type": record.event_type,
+                    "payload_json": record.payload_json,
+                    "seq": record.seq,
+                    "created_at": created_at_ms,
+                }
+            )
+        assert len({record.chat_event_id for record in records}) == 2
+
+        async def page(after_seq: int, headers: dict[str, str]) -> dict[str, JsonValue]:
+            response = await http_client.get(
+                f"/v1/sessions/{request.session_id}/events",
+                params={"after_seq": after_seq, "limit": 1},
+                headers=headers,
+            )
+            assert response.status_code == 200
+            envelope = _json_object(response.json())
+            assert set(envelope) == {"data", "meta"}
+            assert envelope["meta"] == {"request_id": headers["x-request-id"]}
+            data = _nested(envelope, "data")
+            assert set(data) == {"events", "next_seq", "watermark"}
+            return data
+
+        cursor = 0
+        observed_events: list[dict[str, JsonValue]] = []
+        for expected in expected_events:
+            result = await page(cursor, _headers())
+            assert result == {
+                "events": [expected],
+                "next_seq": expected["seq"],
+                "watermark": watermark,
+            }
+            events = result["events"]
+            assert isinstance(events, list) and len(events) == 1
+            event = _json_object(events[0])
+            payload_json = event["payload_json"]
+            assert isinstance(payload_json, str)
+            assert (
+                payload_json.encode("utf-8") == expected_payloads[len(observed_events)]
+            )
+            observed_events.append(event)
+            next_seq = result["next_seq"]
+            assert isinstance(next_seq, int) and not isinstance(next_seq, bool)
+            assert next_seq > cursor
+            cursor = next_seq
+        assert observed_events == expected_events
+        assert await page(cursor, _headers()) == {
+            "events": [],
+            "next_seq": cursor,
+            "watermark": watermark,
+        }
+        assert await page(0, _headers()) == {
+            "events": expected_events[:1],
+            "next_seq": records[0].seq,
+            "watermark": watermark,
+        }
+        for headers in (
+            {**_headers(), "x-kokoro-tenant-ref": "another-tenant"},
+            _headers("another-subject"),
+        ):
+            assert await page(0, headers) == {
+                "events": [],
+                "next_seq": 0,
+                "watermark": 0,
+            }
+        assert await page(0, _headers()) == {
+            "events": expected_events[:1],
+            "next_seq": records[0].seq,
+            "watermark": watermark,
+        }
+        rereader = PostgresChatRepository(settings.database_url, settings.schema_name)
+        assert await rereader.replay("tenant", namespace, request.session_id) == records
+        assert (
+            await rereader.watermark("tenant", namespace, request.session_id)
+            == watermark
+        )
+        async with make_run_repository(acceptance_state.config.run_repository) as runs:
+            assert await runs.next_event_index(run_id) == source_watermark
+    finally:
+        await stream.aclose()

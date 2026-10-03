@@ -1,3 +1,131 @@
+## R122 数据当前态（2026-10-02）
+
+当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。
+
+Root E95实际1960纯节点全部通过/零skip、七静态门通过；E96当前源码新wheel/sdist与完整runtime安装、四布局64负向/219步骤通过；E97同包installed CLI真实PG首次安装/重复拒绝、canonical catalog与六漂移回滚通过；E98同包仓外安装态现HTTP acceptance实际36通过/0失败/0跳过（36 setup/call/teardown），151 loaded模块在collection/finish对应本次site-packages/RECORD。当前wheel SHA256 `4d0e7c8d1455fa395faaebc5e0de123f7131a31d02c413f04266ec67bad78fc3`；Root运行/manifest详见Root `docs/progress.md` E95–98。自有库精确回收/Redis测试区空/owned进程自然终态、371冻结路径保持；七固定测试工具按当前lock URL/hash单独供应，资源测试不出localhost。
+
+这些是限定源码/安装/资源门，不是完整Agent或用户链闭环：真实console启动/SIGTERM、S3/Docker/E2B/custom/provider、完整retention、全部数据owner同库组合，以及正式BFF/Web过程消费与浏览器仍未验；T-Q03/T-R02继续开放。此四文档前缀只修正当前态，不改源码、SQL、协议、生成物、依赖或锁；发布前Root须重建当前最终文档集合的wheel/sdist并核与已测包的全部entry/RECORD一致性，差异则重新验证。
+
+---
+
+## R118：assembly registry 与未转交 handle 不新增持久化事实（2026-10-02）
+
+**当前裁决：R119 GREEN 候选无 SQL/Schema/事务/Redis/checkpoint 变更，待 Root 最终复验。** Supervisor 的 assembly registry、late-handle cleanup、resume transferred 标志与 recovery probe finally 都是进程内生命周期状态。
+
+- assembly task、run task、resource cleanup task 由 Supervisor 强持有并在同一 `drain_timeout_s` 绝对 deadline 下动态等待；这些 task、close 计数和 client 状态不写入 Run、interaction、outbox、Chat 或公开事件。
+- resume replay/observed/非 Started 与 reader 异常/取消不改变既有 interaction 状态机；补 close 只收束未转交本地资源。成功 spawn 后仍由 run task 唯一关闭 handle，禁止第二 ownership 记录或双关。
+- recovery probe 继续读取既有 unknown attempt、local-drained token 与 reconcile probe 事实；probe handle 永不成为 durable sandbox identity，读/记账任一出口都必须本地关闭。
+- Docker 后半构造失败时，是否销毁 container 只按 `container_id != prior_sandbox_id` 判定。本次自建 S3 client 必须关闭；既有 sandbox id、cleanup intent、lease generation、backend kind 与 teardown ref 不被伪造、删除或提前完成。
+- shutdown timeout 保留未完成本地 task 的强引用并使 worker 非零；不通过取消 thread、清表、改 terminal 或写一条“已清理”记录伪造成功。
+
+因此 `database/schema.sql`、installer、表/列/索引/约束、canonical schema、SQL tests、wire、pins、provenance、generated 与 lock 全部保持未编辑。当前纯 GREEN 只验证进程内 owner/顺序，不能替代真实 S3、Docker、SIGTERM 与 durable sandbox recovery 门。
+
+---
+
+## R117：本地 client 与 durable sandbox cleanup 的数据边界（2026-10-02）
+
+**当前裁决：无持久化模型变更；生产实现尚未授权。** 基线 Agent `2653bcc723da5366fd877db73d701410e7bdc3a8`；依据 Root R117 生命周期实施卡、同轮 TECHNICAL_DESIGN/API 与 [Python 后端工程规范](../../../docs/kokoro-handbook/standards/09-python-backend-engineering.md)。
+
+- `S3Archiver` 自建 boto client 及其 `open/closing/closed`、in-flight operation 和 Supervisor cleanup task 都是单进程内资源状态，不写入 PostgreSQL、Redis、checkpoint、Run JSON 或公开事件。
+- 现 sandbox id、cleanup intent、lease generation、backend kind 与 teardown ref 继续是 Docker/E2B/custom 等 durable 外部 sandbox 恢复事实；它们不证明本地 boto client 已 close。本地 close 也不得完成、删除或伪造 durable cleanup intent。
+- Run terminal transaction、lease/fence、outbox、Chat、Delivery journal、tenant、幂等、UTC、purge 与 retention 语义全部保持。正常终态之后等待本地 close 是执行生命周期次序，不把数据库 terminal 回滚为 active，也不产生第二 terminal。
+- connector/Factory 在 backend 或 handle 尚未成功返回时拥有已创建资源；partial peer、native constructor failure、CAS loser 或取消必须在当前构建 ownership 下真实收束，不能把无登记 task 留给 shutdown 猜测。成功返回后 ownership 才转给 Supervisor cleanup registry。
+- shutdown 使用现 `drain_timeout_s` 同一 deadline 等待 run 与随后产生的 cleanup。timeout 返回 false 且 worker 非零；未完成 task 继续受强引用，不通过取消 thread、清表或 durable 状态改写伪造成功。
+
+因此 `database/schema.sql`、installer、事务、表/列/索引/约束、production role、canonical schema 与 SQL 测试全部冻结；wire、pins、provenance 与 generated 当前也预期不变。runtime descriptor 摘要由现 codec 对源码字节自然计算，新 wheel RECORD 由 build 派生；出现任何实际机械生成文件差异时须停下交 Root 另行授权，不手填。后继 GREEN 的 unit double 只证明进程内 owner/顺序；真实 S3 与 durable sandbox 恢复仍是分开的资源验收门，不能互相替代。
+
+---
+
+## R104：安装 DDL 资产与数据验收边界 D0（2026-10-02）
+
+**方案候选，待 Root 裁决与独立审查；本轮无DDL/代码/资源操作。** Agent基线 `17c73541ae5d9f123d85cf531a79503df5c463bd` 加冻结候选，Root `264de6b8`。安装checker真实RED与资源布局比较见同轮TECH/API；本节只界定安装资产与既有数据owner，不改变下方业务表、事务、lease、幂等、UTC或tenant模型。
+
+### 唯一canonical与安装副本
+
+- 唯一可编辑DDL仍是 `database/schema.sql`；无新表、列、索引、迁移链、数据库role或通用配置。pyproject现将其分发到 `share/kokoro-agent/schema.sql`；Root只读报告已确认当前wheel的这一资产与canonical字节相同，但尚未证明安装后fresh apply与catalog门。
+- 建议方案B保持此单份安装DDL位置，不再向audit树复制一份DDL。contract audit树不是数据库schema容器，contract/provenance仍不承担DDL owner。wheel/sdist仅派生同一canonical文件；不手改share、副本不反向写回仓库。
+- 当前 `canonical_schema_path()` 依次试源码相对路径与sys.prefix/share，不能据此宣称任意`--target`可定位。后继调整此函数使用同一 `distribution_assets.py` 的确定布局绑定，返回当前distribution记录的准确DDL；source模式来自明确源码归属，installed模式缺失即失败，不从checkout回退。SQL正文、原installer事务及verify语义不变；operator与installer的资源预检顺序另按下一项收口。
+- 新helper只处理本发行资产的路径/身份，不导入数据库连接、worker或业务repo；schema → helper 的依赖不把contract/Platform checker带进数据库启动路径。R105审查确认当前 `src/kokoro_agent/application/schema.py` 在预检前连接，`src/kokoro_agent/infrastructure/schema.py` 在读DDL前调用 `ensure_schema`，原笼统承诺尚未实现。后继须同时纳入这两个现文件：`apply_database_schema` 先经同一canonical loader纯定位、读取并校验文件清单/来源/bytes，再调用 `connect_pg`；现 `apply_agent_schema` 自身在 `ensure_schema` 前取得已验SQL，保存为本次执行值，后续事务内不重读文件。不新installer/API。入口初始缺失/漂移为零连接、零schema创建；直接installer的连接由调用者提供，其预检失败只承诺零ensure_schema/DDL，不能据此推断零已有连接。
+
+### 生命周期与失败恢复
+
+| 边界 | 保持的规则 / 后继证明 |
+|---|---|
+| 安装文件生命周期 | 归属当前wheel及其安装/卸载；检查只读，不在启动时生成、下载、缓存修复SQL。缺资源、跨安装定位、非预期路径或digest不一致在资源preflight失败。 |
+| 持久事实owner | Run/Chat等仍只写Agent schema；无跨owner SQL/JOIN、无共享ORM、无新production角色。Redis仍只是live/协调，不成为安装或durable数据权威。 |
+| Fresh apply | 已安装CLI沿现apply_agent_schema(require_blank=True)安装Root明确分配的临时库/唯一schema；重复安装拒绝、catalog drift拒绝，不自动drop/重置他人数据。 |
+| 事务/故障 | 预检提前不改变现ensure_schema与transaction的边界；事务内require_blank、SET LOCAL与DDL执行顺序保持，只执行此前捕获的已验SQL，catalog校验不变。失败保实际日志/退出码，Root外层精确回收自有fixture。源树成功不替代安装路径实际连接与验证。 |
+| HTTP测试资源 | 仍用R102独占声明/Redis空与requests不存在预检、事前登记exact keys、handler drain及线程终止后清理；unknown残留失败保留，不SCAN认领、不FLUSH。 |
+
+### 安装后 DDL 与 HTTP 门（本轮均未运行）
+
+1. Root先绑定新wheel SHA、实际已安装module/DDL来源与canonical输入digest；在仓外cwd、Python `-I`、无editable/PYTHONPATH源码回退环境验证正常venv与`--target`布局。仅测试harness可提供输入，不能手动复制checkout SQL到安装目录补洞。
+2. 先在现 `tests/unit/test_cli.py`（已定位的 `test_db_apply_schema_uses_the_configured_empty_namespace` 目前只测CLI委派，后继扩现文件测试真实application入口）与 `tests/contract/test_canonical_database_schema.py` 固化缺失/漂移负例：operator入口connect调用0、schema创建0；直接installer ensure_schema及DDL调用0。合法输入control保原事务顺序；若入口预检后资产再变化，installer二次预检也须在ensure_schema前失败，此时不声称connect调用0。无设施资源门通过后，Root以显式 `KOKORO_AGENT_DATABASE_URL`、schema和独占资源启动已装 `kokoro-agent-db-apply-schema`（或同一安装的 `kokoro-agent db:apply-schema`）；记录fresh成功、require_blank重复拒绝、目录/列/类型/默认值/约束/索引catalog验证，以及库/schema准确清理证据。相邻规范断言仍在现 `tests/contract/test_canonical_database_schema.py`，不修改canonical SQL迎合测试。
+3. 同一wheel的HTTP server/RunEmitter沿正式enqueue/claim→有序Unicode Todo→[]→fresh PG→session HTTP limit1/replay。对照PG原identity/seq/payload UTF-8 bytes/created_at毫秒与next_seq/watermark，跨tenant/subject只返回空集合，原scope与水位不变。已装模块来源检查必须先于PG/Redis/HTTP写入；原源码HTTP36不挪称本门通过。
+4. worker不自行build/install/启动服务；Root先授权精确安装harness文件及资源，再运行。平台/锁/依赖版本不顺手升级，安装失败不fallback源码；记录原r104b RED及新产物不同SHA，不覆盖旧证据。
+
+### retention 的已证范围与未完成边界
+
+Root PG65与HTTP36已包含：terminal cleanup intent未完成阻止purge、完成后允许；interaction terminal吸收、purge后late command不复活、两种锁序无孤儿；Delivery ACK GC在active保mapping、terminal后按watermark回收。保留这些证据，不重写为“retention全未测”。
+但现 `postgres_run_context.purge_terminal` 无LIMIT/bounded batch，也未校验新增scope/head/baseline/native checkpoint可达引用；Chat无统一retention入口。Run purge、outbox GC、Chat/native完整引用生命周期不是同一结论。完整bounded/reference-aware retention、active引用保留、age边界与跨Chat/native删除规则仍需后继已批准政策/独立真实门；未决保留天数不编造，不借安装修复增加DELETE或清用户数据。修复安装资源可独立推进，完整Agent发布/正式数据处置与BFF-Web整链仍不得宣称完成。
+
+---
+
+## R90-W03：安全过程 durable Chat 数据 D0 闭集（2026-10-02）
+
+Agent main基线17c73541ae5d9f123d85cf531a79503df5c463bd；替换未提交R87前缀，原HEAD全文保留。当前HTTP4、唯一canonical database/schema.sql、SQL/installer/source/生成物均不改；HTTP5是后继目标，不新表/列/数据库/FK/进程/依赖。
+Owner：Agent唯一写执行/安全Chat；BFF唯一写durable AG-UI与同水位compact snapshot；Web不写持久业务事实。跨owner只用发布契约，不跨库查询。
+
+### 已核事实与既有位置
+
+| 现事实 | 当前约束 / 目标承接 |
+|---|---|
+| kokoro_agent_chat_event | PK=(tenant_id,namespace,run_id,source_index)；tenant+chat_event_id及tenant/namespace/session/seq唯一；event_type/payload_json为TEXT，无event_type闭集SQL CHECK。现表容纳safe activity/Todo，不因枚举新增DDL。 |
+| Chat seq/ID | 原session计数器/namespace-run-source_index ID不改；同identity比较全部immutable字段，含时间/payload。公开activity/preflight digest仅归组，不替代授权/PK/seq。 |
+| 非critical发射 | RunEmitter先reserve index再append_fenced再live；Run active锁重验原owner/generation/expiry/非terminal；reserve与Chat append分离，可留下index间隙，不能声称原子提交。 |
+| run_outbox | stage_critical_frame已有Run锁及queued/published/superseded事实；run.started尚无按kind幂等查询，invoke仍以index==0判定。目标在同方法/锁内补查询，沿既有签名与StagedFrame。 |
+| Chat message/terminal | Todo/activities仅Chat event，不假造assistant Message；原完整HITL、成功Delivery、唯一terminal writer与事务权限不变。 |
+
+采用扩现infrastructure/postgres_run_events.py和原RunEmitter，不创建progress/todo表或Factory直写/Redis真源；domain/run/repositories.py与postgres_run_repository.py现port/转发无需为查询新增方法。postgres_chat_repository.py的append_fenced/immutable检查维持；postgres_run_context.py是purge事实基线。
+现schema结构容纳目标不等于运行正确性已验；后继若发现确需新DDL/索引，先Root另准三面与精确路径，本D0不授权新建兼容表。
+
+### started唯一锁内判定
+
+1. 只对kind='run.started'：进入既有stage_critical_frame事务，先lock_active_lease持有该Run锁并验证原lease；失败返None，零查回冒充成功/零分配。terminal仍只能走原finalize_terminal。
+2. 同锁内、分配durable_counter/event_index_counter之前，参数化查询原RUN_OUTBOX_TABLE：WHERE run_id=%s AND kind='run.started' AND status IN ('queued','published') ORDER BY durable_seq ASC LIMIT 2；精确同Run有界查询，不锁外先SELECT再emit，也不拉全部outbox到内存过滤。
+3. 0行才走现计数分配/insert；1行校验index_value非null与固定run.started payload一致，返回原event_id、durable_seq、index_value、occurred_at→timestamp、published=(status='published')，newly_staged=false。已有StagedFrame不含payload字段，持久行payload/时间保持原值，调用方不可重写；2行视为不变量破坏，失败封闭，不任取一个掩盖重复。
+4. queued重拾沿现outbox补Chat/发布，published不新分配或重发；重复调用输入的新timestamp/event_id不替换已持久值。same source投影必须用返回的原index/timestamp；原payload一致才复用。durable_seq不要求=1，preflight已占index也不影响started资格。
+5. build成功后的initial invoke调用此入口，包括initial crash重拾；resume模式不分配新started，恢复probe不自行invoke；模式来自supervisor现resume上下文，不以next_index==0/内存bool/随机ID推断。build失败零started。
+6. 并发由现Run行锁串行化，非新锁/新表；真实两连接竞争、提交ACK丢失、reclaim/new generation重拾和terminal后拒写由Root PG门证明，内存fake/unit不冒称此证明。
+
+### progress轮次与故障窗口
+
+1. ordinary progress走同原lease RunEmitter按Run串行：首resolving reserve source_index→按API的C/H派生spf_ID→append_fenced确认→才允许Skill resolve；所有Platform/Storage I/O在DB事务外，禁止持Run锁等待网络。
+2. 后续phase复用首durable resolving anchor，工具/subagent用原真实调用/segment身份；API已锁完整身份元组、域分隔SHA256、64小写hex及68字符前缀ID。identity不来自模型文本，source_refs只来自canonical request。
+3. reserve后append前crash：没有durable阶段，不做Skill I/O、不补伪ready；恢复重新授权/包读必须新resolving anchor。append ACK不确定也不继续I/O；重读原提交事件是replay，重新真实调用是新轮次，不能reuse旧ready。
+4. 同已提交Chat事实replay保source_index/created_at/payload；漂移冲突不覆盖。单纯再emit取得新index不称旧事实重放。append成功/live失败只由durable replay补展示，不重做provider/tool、不补第二terminal。
+5. 回调需显式durable确认；现静默None不算确认。持久化/fence错误独立传播，停止后续I/O，不落入Skill业务异常/assembly_failed/invoke终态转换；initial/control/recovery全部catch同步覆盖。Skill网络失败才用API闭集failed code。
+6. 旧generation迟回调零新增progress，不借新lease；terminal后普通进度零写。HITL/Delivery原具名恢复权限不扩大/删除；private诊断继续保留在私有边界。
+7. Todo以最新已提交主Run完整表替换，不混tenant/Run/子agent；0..100项、content 1..1024码点及整个{"todos":[...]}的C编码≤65536 bytes，孤立surrogate/缺todos/超界整表拒绝。API唯一编码口径在持久化前执行，不二次转义算budget、不截断。
+
+### retention与clean-slate发布门
+
+现Run purge清理Run/outbox/receipt/tool等但不清Chat event/message；现outbox直到Run purge才删除，Run生命周期内started查回沿此事实，不能据此宣称Chat GC已完成。Redis TTL不等于durable Chat retention。
+Agent5仅在明确fresh批准测试边界或正式已批准数据处置cutover启用；本轮不迁移/删除既有用户数据，不双读旧raw、不把旧raw payload重标safe。保留缺口是正式发布/整链门，不阻挡不接资源的纯RED。
+Chat/BFF后继保留策略须对齐durable消费checkpoint、快照与cursor窗口；active/waiting/恢复所需事实及未被下游持久承接事实不得提前删。具体天数未获批准，不编造；现Run purge后Chat残留作为已知风险保留。
+BFF本仓一致快照中的Todo/compact activities/消息/HITL/作品来自同event_watermark；快照之后只replay更晚事件，过期/历史缺失显式重取受信snapshot，不推断空表/成功。Agent不写BFF快照，后继BFF owner裁其保留实现。
+仅安全白名单字段进新Chat过程payload；raw name/args/result/error/路径/stack及private thinking/output不公开。HITL/成功Delivery原授权事实不受普通activity禁字段规则误删；不宣称任意自然语言通用脱敏。
+
+### 后继验证与范围
+
+Root精确PG路径：tests/integration/database/test_run_outbox_filter.py、test_run_interaction_transactions.py、test_delivery_outbox.py；覆盖两连接started、丢ACK/reclaim、fence、回滚/重复漂移、tenant/session排序/终态拒写。新增Chat PG测试另准路径；不reset他人数据、不自行起服务。
+先现tests/unit/chat/test_projection.py、test_emitter.py及factory/invoke/supervisor行为RED；tests/support/fakes.py模拟新started语义但不代替PG。tests/contract/test_canonical_database_schema.py保持canonical无漂移；tenant/time与machine/HTTP门及准确caller/生成路径见TECH。
+后继命令uv run pytest tests/unit/chat tests/contract、uv run kokoro-agent-contract-check及Ruff/Pyright/build；PG/HTTP组合仅Root隔离资源。当前没有DDL，不执行schema安装、不声称fresh install或恢复已通过。
+R80 attempt/evidence/usage outbox仍是独立后继数据目标；不复用本片identity/计数当付款事实、不以Todo/tool/Skill事件计费。同Agent writer先冻结本过程，再续usage/v1，usage SQL另审，不占HTTP5或阻塞本片。
+Root闭集已落定，剩余为代码/机器/真实PG证明、正式历史数据处置、Chat-BFF retention与消费者发布；本轮只文档保护检查，不把D0或旧绿色作为本轮业务验证。
+
+---
+
 ## R80-W03：逐模型 attempt 事实、usage证据与结算恢复 D0（2026-10-02）
 
 跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。

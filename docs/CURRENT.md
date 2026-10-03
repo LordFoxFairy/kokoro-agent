@@ -1,3 +1,43 @@
+## R122 实现与验收当前态（2026-10-02）
+
+当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。
+
+Root E95实际1960纯节点全部通过/零skip、七静态门通过；E96当前源码新wheel/sdist与完整runtime安装、四布局64负向/219步骤通过；E97同包installed CLI真实PG首次安装/重复拒绝、canonical catalog与六漂移回滚通过；E98同包仓外安装态现HTTP acceptance实际36通过/0失败/0跳过（36 setup/call/teardown），151 loaded模块在collection/finish对应本次site-packages/RECORD。当前wheel SHA256 `4d0e7c8d1455fa395faaebc5e0de123f7131a31d02c413f04266ec67bad78fc3`；Root运行/manifest详见Root `docs/progress.md` E95–98。自有库精确回收/Redis测试区空/owned进程自然终态、371冻结路径保持；七固定测试工具按当前lock URL/hash单独供应，资源测试不出localhost。
+
+这些是限定源码/安装/资源门，不是完整Agent或用户链闭环：真实console启动/SIGTERM、S3/Docker/E2B/custom/provider、完整retention、全部数据owner同库组合，以及正式BFF/Web过程消费与浏览器仍未验；T-Q03/T-R02继续开放。此四文档前缀只修正当前态，不改源码、SQL、协议、生成物、依赖或锁；发布前Root须重建当前最终文档集合的wheel/sdist并核与已测包的全部entry/RECORD一致性，差异则重新验证。
+
+---
+
+## R104：安装发布门真实 RED 与四文档候选（2026-10-02，当前）
+
+Agent main `17c73541ae5d9f123d85cf531a79503df5c463bd` 加已冻结源/机器/测试，Root基线 `264de6b8`。本轮仅TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT增加本节；旧正文原字节保留，不改已冻结HTTP5/Todo/SQL语义，不是实现或发布完成。
+
+- Root安装当前wheel SHA256 `230b41bc0038927f5ad5abf588c6ffa6f5fd22dbe7c78472fd810749e4692c25`：安装exit0；仓外cwd、Python -I、已安装distribution entrypoint及网络守卫下，checker exit1 / missing-installed-openapi、network_attempts0、临时target已删除。真实证据 `/tmp/kokoro-r104b-installed-checker-red.json/.log`；只读补充 `/tmp/kokoro-r104-agent-publish-gap.md`。本窗口未复跑。
+- 推荐扩现setuptools data-files为只读contract/scripts/src审计树，以当前distribution元数据确定定位；审计Python副本必须匹配实际安装模块。与包内资源＋逻辑reader方案的比较、完整清单、无fallback与venv/target门已写三设计面，**待Root裁决/独立审，不授源码写权**。
+- canonical OpenAPI/proof/SQL仍单一owner编辑；wheel资产仅派生只读。后继source inventory/digest变化须现generator机械生成并另授路径，不删checker、不放宽raw向量/生成/Platform/provenance门。distribution 2.0.0 / HTTP 5.0.0 / proof 1.0.0身份不混用。
+- Root已报现HTTP acceptance `2884a4fb7d4ab04e7e4849105fd78a64327b6e7d0366df27333ff8383fd8e0f4` 真实36通过、typed代码独立审0；PG65和此前源树门保留其限定范围。原HTTP RED rawlog被覆盖的审计缺口仍保留，不用新报告伪补原日志；上述成功均不代替installed门。
+- R105窄修正：独立审查指出DDL预检承诺与当前先连接/先ensure_schema实现不符，后继GREEN范围补入 `src/kokoro_agent/application/schema.py`，入口纯定位/读取/校验后才connect；现 `src/kokoro_agent/infrastructure/schema.py` 在ensure_schema前取得已验SQL并沿原事务执行，不新installer/API。后继扩现 `tests/unit/test_cli.py` 与 `tests/contract/test_canonical_database_schema.py` 证明初始缺失/漂移零connect/零schema创建及直接installer零ensure_schema/DDL，区分调用者既有连接。此次只纠正文档，未修实现，仍待Root独立复审后tests-only。
+- 待验：最小安装回归/篡改负例、准确wheel/离线依赖隔离安装、installed CLI/完整checker、DDL fresh/重复拒绝/catalog、installed HTTP Todo组合与资源清理。tests-only→Root复现/审查→源码窄授权→新wheel各门；本轮不build/sync/install/import archive/运行测试或共享资源，不操作Git。
+- retention已有terminal/interaction/Delivery GC部分实证，但bounded/native/Chat引用及正式保留政策仍未闭环；BFF/Web固定消费与完整用户链也未完成。Root统一审查、资源、集成/发布与台账；四docs冻结后本窗口停写。
+- 本轮完整前后hash、原正文后缀保护及实际文档检查见 `/tmp/kokoro-r104-agent-installed-d0.json`（0600）；该manifest是文档交接，不是业务门通过。R105修正的前后hash与保护检查另见 `/tmp/kokoro-r105-agent-installed-d0-correction.json`（0600）。
+
+---
+
+## R90-W03：安全过程四文档 D0 闭集冻结（2026-10-02）
+
+Agent main基线17c73541ae5d9f123d85cf531a79503df5c463bd；Root现R90/T-A01–06（任务卡已记030c6b89）。仅替换四份未提交R87前缀；TECH/API/DATA≤80行、CURRENT≤20行，原HEAD全文与370外围文件保护。
+Root闭集已落：tool.execution/subagent.execution唯一display码、零truncated；Skill failed必须二选一error_code/其他phase禁止；Todo0..100项、1..1024 Unicode码点、完整payload确定UTF-8 JSON≤65536 bytes，孤立surrogate/缺失/超界整表拒绝。
+API精确冻结C序列化与域分隔SHA256完整64小写hex/68字符ID；输入仅受信Run四元组及真实调用/segment身份。首durable resolving source_index作anchor；确认前零Skill I/O，真实重验新轮，不复用旧ready。
+started在stage_critical_frame原Run锁内查询queued/published并返原StagedFrame/newly_staged=false，否则才分配；build成功initial invoke调用，resume不新增，删index==0资格。所有build/catch/caller/fake/现generator与两contract checker路径已列TECH。
+ordinary progress同原lease emitter、先durable后live；持久化/失权不伪装Skill/assembly失败或第二terminal。私有诊断、完整HITL、成功Delivery、proof语义保留，Chat原identity/seq不改。
+当前HTTP4/source/test/SQL/生成字节仍锁；目标Agent5未实现/发布。后继Root快审→tests-only真RED→实现/机器/生成/PG门→Agent5发布→BFF在direct/public6后固定消费/同水位snapshot→Web正规pin→Root整链。
+Agent5仅fresh批准测试或正式批准数据处置cutover；不自动清用户数据/双读旧raw。Run purge未清Chat/Chat-BFF retention缺口保留为发布与整链门，不阻挡纯RED、不发明保留天数。
+R80/R81 usage/v1独立后继、同writer串行，不占HTTP5、不把Billing/付款展示作为前置；不以过程事件充当计费证据。
+剩余是实施/验证/发布门，不再将code/presence/容量/身份/started列待裁。本轮只源码定位与文档/字节保护；pytest/Ruff/Pyright/build/生成/HTTP/PG/浏览器/provider均0。
+Root独占Git/index/提交/共享资源/台账；本窗口不向其他线程发消息。四SHA、原正文备份、外围保护与验证manifest交Root；冻结后停写，等待快审及精确tests-only卡。
+
+---
+
 ## R80-W03：逐 actual call/attempt 严格 usage 设计交付（2026-10-02）
 
 跨仓依据：[ADR-033：逐实际调用用量与 Billing 单一定价 owner](../../../docs/kokoro-handbook/decisions/ADR-033-actual-usage-and-pricing-ownership.md)。按 Root 已接受 owner 裁决同步；ADR独立审查不作为本仓实现验收。

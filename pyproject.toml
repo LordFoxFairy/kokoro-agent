@@ -63,6 +63,62 @@ kokoro_agent = ["prompts/*.md"]
 [tool.setuptools.data-files]
 "share/kokoro-agent" = ["database/schema.sql"]
 
+# Read-only audit inputs derived from the canonical source tree at build time.
+"share/kokoro-agent/audit/contract" = [
+  "contract/provenance.json",
+]
+"share/kokoro-agent/audit/contract/execution-proof/v1" = [
+  "contract/execution-proof/v1/schema.json",
+  "contract/execution-proof/v1/vectors.json",
+]
+"share/kokoro-agent/audit/contract/openapi/v1" = [
+  "contract/openapi/v1/openapi.json",
+]
+"share/kokoro-agent/audit/contract/platform/v1" = [
+  "contract/platform/v1/provenance.json",
+]
+"share/kokoro-agent/audit/contract/platform/v1/execution-operations/v4" = [
+  "contract/platform/v1/execution-operations/v4/command-identities.json",
+  "contract/platform/v1/execution-operations/v4/command-schemas.json",
+  "contract/platform/v1/execution-operations/v4/identities.json",
+  "contract/platform/v1/execution-operations/v4/manifest.json",
+  "contract/platform/v1/execution-operations/v4/operation-catalog.json",
+  "contract/platform/v1/execution-operations/v4/projection-registry.json",
+  "contract/platform/v1/execution-operations/v4/provenance.json",
+  "contract/platform/v1/execution-operations/v4/publish-v1.json",
+  "contract/platform/v1/execution-operations/v4/request-bindings.json",
+  "contract/platform/v1/execution-operations/v4/zip-profile-v1.json",
+]
+"share/kokoro-agent/audit/contract/platform/v1/execution-operations/v4/schemas" = [
+  "contract/platform/v1/execution-operations/v4/schemas/command-identities.schema.json",
+  "contract/platform/v1/execution-operations/v4/schemas/identities.schema.json",
+  "contract/platform/v1/execution-operations/v4/schemas/manifest.schema.json",
+  "contract/platform/v1/execution-operations/v4/schemas/operation-catalog.schema.json",
+  "contract/platform/v1/execution-operations/v4/schemas/request-bindings.schema.json",
+  "contract/platform/v1/execution-operations/v4/schemas/vector-inventory.schema.json",
+  "contract/platform/v1/execution-operations/v4/schemas/zip-profile-v1.schema.json",
+]
+"share/kokoro-agent/audit/contract/platform/v1/execution-operations/v4/vectors" = [
+  "contract/platform/v1/execution-operations/v4/vectors/command-projection.json",
+  "contract/platform/v1/execution-operations/v4/vectors/negative.json",
+  "contract/platform/v1/execution-operations/v4/vectors/positive.json",
+  "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json",
+]
+"share/kokoro-agent/audit/scripts" = [
+  "scripts/generate_failure_models.py",
+]
+"share/kokoro-agent/audit/src/kokoro_agent" = [
+  "src/kokoro_agent/chat_contract_check.py",
+  "src/kokoro_agent/contract_check.py",
+  "src/kokoro_agent/distribution_assets.py",
+]
+"share/kokoro-agent/audit/src/kokoro_agent/protocol" = [
+  "src/kokoro_agent/protocol/control.py",
+  "src/kokoro_agent/protocol/events.py",
+  "src/kokoro_agent/protocol/run_failure_generated.py",
+  "src/kokoro_agent/protocol/streams.py",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"

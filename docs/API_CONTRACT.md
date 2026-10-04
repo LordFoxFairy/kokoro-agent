@@ -4,11 +4,11 @@
 
 唯一机器事实仍是`contract/usage/v1` 1.0.0。Agent只冻结其authorization observation中的opaque request/admission refs、canonical bytes及其SHA-256摘要，不复制Billing request/amount/quote/settlement DTO。`newly_started=true`仅授权当前caller执行一次后继provider外发；false表示不得再次外发，不证明先前外发成功或失败。Billing experimental machine contract尚无Agent runtime consumer/read path/ACK接线，本片不得臆造第二协议。
 
-待实现边界：runtime/provider、strict evidence append/finalizer、cancel/failed实际usage封存、Billing evidence读取和ACK、actual-only结算及unknown reconciliation。失败或取消只结算已核实实际消耗、释放其余预占属于Billing owner；Agent unknown必须持久保留，不能补零。本节不改变现OpenAPI、RunRequest、AG-UI或机器artifact bytes；纯artifact职责搬移已按限定内部片验证，且无机器契约版本变化。
+待实现边界：runtime/provider、finalizer、cancel/failed终态封存、Billing evidence读取和ACK、actual-only结算及unknown reconciliation。失败或取消只结算已核实实际消耗、释放其余预占属于Billing owner；Agent unknown必须持久保留，不能补零。本节不改变现OpenAPI、RunRequest、AG-UI或机器artifact bytes；纯artifact职责搬移已按限定内部片验证，且无机器契约版本变化。
 
-### R192-A3a批准目标：内部append，无wire变化（尚未实现）
+### R193-A3a当前态：内部append已实现，无wire变化
 
-当前main仍仅A2。A3a计划增加的append command/receipt与cursor primitive全部是Agent包内接口，不是HTTP/RPC/event/Billing API，不复制usage/v1机器字段，也不升级任何contract version。调用方必须提交完整owner usage/v1 canonical artifact；repository严格验证后只返回内部持久receipt。
+A3a的append command/receipt与cursor primitive现已实现且仍全部是Agent包内接口，不是HTTP/RPC/event/Billing API，不复制usage/v1机器字段，也未升级任何contract version。调用方提交完整owner usage/v1 canonical artifact；repository严格验证后只返回内部持久receipt。Root真实PostgreSQL定点81项与完整database 292项通过；完整工程门自然exit 0（2178 passed、390资源deselected，lock/frozen-sync/Ruff 280 files/Pyright/contract/wheel/sdist build均0）。
 
 普通worker只在Run active且lease fence有效时追加首revision或contiguous monotonic successor；active `unknown/granted`允许合法unknown→known/verified usage增补。Run terminal后新revision一律拒绝，exact readback只恢复已提交同event/revision/bytes/digest，绝不授予provider重发或terminal写权限。Billing evidence读取/ACK及收费仍没有本片契约。
 

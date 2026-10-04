@@ -21,13 +21,19 @@ from kokoro_agent.infrastructure.schema import (
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
 from kokoro_agent.infrastructure.postgres_run_profiles import validate_static_recipe
+from kokoro_agent.infrastructure.postgres_model_call_evidence import (
+    append_evidence_locked,
+    recompute_run_completeness,
+)
 from kokoro_agent.model.call_models import (
+    AppendModelCallEvidence,
     AuthorizationPendingReceipt,
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
     ModelCallAuthorityLost,
     ModelCallAuthorizationReceipt,
     ModelCallDispatchPermit,
+    ModelCallEvidenceReceipt,
     ModelCallIdentityConflict,
     ModelCallInputInvalid,
     ModelCallOrdinalExhausted,
@@ -45,6 +51,7 @@ from kokoro_agent.model.call_artifacts import (
     recipe_feature_for_peer_path,
     strict_granted_artifact,
 )
+from kokoro_agent.model.call_evidence import validate_append_evidence
 from kokoro_agent.protocol import RunRequest
 
 _MAX_INT64 = 9_223_372_036_854_775_807
@@ -240,7 +247,7 @@ class PostgresModelCallRepository:
                         if persisted is None:
                             raise RuntimeError("model-call dispatch returned no row")
                         dispatch_started_at = _instant(persisted["dispatch_started_at"])
-                        await _recompute_run(
+                        await recompute_run_completeness(
                             cursor,
                             qualified(self._schema, RUN_CLAIMS_TABLE),
                             qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE),
@@ -266,6 +273,90 @@ class PostgresModelCallRepository:
             dispatch_started_at_ms=millis,
             newly_started=newly_started,
         )
+
+    async def append_evidence(
+        self, command: AppendModelCallEvidence
+    ) -> ModelCallEvidenceReceipt:
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction(), connection.cursor() as cursor:
+                    attempt, database_now, terminal = await self._lock_evidence_attempt(
+                        cursor, command
+                    )
+                    artifact = validate_append_evidence(
+                        command.evidence_bytes,
+                        attempt_binding_bytes=_bytes(attempt["attempt_binding_bytes"]),
+                        planned_bytes=_bytes(attempt["planned_bytes"]),
+                        authorization_bytes=_bytes(attempt["authorization_bytes"]),
+                        prepared_at=_instant(attempt["prepared_at"]),
+                        dispatch_started_at=(
+                            None
+                            if attempt["dispatch_started_at"] is None
+                            else _instant(attempt["dispatch_started_at"])
+                        ),
+                        database_now=database_now,
+                    )
+                    return await append_evidence_locked(
+                        cursor,
+                        run_table=qualified(self._schema, RUN_CLAIMS_TABLE),
+                        attempt_table=qualified(
+                            self._schema, MODEL_CALL_ATTEMPTS_TABLE
+                        ),
+                        evidence_table=qualified(
+                            self._schema, MODEL_USAGE_EVIDENCE_TABLE
+                        ),
+                        command=command,
+                        attempt=attempt,
+                        artifact=artifact,
+                        allow_new_revision=not terminal,
+                    )
+
+    async def _lock_evidence_attempt(
+        self, cursor: object, command: AppendModelCallEvidence
+    ) -> tuple[Mapping[str, object], datetime, bool]:
+        await execute_sql(cursor, f"SET LOCAL lock_timeout='{self._lock_timeout_ms}ms'")
+        await execute_sql(
+            cursor, f"SET LOCAL statement_timeout='{self._statement_timeout_ms}ms'"
+        )
+        await execute_sql(
+            cursor,
+            f"""SELECT owner,lease_generation,lease_expires_at,terminal
+                FROM {qualified(self._schema, RUN_CLAIMS_TABLE)}
+                WHERE tenant_id=%s AND run_id=%s FOR UPDATE""",
+            (command.tenant_id, command.run_id),
+        )
+        run = await fetch_one(cursor)
+        await execute_sql(cursor, "SELECT clock_timestamp() AS db_now")
+        clock_row = await fetch_one(cursor)
+        if run is None or clock_row is None:
+            raise ModelCallAuthorityLost("model-call evidence Run authority lost")
+        database_now = _instant(clock_row["db_now"])
+        terminal = bool(run["terminal"])
+        if not terminal and (
+            run["owner"] != command.lease.owner
+            or run["lease_generation"] != command.lease.generation
+            or run["lease_expires_at"] is None
+            or run["lease_expires_at"] <= database_now
+        ):
+            raise ModelCallAuthorityLost("model-call evidence lease authority lost")
+        await execute_sql(
+            cursor,
+            f"""SELECT * FROM {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)}
+                WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s FOR UPDATE""",
+            (command.tenant_id, command.run_id, command.attempt_id),
+        )
+        attempt = await fetch_one(cursor)
+        if attempt is None:
+            raise ModelCallAuthorityLost("model-call evidence attempt authority lost")
+        if (
+            attempt["lease_owner"] != command.lease.owner
+            or attempt["lease_generation"] != command.lease.generation
+            or attempt["attempt_binding_digest"] != command.attempt_binding_digest
+            or attempt["planned_digest"] != command.planned_digest
+            or attempt["authorization_digest"] != command.authorization_digest
+        ):
+            raise ModelCallIdentityConflict("model-call evidence identity conflicts")
+        return attempt, database_now, terminal
 
     async def _lock_attempt(
         self,
@@ -478,7 +569,7 @@ class PostgresModelCallRepository:
         if persisted is None:
             raise RuntimeError("model-call prepare insert returned no row")
         prepared_at = _instant(persisted["prepared_at"])
-        await _recompute_run(
+        await recompute_run_completeness(
             cursor,
             run_table,
             attempt_table,
@@ -565,62 +656,6 @@ def _require_authorization(
         or row["authorization_digest"] != expected_digest
     ):
         raise ModelCallIdentityConflict("model-call authorization identity conflicts")
-
-
-async def _recompute_run(
-    cursor: object,
-    run_table: str,
-    attempt_table: str,
-    evidence_table: str,
-    run_id: str,
-) -> None:
-    await execute_sql(
-        cursor,
-        f"""SELECT count(*) AS attempts,
-          count(*) FILTER (WHERE a.dispatch_started_at IS NOT NULL) AS dispatched,
-          count(*) FILTER (WHERE a.sealed_at IS NOT NULL) AS sealed,
-          count(*) FILTER (WHERE a.sealed_at IS NOT NULL AND (
-            e.event_id IS NULL OR e.tenant_id<>a.tenant_id OR e.run_id<>a.run_id OR
-            e.call_id<>a.call_id OR (e.execution_outcome<>'not_dispatched' AND
-              (e.execution_outcome='unknown' OR e.usage_state='unresolved' OR
-               e.classification_state='unknown')))) AS unknown_count,
-          count(*) FILTER (WHERE e.execution_outcome<>'not_dispatched' AND
-            e.classification_state='partial') AS partial_count
-        FROM {attempt_table} a LEFT JOIN {evidence_table} e
-          ON e.attempt_id=a.attempt_id AND e.revision=a.latest_revision
-        WHERE a.run_id=%s""",
-        (run_id,),
-    )
-    counts = await fetch_one(cursor)
-    if counts is None:
-        raise RuntimeError("model-call completeness query returned no row")
-    attempts, dispatched, sealed, unknown, partial = (
-        int(counts[name])
-        for name in (
-            "attempts",
-            "dispatched",
-            "sealed",
-            "unknown_count",
-            "partial_count",
-        )
-    )
-    completeness = (
-        "none"
-        if attempts == 0
-        else "unknown"
-        if sealed < attempts or unknown > 0
-        else "partial"
-        if partial > 0
-        else "complete"
-    )
-    await execute_sql(
-        cursor,
-        f"""UPDATE {run_table} SET model_attempt_count=%s,
-          model_dispatched_attempt_count=%s,model_sealed_attempt_count=%s,
-          model_unknown_attempt_count=%s,model_usage_completeness=%s,
-          updated_at=clock_timestamp() WHERE run_id=%s""",
-        (attempts, dispatched, sealed, unknown, completeness, run_id),
-    )
 
 
 def _receipt(

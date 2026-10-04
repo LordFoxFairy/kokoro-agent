@@ -15,13 +15,13 @@
 
 A2仍不含 evidence append/finalizer、取消封存、runtime/provider调用、Billing Admission client、evidence读取/ACK、预占结算释放或真实收费。真实lost-COMMIT-ACK只允许恢复为`newly_started=false`并停止二次外发，不能据此猜测provider未调用、usage为零或费用可释放。
 
-### R192-A3a批准目标：strict pre-terminal evidence append（尚未实现）
+### R193-A3a当前态：strict pre-terminal evidence append 已实现并限定验证
 
-当前`865afb266915f002470e20f0341055271f7c870e`仍仅为A2；Root只批准A3a设计与后续tests-first，A3b/finalizer、runtime/provider、Billing sender/ACK均未授权。A3a接收完整usage/v1 canonical evidence bytes，在受信Run lease下持久append；不生成provider事实、不改机器契约或SQL。
+A3a包内repository operation现已实现：接收完整usage/v1 canonical evidence bytes，在受信active Run lease下持久append或精确只读重放；不生成provider事实、不改机器契约或SQL。Root真实PostgreSQL定点 **81 passed / 0 failed（8.19s）**，完整database **292 passed / 0 skipped（34.32s）**，隔离数据库回收为absent且验证前后source hash一致；完整工程门自然exit 0（2178 passed、390资源deselected、795既有warning，lock/frozen-sync/Ruff 280 files/Pyright/contract/wheel/sdist build均0，111.98s）。A3b/finalizer、runtime/provider、Billing sender/read/ACK及收费链均未实现。
 
-批准放置保持单一职责：`model/call_models.py`只增加内部immutable append command/receipt与现Protocol方法；新`model/call_evidence.py`只做完整evidence raw canonical校验及与冻结attempt事实匹配；新`infrastructure/postgres_model_call_evidence.py`只做包内cursor primitive、revision insert/head CAS与Run completeness；现`postgres_model_call_repository.py`负责公开repository operation并委托。cursor primitive不导出为跨模块facade，不建立UoW/base repository/mixin。现`_recompute_run`是唯一Run completeness算法，实施时移动到上述evidence adapter供现repository调用并删除原实现，禁止复制第二份。
+已实施放置保持单一职责：`model/call_models.py`只增加内部immutable append command/receipt与现Protocol方法；新`model/call_evidence.py`只做完整evidence raw canonical校验及与冻结attempt事实匹配；新`infrastructure/postgres_model_call_evidence.py`只做包内cursor primitive、revision insert/head CAS与Run completeness；现`postgres_model_call_repository.py`负责公开repository operation并委托。cursor primitive不导出为跨模块facade，不建立UoW/base repository/mixin。`recompute_run_completeness`唯一Run completeness算法已移动到上述evidence adapter并删除原定义，没有复制第二份。
 
-锁序固定Run→Attempt→latest Evidence；锁Run后以DB时间重验tenant/owner/generation/expiry/nonterminal。`parse_evidence`验证generated结构、语义与domain digest，但不证明输入raw本身逐字节等于RFC8785完整document；append还必须移除/保留digest按usage/v1规则重建完整document canonical bytes，并要求与原raw逐字节相等。随后逐项核evidence identity、prepared/dispatch时间、planned、authorization observation与attempt冻结原bytes/digest，不能只比较解析后对象或caller ref。
+FOR UPDATE锁序固定Run→Attempt，之后在Attempt head保护下读取immutable latest Evidence；锁Run后以DB时间重验tenant/owner/generation/expiry/nonterminal。`parse_evidence`验证generated结构、语义与domain digest，但不证明输入raw本身逐字节等于RFC8785完整document；append还必须移除/保留digest按usage/v1规则重建完整document canonical bytes，并要求与原raw逐字节相等。随后逐项核evidence identity、prepared/dispatch时间、planned、authorization observation与attempt冻结原bytes/digest，不能只比较解析后对象或caller ref。
 
 `dispatch_started/granted`可写首revision；`observed`以及`unknown/granted`在Run仍active、受信fence仍有效时允许contiguous monotonic successor，例如unknown outcome增补为已知outcome及verified/normalized usage，但必须满足`validate_successor`且不覆盖已知事实。Run terminal后普通worker不得写任何新revision；只允许按唯一event/revision读取并精确验证已经提交的同bytes/digest后返回原receipt，这只是unknown-COMMIT恢复，不是terminal写通道。post-terminal新事实仍需未来具名reconciler authority，A3a不实现。
 
@@ -35,8 +35,8 @@ A2仍不含 evidence append/finalizer、取消封存、runtime/provider调用、
 | 两位置比较 | 采用“纯evidence规则在model + package-private cursor SQL在新infrastructure文件”；淘汰把全部逻辑继续塞进675行adapter，亦淘汰把model语义塞进`postgres_run_leases.py` |
 | 粒度 | 两个新文件各有独立变化原因且会被repository与后继finalizer复用；不建新目录、facade、UoW、base repository或mixin |
 | 依赖 | caller→`ModelCallRepository` Protocol；repository→纯evidence规则与包内cursor primitive；禁止model import infrastructure、跨owner SQL、Billing DTO、provider SDK |
-| 数据/API | 复用现表/索引与usage/v1；Run→Attempt→latest锁序、tenant/lease fence、revision幂等；无DDL、HTTP/RPC/event版本变化 |
-| 删除项 | `_recompute_run`移动后删除旧定义；不得保留alias、复制算法、第二append路径或兼容fallback |
+| 数据/API | 复用现表/索引与usage/v1；FOR UPDATE锁Run→Attempt，随后在head保护下读immutable latest Evidence；tenant/lease fence、revision幂等；无DDL、HTTP/RPC/event版本变化 |
+| 删除项 | 旧Run completeness定义已由`recompute_run_completeness`替代并删除；不得保留alias、复制算法、第二append路径或兼容fallback |
 | 验证 | 先现integration真实PG行为RED；GREEN后Root跑定点、full database、Ruff、Pyright、contract/architecture、build；A3b另门 |
 
 artifact必须`seal=true`，revision必须在DB-safe正BIGINT范围`1..9223372036854775807`。`observed_at`是输入artifact内已验证的观测事实：转换为UTC毫秒后必须不早于冻结`prepared_at`，有dispatch时不得早于冻结`dispatch_started_at`，且不得晚于**取得Run锁后的受信数据库时刻**；repository持久原时间，重放不得用新`now`替换。该校验与SQL `observed_at TIMESTAMPTZ(3)`精度一致，阻止客户端未来时间或未seal artifact污染head。

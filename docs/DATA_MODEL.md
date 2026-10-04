@@ -4,15 +4,15 @@ A2使用R188已发布的`kokoro_agent_model_call_attempt`与Run completeness列�
 
 事务仍固定锁`kokoro_agent_run`后锁目标attempt，以数据库时间重验tenant/run/owner/generation/expiry/terminal；begin写`authorization_pending/requested_unknown`，grant写`authorized/granted`，首次dispatch写DB毫秒`dispatch_started_at`与`dispatch_started`并同事务重算Run completeness。精确或advanced dispatch replay只读原时间且`newly_started=false`。所有authorization bytes必须是strict generated model的RFC8785 canonical bytes并与stored digest一致；同步篡改非canonical bytes及digest仍拒绝。
 
-尚无evidence repository writer/finalizer/runtime producer/Billing ACK/outbox。旧usage segment继续只是预算事实，不是计费真源；本轮不删除或双写。`model/call_artifacts.py`纯canonical/binding/recipe职责搬移已通过Root数据库/完整工程门与独立审查；canonical SQL、事务顺序与数据生命周期未改。
+现已有strict pre-terminal evidence repository writer；尚无finalizer/runtime producer/Billing ACK/outbox。旧usage segment继续只是预算事实，不是计费真源；本轮不删除或双写。`model/call_artifacts.py`纯canonical/binding/recipe职责搬移已通过Root数据库/完整工程门与独立审查；canonical SQL、事务顺序与数据生命周期未改。
 
-### R192-A3a批准目标：复用现表，无DDL（尚未实现）
+### R193-A3a当前态：复用现表的strict append已实现，无DDL
 
-当前main仍仅A2，canonical schema不变。A3a将在一个事务中锁Run→Attempt→latest Evidence，insert现`kokoro_agent_model_usage_evidence`、CAS现attempt latest/status/sealed并用唯一completeness算法重算现Run五项投影；不增加表、列、索引、FK或outbox。
+canonical schema保持不变。A3a现已在一个事务中FOR UPDATE锁Run→Attempt，之后在Attempt head保护下读取immutable latest Evidence，再insert现`kokoro_agent_model_usage_evidence`、CAS现attempt latest/status/sealed并用唯一completeness算法重算现Run五项投影；没有增加表、列、索引、FK或outbox。Root真实PostgreSQL定点81项与完整database 292项通过，隔离数据库回收为absent且source hash前后相同；完整工程门自然exit 0（2178 passed、390资源deselected，lock/frozen-sync/Ruff 280 files/Pyright/contract/wheel/sdist build均0）。
 
 数据库接收前除`parse_evidence`外还必须证明原raw等于包含digest的完整RFC8785 document bytes，并将identity、planned、authorization及prepared/dispatch时间与冻结attempt原bytes逐项匹配。首revision要求空head；后继精确引用latest。active Run上的`observed`或`unknown/granted`可接受合法contiguous successor；terminal Run只读精确已提交revision，拒绝任何新行。timeout/cancel/conflict使evidence、head和Run projection全部回滚。
 
-现`_recompute_run`实施时只移动到包内cursor evidence primitive并删除旧定义，禁止复制算法或形成第二repository facade。A3b terminal closure、reconciler与Billing ACK不在A3a数据写集。
+原Run completeness逻辑已收敛为包内cursor evidence primitive `recompute_run_completeness`，旧定义已删除，未复制算法或形成第二repository facade。A3b terminal closure、reconciler与Billing ACK不在A3a数据写集。
 
 ## 历史基线：R188-AGENT-A1-SCHEMA canonical SQL（2026-10-04）
 

@@ -161,6 +161,34 @@ class ModelCallDispatchPermit(BaseModel):
     newly_started: bool
 
 
+class AppendModelCallEvidence(BaseModel):
+    """Append one complete strict observation under trusted attempt authority."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    authorization_digest: Digest
+    evidence_bytes: bytes = Field(min_length=1, max_length=65_536)
+
+
+class ModelCallEvidenceReceipt(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    attempt_id: Uuid
+    event_id: Uuid
+    revision: int = Field(ge=1)
+    evidence_digest: Digest
+    observed_at_ms: int = Field(ge=0)
+    replayed: bool
+
+
 class ModelCallAuthorityLost(RuntimeError):
     pass
 
@@ -192,9 +220,14 @@ class ModelCallRepository(Protocol):
         self, command: StartModelCallDispatch
     ) -> ModelCallDispatchPermit: ...
 
+    async def append_evidence(
+        self, command: AppendModelCallEvidence
+    ) -> ModelCallEvidenceReceipt: ...
+
 
 __all__ = [
     "AttemptBinding",
+    "AppendModelCallEvidence",
     "AuthorizationPendingReceipt",
     "BeginModelCallAuthorization",
     "GrantModelCallAuthorization",
@@ -204,6 +237,7 @@ __all__ = [
     "ModelCallOrdinalExhausted",
     "ModelCallAuthorizationReceipt",
     "ModelCallDispatchPermit",
+    "ModelCallEvidenceReceipt",
     "ModelCallRepository",
     "PrepareModelCall",
     "PreparedModelCall",

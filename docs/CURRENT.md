@@ -4,13 +4,13 @@
 
 纯canonical JSON、attempt artifact binding及冻结recipe/peer-path校验现由`model/call_artifacts.py`拥有；SQL、锁、Row与Run projection留在adapter，无mixin、通用UoW或第二repository框架。上述最终门只验收内部repository片，矩阵仍非穷举。
 
-明确OPEN：runtime caller与provider外发、evidence append/finalizer、取消/失败封存、真实lost-COMMIT-ACK恢复、Billing Admission消费、evidence读取/ACK、预占/actual结算/释放与端到端用户费用。unknown不猜零；失败/取消的已核实实际用量政策仍由Billing owner实施。R188/R189下节是schema/prepare历史证据，不覆盖本节当前态。
+明确OPEN：runtime caller与provider外发、finalizer、取消/失败终态封存、真实lost-COMMIT-ACK恢复、Billing Admission消费、evidence读取/ACK、预占/actual结算/释放与端到端用户费用。unknown不猜零；失败/取消的已核实实际用量政策仍由Billing owner实施。R188/R189下节是schema/prepare历史证据，不覆盖本节当前态。
 
-### 下一批准片：R192-A3a strict pre-terminal append（D0，尚未实现）
+### R193-A3a：strict pre-terminal append 已实现并通过数据库门
 
-当前`main 865afb266915f002470e20f0341055271f7c870e`仍只完成A2。Root已批准A3a目标态与放置表，下一步仍须tests-first真实PostgreSQL RED后再授源码；本次四D0不构成实现证据。
+A3a包内command/receipt、strict artifact校验及PostgreSQL cursor primitive已实现。普通worker仅在active Run和有效fence下append完整canonical strict usage evidence；active `unknown/granted`可按contiguous successor单调增补known outcome/verified usage。Run terminal后禁止新revision，exact readback仅以原完整bytes/fence/digests恢复已提交receipt且Evidence/Attempt/Run零写；真实双连接owned锁图证明同revision竞争仅一insert、一replay。原raw完整RFC8785、冻结identity/planned/authorization/time、revision/predecessor、seal与正int64边界均由repository严格核验，唯一Run completeness算法未复制。
 
-A3a仅在active Run和有效fence下append完整strict usage evidence。active `unknown/granted`可按contiguous successor单调增补known outcome/verified usage；Run terminal后普通worker禁止新revision，exact readback只恢复已提交事实。append必须补`parse_evidence`未覆盖的原raw完整RFC8785逐字节校验，并与冻结identity/planned/authorization/time原事实匹配。唯一Run completeness算法只移动不复制；新cursor primitive限包内，不建facade/UoW。A3b/finalizer、post-terminal reconciler、runtime/provider与Billing read/ACK/收费继续OPEN。
+Root真实PostgreSQL定点 **81 passed / 0 failed（8.19s）**；完整database **292 passed / 0 skipped（34.32s）**，manifest `T/kokoro-r193-agent-full-8h0ni7r9`，自有数据库absent且source hash前后相同。完整工程门自然exit 0（2178 passed、390资源deselected、795既有warning，111.98s；lock/frozen-sync/Ruff 280 files/Pyright/contract/wheel/sdist build均0），构建产物位于`/tmp/kokoro-r193-agent-build-final`。A3b/finalizer、post-terminal reconciler、runtime/provider、Billing evidence read/ACK、预占/actual结算/释放及端到端收费继续OPEN；unknown不猜零，失败/取消仅结算已核实用量的政策仍归Billing owner。
 
 ---
 

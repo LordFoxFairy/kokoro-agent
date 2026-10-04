@@ -16,9 +16,9 @@ A3a的append command/receipt与cursor primitive现已实现且仍全部是Agent�
 
 append只接受`seal=true`、revision在正int64范围的artifact。repository在Run锁后以受信DB时刻验证`prepared_at <= observed_at <= db_now`，有dispatch时还要求`dispatch_started_at <= observed_at`；输入观测时间成功后原样持久，exact replay返回原`observed_at_ms`，绝不按重放时钟刷新。
 
-## R194-A3b批准目标：终态closure仍为包内事务，无wire变化
+## R195-A3b当前实现：终态closure仍为包内事务，无wire变化
 
-A3b不新增或修改HTTP、RPC、event、generated、usage/v1或Billing契约。它只在现`finalize_terminal`事务内从冻结Attempt事实生成合法strict closure：未dispatch的prepared/pending/authorized保存`not_dispatched`与unresolved missing usage；已dispatch但无观察保存`unknown`与unresolved incomplete response。exact terminal retry验证全部heads并读取原event/time/bytes且零写，不提供provider重发、post-terminal新证据或收费许可。既有terminal `outcome.usage`/预算累计不成为strict Evidence或费用事实。当前仅D0，尚未实现。
+A3b不新增或修改HTTP、RPC、event、generated、usage/v1或Billing契约。它只在现`finalize_terminal`事务内从冻结Attempt事实生成合法strict closure：未dispatch的prepared/pending/authorized保存`not_dispatched`与unresolved missing usage；已dispatch但无观察保存`unknown`与unresolved incomplete response。exact terminal retry验证全部heads并读取原event/time/bytes且零写，不提供provider重发、post-terminal新证据或收费许可。既有terminal `outcome.usage`/预算累计不成为strict Evidence或费用事实。当前包内实现已由Root全真实PG303及完整默认工程2178/contract/build限定验收；不发布或开放Billing/provider caller能力。
 
 ## 历史基线：R188-AGENT-A1-SCHEMA内部数据合同（2026-10-04）
 

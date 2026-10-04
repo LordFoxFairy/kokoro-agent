@@ -14,9 +14,9 @@ canonical schema保持不变。A3a现已在一个事务中FOR UPDATE锁Run→Att
 
 原Run completeness逻辑已收敛为包内cursor evidence primitive `recompute_run_completeness`，旧定义已删除，未复制算法或形成第二repository facade。A3b terminal closure、reconciler与Billing ACK不在A3a数据写集。
 
-## R194-A3b批准目标：复用现Attempt/Evidence/Run投影，无DDL
+## R195-A3b当前实现：复用现Attempt/Evidence/Run投影，无DDL
 
-A3b不改canonical schema。现终态事务保留全部authority/delivery-readiness检查，锁Run后按`attempt_id`确定序锁全部Attempts，并在Attempt head保护下读取immutable latest Evidence；它验证sealed rows、为四种开放状态写合法revision 1 closure、更新head/status/sealed time，再以唯一`recompute_run_completeness`重算现五项Run投影，之后才继续公开终态写入。任何corruption/timeout/取消使Evidence、Attempt、Run投影及interaction/Chat/outbox/control/terminal全回滚。terminal replay验证全部heads与既有行并零写；历史attempt的原lease/frozen artifacts须自洽但不要求等于当前finalizer Run lease，预算usage不反填strict Evidence。当前仅D0，尚无该writer；无新表、列、索引、FK或outbox。
+A3b不改canonical schema。现终态事务保留全部authority/delivery-readiness检查，锁Run后按`attempt_id`确定序锁全部Attempts，并在Attempt head保护下读取immutable latest Evidence；它验证sealed rows、为四种开放状态写合法revision 1 closure、更新head/status/sealed time，再以唯一`recompute_run_completeness`重算现五项Run投影，之后才继续公开终态写入。任何corruption/timeout/取消使Evidence、Attempt、Run投影及interaction/Chat/outbox/control/terminal全回滚。terminal replay验证全部heads与既有行并零写；历史attempt的原lease/frozen artifacts须自洽但不要求等于当前finalizer Run lease，预算usage不反填strict Evidence。当前writer已实现，strict canonical与SQL全部投影及授权state必须一致，合法denied sealed状态不会误拒。Root全真实PG303通过/自库absent/source不变，完整工程2178及build0；无新表、列、索引、FK或outbox，runtime/provider/Billing消费仍另门。
 
 ## 历史基线：R188-AGENT-A1-SCHEMA canonical SQL（2026-10-04）
 

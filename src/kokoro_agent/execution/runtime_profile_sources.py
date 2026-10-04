@@ -131,6 +131,7 @@ infrastructure/memory_store.py
 infrastructure/postgres.py
 infrastructure/postgres_chat_repository.py
 infrastructure/postgres_execution_proof_lease.py
+infrastructure/postgres_model_call_evidence.py
 infrastructure/postgres_run_admission.py
 infrastructure/postgres_run_context.py
 infrastructure/postgres_run_dispatch.py
@@ -147,7 +148,11 @@ distribution_assets.py
 mcp/__init__.py
 metrics.py
 model/__init__.py
+model/call_evidence.py
+model/call_models.py
+model/usage_evidence.py
 observability.py
+protocol/model_usage_generated.py
 skills/__init__.py
 streams/__init__.py
 streams/factory.py

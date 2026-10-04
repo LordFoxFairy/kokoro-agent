@@ -44,6 +44,9 @@ from kokoro_agent.infrastructure.schema import (
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
 )
+from kokoro_agent.infrastructure.postgres_model_call_evidence import (
+    close_model_call_attempts_for_terminal,
+)
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.protocol import (
     RunRequest,
@@ -487,6 +490,14 @@ class PostgresRunLeases:
                     existing_raw = await fetch_one(cur)
                     existing = None if existing_raw is None else dict(existing_raw)
                     if bool(row["terminal"]):
+                        await close_model_call_attempts_for_terminal(
+                            cur,
+                            schema=self._context.schema,
+                            tenant_id=request.execution_identity.tenant_ref,
+                            run_id=run_id,
+                            database_now=datetime.fromtimestamp(now / 1000, tz=UTC),
+                            allow_create=False,
+                        )
                         if cancel and (
                             command is None or command["status"] != "succeeded"
                         ):
@@ -598,6 +609,14 @@ class PostgresRunLeases:
                             cur, request, delivery_snapshot
                         ):
                             return TerminalCommitResult(status="deferred", lease=None)
+                    await close_model_call_attempts_for_terminal(
+                        cur,
+                        schema=self._context.schema,
+                        tenant_id=request.execution_identity.tenant_ref,
+                        run_id=run_id,
+                        database_now=datetime.fromtimestamp(now / 1000, tz=UTC),
+                        allow_create=True,
+                    )
                     total_in, total_out = (
                         int(row["usage_input_total"]),
                         int(row["usage_output_total"]),

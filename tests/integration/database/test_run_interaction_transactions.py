@@ -13,16 +13,19 @@ from kokoro_agent.protocol import SkillProgressSink
 
 import asyncio
 import base64
+import copy
 import hashlib
 import json
+from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
+import rfc8785
 from psycopg.errors import RaiseException
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 from langchain_core.runnables.config import RunnableConfig
 
 from kokoro_agent.domain.run import interactions
@@ -33,8 +36,35 @@ from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.interfaces.http.ingress import AgentIngress
 from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepository
+from kokoro_agent.infrastructure.postgres_model_call_repository import (
+    PostgresModelCallRepository,
+)
+from kokoro_agent.model.call_models import (
+    AppendModelCallEvidence,
+    BeginModelCallAuthorization,
+    GrantModelCallAuthorization,
+    ModelCallIdentityConflict,
+    PrepareModelCall,
+    StartModelCallDispatch,
+)
+from kokoro_agent.domain.run.models import StaticRecipeBinding
 from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_generated import AuthorizationRequested
+from kokoro_agent.model.usage_evidence import parse_evidence
+from kokoro_agent.agents.definition import Agent
+from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
+from kokoro_agent.config import AppConfig
+from kokoro_agent.execution.runtime_profile_plan import (
+    RuntimeAssemblyPolicy,
+    prepare_feature,
+)
+from kokoro_agent.execution.runtime_profile_sources import production_manifest
+from kokoro_agent.features.definition import Feature
+from kokoro_agent.tools.toolbox import build_toolbox
 from support.fakes import FakeBus, request
+
+_MODEL_ROW_LIST = TypeAdapter(list[dict[str, object]])
 
 
 def _canonical(value: object) -> bytes:
@@ -178,6 +208,317 @@ async def _launch_claim(
     )
     assert scoped is not None and scoped.model_dump_json() == run.model_dump_json()
     return run, lease
+
+
+async def _open_model_attempts(
+    run_repository: RunRepository,
+    run: RunRequest,
+    lease: LeaseFence,
+    url: str,
+    schema: str,
+) -> dict[str, str]:
+    config = AppConfig.from_env({})
+    plan = prepare_feature(
+        Feature(
+            key=run.feature_key,
+            agents=(Agent(key="assistant", prompt="a"),),
+            entry_agent="assistant",
+        ),
+        runtime_policy=RuntimeAssemblyPolicy.from_settings(
+            run_token_budget=17,
+            recursion_limit=43,
+            model=config.model,
+            sandbox=config.sandbox,
+        ),
+        manifest=production_manifest(),
+        toolbox=build_toolbox(fetch_allow_private=False, search=None),
+        subagent_catalog=build_subagent_catalog(None),
+        delivery_available=False,
+    )
+    await run_repository.freeze_or_verify_static_recipe(
+        run,
+        lease,
+        StaticRecipeBinding(
+            canonical_bytes=plan.recipe_bytes, fingerprint=plan.fingerprint
+        ),
+    )
+    async with connect_pg(url) as connection, connection.cursor() as cursor:
+        await execute_sql(
+            cursor,
+            "SELECT assembly_recipe_bytes,assembly_recipe_fingerprint FROM {} WHERE run_id=%s".format(
+                qualified(schema, "kokoro_agent_run")
+            ),
+            (run.run_id,),
+        )
+        stored = await fetch_one(cursor)
+        assert stored is not None
+    recipe_bytes = stored["assembly_recipe_bytes"]
+    recipe_fingerprint = stored["assembly_recipe_fingerprint"]
+    assert isinstance(recipe_bytes, bytes) and isinstance(recipe_fingerprint, str)
+    recipe = StaticRecipeBinding(
+        canonical_bytes=recipe_bytes, fingerprint=recipe_fingerprint
+    )
+    planned = PlannedBinding(
+        model="model-a3b",
+        provider="provider-a3b",
+        revision_id="revision-a3b",
+        provider_model_name="provider-model-a3b",
+        gateway_model_name="gateway-a3b",
+        feature_key=run.feature_key,
+        revision="1",
+        generation="1",
+        tenant_generation="1",
+        digest="a" * 64,
+        label=None,
+    )
+    repository = PostgresModelCallRepository(url, schema)
+    attempts: dict[str, str] = {}
+    for target in (
+        "prepared",
+        "authorization_pending",
+        "authorized",
+        "dispatch_started",
+    ):
+        prepared = await repository.prepare(
+            PrepareModelCall(
+                request=run,
+                lease=lease,
+                call_id=str(uuid4()),
+                attempt_id=str(uuid4()),
+                planned=planned,
+                peer_path=("assistant",),
+                recipe=recipe,
+            )
+        )
+        attempts[target] = str(prepared.attempt_id)
+        if target == "prepared":
+            continue
+        pending = await repository.begin_authorization(
+            BeginModelCallAuthorization(
+                tenant_id=prepared.tenant_id,
+                run_id=prepared.run_id,
+                attempt_id=prepared.attempt_id,
+                lease=lease,
+                attempt_binding_digest=prepared.attempt_binding_digest,
+                planned_digest=prepared.planned_digest,
+                request_ref=f"request-{target}",
+            )
+        )
+        if target == "authorization_pending":
+            continue
+        granted = await repository.grant_authorization(
+            GrantModelCallAuthorization(
+                tenant_id=prepared.tenant_id,
+                run_id=prepared.run_id,
+                attempt_id=prepared.attempt_id,
+                lease=lease,
+                attempt_binding_digest=prepared.attempt_binding_digest,
+                planned_digest=prepared.planned_digest,
+                expected_authorization_digest=pending.authorization_digest,
+                request_ref=pending.request_ref,
+                admission_ref=f"admission-{target}",
+            )
+        )
+        if target == "dispatch_started":
+            await repository.start_dispatch(
+                StartModelCallDispatch(
+                    tenant_id=prepared.tenant_id,
+                    run_id=prepared.run_id,
+                    attempt_id=prepared.attempt_id,
+                    lease=lease,
+                    attempt_binding_digest=prepared.attempt_binding_digest,
+                    planned_digest=prepared.planned_digest,
+                    authorization_digest=granted.authorization_digest,
+                    request_ref=granted.request_ref,
+                    admission_ref=granted.admission_ref,
+                )
+            )
+    return attempts
+
+
+async def _model_call_snapshot(url: str, schema: str, run_id: str) -> dict[str, object]:
+    async with connect_pg(url) as connection, connection.cursor() as cursor:
+        result: dict[str, object] = {}
+        for name, table, order in (
+            ("attempts", "kokoro_agent_model_call_attempt", "attempt_id"),
+            ("evidence", "kokoro_agent_model_usage_evidence", "attempt_id,revision"),
+        ):
+            await execute_sql(
+                cursor,
+                f"SELECT to_jsonb(t) AS row FROM {qualified(schema, table)} t WHERE run_id=%s ORDER BY {order}",
+                (run_id,),
+            )
+            result[name] = [row["row"] for row in await fetch_all(cursor)]
+        await execute_sql(
+            cursor,
+            "SELECT model_attempt_count,model_dispatched_attempt_count,model_sealed_attempt_count,model_unknown_attempt_count,model_usage_completeness,terminal FROM {} WHERE run_id=%s".format(
+                qualified(schema, "kokoro_agent_run")
+            ),
+            (run_id,),
+        )
+        result["run"] = await fetch_one(cursor)
+        return result
+
+
+def _snapshot_rows(snapshot: dict[str, object], key: str) -> list[dict[str, object]]:
+    return _MODEL_ROW_LIST.validate_python(snapshot[key], strict=True)
+
+
+def _utc_millis(value: datetime) -> str:
+    return (
+        value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
+
+
+async def _seal_dispatch_started_attempt(
+    url: str, schema: str, run_id: str, attempt_id: str, lease: LeaseFence
+) -> None:
+    async with connect_pg(url) as connection, connection.cursor() as cursor:
+        await execute_sql(
+            cursor,
+            "SELECT * FROM {} WHERE run_id=%s AND attempt_id=%s".format(
+                qualified(schema, "kokoro_agent_model_call_attempt")
+            ),
+            (run_id, attempt_id),
+        )
+        row = await fetch_one(cursor)
+        assert row is not None
+    prepared_at = row["prepared_at"]
+    dispatch_started_at = row["dispatch_started_at"]
+    assert isinstance(prepared_at, datetime) and isinstance(
+        dispatch_started_at, datetime
+    )
+    identity = json.loads(row["attempt_binding_bytes"])
+    identity["event_id"] = str(uuid4())
+    document = {
+        "artifact_version": "1.0.0",
+        "identity": identity,
+        "planned": json.loads(row["planned_bytes"]),
+        "actual": {"state": "unknown", "reason": "not_observed"},
+        "authorization_observation": json.loads(row["authorization_bytes"]),
+        "execution": {
+            "outcome": "unknown",
+            "seal": True,
+            "prepared_at": _utc_millis(prepared_at),
+            "dispatch_started_at": _utc_millis(dispatch_started_at),
+        },
+        "usage": {
+            "state": "unresolved",
+            "reason": "incomplete_response",
+            "raw_usage_digest": None,
+        },
+        "revision": "1",
+        "predecessor": None,
+        "observed_at": _utc_millis(dispatch_started_at),
+    }
+    domain = b"kokoro-agent:model-usage-evidence:v1\n"
+    document["digest"] = hashlib.sha256(domain + rfc8785.dumps(document)).hexdigest()
+    raw = rfc8785.dumps(document)
+    await PostgresModelCallRepository(url, schema).append_evidence(
+        AppendModelCallEvidence(
+            tenant_id=str(row["tenant_id"]),
+            run_id=run_id,
+            attempt_id=str(row["attempt_id"]),
+            lease=lease,
+            attempt_binding_digest=str(row["attempt_binding_digest"]),
+            planned_digest=str(row["planned_digest"]),
+            authorization_digest=str(row["authorization_digest"]),
+            evidence_bytes=raw,
+        )
+    )
+
+
+async def _seal_denied_attempt(
+    url: str, schema: str, run_id: str, attempt_id: str
+) -> tuple[bytes, str]:
+    async with connect_pg(url) as connection, connection.cursor() as cursor:
+        await execute_sql(
+            cursor,
+            "SELECT * FROM {} WHERE run_id=%s AND attempt_id=%s".format(
+                qualified(schema, "kokoro_agent_model_call_attempt")
+            ),
+            (run_id, attempt_id),
+        )
+        row = await fetch_one(cursor)
+        assert row is not None and row["status"] == "authorization_pending"
+        pending = json.loads(row["authorization_bytes"])
+        denied_bytes = rfc8785.dumps(
+            AuthorizationRequested(
+                state="denied", request_ref=pending["request_ref"]
+            ).model_dump(mode="json")
+        )
+        denied_digest = hashlib.sha256(denied_bytes).hexdigest()
+        prepared_at = row["prepared_at"]
+        assert isinstance(prepared_at, datetime)
+        identity = json.loads(row["attempt_binding_bytes"])
+        event_id = str(uuid4())
+        identity["event_id"] = event_id
+        document = {
+            "artifact_version": "1.0.0",
+            "identity": identity,
+            "planned": json.loads(row["planned_bytes"]),
+            "actual": {"state": "unknown", "reason": "not_observed"},
+            "authorization_observation": json.loads(denied_bytes),
+            "execution": {
+                "outcome": "not_dispatched",
+                "seal": True,
+                "prepared_at": _utc_millis(prepared_at),
+                "dispatch_started_at": None,
+            },
+            "usage": {
+                "state": "unresolved",
+                "reason": "missing_usage",
+                "raw_usage_digest": None,
+            },
+            "revision": "1",
+            "predecessor": None,
+            "observed_at": _utc_millis(prepared_at),
+        }
+        domain = b"kokoro-agent:model-usage-evidence:v1\n"
+        document["digest"] = hashlib.sha256(
+            domain + rfc8785.dumps(document)
+        ).hexdigest()
+        evidence_bytes = rfc8785.dumps(document)
+        parsed = parse_evidence(evidence_bytes)
+        assert parsed.execution.outcome == "not_dispatched"
+        await execute_sql(
+            cursor,
+            """INSERT INTO {} (event_id,tenant_id,run_id,attempt_id,call_id,
+                revision,evidence_bytes,evidence_digest,execution_outcome,
+                usage_state,totals_state,classification_state,sealed,observed_at)
+                VALUES (%s,%s,%s,%s,%s,1,%s,%s,'not_dispatched','unresolved',
+                        'unknown','unknown',TRUE,%s)""".format(
+                qualified(schema, "kokoro_agent_model_usage_evidence")
+            ),
+            (
+                event_id,
+                row["tenant_id"],
+                run_id,
+                attempt_id,
+                row["call_id"],
+                evidence_bytes,
+                document["digest"],
+                prepared_at,
+            ),
+        )
+        await execute_sql(
+            cursor,
+            """UPDATE {} SET authorization_bytes=%s,authorization_digest=%s,
+                authorization_state='denied',status='authorization_denied',
+                sealed_at=%s,latest_revision=1,latest_event_id=%s,
+                latest_evidence_digest=%s WHERE attempt_id=%s""".format(
+                qualified(schema, "kokoro_agent_model_call_attempt")
+            ),
+            (
+                denied_bytes,
+                denied_digest,
+                prepared_at,
+                event_id,
+                document["digest"],
+                attempt_id,
+            ),
+        )
+    return evidence_bytes, event_id
 
 
 async def _admit(
@@ -673,6 +1014,474 @@ async def test_terminal_absorbs_interaction_and_purge_blocks_late_recreation(
         )
         row = await fetch_one(cur)
         assert row is not None and row["count"] == 0
+
+
+async def test_r194_a3b_terminal_closes_all_four_open_model_attempt_states_atomically(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    attempts = await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    result = await run_repository.finalize_terminal(
+        run.run_id,
+        ExecutionTerminalAuthority(lease=lease),
+        RunTerminalOutcome(payload=RunCompletedPayload(status="completed"), usage=None),
+        (),
+    )
+    assert result.status == "committed"
+    snapshot = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    rows = _snapshot_rows(snapshot, "attempts")
+    evidence = _snapshot_rows(snapshot, "evidence")
+    by_id = {str(row["attempt_id"]): row for row in rows}
+    assert by_id[attempts["prepared"]]["status"] == "not_dispatched"
+    assert by_id[attempts["authorization_pending"]]["status"] == "not_dispatched"
+    assert by_id[attempts["authorized"]]["status"] == "not_dispatched"
+    assert by_id[attempts["dispatch_started"]]["status"] == "unknown"
+    assert len(evidence) == 4
+    outcomes = {str(row["attempt_id"]): row["execution_outcome"] for row in evidence}
+    assert outcomes[attempts["prepared"]] == "not_dispatched"
+    assert outcomes[attempts["authorization_pending"]] == "not_dispatched"
+    assert outcomes[attempts["authorized"]] == "not_dispatched"
+    assert outcomes[attempts["dispatch_started"]] == "unknown"
+    assert all(row["usage_state"] == "unresolved" for row in evidence)
+    assert snapshot["run"] == {
+        "model_attempt_count": 4,
+        "model_dispatched_attempt_count": 1,
+        "model_sealed_attempt_count": 4,
+        "model_unknown_attempt_count": 1,
+        "model_usage_completeness": "unknown",
+        "terminal": True,
+    }
+
+
+async def test_r194_a3b_terminal_model_closure_replay_preserves_every_head_and_public_fact(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    authority = ExecutionTerminalAuthority(lease=lease)
+    outcome = RunTerminalOutcome(
+        payload=RunCompletedPayload(status="completed"), usage=None
+    )
+    assert (
+        await run_repository.finalize_terminal(run.run_id, authority, outcome, ())
+    ).status == "committed"
+    model_before = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    public_before = await _facts(run_chat_database_url, run_chat_schema, run)
+    assert len(_snapshot_rows(model_before, "evidence")) == 4
+    replay = await run_repository.finalize_terminal(run.run_id, authority, outcome, ())
+    assert replay.status == "replayed"
+    assert (
+        await _model_call_snapshot(run_chat_database_url, run_chat_schema, run.run_id)
+        == model_before
+    )
+    assert await _facts(run_chat_database_url, run_chat_schema, run) == public_before
+
+
+async def test_r194_a3b_terminal_closure_preserves_preexisting_sealed_evidence_byte_for_byte(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    attempts = await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    await _seal_dispatch_started_attempt(
+        run_chat_database_url,
+        run_chat_schema,
+        run.run_id,
+        attempts["dispatch_started"],
+        lease,
+    )
+    before = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    sealed_before = next(
+        row
+        for row in _snapshot_rows(before, "attempts")
+        if str(row["attempt_id"]) == attempts["dispatch_started"]
+    )
+    evidence_before = next(
+        row
+        for row in _snapshot_rows(before, "evidence")
+        if str(row["attempt_id"]) == attempts["dispatch_started"]
+    )
+    result = await run_repository.finalize_terminal(
+        run.run_id,
+        ExecutionTerminalAuthority(lease=lease),
+        RunTerminalOutcome(payload=RunCompletedPayload(status="completed"), usage=None),
+        (),
+    )
+    assert result.status == "committed"
+    after = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    assert (
+        next(
+            row
+            for row in _snapshot_rows(after, "attempts")
+            if str(row["attempt_id"]) == attempts["dispatch_started"]
+        )
+        == sealed_before
+    )
+    assert (
+        next(
+            row
+            for row in _snapshot_rows(after, "evidence")
+            if str(row["attempt_id"]) == attempts["dispatch_started"]
+        )
+        == evidence_before
+    )
+    assert len(_snapshot_rows(after, "evidence")) == 4
+
+
+@pytest.mark.parametrize("drift", ["revision_head", "call_id", "knowledge"])
+async def test_r194_a3b_sealed_projection_drift_rolls_back_terminal(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    drift: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    attempts = await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    attempt_id = attempts["dispatch_started"]
+    await _seal_dispatch_started_attempt(
+        run_chat_database_url, run_chat_schema, run.run_id, attempt_id, lease
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        evidence = qualified(run_chat_schema, "kokoro_agent_model_usage_evidence")
+        attempt = qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+        if drift == "revision_head":
+            predecessor_event = str(uuid4())
+            await execute_sql(
+                cursor,
+                f"UPDATE {evidence} SET revision=2,predecessor_event_id=%s,predecessor_digest=%s WHERE attempt_id=%s",
+                (predecessor_event, "b" * 64, attempt_id),
+            )
+            await execute_sql(
+                cursor,
+                f"UPDATE {attempt} SET latest_revision=2 WHERE attempt_id=%s",
+                (attempt_id,),
+            )
+        elif drift == "call_id":
+            await execute_sql(
+                cursor,
+                f"UPDATE {evidence} SET call_id=%s WHERE attempt_id=%s",
+                (str(uuid4()), attempt_id),
+            )
+        else:
+            await execute_sql(
+                cursor,
+                f"""UPDATE {evidence} SET execution_outcome='completed',
+                    usage_state='normalized',totals_state='known_zero',
+                    classification_state='partial',sealed=TRUE WHERE attempt_id=%s""",
+                (attempt_id,),
+            )
+    model_before = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    public_before = await _facts(run_chat_database_url, run_chat_schema, run)
+    with pytest.raises(ModelCallIdentityConflict):
+        await run_repository.finalize_terminal(
+            run.run_id,
+            ExecutionTerminalAuthority(lease=lease),
+            RunTerminalOutcome(
+                payload=RunCompletedPayload(status="completed"), usage=None
+            ),
+            (),
+        )
+    assert (
+        await _model_call_snapshot(run_chat_database_url, run_chat_schema, run.run_id)
+        == model_before
+    )
+    assert await _facts(run_chat_database_url, run_chat_schema, run) == public_before
+
+
+async def test_r194_a3b_denied_strict_head_commits_and_replays_without_rewrite(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    attempts = await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    denied_id = attempts["authorization_pending"]
+    denied_bytes, denied_event = await _seal_denied_attempt(
+        run_chat_database_url, run_chat_schema, run.run_id, denied_id
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "DELETE FROM {} WHERE run_id=%s AND attempt_id<>%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (run.run_id, denied_id),
+        )
+    authority = ExecutionTerminalAuthority(lease=lease)
+    outcome = RunTerminalOutcome(
+        payload=RunCompletedPayload(status="completed"), usage=None
+    )
+    assert (
+        await run_repository.finalize_terminal(run.run_id, authority, outcome, ())
+    ).status == "committed"
+    committed = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    evidence = _snapshot_rows(committed, "evidence")
+    assert len(evidence) == 1
+    assert evidence[0]["event_id"] == denied_event
+    assert evidence[0]["evidence_bytes"] == "\\x" + denied_bytes.hex()
+    assert (
+        await run_repository.finalize_terminal(run.run_id, authority, outcome, ())
+    ).status == "replayed"
+    assert (
+        await _model_call_snapshot(run_chat_database_url, run_chat_schema, run.run_id)
+        == committed
+    )
+
+
+async def test_r194_a3b_authorization_state_and_canonical_bytes_mismatch_rolls_back(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    attempts = await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    attempt_id = attempts["authorization_pending"]
+    await _seal_denied_attempt(
+        run_chat_database_url, run_chat_schema, run.run_id, attempt_id
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        attempt = qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+        await execute_sql(
+            cursor,
+            f"""UPDATE {attempt} SET status='not_dispatched',
+                authorization_state='requested_unknown' WHERE attempt_id=%s""",
+            (attempt_id,),
+        )
+        await execute_sql(
+            cursor,
+            f"DELETE FROM {attempt} WHERE run_id=%s AND attempt_id<>%s",
+            (run.run_id, attempt_id),
+        )
+    model_before = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    public_before = await _facts(run_chat_database_url, run_chat_schema, run)
+    with pytest.raises(ModelCallIdentityConflict):
+        await run_repository.finalize_terminal(
+            run.run_id,
+            ExecutionTerminalAuthority(lease=lease),
+            RunTerminalOutcome(
+                payload=RunCompletedPayload(status="completed"), usage=None
+            ),
+            (),
+        )
+    assert (
+        await _model_call_snapshot(run_chat_database_url, run_chat_schema, run.run_id)
+        == model_before
+    )
+    assert await _facts(run_chat_database_url, run_chat_schema, run) == public_before
+
+
+async def test_r194_a3b_corrupt_frozen_model_attempt_rolls_back_all_terminal_facts(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    attempts = await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "UPDATE {} SET planned_digest=%s WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            ("f" * 64, attempts["authorized"]),
+        )
+    model_before = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    public_before = await _facts(run_chat_database_url, run_chat_schema, run)
+    with pytest.raises(ModelCallIdentityConflict):
+        await run_repository.finalize_terminal(
+            run.run_id,
+            ExecutionTerminalAuthority(lease=lease),
+            RunTerminalOutcome(
+                payload=RunCompletedPayload(status="completed"), usage=None
+            ),
+            (),
+        )
+    assert (
+        await _model_call_snapshot(run_chat_database_url, run_chat_schema, run.run_id)
+        == model_before
+    )
+    assert await _facts(run_chat_database_url, run_chat_schema, run) == public_before
+
+
+@pytest.mark.parametrize("loss", ["expiry", "cancel"])
+async def test_r194_a3b_finalize_lock_wait_lost_authority_or_cancel_writes_nothing(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    loss: str,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+    from kokoro_agent.protocol import RunCompletedPayload
+
+    run, lease = await _launch_claim(
+        run_repository, run_chat_database_url, run_chat_schema
+    )
+    await _open_model_attempts(
+        run_repository, run, lease, run_chat_database_url, run_chat_schema
+    )
+    model_before = await _model_call_snapshot(
+        run_chat_database_url, run_chat_schema, run.run_id
+    )
+    public_before = await _facts(run_chat_database_url, run_chat_schema, run)
+    public_expected = copy.deepcopy(public_before)
+
+    async with connect_pg(run_chat_database_url) as blocker, blocker.cursor() as cursor:
+        await execute_sql(cursor, "BEGIN")
+        await execute_sql(cursor, "SELECT pg_backend_pid() AS pid")
+        pid_row = await fetch_one(cursor)
+        assert pid_row is not None
+        blocker_pid = int(pid_row["pid"])
+        await execute_sql(
+            cursor,
+            "SELECT run_id FROM {} WHERE run_id=%s FOR UPDATE".format(
+                qualified(run_chat_schema, "kokoro_agent_run")
+            ),
+            (run.run_id,),
+        )
+        task = asyncio.create_task(
+            run_repository.finalize_terminal(
+                run.run_id,
+                ExecutionTerminalAuthority(lease=lease),
+                RunTerminalOutcome(
+                    payload=RunCompletedPayload(status="completed"), usage=None
+                ),
+                (),
+            )
+        )
+        assert (
+            len(await _wait_for_owned_lock_queue(run_chat_database_url, blocker_pid, 1))
+            == 1
+        )
+        if loss == "expiry":
+            await execute_sql(
+                cursor,
+                "UPDATE {} SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id=%s RETURNING to_jsonb(lease_expires_at) AS lease_expires_at".format(
+                    qualified(run_chat_schema, "kokoro_agent_run")
+                ),
+                (run.run_id,),
+            )
+            expiry_row = await fetch_one(cursor)
+            assert expiry_row is not None
+            public_expected["run"]["lease_expires_at"] = expiry_row["lease_expires_at"]
+            await execute_sql(cursor, "COMMIT")
+            assert (await task).status == "lost"
+        else:
+            task.cancel()
+            await execute_sql(cursor, "ROLLBACK")
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert (
+        await _model_call_snapshot(run_chat_database_url, run_chat_schema, run.run_id)
+        == model_before
+    )
+    assert await _facts(run_chat_database_url, run_chat_schema, run) == public_expected
 
 
 @pytest.mark.parametrize("drift", ["time_precision", "constraint", "index", "column"])

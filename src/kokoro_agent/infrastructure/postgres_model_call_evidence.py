@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 
-from kokoro_agent.infrastructure.postgres import utc_to_epoch_millis
-from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
-from kokoro_agent.model.call_evidence import ValidatedModelCallEvidence
+from kokoro_agent.infrastructure.postgres import qualified, utc_to_epoch_millis
+from kokoro_agent.infrastructure.schema import (
+    MODEL_CALL_ATTEMPTS_TABLE,
+    MODEL_USAGE_EVIDENCE_TABLE,
+    RUN_CLAIMS_TABLE,
+)
+from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+from kokoro_agent.model.call_evidence import (
+    ValidatedModelCallEvidence,
+    build_terminal_closure_evidence,
+    validate_append_evidence,
+    validate_frozen_attempt,
+)
 from kokoro_agent.model.call_models import (
     AppendModelCallEvidence,
     ModelCallAuthorityLost,
@@ -229,10 +240,188 @@ def _integer(value: object) -> int:
     return int(value)
 
 
+async def close_model_call_attempts_for_terminal(
+    cursor: object,
+    *,
+    schema: str,
+    tenant_id: str,
+    run_id: str,
+    database_now: datetime,
+    allow_create: bool,
+) -> None:
+    run_table = qualified(schema, RUN_CLAIMS_TABLE)
+    attempt_table = qualified(schema, MODEL_CALL_ATTEMPTS_TABLE)
+    evidence_table = qualified(schema, MODEL_USAGE_EVIDENCE_TABLE)
+    if database_now.tzinfo is None:
+        raise ModelCallIdentityConflict("terminal model-call time is invalid")
+    await execute_sql(
+        cursor,
+        f"SELECT * FROM {attempt_table} WHERE tenant_id=%s AND run_id=%s ORDER BY attempt_id FOR UPDATE",
+        (tenant_id, run_id),
+    )
+    attempts = await fetch_all(cursor)
+    changed = False
+    for attempt in attempts:
+        validate_frozen_attempt(attempt)
+        revision = _integer(attempt["latest_revision"])
+        if revision > 0:
+            await _validate_sealed_head(cursor, evidence_table, attempt, database_now)
+            continue
+        if not allow_create:
+            raise ModelCallIdentityConflict(
+                "terminal Run has an open model-call attempt"
+            )
+        raw, artifact = build_terminal_closure_evidence(attempt, database_now)
+        predecessor = artifact.evidence.predecessor
+        if predecessor is not None:
+            raise ModelCallIdentityConflict("terminal closure has a predecessor")
+        await execute_sql(
+            cursor,
+            f"""INSERT INTO {evidence_table} (
+                event_id,tenant_id,run_id,attempt_id,call_id,revision,
+                predecessor_event_id,predecessor_digest,evidence_bytes,evidence_digest,
+                execution_outcome,usage_state,totals_state,classification_state,
+                sealed,observed_at)
+                VALUES (%s,%s,%s,%s,%s,1,NULL,NULL,%s,%s,%s,%s,%s,%s,TRUE,%s)""",
+            (
+                artifact.event_id,
+                tenant_id,
+                run_id,
+                attempt["attempt_id"],
+                artifact.evidence.identity.call_id,
+                raw,
+                artifact.digest,
+                artifact.outcome,
+                artifact.usage_state,
+                artifact.totals_state,
+                artifact.classification_state,
+                artifact.observed_at,
+            ),
+        )
+        next_status = "unknown" if artifact.outcome == "unknown" else "not_dispatched"
+        await execute_sql(
+            cursor,
+            f"""UPDATE {attempt_table}
+                SET status=%s,sealed_at=%s,latest_revision=1,latest_event_id=%s,
+                    latest_evidence_digest=%s,updated_at=clock_timestamp()
+                WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s
+                  AND latest_revision=0 AND status=%s RETURNING attempt_id""",
+            (
+                next_status,
+                artifact.observed_at,
+                artifact.event_id,
+                artifact.digest,
+                tenant_id,
+                run_id,
+                attempt["attempt_id"],
+                attempt["status"],
+            ),
+        )
+        if await fetch_one(cursor) is None:
+            raise ModelCallIdentityConflict("terminal model-call closure lost its head")
+        changed = True
+    if not allow_create:
+        return
+    if changed or attempts:
+        await recompute_run_completeness(
+            cursor, run_table, attempt_table, evidence_table, run_id
+        )
+    await execute_sql(
+        cursor,
+        f"SELECT model_attempt_count,model_sealed_attempt_count FROM {run_table} WHERE run_id=%s",
+        (run_id,),
+    )
+    counts = await fetch_one(cursor)
+    if (
+        counts is None
+        or counts["model_attempt_count"] != counts["model_sealed_attempt_count"]
+    ):
+        raise ModelCallIdentityConflict("terminal model-call closure is incomplete")
+
+
+async def _validate_sealed_head(
+    cursor: object,
+    evidence_table: str,
+    attempt: Mapping[str, object],
+    database_now: datetime,
+) -> None:
+    await execute_sql(
+        cursor,
+        f"SELECT * FROM {evidence_table} WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s AND revision=%s",
+        (
+            attempt["tenant_id"],
+            attempt["run_id"],
+            attempt["attempt_id"],
+            attempt["latest_revision"],
+        ),
+    )
+    evidence = await fetch_one(cursor)
+    if evidence is None:
+        raise ModelCallIdentityConflict("terminal model-call evidence head is missing")
+    artifact = validate_append_evidence(
+        _bytes(evidence["evidence_bytes"]),
+        attempt_binding_bytes=_bytes(attempt["attempt_binding_bytes"]),
+        planned_bytes=_bytes(attempt["planned_bytes"]),
+        authorization_bytes=_bytes(attempt["authorization_bytes"]),
+        prepared_at=_datetime(attempt["prepared_at"]),
+        dispatch_started_at=_optional_datetime(attempt["dispatch_started_at"]),
+        database_now=database_now,
+    )
+    expected_status = "observed"
+    if artifact.outcome == "unknown":
+        expected_status = "unknown"
+    elif artifact.outcome == "not_dispatched":
+        expected_status = (
+            "authorization_denied"
+            if attempt["authorization_state"] == "denied"
+            else "not_dispatched"
+        )
+    predecessor = artifact.evidence.predecessor
+    if (
+        evidence["tenant_id"] != attempt["tenant_id"]
+        or evidence["run_id"] != attempt["run_id"]
+        or str(evidence["attempt_id"]) != str(attempt["attempt_id"])
+        or str(evidence["call_id"]) != str(attempt["call_id"])
+        or _integer(evidence["revision"]) != artifact.revision
+        or artifact.revision != _integer(attempt["latest_revision"])
+        or (None if predecessor is None else predecessor.event_id)
+        != (
+            None
+            if evidence["predecessor_event_id"] is None
+            else str(evidence["predecessor_event_id"])
+        )
+        or (None if predecessor is None else predecessor.digest)
+        != evidence["predecessor_digest"]
+        or str(evidence["event_id"]) != artifact.event_id
+        or evidence["evidence_digest"] != artifact.digest
+        or str(attempt["latest_event_id"]) != artifact.event_id
+        or attempt["latest_evidence_digest"] != artifact.digest
+        or attempt["status"] != expected_status
+        or evidence["execution_outcome"] != artifact.outcome
+        or evidence["usage_state"] != artifact.usage_state
+        or evidence["totals_state"] != artifact.totals_state
+        or evidence["classification_state"] != artifact.classification_state
+        or evidence["sealed"] is not True
+        or evidence["observed_at"] != artifact.observed_at
+        or attempt["sealed_at"] != artifact.observed_at
+    ):
+        raise ModelCallIdentityConflict("terminal model-call evidence head conflicts")
+
+
 def _bytes(value: object) -> bytes:
     if not isinstance(value, bytes):
         raise ModelCallIdentityConflict("model-call evidence bytes are invalid")
     return value
+
+
+def _datetime(value: object) -> datetime:
+    if not isinstance(value, datetime):
+        raise ModelCallIdentityConflict("model-call evidence time is invalid")
+    return value
+
+
+def _optional_datetime(value: object) -> datetime | None:
+    return None if value is None else _datetime(value)
 
 
 __all__: list[str] = []

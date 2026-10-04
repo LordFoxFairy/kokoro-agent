@@ -41,11 +41,13 @@ FOR UPDATE锁序固定Run→Attempt，之后在Attempt head保护下读取immuta
 
 artifact必须`seal=true`，revision必须在DB-safe正BIGINT范围`1..9223372036854775807`。`observed_at`是输入artifact内已验证的观测事实：转换为UTC毫秒后必须不早于冻结`prepared_at`，有dispatch时不得早于冻结`dispatch_started_at`，且不得晚于**取得Run锁后的受信数据库时刻**；repository持久原时间，重放不得用新`now`替换。该校验与SQL `observed_at TIMESTAMPTZ(3)`精度一致，阻止客户端未来时间或未seal artifact污染head。
 
-## R194-A3b批准目标：同一终态事务封存开放model attempts（D0，尚未实现）
+## R195-A3b当前实现：同一终态事务封存开放model attempts（限定owner门已通过）
 
 A3b只扩现`finalize_terminal`唯一事务：完整保留既有Execution/Cancel/Quarantine authority与delivery-readiness校验；通过后按`attempt_id`确定序FOR UPDATE锁定该Run全部Attempts，并在Attempt head保护下读取immutable latest Evidence。历史attempt的原lease/frozen artifacts必须内部自洽，但其lease不要求等于当前finalizer Run lease。已sealed attempt只验证严格head/冻结绑定而不覆写；`prepared/not_requested`、`authorization_pending/requested_unknown`、`authorized/granted`形成revision 1 `not_dispatched` closure，actual保持`unknown/not_observed`且usage为`unresolved/missing_usage`；`dispatch_started/granted`形成revision 1 `unknown` closure与`unresolved/incomplete_response`。不生成known-zero、normalized usage、actual provider/model或Billing事实。
 
 开放attempt closure全部成功后只调用一次现`recompute_run_completeness`，再继续原interaction terminal、Chat、outbox/control与Run terminal写入；现`outcome.usage`及usage segment仍只服务执行预算/既有展示，不得反填strict Evidence或冒充费用事实；codec、冻结事实、head关联、SQL、timeout或取消任一失败使整个事务回滚。terminal exact retry按同序验证已提交strict rows并返回原终态重放，保留原event ID/observed time/bytes且零写；terminal后新revision仍拒绝，不开放late-usage authority。
+
+Root R195实际主验：全真实PG303通过39.35s、自有库回收/source不变；完整默认2178通过/401资源deselected，lock/frozen-sync/Ruff/types/contract/build0。strict SQL全投影与typed denied负控已从真实失败修复；运行producer与Billing链另门，不以此完成。
 
 ### A3b §8实施放置门
 
@@ -55,7 +57,7 @@ A3b只扩现`finalize_terminal`唯一事务：完整保留既有Execution/Cancel
 | 当前事实 | `postgres_run_leases.py::finalize_terminal`拥有Run/interaction/Chat/outbox/control终态原子性；A3a已有纯strict规则、cursor evidence/completeness primitive与canonical表 |
 | 目标职责/API | 包内cursor operation封存/验证全部attempt并重算completeness；不新增公开Protocol、HTTP/RPC/event/generated/Billing API |
 | 两位置比较 | 采用纯builder/validation留`model/call_evidence.py`、有序锁/SQL留`postgres_model_call_evidence.py`、`postgres_run_leases.py`只编排一次；淘汰全部内联finalizer造成重复语义，也淘汰调用会开启第二事务的repository facade |
-| 粒度 | 只扩三个现生产文件；不新建文件/目录/facade/UoW/base repository/mixin |
+| 粒度 | 只扩三个现业务生产文件及现runtime资源清单；不新建文件/目录/facade/UoW/base repository/mixin |
 | 依赖 | run-leases infrastructure可依赖包内evidence cursor函数；model不得反向依赖infrastructure；禁止Billing/provider SDK、网络I/O与跨owner SQL |
 | 数据/API | 无DDL/index/FK/outbox/contract/version变化；锁Run→按attempt_id锁全部Attempts，再在head保护下读immutable Evidence；tenant/authority来自locked Run/request；历史attempt原lease须与其冻结artifact自洽但不等于当前finalizer lease |
 | 幂等 | open row仅建revision 1；sealed row validate/no-op；committed terminal retry读取原event/time/bytes；随机event仅在无已提交closure时生成 |
@@ -63,7 +65,7 @@ A3b只扩现`finalize_terminal`唯一事务：完整保留既有Execution/Cancel
 | 删除项 | 不留terminal专用重复codec/recompute/兼容路径；保持唯一`recompute_run_completeness` |
 | 验证 | 现真实PG integration tests-first；mixed states、sealed immutable、corruption全回滚、terminal exact retry、owned锁等待；随后full database、Ruff、Pyright、contract/architecture、build |
 
-生产GREEN最大写集仅`model/call_evidence.py`、`infrastructure/postgres_model_call_evidence.py`、`infrastructure/postgres_run_leases.py`。测试最大写集为现`test_model_call_evidence_repository.py`、`test_run_interaction_transactions.py`，仅在证明Chat/outbox/control原子性确需既有fixture时扩`test_delivery_outbox.py`。A3b不含runtime/provider调用、post-terminal reconciler、Billing evidence读取/ACK或收费。
+生产业务GREEN仅`model/call_evidence.py`、`infrastructure/postgres_model_call_evidence.py`、`infrastructure/postgres_run_leases.py`；现`execution/runtime_profile_sources.py`另精确登记所需5个已有resource闭包，不改版本/metadata/动态边或实际runtime caller。测试最大写集为现`test_model_call_evidence_repository.py`、`test_run_interaction_transactions.py`，仅在证明Chat/outbox/control原子性确需既有fixture时扩`test_delivery_outbox.py`。A3b不含runtime/provider调用、post-terminal reconciler、Billing evidence读取/ACK或收费。
 
 ## 历史基线：R188-AGENT-A1-SCHEMA（2026-10-04）
 

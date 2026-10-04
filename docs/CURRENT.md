@@ -1,3 +1,13 @@
+## R195-A3b 当前：终态原子封存已实现并通过限定 owner 门（2026-10-04）
+
+本片基线 main `c3bf769`；Root 仅验收四个现 production 文件与一个现数据库 integration 文件：纯 strict builder/冻结事实校验、同cursor Evidence primitive、原Run finalizer接线及其显式runtime resource闭包。现终态事务在原Execution/Cancel/Quarantine/delivery-readiness门后锁Run→按attempt_id锁全部Attempts；验证immutable sealed heads，开放prepared/pending/authorized保存not_dispatched unresolved closure，dispatch_started保存unknown unresolved closure；唯一completeness重算与原interaction/Chat/outbox/control/Run终态同事务提交。未知不猜零、原预算usage不反填strict费用证据。
+
+sealed验证逐项核canonical与SQL identity/revision/predecessor/outcome/usage/totals/classification/seal/time及Attempt head；typed授权与SQL state严格一致；合法denied只对应authorization_denied而不误映not_dispatched。历史Attempt lease只核自身冻结identity，不误要求等于当前finalizer lease。committed terminal精确重放保原event/time/bytes，Evidence/head/Run零写。
+
+Root新manifest后真实PostgreSQL完整 **303 passed / 0 failed / 0 skipped（39.35s）**，manifest `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r195-agent-full-pi5btyok/manifest.json`：自有数据库absent，全部source hash前后相同。完整工程 **2178 passed / 401资源deselected / 795既有warnings（112.57s）**；lock-check、frozen-sync、Ruff280文件、默认全Pyright、contract-check、wheel/sdist build均自然exit0。独立静态review0P0/0P1/1P2（矩阵非穷举）。真实5RED→11GREEN及首次fixture/typing/资源闭包失败均保留在Root台账，不弱化门禁。
+
+明确仍OPEN：实际per-invocation runtime caller/provider、Billing正式Admission消费、authenticated evidence读取/ACK、reconciler、预占/actual结算/释放与用户收费链。本片只完成终态持久事实边界，不代表真实模型或整体Agent闭环；401未选择资源用例不计业务通过。下方R192/R193及更旧节仅为当时历史收据。
+
 ## R192-AGENT-A2：内部授权/dispatch repository 已验，运行与收费链未接（2026-10-04）
 
 当前工作树已实现Agent内部`prepare`、authorization begin/grant与唯一dispatch CAS，并完成234行纯artifact模块/675行PostgreSQL adapter职责拆分。Root真实PostgreSQL定点70项通过、0失败、6.93s；完整database 281通过、0 skip、32.90s；完整工程自然exit0（2178通过、379资源deselected，lock/frozen-sync/Ruff 278 files/Pyright/contract/wheel/sdist均0，112.54s），独立审查0 P0/P1。自有临时数据库回收为absent且验证前后source hash一致；其中包含canonical corruption RED→GREEN、真实双连接owned lock chain、恰一dispatch authority、authority/ref/digest/terminal/timeout零写及Run completeness读回。该证据只绑定当前model/repository/integration切片，不代表provider或用户收费链。
@@ -13,12 +23,6 @@ A3a包内command/receipt、strict artifact校验及PostgreSQL cursor primitive�
 Root真实PostgreSQL定点 **81 passed / 0 failed（8.19s）**；完整database **292 passed / 0 skipped（34.32s）**，manifest `T/kokoro-r193-agent-full-8h0ni7r9`，自有数据库absent且source hash前后相同。完整工程门自然exit 0（2178 passed、390资源deselected、795既有warning，111.98s；lock/frozen-sync/Ruff 280 files/Pyright/contract/wheel/sdist build均0），构建产物位于`/tmp/kokoro-r193-agent-build-final`。A3b/finalizer、post-terminal reconciler、runtime/provider、Billing evidence read/ACK、预占/actual结算/释放及端到端收费继续OPEN；unknown不猜零，失败/取消仅结算已核实用量的政策仍归Billing owner。
 
 ---
-
-## R194-A3b下一片：terminal closure D0（尚未实现）
-
-Root当前只批准A3b设计收敛：完整保留Execution/Cancel/Quarantine authority及delivery readiness，在现唯一`finalize_terminal`事务内有序锁全部Attempts，验证sealed heads，分别把prepared/pending/authorized封存为strict `not_dispatched`、把dispatch_started封存为strict `unknown`，重算Run completeness后再原子提交interaction/Chat/outbox/control/Run terminal。corrupt facts全回滚，terminal exact retry验证全部heads、保原event/time/bytes且零写；历史attempt lease只须与其冻结artifact自洽，不要求等于当前finalizer lease；unknown不补零，已sealed不覆写，既有outcome budget usage不冒充strict费用事实。
-
-本片无DDL/wire/Billing/provider变化，也不开放post-terminal新证据authority。后继仍须真实PG tests-first RED及精确源码授权；A3b完成也不代表runtime/provider、Billing read/ACK、预占/结算/释放或收费链闭环。
 
 ## 历史基线：R189-AGENT-A1-PREPARE（2026-10-04）
 

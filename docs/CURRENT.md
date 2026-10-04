@@ -14,6 +14,12 @@ Root真实PostgreSQL定点 **81 passed / 0 failed（8.19s）**；完整database 
 
 ---
 
+## R194-A3b下一片：terminal closure D0（尚未实现）
+
+Root当前只批准A3b设计收敛：完整保留Execution/Cancel/Quarantine authority及delivery readiness，在现唯一`finalize_terminal`事务内有序锁全部Attempts，验证sealed heads，分别把prepared/pending/authorized封存为strict `not_dispatched`、把dispatch_started封存为strict `unknown`，重算Run completeness后再原子提交interaction/Chat/outbox/control/Run terminal。corrupt facts全回滚，terminal exact retry验证全部heads、保原event/time/bytes且零写；历史attempt lease只须与其冻结artifact自洽，不要求等于当前finalizer lease；unknown不补零，已sealed不覆写，既有outcome budget usage不冒充strict费用事实。
+
+本片无DDL/wire/Billing/provider变化，也不开放post-terminal新证据authority。后继仍须真实PG tests-first RED及精确源码授权；A3b完成也不代表runtime/provider、Billing read/ACK、预占/结算/释放或收费链闭环。
+
 ## 历史基线：R189-AGENT-A1-PREPARE（2026-10-04）
 
 R189 prepare source/tests已进入当前工作树候选：仅实现trusted durable Run/recipe scope下的prepared insert、ordinal、immutable replay和同事务Run completeness重算。Root真实PG 56项及完整database 267项已通过。完整工程首轮2174通过、1失败、365 deselected：新repository导入`typing.cast`触发架构门，build未执行。移除逃逸后Root18098同完整门exit0：2175通过、365资源deselected（非业务通过），lock/frozen-sync/ruff/pyright/contract及wheel/sdist build均0，112.85s。最终a9c57172源码Root24104定点真实PG56通过5.49s；此前全database267通过绑定9df候选，不冒最新267重跑。自有数据库已回收，源码哈希前后相同；真实provider/费用链不在此证据内。

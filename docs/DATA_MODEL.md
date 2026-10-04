@@ -6,6 +6,14 @@ A2使用R188已发布的`kokoro_agent_model_call_attempt`与Run completeness列�
 
 尚无evidence repository writer/finalizer/runtime producer/Billing ACK/outbox。旧usage segment继续只是预算事实，不是计费真源；本轮不删除或双写。`model/call_artifacts.py`纯canonical/binding/recipe职责搬移已通过Root数据库/完整工程门与独立审查；canonical SQL、事务顺序与数据生命周期未改。
 
+### R192-A3a批准目标：复用现表，无DDL（尚未实现）
+
+当前main仍仅A2，canonical schema不变。A3a将在一个事务中锁Run→Attempt→latest Evidence，insert现`kokoro_agent_model_usage_evidence`、CAS现attempt latest/status/sealed并用唯一completeness算法重算现Run五项投影；不增加表、列、索引、FK或outbox。
+
+数据库接收前除`parse_evidence`外还必须证明原raw等于包含digest的完整RFC8785 document bytes，并将identity、planned、authorization及prepared/dispatch时间与冻结attempt原bytes逐项匹配。首revision要求空head；后继精确引用latest。active Run上的`observed`或`unknown/granted`可接受合法contiguous successor；terminal Run只读精确已提交revision，拒绝任何新行。timeout/cancel/conflict使evidence、head和Run projection全部回滚。
+
+现`_recompute_run`实施时只移动到包内cursor evidence primitive并删除旧定义，禁止复制算法或形成第二repository facade。A3b terminal closure、reconciler与Billing ACK不在A3a数据写集。
+
 ## 历史基线：R188-AGENT-A1-SCHEMA canonical SQL（2026-10-04）
 
 > 以下“当前/尚无”均为R188/R189当时快照；R192现状以上方首节为准。

@@ -6,6 +6,16 @@
 
 待实现边界：runtime/provider、strict evidence append/finalizer、cancel/failed实际usage封存、Billing evidence读取和ACK、actual-only结算及unknown reconciliation。失败或取消只结算已核实实际消耗、释放其余预占属于Billing owner；Agent unknown必须持久保留，不能补零。本节不改变现OpenAPI、RunRequest、AG-UI或机器artifact bytes；纯artifact职责搬移已按限定内部片验证，且无机器契约版本变化。
 
+### R192-A3a批准目标：内部append，无wire变化（尚未实现）
+
+当前main仍仅A2。A3a计划增加的append command/receipt与cursor primitive全部是Agent包内接口，不是HTTP/RPC/event/Billing API，不复制usage/v1机器字段，也不升级任何contract version。调用方必须提交完整owner usage/v1 canonical artifact；repository严格验证后只返回内部持久receipt。
+
+普通worker只在Run active且lease fence有效时追加首revision或contiguous monotonic successor；active `unknown/granted`允许合法unknown→known/verified usage增补。Run terminal后新revision一律拒绝，exact readback只恢复已提交同event/revision/bytes/digest，绝不授予provider重发或terminal写权限。Billing evidence读取/ACK及收费仍没有本片契约。
+
+包内目标签名沿现immutable command惯例：`append_evidence(AppendModelCallEvidence) -> ModelCallEvidenceReceipt`。command显式携带受信`tenant_id/run_id/attempt_id/lease`、`attempt_binding_digest/planned_digest/authorization_digest`与完整`evidence_bytes`；event/revision/digest/observed time只从strict artifact解析，不接受raw之外第二套caller自报授权字段。receipt仅绑定tenant/run/attempt/event/revision/digest、原`observed_at_ms`与`replayed`，不包含`newly_started`或任何provider外发许可。此处仅定义包内目标，不复写generated usage机器字段。
+
+append只接受`seal=true`、revision在正int64范围的artifact。repository在Run锁后以受信DB时刻验证`prepared_at <= observed_at <= db_now`，有dispatch时还要求`dispatch_started_at <= observed_at`；输入观测时间成功后原样持久，exact replay返回原`observed_at_ms`，绝不按重放时钟刷新。
+
 ## 历史基线：R188-AGENT-A1-SCHEMA内部数据合同（2026-10-04）
 
 > 以下“当前/尚无”均为R188/R189当时快照；R192现状以上方首节为准。

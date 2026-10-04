@@ -1,3 +1,56 @@
+## R188-AGENT-A1-SCHEMA：attempt/evidence canonical SQL实施候选（2026-10-04）
+
+当前`kokoro_agent_run`已有run/tenant/lease/terminal与旧usage totals；`kokoro_agent_run_usage_segment`服务预算。A1现已在唯一canonical DDL加入两张Agent表与Run completeness，并同步catalog verifier/真实PG测试候选；等待Root fresh/漂移验收。不新增outbox/Billing表/FK，且尚无repository/runtime writer。
+
+### `kokoro_agent_model_call_attempt`
+
+- `attempt_id UUID PRIMARY KEY`；`tenant_id TEXT NOT NULL`、`run_id TEXT NOT NULL`、`call_id UUID NOT NULL`、`attempt_ordinal BIGINT NOT NULL CHECK >0`；唯一`(run_id,call_id,attempt_ordinal)`。
+- 原fence：`lease_owner TEXT NOT NULL`非空、`lease_generation BIGINT NOT NULL CHECK >0`。
+- `attempt_binding_bytes BYTEA NOT NULL`（artifact identity除revision级event_id的字段，1..65536）、`attempt_binding_digest TEXT NOT NULL CHECK ^[0-9a-f]{64}$`，唯一`(tenant_id,run_id,attempt_binding_digest)`；不再机械声明PK上的tenant唯一。
+- `planned_bytes BYTEA NOT NULL`有界、`planned_digest TEXT` hex；`authorization_bytes BYTEA NOT NULL`有界、`authorization_digest TEXT` hex；均保存artifact结构，不复制跨仓DTO。
+- `authorization_state TEXT`闭集not_requested/requested_unknown/denied/granted；`status TEXT`闭集prepared/authorization_pending/authorization_denied/authorized/dispatch_started/observed/unknown/not_dispatched。
+- `prepared_at TIMESTAMPTZ(3) NOT NULL`、`dispatch_started_at TIMESTAMPTZ(3) NULL`、`sealed_at TIMESTAMPTZ(3) NULL`；`latest_revision BIGINT NOT NULL DEFAULT 0`、`latest_event_id UUID NULL`、`latest_evidence_digest TEXT NULL CHECK hex`；created/updated DB毫秒时间，成功replay不改updated_at。
+
+精确CHECK采用TECH八态表：prepared=not_requested/no dispatch/unsealed/latest0；pending=requested_unknown/no dispatch/unsealed；denied=denied/no dispatch/sealed/latest；authorized=granted/no dispatch/unsealed；dispatch_started=granted/dispatch/unsealed；observed=granted/dispatch/sealed/latest；unknown=granted/dispatch/sealed/latest；not_dispatched只允许not_requested/requested_unknown/granted、无dispatch、sealed/latest。latest三元组全NULL+revision0或全非NULL+revision>0。sealed时间与latest同步，时间顺序`prepared <= dispatch <= sealed`按存在字段比较。
+
+索引：ordinal唯一；`ix_model_attempt_unsealed(run_id,status,attempt_id) WHERE status IN ('prepared','authorization_pending','authorized','dispatch_started')`；A1不建unknown reconcile writer，若未来获准再加`status='unknown'`专用索引。无provider/model/opaque ref索引。
+
+ordinal在Run `FOR UPDATE`及fence校验后查同call max+1；BIGINT耗尽零写。同attempt binding digest重放原行，任何ordinal/binding漂移冲突。
+
+### `kokoro_agent_model_usage_evidence`
+
+- `event_id UUID PRIMARY KEY`；tenant/run TEXT、attempt/call UUID NOT NULL；`revision BIGINT >0`，唯一`(attempt_id,revision)`。
+- predecessor event UUID与digest TEXT成组；revision1必须NULL，后继必须非NULL并匹配当前latest。
+- `evidence_bytes BYTEA NOT NULL` 1..65536；`evidence_digest TEXT NOT NULL CHECK hex`，唯一`(attempt_id,evidence_digest)`。
+- `execution_outcome TEXT`闭集not_dispatched/completed/failed/cancelled/unknown；`usage_state TEXT` normalized/unresolved；`totals_state TEXT` known_zero/known_nonzero/unknown；`classification_state TEXT` complete/partial/unknown；`sealed BOOLEAN NOT NULL CHECK sealed=TRUE`；observed_at/created_at TIMESTAMPTZ(3)。
+
+CHECK：unresolved必为totals/classification unknown；execution unknown必为两项unknown；not_dispatched只允许unresolved missing usage，不据此补0；normalized的known totals只配partial，totals unknown只配classification unknown，当前codec不可达complete。completed/failed/cancelled要求attempt有dispatch，not_dispatched要求无dispatch。跨表规则在Run→attempt锁内验证，不用CHECK假装FK。
+
+append用`parse_evidence`验证并核冻结字段；相同event/revision/digest/bytes重放，漂移冲突；insert evidence、CAS attempt latest/status、更新Run投影同事务。
+
+### Run completeness与完整真值
+
+Run增加四计数+状态：attempt/dispatched/sealed/unknown BIGINT默认0，`model_usage_completeness TEXT DEFAULT 'none'`闭集none/complete/partial/unknown。unknown_count只计sealed unknown execution、unresolved dispatched usage或normalized classification unknown；不计sealed not_dispatched，也不把unsealed重复计数。
+
+| 行集合 | completeness | 必要计数关系 |
+|---|---|---|
+| 无attempt | none | attempt=dispatched=sealed=unknown=0 |
+| 任一unsealed（含prepared/pending/authorized/started） | unknown | sealed<attempt；unknown可0 |
+| 全sealed且任一sealed unknown/unresolved dispatched/normalized classification unknown | unknown | sealed=attempt；unknown>0 |
+| 全sealed、无unknown，至少一normalized partial，其余complete或not_dispatched | partial | sealed=attempt；unknown=0 |
+| 全sealed、无unknown/partial，全部normalized complete或not_dispatched | complete | sealed=attempt；unknown=0 |
+
+通用CHECK：0<=unknown<=sealed<=attempt，0<=dispatched<=attempt；none精确零；complete/partial要求attempt>0、sealed=attempt、unknown=0；unknown要求attempt>0且(`sealed<attempt`或`unknown>0`)。应用锁内从attempt/latest evidence重算，以区分complete和partial，并断dispatched计数等于有dispatch时间行数。全not_dispatched为complete，表示外发知识完整，不代表provider reported zero。
+
+### finalizer/cancel稳定事实
+
+cancel/finalizer只依据持久状态：prepared/pending/authorized→sealed not_dispatched；dispatch_started→sealed unknown；denied transition自身原子写not_dispatched；observed/unknown/已not-dispatched保持原revision。closure首次在锁内查询next revision；不存在才生成随机event UUID、读取一次DB observed_at、用冻结字段+actual unknown/not_observed+unresolved reason构造并经codec验证。unknown commit后先查询唯一attempt/revision，存在即精确重放原event/time/bytes/digest。绝不按Run终态捏造known-zero或actual binding。
+
+A1不建usage outbox、delivery lease或Billing ACK。旧segment仅预算职责；新producer接线、预算caller迁移和恢复门全部通过后才一次删除旧独立writer/fallback。
+
+---
+
+
 ## R122 数据当前态（2026-10-02）
 
 当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。

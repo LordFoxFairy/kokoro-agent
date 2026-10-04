@@ -1,3 +1,18 @@
+## R188-AGENT-A1-SCHEMA：内部数据合同实施候选（2026-10-04）
+
+当前canonical PostgreSQL数据合同已通过Root真实PG定点58项及完整database 254项；没有repository/runtime producer。A1不修改HTTP5/OpenAPI、RunRequest、BFF/AG-UI或Billing operation，不新增跨仓RPC。Billing v2 2.0.2仍是未部署experimental Run/invocation target，Agent/BFF无consumer pin；A1不复制其request/response或generic service receipt。
+
+唯一机器语义来自已发布`contract/usage/v1` 1.0.0：小写UUID event/call/attempt；正ordinal/revision/lease generation；revision1无predecessor、后继精确引用前event/digest；同identity+revision+bytes+digest只读幂等，漂移冲突。authorization闭集`not_requested|requested_unknown|denied|granted`；只有granted的authorized attempt可dispatch。execution闭集`not_dispatched|completed|failed|cancelled|unknown`；usage为normalized或unresolved，totals和classification各自保留unknown。
+
+A1状态映射以TECH真值表为唯一内部合同。特别是：prepared/pending不得dispatch；denied在同事务写sealed not_dispatched；unknown是sealed事实；unsealed扫描只含prepared/pending/authorized/dispatch_started。evidence同表投影遵循已发布codec：not_dispatched不接受normalized，known totals只配partial，totals unknown只配classification unknown；后一合法组合仍使Run unknown。全sealed not_dispatched表示“已证明零外发”，Run completeness可complete，但不生成provider reported zero。
+
+finalizer closure严格复用冻结attempt字段并经现codec产生合法artifact。首次事务内随机event UUID+DB毫秒observed_at；无派生UUID算法。unknown commit后按`(attempt_id,revision)`读取已提交原bytes/event/time/digest，只有不存在才新建。not_dispatched使用unresolved/missing_usage，started unknown使用unresolved/incomplete_response；actual unknown/not_observed；raw digest只保留已观察值。缺冻结事实或codec失败使Run终态全回滚。
+
+repository内部结果闭集`created|replayed|conflict|authority_lost|terminal`，不直接成为HTTP error。Run completeness内部投影不进入公开payload：none/complete/partial/unknown按TECH逐attempt真值计算。终态后普通lease callerauthority_lost；reconciler另设计。A1没有delivery ACK/outbox、Billing receipt、结算状态或金额。
+
+---
+
+
 ## R122 契约当前态（2026-10-02）
 
 当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。

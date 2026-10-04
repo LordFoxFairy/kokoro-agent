@@ -1,3 +1,75 @@
+## R188-AGENT-A1-SCHEMA：canonical schema 实施候选（2026-10-04）
+
+### 当前态与批准目标态
+
+当前Schema切片已按R2写入canonical DDL、catalog verifier与真实PG测试候选，Root真实fresh/漂移定点58通过、完整database 254通过；repository/runtime producer仍不存在。当前 Agent `main` 基线 `2d2ad9bb4d261bee6c71e35f0d68f419a785bf9c`：`kokoro_agent_run` 已有 tenant/lease/terminal 与三个旧usage总量；`kokoro_agent_run_usage_segment` 只按 `(run_id, lease_generation)`保存执行预算段。已发布`contract/usage/v1` 1.0.0精确定义event/call/attempt/revision/digest、authorization/execution observation及usage知识，但运行时尚无PG producer journal。
+
+Root批准A1仅含Agent attempt journal、immutable strict evidence revisions、Run completeness；不含Billing client、网络sender、外部ACK、usage outbox、价格或金额。A1只保存usage artifact已有authorization observation，不复制或解释Billing DTO。
+
+### 放置与职责
+
+采用`model/call_models.py`承载不可变内部值、闭集状态及repository Protocol，`infrastructure/postgres_model_call_repository.py`仅承载SQL adapter；现`postgres_run_leases.py`只协调同连接finalizer。淘汰types/Protocol/SQL万能文件及把attempt CRUD继续塞进finalizer。两个新生产文件，无新目录、base repository、通用UoW或第二executor。HTTP5、RunRequest、AG-UI及usage artifact字节不变。
+
+### 状态、授权与持久观察真值表
+
+`latest`表示`latest_revision/latest_event_id/latest_evidence_digest`三元组；三者必须全有或全无。所有sealed状态必须latest全有；所有unsealed状态必须latest全无。
+
+| attempt status | authorization state | dispatch | sealed/latest | 允许的latest execution | usage/completeness贡献 | 可执行CAS |
+|---|---|---|---|---|---|---|
+| `prepared` | `not_requested` | NULL | 否/无 | 无 | Run unknown（存在未封存attempt） | →authorization_pending / authorization_denied / authorized / not_dispatched |
+| `authorization_pending` | `requested_unknown` | NULL | 否/无 | 无 | unknown | →authorization_denied / authorized / not_dispatched；不得dispatch |
+| `authorization_denied` | `denied` | NULL | 是/有 | `not_dispatched` | 已证明未外发，不计unknown | 终态，只读重放 |
+| `authorized` | `granted` | NULL | 否/无 | 无 | unknown | →dispatch_started / not_dispatched |
+| `dispatch_started` | `granted` | 非NULL | 否/无 | 无 | unknown | →observed / unknown |
+| `observed` | `granted` | 非NULL | 是/有 | `completed|failed|cancelled` | 依latest usage分类 | 只允许append合法后继revision并保持observed，不能改已知事实 |
+| `unknown` | `granted` | 非NULL | 是/有 | `unknown` | unknown_count+1，Run unknown | A1普通worker只读；未来具名reconciler另设计 |
+| `not_dispatched` | `not_requested|requested_unknown|granted` | NULL | 是/有 | `not_dispatched` | 已证明未外发，不计unknown | 终态，只读重放 |
+
+`denied`只配`authorization_denied`，避免denied与通用not_dispatched双表示。只有`authorized -> dispatch_started`；prepared/pending绝不直接dispatch。unknown已经sealed，不进入unsealed扫描。finalizer未封存索引覆盖`prepared|authorization_pending|authorized|dispatch_started`；未来reconcile索引若获准只覆盖sealed `unknown`，A1不实现其writer。
+
+### exact CAS、ordinal与重放
+
+固定锁序`kokoro_agent_run -> model_call_attempt -> model_usage_evidence`。所有写显式tenant/run/LeaseFence，锁后用DB clock重验owner/generation、lease未过期、Run非terminal；不持锁等待外部I/O。
+
+- prepare在Run锁下为`(run_id,call_id)`读取最大ordinal并+1；正BIGINT耗尽零写。相同attempt/binding digest重放返回原行且不改updated_at；ordinal或任何binding漂移冲突。
+- authorization transition比较expected status、原authorization digest及新canonical observation；同目标同digest只读重放，不同bytes/digest冲突。
+- dispatch CAS只接受authorized+granted+无dispatch/latest，首次写DB时间；重放必须同attempt及原时间/authorization，不能生成第二外发许可。
+- evidence append先用现`parse_evidence`验证完整canonical envelope，再核tenant/run/call/attempt/ordinal/lease/planned/authorization与attempt冻结值。revision 1无predecessor；N>1必须精确引用当前latest event/digest。相同event/revision/digest/bytes只读重放；任一漂移冲突。
+- 旧generation、过期lease和terminal普通worker零写。unknown不是retry许可；真正外发重试未来必须新attempt及新授权。
+
+### finalizer稳定strict observation
+
+finalizer不得从Run终态猜known-zero、实际provider/model或成功用量，也不得覆盖已有evidence。它只对四种unsealed状态依据**已持久attempt事实**形成合法closure observation：prepared/pending/authorized均为`not_dispatched`；dispatch_started为`unknown`。authorization_denied已在拒绝CAS时原子写入not_dispatched evidence，不留给finalizer补。
+
+首次closure在持有Run+attempt锁的同一事务内：先按`(attempt_id,next_revision)`查询是否已有行；没有才由应用生成新的随机artifact UUID event_id（不使用猜测/派生算法），从数据库读取一次毫秒`observed_at`，组合冻结attempt binding、planned bytes、authorization bytes；actual=`unknown/not_observed`；execution使用上述not_dispatched或unknown、`seal=true`、原prepared_at/dispatch_started_at；usage=`unresolved`，reason为not_dispatched的`missing_usage`或started的`incomplete_response`，保留已有raw_usage_digest（没有则null），绝不构造reported 0。调用现codec得到canonical bytes/domain digest后，在同事务insert并CAS latest/status/completeness。
+
+若提交结果未知，重试先按唯一`(attempt_id,revision)`读取：存在则校完整bytes/digest/identity并重放其原event_id/observed_at；不存在才生成新event/time。因未提交的随机值不是事实，无需跨进程派生；已经提交的身份永远从PG恢复。任何缺失冻结identity/planned/authorization、codec失败或已有revision漂移使整个finalize回滚，Run保持非terminal，绝不写半终态。
+
+原唯一`finalize_terminal`在同连接完成closure、Run completeness、Run terminal、Chat/outbox/control/cleanup；重放只读既有closure。Run terminal后普通lease caller不得append；未来reconciler需独立具名authority，不在A1开放。
+
+### Run completeness真值
+
+四计数：attempt、dispatched、sealed、unknown。unknown_count仅计sealed且执行/usage知识仍unknown的attempt；未封存attempt不增unknown_count，但整体completeness仍unknown。逐attempt归类：
+
+| durable attempt事实 | attempt分类 |
+|---|---|
+| 任一unsealed状态（prepared/pending/authorized/dispatch_started） | `open` |
+| sealed not_dispatched（含authorization_denied） | `no_usage_required` |
+| sealed unknown、unresolved usage、或normalized classification unknown | `unknown` |
+| sealed observed + normalized classification complete | `complete`（当前codec不可达，仅保留未来投影语义） |
+| sealed observed + normalized classification partial | `partial` |
+
+Run：0 attempts=`none`；任一open/unknown=`unknown`；否则至少一partial=`partial`；否则（全部complete或no_usage_required）=`complete`。因此全not_dispatched是complete而不是伪造usage 0；normalized classification unknown明确为unknown。evidence同表CHECK与codec一致：not_dispatched不接受normalized，known totals只配partial，totals unknown只配classification unknown。Run SQL CHECK仅保护计数边界与none/complete/partial必要条件，应用在Run锁内从attempt/latest evidence重算并验证精确分类。
+
+旧token totals和usage_segment继续只服务执行预算，不是计费真源。A1不从它们造evidence、不双写收费累计。后继producer实际接线、预算改为同源投影且全部恢复/预算测试通过后，才同切片删除旧独立writer/fallback。
+
+### 阶段门
+
+候选实施仅两个新生产文件加现schema/facade/finalizer；先tests-only真实PG RED，Root另授后才写测试/DDL/source。本schema切片已经完成DDL/catalog与对应真实PG门；后继repository实施尚未获源码放行，须另以真实业务RED覆盖两连接ordinal、八态全部合法/非法CAS、unsealed/reconcile索引、重放漂移、旧fence、cancel、closure稳定identity/time/bytes、unknown commit重查、codec失败全回滚、terminal重放及completeness全真值。A1即使未来通过也不证明Billing、provider、BFF/Web或真实收费链。
+
+---
+
+
 ## R122 技术方案当前态（2026-10-02）
 
 当前为Agent main `2653bcc723da5366fd877db73d701410e7bdc3a8` 之上的完整HTTP5/Todo、安全过程、安装资源与生命周期候选，待Root提交/发布；下方R104提案与R117 RED均为历史阶段，不覆盖本节。事实owner/模块、唯一canonical SQL与机器契约不变；distribution `2.0.0`、HTTP `5.0.0`、execution proof `1.0.0` 是不同身份。当前OpenAPI SHA256 `bca8e4f4fd613e4325f594266893d5b089168cf14f2ad7a7df03f3f116af85f2`；跨仓消费者必须随后固定正式owner commit/digest，不靠未发布源码或兼容协议。

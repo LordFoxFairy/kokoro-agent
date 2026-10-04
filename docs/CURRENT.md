@@ -1,3 +1,14 @@
+## R188-AGENT-A1-SCHEMA：持久化边界已由Root验证，运行接线未完成（2026-10-04）
+
+基线Agent main `2d2ad9bb4d261bee6c71e35f0d68f419a785bf9c` 加已审四D0 R2与tests-only RED。Root已确认原RED为两项schema缺失失败、一项现Run正控通过。
+
+本片仅在唯一`database/schema.sql`实现两张Agent-owned表、八态CHECK/唯一键/真实索引与Run completeness；`infrastructure/schema.py`同步正式AGENT_TABLES、精确列/constraint inventory/index catalog门；三个获准测试文件覆盖fresh、状态/字节/digest/revision/time/count及catalog drift。四D0仅更新顶部当前态。没有migration/FK/第二schema、Billing/provider/HTTP/lock/generated变更。
+
+Root已实际复验：真实PostgreSQL定点58通过，全database 254通过/0失败（29.64s），自有临时数据库已回收、源码哈希前后相同。完整默认工程门2175通过、352资源类取消选择（非跳过验收），ruff格式275文件/检查、pyright、wheel/sdist构建均退出0；uv lock --check、uv sync --frozen与contract-check也实际退出0。资源证据见Root docs/progress.md R188及manifest `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r188-agent-schema-l1q_ndx5/manifest.json`。只验收本持久边界，不视为完整业务系统验收。evidence同表CHECK已与现usage/v1 codec对齐：not_dispatched+normalized、normalized known+complete、normalized unknown+complete均拒绝，normalized unknown+unknown保持合法。repository/model/runtime producer仍不存在，因此prepare/fence/finalizer的业务CAS尚未执行；Schema GREEN也不代表Billing、provider、正式收费或产品E2E完成。
+
+---
+
+
 ## R145：strict usage离线artifact限定验收（2026-10-03）
 
 基线Agent main `79bf98c` 加本片14路径候选，源码/机器已冻结，当前仅文档收口，待Root提交发布。schema-first `contract/usage/v1`、有限compiler、生成Pydantic、纯codec、独立manifest及既有installed audit闭包已实现；HTTP5/public7、SQL、依赖锁与运行producer保持不变。下方旧R80/R104/R122记录保留历史，不覆盖本节当前切片证据。

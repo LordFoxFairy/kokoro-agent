@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_run (
   token_total             BIGINT NOT NULL DEFAULT 0,
   usage_input_total       BIGINT NOT NULL DEFAULT 0,
   usage_output_total      BIGINT NOT NULL DEFAULT 0,
+  model_attempt_count     BIGINT NOT NULL DEFAULT 0,
+  model_dispatched_attempt_count BIGINT NOT NULL DEFAULT 0,
+  model_sealed_attempt_count BIGINT NOT NULL DEFAULT 0,
+  model_unknown_attempt_count BIGINT NOT NULL DEFAULT 0,
+  model_usage_completeness TEXT NOT NULL DEFAULT 'none',
   sandbox_id              TEXT,
   sandbox_generation      BIGINT,
   sandbox_backend_kind    TEXT,
@@ -69,6 +74,30 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_run (
     AND token_total >= 0
     AND usage_input_total >= 0
     AND usage_output_total >= 0
+  ),
+  CONSTRAINT ck_kokoro_agent_run_model_usage CHECK (
+    model_attempt_count >= 0
+    AND model_dispatched_attempt_count >= 0
+    AND model_dispatched_attempt_count <= model_attempt_count
+    AND model_sealed_attempt_count >= 0
+    AND model_sealed_attempt_count <= model_attempt_count
+    AND model_unknown_attempt_count >= 0
+    AND model_unknown_attempt_count <= model_sealed_attempt_count
+    AND model_usage_completeness IN ('none','complete','partial','unknown')
+    AND (
+      (model_usage_completeness = 'none'
+        AND model_attempt_count = 0
+        AND model_dispatched_attempt_count = 0
+        AND model_sealed_attempt_count = 0
+        AND model_unknown_attempt_count = 0)
+      OR (model_usage_completeness IN ('complete','partial')
+        AND model_attempt_count > 0
+        AND model_sealed_attempt_count = model_attempt_count
+        AND model_unknown_attempt_count = 0)
+      OR (model_usage_completeness = 'unknown'
+        AND model_attempt_count > 0
+        AND (model_sealed_attempt_count < model_attempt_count OR model_unknown_attempt_count > 0))
+    )
   ),
   CONSTRAINT ck_kokoro_agent_run_sandbox_binding CHECK (
     (
@@ -259,6 +288,119 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_run_usage_segment (
     input_tokens >= 0 AND output_tokens >= 0
   )
 );
+
+CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
+  attempt_id              UUID PRIMARY KEY,
+  tenant_id               TEXT NOT NULL,
+  run_id                  TEXT NOT NULL,
+  call_id                 UUID NOT NULL,
+  attempt_ordinal         BIGINT NOT NULL,
+  lease_owner             TEXT NOT NULL,
+  lease_generation        BIGINT NOT NULL,
+  attempt_binding_bytes   BYTEA NOT NULL,
+  attempt_binding_digest  TEXT NOT NULL,
+  planned_bytes           BYTEA NOT NULL,
+  planned_digest          TEXT NOT NULL,
+  authorization_bytes     BYTEA NOT NULL,
+  authorization_digest    TEXT NOT NULL,
+  authorization_state     TEXT NOT NULL,
+  status                  TEXT NOT NULL,
+  prepared_at             TIMESTAMPTZ(3) NOT NULL,
+  dispatch_started_at     TIMESTAMPTZ(3),
+  sealed_at               TIMESTAMPTZ(3),
+  latest_revision         BIGINT NOT NULL DEFAULT 0,
+  latest_event_id         UUID,
+  latest_evidence_digest  TEXT,
+  created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT uq_model_attempt_call_ordinal UNIQUE (run_id, call_id, attempt_ordinal),
+  CONSTRAINT uq_model_attempt_binding UNIQUE (tenant_id, run_id, attempt_binding_digest),
+  CONSTRAINT ck_model_attempt_identity CHECK (
+    length(trim(tenant_id)) > 0 AND length(run_id) > 0 AND length(lease_owner) > 0
+    AND attempt_ordinal > 0 AND lease_generation > 0
+  ),
+  CONSTRAINT ck_model_attempt_bytes CHECK (
+    octet_length(attempt_binding_bytes) BETWEEN 1 AND 65536
+    AND octet_length(planned_bytes) BETWEEN 1 AND 65536
+    AND octet_length(authorization_bytes) BETWEEN 1 AND 65536
+    AND attempt_binding_digest ~ '^[0-9a-f]{64}$'
+    AND planned_digest ~ '^[0-9a-f]{64}$'
+    AND authorization_digest ~ '^[0-9a-f]{64}$'
+    AND (latest_evidence_digest IS NULL OR latest_evidence_digest ~ '^[0-9a-f]{64}$')
+  ),
+  CONSTRAINT ck_model_attempt_latest CHECK (
+    (latest_revision = 0 AND latest_event_id IS NULL AND latest_evidence_digest IS NULL AND sealed_at IS NULL)
+    OR (latest_revision > 0 AND latest_event_id IS NOT NULL AND latest_evidence_digest IS NOT NULL AND sealed_at IS NOT NULL)
+  ),
+  CONSTRAINT ck_model_attempt_state CHECK (
+    (status = 'prepared' AND authorization_state = 'not_requested' AND dispatch_started_at IS NULL AND latest_revision = 0)
+    OR (status = 'authorization_pending' AND authorization_state = 'requested_unknown' AND dispatch_started_at IS NULL AND latest_revision = 0)
+    OR (status = 'authorization_denied' AND authorization_state = 'denied' AND dispatch_started_at IS NULL AND latest_revision > 0)
+    OR (status = 'authorized' AND authorization_state = 'granted' AND dispatch_started_at IS NULL AND latest_revision = 0)
+    OR (status = 'dispatch_started' AND authorization_state = 'granted' AND dispatch_started_at IS NOT NULL AND latest_revision = 0)
+    OR (status = 'observed' AND authorization_state = 'granted' AND dispatch_started_at IS NOT NULL AND latest_revision > 0)
+    OR (status = 'unknown' AND authorization_state = 'granted' AND dispatch_started_at IS NOT NULL AND latest_revision > 0)
+    OR (status = 'not_dispatched' AND authorization_state IN ('not_requested','requested_unknown','granted') AND dispatch_started_at IS NULL AND latest_revision > 0)
+  ),
+  CONSTRAINT ck_model_attempt_times CHECK (
+    (dispatch_started_at IS NULL OR dispatch_started_at >= prepared_at)
+    AND (sealed_at IS NULL OR sealed_at >= prepared_at)
+    AND (sealed_at IS NULL OR dispatch_started_at IS NULL OR sealed_at >= dispatch_started_at)
+  )
+);
+CREATE INDEX IF NOT EXISTS ix_model_attempt_unsealed
+  ON kokoro_agent_model_call_attempt (run_id, status, attempt_id)
+  WHERE status IN ('prepared','authorization_pending','authorized','dispatch_started');
+
+CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
+  event_id                UUID PRIMARY KEY,
+  tenant_id               TEXT NOT NULL,
+  run_id                  TEXT NOT NULL,
+  attempt_id              UUID NOT NULL,
+  call_id                 UUID NOT NULL,
+  revision                BIGINT NOT NULL,
+  predecessor_event_id    UUID,
+  predecessor_digest      TEXT,
+  evidence_bytes          BYTEA NOT NULL,
+  evidence_digest         TEXT NOT NULL,
+  execution_outcome       TEXT NOT NULL,
+  usage_state             TEXT NOT NULL,
+  totals_state            TEXT NOT NULL,
+  classification_state    TEXT NOT NULL,
+  sealed                  BOOLEAN NOT NULL,
+  observed_at             TIMESTAMPTZ(3) NOT NULL,
+  created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT uq_model_evidence_attempt_revision UNIQUE (attempt_id, revision),
+  CONSTRAINT uq_model_evidence_attempt_digest UNIQUE (attempt_id, evidence_digest),
+  CONSTRAINT ck_model_evidence_identity CHECK (
+    length(trim(tenant_id)) > 0 AND length(run_id) > 0 AND revision > 0
+    AND evidence_digest ~ '^[0-9a-f]{64}$'
+    AND (predecessor_digest IS NULL OR predecessor_digest ~ '^[0-9a-f]{64}$')
+  ),
+  CONSTRAINT ck_model_evidence_revision CHECK (
+    (revision = 1 AND predecessor_event_id IS NULL AND predecessor_digest IS NULL)
+    OR (revision > 1 AND predecessor_event_id IS NOT NULL AND predecessor_digest IS NOT NULL)
+  ),
+  CONSTRAINT ck_model_evidence_bytes CHECK (
+    octet_length(evidence_bytes) BETWEEN 1 AND 65536
+  ),
+  CONSTRAINT ck_model_evidence_state CHECK (
+    sealed = TRUE
+    AND execution_outcome IN ('not_dispatched','completed','failed','cancelled','unknown')
+    AND usage_state IN ('normalized','unresolved')
+    AND totals_state IN ('known_zero','known_nonzero','unknown')
+    AND classification_state IN ('complete','partial','unknown')
+    AND (usage_state <> 'unresolved' OR (totals_state = 'unknown' AND classification_state = 'unknown'))
+    AND (usage_state <> 'normalized' OR (
+      (totals_state IN ('known_zero','known_nonzero') AND classification_state = 'partial')
+      OR (totals_state = 'unknown' AND classification_state = 'unknown')
+    ))
+    AND (execution_outcome <> 'not_dispatched' OR usage_state = 'unresolved')
+    AND (execution_outcome <> 'unknown' OR (totals_state = 'unknown' AND classification_state = 'unknown'))
+  )
+);
+CREATE INDEX IF NOT EXISTS ix_model_evidence_run
+  ON kokoro_agent_model_usage_evidence (run_id, attempt_id, revision);
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_sandbox_cleanup_intent (
   cleanup_id       TEXT PRIMARY KEY,

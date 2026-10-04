@@ -58,6 +58,8 @@ def test_database_schema_contains_every_agent_owned_durable_surface() -> None:
         "kokoro_agent_run_control_command",
         "kokoro_agent_run_steer",
         "kokoro_agent_run_usage_segment",
+        "kokoro_agent_model_call_attempt",
+        "kokoro_agent_model_usage_evidence",
         "kokoro_agent_run_dlq",
         "kokoro_agent_sandbox_cleanup_intent",
         "kokoro_agent_tool_result",
@@ -76,6 +78,43 @@ def test_database_schema_contains_every_agent_owned_durable_surface() -> None:
         assert f"create table if not exists {table}" in schema
 
     assert "tenant_id" in schema
+
+
+def test_model_attempt_evidence_schema_has_exact_owner_boundaries() -> None:
+    schema = _schema().lower()
+
+    for column in (
+        "model_attempt_count",
+        "model_dispatched_attempt_count",
+        "model_sealed_attempt_count",
+        "model_unknown_attempt_count",
+        "model_usage_completeness",
+    ):
+        assert re.search(rf"\b{column}\s+", schema)
+
+    for constraint in (
+        "ck_kokoro_agent_run_model_usage",
+        "uq_model_attempt_call_ordinal",
+        "uq_model_attempt_binding",
+        "ck_model_attempt_identity",
+        "ck_model_attempt_bytes",
+        "ck_model_attempt_latest",
+        "ck_model_attempt_state",
+        "ck_model_attempt_times",
+        "uq_model_evidence_attempt_revision",
+        "uq_model_evidence_attempt_digest",
+        "ck_model_evidence_identity",
+        "ck_model_evidence_revision",
+        "ck_model_evidence_bytes",
+        "ck_model_evidence_state",
+        "ix_model_attempt_unsealed",
+        "ix_model_evidence_run",
+    ):
+        assert constraint in schema
+
+    assert "kokoro_agent_usage_outbox" not in schema
+    assert "authorized_micros" not in schema
+    assert "billing_receipt" not in schema
 
 
 def test_static_recipe_binding_has_atomic_bounded_canonical_columns() -> None:

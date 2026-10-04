@@ -21,6 +21,8 @@ RUN_CHECKPOINT_OBSERVATIONS_TABLE = "kokoro_agent_run_checkpoint_observation"
 RUN_CONTROL_COMMANDS_TABLE = "kokoro_agent_run_control_command"
 RUN_STEERS_TABLE = "kokoro_agent_run_steer"
 RUN_USAGE_SEGMENTS_TABLE = "kokoro_agent_run_usage_segment"
+MODEL_CALL_ATTEMPTS_TABLE = "kokoro_agent_model_call_attempt"
+MODEL_USAGE_EVIDENCE_TABLE = "kokoro_agent_model_usage_evidence"
 SANDBOX_CLEANUP_INTENTS_TABLE = "kokoro_agent_sandbox_cleanup_intent"
 TOOL_RESULTS_TABLE = "kokoro_agent_tool_result"
 TOOL_JOURNAL_TABLE = "kokoro_agent_tool_journal"
@@ -42,6 +44,8 @@ AGENT_TABLES = (
     RUN_CHECKPOINT_OBSERVATIONS_TABLE,
     RUN_STEERS_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
+    MODEL_CALL_ATTEMPTS_TABLE,
+    MODEL_USAGE_EVIDENCE_TABLE,
     SANDBOX_CLEANUP_INTENTS_TABLE,
     TOOL_RESULTS_TABLE,
     TOOL_JOURNAL_TABLE,
@@ -175,6 +179,7 @@ async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -
             )
 
     await _verify_interaction_schema(conn, schema)
+    await _verify_model_evidence_schema(conn, schema)
 
 
 async def _verify_interaction_schema(
@@ -406,6 +411,373 @@ async def _verify_interaction_schema(
                 raise SchemaNotReadyError("Agent interaction index differs: " + name)
 
 
+async def _verify_model_evidence_schema(
+    conn: psycopg.AsyncConnection[Any], schema: str
+) -> None:
+    """Check exact A1 columns and the approved constraint/index inventory."""
+
+    run_columns = {
+        "model_attempt_count": ("bigint", "NO", "0", None),
+        "model_dispatched_attempt_count": ("bigint", "NO", "0", None),
+        "model_sealed_attempt_count": ("bigint", "NO", "0", None),
+        "model_unknown_attempt_count": ("bigint", "NO", "0", None),
+        "model_usage_completeness": ("text", "NO", "'none'::text", None),
+    }
+    attempt_types = {
+        "attempt_id": "uuid",
+        "tenant_id": "text",
+        "run_id": "text",
+        "call_id": "uuid",
+        "attempt_ordinal": "bigint",
+        "lease_owner": "text",
+        "lease_generation": "bigint",
+        "attempt_binding_bytes": "bytea",
+        "attempt_binding_digest": "text",
+        "planned_bytes": "bytea",
+        "planned_digest": "text",
+        "authorization_bytes": "bytea",
+        "authorization_digest": "text",
+        "authorization_state": "text",
+        "status": "text",
+        "prepared_at": "timestamp with time zone",
+        "dispatch_started_at": "timestamp with time zone",
+        "sealed_at": "timestamp with time zone",
+        "latest_revision": "bigint",
+        "latest_event_id": "uuid",
+        "latest_evidence_digest": "text",
+        "created_at": "timestamp with time zone",
+        "updated_at": "timestamp with time zone",
+    }
+    evidence_types = {
+        "event_id": "uuid",
+        "tenant_id": "text",
+        "run_id": "text",
+        "attempt_id": "uuid",
+        "call_id": "uuid",
+        "revision": "bigint",
+        "predecessor_event_id": "uuid",
+        "predecessor_digest": "text",
+        "evidence_bytes": "bytea",
+        "evidence_digest": "text",
+        "execution_outcome": "text",
+        "usage_state": "text",
+        "totals_state": "text",
+        "classification_state": "text",
+        "sealed": "boolean",
+        "observed_at": "timestamp with time zone",
+        "created_at": "timestamp with time zone",
+    }
+    nullable_attempt = {
+        "dispatch_started_at",
+        "sealed_at",
+        "latest_event_id",
+        "latest_evidence_digest",
+    }
+    nullable_evidence = {"predecessor_event_id", "predecessor_digest"}
+    expected_columns = {
+        RUN_CLAIMS_TABLE: run_columns,
+        MODEL_CALL_ATTEMPTS_TABLE: {
+            name: (
+                kind,
+                "YES" if name in nullable_attempt else "NO",
+                "0"
+                if name == "latest_revision"
+                else (
+                    "CURRENT_TIMESTAMP(3)"
+                    if name in {"created_at", "updated_at"}
+                    else None
+                ),
+                3 if kind == "timestamp with time zone" else None,
+            )
+            for name, kind in attempt_types.items()
+        },
+        MODEL_USAGE_EVIDENCE_TABLE: {
+            name: (
+                kind,
+                "YES" if name in nullable_evidence else "NO",
+                "CURRENT_TIMESTAMP(3)" if name == "created_at" else None,
+                3 if kind == "timestamp with time zone" else None,
+            )
+            for name, kind in evidence_types.items()
+        },
+    }
+    check_names = {
+        RUN_CLAIMS_TABLE: {"ck_kokoro_agent_run_model_usage"},
+        MODEL_CALL_ATTEMPTS_TABLE: {
+            "ck_model_attempt_identity",
+            "ck_model_attempt_bytes",
+            "ck_model_attempt_latest",
+            "ck_model_attempt_state",
+            "ck_model_attempt_times",
+        },
+        MODEL_USAGE_EVIDENCE_TABLE: {
+            "ck_model_evidence_identity",
+            "ck_model_evidence_revision",
+            "ck_model_evidence_bytes",
+            "ck_model_evidence_state",
+        },
+    }
+    canonical_checks = {
+        "ck_kokoro_agent_run_model_usage": "CHECK (model_attempt_count >= 0 AND "
+        "model_dispatched_attempt_count >= 0 AND "
+        "model_dispatched_attempt_count <= "
+        "model_attempt_count AND "
+        "model_sealed_attempt_count >= 0 AND "
+        "model_sealed_attempt_count <= model_attempt_count "
+        "AND model_unknown_attempt_count >= 0 AND "
+        "model_unknown_attempt_count <= "
+        "model_sealed_attempt_count AND "
+        "(model_usage_completeness = ANY "
+        "(ARRAY['none'::text, 'complete'::text, "
+        "'partial'::text, 'unknown'::text])) AND "
+        "(model_usage_completeness = 'none'::text AND "
+        "model_attempt_count = 0 AND "
+        "model_dispatched_attempt_count = 0 AND "
+        "model_sealed_attempt_count = 0 AND "
+        "model_unknown_attempt_count = 0 OR "
+        "(model_usage_completeness = ANY "
+        "(ARRAY['complete'::text, 'partial'::text])) AND "
+        "model_attempt_count > 0 AND "
+        "model_sealed_attempt_count = model_attempt_count "
+        "AND model_unknown_attempt_count = 0 OR "
+        "model_usage_completeness = 'unknown'::text AND "
+        "model_attempt_count > 0 AND "
+        "(model_sealed_attempt_count < model_attempt_count "
+        "OR model_unknown_attempt_count > 0)))",
+        "ck_model_attempt_bytes": "CHECK (octet_length(attempt_binding_bytes) >= 1 AND "
+        "octet_length(attempt_binding_bytes) <= 65536 AND "
+        "octet_length(planned_bytes) >= 1 AND "
+        "octet_length(planned_bytes) <= 65536 AND "
+        "octet_length(authorization_bytes) >= 1 AND "
+        "octet_length(authorization_bytes) <= 65536 AND "
+        "attempt_binding_digest ~ '^[0-9a-f]{64}$'::text AND "
+        "planned_digest ~ '^[0-9a-f]{64}$'::text AND "
+        "authorization_digest ~ '^[0-9a-f]{64}$'::text AND "
+        "(latest_evidence_digest IS NULL OR latest_evidence_digest "
+        "~ '^[0-9a-f]{64}$'::text))",
+        "ck_model_attempt_identity": "CHECK (length(TRIM(BOTH FROM tenant_id)) > 0 AND "
+        "length(run_id) > 0 AND length(lease_owner) > 0 AND "
+        "attempt_ordinal > 0 AND lease_generation > 0)",
+        "ck_model_attempt_latest": "CHECK (latest_revision = 0 AND latest_event_id IS NULL "
+        "AND latest_evidence_digest IS NULL AND sealed_at IS NULL "
+        "OR latest_revision > 0 AND latest_event_id IS NOT NULL "
+        "AND latest_evidence_digest IS NOT NULL AND sealed_at IS "
+        "NOT NULL)",
+        "ck_model_attempt_state": "CHECK (status = 'prepared'::text AND authorization_state = "
+        "'not_requested'::text AND dispatch_started_at IS NULL AND "
+        "latest_revision = 0 OR status = "
+        "'authorization_pending'::text AND authorization_state = "
+        "'requested_unknown'::text AND dispatch_started_at IS NULL "
+        "AND latest_revision = 0 OR status = "
+        "'authorization_denied'::text AND authorization_state = "
+        "'denied'::text AND dispatch_started_at IS NULL AND "
+        "latest_revision > 0 OR status = 'authorized'::text AND "
+        "authorization_state = 'granted'::text AND "
+        "dispatch_started_at IS NULL AND latest_revision = 0 OR "
+        "status = 'dispatch_started'::text AND authorization_state "
+        "= 'granted'::text AND dispatch_started_at IS NOT NULL AND "
+        "latest_revision = 0 OR status = 'observed'::text AND "
+        "authorization_state = 'granted'::text AND "
+        "dispatch_started_at IS NOT NULL AND latest_revision > 0 OR "
+        "status = 'unknown'::text AND authorization_state = "
+        "'granted'::text AND dispatch_started_at IS NOT NULL AND "
+        "latest_revision > 0 OR status = 'not_dispatched'::text AND "
+        "(authorization_state = ANY (ARRAY['not_requested'::text, "
+        "'requested_unknown'::text, 'granted'::text])) AND "
+        "dispatch_started_at IS NULL AND latest_revision > 0)",
+        "ck_model_attempt_times": "CHECK ((dispatch_started_at IS NULL OR dispatch_started_at "
+        ">= prepared_at) AND (sealed_at IS NULL OR sealed_at >= "
+        "prepared_at) AND (sealed_at IS NULL OR dispatch_started_at "
+        "IS NULL OR sealed_at >= dispatch_started_at))",
+        "ck_model_evidence_bytes": "CHECK (octet_length(evidence_bytes) >= 1 AND "
+        "octet_length(evidence_bytes) <= 65536)",
+        "ck_model_evidence_identity": "CHECK (length(TRIM(BOTH FROM tenant_id)) > 0 AND "
+        "length(run_id) > 0 AND revision > 0 AND "
+        "evidence_digest ~ '^[0-9a-f]{64}$'::text AND "
+        "(predecessor_digest IS NULL OR predecessor_digest ~ "
+        "'^[0-9a-f]{64}$'::text))",
+        "ck_model_evidence_revision": "CHECK (revision = 1 AND predecessor_event_id IS NULL "
+        "AND predecessor_digest IS NULL OR revision > 1 AND "
+        "predecessor_event_id IS NOT NULL AND "
+        "predecessor_digest IS NOT NULL)",
+        "ck_model_evidence_state": "CHECK (sealed = true AND (execution_outcome = ANY "
+        "(ARRAY['not_dispatched'::text, 'completed'::text, "
+        "'failed'::text, 'cancelled'::text, 'unknown'::text])) AND "
+        "(usage_state = ANY (ARRAY['normalized'::text, "
+        "'unresolved'::text])) AND (totals_state = ANY "
+        "(ARRAY['known_zero'::text, 'known_nonzero'::text, "
+        "'unknown'::text])) AND (classification_state = ANY "
+        "(ARRAY['complete'::text, 'partial'::text, "
+        "'unknown'::text])) AND (usage_state <> 'unresolved'::text "
+        "OR totals_state = 'unknown'::text AND "
+        "classification_state = 'unknown'::text) AND (usage_state "
+        "<> 'normalized'::text OR (totals_state = ANY "
+        "(ARRAY['known_zero'::text, 'known_nonzero'::text])) AND "
+        "classification_state = 'partial'::text OR totals_state = "
+        "'unknown'::text AND classification_state = "
+        "'unknown'::text) AND (execution_outcome <> "
+        "'not_dispatched'::text OR usage_state = "
+        "'unresolved'::text) AND (execution_outcome <> "
+        "'unknown'::text OR totals_state = 'unknown'::text AND "
+        "classification_state = 'unknown'::text))",
+    }
+    primary_keys = {
+        MODEL_CALL_ATTEMPTS_TABLE: (
+            "kokoro_agent_model_call_attempt_pkey",
+            ["attempt_id"],
+        ),
+        MODEL_USAGE_EVIDENCE_TABLE: (
+            "kokoro_agent_model_usage_evidence_pkey",
+            ["event_id"],
+        ),
+    }
+    indexes = (
+        (
+            MODEL_CALL_ATTEMPTS_TABLE,
+            "uq_model_attempt_call_ordinal",
+            True,
+            ["run_id", "call_id", "attempt_ordinal"],
+            None,
+        ),
+        (
+            MODEL_CALL_ATTEMPTS_TABLE,
+            "uq_model_attempt_binding",
+            True,
+            ["tenant_id", "run_id", "attempt_binding_digest"],
+            None,
+        ),
+        (
+            MODEL_CALL_ATTEMPTS_TABLE,
+            "ix_model_attempt_unsealed",
+            False,
+            ["run_id", "status", "attempt_id"],
+            "status = ANY (ARRAY['prepared'::text, 'authorization_pending'::text, 'authorized'::text, 'dispatch_started'::text])",
+        ),
+        (
+            MODEL_USAGE_EVIDENCE_TABLE,
+            "uq_model_evidence_attempt_revision",
+            True,
+            ["attempt_id", "revision"],
+            None,
+        ),
+        (
+            MODEL_USAGE_EVIDENCE_TABLE,
+            "uq_model_evidence_attempt_digest",
+            True,
+            ["attempt_id", "evidence_digest"],
+            None,
+        ),
+        (
+            MODEL_USAGE_EVIDENCE_TABLE,
+            "ix_model_evidence_run",
+            False,
+            ["run_id", "attempt_id", "revision"],
+            None,
+        ),
+    )
+
+    async with conn.cursor() as cur:
+        for table, expected in expected_columns.items():
+            await cur.execute(
+                """SELECT column_name,data_type,is_nullable,column_default,datetime_precision
+                FROM information_schema.columns WHERE table_schema=%s AND table_name=%s
+                  AND column_name=ANY(%s)""",
+                (schema, table, list(expected)),
+            )
+            actual = {
+                row["column_name"]: tuple(
+                    row[key]
+                    for key in (
+                        "data_type",
+                        "is_nullable",
+                        "column_default",
+                        "datetime_precision",
+                    )
+                )
+                for row in await cur.fetchall()
+            }
+            if actual != expected:
+                raise SchemaNotReadyError(
+                    "Agent model evidence columns differ: " + table
+                )
+            await cur.execute(
+                """SELECT c.conname,pg_get_constraintdef(c.oid,true) AS definition,
+                c.convalidated,c.connoinherit
+                FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+                JOIN pg_namespace n ON n.oid=t.relnamespace
+                WHERE n.nspname=%s AND t.relname=%s AND c.contype='c'
+                  AND c.conname=ANY(%s)""",
+                (schema, table, list(check_names[table])),
+            )
+            found = {row["conname"]: row for row in await cur.fetchall()}
+            if set(found) != check_names[table] or any(
+                not row["convalidated"] or row["connoinherit"] for row in found.values()
+            ):
+                raise SchemaNotReadyError(
+                    "Agent model evidence checks differ: " + table
+                )
+            for name, row in found.items():
+                definition = str(row["definition"])
+                if _sql_tokens(definition) != _sql_tokens(canonical_checks[name]):
+                    raise SchemaNotReadyError(
+                        "Agent model evidence check differs: " + name
+                    )
+
+            if table in primary_keys:
+                primary_name, primary_columns = primary_keys[table]
+                await cur.execute(
+                    """SELECT c.conname,c.convalidated,
+                    ARRAY(SELECT a.attname FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum,ord)
+                          JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
+                          ORDER BY k.ord) AS columns
+                    FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+                    JOIN pg_namespace n ON n.oid=t.relnamespace
+                    WHERE n.nspname=%s AND t.relname=%s AND c.contype='p'""",
+                    (schema, table),
+                )
+                primary = await cur.fetchone()
+                if (
+                    primary is None
+                    or primary["conname"] != primary_name
+                    or not primary["convalidated"]
+                    or primary["columns"] != primary_columns
+                ):
+                    raise SchemaNotReadyError(
+                        "Agent model evidence primary key differs: " + table
+                    )
+
+        for table, name, unique, keys, predicate in indexes:
+            await cur.execute(
+                """SELECT x.indisunique,x.indisvalid,x.indisready,x.indnatts,x.indnkeyatts,
+                ARRAY(SELECT pg_get_indexdef(x.indexrelid,k,true)
+                      FROM generate_series(1,x.indnkeyatts) AS k) AS keys,
+                pg_get_expr(x.indpred,x.indrelid,true) AS predicate,am.amname
+                FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid
+                JOIN pg_class t ON t.oid=x.indrelid
+                JOIN pg_namespace n ON n.oid=t.relnamespace
+                JOIN pg_am am ON am.oid=i.relam
+                WHERE n.nspname=%s AND t.relname=%s AND i.relname=%s""",
+                (schema, table, name),
+            )
+            row = await cur.fetchone()
+            if (
+                row is None
+                or row["indisunique"] != unique
+                or not row["indisvalid"]
+                or not row["indisready"]
+                or row["indnatts"] != len(keys)
+                or row["indnkeyatts"] != len(keys)
+                or row["keys"] != keys
+                or row["amname"] != "btree"
+                or (row["predicate"] is None) != (predicate is None)
+                or (
+                    predicate is not None
+                    and _sql_tokens(row["predicate"]) != _sql_tokens(predicate)
+                )
+            ):
+                raise SchemaNotReadyError("Agent model evidence index differs: " + name)
+
+
 def _sql_tokens(value: str) -> list[str]:
     # Ignore formatting only, never parentheses, string values or operators.
     return re.findall(
@@ -425,6 +797,8 @@ __all__ = [
     "CHAT_SESSIONS_TABLE",
     "CHECKPOINT_TABLES",
     "MEMORY_TABLE",
+    "MODEL_CALL_ATTEMPTS_TABLE",
+    "MODEL_USAGE_EVIDENCE_TABLE",
     "RUN_CLAIMS_TABLE",
     "RUN_CONTROL_COMMANDS_TABLE",
     "RUN_DISPATCHES_TABLE",

@@ -92,3 +92,62 @@ async def test_profile_schema_catalog_drift_rejected(
             )
         with pytest.raises(SchemaNotReadyError):
             await verify_agent_schema(connection, run_chat_schema)
+
+
+@pytest.mark.parametrize(
+    ("table", "mutation"),
+    [
+        (
+            "kokoro_agent_run",
+            "DROP CONSTRAINT ck_kokoro_agent_run_model_usage",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_state",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_state, "
+            "ADD CONSTRAINT ck_model_attempt_state CHECK (TRUE)",
+        ),
+        (
+            "kokoro_agent_model_usage_evidence",
+            "DROP CONSTRAINT ck_model_evidence_revision",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT uq_model_attempt_call_ordinal",
+        ),
+        (
+            "kokoro_agent_model_usage_evidence",
+            "DROP CONSTRAINT uq_model_evidence_attempt_revision",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP COLUMN authorization_digest",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT kokoro_agent_model_call_attempt_pkey",
+        ),
+    ],
+)
+async def test_a1_model_evidence_catalog_drift_rejected(
+    run_chat_schema: str,
+    run_chat_database_url: str,
+    table: str,
+    mutation: str,
+) -> None:
+    from kokoro_agent.infrastructure.postgres import qualified
+    from kokoro_agent.infrastructure.schema import SchemaNotReadyError
+    from kokoro_agent.infrastructure.sql import execute_sql
+
+    async with connect_pg(run_chat_database_url) as connection:
+        await verify_agent_schema(connection, run_chat_schema)
+        async with connection.cursor() as cursor:
+            await execute_sql(
+                cursor,
+                "ALTER TABLE {} {}".format(qualified(run_chat_schema, table), mutation),
+            )
+        with pytest.raises(SchemaNotReadyError):
+            await verify_agent_schema(connection, run_chat_schema)

@@ -1,4 +1,4 @@
-## R198-A4-D0 当前：native旁路RED成立，identity与缺consumer语义已裁决（2026-10-04）
+## R198-A4 当前：native主调用无Billing许可已fail-closed（2026-10-04）
 
 基线main `814e929`；冻结系统测试`test_model_call_runtime_chain.py` SHA256 `57bc7e…`。Root真实fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK已走正式`invoke_once`与现finalizer：实际provider POST=1、`run.completed`、0 attempt、completeness none，而目标为0 provider、safe failed、prepared后sealed closure，故1 failed/69 warnings（1.77s）；10项canonical CHECK正控通过，自有库absent且source hash不变。这是业务RED，不是fixture/import失败。
 
@@ -6,7 +6,11 @@
 
 冻结peer path补充裁决：recipe freeze前以排序BFS选entry到peer的最短path，同长按完整path字典序，合法cycle/多入边保留；实际执行仍靠checkpoint/task identity区分。每peer实际内生`general-purpose`作为`source="built-in"`显式frozen child并保持工具继承，catalog child同样独立path；不以parent冒充、不删能力。现recipe validator预计可直接证明，尚未授权改动。
 
-当前仅设计，生产caller仍不存在，冻结RED仍红。下一步须先按TECH §8由Root授权tests-first/生产精确集；真实Billing admission/evidence ACK、成功provider、失败/取消actual结算及用户收费链继续OPEN。本轮未运行PG/Redis/provider/native测试、未改SQL/contract/generated/lock。
+基于Root后续实施的13个production/test路径，现有native main caller已接入内部prepare：缺Billing consumer时产生唯一`prepared/not_requested` attempt，在handler前失败，安全映射`dependency_unavailable,retryable=false`，并由现terminal事务封存`not_dispatched + unresolved/missing_usage`。历史RED为provider POST=1、`run.completed`、0 attempt；Root54105同业务路径GREEN为provider=0、prepare=1、safe failed且封口成功。
+
+Root50248在冻结源码上完成fresh PostgreSQL全database **304 passed / 0 skipped（41.39s）**；默认工程 **2182 passed / 416资源deselected（114.63s）**；lock/offline frozen sync、Ruff 283文件、全Pyright、contract、wheel/sdist均exit 0，自有库absent且source hash不变。独审`b010ef5`为0 P0/P1。16个旧工具/Skills/HITL/lifecycle单测仅以显式test-scope隔离非费用职责，不是model gate证据。
+
+GP/catalog/Swarm的frozen recipe与middleware registration已有静态闭合测试，但尚未冒称真实caller/recovery验收。实际model invocation digest、Billing正式准入/grant/dispatch、provider成功调用、evidence ACK、失败/取消actual结算及用户收费链仍OPEN；本片不生成fake grant、known-zero或第二协议。
 
 ---
 

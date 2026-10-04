@@ -67,6 +67,8 @@ from support.deepagents import create_test_deep_agent
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.execution.failures import run_failed_payload
+from kokoro_agent.model.call_models import ModelCallAuthorizationUnavailable
 from kokoro_agent.protocol.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
@@ -74,6 +76,12 @@ from kokoro_agent.streams.redis import RedisStream
 
 def _runtime_custom(_name: str) -> SubagentSource:
     return "runtime-custom"
+
+
+def test_missing_model_authorization_uses_existing_safe_failure_tuple() -> None:
+    assert run_failed_payload(
+        ModelCallAuthorizationUnavailable("consumer absent")
+    ) == RunFailedPayload(code="dependency_unavailable", retryable=False)
 
 
 async def _always_claim() -> bool:

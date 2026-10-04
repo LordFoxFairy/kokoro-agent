@@ -1,4 +1,4 @@
-## R198-A4-D0：包内identity与现有安全失败映射（2026-10-04；机器契约不变）
+## R198-A4：包内identity与现有安全失败映射（2026-10-04；最低main caller已验，机器契约不变）
 
 A4不新增HTTP/RPC/event/generated或usage/v1字段。logical call仅为包内执行身份：RFC8785 locator绑定locked tenant/run、显式peer path及公开`ExecutionInfo(checkpoint_id, checkpoint_ns, task_id)`；根`checkpoint_ns=""`合法。固定namespace `a06d00e2-defa-5fe3-8f2c-10ecb19c1161`派生call UUID，固定namespace `64675e75-8af6-50b4-ade3-d413e5144dc9`以`{call_id}:1`派生首attempt UUID。node_attempt/metadata/time不入identity。
 
@@ -7,6 +7,8 @@ A4不新增HTTP/RPC/event/generated或usage/v1字段。logical call仅为包内�
 usage/v1现`input_digest`仍精确表示locked `RunRequest.input` canonical SHA-256，不表示实际model invocation摘要；本片没有发布后者。execution info缺失/非法使用现`contract_incompatible`。Billing consumer缺席时，包内typed `ModelCallAuthorizationUnavailable`只映射已发布Run failure `dependency_unavailable`且`retryable=false`；不新增`model_authorization_unavailable` wire code。
 
 有合法identity时先留下`prepared/not_requested`，随后失败封闭且零handler/provider。现`invoke_once`把typed native异常转成单一RunFailed outcome，现terminal closure把该attempt封存为`not_dispatched + unresolved/missing_usage + actual unknown/not_observed`；这不等于known-zero、Billing denial或费用结清。正式Billing begin/grant/dispatch、evidence read/ACK仍OPEN。
+
+Root54105已以真fresh PostgreSQL/native loopback验证这一main负路径：0 provider、1 prepared/not_requested、safe failed及终态ND封存。Root50248又完成database 304、default 2182与contract/build全门；独审0 P0/P1。这些证据未发布新wire，也未覆盖GP/catalog/Swarm的真实caller/recovery、实际model invocation digest、Billing准入/dispatch、provider成功或收费。16个显式隔离的旧非费用unit case不作为model gate证据。
 
 ---
 

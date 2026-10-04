@@ -6,6 +6,10 @@ from langgraph.errors import GraphRecursionError
 
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.clients.system import ModelResolutionError
+from kokoro_agent.model.call_models import (
+    ModelCallAuthorizationUnavailable,
+    ModelCallInputInvalid,
+)
 from kokoro_agent.protocol import RunErrorCode, RunFailedPayload
 from kokoro_agent.tools.middleware import TokenBudgetExceeded
 
@@ -30,6 +34,10 @@ def failure_code(error: BaseException) -> RunErrorCode:
     """Classify typed execution failures without rendering exception diagnostics."""
     if isinstance(error, StaticRecipeIncompatible):
         return "contract_incompatible"
+    if isinstance(error, ModelCallInputInvalid):
+        return "contract_incompatible"
+    if isinstance(error, ModelCallAuthorizationUnavailable):
+        return "dependency_unavailable"
     if isinstance(error, ModelResolutionError):
         return _MODEL_FAILURE_CODES.get(error.code, "internal_error")
     if isinstance(error, TokenBudgetExceeded):
@@ -44,8 +52,10 @@ def run_failed_payload(
 ) -> RunFailedPayload:
     # Assembly callers supply their ordinary-error default; typed owner failures
     # retain their verified classification on both initial build and resume.
-    if isinstance(error, StaticRecipeIncompatible):
+    if isinstance(error, StaticRecipeIncompatible | ModelCallInputInvalid):
         return RunFailedPayload(code="contract_incompatible", retryable=False)
+    if isinstance(error, ModelCallAuthorizationUnavailable):
+        return RunFailedPayload(code="dependency_unavailable", retryable=False)
     typed = isinstance(error, ModelResolutionError)
     classified = failure_code(error) if typed else code or failure_code(error)
     retryable = False

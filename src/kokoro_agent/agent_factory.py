@@ -22,6 +22,7 @@ from uuid import uuid4
 from typing import Any
 
 import deepagents
+from langchain.agents.middleware import AgentMiddleware
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.backends.state import StateBackend
@@ -44,6 +45,7 @@ from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
 from kokoro_agent.model.factory import make_chat_model, model_from_route
+from kokoro_agent.model.call_runtime import ModelCallRuntimeMiddleware
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
@@ -64,6 +66,7 @@ from kokoro_agent.agents.native_profile import validate_native_registry
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.models import LeasedRun, StaticRecipeBinding
+from kokoro_agent.protocol.model_usage_generated import PlannedBinding
 
 LOGGER = logging.getLogger(__name__)
 
@@ -185,6 +188,7 @@ async def build_deep_agent(
     lease: LeaseFence,
     *,
     plan: PreparedPeerPlan,
+    recipe: StaticRecipeBinding,
     capabilities: _ResolvedCapabilities,
     name: str | None = None,
 ) -> AgentHandle:
@@ -203,6 +207,19 @@ async def build_deep_agent(
         request_id=correlation_id,
     )
     model = model_from_route(route, agent.model)
+    planned = PlannedBinding(
+        model=route.model_id,
+        provider=route.provider_id,
+        revision_id=route.revision_id,
+        provider_model_name=route.provider_model_name,
+        gateway_model_name=route.gateway_model_name,
+        feature_key=route.feature_key,
+        revision=str(route.revision),
+        generation=route.generation,
+        tenant_generation=route.tenant_generation,
+        digest=route.digest,
+        label=route.label_key,
+    )
     LOGGER.info(
         "model route resolved",
         extra={
@@ -260,17 +277,38 @@ async def build_deep_agent(
             lease,
             policy,
         )
-        subagent_bundle = build_subagent_bundle(
-            toolset,
-            plan.subagents,
-            chains.subagent,
-        )
-        main_chain = chains.main(
+
+        def model_guard(peer_path: tuple[str, ...]) -> ModelCallRuntimeMiddleware:
+            return ModelCallRuntimeMiddleware(
+                repository=dependencies.model_call_repository,
+                request=request,
+                lease=lease,
+                planned=planned,
+                recipe=recipe,
+                peer_path=peer_path,
+            )
+
+        def subagent_chain(name: str) -> tuple[AgentMiddleware, ...]:
+            offset = len(chains.guards)
+            return (
+                *chains.subagent[:offset],
+                model_guard((*plan.peer_path, name)),
+                *chains.subagent[offset:],
+            )
+
+        subagent_bundle = build_subagent_bundle(toolset, plan.subagents, subagent_chain)
+        base_main_chain = chains.main(
             ToolPolicyMiddleware(
                 toolset.authorized,
                 declared_subagents=subagent_bundle.declared,
                 subagent_create=policy.subagent_create,
             )
+        )
+        offset = len(chains.guards)
+        main_chain = (
+            *base_main_chain[:offset],
+            model_guard(plan.peer_path),
+            *base_main_chain[offset:],
         )
         # DeepAgents is the runtime.  This call must remain a direct call to the
         # upstream constructor; this module only translates GA's static Agent
@@ -386,6 +424,9 @@ class AgentFactory:
                 canonical_bytes=prepared.recipe_bytes, fingerprint=prepared.fingerprint
             ),
         )
+        recipe = StaticRecipeBinding(
+            canonical_bytes=prepared.recipe_bytes, fingerprint=prepared.fingerprint
+        )
         loading = False
 
         async def before_load() -> None:
@@ -425,6 +466,7 @@ class AgentFactory:
                 request,
                 lease,
                 plan=peer,
+                recipe=recipe,
                 capabilities=capabilities[peer.agent.key],
             )
         built_agents: list[AgentHandle] = []
@@ -437,6 +479,7 @@ class AgentFactory:
                         request,
                         lease,
                         plan=peer,
+                        recipe=recipe,
                         name=peer.agent.key,
                         capabilities=capabilities[peer.agent.key],
                     )

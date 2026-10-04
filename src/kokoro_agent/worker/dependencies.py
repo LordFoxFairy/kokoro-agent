@@ -18,6 +18,7 @@ from kokoro_agent.mcp.config import McpServerConfig
 from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.model.call_models import ModelCallRepository
 from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.domain.run.repository import RunRepository
@@ -50,6 +51,7 @@ class WorkerDependencies:
     toolbox: ProcessToolbox
     checkpointer: BaseCheckpointSaver[str]
     run_repository: RunRepository
+    model_call_repository: ModelCallRepository
     memory_store: BaseStore
     platform: WorkerPlatformRuntime | None = None
     # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。

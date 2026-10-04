@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatResult
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from kokoro_agent.clients.skills import ResolvedSkill, PlatformSkillClient
 from kokoro_agent.domain.run.models import LeasedRun
 
@@ -34,6 +35,18 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.model.call_models import (
+    AppendModelCallEvidence,
+    AuthorizationPendingReceipt,
+    BeginModelCallAuthorization,
+    GrantModelCallAuthorization,
+    ModelCallAuthorizationReceipt,
+    ModelCallDispatchPermit,
+    ModelCallEvidenceReceipt,
+    PrepareModelCall,
+    PreparedModelCall,
+    StartModelCallDispatch,
+)
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.tools.toolbox import ProcessToolbox, build_toolbox
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
@@ -102,6 +115,20 @@ def _request(feature_key: str) -> RunRequest:
     )
 
 
+class _UnrelatedUnitScopeModelCallMiddleware(AgentMiddleware):
+    """Transparent boundary for tests that do not claim model-admission coverage."""
+
+    def __init__(self, **_kwargs: object) -> None:
+        super().__init__()
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(request)
+
+
 def _factory(
     monkeypatch: pytest.MonkeyPatch,
     resolver: ModelResolver | None,
@@ -110,6 +137,7 @@ def _factory(
     config: AppConfig | None = None,
     delivery: DeliveryClient | None = None,
     platform: WorkerPlatformRuntime | None = None,
+    isolate_model_call_gate_for_unrelated_unit_scope: bool = False,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
@@ -119,6 +147,15 @@ def _factory(
         return LocalFakeChatModel()
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", test_model)
+    if isolate_model_call_gate_for_unrelated_unit_scope:
+        # These legacy tests exercise tools, Skills, HITL, or lifecycle behavior,
+        # not model admission or charging.  MonkeyPatch keeps the transparent
+        # middleware scoped to the requesting test and restores it at teardown.
+        monkeypatch.setattr(
+            agent_factory_module,
+            "ModelCallRuntimeMiddleware",
+            _UnrelatedUnitScopeModelCallMiddleware,
+        )
     active_config = config or AppConfig.from_env({})
     clients = WorkerClients()
     repository = FakeRunRepository()
@@ -137,6 +174,7 @@ def _factory(
             toolbox=build_toolbox(fetch_allow_private=False, search=None),
             checkpointer=InMemorySaver(),
             run_repository=repository,
+            model_call_repository=_UnusedModelCallRepository(),
             memory_store=InMemoryStore(),
             mcp_client=clients.mcp,
             delivery=delivery or clients.delivery,
@@ -217,7 +255,11 @@ async def test_invokes_native_agent_with_model_resolver_without_optional_clients
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The local path exercises the actual DeepAgents loop, not just construction."""
-    factory, repository = _factory(monkeypatch, RouteResolver())
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
     run_request = _request("chat")
     lease = await repository.try_claim(run_request)
     assert lease is not None
@@ -409,7 +451,11 @@ async def _native_script(
     catalog: FeatureCatalog = FEATURE_CATALOG,
 ) -> tuple[list[BaseMessage], FakeRunRepository]:
     factory, repository = _factory(
-        monkeypatch, RouteResolver(), catalog, delivery=delivery
+        monkeypatch,
+        RouteResolver(),
+        catalog,
+        delivery=delivery,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
 
     def scripted_model(
@@ -771,7 +817,12 @@ async def test_factory_skill_metadata_is_current_run_not_session(
     monkeypatch: pytest.MonkeyPatch, first: tuple[str, ...], second: tuple[str, ...]
 ) -> None:
     platform = CheckpointSkillPlatform()
-    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
     model = PromptRecordingModel()
 
     def make_model(*_: object) -> BaseChatModel:
@@ -834,7 +885,11 @@ async def test_factory_skill_metadata_survives_same_run_hitl_with_guard(
     )
     platform = CheckpointSkillPlatform()
     factory, repository = _factory(
-        monkeypatch, RouteResolver(), catalog, platform=platform
+        monkeypatch,
+        RouteResolver(),
+        catalog,
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
     model = PromptRecordingModel.with_script(
         [
@@ -907,7 +962,12 @@ async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
     monkeypatch: pytest.MonkeyPatch, cancel: bool
 ) -> None:
     platform = CheckpointSkillPlatform()
-    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
     model = PromptRecordingModel()
 
     def make_model(*_: object) -> BaseChatModel:
@@ -1062,7 +1122,7 @@ def test_subagent_materialization_uses_the_same_pure_selection(
         module.plan_subagents(
             catalog, frozenset({"available"}), selected=frozenset({"missing", "kept"})
         ),
-        (),
+        lambda _name: (),
     )
     assert len(calls) == 1
     plan = planner(
@@ -1208,6 +1268,41 @@ async def test_real_factory_materializers_consume_exact_prepared_objects(
     assert lease is not None
     await factory.build(request, lease, await _r93_progress(repository, request, lease))
     assert len(observed) == 1
+
+
+async def test_factory_installs_distinct_main_swarm_and_general_purpose_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+
+    feature = Feature(
+        key="team_paths",
+        agents=(Agent(key="root", prompt="root"), Agent(key="leaf", prompt="leaf")),
+        entry_agent="root",
+        handoffs=(("root", "leaf"), ("leaf", "root")),
+    )
+    original = agent_factory_module.ModelCallRuntimeMiddleware
+    paths: list[tuple[str, ...]] = []
+
+    def capture(**kwargs: Any):
+        paths.append(kwargs["peer_path"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(agent_factory_module, "ModelCallRuntimeMiddleware", capture)
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    await factory.build(request, lease, await _r93_progress(repository, request, lease))
+    assert paths == [
+        ("root", "general-purpose"),
+        ("root",),
+        ("root", "leaf", "general-purpose"),
+        ("root", "leaf"),
+    ]
 
 
 @pytest.mark.parametrize("feature_key", ["chat", "music", "music_chat"])
@@ -1408,7 +1503,12 @@ async def test_r91_real_factory_skill_io_observes_durable_phase(
     import json
 
     platform = CheckpointSkillPlatform()
-    factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
     observations: list[tuple[str, list[str]]] = []
 
     def phases() -> list[str]:
@@ -1670,6 +1770,7 @@ async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
         RouteResolver(),
         FeatureCatalog((feature,)),
         config=config,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
 
     class DrainWitnessRun:
@@ -1795,7 +1896,10 @@ async def test_terminal_state_backend_runs_without_constructing_s3_client(
 
     monkeypatch.setattr(archive_module.boto3, "client", forbidden_client)
     factory, repository = _factory(
-        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+        monkeypatch,
+        RouteResolver(),
+        FeatureCatalog((feature,)),
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
 
     def approval_names(_request: RunRequest) -> frozenset[str]:
@@ -1921,3 +2025,28 @@ async def test_partial_swarm_failure_closes_already_built_s3_client(
 
     assert len(clients) == 1
     assert clients[0].close_calls == 1
+
+
+class _UnusedModelCallRepository:
+    async def prepare(self, command: PrepareModelCall) -> PreparedModelCall:
+        raise AssertionError(f"unexpected model-call preparation: {command.call_id}")
+
+    async def begin_authorization(
+        self, command: BeginModelCallAuthorization
+    ) -> AuthorizationPendingReceipt:
+        raise AssertionError(f"unexpected authorization: {command.attempt_id}")
+
+    async def grant_authorization(
+        self, command: GrantModelCallAuthorization
+    ) -> ModelCallAuthorizationReceipt:
+        raise AssertionError(f"unexpected authorization grant: {command.attempt_id}")
+
+    async def start_dispatch(
+        self, command: StartModelCallDispatch
+    ) -> ModelCallDispatchPermit:
+        raise AssertionError(f"unexpected dispatch: {command.attempt_id}")
+
+    async def append_evidence(
+        self, command: AppendModelCallEvidence
+    ) -> ModelCallEvidenceReceipt:
+        raise AssertionError(f"unexpected evidence: {command.attempt_id}")

@@ -62,6 +62,52 @@ def test_handoff_instances_are_real_ordered_and_retained() -> None:
     assert plan.peers[1].handoffs[0].name == "transfer_to_one"
 
 
+def test_peer_paths_are_shortest_lexical_and_cycles_remain_valid() -> None:
+    feature = Feature(
+        key="team",
+        agents=tuple(
+            Agent(key=key, prompt=key) for key in ("root", "zeta", "alpha", "leaf")
+        ),
+        entry_agent="root",
+        handoffs=(
+            ("root", "zeta"),
+            ("root", "alpha"),
+            ("zeta", "leaf"),
+            ("alpha", "leaf"),
+            ("leaf", "root"),
+        ),
+    )
+    plan = prepare(feature)
+    assert {peer.agent.key: peer.peer_path for peer in plan.peers} == {
+        "root": ("root",),
+        "zeta": ("root", "zeta"),
+        "alpha": ("root", "alpha"),
+        "leaf": ("root", "alpha", "leaf"),
+    }
+
+
+def test_recipe_freezes_general_purpose_as_first_built_in_child() -> None:
+    plan = prepare(
+        Feature(key="one", agents=(Agent(key="one", prompt="one"),), entry_agent="one")
+    )
+    recipe = json.loads(plan.recipe_bytes)
+    child = recipe["feature"]["agents"][0]["subagents"][0]
+    assert child == {
+        "name": "general-purpose",
+        "description": child["description"],
+        "system_prompt": child["system_prompt"],
+        "source": "built-in",
+        "tools": [],
+    }
+
+    from kokoro_agent.model.call_artifacts import recipe_feature_for_peer_path
+
+    assert (
+        recipe_feature_for_peer_path(plan.recipe_bytes, ("one", "general-purpose"))
+        == "one"
+    )
+
+
 def test_unknown_tool_and_illegal_guard_rejected_in_prepare() -> None:
     from kokoro_agent.policy import Permissions
     from langchain_core.tools import StructuredTool

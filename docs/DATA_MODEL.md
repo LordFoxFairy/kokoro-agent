@@ -1,4 +1,4 @@
-## R198-A4-D0：稳定identity复用现Attempt/Evidence，无DDL（2026-10-04）
+## R198-A4：稳定identity已接main caller并复用现Attempt/Evidence，无DDL（2026-10-04）
 
 本片不增加表、列、索引、CHECK、FK或outbox。call_id由固定namespace `a06d00e2-defa-5fe3-8f2c-10ecb19c1161`与RFC8785 execution-info locator确定性派生；首attempt_id由`64675e75-8af6-50b4-ade3-d413e5144dc9`及`{call_id}:1`派生。locator绑定tenant/run/显式peer path/checkpoint_id/checkpoint_ns/task_id；根checkpoint_ns空字符串合法，node_attempt/time/metadata不入库。相同未完成task恢复命中现唯一键与immutable replay，不分配第二身份。
 
@@ -7,6 +7,8 @@ peer path在assembly recipe冻结前确定：从entry按target key排序BFS取�
 现`AttemptBinding.input_digest`继续由repository从locked `RunRequest.input`重算；无实际model invocation digest字段，不改语义。Billing consumer缺席时只写现attempt的`prepared/not_requested`，不写authorization request/grant/dispatch。现terminal builder已经对该组合生成sealed revision 1：not_dispatched、unresolved missing_usage、actual unknown/not_observed；唯一completeness算法随后重算Run投影。无known-zero、fake denied或金额事实。
 
 execution info非法时在prepare前fail closed且无行；typed dependency failure进入现唯一终态事务。terminal事务失败/ACK未知保留open prepared事实，原finalizer exact retry以同call/attempt identity封存；不得重新调用provider。本片无Billing client/ACK、post-terminal reconciler或GC变化。
+
+当前main native负路径已实际使用上述现表：Root54105真PG证明1个prepared/not_requested在0 provider后由终态事务封存为ND；唯一completeness SQL将sealed not_dispatched排除于unknown_count，因而该单attempt投影为unknown_count=0/completeness=complete，但Evidence仍是actual unknown与usage unresolved，不是known-zero或收费事实。Root50248全database 304通过且schema/contract未变；GP/catalog/Swarm真实caller/recovery与Billing/provider正路仍OPEN。
 
 ---
 

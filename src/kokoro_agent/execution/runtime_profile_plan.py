@@ -137,6 +137,7 @@ class RuntimeAssemblyPolicy:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PreparedPeerPlan:
     agent: Agent
+    peer_path: tuple[str, ...]
     tools: toolset.ToolSelectionPlan
     subagents: subagents.SubagentSelectionPlan
     handoffs: tuple[BaseTool, ...]
@@ -252,6 +253,7 @@ def prepare_feature(
     ]
     if feature.handoffs:
         sources.extend(("swarm", "handoff"))
+    peer_paths = _canonical_peer_paths(feature)
     for agent in feature.agents:
         validate_guard_policy(agent.permissions)
         tools = toolset.plan_toolset(
@@ -293,6 +295,7 @@ def prepare_feature(
         peers.append(
             PreparedPeerPlan(
                 agent=agent,
+                peer_path=peer_paths[agent.key],
                 tools=tools,
                 subagents=selected,
                 handoffs=handoffs,
@@ -307,7 +310,10 @@ def prepare_feature(
                 "prompt": agent.prompt,
                 "tools": selected_tools,
                 "mcp": agent.mcp,
-                "subagents": selected.as_profile(),
+                "subagents": (
+                    subagents.general_purpose_profile(),
+                    *selected.as_profile(),
+                ),
                 "native_task_description": native_task_description(
                     tuple((spec.name, spec.description) for spec in selected.specs)
                 ),
@@ -378,3 +384,31 @@ def prepare_feature(
         runtime_policy=runtime_policy,
         recipe_bytes=canonical_json(recipe),
     )
+
+
+def _canonical_peer_paths(feature: Feature) -> dict[str, tuple[str, ...]]:
+    """Freeze one shortest, lexicographically stable path for every peer."""
+    adjacency: dict[str, list[str]] = {agent.key: [] for agent in feature.agents}
+    for source, target in feature.handoffs:
+        adjacency[source].append(target)
+    for targets in adjacency.values():
+        targets.sort()
+    paths: dict[str, tuple[str, ...]] = {feature.entry_agent: (feature.entry_agent,)}
+    frontier: list[tuple[str, ...]] = [paths[feature.entry_agent]]
+    while frontier:
+        path = frontier.pop(0)
+        for target in adjacency[path[-1]]:
+            candidate = (*path, target)
+            current = paths.get(target)
+            if current is not None and (len(current), current) <= (
+                len(candidate),
+                candidate,
+            ):
+                continue
+            paths[target] = candidate
+            frontier.append(candidate)
+        frontier.sort(key=lambda value: (len(value), value))
+    expected = {agent.key for agent in feature.agents}
+    if set(paths) != expected:
+        raise ValueError("feature has a peer outside the entry handoff graph")
+    return paths

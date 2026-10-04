@@ -45,7 +45,7 @@ __init__.py agent_factory.py policy.py agents/definition.py agents/subagent_cata
 agents/subagents.py agents/native_profile.py features/definition.py
 execution/runtime_profile.py execution/runtime_profile_plan.py execution/runtime_profile_sources.py
 execution/protocols.py tools/toolset.py tools/toolbox.py tools/registry.py
-model/factory.py worker/dependencies.py worker/main.py
+model/factory.py model/call_runtime.py model/call_models.py worker/dependencies.py worker/main.py
 """,
     ),
     (
@@ -132,6 +132,7 @@ infrastructure/postgres.py
 infrastructure/postgres_chat_repository.py
 infrastructure/postgres_execution_proof_lease.py
 infrastructure/postgres_model_call_evidence.py
+infrastructure/postgres_model_call_repository.py
 infrastructure/postgres_run_admission.py
 infrastructure/postgres_run_context.py
 infrastructure/postgres_run_dispatch.py
@@ -149,6 +150,7 @@ mcp/__init__.py
 metrics.py
 model/__init__.py
 model/call_evidence.py
+model/call_artifacts.py
 model/call_models.py
 model/usage_evidence.py
 observability.py

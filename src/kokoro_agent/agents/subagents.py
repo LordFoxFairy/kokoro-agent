@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgent
 from langchain.agents.middleware import AgentMiddleware
@@ -20,13 +20,25 @@ from kokoro_agent.agents.subagent_catalog import RegisteredSubagent, SubagentCat
 LOGGER = logging.getLogger(__name__)
 
 
-def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent:
-    """deepagents 自动注入的 general-purpose 不带本仓守卫（allow 档可达即旁路预算/终态/审核）
-    ——传同名 spec 显式覆盖：tools/model 缺省即继承主 agent（GP 语义不变），middleware 挂满守卫。"""
-    sub: SubAgent = {
+def general_purpose_profile() -> dict[str, object]:
+    """Frozen recipe projection for DeepAgents' always-mounted built-in child."""
+    return {
         "name": GENERAL_PURPOSE_SUBAGENT["name"],
         "description": GENERAL_PURPOSE_SUBAGENT["description"],
         "system_prompt": GENERAL_PURPOSE_SUBAGENT["system_prompt"],
+        "source": "built-in",
+        "tools": (),
+    }
+
+
+def general_purpose_subagent(guards: Sequence[AgentMiddleware] = ()) -> SubAgent:
+    """deepagents 自动注入的 general-purpose 不带本仓守卫（allow 档可达即旁路预算/终态/审核）
+    ——传同名 spec 显式覆盖：tools/model 缺省即继承主 agent（GP 语义不变），middleware 挂满守卫。"""
+    profile = general_purpose_profile()
+    sub: SubAgent = {
+        "name": str(profile["name"]),
+        "description": str(profile["description"]),
+        "system_prompt": str(profile["system_prompt"]),
     }
     if guards:
         sub["middleware"] = list(guards)
@@ -57,6 +69,9 @@ def plan_subagents(
     *,
     selected: frozenset[str] | None = None,
 ) -> SubagentSelectionPlan:
+    general_name = str(GENERAL_PURPOSE_SUBAGENT["name"])
+    if general_name in catalog.names():
+        raise ValueError("general-purpose is reserved for the native built-in child")
     if selected is not None:
         unknown = selected - catalog.names()
         if unknown:
@@ -84,13 +99,14 @@ def catalog_subagents(
     """内建/配置子代理 → deepagents 定义：声明工具缺任一即整个不挂（不设空壳），
     返回 (定义, 实际可委派名集)——deny 声明集只含真挂载者。"""
     plan = plan_subagents(catalog, frozenset(tool_index), selected=selected)
-    return _materialize_subagents(plan, tool_index, guards)
+    chain = tuple(guards)
+    return _materialize_subagents(plan, tool_index, lambda _name: chain)
 
 
 def _materialize_subagents(
     plan: SubagentSelectionPlan,
     tool_index: Mapping[str, BaseTool],
-    guards: Sequence[AgentMiddleware],
+    chain_for: Callable[[str], tuple[AgentMiddleware, ...]],
 ) -> tuple[list[SubAgent], frozenset[str]]:
     subs: list[SubAgent] = []
     mounted: set[str] = set()
@@ -108,8 +124,9 @@ def _materialize_subagents(
         }
         if spec.tools:
             sub["tools"] = [tool_index[name] for name in spec.tools]
-        if guards:
-            sub["middleware"] = list(guards)
+        chain = chain_for(spec.name)
+        if chain:
+            sub["middleware"] = list(chain)
         subs.append(sub)
         mounted.add(spec.name)
     return subs, frozenset(mounted)
@@ -128,10 +145,13 @@ class SubagentBundle:
 def build_subagent_bundle(
     toolset: Toolset,
     plan: SubagentSelectionPlan,
-    chain: tuple[AgentMiddleware, ...],
+    chain_for: Callable[[str], tuple[AgentMiddleware, ...]],
 ) -> SubagentBundle:
-    catalog_defs, catalog_names = _materialize_subagents(plan, toolset.by_name, chain)
+    gp_name = str(GENERAL_PURPOSE_SUBAGENT["name"])
+    catalog_defs, catalog_names = _materialize_subagents(
+        plan, toolset.by_name, chain_for
+    )
     return SubagentBundle(
-        subagents=(general_purpose_subagent(chain), *catalog_defs),
+        subagents=(general_purpose_subagent(chain_for(gp_name)), *catalog_defs),
         declared=catalog_names,
     )

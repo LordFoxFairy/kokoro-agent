@@ -1,6 +1,6 @@
-## R198-A4-D0：原生task identity与无Billing许可fail-closed（2026-10-04；仅设计）
+## R198-A4：原生task identity与无Billing许可fail-closed（2026-10-04；最低main caller已验）
 
-**当前事实。** main `814e929`已提交SDK五构造`max_retries=0`；冻结系统RED `test_model_call_runtime_chain.py`（SHA256 `57bc7e…`）已由Root以fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK及正式`invoke_once`、现repository finalizer运行。实际为provider POST 1、`run.completed`、0 attempt、completeness none，与目标0 provider、safe failed、prepared后terminal closure不同，1 failed/69 warnings（1.77s）；10项canonical CHECK正控通过，自有库absent且source hash不变。A1–A3 repository与终态closure已存在，但runtime尚无caller，`WorkerDependencies`也无ModelCallRepository/Billing consumer。
+**当前事实。** 历史系统RED以fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK及正式`invoke_once`证明旧路径provider POST 1、`run.completed`、0 attempt。Root后续实施的13路径已将现main native caller接入`ModelCallRuntimeMiddleware`与真实`PostgresModelCallRepository`；无Billing consumer时先prepare，再在handler/provider前以现safe failure终止并由唯一terminal transaction封存。Root54105主调用真PG GREEN证明provider=0、prepare=1/not_requested、`dependency_unavailable,retryable=false`与sealed ND closure。Root50248冻结门证明database 304通过，default 2182通过/416资源deselected，lock/frozen-sync/Ruff283/Pyright/contract/wheel/sdist均0，自有库absent/source hash不变；独审0 P0/P1。
 
 **稳定logical call。** middleware只信`ModelRequest.runtime.execution_info`与构造闭包：execution info必须非空，`checkpoint_id`、`task_id`必须非空；`checkpoint_ns`允许根图合法空字符串，必须按字段存在/类型验证，禁止用truthiness一并拒绝。版本1 locator为RFC8785 canonical object：`version=1`、locked `tenant_ref/run_id`、显式`peer_path`、`checkpoint_id/checkpoint_ns/task_id`。`call_id = uuid5(a06d00e2-defa-5fe3-8f2c-10ecb19c1161, canonical_locator_utf8)`；排除`node_attempt`、首次时间、trace、metadata、SDK对象地址和wall clock。同task SDK node retry/恢复得到同call_id；新tool-loop model task得到新call_id。first attempt固定`attempt_id = uuid5(64675e75-8af6-50b4-ade3-d413e5144dc9, f"{call_id}:1")`，本片只允许ordinal 1；未来显式retry ordinal另门。
 
@@ -16,16 +16,16 @@ DeepAgents始终挂载的`general-purpose`必须成为每个peer recipe中首个
 
 | 项 | 裁决 |
 | --- | --- |
-| Owner/当前 | Agent model-call runtime唯一writer；现`agent_factory.py`已有locked Run/lease/route/peer，`call_models.py`有commands/errors，Postgres adapter已有prepare；runtime caller/Billing consumer缺失。 |
+| Owner/当前 | Agent model-call runtime唯一writer；现`agent_factory.py`以locked Run/lease/route/peer装配main native caller，`call_models.py`有commands/errors，Postgres adapter已有prepare；Billing consumer仍缺失。 |
 | 位置比较 | **采用**新`model/call_runtime.py`：仅原生`AgentMiddleware.awrap_model_call`编排locator→prepare→owner gate→handler。**淘汰**塞入`tools/middleware.py`：该文件拥有通用终态/预算/工具策略，model evidence是不同变化原因。**淘汰**`execution/run_agent.py`外围：看不到每个tool-loop/subagent物理调用。 |
 | 错误位置比较 | **采用**现`model/call_models.py`增加纯包内`ModelCallAuthorizationUnavailable`，与现authority/identity/input errors同owner；`execution/failures.py`只做现wire映射。**淘汰**在`call_runtime.py`自建错误体系或新增wire code。 |
 | 装配文件 | 现`runtime_profile_plan.py`在freeze前计算BFS path并把GP/catalog完整child写同一recipe；`agents/subagents.py`提供GP具名profile并逐child装配path；`agent_factory.py`只下传已冻结path/route/recipe，不现场搜图。现`worker/dependencies.py`注入ModelCallRepository与consumer缺席事实；现`worker/main.py`构造Agent-owned Postgres adapter。新源码加入现`execution/runtime_profile_sources.py`显式资源闭包。 |
 | 数据/API | 无DDL、usage/v1、HTTP/generated变化；input_digest现义不变；无consumer时只prepared/not_requested。Billing成功begin/grant/dispatch/evidence ACK不在本片。 |
-| 测试 | 现`tests/integration/database/test_model_call_runtime_chain.py`扩正式`invoke_once`生命周期、exact POST path/未知path拒绝/finally清理、prepared与terminal sealed事实；现`tests/unit/execution/test_invoke.py`只核typed error→existing failure tuple；现`test_runtime_profile_plan.py`覆盖排序BFS最短/同长lex/cycle/多入边/GP recipe，现`test_factory.py`覆盖main、Swarm、catalog与GP实际middleware path。真实fresh PG/native/loopback最终必须证明四类caller均无裸provider旁路。 |
+| 测试 | 现`tests/integration/database/test_model_call_runtime_chain.py`扩正式`invoke_once`生命周期、exact POST path/未知path拒绝/finally清理、prepared与terminal sealed事实；现`tests/unit/execution/test_invoke.py`只核typed error→existing failure tuple；现`test_runtime_profile_plan.py`覆盖排序BFS最短/同长lex/cycle/多入边/GP recipe，现`test_factory.py`显式断言main、Swarm peer与GP的middleware注册path；catalog逐child注册接线由静态源码审查核对。真实fresh PG/native/loopback已证明main caller无裸provider旁路；GP/catalog/Swarm目前只证明冻结registration，真实caller/recovery仍须后继系统门。 |
 | 删除/禁止 | 切换时主链不得保留裸provider旁路；不删旧Run预算usage。不随机UUID、metadata path、fake grant、known-zero、第二协议或通用UoW/facade。 |
 | 验证 | tests-first真实RED→窄GREEN；Ruff/全Pyright/contract/default/build；Root fresh PG + native HTTP验证0 provider、1 prepared后1 sealed closure、唯一terminal/exact retry。真实Billing/provider收费仍另门。 |
 
-**后继最大允许生产/测试集（尚未授权）：** 新`src/kokoro_agent/model/call_runtime.py`；现`model/call_models.py`、`agent_factory.py`、`agents/subagents.py`、`execution/runtime_profile_plan.py`、`worker/dependencies.py`、`worker/main.py`、`execution/failures.py`、`execution/runtime_profile_sources.py`；现`test_model_call_runtime_chain.py`、`test_invoke.py`、`test_runtime_profile_plan.py`与`test_factory.py`。若实现发现现recipe validator不能证明上述path，或需要schema/contract/generated/lock/新client，必须停下回Root裁决；本门未授权修改`call_artifacts.py`。
+**已实施的限定生产/测试集：** 新`src/kokoro_agent/model/call_runtime.py`；现`model/call_models.py`、`agent_factory.py`、`agents/subagents.py`、`execution/runtime_profile_plan.py`、`worker/dependencies.py`、`worker/main.py`、`execution/failures.py`、`execution/runtime_profile_sources.py`；现`test_model_call_runtime_chain.py`、`test_invoke.py`、`test_runtime_profile_plan.py`与`test_factory.py`。若实现发现现recipe validator不能证明上述path，或需要schema/contract/generated/lock/新client，必须停下回Root裁决；本门未授权修改`call_artifacts.py`。
 
 ---
 

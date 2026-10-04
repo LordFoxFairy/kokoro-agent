@@ -205,6 +205,10 @@ class ModelCallInputInvalid(ValueError):
     pass
 
 
+class ModelCallAuthorizationUnavailable(RuntimeError):
+    """No published Billing admission consumer can authorize this attempt."""
+
+
 class ModelCallRepository(Protocol):
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall: ...
 
@@ -236,6 +240,7 @@ __all__ = [
     "ModelCallInputInvalid",
     "ModelCallOrdinalExhausted",
     "ModelCallAuthorizationReceipt",
+    "ModelCallAuthorizationUnavailable",
     "ModelCallDispatchPermit",
     "ModelCallEvidenceReceipt",
     "ModelCallRepository",

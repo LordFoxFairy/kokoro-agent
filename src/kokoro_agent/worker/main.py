@@ -42,6 +42,9 @@ from kokoro_agent.infrastructure.checkpoint_interactions import (
 )
 from kokoro_agent.infrastructure.memory_store import make_memory_store
 from kokoro_agent.infrastructure.postgres_run_repository import make_run_repository
+from kokoro_agent.infrastructure.postgres_model_call_repository import (
+    PostgresModelCallRepository,
+)
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
@@ -240,6 +243,10 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             toolbox=toolbox_from_config(config),
             checkpointer=interaction_checkpointer,
             run_repository=run_repository,
+            model_call_repository=PostgresModelCallRepository(
+                config.run_repository.database_url,
+                config.run_repository.schema_name,
+            ),
             memory_store=memory_store,
             # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
             # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。

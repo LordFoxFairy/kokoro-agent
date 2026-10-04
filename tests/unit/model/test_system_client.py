@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import asdict
 from typing import Any
 
 import httpx
@@ -26,6 +27,8 @@ def route_payload() -> dict[str, Any]:
             "gateway_model_name": "gateway-model",
             "feature_key": "chat",
             "label_key": "fast",
+            "context_window": 4096,
+            "max_output_tokens": 128,
         }
     }
 
@@ -326,3 +329,87 @@ async def test_failure_contract_invalid_error_envelope_is_secret_free(
     assert caught.value.code == "MODEL_RESPONSE_INVALID"
     assert caught.value.retryable is False
     assert "SENTINEL" not in repr(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("context_window", "max_output_tokens"),
+    [(1, 1), (4096, 128), (2147483647, 2147483647), (2147483647, 1)],
+)
+async def test_r216_binds_strict_positive_int32_execution_limits(
+    context_window: int, max_output_tokens: int
+) -> None:
+    payload = route_payload()
+    payload["data"]["context_window"] = context_window
+    payload["data"]["max_output_tokens"] = max_output_tokens
+    async with client(
+        httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as resolver:
+        result = await resolver.resolve(
+            tenant_id="tenant", feature_key="chat", label="fast", request_id="r216"
+        )
+    assert asdict(result) == payload["data"]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        ("context_window",),
+        ("max_output_tokens",),
+        ("context_window", "max_output_tokens"),
+    ],
+)
+async def test_r216_rejects_missing_execution_limits(missing: tuple[str, ...]) -> None:
+    payload = route_payload()
+    for name in missing:
+        del payload["data"][name]
+    async with client(
+        httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as resolver:
+        with pytest.raises(ModelResolutionError, match="MODEL_RESPONSE_INVALID"):
+            await resolver.resolve(
+                tenant_id="tenant", feature_key="chat", label="fast", request_id="r216"
+            )
+
+
+@pytest.mark.parametrize("name", ["context_window", "max_output_tokens"])
+@pytest.mark.parametrize("value", [None, True, False, 1.0, 1.5, "1", 0, -1, 2147483648])
+async def test_r216_rejects_non_int32_execution_limit(name: str, value: object) -> None:
+    payload = route_payload()
+    payload["data"][name] = value
+    async with client(
+        httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as resolver:
+        with pytest.raises(ModelResolutionError, match="MODEL_RESPONSE_INVALID"):
+            await resolver.resolve(
+                tenant_id="tenant", feature_key="chat", label="fast", request_id="r216"
+            )
+
+
+@pytest.mark.parametrize(
+    ("context_window", "max_output_tokens"), [(128, 129), (2147483646, 2147483647)]
+)
+async def test_r216_rejects_output_exceeding_same_revision_context(
+    context_window: int, max_output_tokens: int
+) -> None:
+    payload = route_payload()
+    payload["data"]["context_window"] = context_window
+    payload["data"]["max_output_tokens"] = max_output_tokens
+    async with client(
+        httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as resolver:
+        with pytest.raises(ModelResolutionError, match="MODEL_RESPONSE_INVALID"):
+            await resolver.resolve(
+                tenant_id="tenant", feature_key="chat", label="fast", request_id="r216"
+            )
+
+
+async def test_r216_rejects_unknown_field_with_valid_execution_limits() -> None:
+    payload = route_payload()
+    payload["data"]["execution_expiry"] = "2099-01-01T00:00:00Z"
+    async with client(
+        httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as resolver:
+        with pytest.raises(ModelResolutionError, match="MODEL_RESPONSE_INVALID"):
+            await resolver.resolve(
+                tenant_id="tenant", feature_key="chat", label="fast", request_id="r216"
+            )

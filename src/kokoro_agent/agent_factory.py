@@ -44,7 +44,11 @@ from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
-from kokoro_agent.model.factory import make_chat_model, model_from_route
+from kokoro_agent.model.factory import (
+    ModelHttpClients,
+    make_chat_model,
+    model_from_route,
+)
 from kokoro_agent.model.call_runtime import ModelCallRuntimeMiddleware
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
@@ -78,6 +82,7 @@ class AgentHandle:
     runnable: AgentRunnable
     tool_descriptions: Mapping[str, str]
     resources: tuple[ArchivingWritesMixin, ...] = ()
+    model_clients: tuple[ModelHttpClients, ...] = ()
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -86,6 +91,7 @@ class AgentHandle:
         """Close every factory-owned local resource; each resource is idempotent."""
         results = await asyncio.gather(
             *(resource.aclose_resources() for resource in self.resources),
+            *(clients.aclose() for clients in self.model_clients),
             return_exceptions=True,
         )
         errors = [result for result in results if isinstance(result, BaseException)]
@@ -95,14 +101,16 @@ class AgentHandle:
 
 async def _settle_resource_cleanup(
     resources: tuple[ArchivingWritesMixin, ...],
+    model_clients: tuple[ModelHttpClients, ...] = (),
 ) -> BaseException | None:
     """Finish cleanup despite repeated cancellation and return its own failure."""
-    if not resources:
+    if not resources and not model_clients:
         return None
 
     async def close_all() -> None:
         results = await asyncio.gather(
             *(resource.aclose_resources() for resource in resources),
+            *(clients.aclose() for clients in model_clients),
             return_exceptions=True,
         )
         errors = [result for result in results if isinstance(result, BaseException)]
@@ -241,17 +249,19 @@ async def build_deep_agent(
     policy = agent.permissions
     # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
     # docker/e2b 档带 run 级生命周期：resume 经 run_repository 重连既往箱/容器。
-    backend = await make_backend_for_run(
-        agent.backend,
-        dependencies.sandbox,
-        workspace=workspace_key(scope.namespace, scope.session_id),
-        run_id=request.run_id,
-        lease=lease,
-        sandbox_store=dependencies.run_repository,
-    )
-    resource = backend_resource(backend)
-    resources = () if resource is None else (resource,)
+    clients = ModelHttpClients(dependencies.model, route)
+    resources: tuple[ArchivingWritesMixin, ...] = ()
     try:
+        backend = await make_backend_for_run(
+            agent.backend,
+            dependencies.sandbox,
+            workspace=workspace_key(scope.namespace, scope.session_id),
+            run_id=request.run_id,
+            lease=lease,
+            sandbox_store=dependencies.run_repository,
+        )
+        resource = backend_resource(backend)
+        resources = () if resource is None else (resource,)
         resolved_skills = capabilities.skills
         skill_backend = TypedSkillBackend(resolved_skills, capabilities.skill_reader)
         native_backend = _with_native_skills(backend, skill_backend)
@@ -321,7 +331,7 @@ async def build_deep_agent(
         native_constructor: Any = getattr(deepagents, "create_deep_agent")
         validate_native_registry()
         candidate: object = native_constructor(
-            model=make_chat_model(dependencies.model, model),
+            model=make_chat_model(dependencies.model, model, model_clients=clients),
             tools=toolset.tools,
             system_prompt=agent.prompt,
             skills=None,
@@ -347,9 +357,10 @@ async def build_deep_agent(
             runnable=require_agent_runnable(candidate),
             tool_descriptions=toolset.descriptions,
             resources=resources,
+            model_clients=(clients,),
         )
     except BaseException as primary:
-        cleanup_error = await _settle_resource_cleanup(resources)
+        cleanup_error = await _settle_resource_cleanup(resources, (clients,))
         if cleanup_error is not None:
             primary.add_note(
                 "resource cleanup also failed: " + type(cleanup_error).__name__
@@ -494,7 +505,10 @@ class AgentFactory:
             cleanup_error = await _settle_resource_cleanup(
                 tuple(
                     resource for built in built_agents for resource in built.resources
-                )
+                ),
+                tuple(
+                    clients for built in built_agents for clients in built.model_clients
+                ),
             )
             if cleanup_error is not None:
                 primary.add_note(
@@ -511,6 +525,9 @@ class AgentFactory:
             runnable=native,
             tool_descriptions=descriptions,
             resources=tuple(resources),
+            model_clients=tuple(
+                clients for built in built_agents for clients in built.model_clients
+            ),
         )
 
     def approval_names(self, request: RunRequest) -> frozenset[str]:

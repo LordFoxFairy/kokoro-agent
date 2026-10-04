@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
+import json
+import math
+
+import httpx
+
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 
 from kokoro_agent.policy import ModelConfig
 
 from kokoro_agent.clients.system import ResolvedModel
+
+
+_WIRE_OBJECT = TypeAdapter(dict[str, object])
 
 
 class ChatModelSettings(BaseModel):
@@ -31,13 +41,156 @@ class ChatModelSettings(BaseModel):
     litellm_api_key: SecretStr | None
 
 
-def make_chat_model(settings: ChatModelSettings, model: ModelConfig) -> BaseChatModel:
+def _request_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("model request JSON is invalid")
+        result[key] = value
+    return result
+
+
+def _finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("model request JSON is invalid")
+    return number
+
+
+def _reject_nonfinite(_: str) -> object:
+    raise ValueError("model request JSON is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelHttpClients:
+    """Own one route's transports; validate final wire bytes before network I/O."""
+
+    settings: ChatModelSettings
+    route: ResolvedModel
+    sync: httpx.Client = field(init=False, repr=False)
+    async_client: httpx.AsyncClient = field(init=False, repr=False)
+    endpoint: httpx.URL = field(init=False)
+    _close_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        self.route.__post_init__()
+        base = httpx.URL(self.settings.litellm_base_url or "")
+        if (
+            self.route.transport != "litellm"
+            or not self.settings.litellm_enabled
+            or self.settings.litellm_api_key is None
+            or not self.settings.litellm_api_key.get_secret_value().strip()
+            or base.scheme not in {"http", "https"}
+            or not base.host
+            or base.userinfo
+            or base.query
+            or base.fragment
+        ):
+            raise ValueError("invalid owned model transport")
+        endpoint = httpx.URL(str(base).rstrip("/") + "/chat/completions")
+        object.__setattr__(self, "endpoint", endpoint)
+        sync = httpx.Client(
+            event_hooks={"request": [self._validate_sync]},
+            follow_redirects=False,
+            trust_env=False,
+        )
+        object.__setattr__(self, "sync", sync)
+        try:
+            client = httpx.AsyncClient(
+                event_hooks={"request": [self._validate_async]},
+                follow_redirects=False,
+                trust_env=False,
+            )
+        except BaseException:
+            sync.close()
+            raise
+        object.__setattr__(self, "async_client", client)
+
+    def _validate(self, request: httpx.Request, raw: bytes) -> None:
+        if request.method != "POST" or request.url != self.endpoint:
+            raise ValueError("model request endpoint is not bound")
+        try:
+            decoded: object = json.loads(
+                raw,
+                object_pairs_hook=_request_object,
+                parse_constant=_reject_nonfinite,
+                parse_float=_finite_float,
+            )
+        except (ValueError, UnicodeError):
+            raise ValueError("model request JSON is invalid") from None
+        try:
+            payload = _WIRE_OBJECT.validate_python(decoded, strict=True)
+        except ValueError:
+            raise ValueError("model request JSON is invalid") from None
+        cap = payload.get("max_completion_tokens")
+        if (
+            payload.get("model") != self.route.gateway_model_name
+            or type(cap) is not int
+            or not 1 <= cap <= self.route.max_output_tokens
+            or "max_tokens" in payload
+            or "max_output_tokens" in payload
+        ):
+            raise ValueError("model request execution bound is invalid")
+
+    def _validate_sync(self, request: httpx.Request) -> None:
+        self._validate(request, request.read())
+
+    async def _validate_async(self, request: httpx.Request) -> None:
+        self._validate(request, await request.aread())
+
+    async def _close(self) -> None:
+        errors: list[BaseException] = []
+        try:
+            self.sync.close()
+        except BaseException as error:
+            errors.append(error)
+        try:
+            await self.async_client.aclose()
+        except BaseException as error:
+            errors.append(error)
+        if errors:
+            raise BaseExceptionGroup("model client cleanup failed", errors)
+
+    async def aclose(self) -> None:
+        """Exactly one close task, settled even if callers are cancelled again."""
+        if self._close_task is None:
+            object.__setattr__(self, "_close_task", asyncio.create_task(self._close()))
+        task = self._close_task
+        assert task is not None
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError()
+
+
+def make_chat_model(
+    settings: ChatModelSettings,
+    model: ModelConfig,
+    *,
+    model_clients: ModelHttpClients | None = None,
+) -> BaseChatModel:
+    if model_clients is not None and (
+        model.provider != "litellm"
+        or model_clients.settings != settings
+        or model_clients.route.transport != model.provider
+        or model_clients.route.gateway_model_name != model.name
+        or model_clients.sync.is_closed
+        or model_clients.async_client.is_closed
+    ):
+        raise ValueError("model clients conflict with authenticated route")
     if model.provider == "openai":
         return _build_openai_model(settings, model)
     if model.provider == "anthropic":
         return _build_anthropic_model(settings, model)
     if model.provider == "litellm":
-        return _build_litellm_model(settings, model)
+        if model_clients is None:
+            raise ValueError("litellm requires owned model clients")
+        return _build_litellm_model(settings, model, model_clients)
     raise ValueError(f"unsupported model provider: {model.provider!r}")
 
 
@@ -126,7 +279,7 @@ def _build_anthropic_model(
 
 
 def _build_litellm_model(
-    settings: ChatModelSettings, model: ModelConfig
+    settings: ChatModelSettings, model: ModelConfig, clients: ModelHttpClients
 ) -> BaseChatModel:
     if not settings.litellm_enabled:
         raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_ENABLED=1")
@@ -146,6 +299,10 @@ def _build_litellm_model(
         base_url=settings.litellm_base_url,
         disable_streaming=settings.disable_streaming,
         max_retries=0,
+        max_completion_tokens=clients.route.max_output_tokens,
+        http_client=clients.sync,
+        http_async_client=clients.async_client,
+        use_responses_api=False,
         # 流式下也回 usage（stream_options.include_usage=true）：否则 usage_metadata 空 →
         # 终态 token_usage=None → session settle 捕获 0 → 计费不扣。对所有经网关的 OpenAI 兼容
         # 后端(生产 GLM/openai 及 dev ollama)一致生效，是计费闭环所需，非本地专用。

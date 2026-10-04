@@ -7,7 +7,10 @@ Authorization 携带网关 key、body.model 为网关侧 model_name（别名）�
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Generator
+from contextlib import contextmanager
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,7 +22,8 @@ from langchain_openai import ChatOpenAI
 
 from kokoro_agent.config import AppConfig
 from kokoro_agent.policy import ModelConfig
-from kokoro_agent.model.factory import make_chat_model
+from kokoro_agent.clients.system import ResolvedModel
+from kokoro_agent.model.factory import ModelHttpClients, make_chat_model
 
 GATEWAY_KEY = "gw-test-key-not-real"
 
@@ -32,6 +36,7 @@ class _Captured:
     authorization: str | None
     model: str
     stream: bool
+    max_completion_tokens: object
 
 
 class _GatewayServer(ThreadingHTTPServer):
@@ -96,6 +101,7 @@ class _FakeOpenAIHandler(BaseHTTPRequestHandler):
                 authorization=self.headers.get("Authorization"),
                 model=str(parsed.get("model")),
                 stream=streaming,
+                max_completion_tokens=parsed.get("max_completion_tokens"),
             )
         )
         if streaming:
@@ -149,102 +155,162 @@ def _config(base_url: str) -> AppConfig:
     )
 
 
+def _route() -> ResolvedModel:
+    """One legal immutable owner route; never an implicit production default."""
+    return ResolvedModel(
+        model_id="11111111-1111-4111-8111-111111111111",
+        provider_id="22222222-2222-4222-8222-222222222222",
+        revision_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        digest="a" * 64,
+        generation="1",
+        tenant_generation="1",
+        provider_model_name="provider-model",
+        gateway_model_name="gateway-alias",
+        feature_key="chat",
+        label_key="fast",
+        context_window=8192,
+        max_output_tokens=96,
+    )
+
+
+@contextmanager
+def _owned_clients(config: AppConfig) -> Generator[ModelHttpClients]:
+    clients = ModelHttpClients(config.model, _route())
+    try:
+        yield clients
+    finally:
+        # These tests use sync SDK calls; the owned async pool still must close.
+        asyncio.run(clients.aclose())
+        assert clients.sync.is_closed
+        assert clients.async_client.is_closed
+
+
 def test_litellm_construction_shape() -> None:
     # provider=litellm 复用现有 ModelConfig 形状；构造出指向网关的 OpenAI 兼容客户端。
     config = _config("https://gateway.example.com/v1")
-    model = make_chat_model(
-        config.model, ModelConfig(provider="litellm", name="gateway-alias")
-    )
-    assert isinstance(model, ChatOpenAI)
-    assert model.model_name == "gateway-alias"
-    assert model.openai_api_base == "https://gateway.example.com/v1"
-    # 网关 key 是否真被携带由真端点测试（test_litellm_invoke_hits_gateway_with_key）权威证明。
+    with _owned_clients(config) as clients:
+        model = make_chat_model(
+            config.model,
+            ModelConfig(provider="litellm", name="gateway-alias"),
+            model_clients=clients,
+        )
+        assert isinstance(model, ChatOpenAI)
+        assert model.model_name == "gateway-alias"
+        assert model.openai_api_base == "https://gateway.example.com/v1"
+        # 网关 key 是否真被携带由真端点测试（test_litellm_invoke_hits_gateway_with_key）权威证明。
 
 
 def test_litellm_thinking_maps_reasoning_effort() -> None:
     # OpenAI 兼容语义透传 reasoning_effort：thinking=True→high、False→minimal、None→回落 effort。
     config = _config("https://gateway.example.com/v1")
+    with _owned_clients(config) as clients:
 
-    def effort_of(thinking: bool | None, effort: str | None) -> object:
-        model = make_chat_model(
-            config.model,
-            ModelConfig(
-                provider="litellm",
-                name="gateway-alias",
-                thinking=thinking,
-                effort=effort,
-            ),
-        )
-        assert isinstance(model, ChatOpenAI)
-        return model.reasoning_effort
+        def effort_of(thinking: bool | None, effort: str | None) -> object:
+            model = make_chat_model(
+                config.model,
+                ModelConfig(
+                    provider="litellm",
+                    name="gateway-alias",
+                    thinking=thinking,
+                    effort=effort,
+                ),
+                model_clients=clients,
+            )
+            assert isinstance(model, ChatOpenAI)
+            return model.reasoning_effort
 
-    assert effort_of(True, None) == "high"
-    assert effort_of(False, None) == "minimal"
-    assert effort_of(None, "medium") == "medium"
+        assert effort_of(True, None) == "high"
+        assert effort_of(False, None) == "minimal"
+        assert effort_of(None, "medium") == "medium"
 
 
-def test_litellm_requires_base_url_fail_loud() -> None:
+def test_litellm_requires_base_url_fail_loud(gateway: _GatewayServer) -> None:
     config = AppConfig.from_env(
         {"KOKORO_LITELLM_ENABLED": "1", "KOKORO_LITELLM_API_KEY": GATEWAY_KEY}
     )
-    with pytest.raises(ValueError, match="KOKORO_LITELLM_BASE_URL"):
+    with pytest.raises(ValueError, match="invalid owned model transport"):
+        ModelHttpClients(config.model, _route())
+    with pytest.raises(ValueError, match="litellm requires owned model clients"):
         make_chat_model(
             config.model, ModelConfig(provider="litellm", name="gateway-alias")
         )
 
+    assert gateway.captured == []
 
-def test_litellm_requires_api_key_fail_loud() -> None:
+
+def test_litellm_requires_api_key_fail_loud(gateway: _GatewayServer) -> None:
     config = AppConfig.from_env(
         {
             "KOKORO_LITELLM_ENABLED": "1",
-            "KOKORO_LITELLM_BASE_URL": "https://gateway.example.com/v1",
+            "KOKORO_LITELLM_BASE_URL": _base_url(gateway),
         }
     )
-    with pytest.raises(ValueError, match="KOKORO_LITELLM_API_KEY"):
+    with pytest.raises(ValueError, match="invalid owned model transport"):
+        ModelHttpClients(config.model, _route())
+    with pytest.raises(ValueError, match="litellm requires owned model clients"):
         make_chat_model(
             config.model, ModelConfig(provider="litellm", name="gateway-alias")
         )
 
+    assert gateway.captured == []
 
-def test_litellm_is_disabled_by_default() -> None:
+
+def test_litellm_is_disabled_by_default(gateway: _GatewayServer) -> None:
     config = AppConfig.from_env(
         {
-            "KOKORO_LITELLM_BASE_URL": "https://gateway.example.com/v1",
+            "KOKORO_LITELLM_BASE_URL": _base_url(gateway),
             "KOKORO_LITELLM_API_KEY": GATEWAY_KEY,
         }
     )
-    with pytest.raises(ValueError, match="KOKORO_LITELLM_ENABLED"):
+    with pytest.raises(ValueError, match="invalid owned model transport"):
+        ModelHttpClients(config.model, _route())
+    with pytest.raises(ValueError, match="litellm requires owned model clients"):
         make_chat_model(
             config.model, ModelConfig(provider="litellm", name="gateway-alias")
         )
+
+    assert gateway.captured == []
 
 
 def test_litellm_invoke_hits_gateway_with_key(gateway: _GatewayServer) -> None:
     # 真 HTTP 假网关：证明请求打到网关地址、Authorization 带网关 key、body.model 为网关别名。
     config = _config(_base_url(gateway))
-    model = make_chat_model(
-        config.model, ModelConfig(provider="litellm", name="gateway-alias")
-    )
-    reply = model.invoke([HumanMessage(content="ping")])
-    assert reply.text == "pong"
-    assert len(gateway.captured) == 1
-    call = gateway.captured[0]
-    assert call.path == "/v1/chat/completions"
-    assert call.authorization == f"Bearer {GATEWAY_KEY}"
-    assert call.model == "gateway-alias"
-    assert call.stream is False
+    with _owned_clients(config) as clients:
+        model = make_chat_model(
+            config.model,
+            ModelConfig(provider="litellm", name="gateway-alias"),
+            model_clients=clients,
+        )
+        reply = model.invoke([HumanMessage(content="ping")])
+        assert reply.text == "pong"
+        assert len(gateway.captured) == 1
+        call = gateway.captured[0]
+        assert call.path == "/v1/chat/completions"
+        assert call.authorization == f"Bearer {GATEWAY_KEY}"
+        assert call.model == "gateway-alias"
+        assert call.stream is False
+
+        assert type(call.max_completion_tokens) is int
+        assert call.max_completion_tokens == clients.route.max_output_tokens
 
 
 def test_litellm_streaming_over_gateway(gateway: _GatewayServer) -> None:
     # 流式可用：stream=True 走 SSE，分块拼回完整内容，请求同样落在网关且带网关 key。
     config = _config(_base_url(gateway))
-    model = make_chat_model(
-        config.model, ModelConfig(provider="litellm", name="gateway-alias")
-    )
-    chunks = list(model.stream([HumanMessage(content="ping")]))
-    assert "".join(chunk.text for chunk in chunks) == "pong"
-    assert len(gateway.captured) == 1
-    call = gateway.captured[0]
-    assert call.stream is True
-    assert call.authorization == f"Bearer {GATEWAY_KEY}"
-    assert call.model == "gateway-alias"
+    with _owned_clients(config) as clients:
+        model = make_chat_model(
+            config.model,
+            ModelConfig(provider="litellm", name="gateway-alias"),
+            model_clients=clients,
+        )
+        chunks = list(model.stream([HumanMessage(content="ping")]))
+        assert "".join(chunk.text for chunk in chunks) == "pong"
+        assert len(gateway.captured) == 1
+        call = gateway.captured[0]
+        assert call.stream is True
+        assert call.authorization == f"Bearer {GATEWAY_KEY}"
+        assert call.model == "gateway-alias"
+
+        assert type(call.max_completion_tokens) is int
+        assert call.max_completion_tokens == clients.route.max_output_tokens

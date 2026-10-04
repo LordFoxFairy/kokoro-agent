@@ -1,3 +1,70 @@
+## R216-AGENT-EXECUTION-D0：固定 System 3.0 消费与逐调用执行界（2026-10-04；D0已审，候选已验待Root提交）
+
+本节是已验候选消费者切片的当前方案，不覆盖下方 R203 已验收的取消/fatal 事实；下方旧 System 2.0、无界 SDK 或待升级描述仅是历史快照。唯一任务卡在 Root `docs/task.md` 的 **R216-AGENT-EXECUTION-D0**，不另建计划中心。基线为 Agent `main@92b802e223547288c4a8dcaba56dfd2f0c327f93`，盘点时工作树 clean；本轮唯一 writer 为 Agent 固定 System 消费者与 SDK 执行限额设计，Root 独占 Git、资源和验收。D0只写四docs前缀且独审已归零；R218另授既定tests-only，本次同步API_CONTRACT所列最终955bd587固定来源。Root已核owner原件与19sources；R218/R219正式授九production/machine路径后，现九production/machine、八tests候选已完成Root限定验收；R221仅回填四docs，Root独占提交，3310未启用。
+
+### 当前调用事实与目标
+
+- D0基线仍pin System2.0且decoder不含两界；R219候选已原子替为API_CONTRACT所列955固定3.0收据，`_Route -> ResolvedModel` strict required两正int32及关系已实现，已通过Root冻结边界/真实peer测试。
+- `AgentFactory._build_feature -> prepare_feature -> freeze_or_verify_static_recipe -> build_deep_agent`，后者 `resolver.resolve -> model_from_route -> make_chat_model -> deepagents.create_deep_agent`。各 Swarm peer 单独构造；GP/catalog child 继承该 peer 的模型，`agents/subagents.py` 逐 child 下发同 owner guard。`ModelCallRuntimeMiddleware.awrap_model_call` 逐 native model task 登记 scope、prepare，然后无条件抛授权 unavailable；不是可直接授 provider 的 success path。
+- `model/factory.py` 五 SDK 构造已 `max_retries=0`，R219候选已通过公开HTTPX hook执行owner output cap（Root真实peer已验）。正式 System transport 只有 `litellm`，实际调用 `ChatOpenAI`；其他 provider constructor 是既有内部能力，不据此扩展 System 契约。
+- 本地锁定并查阅的源码版本：DeepAgents 0.6.6、LangChain 1.3.2、LangGraph 1.2.2、langchain-openai 1.2.2 / OpenAI 2.41.0、langchain-anthropic 1.4.4 / Anthropic 0.105.2、langchain-deepseek 1.1.0。本片不升级锁。OpenAI-compatible Chat Completions 实际序列化字段为 `max_completion_tokens`（SDK 会归一旧 `max_tokens`）；Anthropic 为 `max_tokens`。版本来自锁定源码，wire已由Root自有真实peer实测，不以构造参数断言替代。
+
+现已沿同一路径携带 required `context_window` 与 `max_output_tokens`：严格 JSON 整数 `1..2147483647`、output ≤ context，拒绝 bool/float/string/null/缺失/未知字段，不设置默认、可选值或 2.0 fallback。身份、revision/digest/generation、tenant/feature/label 保持同一已认证 response 的绑定，不能把不同 revision 的界拼装在一起。技术界仅由 System model-catalog 发布；价格、账户、授权金额和结算仍归 Billing。
+
+### §8 放置表与闭集
+
+| 项 | 结论 |
+| --- | --- |
+| Owner | System 唯一发布模型 technical capabilities；Agent 唯一负责将其约束到本次实际 SDK call；Billing 唯一授收费 Admission。Agent D0 四文档独占 writer，Root 审查与提交。 |
+| 当前事实 | 上述现 client/factory/native middleware/prepare 路径；canonical `database/schema.sql`，usage/v1、HTTP5不变；既有真实 SDK peer 和 native PG caller 测试可扩展。候选 System pin3.0；无正式 Billing consumer；完整授权 execution-bound仍后继。 |
+| 目标职责/API | `ResolvedModel` 承接 owner 严格值；现 factory 显式接收同 route 的界并构造受限 SDK；现逐 model-call middleware 承接后继可信执行 bound，不新增公开 API。两值不能丢在 `model_from_route` 映射，也不塞静态 `ModelConfig` 形成第二事实源。 |
+| 目录方案 | **采用现 `clients/system.py` + `model/factory.py` + `agent_factory.py` 的显式下传**：已有 HTTP、SDK、装配职责分别承接。**淘汰 runtime-manifest/recipe 增加模型界**：静态装配 fingerprint 不拥有动态模型 revision/授权 expiry，复制后会漂移。**淘汰新 execution-limit 模块/进程**：无独立生命周期或 owner，不建一文件目录。 |
+| 粒度 | 扩展上述现文件；System固定收据现新增同package普通 `system_consumer_contract.py`（纯文件，不新业务模块/目录），淘汰把第三方收据塞进809行 `execution_proof_contract.py`；后者仅追加OWNER_SOURCE_FILES inventory。后继包内 bound 的纯值/错误归现 `model/call_models.py`，逐调用编排归现 `model/call_runtime.py`，持久当前租约验证归现 `infrastructure/postgres_model_call_repository.py`。完整授权bound仍是后继，不由本切片先抽通用框架。 |
+| 依赖 | client 在 HTTP 边界结束；factory 只用验证后内部值，装配下传给现 native chain。禁止运行时 import System/Billing 源码、数据库/DTO、SDK 私有 API；不从 metadata/runtime.context/request body 接受限额或授权。既有资源显式闭包在需要时补 `execution/runtime_profile_sources.py` 的准确 client 路径，不作为业务配置仓。 |
+| 数据/API | 不新增模块、目录、进程、SQL 列、HTTP/event/usage 字段或第二 protocol；技术界不写金额/usage。既有 Run/Attempt/Evidence 的 tenant、锁序、幂等、terminal 与取消边界不变；固定 owner pin 是 breaking 消费升级，不支持新旧双读。 |
+| 删除项 | 已替换旧 System2.0 pin 与相应旧合法响应 fixture，已删除无界正式 SDK 构造/可选限额/静默忽略限额入口；不删现 Run budget、取消 scope、lease gate、retry0、GP/catalog/Swarm 能力或有效历史证据。 |
+| 验证 | 下述 tests-first 真 HTTP / SDK wire / PG native oracle及Root完整工程/installed门已通过；unit/MockTransport 只证明边界分支，不能替代系统门。 |
+
+### SDK 硬界与 execution-bound 的依赖顺序
+
+1. Root 先核对本地已提交 System owner artifact、provenance 和全部 source digest（精确身份见 API_CONTRACT），再批准 Agent 原子 pin/decoder/factory 消费。未 push 不等于远端已发布；发布组合须能取得该固定 commit，不能消费浮动 checkout。
+2. 第一实现切片沿factory显式传同一 `ResolvedModel` 的界；constructor cap只提供默认，不是最终硬界。采用下节具名 `ModelHttpClients` 的公开HTTPX request hook，在SDK最终序列化后、真实网络send前严格核cap，`max_retries=0` 保持。正式仅支持锁定且经peer验证的LiteLLM/OpenAI-compatible Chat Completions；缺界、冲突/上调/移除 override、不支持endpoint均在外发前拒绝，不静默忽略。`context_window` 是总上下文能力，不冒充 SDK 的输出字段；上下文总 token 的保守核算/可信 tokenizer 尚需后继门，不能用字符数或 `run_token_budget` 证明精确 input+output fits。
+3. 此片正控仅测试侧隔离 `SystemModelClient -> model_from_route -> make_chat_model -> SDK -> 自有 loopback HTTP peer`，读取真正 POST JSON 并证明 cap。它不是正式 Run，不调用 Billing，不创建 fake grant，也不算真实模型服务验收。正式 `AgentFactory -> invoke_once -> ModelCallRuntimeMiddleware` 必须保持缺 Billing consumer 时 provider=0。
+4. 后继 bound 只在实际逐调用 gate 内由同 tenant/Run/lease、当前 System revision 界与真实 Billing 授权联合形成。当前 `LeaseFence` 仅 owner/generation；`PreparedModelCall` 是不可变创建 receipt，不能拿 prepared_at 充 expiry。现 model-call repository 已在锁 Run 后读 DB `clock_timestamp()` 并验证 live `lease_expires_at`，后继在该 owner 边界提供单独的包内当前观测，不把 live expiry 塞进 immutable prepare receipt，也不借用 proof-only reader 冒充模型授权。
+5. 执行截止取当前有效租约、可信 Admission expiry 和已批准 operation deadline 的最早者；UTC 瞬时点结合 DB 时钟观测转换为保守 monotonic 剩余预算，扣掉观测/排队耗时，不在重试中重置。缺授权、过期、fence/tenant/revision 不符或无正剩余时间均不进入 handler。DB dispatch CAS 仍须当前 fence 且 `newly_started=true`；读租约与网络发送不是原子操作，不宣称提前撤销瞬时生效。正式 Admission 尚未发布/接线，不能编造其字段、期限或免费许可。
+6. `health.valid_until`、resolve cache TTL、生成时间、配置 timeout、proof 60秒 TTL均非模型执行授权 expiry；scope 的5秒只负责取消 settle，不延长许可。到期取消沿现 scope/fatal 保证有限收束；未知结果仍 unknown。下一正式 paid/provider 正控须先完成 Billing fixed consumer、授权 expiry/绑定契约及全部真实系统门，本 D0 不放开 handler。
+
+### R217/R219：已实现公开硬界 seam、资源所有权与准确写集
+
+**唯一enforcement对象。** 在现 `model/factory.py` 内增加包内 `ModelHttpClients`，持同一次已验证System route的不可变endpoint/model/context/output值与自有HTTPX sync/async client。`make_chat_model` 的正式litellm分支显式接收该对象，通过ChatOpenAI公开 `http_client` / `http_async_client` 参数传入；两侧均装公开 `event_hooks={"request": ...}`，不读/覆写SDK `_get_request_payload`、private client或model内部字段。上下文界不另传成伪SDK参数。SDK kwargs即使在 `.bind/.bind_tools/.ainvoke/.astream`、`model_settings` 或 `extra_body` 覆盖默认，最终请求仍先经过同一hook；禁止为调试暴露可换transport/client的正式入口。对象不是BaseChatModel代理、第二runtime或授权框架。
+
+**R219实际signature。** `ModelHttpClients(settings: ChatModelSettings, route: ResolvedModel)`；`make_chat_model(settings, model, *, model_clients: ModelHttpClients | None = None)`。None只保留既有非正式其他provider构造，正式LiteLLM必拒；传入clients的settings/transport/model/closed状态同时核对。`AgentHandle.model_clients`为独立tuple；close task恰一次且重复取消先settle。以下候选矩阵由Root实测通过，作者不冒领执行；正式provider/Billing成功仍OPEN。现checker为199行；仅reader局部导入别名read_document维持自然格式，不改变公开入口/阈值或搬职责。
+
+**hook闭集。** 只接受配置origin下exact `POST <base_path>/chat/completions`、JSON对象且无duplicate member/非有限数值、model恰为同route.gateway_model_name、唯一整数 `max_completion_tokens` 在 `1..route.max_output_tokens` 内；拒绝缺失/null/bool/float/字符串、上调、遗留 `max_tokens` 或 `max_output_tokens` 冲突别名及Responses/未知path。接受正向收窄，不在hook修写payload或补默认；无override的SDK默认必须恰为owner cap。read body使用HTTPX公开request API；仅校验输出关键闭集，不删SDK正常messages/tools/stream字段。sync/async同一纯验证逻辑，fail前不发送；`follow_redirects=False`、不凭重定向换端点、无自动retry。不输出secret、请求body、prompt、token或模型响应，错误只有固定脱敏原因。
+
+**资源闭环。** `build_deep_agent`在解析/验证route后创建该peer的 `ModelHttpClients`，先登记本地构建owner再交 `make_chat_model`；构造任何阶段失败/取消时同一owner关闭sync及async client。成功后转交现 `AgentHandle` 的独立 `model_clients` 集合，不能伪装成 `ArchivingWritesMixin` backend资源；`AgentHandle.aclose`显式关闭两类资源、每个client恰一次、保持primary并聚合关闭异常。partial Swarm构建失败和成功Swarm聚合都要转交/关闭每个peer集合；GP/catalog继承该peer受控model而不新建无主client。正式正常/失败/取消沿原scope settle后才handle cleanup，hook不会持有未登记background task。SDKpeer fixture使用同一对象并显式finally/aclose；0请求负例仍须证明无遗留连接/task。没有常驻进程、新配置或新凭据源。
+
+**R219已授并已写候选的源码闭集（已验，待Root提交）。** 现 `src/kokoro_agent/clients/system.py`、`src/kokoro_agent/model/factory.py`、`src/kokoro_agent/agent_factory.py`、`src/kokoro_agent/contract_check.py`、`src/kokoro_agent/execution_proof_contract.py`（只追加source inventory）、`src/kokoro_agent/execution/runtime_profile_sources.py`（只补准确运行资源闭包）、`contract/provenance.json`、`pyproject.toml`（只追加新validator的现audit data-files），以及新普通 `src/kokoro_agent/system_consumer_contract.py`。不修改call_runtime的Billing gate、Run/usage/schema/锁。`scripts/generate_failure_models.py`只运行既有正规命令刷新aggregate，不改生成器；Failure生成bytes实际不变，后继出现变化仍先报Root，不授手改generated。新validator不属于运行配方，不塞runtime manifest；System client/factory实际运行源码才在原显式闭包中登记。
+
+**精确测试补充。** 原六tests-only路径保持；因新module source inventory增加，候选已将现 `tests/contract/test_execution_proof_artifact.py` 的OWNER_INVENTORY常量追加该项（仅inventory，不松其他proof断言），形成首批七个现测试路径；Root实测默认门发现旧裸gateway fixture后另授现 `tests/unit/config/test_litellm_gateway.py`，合计八路径，现均已验。包内receipt闭集/duplicate/tamper测试放现 `tests/contract/test_machine_contract.py`，并由Root仓外真实installed checker验证新module原件/audit副本/receipt/RECORD完整性；精确收据、Root Git-object来源命令和installed负例全见API_CONTRACT，不新增vendored资产。现 `tests/unit/agents/test_factory.py`扩build失败/取消、partial peer及handle关闭的exact-once ownership断言，真实peer层检查client最终关闭，unit不替代网络证明。
+
+**真实hard-cap正反控。** 现SDK peer逐次记录async nonstream与stream、sync invoke/stream、`.bind`/`.bind_tools`的真实JSON；合法默认恰cap、显式更小值≤cap且POST=1。依次从直接invoke kwargs、绑定kwargs、native `ModelRequest.model_settings`和 `extra_body`上调/移除/冲突，必须真实peer请求数=0，不能由构造字段introspection替代。native model_settings覆盖测试使用测试内独立 `create_agent` + 公开middleware设置model_settings，经真实LangChain handler `bind_tools/bind -> ainvoke`验证hook；这个SDK-only测试图不是正式Run、不涉及Billing或fake grant，不删除/替换production guard。正式AgentFactory/PG native路径另保留合法3.0→缺Billing→0provider的强负控。unsupported Responses/endpoint或换model均0request。未来Billing成功前仍不宣称正式provider正路已验。
+
+### 已执行 tests-first 范围与 RED → GREEN；后继授权bound另门
+
+- 首波behavior tests-only为现 `tests/unit/model/test_system_client.py`、`tests/unit/model/test_model_selection.py`、`tests/unit/agents/test_factory.py`、`tests/contract/test_machine_contract.py`、`tests/integration/test_model_provider_retries.py`、`tests/integration/database/test_model_call_runtime_chain.py`。另仅追加上节一个inventory测试路径（首批七个已授权路径）；两 integration 复用原文件资源边界，不新造 test helper 模块；完整默认门的唯一旧gateway无ownedclients七失败已由Root另授第八路径迁移，未批量改tests或放宽guard。新测试统一 `test_r216_*` 名字，旧测试断言保留。
+- RED-A：真实 loopback owner response 提供合法3.0两值，旧 decoder 实际因 extra field 拒绝；仅此业务拒绝算 RED，import/setup/未知 endpoint 不算。负例矩阵覆盖缺/nullable/bool/float/string/0/负数/int32溢出/关系逆转；合法 1/1、int32边界和 output<context 正控；未知字段、tenant/feature/label 与原身份绑定回归。
+- RED-B：真实锁定 SDK 首先记录**当时无界请求体**，断言所需 wire cap 缺失/默认不符；GREEN 再沿同正式 factory 传有效界，nonstream/stream 均断言实际 POST 的 exact target/model/cap、无冲突别名、物理请求恰1。参数 override 上调/移除、unsupported route 和非法界必须0请求；既有429/500/断链/retry0/取消清理不得回归。先只计正式 LiteLLM-compatible transport 的结果，其他构造没有对应 wire 证据就不宣称覆盖。
+- native负控：扩现真 PostgreSQL/checkpointer/AgentFactory/DeepAgent/`invoke_once` 例，owner peer 响应合法3.0后仍 `provider=0`、prepared/not_requested、现 `dependency_unavailable,retryable=false`、单terminal sealed not_dispatched/unresolved，exact recovery字节不变；不能通过删除/替换 middleware 或直接 mock `prepare` 获得成功。FakeBus仅事件传输，不能称该例已验Redis或真实System服务。
+- 后继 bound 必测真实 PG 锁/排队跨 expiry、旧generation/tenant/terminal、授权在途过期、单dispatch竞争、取消后两窗口零后写及清理；本首波没有 Billing success oracle，不以 mock grant 完成这些门。GP/catalog/Swarm真实caller/recovery仍单列OPEN。
+- tests RED经Root和独审确认后，已授并验收上节明确的九个production/机器路径。System收据validator、checker编排、完整source inventory/data-files/installed门作为同一个原子consumer交付；Root固定Git-object来源门另跑，不依赖浮动checkout。不存在System generator，不新增输出协议或generated类型。
+
+**Root已执行门与终态。** targeted394 passed含90自有HTTP/锁定SDK peer；真实PostgreSQL306 passed（包含现native无Billing0provider、prepare/seal/cancel/exact recovery），生命周期3 passed；default2253 passed/497资源deselected/795既有warnings。lock/frozen-sync、Ruff、Pyright、contract-check、wheel/sdist build均exit0。installed18步骤通过，两个exit1为预期篡改拒绝、恢复check0，隔离origin/116个hash-locked依赖及清理见API_CONTRACT。资源验证由Root执行，本R221 docs-only不重复运行。
+
+**复验入口。** Agent现unit/contract路径及 `uv run pytest -q -o addopts='' tests/integration/test_model_provider_retries.py`；native/完整PG与scope/fatal入口见DATA_MODEL。默认pytest排除integration，497 deselected不冒通过；自有HTTP peer不冒外部provider。后继涉及源码或机器收据变化仍须重跑相关冻结门；当前候选待Root提交，不代表3310、正式Billing reader/Admission、exact input token、GP/catalog/Swarm真实caller恢复或UI闭环。
+
+---
+
 ## R203-A4-SCOPE：invocation-local model-call有限收束候选与取消审计边界（2026-10-04）
 
 本节取代下方R198首节中“等待SDK公开终止/外部部署硬终止再裁决”的旧阻断描述；旧段只保留历史审计，不与本节并列为当前方案。

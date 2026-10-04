@@ -264,6 +264,8 @@ def _system_route_body() -> bytes:
                 "feature_key": "chat",
                 "label_key": "default",
                 "transport": "litellm",
+                "context_window": 8192,
+                "max_output_tokens": 256,
             }
         },
         separators=(",", ":"),

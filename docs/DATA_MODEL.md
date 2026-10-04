@@ -1,3 +1,26 @@
+## R216-AGENT-EXECUTION-D0：技术执行界为消费值，不新增持久owner（2026-10-04；候选已验待Root提交）
+
+本片基线 Agent `main@92b802e223547288c4a8dcaba56dfd2f0c327f93`，任务为 Root `docs/task.md::R216-AGENT-EXECUTION-D0`。D0独审已归零；R218已另授既定tests-only并同步最终System `955bd587f46a771e43a4330d202d90a7d2d67262` 固定来源，R219候选已按授权更新source/机器receipt并通过Root真实PG/工程/installed门，但无DDL修改；System receipt唯一存于现provenance，不进数据库。TECHNICAL_DESIGN放置表与API_CONTRACT固定System3.0身份共同构成当前方案。
+
+- 唯一canonical仍 `database/schema.sql`；Run、lease、Attempt/Evidence、checkpoint、outbox的writer、tenant、锁序、幂等、retention和fresh install均不变。无新表、列、索引、CHECK、FK、migration、Redis namespace或第二schema。
+- System两个technical界来自同一published model revision/resolve，不把System表或价格复制到Agent。现 `PlannedBinding` 已绑定model/provider/revision_id/revision/digest/generation/tenant_generation/feature/label；它不含两个界或expiry，usage/v1本片不增加这些字段，不偷塞input_digest或metadata。revision immutable/digest保证来源定位，不声称当前Agent离线可以重建完整System revision。
+- 现 `LeaseFence` 只保存owner/generation；prepare在现 `PostgresModelCallRepository._prepare_locked` 锁持久Run后，以DB `clock_timestamp()`重验tenant、owner/generation、terminal与 `lease_expires_at`。`PreparedModelCall` 是不可变创建receipt，不是可缓存当前权限，也不把prepared_at、lease TTL配置或System health/cache TTL当执行expiry。
+- 后继单独的包内current observation/dispatch校验仍放现model-call repository与call_models，由原锁内Run事实给出可信DB时间/租约到期；它不新增canonical字段，也不复用proof-only port冒充Billing许可。最后执行deadline取当前有效lease、正式Admission expiry、已批准operation deadline最早值；保守扣掉观测耗时，过期/未知/冲突不外发。提前撤权与网络发送的在途race不宣称由单次读取消除。
+- output hard cap候选已由现factory的ModelHttpClients公开HTTPX request hook在最终序列化后/网络send前执行，constructor默认本身可被kwargs覆盖而不算硬界；sync/async、bind/model_settings/extra_body均检查，资源由构建owner明确转交AgentHandle并关闭。它只限制本物理SDK请求；context window只表能力，字符数、SDK累计callback和 `run_token_budget` 不成为精确input token或verified actual证据。缺正式Billing时保持 `prepared/not_requested -> safe failed -> sealed not_dispatched + unresolved/missing_usage + actual unknown/not_observed`；没有grant/dispatch/金额/known-zero。现Run completeness可能complete/unknown_count=0也不等于用量已核实或账单结清。
+- 不改现取消/timeout/fatal语义：未commit prepare收到取消rollback；已commit行保留，scope settle后才terminal/seal；fatal不写假终态/释放lease。exact terminal recovery读取原bytes并零写；所有费用与释放规则待Billing真实consumer，不以本片SDKpeer成功越过Admission。
+
+R219已新增的普通 `system_consumer_contract.py` 只校验现provenance精确receipt闭集；OWNER_SOURCE_FILES/data-files/installed RECORD及audit副本沿现安装链登记，无新schema/vendor资产或业务owner。Root另从固定System Git object验证artifact/provenance/19sources，不读System数据库。字段required/单值范围来自OpenAPI，output≤context来自固定runtime-Zod source，Agent边界重复验证；不通过OpenAPI臆称已生成关系约束。
+
+### Root已验数据/系统边界与后继门
+
+Root已以自有Agent数据库/schema完成真实PostgreSQL306 passed，覆盖现 `tests/integration/database/test_model_call_runtime_chain.py` 合法3.0响应下正式native仍0provider、唯一prepared/not_requested、既有sealed not_dispatched/unresolved、取消前后事实快照及exact recovery；无fake grant或known-zero。fatal/非法callback/正常SIGTERM生命周期3 passed。自有数据库回收、受保护源码保持；2253默认通过/497资源deselected不是PG门替代。同期targeted394含90自有HTTP/SDK peer与lock/sync/Ruff/Pyright/contract/build均通过，installed18步骤收据及两层篡改拒绝见API_CONTRACT。
+
+复验仍使用现canonical与owner命令：`uv run kokoro-agent-db-apply-schema` 指向Root分配的自有schema；`uv run pytest -q -o addopts='' tests/integration/database`；scope/fatal为 `uv run pytest -q -o addopts='' tests/integration/test_model_call_fatal_exit.py`。本R221仅文档回填，不再次执行或访问资源，不修改canonical、source、测试或机器receipt。
+
+后继execution-bound仍需真实锁等待跨lease/Admission expiry、tenant/fence冲突及dispatch竞态等收费成功矩阵；正式Billing reader/Admission consumer、exact input token/完整上下文核算、真实provider、GP/catalog/Swarm真实caller恢复与UI均OPEN。自有HTTP peer不冒真实System/Nest服务或外部模型，当前3310未启用；已验候选等待Root提交，不等于用户收费闭环。
+
+---
+
 ## R203-A4-SCOPE：取消返回后零业务写保持现schema（2026-10-04；无DDL）
 
 本节取代下方R198取消段的旧未裁决状态；旧段仅为历史快照。

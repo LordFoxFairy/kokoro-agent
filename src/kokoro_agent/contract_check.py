@@ -10,7 +10,7 @@ from kokoro_agent import model_usage_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
     generate_failure_models,
-    read_contract_document,
+    read_contract_document as read_document,
     validate_chat_response_contract,
 )
 from kokoro_agent.distribution_assets import contract_audit_root
@@ -25,6 +25,7 @@ from kokoro_agent.platform_binding_contract import (
     PLATFORM_PROVENANCE_RELATIVE,
     validate_platform_binding_artifact,
 )
+from kokoro_agent.system_consumer_contract import validate_system_consumer_receipt
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
@@ -170,10 +171,9 @@ def _validate_representation_headers(
 def validate(root: Path = ROOT) -> None:
     """Validate all Agent-owned machine facts rooted at ``root``."""
 
-    validate_openapi_document(read_contract_document(root / OPENAPI_RELATIVE))
-    validate_http_provenance(
-        root, read_contract_document(root / "contract/provenance.json")
-    )
+    validate_openapi_document(read_document(root / OPENAPI_RELATIVE))
+    validate_http_provenance(root, read_document(root / "contract/provenance.json"))
+    validate_system_consumer_receipt(root)
     generate_failure_models(root, check=True)
     validate_execution_proof_contract(root)
     validate_platform_binding_artifact(root)

@@ -1,3 +1,23 @@
+## R216/R219 当前：固定 System 3.0 与 SDK 硬界候选已验，待 Root 提交（2026-10-04）
+
+唯一任务为 Root `docs/task.md::R216-AGENT-EXECUTION-D0` 及其 R218/R219、R221-AGENT-DOC-FINAL 续记。Agent 基线 `main@92b802e223547288c4a8dcaba56dfd2f0c327f93`；原 writer 只在既定九 production/machine、八 tests、四 docs 内写入，Root 独占 Git、所有测试/资源与集成。
+
+**实际候选源码：** SystemModelClient 严格解码同 response 的 required `context_window/max_output_tokens`，ResolvedModel 同样验证正 int32 与 output≤context。`model/factory.py::ModelHttpClients(settings, route)` 持不可变 route 及公开 HTTPX sync/async clients，最终 POST exact endpoint/model/JSON/cap 校验发生于网络发送前；constructor cap只是默认。正式 LiteLLM 缺 owned clients、错误 route/settings/model 或 closed clients 均拒绝；既有非正式 OpenAI/Anthropic 构造保持。没有 ModelConfig 动态界副本/2.0 fallback/SDK private API。
+
+现 build_deep_agent 在首次 backend await 前创建并登记 clients，失败/取消收束关闭，成功转交 AgentHandle.model_clients；partial/成功 Swarm 聚合相同所有权。每个客户端独立 once-only close task，重复取消等待关闭结束。正式 native ModelCallRuntimeMiddleware/Billing guard 未改，真实PG已验证合法3.0→prepare/not_requested→safe failure→sealed not_dispatched/unresolved，provider=0；候选代码不是收费放行。
+
+**机器来源：** provenance 唯一 System 收据已原子替为 3.0.0 / `955bd587f46a771e43a4330d202d90a7d2d67262`；artifact `94ed91655741cbba66ce80a4c41717b9179cc509cb6858534e0b78aa3e6dc059`、provenance `5fda620ca1526f57d8759b2c6282ed6d674455a78e8ff9ee7fc0522e8f5a3832`、19-source canonical receipt `aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b`。新同 package 普通 system_consumer_contract.py 已接现 checker；proof仅追加inventory，现audit data-files/aggregate登记同源。Root已核候选收据与固定Git原件19/19，包内及installed门也已通过；尚未提交/远端发布/3310启用。
+
+**Root实测终态：** targeted **394 passed**（含 **90** 个自有HTTP/锁定SDK peer案例）、真实PostgreSQL **306 passed**、fatal/非法callback/正常SIGTERM生命周期 **3 passed**；最终default **2253 passed / 497资源deselected / 795既有warnings**。lock/frozen-sync、Ruff、Pyright、contract-check、wheel/sdist build均exit0。两次fixture失败分别为AppConfig.model属性误配与旧gateway裸构造，已按Root真实失败只修获授fixture，原响应/path/凭据/model/stream/effort和费用guard断言保持；不是放宽生产guard。Failure生成bytes保持SHA `21ceb086c18f9b386f1049a1e16131be4a4e9fa8f6f2e7d9e1e4d06bb7104e83`。
+
+**安装门：** `/tmp/kokoro-r219-agent-installed-root-v2.json` 为Root独立18步骤收据：隔离origin、116个hash-locked依赖、installed checker/inspect通过；RECORD不匹配与RECORD自洽但System receipt被降为2.0的两次checker exit1是预期拒绝，恢复checker exit0。受保护源码不变、自有venv已删除；不将两次预期拒绝误计安装失败。九production/machine与八tests绑定 `/tmp/kokoro-r219-agent-gateway-fixture-sha.json`；本R221仅回填四docs当前前缀，不重跑或冒领Root测试。
+
+**交付状态：** 本消费者/SDK限额切片已通过上述限定工程、真实peer/PG与installed门，候选待Root精确提交；当前3310未启用。自有peer验证本方最终wire和资源收束，不等于真实模型服务成功或收费用户链。
+
+**继续OPEN：** 正式Billing reader/Admission consumer与授权expiry、exact input token/完整上下文token界、provider真实推理、GP/catalog/Swarm真实caller/recovery、evidence ACK、结算释放与完整浏览器用户旅程。本片不增SQL/wire/依赖，不用health/cacheTTL/字符数/Run预算冒执行许可或精确token，不造fake grant/known-zero。
+
+---
+
 ## R203-A4-SCOPE 当前：有限settle已实现并通过最终22路径门（2026-10-04）
 
 本节是当前事实；下方R198/R199取消描述为当时历史证据，不再表示当前裁决状态。

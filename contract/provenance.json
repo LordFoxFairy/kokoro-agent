@@ -12,9 +12,10 @@
     "src/kokoro_agent/contract_check.py",
     "src/kokoro_agent/chat_contract_check.py",
     "src/kokoro_agent/protocol/run_failure_generated.py",
-    "src/kokoro_agent/distribution_assets.py"
+    "src/kokoro_agent/distribution_assets.py",
+    "src/kokoro_agent/system_consumer_contract.py"
   ],
-  "combined_sha256": "f4a580974aa7f73db7355243f849cd45aae273259c7768674362fd1246462386",
+  "combined_sha256": "e79f9a61154b283fe1b7d5770b68c6c23b7d8385c08e65ba596f244405c8d10e",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
@@ -29,9 +30,34 @@
     {
       "owner": "kokoro-system",
       "contract": "contract/openapi/system.openapi.json",
-      "version": "2.0.0",
-      "source_commit": "f5702068d4416ad90b1bd02af57d2825c32be916",
-      "sha256": "f9ea76f107e1ea0fc19df20ee7c59032c0fbac66e640e9a16a1b770ab27c1f37",
+      "version": "3.0.0",
+      "source_commit": "955bd587f46a771e43a4330d202d90a7d2d67262",
+      "sha256": "94ed91655741cbba66ce80a4c41717b9179cc509cb6858534e0b78aa3e6dc059",
+      "provenance": {
+        "path": "contract/provenance.json",
+        "sha256": "5fda620ca1526f57d8759b2c6282ed6d674455a78e8ff9ee7fc0522e8f5a3832"
+      },
+      "source_sha256": {
+        "scripts/generate-system-openapi.ts": "4830a6c594255984261efe2907c17cd4e63df4b28d10c2ef1cf65c8e61287890",
+        "scripts/system-openapi-operations.ts": "fb46bea2ec53a09c0f397d2f38aafc77a1c6e7eaef904b11667d56fda919d9f3",
+        "src/http/protocol.schema.ts": "72dbe6ee57d842b855b337d1f1603a7ddbb8c3a4bb6c4f7bf3fe62821c8160c0",
+        "src/modules/model-catalog/schemas/definition.schema.ts": "e2063b9ae62b8e5c4ca7cccce09dd4874f818831fc8966de2cf6d015a99bef64",
+        "src/modules/model-catalog/schemas/label.schema.ts": "96116b4d390e203be056f73e32a30ea93e40dc0c60966ce60579cdb949f31a6a",
+        "src/modules/model-catalog/schemas/provider.schema.ts": "f33d4aaa5bd34ff7008712ecda8f27c0c8769830652ada7df60f184e3961c57c",
+        "src/modules/model-catalog/schemas/resolve.schema.ts": "31b6d275c9187b3592ff402b3b3bef3da3b83629ffe53896050a8129310b1b74",
+        "src/modules/model-catalog/schemas/revision.schema.ts": "5d8559c0d4bac7e88a3e54d753c30e87c0f070be05dae813a401afe2b1a5274b",
+        "src/modules/products/products.public.ts": "ccea3298f5ca5549d7882ce056e8bbb3445d23a9e1703958bd4b0a220882983e",
+        "src/modules/products/schemas/application.schema.ts": "087d997360add9b9bbb2e244c1b1f9864fc6cf4ba93a7c9e8c14767288ca6a57",
+        "src/modules/products/schemas/config.schema.ts": "92324f19fd4e39fdf2cef0a4a28f9e43f8b70c09fd5290e8153035a5a2aa2060",
+        "src/modules/products/schemas/feature.schema.ts": "5222976ca8ccba5669e868386132dca6489d44c26f9a23526aaaeb0d20147014",
+        "src/modules/products/schemas/presentation.schema.ts": "5cd491fe9788de6fb8e7d575fd303b795251e7f682e89c10506e6ee7601174b5",
+        "src/modules/products/schemas/product.schema.ts": "90c57e7ecfa71346698ed7f399c6e31a5258451d4eea16023d2c011b4986beb6",
+        "src/modules/products/schemas/release.schema.ts": "2d21d41ebb4b0a0c8b33dde26783052f1142eaf8f44ab0027e350cb1b6e2a669",
+        "src/modules/runtime-manifests/schemas/manifest.schema.ts": "8b73a78e98c64174494398bc68c69061a408f53a9e81bf19d5e970d1ef828553",
+        "src/modules/sites/schemas/policy.schema.ts": "b9aa0e7d70d9212a668b7c88133fb337acc8248f956240bbf0afe60d12eff7e9",
+        "src/modules/sites/schemas/site.schema.ts": "98031e74e4badb28d519f9f42e4c29894aa2a7c4b9388b0756764abc9e7b3636",
+        "src/modules/workspaces/schemas/workspace.schema.ts": "a52e63e9fc798eb25b2003830ad4fcebb7ce9edf0a06b90a5f3b72ad752bc16d"
+      },
       "operations": [
         "POST /v1/system/model-catalog/resolve"
       ]

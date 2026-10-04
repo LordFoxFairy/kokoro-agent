@@ -786,3 +786,176 @@ def test_console_checker_rejects_metadata_mismatch_without_source_fallback(
     monkeypatch.setattr(metadata.PathDistribution, "read_text", altered_metadata)
     with pytest.raises((ValueError, FileNotFoundError, RuntimeError)):
         contract_check.main()  # Existing real entrypoint; no future-helper import.
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_dependencies",
+        "empty_dependencies",
+        "duplicate_owner",
+        "extra_key",
+        "version",
+        "source_commit",
+        "contract_path",
+        "artifact_hash",
+        "empty_operations",
+        "duplicate_operation",
+        "foreign_operation",
+        "provenance_hash",
+        "provenance_path",
+        "source_hash",
+        "missing_source",
+        "extra_source",
+        "foreign_source",
+        "source_type",
+        "duplicate_json",
+        "missing_field",
+    ],
+)
+def test_r216_public_checker_rejects_system_dependency_receipt_tamper(
+    tmp_path: Path, mutation: str
+) -> None:
+    from kokoro_agent import contract_check
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+
+    root = tmp_path / "r216-receipt-source"
+    shutil.copytree(ROOT / "contract", root / "contract")
+    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES):
+        target = root / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / source).read_bytes())
+    # The current public checker must accept the complete unmodified control;
+    # this is not an installed-wheel test or proof that the pin is already 3.0.
+    contract_check.validate(root)
+    path = root / "contract/provenance.json"
+    manifest = _object(json.loads(path.read_bytes()))
+    records = TypeAdapter(list[dict[str, object]]).validate_python(
+        manifest["consumer_dependencies"], strict=True
+    )
+    matches = [record for record in records if record["owner"] == "kokoro-system"]
+    assert len(matches) == 1
+    receipt = matches[0]
+    if mutation == "missing_dependencies":
+        del manifest["consumer_dependencies"]
+    elif mutation == "empty_dependencies":
+        manifest["consumer_dependencies"] = []
+    elif mutation == "duplicate_owner":
+        manifest["consumer_dependencies"] = [*records, dict(receipt)]
+    else:
+        if mutation == "extra_key":
+            receipt["unrecognized"] = "r216"
+        elif mutation == "version":
+            receipt["version"] = "999.0.0"
+        elif mutation == "source_commit":
+            receipt["source_commit"] = "0" * 40
+        elif mutation == "contract_path":
+            receipt["contract"] = "contract/openapi/foreign.json"
+        elif mutation == "artifact_hash":
+            receipt["sha256"] = "0" * 64
+        elif mutation == "empty_operations":
+            receipt["operations"] = []
+        elif mutation == "duplicate_operation":
+            receipt["operations"] = [
+                "POST /v1/system/model-catalog/resolve",
+                "POST /v1/system/model-catalog/resolve",
+            ]
+        elif mutation == "foreign_operation":
+            receipt["operations"] = ["POST /v1/foreign/resolve"]
+        elif mutation in {"provenance_hash", "provenance_path"}:
+            provenance = _object(receipt["provenance"])
+            provenance["sha256" if mutation == "provenance_hash" else "path"] = (
+                "foreign"
+            )
+            receipt["provenance"] = provenance
+        elif mutation == "missing_field":
+            del receipt["source_commit"]
+        elif mutation != "duplicate_json":
+            sources = _object(receipt["source_sha256"])
+            first = next(iter(sources))
+            if mutation == "source_hash":
+                sources[first] = "0" * 64
+            elif mutation == "source_type":
+                sources[first] = 1
+            elif mutation == "missing_source":
+                del sources[first]
+            elif mutation == "extra_source":
+                sources["foreign.ts"] = "0" * 64
+            else:
+                assert mutation == "foreign_source"
+                sources["foreign.ts"] = sources.pop(first)
+            receipt["source_sha256"] = sources
+        manifest["consumer_dependencies"] = records
+    raw = json.dumps(manifest)
+    if mutation == "duplicate_json":
+        needle = '"owner": "kokoro-system"'
+        assert raw.count(needle) == 1
+        raw = raw.replace(needle, needle + ", " + needle)
+    path.write_text(raw, encoding="utf-8")
+    before = {
+        candidate.relative_to(root): candidate.read_bytes()
+        for candidate in root.rglob("*")
+        if candidate.is_file()
+    }
+    with pytest.raises(ValueError):
+        contract_check.validate(root)
+    assert {
+        candidate.relative_to(root): candidate.read_bytes()
+        for candidate in root.rglob("*")
+        if candidate.is_file()
+    } == before
+
+
+def test_r216_system_receipt_declares_complete_versioned_source_identity() -> None:
+    manifest = _object(json.loads((ROOT / "contract/provenance.json").read_bytes()))
+    records = TypeAdapter(list[dict[str, object]]).validate_python(
+        manifest["consumer_dependencies"], strict=True
+    )
+    matches = [record for record in records if record["owner"] == "kokoro-system"]
+    assert len(matches) == 1
+    receipt = matches[0]
+    assert receipt["version"] == "3.0.0"
+    assert set(receipt) == {
+        "owner",
+        "contract",
+        "version",
+        "source_commit",
+        "sha256",
+        "provenance",
+        "source_sha256",
+        "operations",
+    }
+    assert set(_object(receipt["provenance"])) == {"path", "sha256"}
+    assert len(_object(receipt["source_sha256"])) == 19
+    assert receipt["operations"] == ["POST /v1/system/model-catalog/resolve"]
+    # Root verified this immutable release against Git objects, not a checkout.
+    # The canonical hash binds every receipt field and all 19 source path/hashes.
+    import hashlib
+
+    assert receipt["source_commit"] == "955bd587f46a771e43a4330d202d90a7d2d67262"
+    canonical = json.dumps(
+        receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    assert hashlib.sha256(canonical).hexdigest() == (
+        "aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b"
+    )
+
+
+def test_r216_system_consumer_has_source_and_audit_inventory() -> None:
+    import tomllib
+
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+
+    relative = "src/kokoro_agent/system_consumer_contract.py"
+    assert relative in OWNER_SOURCE_FILES
+    manifest = _object(json.loads((ROOT / "contract/provenance.json").read_bytes()))
+    source_files = TypeAdapter(list[str]).validate_python(
+        manifest["source_files"], strict=True
+    )
+    assert source_files.count(relative) == 1
+    with (ROOT / "pyproject.toml").open("rb") as source:
+        package = tomllib.load(source)
+    declared = package["tool"]["setuptools"]["data-files"]
+    assert declared["share/kokoro-agent/audit/src/kokoro_agent"].count(relative) == 1
+    # Declaration evidence only; Root must also execute the installed RECORD gate.

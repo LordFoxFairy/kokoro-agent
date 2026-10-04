@@ -17,6 +17,7 @@ from pydantic import (
     SecretStr,
     StringConstraints,
     ValidationError,
+    model_validator,
 )
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
@@ -64,7 +65,17 @@ class ResolvedModel:
     gateway_model_name: str
     feature_key: str
     label_key: str
+    context_window: int
+    max_output_tokens: int
     transport: Literal["litellm"] = "litellm"
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.context_window) is not int
+            or type(self.max_output_tokens) is not int
+            or not 1 <= self.max_output_tokens <= self.context_window <= 2147483647
+        ):
+            raise ValueError("invalid model execution limits")
 
 
 class ModelResolver(Protocol):
@@ -93,6 +104,14 @@ class _Route(BaseModel):
     feature_key: _Text
     label_key: _Text
     transport: Literal["litellm"]
+    context_window: int = Field(gt=0, le=2147483647)
+    max_output_tokens: int = Field(gt=0, le=2147483647)
+
+    @model_validator(mode="after")
+    def validate_execution_limits(self) -> Self:
+        if self.max_output_tokens > self.context_window:
+            raise ValueError("output exceeds context")
+        return self
 
 
 class _Envelope(BaseModel):
@@ -222,6 +241,8 @@ class SystemModelClient:
             feature_key=route.feature_key,
             label_key=route.label_key,
             transport=route.transport,
+            context_window=route.context_window,
+            max_output_tokens=route.max_output_tokens,
         )
 
     @staticmethod

@@ -34,7 +34,7 @@ from kokoro_agent.protocol import (
     SkillProgressSink,
 )
 from kokoro_agent.domain.run.repository import LeaseFence
-from kokoro_agent.model.factory import ChatModelSettings
+from kokoro_agent.model.factory import ChatModelSettings, ModelHttpClients
 from kokoro_agent.model.call_models import (
     AppendModelCallEvidence,
     AuthorizationPendingReceipt,
@@ -95,6 +95,8 @@ class RouteResolver:
             gateway_model_name="gateway-name",
             feature_key=feature_key,
             label_key=label or "default",
+            context_window=4096,
+            max_output_tokens=128,
         )
 
 
@@ -141,7 +143,12 @@ def _factory(
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
-    def test_model(_settings: ChatModelSettings, _model: ModelConfig) -> BaseChatModel:
+    def test_model(
+        _settings: ChatModelSettings,
+        _model: ModelConfig,
+        *,
+        model_clients: ModelHttpClients,
+    ) -> BaseChatModel:
         assert _model.provider == "litellm"
         assert _model.name == "gateway-name"
         return LocalFakeChatModel()
@@ -156,7 +163,16 @@ def _factory(
             "ModelCallRuntimeMiddleware",
             _UnrelatedUnitScopeModelCallMiddleware,
         )
+    from pydantic import SecretStr
+
     active_config = config or AppConfig.from_env({})
+    active_config = active_config.model_copy(
+        update={
+            "litellm_enabled": True,
+            "litellm_base_url": "http://model-unit.invalid/v1",
+            "litellm_api_key": SecretStr("unit-model-key"),
+        }
+    )
     clients = WorkerClients()
     repository = FakeRunRepository()
     return AgentFactory(
@@ -459,7 +475,10 @@ async def _native_script(
     )
 
     def scripted_model(
-        _settings: ChatModelSettings, _model: ModelConfig
+        _settings: ChatModelSettings,
+        _model: ModelConfig,
+        *,
+        model_clients: ModelHttpClients,
     ) -> BaseChatModel:
         return LocalFakeChatModel.with_script(script)
 
@@ -825,7 +844,7 @@ async def test_factory_skill_metadata_is_current_run_not_session(
     )
     model = PromptRecordingModel()
 
-    def make_model(*_: object) -> BaseChatModel:
+    def make_model(*_: object, **_kwargs: object) -> BaseChatModel:
         return model
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
@@ -908,7 +927,7 @@ async def test_factory_skill_metadata_survives_same_run_hitl_with_guard(
     )
     assert isinstance(model, PromptRecordingModel)
 
-    def make_model(*_: object) -> BaseChatModel:
+    def make_model(*_: object, **_kwargs: object) -> BaseChatModel:
         return model
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
@@ -970,7 +989,7 @@ async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
     )
     model = PromptRecordingModel()
 
-    def make_model(*_: object) -> BaseChatModel:
+    def make_model(*_: object, **_kwargs: object) -> BaseChatModel:
         return model
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
@@ -2050,3 +2069,170 @@ class _UnusedModelCallRepository:
         self, command: AppendModelCallEvidence
     ) -> ModelCallEvidenceReceipt:
         raise AssertionError(f"unexpected evidence: {command.attempt_id}")
+
+
+@pytest.fixture(autouse=True)
+async def r216_owned_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterable[list[tuple[ModelHttpClients, list[str]]]]:
+    """Real clients, no network; observe closes and clean older unrelated tests."""
+    owned: list[tuple[ModelHttpClients, list[str]]] = []
+
+    def construct(
+        settings: ChatModelSettings, route: ResolvedModel
+    ) -> ModelHttpClients:
+        clients = ModelHttpClients(settings, route)
+        calls: list[str] = []
+        sync_close, async_close = clients.sync.close, clients.async_client.aclose
+
+        def close() -> None:
+            calls.append("sync")
+            sync_close()
+
+        async def aclose() -> None:
+            calls.append("async")
+            await async_close()
+
+        monkeypatch.setattr(clients.sync, "close", close)
+        monkeypatch.setattr(clients.async_client, "aclose", aclose)
+        owned.append((clients, calls))
+        return clients
+
+    monkeypatch.setattr(agent_factory_module, "ModelHttpClients", construct)
+    yield owned
+    for clients, _calls in owned:
+        await clients.aclose()
+        assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.parametrize("swarm", [False, True])
+async def test_r216_handle_owns_each_real_client_and_closes_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+    r216_owned_clients: list[tuple[ModelHttpClients, list[str]]],
+    swarm: bool,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+
+    peers = (Agent(key="first", prompt="first"), Agent(key="second", prompt="second"))
+    feature = Feature(
+        key="owned_clients",
+        agents=peers if swarm else peers[:1],
+        entry_agent="first",
+        handoffs=(("first", "second"),) if swarm else (),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    assert len(handle.model_clients) == (2 if swarm else 1)
+    assert handle.model_clients == tuple(clients for clients, _ in r216_owned_clients)
+    assert all(not clients.sync.is_closed for clients in handle.model_clients)
+    await asyncio.gather(handle.aclose(), handle.aclose())
+    for clients, calls in r216_owned_clients:
+        assert calls == ["sync", "async"]
+        assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.parametrize("stage", ["backend", "model", "second_peer", "swarm"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_r216_factory_failure_or_cancel_closes_all_registered_clients(
+    monkeypatch: pytest.MonkeyPatch,
+    r216_owned_clients: list[tuple[ModelHttpClients, list[str]]],
+    stage: str,
+    cancel: bool,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+
+    feature = Feature(
+        key="owned_failure",
+        agents=(
+            Agent(key="first", prompt="first"),
+            Agent(key="second", prompt="second"),
+        ),
+        entry_agent="first",
+        handoffs=(("first", "second"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    failure = asyncio.CancelledError if cancel else RuntimeError
+
+    def fail(*_args: object, **_kwargs: object) -> Any:
+        raise failure("r216-construction")
+
+    if stage == "backend":
+
+        async def fail_backend(*_args: object, **_kwargs: object) -> Any:
+            raise failure("r216-construction")
+
+        monkeypatch.setattr(agent_factory_module, "make_backend_for_run", fail_backend)
+    elif stage == "model":
+        monkeypatch.setattr(agent_factory_module, "make_chat_model", fail)
+    elif stage == "swarm":
+        monkeypatch.setattr(agent_factory_module, "create_swarm", fail)
+    else:
+        original = agent_factory_module.make_chat_model
+        calls = 0
+
+        def second(*args: Any, **kwargs: Any) -> BaseChatModel:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise failure("r216-construction")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(agent_factory_module, "make_chat_model", second)
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    with pytest.raises(failure, match="r216-construction"):
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
+    assert len(r216_owned_clients) == (2 if stage in {"second_peer", "swarm"} else 1)
+    for clients, closes in r216_owned_clients:
+        assert closes == ["sync", "async"]
+        assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+async def test_r216_repeated_close_cancellation_settles_owned_async_client(
+    monkeypatch: pytest.MonkeyPatch,
+    r216_owned_clients: list[tuple[ModelHttpClients, list[str]]],
+) -> None:
+    factory, repository = _factory(monkeypatch, RouteResolver())
+    request = _request("chat")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    clients, calls = r216_owned_clients[0]
+    entered, release = asyncio.Event(), asyncio.Event()
+    close = clients.async_client.aclose
+
+    async def delayed_close() -> None:
+        entered.set()
+        await release.wait()
+        await close()
+
+    monkeypatch.setattr(clients.async_client, "aclose", delayed_close)
+    closing = asyncio.create_task(clients.aclose())
+    await entered.wait()
+    closing.cancel()
+    await asyncio.sleep(0)
+    closing.cancel()
+    await asyncio.sleep(0)
+    assert not closing.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    await handle.aclose()
+    assert calls == ["sync", "async"]
+    assert clients.sync.is_closed and clients.async_client.is_closed

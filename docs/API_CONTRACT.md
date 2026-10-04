@@ -1,3 +1,137 @@
+## R216-AGENT-EXECUTION-D0：System 3.0 固定消费者边界（2026-10-04；候选已验待Root提交）
+
+本节对应 Root `docs/task.md::R216-AGENT-EXECUTION-D0` 与本仓 TECHNICAL_DESIGN 顶部当前方案。Agent 基线 `92b802e223547288c4a8dcaba56dfd2f0c327f93`；候选 consumer pin 已原子更新为下列3.0.0固定收据；限定消费者与安装门已验，但尚未提交/部署3.0。本片不修改 Agent HTTP5、usage/v1、RunRequest、AG-UI、execution-proof、Billing或canonical SQL契约。
+
+### 唯一 owner artifact 与来源
+
+| 项 | 固定目标 |
+| --- | --- |
+| Owner / visibility / operation | `kokoro-system` / `internal-owner` / `POST /v1/system/model-catalog/resolve`，HTTP路径仍v1 |
+| Owner本地已提交commit | `955bd587f46a771e43a4330d202d90a7d2d67262`；未push，不宣称远端可取得 |
+| Artifact版本/路径 | `3.0.0` / System `contract/openapi/system.openapi.json`（runtime-Zod只读生成物） |
+| Artifact SHA256 | `94ed91655741cbba66ce80a4c41717b9179cc509cb6858534e0b78aa3e6dc059` |
+| Provenance路径/SHA256 | System `contract/provenance.json` / `5fda620ca1526f57d8759b2c6282ed6d674455a78e8ff9ee7fc0522e8f5a3832` |
+| source digest集合 | 上述固定provenance的 `openapi.sourceSha256` 全19项，必须逐项对该commit原bytes校验，不只挑本片文件；例如resolve schema `31b6d275c9187b3592ff402b3b3bef3da3b83629ffe53896050a8129310b1b74`、revision schema `5d8559c0d4bac7e88a3e54d753c30e87c0f070be05dae813a401afe2b1a5274b` |
+| 发布前置 | Root已验owner HTTP/PG/Redis/fresh并本地提交；Agent限定消费工程/真实peer/PG/安装门已验；Root提交、固定组合分发与远端发布仍待执行，不用provenance中的历史consumer disposition冒充当前Agent3.0证据 |
+
+D0基线 Agent receipt为2.0；R219候选已换下述唯一完整3.0收据；`clients/system.py`是手写窄client，不存在System Python consumer generator，也没有vendored System可编辑schema。现 `kokoro-agent-contract-check` 验Agent-owned/Platform/usage等事实，R219已接具名System receipt validator。候选采用**现provenance内精确收据＋包内checker＋Root Git-object来源门**，不新增vendored资产/第二schema。包内checker验证固定收据，Root独立验证owner原件，两门均通过才可放行；runtime不读取邻仓checkout或网络原件。精确写集见TECHNICAL_DESIGN；当前候选已通过Root机器/资源/installed门；本R221仅回填文档，Root提交与3310启用未完成。
+
+### R217窄修：精确收据与两道独立机器门
+
+唯一持久位置是现 `contract/provenance.json::consumer_dependencies` 中唯一 `owner="kokoro-system"` 元素。该元素精确如下；顶层恰8 keys、provenance恰path/sha256、source_sha256恰19个路径、operations恰一个操作，禁止额外/缺失key、重复owner/operation/source路径/JSON member及类型coercion。候选已整体替换旧2.0元素，不并列两套收据：
+
+```json
+{
+  "owner": "kokoro-system",
+  "contract": "contract/openapi/system.openapi.json",
+  "version": "3.0.0",
+  "source_commit": "955bd587f46a771e43a4330d202d90a7d2d67262",
+  "sha256": "94ed91655741cbba66ce80a4c41717b9179cc509cb6858534e0b78aa3e6dc059",
+  "provenance": {
+    "path": "contract/provenance.json",
+    "sha256": "5fda620ca1526f57d8759b2c6282ed6d674455a78e8ff9ee7fc0522e8f5a3832"
+  },
+  "source_sha256": {
+    "scripts/generate-system-openapi.ts": "4830a6c594255984261efe2907c17cd4e63df4b28d10c2ef1cf65c8e61287890",
+    "scripts/system-openapi-operations.ts": "fb46bea2ec53a09c0f397d2f38aafc77a1c6e7eaef904b11667d56fda919d9f3",
+    "src/http/protocol.schema.ts": "72dbe6ee57d842b855b337d1f1603a7ddbb8c3a4bb6c4f7bf3fe62821c8160c0",
+    "src/modules/model-catalog/schemas/definition.schema.ts": "e2063b9ae62b8e5c4ca7cccce09dd4874f818831fc8966de2cf6d015a99bef64",
+    "src/modules/model-catalog/schemas/label.schema.ts": "96116b4d390e203be056f73e32a30ea93e40dc0c60966ce60579cdb949f31a6a",
+    "src/modules/model-catalog/schemas/provider.schema.ts": "f33d4aaa5bd34ff7008712ecda8f27c0c8769830652ada7df60f184e3961c57c",
+    "src/modules/model-catalog/schemas/resolve.schema.ts": "31b6d275c9187b3592ff402b3b3bef3da3b83629ffe53896050a8129310b1b74",
+    "src/modules/model-catalog/schemas/revision.schema.ts": "5d8559c0d4bac7e88a3e54d753c30e87c0f070be05dae813a401afe2b1a5274b",
+    "src/modules/products/products.public.ts": "ccea3298f5ca5549d7882ce056e8bbb3445d23a9e1703958bd4b0a220882983e",
+    "src/modules/products/schemas/application.schema.ts": "087d997360add9b9bbb2e244c1b1f9864fc6cf4ba93a7c9e8c14767288ca6a57",
+    "src/modules/products/schemas/config.schema.ts": "92324f19fd4e39fdf2cef0a4a28f9e43f8b70c09fd5290e8153035a5a2aa2060",
+    "src/modules/products/schemas/feature.schema.ts": "5222976ca8ccba5669e868386132dca6489d44c26f9a23526aaaeb0d20147014",
+    "src/modules/products/schemas/presentation.schema.ts": "5cd491fe9788de6fb8e7d575fd303b795251e7f682e89c10506e6ee7601174b5",
+    "src/modules/products/schemas/product.schema.ts": "90c57e7ecfa71346698ed7f399c6e31a5258451d4eea16023d2c011b4986beb6",
+    "src/modules/products/schemas/release.schema.ts": "2d21d41ebb4b0a0c8b33dde26783052f1142eaf8f44ab0027e350cb1b6e2a669",
+    "src/modules/runtime-manifests/schemas/manifest.schema.ts": "8b73a78e98c64174494398bc68c69061a408f53a9e81bf19d5e970d1ef828553",
+    "src/modules/sites/schemas/policy.schema.ts": "b9aa0e7d70d9212a668b7c88133fb337acc8248f956240bbf0afe60d12eff7e9",
+    "src/modules/sites/schemas/site.schema.ts": "98031e74e4badb28d519f9f42e4c29894aa2a7c4b9388b0756764abc9e7b3636",
+    "src/modules/workspaces/schemas/workspace.schema.ts": "a52e63e9fc798eb25b2003830ad4fcebb7ce9edf0a06b90a5f3b72ad752bc16d"
+  },
+  "operations": [
+    "POST /v1/system/model-catalog/resolve"
+  ]
+}
+```
+
+**Agent包内门。** 对原始provenance JSON使用拒绝重复member的读取；从consumer_dependencies提取唯一System元素，以RFC8785 canonical bytes核固定收据SHA256 **`aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b`**，同时校验上述key/type/count闭集。它固定全部19项而不在另一个资产复制可编辑schema；更改任一field/hash/path/operation、重排array、删加source、重复元素均失败。对象member顺序不影响canonical值，不强制文档pretty-print。这个hash只证明包内固定receipt，**不证明owner Git原件**。source-tree与installed均走现 `kokoro-agent-contract-check -> contract_check.main -> distribution_assets.contract_audit_root -> validate`；现 `share/kokoro-agent/audit/contract/provenance.json` 已是data-files，正常wheel RECORD绑定与audit closure验证机制保持；闭集仅追加下述validator Python原件/audit副本，不新增System安装资产。
+
+现 `contract_check.py` 保持199行且硬门<200，保持编排职责，不放宽阈值或机械压行。**采用同package新增普通 `src/kokoro_agent/system_consumer_contract.py`**，唯一公开函数 `validate_system_consumer_receipt(root: Path) -> None` 读取现provenance原bytes、拒绝duplicate并验证上述闭集与固定canonical hash；仅标准库（此全ASCII字符串/对象/数组收据的sorted compact JSON等于RFC8785），无网络/Git/SDK/SQL/import副作用。**淘汰复用 `execution_proof_contract.py`**：它已809行，Agent-owned proof与第三方System receipt是不同变化原因。不是新目录、一级业务模块、资产或schema。`contract_check.py::validate`显式调用具名validator，现reader仅局部导入别名read_document使HTTP provenance调用自然单行保持<200，不移动业务或放宽架构门。新普通module同时加入现 `execution_proof_contract.py::OWNER_SOURCE_FILES`（仅inventory项，不放新校验逻辑）、provenance.source_files及现pyproject的 `share/kokoro-agent/audit/src/kokoro_agent` data-files；现distribution_assets自动核精确closure、audit副本与installed Python原件及wheel RECORD。现source aggregate经 `uv run python scripts/generate_failure_models.py` 正规刷新，生成的Failure字节实际不变；该命令不是System生成器。
+
+**Root来源门。** 以下是可复现只读命令，最终owner原件已由Root独立固定对象实核；以下Agent候选来源门也已由Root执行通过；Agent收据从候选文件读，System所有原件只用固定commit的 `git show`，绝不哈希浮动工作树。R219候选pin已3.0，Root已独立执行固定原件门exit0；全包与installed门亦已独立通过；来源门自身仍不替代消费行为证据。Root记录stdout/exit、Agent候选SHA与固定commit后，再放行组合分发：
+
+```bash
+python3 - <<'PY_GATE'
+import hashlib, json, subprocess
+from pathlib import Path
+root = Path('/Users/nako/WebstormProjects/github/thefoxfairy/Kokoro')
+commit = '955bd587f46a771e43a4330d202d90a7d2d67262'
+def strict(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate JSON member')
+        result[key] = value
+    return result
+def decode(raw):
+    return json.loads(raw, object_pairs_hook=strict)
+def original(path):
+    return subprocess.check_output(['git', '-C', str(root / 'apps/kokoro-system'), 'show', commit + ':' + path])
+def digest(raw):
+    return hashlib.sha256(raw).hexdigest()
+manifest = decode((root / 'apps/kokoro-agent/contract/provenance.json').read_bytes())
+receipts = [r for r in manifest['consumer_dependencies'] if r['owner'] == 'kokoro-system']
+assert len(receipts) == 1
+r = receipts[0]
+# This receipt contains only ASCII string keys/values, objects and arrays;
+# sorted compact JSON therefore equals its RFC8785 bytes.
+canonical = json.dumps(r, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+assert digest(canonical) == 'aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b'
+assert r['source_commit'] == commit
+artifact = original(r['contract'])
+provenance = original(r['provenance']['path'])
+assert digest(artifact) == r['sha256']
+assert digest(provenance) == r['provenance']['sha256']
+a, p = decode(artifact), decode(provenance)
+assert a['info']['version'] == r['version'] == '3.0.0'
+assert p['openapi']['sha256'] == r['sha256']
+assert 'contract/' + p['openapi']['file'] == r['contract']
+assert p['openapi']['sourceSha256'] == r['source_sha256']
+assert len(r['source_sha256']) == 19
+for path, expected in r['source_sha256'].items():
+    assert digest(original(path)) == expected, path
+assert r['operations'] == ['POST /v1/system/model-catalog/resolve']
+assert 'post' in a['paths']['/v1/system/model-catalog/resolve']
+print('System fixed Git-object source gate: artifact + provenance + 19 sources PASS', commit)
+PY_GATE
+```
+
+**installed门已验（Root独立执行）。** `/tmp/kokoro-r219-agent-installed-root-v2.json` 记录18步骤通过：从固定锁导出116个hash-locked运行依赖，独立venv安装wheel、检查依赖及隔离import origin，仓外 `kokoro-agent-contract-check`、`kokoro-agent inspect --json` 均exit0。两层负控分别把已安装audit/provenance内System version改为2.0：第一次保持原RECORD，checker因完整性不符exit1；第二次同步更新对应RECORD的hash/size，使安装记录自洽，checker仍因fixed receipt语义不符exit1。两次均为预期拒绝，不是门失败；恢复原bytes及RECORD后checker exit0。受保护392文件不变、自有venv已删除，未读取浮动邻仓作为运行依赖。
+
+source public checker矩阵另覆盖缺/重复/extra key、artifact/provenance/source hash/path/type、18/20 sources与操作闭集等；这些source级测试不冒充每一种已安装包篡改均逐一运行。当前安装实证是上述两层version降级及恢复，未来新增资产仍须完整closure/RECORD门。新validator原件和audit副本沿现data-files/RECORD登记，无vendored System资产或第二schema。
+
+**上游元数据债已关闭（历史处置）。** 旧commit的Agent disposition/description失实措辞已由上述最终metadata-only commit修正，Root已完整205/16contract/fresh23/22及独审归零。本前缀receipt、source集合与Root命令已整体重pin，不沿用旧hash。Agent候选已pin3.0并通过限定门、待Root提交，未push与3310运行实例均不冒消费3.0；未来再修owner bytes仍须整体重新固定并重跑两门。
+
+### 消费语义，不复写 owner schema
+
+上表OpenAPI artifact定义两字段、required及各自正int32范围；跨字段 `max_output_tokens <= context_window` 由同commit的runtime-Zod `src/modules/model-catalog/schemas/resolve.schema.ts` refine定义、经provenance固定，当前OpenAPI未表达该关系。Agent在自身不可信HTTP边界重复fail-closed校验，不能仅凭OpenAPI生成推断关系；Agent `_Route -> ResolvedModel` 必须strict解码 `context_window`、`max_output_tokens`，JSON整数范围 `1..2147483647` 且 `max_output_tokens <= context_window`，拒绝bool、float token、字符串、null、缺失和额外字段；旧2.0合法响应在新消费者中必须拒绝，禁止optional/default/fallback。保留同response的model/provider/revision/digest/generation/tenant_generation/feature/label绑定和现transport=`litellm`。未通过解析映射现 `MODEL_RESPONSE_INVALID`；不新增公开错误码、自动重试或第二resolve入口。
+
+界沿AgentFactory现正式caller显式下传到SDK；context window不是输出token字段、账户余额或Run预算，output上限不是计费单价/授权金额。System published revision的immutable/digest/generation/checksum语义由System负责，Agent只固定消费，不复制修改规则。价格、费率、Admission与结算只归Billing。
+
+执行bound目前未发布为HTTP/usage字段：仅后继包内逻辑在逐调用gate由当前有效Run lease与真实Billing授权构成，最早expiry控制本次外发。System health/缓存TTL不授执行许可；当前未有Billing consumer，正式native路径仍prepare/not_requested后现safe failure并0 provider。isolated SDK→loopback的wire正控不调用正式Run，也不代表收费准入完成；不fake grant、known-zero、免费降级或绕过middleware。
+
+### 可执行契约核验与证据边界
+
+- Owner工作目录的既有命令：`pnpm contract:generate` 仅后继需重新生成时由owner运行；只读漂移门 `pnpm verify:contract-provenance`、`pnpm contract:check`。本D0未运行任何owner生成/测试，也未改其文件。
+- Agent现命令：`uv run kokoro-agent-contract-check`、`uv run pytest -q tests/contract/test_machine_contract.py tests/unit/model/test_system_client.py`；System dependency pin新增断言须先RED再GREEN。Root现已运行相关source门通过；targeted394含90真实peer，默认2253及contract/build均通过，证据不只来自文档或unit。
+- R218最终来源由Root从固定commit的Git原bytes核artifact/provenance及19sources；本writer核对Root固定receipt并同步本前缀，不读取浮动邻仓。Root已对候选pin固定原件门得到exit0；后续任何相关bytes变化仍重跑，不以该快照代完整GREEN。SDK固定版本及Root真实HTTP/PG终态见TECHNICAL_DESIGN；正式Billing reader/Admission、exact input token、真实provider、GP/catalog/Swarm恢复、UI与3310启用仍OPEN。
+
+---
+
 ## R203-A4-SCOPE：包内有限settle与取消审计边界（2026-10-04；无机器契约变化）
 
 本节取代下方R198取消段的旧“实现门仍阻断”状态；旧段仅为历史快照。

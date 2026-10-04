@@ -18,6 +18,8 @@ def route() -> ResolvedModel:
         gateway_model_name="gateway-name",
         feature_key="chat",
         label_key="fast",
+        context_window=4096,
+        max_output_tokens=128,
     )
 
 

@@ -1,3 +1,34 @@
+## R198-A4-D0：原生task identity与无Billing许可fail-closed（2026-10-04；仅设计）
+
+**当前事实。** main `814e929`已提交SDK五构造`max_retries=0`；冻结系统RED `test_model_call_runtime_chain.py`（SHA256 `57bc7e…`）已由Root以fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK及正式`invoke_once`、现repository finalizer运行。实际为provider POST 1、`run.completed`、0 attempt、completeness none，与目标0 provider、safe failed、prepared后terminal closure不同，1 failed/69 warnings（1.77s）；10项canonical CHECK正控通过，自有库absent且source hash不变。A1–A3 repository与终态closure已存在，但runtime尚无caller，`WorkerDependencies`也无ModelCallRepository/Billing consumer。
+
+**稳定logical call。** middleware只信`ModelRequest.runtime.execution_info`与构造闭包：execution info必须非空，`checkpoint_id`、`task_id`必须非空；`checkpoint_ns`允许根图合法空字符串，必须按字段存在/类型验证，禁止用truthiness一并拒绝。版本1 locator为RFC8785 canonical object：`version=1`、locked `tenant_ref/run_id`、显式`peer_path`、`checkpoint_id/checkpoint_ns/task_id`。`call_id = uuid5(a06d00e2-defa-5fe3-8f2c-10ecb19c1161, canonical_locator_utf8)`；排除`node_attempt`、首次时间、trace、metadata、SDK对象地址和wall clock。同task SDK node retry/恢复得到同call_id；新tool-loop model task得到新call_id。first attempt固定`attempt_id = uuid5(64675e75-8af6-50b4-ade3-d413e5144dc9, f"{call_id}:1")`，本片只允许ordinal 1；未来显式retry ordinal另门。
+
+现usage identity `input_digest`继续是locked durable `RunRequest.input`的RFC8785 SHA-256，不改wire名义、不冒充本次model messages/system/tools摘要。实际model invocation摘要没有已发布字段/DDL；不得混入call_id或偷塞现digest。runtime execution info缺失/非法映射现`contract_incompatible`且零prepare/provider。
+
+**冻结peer/child path。** `prepare_feature`必须在recipe freeze前从`entry_agent`对声明handoff图执行确定性BFS：邻接target按agent key排序，取最短路径；同长度按完整key序列字典序取唯一结果。visited/best-path使合法cycle收敛，多入边稳定选择而非拒绝；该path是冻结caller分类，不是假装实际handoff轨迹，实际执行仍由`checkpoint_id/checkpoint_ns/task_id`区分。`PreparedPeerPlan`持有该path，factory/middleware不得从metadata、active-agent state或运行轨迹重算。
+
+DeepAgents始终挂载的`general-purpose`必须成为每个peer recipe中首个显式内生child，`source="built-in"`、空tools表示保持现继承parent工具的语义；其path为`(*peer_path, "general-purpose")`。catalog child随后按现冻结顺序编码，path为`(*peer_path, spec.name)`；不得用parent path冒充、删掉GP或接受recipe外child。现`recipe_feature_for_peer_path`继续作为唯一证明器，不复制第二validator。
+
+**无Billing consumer生命周期。** 有合法identity时先以locked Run/lease、System route、recipe/peer执行A1 `prepare`，留下`prepared + authorization_state=not_requested`；没有正式consumer不得调用begin/grant，不造request/admission ref，抛包内typed `ModelCallAuthorizationUnavailable`。`invoke_once`已在native异常边界调用`run_failed_payload`，后继在`execution/failures.py`把该typed错误映射已发布`dependency_unavailable, retryable=false`，再调用唯一`finalize_terminal`。现closure实际为prepared/not_requested生成`execution.outcome=not_dispatched`、`usage.state=unresolved/reason=missing_usage`、`actual=unknown/not_observed`并seal；不写known-zero。terminal提交未知沿原exact retry，不重新handler/provider。
+
+### §8 精确放置与后继实施门
+
+| 项 | 裁决 |
+| --- | --- |
+| Owner/当前 | Agent model-call runtime唯一writer；现`agent_factory.py`已有locked Run/lease/route/peer，`call_models.py`有commands/errors，Postgres adapter已有prepare；runtime caller/Billing consumer缺失。 |
+| 位置比较 | **采用**新`model/call_runtime.py`：仅原生`AgentMiddleware.awrap_model_call`编排locator→prepare→owner gate→handler。**淘汰**塞入`tools/middleware.py`：该文件拥有通用终态/预算/工具策略，model evidence是不同变化原因。**淘汰**`execution/run_agent.py`外围：看不到每个tool-loop/subagent物理调用。 |
+| 错误位置比较 | **采用**现`model/call_models.py`增加纯包内`ModelCallAuthorizationUnavailable`，与现authority/identity/input errors同owner；`execution/failures.py`只做现wire映射。**淘汰**在`call_runtime.py`自建错误体系或新增wire code。 |
+| 装配文件 | 现`runtime_profile_plan.py`在freeze前计算BFS path并把GP/catalog完整child写同一recipe；`agents/subagents.py`提供GP具名profile并逐child装配path；`agent_factory.py`只下传已冻结path/route/recipe，不现场搜图。现`worker/dependencies.py`注入ModelCallRepository与consumer缺席事实；现`worker/main.py`构造Agent-owned Postgres adapter。新源码加入现`execution/runtime_profile_sources.py`显式资源闭包。 |
+| 数据/API | 无DDL、usage/v1、HTTP/generated变化；input_digest现义不变；无consumer时只prepared/not_requested。Billing成功begin/grant/dispatch/evidence ACK不在本片。 |
+| 测试 | 现`tests/integration/database/test_model_call_runtime_chain.py`扩正式`invoke_once`生命周期、exact POST path/未知path拒绝/finally清理、prepared与terminal sealed事实；现`tests/unit/execution/test_invoke.py`只核typed error→existing failure tuple；现`test_runtime_profile_plan.py`覆盖排序BFS最短/同长lex/cycle/多入边/GP recipe，现`test_factory.py`覆盖main、Swarm、catalog与GP实际middleware path。真实fresh PG/native/loopback最终必须证明四类caller均无裸provider旁路。 |
+| 删除/禁止 | 切换时主链不得保留裸provider旁路；不删旧Run预算usage。不随机UUID、metadata path、fake grant、known-zero、第二协议或通用UoW/facade。 |
+| 验证 | tests-first真实RED→窄GREEN；Ruff/全Pyright/contract/default/build；Root fresh PG + native HTTP验证0 provider、1 prepared后1 sealed closure、唯一terminal/exact retry。真实Billing/provider收费仍另门。 |
+
+**后继最大允许生产/测试集（尚未授权）：** 新`src/kokoro_agent/model/call_runtime.py`；现`model/call_models.py`、`agent_factory.py`、`agents/subagents.py`、`execution/runtime_profile_plan.py`、`worker/dependencies.py`、`worker/main.py`、`execution/failures.py`、`execution/runtime_profile_sources.py`；现`test_model_call_runtime_chain.py`、`test_invoke.py`、`test_runtime_profile_plan.py`与`test_factory.py`。若实现发现现recipe validator不能证明上述path，或需要schema/contract/generated/lock/新client，必须停下回Root裁决；本门未授权修改`call_artifacts.py`。
+
+---
+
 ## R196-A4-D0b：原生middleware seam与隐藏retry边界（2026-10-04；Retry已验，Middleware仍设计）
 
 **当前态。** main `c7c6885`已提交A1–A3持久边界与A4-D0a；本工作树的独立Retry片已在`model/factory.py`五个实际SDK构造显式设置`max_retries=0`。锁定DeepAgents 0.6.6最终使用LangChain 1.3.2 `create_agent`；其async model node先组合`AgentMiddleware.awrap_model_call`，handler内部才执行`request.model.bind_tools/bind`及`ainvoke`。现`TerminalGuardMiddleware`与`TokenBudgetMiddleware`已沿同一hook逐model轮运行，但生产仍未装配model-call middleware/repository/Billing client，provider/Billing/收费链OPEN。OpenAI SDK 2.41.0与Anthropic SDK 0.105.2默认`max_retries=2`；本片只关闭同一permit内的SDK隐藏HTTP retry。

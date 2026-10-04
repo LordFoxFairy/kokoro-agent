@@ -1,3 +1,15 @@
+## R198-A4-D0：稳定identity复用现Attempt/Evidence，无DDL（2026-10-04）
+
+本片不增加表、列、索引、CHECK、FK或outbox。call_id由固定namespace `a06d00e2-defa-5fe3-8f2c-10ecb19c1161`与RFC8785 execution-info locator确定性派生；首attempt_id由`64675e75-8af6-50b4-ade3-d413e5144dc9`及`{call_id}:1`派生。locator绑定tenant/run/显式peer path/checkpoint_id/checkpoint_ns/task_id；根checkpoint_ns空字符串合法，node_attempt/time/metadata不入库。相同未完成task恢复命中现唯一键与immutable replay，不分配第二身份。
+
+peer path在assembly recipe冻结前确定：从entry按target key排序BFS取最短路径，同长取完整path字典序首项；cycle以visited/best-path收敛，多入边不拒绝。每peer recipe显式包含`source="built-in"`的`general-purpose` child（空tools仍表示继承parent）及现catalog children；child path只在peer path后追加一次name。recipe bytes/fingerprint因此完整覆盖所有实际declarative model caller，但不新增数据库列；现path validator仍逐冻结handoff/child证明。
+
+现`AttemptBinding.input_digest`继续由repository从locked `RunRequest.input`重算；无实际model invocation digest字段，不改语义。Billing consumer缺席时只写现attempt的`prepared/not_requested`，不写authorization request/grant/dispatch。现terminal builder已经对该组合生成sealed revision 1：not_dispatched、unresolved missing_usage、actual unknown/not_observed；唯一completeness算法随后重算Run投影。无known-zero、fake denied或金额事实。
+
+execution info非法时在prepare前fail closed且无行；typed dependency failure进入现唯一终态事务。terminal事务失败/ACK未知保留open prepared事实，原finalizer exact retry以同call/attempt identity封存；不得重新调用provider。本片无Billing client/ACK、post-terminal reconciler或GC变化。
+
+---
+
 ## R196-A4-D0b：middleware与retry关闭无数据模型变化（2026-10-04）
 
 采用`AgentMiddleware.awrap_model_call`或现已落地的五处SDK `max_retries=0`均不增加表、列、索引、FK、outbox或Billing事实。每个获准handler调用仍对应现有一个attempt；Root本地HTTP sandbox 14项与完整工程门通过后，隐藏SDK retry关闭，一次`newly_started=true`不再在同attempt内产生多个不可见HTTP attempt。未来显式retry必须新attempt/new ordinal/new admission，沿现A1–A3写入。本轮未重跑PostgreSQL；原303项是真实A3b历史证据且本片无SQL变化。

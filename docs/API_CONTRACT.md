@@ -1,3 +1,15 @@
+## R198-A4-D0：包内identity与现有安全失败映射（2026-10-04；机器契约不变）
+
+A4不新增HTTP/RPC/event/generated或usage/v1字段。logical call仅为包内执行身份：RFC8785 locator绑定locked tenant/run、显式peer path及公开`ExecutionInfo(checkpoint_id, checkpoint_ns, task_id)`；根`checkpoint_ns=""`合法。固定namespace `a06d00e2-defa-5fe3-8f2c-10ecb19c1161`派生call UUID，固定namespace `64675e75-8af6-50b4-ade3-d413e5144dc9`以`{call_id}:1`派生首attempt UUID。node_attempt/metadata/time不入identity。
+
+显式peer path来自同一frozen recipe而非wire或runtime metadata：Swarm peer使用entry出发的排序BFS最短路径（同长完整path字典序）；合法cycle/多入边仍有稳定结果。每peer的内生`general-purpose`以`source="built-in"`作为recipe显式child且保持工具继承，catalog child沿现spec；child path追加其name。该规则不新增公开字段，也不把静态path称为实际handoff轨迹。
+
+usage/v1现`input_digest`仍精确表示locked `RunRequest.input` canonical SHA-256，不表示实际model invocation摘要；本片没有发布后者。execution info缺失/非法使用现`contract_incompatible`。Billing consumer缺席时，包内typed `ModelCallAuthorizationUnavailable`只映射已发布Run failure `dependency_unavailable`且`retryable=false`；不新增`model_authorization_unavailable` wire code。
+
+有合法identity时先留下`prepared/not_requested`，随后失败封闭且零handler/provider。现`invoke_once`把typed native异常转成单一RunFailed outcome，现terminal closure把该attempt封存为`not_dispatched + unresolved/missing_usage + actual unknown/not_observed`；这不等于known-zero、Billing denial或费用结清。正式Billing begin/grant/dispatch、evidence read/ACK仍OPEN。
+
+---
+
 ## R196-A4-D0b：原生model-call hook与retry语义（2026-10-04；机器契约不变）
 
 A4唯一package-internal拦截形态为LangChain `AgentMiddleware.awrap_model_call`：handler内部才执行`bind_tools/bind→ainvoke`，所以middleware可在真实模型调用前完成持久gate，并在结果/异常/取消后记录strict evidence。它不是HTTP/RPC/event，不改变usage/v1或Billing机器契约。main/swarm peer的Run/lease/System route/peer key来自构造闭包；declarative subagent path按受信spec显式装配，不从metadata或`runtime.context`推断。Compiled/remote subagent当前未启用，不在覆盖声明内。

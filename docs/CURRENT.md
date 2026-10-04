@@ -1,3 +1,15 @@
+## R198-A4-D0 当前：native旁路RED成立，identity与缺consumer语义已裁决（2026-10-04）
+
+基线main `814e929`；冻结系统测试`test_model_call_runtime_chain.py` SHA256 `57bc7e…`。Root真实fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK已走正式`invoke_once`与现finalizer：实际provider POST=1、`run.completed`、0 attempt、completeness none，而目标为0 provider、safe failed、prepared后sealed closure，故1 failed/69 warnings（1.77s）；10项canonical CHECK正控通过，自有库absent且source hash不变。这是业务RED，不是fixture/import失败。
+
+现D0批准：公开`Runtime.execution_info` locator加固定namespace UUIDv5生成稳定call_id/ordinal1 attempt_id；根checkpoint_ns空合法；现input_digest仍是locked Run input摘要。无Billing consumer时先prepare为not_requested，再由包内typed unavailable映射现wire `dependency_unavailable,retryable=false`，正常`invoke_once`→唯一terminal把它seal为not_dispatched/unresolved missing_usage；不fake grant、不补零、不外发。
+
+冻结peer path补充裁决：recipe freeze前以排序BFS选entry到peer的最短path，同长按完整path字典序，合法cycle/多入边保留；实际执行仍靠checkpoint/task identity区分。每peer实际内生`general-purpose`作为`source="built-in"`显式frozen child并保持工具继承，catalog child同样独立path；不以parent冒充、不删能力。现recipe validator预计可直接证明，尚未授权改动。
+
+当前仅设计，生产caller仍不存在，冻结RED仍红。下一步须先按TECH §8由Root授权tests-first/生产精确集；真实Billing admission/evidence ACK、成功provider、失败/取消actual结算及用户收费链继续OPEN。本轮未运行PG/Redis/provider/native测试、未改SQL/contract/generated/lock。
+
+---
+
 ## R196-A4-D0b 当前：原生middleware seam已核，SDK隐藏retry已关闭（2026-10-04）
 
 Agent main `c7c6885`。锁定SDK核验确认LangChain `AgentMiddleware.awrap_model_call`在每个model node的`bind_tools/bind→ainvoke`之前执行；A4保留`call_runtime.py`业务职责但具体实现收敛为该middleware，旧BaseChatModel wrapper方案不并存。main/swarm peer用构造闭包持trusted Run/lease/System route/peer key；declarative subagent须逐spec显式path，Compiled/remote当前不在启用范围。

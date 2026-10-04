@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import math
 from collections.abc import Mapping
 from datetime import datetime
 
-import rfc8785
-from pydantic import JsonValue, TypeAdapter
 from psycopg.errors import UniqueViolation
 
 from kokoro_agent.infrastructure.postgres import (
@@ -25,26 +22,32 @@ from kokoro_agent.infrastructure.schema import (
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
 from kokoro_agent.infrastructure.postgres_run_profiles import validate_static_recipe
 from kokoro_agent.model.call_models import (
-    AttemptBinding,
+    AuthorizationPendingReceipt,
+    BeginModelCallAuthorization,
+    GrantModelCallAuthorization,
     ModelCallAuthorityLost,
+    ModelCallAuthorizationReceipt,
+    ModelCallDispatchPermit,
     ModelCallIdentityConflict,
     ModelCallInputInvalid,
     ModelCallOrdinalExhausted,
     PrepareModelCall,
     PreparedModelCall,
+    StartModelCallDispatch,
 )
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
-from kokoro_agent.protocol import RunRequest
-from kokoro_agent.protocol.model_usage_generated import (
-    AuthorizationNotRequested,
-    IdentityRef,
-    Lease,
+from kokoro_agent.model.call_artifacts import (
+    encode_attempt_binding,
+    encode_granted_artifact,
+    encode_not_requested_artifact,
+    encode_planned_artifact,
+    encode_requested_artifact,
+    recipe_feature_for_peer_path,
+    strict_granted_artifact,
 )
+from kokoro_agent.protocol import RunRequest
 
 _MAX_INT64 = 9_223_372_036_854_775_807
-_RAW_OBJECT = TypeAdapter(dict[str, object])
-_RAW_ARRAY = TypeAdapter(list[object])
-_RAW_TUPLE = TypeAdapter(tuple[object, ...])
 
 
 class PostgresModelCallRepository:
@@ -70,14 +73,8 @@ class PostgresModelCallRepository:
         self._statement_timeout_ms = statement_timeout_ms
 
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall:
-        planned_bytes = _canonical(command.planned.model_dump(mode="json"))
-        planned_digest = _digest(planned_bytes)
-        authorization_bytes = _canonical(
-            AuthorizationNotRequested(state="not_requested").model_dump(mode="json")
-        )
-        authorization_digest = _digest(authorization_bytes)
-        _bounded(planned_bytes)
-        _bounded(authorization_bytes)
+        planned_bytes, planned_digest = encode_planned_artifact(command.planned)
+        authorization_bytes, authorization_digest = encode_not_requested_artifact()
         async with asyncio.timeout(self._total_timeout_seconds):
             try:
                 return await self._execute_prepare(
@@ -99,6 +96,227 @@ class PostgresModelCallRepository:
                 raise ModelCallIdentityConflict(
                     "model-call preparation unique identity conflicts"
                 ) from error
+
+    async def begin_authorization(
+        self, command: BeginModelCallAuthorization
+    ) -> AuthorizationPendingReceipt:
+        authorization_bytes, authorization_digest = encode_requested_artifact(
+            command.request_ref
+        )
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction(), connection.cursor() as cursor:
+                    row, _ = await self._lock_attempt(cursor, command)
+                    current = str(row["status"])
+                    if current == "prepared":
+                        initial_bytes, initial_digest = encode_not_requested_artifact()
+                        _require_authorization(row, initial_bytes, initial_digest)
+                        await execute_sql(
+                            cursor,
+                            f"""UPDATE {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)}
+                                SET authorization_bytes=%s,authorization_digest=%s,
+                                    authorization_state='requested_unknown',
+                                    status='authorization_pending',updated_at=clock_timestamp()
+                                WHERE attempt_id=%s""",
+                            (
+                                authorization_bytes,
+                                authorization_digest,
+                                command.attempt_id,
+                            ),
+                        )
+                        newly_requested = True
+                    elif current == "authorization_pending":
+                        _require_authorization(
+                            row, authorization_bytes, authorization_digest
+                        )
+                        newly_requested = False
+                    else:
+                        try:
+                            current_bytes = _bytes(row["authorization_bytes"])
+                            granted, current_digest = strict_granted_artifact(
+                                current_bytes
+                            )
+                        except (TypeError, ValueError) as error:
+                            raise ModelCallIdentityConflict(
+                                "authorization request identity conflicts"
+                            ) from error
+                        if (
+                            granted.request_ref != command.request_ref
+                            or row["authorization_digest"] != current_digest
+                        ):
+                            raise ModelCallIdentityConflict(
+                                "authorization request identity conflicts"
+                            )
+                        authorization_bytes = current_bytes
+                        authorization_digest = str(row["authorization_digest"])
+                        newly_requested = False
+        return AuthorizationPendingReceipt(
+            tenant_id=command.tenant_id,
+            run_id=command.run_id,
+            attempt_id=command.attempt_id,
+            request_ref=command.request_ref,
+            authorization_bytes=authorization_bytes,
+            authorization_digest=authorization_digest,
+            newly_requested=newly_requested,
+        )
+
+    async def grant_authorization(
+        self, command: GrantModelCallAuthorization
+    ) -> ModelCallAuthorizationReceipt:
+        authorization_bytes, authorization_digest = encode_granted_artifact(
+            command.request_ref, command.admission_ref
+        )
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction(), connection.cursor() as cursor:
+                    row, _ = await self._lock_attempt(cursor, command)
+                    current = str(row["status"])
+                    if current == "authorization_pending":
+                        requested_bytes, requested_digest = encode_requested_artifact(
+                            command.request_ref
+                        )
+                        if (
+                            row["authorization_bytes"] != requested_bytes
+                            or row["authorization_digest"]
+                            != command.expected_authorization_digest
+                            or command.expected_authorization_digest != requested_digest
+                        ):
+                            raise ModelCallIdentityConflict(
+                                "authorization observation predecessor conflicts"
+                            )
+                        await execute_sql(
+                            cursor,
+                            f"""UPDATE {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)}
+                                SET authorization_bytes=%s,authorization_digest=%s,
+                                    authorization_state='granted',status='authorized',
+                                    updated_at=clock_timestamp() WHERE attempt_id=%s""",
+                            (
+                                authorization_bytes,
+                                authorization_digest,
+                                command.attempt_id,
+                            ),
+                        )
+                        newly_recorded = True
+                    else:
+                        _require_authorization(
+                            row, authorization_bytes, authorization_digest
+                        )
+                        newly_recorded = False
+        return ModelCallAuthorizationReceipt(
+            tenant_id=command.tenant_id,
+            run_id=command.run_id,
+            attempt_id=command.attempt_id,
+            request_ref=command.request_ref,
+            admission_ref=command.admission_ref,
+            authorization_bytes=authorization_bytes,
+            authorization_digest=authorization_digest,
+            newly_recorded=newly_recorded,
+        )
+
+    async def start_dispatch(
+        self, command: StartModelCallDispatch
+    ) -> ModelCallDispatchPermit:
+        authorization_bytes, _ = encode_granted_artifact(
+            command.request_ref, command.admission_ref
+        )
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction(), connection.cursor() as cursor:
+                    row, clock = await self._lock_attempt(cursor, command)
+                    _require_authorization(
+                        row, authorization_bytes, command.authorization_digest
+                    )
+                    current = str(row["status"])
+                    if current == "authorized":
+                        await execute_sql(
+                            cursor,
+                            f"""UPDATE {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)}
+                                SET status='dispatch_started',dispatch_started_at=%s,
+                                    updated_at=%s WHERE attempt_id=%s
+                                RETURNING dispatch_started_at""",
+                            (clock, clock, command.attempt_id),
+                        )
+                        persisted = await fetch_one(cursor)
+                        if persisted is None:
+                            raise RuntimeError("model-call dispatch returned no row")
+                        dispatch_started_at = _instant(persisted["dispatch_started_at"])
+                        await _recompute_run(
+                            cursor,
+                            qualified(self._schema, RUN_CLAIMS_TABLE),
+                            qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE),
+                            qualified(self._schema, MODEL_USAGE_EVIDENCE_TABLE),
+                            command.run_id,
+                        )
+                        newly_started = True
+                    elif row["dispatch_started_at"] is not None:
+                        dispatch_started_at = _instant(row["dispatch_started_at"])
+                        newly_started = False
+                    else:
+                        raise ModelCallAuthorityLost(
+                            "model-call is not authorized for dispatch"
+                        )
+        millis = utc_to_epoch_millis(dispatch_started_at)
+        if millis is None:
+            raise ModelCallIdentityConflict("dispatch time is missing")
+        return ModelCallDispatchPermit(
+            tenant_id=command.tenant_id,
+            run_id=command.run_id,
+            attempt_id=command.attempt_id,
+            authorization_digest=command.authorization_digest,
+            dispatch_started_at_ms=millis,
+            newly_started=newly_started,
+        )
+
+    async def _lock_attempt(
+        self,
+        cursor: object,
+        command: BeginModelCallAuthorization
+        | GrantModelCallAuthorization
+        | StartModelCallDispatch,
+    ) -> tuple[Mapping[str, object], datetime]:
+        await execute_sql(cursor, f"SET LOCAL lock_timeout='{self._lock_timeout_ms}ms'")
+        await execute_sql(
+            cursor, f"SET LOCAL statement_timeout='{self._statement_timeout_ms}ms'"
+        )
+        await execute_sql(
+            cursor,
+            f"""SELECT owner,lease_generation,lease_expires_at,terminal
+                FROM {qualified(self._schema, RUN_CLAIMS_TABLE)}
+                WHERE tenant_id=%s AND run_id=%s FOR UPDATE""",
+            (command.tenant_id, command.run_id),
+        )
+        run = await fetch_one(cursor)
+        await execute_sql(cursor, "SELECT clock_timestamp() AS db_now")
+        clock_row = await fetch_one(cursor)
+        if clock_row is None:
+            raise RuntimeError("model-call database clock is missing")
+        clock = _instant(clock_row["db_now"])
+        if (
+            run is None
+            or run["owner"] != command.lease.owner
+            or run["lease_generation"] != command.lease.generation
+            or run["terminal"]
+            or run["lease_expires_at"] is None
+            or run["lease_expires_at"] <= clock
+        ):
+            raise ModelCallAuthorityLost("model-call transition authority lost")
+        await execute_sql(
+            cursor,
+            f"""SELECT * FROM {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)}
+                WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s FOR UPDATE""",
+            (command.tenant_id, command.run_id, command.attempt_id),
+        )
+        attempt = await fetch_one(cursor)
+        if attempt is None:
+            raise ModelCallAuthorityLost("model-call attempt authority lost")
+        if (
+            attempt["lease_owner"] != command.lease.owner
+            or attempt["lease_generation"] != command.lease.generation
+            or attempt["attempt_binding_digest"] != command.attempt_binding_digest
+            or attempt["planned_digest"] != command.planned_digest
+        ):
+            raise ModelCallIdentityConflict("model-call transition identity conflicts")
+        return attempt, clock
 
     async def _execute_prepare(
         self,
@@ -183,10 +401,11 @@ class PostgresModelCallRepository:
         if (
             run["assembly_recipe_bytes"] != command.recipe.canonical_bytes
             or run["assembly_recipe_fingerprint"] != command.recipe.fingerprint
-            or _digest(command.recipe.canonical_bytes) != command.recipe.fingerprint
+            or hashlib.sha256(command.recipe.canonical_bytes).hexdigest()
+            != command.recipe.fingerprint
         ):
             raise ModelCallAuthorityLost("model-call recipe authority differs")
-        recipe_feature = _validate_peer_path(
+        recipe_feature = recipe_feature_for_peer_path(
             command.recipe.canonical_bytes, command.peer_path
         )
         if recipe_feature != durable_request.feature_key:
@@ -201,11 +420,16 @@ class PostgresModelCallRepository:
         )
         existing = await fetch_one(cursor)
         if existing is not None:
-            binding_bytes = _binding_bytes(
+            binding_bytes, binding_digest = encode_attempt_binding(
                 command, durable_request, _integer(existing["attempt_ordinal"])
             )
             return _replay(
-                existing, command, binding_bytes, planned_bytes, planned_digest
+                existing,
+                command,
+                binding_bytes,
+                binding_digest,
+                planned_bytes,
+                planned_digest,
             )
 
         await execute_sql(
@@ -218,8 +442,9 @@ class PostgresModelCallRepository:
         if maximum == _MAX_INT64:
             raise ModelCallOrdinalExhausted("model-call attempt ordinal exhausted")
         ordinal = 1 if maximum is None else int(maximum) + 1
-        binding_bytes = _binding_bytes(command, durable_request, ordinal)
-        binding_digest = _digest(binding_bytes)
+        binding_bytes, binding_digest = encode_attempt_binding(
+            command, durable_request, ordinal
+        )
         prepared_at = clock["db_now"]
         await execute_sql(
             cursor,
@@ -282,80 +507,11 @@ def _durable_request(value: object) -> RunRequest:
         raise ModelCallAuthorityLost("durable Run request is invalid") from error
 
 
-def _binding_bytes(
-    command: PrepareModelCall, request: RunRequest, ordinal: int
-) -> bytes:
-    identity = request.execution_identity
-    binding = AttemptBinding(
-        tenant_ref=identity.tenant_ref,
-        actor=IdentityRef(
-            kind=identity.actor.kind, opaque_ref=identity.actor.opaque_ref
-        ),
-        subject=IdentityRef(
-            kind=identity.subject.kind, opaque_ref=identity.subject.opaque_ref
-        ),
-        identity_assertion_ref=identity.identity_assertion_ref,
-        run_id=request.run_id,
-        session_id=request.session_id,
-        call_id=command.call_id,
-        attempt_id=command.attempt_id,
-        attempt_ordinal=str(ordinal),
-        lease=Lease(
-            owner=command.lease.owner, generation=str(command.lease.generation)
-        ),
-        input_digest=_digest(_canonical(request.input.model_dump(mode="json"))),
-        peer_path=command.peer_path,
-    )
-    raw = _canonical(binding.model_dump(mode="json"))
-    _bounded(raw)
-    return raw
-
-
-def _validate_peer_path(recipe_bytes: bytes, path: tuple[str, ...]) -> str:
-    try:
-        recipe = _json_object(_RAW_OBJECT.validate_json(recipe_bytes, strict=True))
-        feature = _require_object(recipe, "feature")
-        agent_items = _require_list(feature, "agents")
-        agents = {
-            _require_str(item, "key"): item
-            for value in agent_items
-            if (item := _as_object(value)) is not None
-        }
-        if len(agents) != len(agent_items):
-            raise ValueError
-        handoffs = {
-            (_require_string(edge[0]), _require_string(edge[1]))
-            for value in _require_list(feature, "handoffs")
-            if len(edge := _require_array(value)) == 2
-        }
-        entry_agent = _require_str(feature, "entry_agent")
-        if not path or path[0] != entry_agent or path[0] not in agents:
-            raise ValueError
-        current = path[0]
-        for target in path[1:]:
-            agent = agents.get(current)
-            if agent is None:
-                raise ValueError
-            subagents = {
-                _require_str(item, "name")
-                for value in _require_list(agent, "subagents")
-                if (item := _as_object(value)) is not None
-            }
-            if target in subagents:
-                current = target
-                continue
-            if (current, target) not in handoffs or target not in agents:
-                raise ValueError
-            current = target
-        return _require_str(feature, "key")
-    except (KeyError, TypeError, ValueError) as error:
-        raise ModelCallInputInvalid("peer path is outside the frozen recipe") from error
-
-
 def _replay(
     row: Mapping[str, object],
     command: PrepareModelCall,
     binding_bytes: bytes,
+    binding_digest: str,
     planned_bytes: bytes,
     planned_digest: str,
 ) -> PreparedModelCall:
@@ -367,7 +523,7 @@ def _replay(
         command.lease.owner,
         command.lease.generation,
         binding_bytes,
-        _digest(binding_bytes),
+        binding_digest,
         planned_bytes,
         planned_digest,
     )
@@ -399,6 +555,16 @@ def _replay(
         _instant(row["prepared_at"]),
         replayed=True,
     )
+
+
+def _require_authorization(
+    row: Mapping[str, object], expected_bytes: bytes, expected_digest: str
+) -> None:
+    if (
+        row["authorization_bytes"] != expected_bytes
+        or row["authorization_digest"] != expected_digest
+    ):
+        raise ModelCallIdentityConflict("model-call authorization identity conflicts")
 
 
 async def _recompute_run(
@@ -488,97 +654,16 @@ def _receipt(
     )
 
 
-def _canonical(value: object) -> bytes:
-    try:
-        validated = _json_value(value)
-        return rfc8785.dumps(validated)
-    except (TypeError, ValueError) as error:
-        raise ModelCallInputInvalid("model-call canonical value is invalid") from error
-
-
-def _digest(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
-def _bounded(value: bytes) -> None:
-    if not 0 < len(value) <= 65_536:
-        raise ModelCallInputInvalid("model-call canonical value exceeds its bound")
-
-
-def _json_value(value: object, depth: int = 1) -> JsonValue:
-    if depth > 16:
-        raise ValueError("model-call JSON exceeds its depth bound")
-    if value is None or isinstance(value, (bool, str)):
-        return value
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("model-call JSON number is not finite")
-        return value
-    if isinstance(value, list):
-        return [
-            _json_value(item, depth + 1)
-            for item in _RAW_ARRAY.validate_python(value, strict=True)
-        ]
-    if isinstance(value, tuple):
-        return [
-            _json_value(item, depth + 1)
-            for item in _RAW_TUPLE.validate_python(value, strict=True)
-        ]
-    if isinstance(value, Mapping):
-        result: dict[str, JsonValue] = {}
-        for key, item in _RAW_OBJECT.validate_python(value, strict=True).items():
-            result[key] = _json_value(item, depth + 1)
-        return result
-    raise ValueError("model-call value is not JSON")
-
-
-def _json_object(value: Mapping[str, object]) -> dict[str, JsonValue]:
-    normalized = _json_value(value)
-    if not isinstance(normalized, dict):
-        raise ValueError("model-call recipe root is not an object")
-    return normalized
-
-
-def _as_object(value: JsonValue) -> dict[str, JsonValue] | None:
-    return value if isinstance(value, dict) else None
-
-
-def _require_object(value: Mapping[str, JsonValue], key: str) -> dict[str, JsonValue]:
-    result = _as_object(value.get(key))
-    if result is None:
-        raise ValueError
-    return result
-
-
-def _require_list(value: Mapping[str, JsonValue], key: str) -> list[JsonValue]:
-    result = value.get(key)
-    if not isinstance(result, list):
-        raise ValueError
-    return result
-
-
-def _require_array(value: JsonValue) -> list[JsonValue]:
-    if not isinstance(value, list):
-        raise ValueError
-    return value
-
-
-def _require_string(value: JsonValue) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError
-    return value
-
-
-def _require_str(value: Mapping[str, JsonValue], key: str) -> str:
-    return _require_string(value.get(key))
-
-
 def _integer(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ModelCallIdentityConflict("model-call ordinal is invalid")
     return int(value)
+
+
+def _bytes(value: object) -> bytes:
+    if not isinstance(value, bytes):
+        raise ModelCallIdentityConflict("model-call canonical bytes are invalid")
+    return value
 
 
 def _instant(value: object) -> datetime:

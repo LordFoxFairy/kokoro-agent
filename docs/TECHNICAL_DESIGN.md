@@ -1,6 +1,23 @@
-R189最新Root收据：完整工程18098 exit0（2175pass/365资源deselected、wheel/sdist及全部纯门0），最终a9c57172 prepare真PG56pass5.49s；全database267属于此前9df候选。仅prepare持久边界，runtime/provider/Billing/真实lostACK及当前列明P2门仍OPEN。
+## R192-AGENT-A2：内部授权、唯一 dispatch 与 artifact 职责已验（2026-10-04）
 
-## R188-AGENT-A1-SCHEMA：canonical schema 实施候选（2026-10-04）
+当前内部 operation 与artifact职责拆分已由Root最终验证：定点真实PostgreSQL 70 passed / 0 failed（6.93s），完整database **281 passed / 0 skipped（32.90s）**；完整工程自然exit 0（2178 passed、379资源deselected，lock/frozen-sync/Ruff 278 files/Pyright/contract/build均0，112.54s）。`model/call_artifacts.py`为234行纯模块，PostgreSQL adapter为675行。`prepare`、`begin_authorization`、`grant_authorization` 与 `start_dispatch` 均按固定 Run→Attempt 锁序、DB clock lease authority、canonical bytes/digest 和 immutable replay 工作；只有首次合法 `authorized -> dispatch_started` 返回 `newly_started=true`，精确及 advanced replay 保留原 DB 时间并返回 false。该证据只覆盖本地 repository 状态切片，不包含 provider 外发。
+
+### 持久放置表与调用方向
+
+| 职责 | 当前放置 | 批准目标放置 | 采用/淘汰理由 |
+|---|---|---|---|
+| command、receipt、Protocol、内部闭集值 | `model/call_models.py` | 保持 | 纯业务边界，不依赖 psycopg/SQL |
+| canonical JSON、attempt binding、冻结 recipe/peer-path artifact 校验 | `model/call_artifacts.py`（234行） | 保持 | 这些是纯 artifact/recipe 规则，可由 repository 及后继 finalizer 共同调用；淘汰继续膨胀 infrastructure 或建立通用 utils/mixin |
+| Run/Attempt 加锁、SQL Row 校验、CAS、Run completeness 重算 | `infrastructure/postgres_model_call_repository.py` | 保持 | PostgreSQL transaction adapter 单一职责；禁止抽象 UoW、base repository 或 mixin |
+| runtime caller | 尚未接线 | 未来现 model execution/runtime caller → `ModelCallRepository` Protocol | caller 只消费内部 command/receipt；不得 import psycopg Row、跨 owner SQL 或把 receipt 当 provider-send 重试许可 |
+
+依赖方向固定为 runtime caller → `model/call_models.py` Protocol；PostgreSQL adapter实现Protocol并依赖`model/call_artifacts.py`纯函数。`call_artifacts.py`可依赖已发布 usage generated model、`RunRequest`与冻结 recipe model，不依赖infrastructure、连接、SQL、Billing DTO或provider SDK。职责搬移已通过上述Root真实数据库、完整工程门与独立审查（0 P0/P1）：`model/call_artifacts.py`承接纯canonical/binding/recipe规则，675行PostgreSQL adapter保留锁/SQL/Row/Run投影。
+
+A2仍不含 evidence append/finalizer、取消封存、runtime/provider调用、Billing Admission client、evidence读取/ACK、预占结算释放或真实收费。真实lost-COMMIT-ACK只允许恢复为`newly_started=false`并停止二次外发，不能据此猜测provider未调用、usage为零或费用可释放。
+
+## 历史基线：R188-AGENT-A1-SCHEMA（2026-10-04）
+
+> 以下“当前/尚无”均为R188/R189当时快照；R192现状以上方首节为准。
 
 > R189 prepare实现已由Root在隔离真实PostgreSQL中验证56项，同轮完整database 267项通过：内部immutable call values/Protocol与PostgreSQL prepare adapter从锁定RunRequest复制可信身份/会话/输入摘要并核冻结recipe peer路径，不接受自报身份或授权。完整工程门当前为2174通过、1失败、365 deselected；唯一失败是新repository的`typing.cast`触发architecture门，随后build未执行。本次候选已用递归`JsonValue`校验移除该逃逸，正等待Root复跑完整门。真实lost-COMMIT-ACK、完整not-dispatched知识正反控、同identity并发/race输家零副作用及timeout全面恢复证据仍OPEN；尚无authorization/dispatch/evidence/finalizer/runtime wiring。
 

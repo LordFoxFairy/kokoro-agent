@@ -6,11 +6,10 @@ authority, peer scope, and same-transaction Run completeness. Root's isolated
 PostgreSQL run passed all 56 cases here; the full database gate passed 267 cases.
 Root remains the only runner and owner of PostgreSQL resources.
 
-Authorization/dispatch/evidence/finalizer and runtime-provider wiring are not
-implemented by this slice. Real lost-COMMIT-ACK recovery, the complete
-not-dispatched knowledge matrix, same-identity race-loser side effects, and
-comprehensive timeout recovery remain open rather than represented by mocks,
-skips, or import failures.
+Authorization begin/grant and the one-time dispatch permit are implemented by
+this slice. Evidence/finalizer and runtime-provider wiring remain absent. Real
+lost-COMMIT-ACK recovery and the complete not-dispatched knowledge matrix remain
+open rather than represented by mocks, skips, or import failures.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ import hashlib
 import json
 
 import pytest
+import rfc8785
 from psycopg.errors import CheckViolation, UniqueViolation
 
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
@@ -32,12 +32,17 @@ from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
 )
 from kokoro_agent.model.call_models import (
+    BeginModelCallAuthorization,
+    GrantModelCallAuthorization,
     ModelCallAuthorityLost,
     ModelCallIdentityConflict,
     ModelCallInputInvalid,
     ModelCallOrdinalExhausted,
     PrepareModelCall,
+    PreparedModelCall,
+    StartModelCallDispatch,
 )
+from kokoro_agent.model.usage_evidence import parse_evidence
 from kokoro_agent.protocol.control import (
     ExecutionIdentity,
     IdentityRef,
@@ -81,6 +86,52 @@ _CURRENT_RUN_CONTROL_COLUMNS = {
 }
 _DIGEST = "a" * 64
 _OTHER_DIGEST = "b" * 64
+_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v1\n"
+
+
+def _utc_millis(value: int) -> str:
+    return (
+        datetime.fromtimestamp(value / 1000, UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _strict_completed_evidence(
+    prepared: PreparedModelCall,
+    authorization_bytes: bytes,
+    dispatch_started_at_ms: int,
+) -> tuple[str, bytes, str]:
+    event_id = str(uuid4())
+    observed_at = _utc_millis(dispatch_started_at_ms + 1)
+    identity = json.loads(prepared.attempt_binding_bytes)
+    identity["event_id"] = event_id
+    document = {
+        "artifact_version": "1.0.0",
+        "identity": identity,
+        "planned": json.loads(prepared.planned_bytes),
+        "actual": {"state": "unknown", "reason": "not_observed"},
+        "authorization_observation": json.loads(authorization_bytes),
+        "execution": {
+            "outcome": "completed",
+            "seal": True,
+            "prepared_at": _utc_millis(prepared.prepared_at_ms),
+            "dispatch_started_at": _utc_millis(dispatch_started_at_ms),
+        },
+        "revision": "1",
+        "predecessor": None,
+        "observed_at": observed_at,
+        "usage": {
+            "state": "unresolved",
+            "reason": "missing_usage",
+            "raw_usage_digest": None,
+        },
+    }
+    digest = hashlib.sha256(_EVIDENCE_DOMAIN + rfc8785.dumps(document)).hexdigest()
+    document["digest"] = digest
+    raw = rfc8785.dumps(document)
+    parse_evidence(raw)
+    return event_id, raw, digest
 
 
 def _prepare_values() -> tuple[RunRequest, StaticRecipeBinding, PlannedBinding]:
@@ -300,6 +351,706 @@ async def test_prepare_freezes_trusted_identity_and_exact_replay(
         )
     advanced_replay = await repository.prepare(command)
     assert advanced_replay == created.model_copy(update={"replayed": True})
+
+
+async def _prepared_attempt(
+    database_url: str, schema: str
+) -> tuple[PostgresModelCallRepository, PrepareModelCall, PreparedModelCall]:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(database_url, schema, request, recipe)
+    repository = PostgresModelCallRepository(database_url, schema)
+    command = PrepareModelCall(
+        request=request,
+        lease=LeaseFence(owner="worker-a1", generation=1),
+        call_id=str(uuid4()),
+        attempt_id=str(uuid4()),
+        planned=planned,
+        peer_path=("assistant",),
+        recipe=recipe,
+    )
+    return repository, command, await repository.prepare(command)
+
+
+async def _authorized_attempt(
+    database_url: str, schema: str
+) -> tuple[PostgresModelCallRepository, StartModelCallDispatch]:
+    repository, prepare, prepared = await _prepared_attempt(database_url, schema)
+    pending = await repository.begin_authorization(
+        BeginModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=prepare.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            request_ref="billing-operation-a1",
+        )
+    )
+    granted = await repository.grant_authorization(
+        GrantModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=prepare.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            expected_authorization_digest=pending.authorization_digest,
+            request_ref=pending.request_ref,
+            admission_ref="billing-admission-a1",
+        )
+    )
+    return repository, StartModelCallDispatch(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        authorization_digest=granted.authorization_digest,
+        request_ref=granted.request_ref,
+        admission_ref=granted.admission_ref,
+    )
+
+
+async def test_authorization_begin_freezes_observation_ref_and_exact_replay(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    repository, prepare, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    command = BeginModelCallAuthorization(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        request_ref="billing-operation-a1",
+    )
+
+    created = await repository.begin_authorization(command)
+    replayed = await repository.begin_authorization(command)
+
+    expected_bytes = (
+        b'{"request_ref":"billing-operation-a1","state":"requested_unknown"}'
+    )
+    assert created.authorization_bytes == expected_bytes
+    assert created.authorization_digest == hashlib.sha256(expected_bytes).hexdigest()
+    assert created.newly_requested is True
+    assert replayed == created.model_copy(update={"newly_requested": False})
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.begin_authorization(
+            command.model_copy(update={"request_ref": "billing-operation-other"})
+        )
+
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """SELECT status,authorization_state,authorization_bytes,
+                      authorization_digest,dispatch_started_at
+               FROM {} WHERE attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (prepared.attempt_id,),
+        )
+        assert await cursor.fetchone() == {
+            "status": "authorization_pending",
+            "authorization_state": "requested_unknown",
+            "authorization_bytes": expected_bytes,
+            "authorization_digest": created.authorization_digest,
+            "dispatch_started_at": None,
+        }
+
+
+async def test_authorization_grant_freezes_refs_and_replays_immutable_view(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    repository, prepare, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    pending = await repository.begin_authorization(
+        BeginModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=prepare.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            request_ref="billing-operation-a1",
+        )
+    )
+    command = GrantModelCallAuthorization(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        expected_authorization_digest=pending.authorization_digest,
+        request_ref=pending.request_ref,
+        admission_ref="billing-admission-a1",
+    )
+
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.grant_authorization(
+            command.model_copy(update={"request_ref": "billing-operation-other"})
+        )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT status,authorization_bytes,authorization_digest FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (prepared.attempt_id,),
+        )
+        assert await cursor.fetchone() == {
+            "status": "authorization_pending",
+            "authorization_bytes": pending.authorization_bytes,
+            "authorization_digest": pending.authorization_digest,
+        }
+
+    created = await repository.grant_authorization(command)
+    replayed = await repository.grant_authorization(command)
+
+    expected_bytes = (
+        b'{"admission_ref":"billing-admission-a1",'
+        b'"request_ref":"billing-operation-a1","state":"granted"}'
+    )
+    assert created.authorization_bytes == expected_bytes
+    assert created.authorization_digest == hashlib.sha256(expected_bytes).hexdigest()
+    assert created.newly_recorded is True
+    assert replayed == created.model_copy(update={"newly_recorded": False})
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.grant_authorization(
+            command.model_copy(update={"admission_ref": "billing-admission-other"})
+        )
+
+
+async def test_advanced_begin_rejects_noncanonical_grant_bytes_with_matching_digest(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    repository, dispatch = await _authorized_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    semantic_grant = {
+        "state": "granted",
+        "request_ref": dispatch.request_ref,
+        "admission_ref": dispatch.admission_ref,
+    }
+    corrupt_bytes = json.dumps(semantic_grant, indent=1).encode()
+    corrupt_digest = hashlib.sha256(corrupt_bytes).hexdigest()
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """UPDATE {} SET authorization_bytes=%s,authorization_digest=%s
+               WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (
+                corrupt_bytes,
+                corrupt_digest,
+                dispatch.tenant_id,
+                dispatch.run_id,
+                dispatch.attempt_id,
+            ),
+        )
+
+    begin = BeginModelCallAuthorization(
+        tenant_id=dispatch.tenant_id,
+        run_id=dispatch.run_id,
+        attempt_id=dispatch.attempt_id,
+        lease=dispatch.lease,
+        attempt_binding_digest=dispatch.attempt_binding_digest,
+        planned_digest=dispatch.planned_digest,
+        request_ref=dispatch.request_ref,
+    )
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.begin_authorization(begin)
+
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """SELECT status,authorization_state,authorization_bytes,
+                      authorization_digest,dispatch_started_at
+               FROM {} WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (dispatch.tenant_id, dispatch.run_id, dispatch.attempt_id),
+        )
+        assert await cursor.fetchone() == {
+            "status": "authorized",
+            "authorization_state": "granted",
+            "authorization_bytes": corrupt_bytes,
+            "authorization_digest": corrupt_digest,
+            "dispatch_started_at": None,
+        }
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        (
+            {"lease": LeaseFence(owner="worker-a1", generation=2)},
+            ModelCallAuthorityLost,
+        ),
+        ({"planned_digest": _OTHER_DIGEST}, ModelCallIdentityConflict),
+    ],
+)
+async def test_begin_rejects_stale_authority_or_digest_without_write(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    change: dict[str, object],
+    error: type[Exception],
+) -> None:
+    repository, prepare, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    command = BeginModelCallAuthorization(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        request_ref="billing-operation-a1",
+    )
+    with pytest.raises(error):
+        await repository.begin_authorization(command.model_copy(update=change))
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT status,authorization_state FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (prepared.attempt_id,),
+        )
+        assert await cursor.fetchone() == {
+            "status": "prepared",
+            "authorization_state": "not_requested",
+        }
+
+
+async def test_begin_timeout_rolls_back_without_authorization_write(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    _, prepare, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    repository = PostgresModelCallRepository(
+        run_chat_database_url, run_chat_schema, total_timeout_seconds=0.1
+    )
+    command = BeginModelCallAuthorization(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        request_ref="billing-operation-a1",
+    )
+    async with connect_pg(run_chat_database_url) as blocker:
+        async with blocker.transaction(), blocker.cursor() as cursor:
+            await execute_sql(
+                cursor,
+                "SELECT run_id FROM {} WHERE tenant_id=%s AND run_id=%s FOR UPDATE".format(
+                    qualified(run_chat_schema, "kokoro_agent_run")
+                ),
+                (prepared.tenant_id, prepared.run_id),
+            )
+            with pytest.raises(TimeoutError):
+                await repository.begin_authorization(command)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT status,authorization_state FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (prepared.attempt_id,),
+        )
+        assert await cursor.fetchone() == {
+            "status": "prepared",
+            "authorization_state": "not_requested",
+        }
+
+
+async def test_dispatch_permit_is_true_only_for_first_transition_and_replay_is_false(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    repository, prepare, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    pending = await repository.begin_authorization(
+        BeginModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=prepare.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            request_ref="billing-operation-a1",
+        )
+    )
+    granted = await repository.grant_authorization(
+        GrantModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=prepare.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            expected_authorization_digest=pending.authorization_digest,
+            request_ref=pending.request_ref,
+            admission_ref="billing-admission-a1",
+        )
+    )
+    command = StartModelCallDispatch(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        authorization_digest=granted.authorization_digest,
+        request_ref=granted.request_ref,
+        admission_ref=granted.admission_ref,
+    )
+    begin = BeginModelCallAuthorization(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        request_ref=granted.request_ref,
+    )
+
+    authorized_begin_replay = await repository.begin_authorization(begin)
+    assert authorized_begin_replay.newly_requested is False
+    assert authorized_begin_replay.authorization_bytes == granted.authorization_bytes
+    assert authorized_begin_replay.authorization_digest == granted.authorization_digest
+
+    created = await repository.start_dispatch(command)
+    replayed = await repository.start_dispatch(command)
+    dispatch_begin_replay = await repository.begin_authorization(begin)
+
+    assert created.newly_started is True
+    assert replayed == created.model_copy(update={"newly_started": False})
+    assert replayed.dispatch_started_at_ms == created.dispatch_started_at_ms
+    assert dispatch_begin_replay == authorized_begin_replay
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        event_id, evidence_bytes, evidence_digest = _strict_completed_evidence(
+            prepared, granted.authorization_bytes, created.dispatch_started_at_ms
+        )
+        await execute_sql(
+            cursor,
+            """INSERT INTO {} (event_id,tenant_id,run_id,attempt_id,call_id,
+                   revision,evidence_bytes,evidence_digest,execution_outcome,
+                   usage_state,totals_state,classification_state,sealed,observed_at)
+               VALUES (%s,%s,%s,%s,%s,1,%s,%s,'completed','unresolved',
+                       'unknown','unknown',TRUE,clock_timestamp())""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_usage_evidence")
+            ),
+            (
+                event_id,
+                prepared.tenant_id,
+                prepared.run_id,
+                prepared.attempt_id,
+                prepared.call_id,
+                evidence_bytes,
+                evidence_digest,
+            ),
+        )
+        await execute_sql(
+            cursor,
+            """UPDATE {} SET status='observed',sealed_at=clock_timestamp(),
+                      latest_revision=1,latest_event_id=%s,latest_evidence_digest=%s
+               WHERE attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (event_id, evidence_digest, prepared.attempt_id),
+        )
+
+    advanced_replay = await repository.start_dispatch(command)
+    observed_begin_replay = await repository.begin_authorization(begin)
+    assert advanced_replay == created.model_copy(update={"newly_started": False})
+    assert observed_begin_replay == authorized_begin_replay
+
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """SELECT status,authorization_state,dispatch_started_at,sealed_at,
+                      latest_revision,latest_event_id,latest_evidence_digest,
+                      model_dispatched_attempt_count
+               FROM {} AS attempt JOIN {} AS run USING (run_id)
+               WHERE attempt.attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt"),
+                qualified(run_chat_schema, "kokoro_agent_run"),
+            ),
+            (prepared.attempt_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["status"] == "observed"
+        assert row["authorization_state"] == "granted"
+        assert row["dispatch_started_at"] is not None
+        assert row["sealed_at"] is not None
+        assert row["latest_revision"] == 1
+        assert str(row["latest_event_id"]) == event_id
+        assert row["latest_evidence_digest"] == evidence_digest
+        assert row["model_dispatched_attempt_count"] == 1
+
+
+async def test_dispatch_two_connections_queue_and_only_one_gets_new_authority(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    repository, command = await _authorized_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    async with connect_pg(run_chat_database_url) as blocker:
+        async with blocker.transaction(), blocker.cursor() as cursor:
+            await execute_sql(cursor, "SELECT pg_backend_pid() AS pid")
+            blocker_row = await cursor.fetchone()
+            assert blocker_row is not None
+            blocker_pid = blocker_row["pid"]
+            await execute_sql(
+                cursor,
+                "SELECT run_id FROM {} WHERE tenant_id=%s AND run_id=%s FOR UPDATE".format(
+                    qualified(run_chat_schema, "kokoro_agent_run")
+                ),
+                (command.tenant_id, command.run_id),
+            )
+            first = asyncio.create_task(repository.start_dispatch(command))
+            second = asyncio.create_task(repository.start_dispatch(command))
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                await execute_sql(cursor, "SELECT pg_stat_clear_snapshot()")
+                await execute_sql(
+                    cursor,
+                    """WITH RECURSIVE waiters AS (
+                         SELECT pid FROM pg_stat_activity
+                         WHERE datname=current_database()
+                           AND pid<>pg_backend_pid() AND wait_event_type='Lock'
+                           AND query LIKE %s AND position(%s in query)>0
+                       ), blocker_chain(waiter_pid,pid,path) AS (
+                         SELECT pid,pid,ARRAY[pid] FROM waiters
+                         UNION ALL
+                         SELECT chain.waiter_pid,blocker.pid,
+                                chain.path || blocker.pid
+                         FROM blocker_chain AS chain
+                         CROSS JOIN LATERAL
+                           unnest(pg_blocking_pids(chain.pid)) AS blocker(pid)
+                         WHERE NOT blocker.pid=ANY(chain.path)
+                       )
+                       SELECT array_agg(waiters.pid ORDER BY waiters.pid) AS pids,
+                              count(*)=2 AND count(*) FILTER (
+                                WHERE EXISTS (
+                                  SELECT 1 FROM blocker_chain AS chain
+                                  WHERE chain.waiter_pid=waiters.pid AND chain.pid=%s
+                                )
+                              )=2 AS owned_blocker
+                       FROM waiters""",
+                    (
+                        "SELECT owner,lease_generation,%",
+                        run_chat_schema,
+                        blocker_pid,
+                    ),
+                )
+                waiting = await cursor.fetchone()
+                if (
+                    waiting is not None
+                    and waiting["pids"] is not None
+                    and len(waiting["pids"]) == 2
+                    and waiting["owned_blocker"] is True
+                ):
+                    break
+            else:
+                first.cancel()
+                second.cancel()
+                await asyncio.gather(first, second, return_exceptions=True)
+                pytest.fail(
+                    "both dispatch connections did not enter the database lock queue"
+                )
+        permits = await asyncio.gather(first, second)
+
+    assert sorted(permit.newly_started for permit in permits) == [False, True]
+    assert permits[0].dispatch_started_at_ms == permits[1].dispatch_started_at_ms
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """SELECT model_attempt_count,model_dispatched_attempt_count,
+                      model_sealed_attempt_count,model_unknown_attempt_count,
+                      model_usage_completeness
+               FROM {} WHERE tenant_id=%s AND run_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_run")
+            ),
+            (command.tenant_id, command.run_id),
+        )
+        assert await cursor.fetchone() == {
+            "model_attempt_count": 1,
+            "model_dispatched_attempt_count": 1,
+            "model_sealed_attempt_count": 0,
+            "model_unknown_attempt_count": 0,
+            "model_usage_completeness": "unknown",
+        }
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"tenant_id": "tenant-other"}, ModelCallAuthorityLost),
+        (
+            {"lease": LeaseFence(owner="worker-a1", generation=2)},
+            ModelCallAuthorityLost,
+        ),
+        ({"attempt_binding_digest": _OTHER_DIGEST}, ModelCallIdentityConflict),
+        ({"request_ref": "billing-operation-other"}, ModelCallIdentityConflict),
+    ],
+)
+async def test_dispatch_rejects_untrusted_identity_without_write(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    change: dict[str, object],
+    error: type[Exception],
+) -> None:
+    repository, command = await _authorized_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    with pytest.raises(error):
+        await repository.start_dispatch(command.model_copy(update=change))
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT status,dispatch_started_at FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (command.attempt_id,),
+        )
+        assert await cursor.fetchone() == {
+            "status": "authorized",
+            "dispatch_started_at": None,
+        }
+
+
+async def test_dispatch_rejects_pending_and_terminal_authority_without_write(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    repository, prepare, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    pending = await repository.begin_authorization(
+        BeginModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=prepare.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            request_ref="billing-operation-a1",
+        )
+    )
+    provisional = StartModelCallDispatch(
+        tenant_id=prepared.tenant_id,
+        run_id=prepared.run_id,
+        attempt_id=prepared.attempt_id,
+        lease=prepare.lease,
+        attempt_binding_digest=prepared.attempt_binding_digest,
+        planned_digest=prepared.planned_digest,
+        authorization_digest=pending.authorization_digest,
+        request_ref=pending.request_ref,
+        admission_ref="billing-admission-a1",
+    )
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.start_dispatch(provisional)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """UPDATE {} SET terminal=TRUE,terminal_at=clock_timestamp(),
+                      interaction_phase='terminal'
+               WHERE tenant_id=%s AND run_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_run")
+            ),
+            (prepared.tenant_id, prepared.run_id),
+        )
+    with pytest.raises(ModelCallAuthorityLost):
+        await repository.begin_authorization(
+            BeginModelCallAuthorization(
+                tenant_id=prepared.tenant_id,
+                run_id=prepared.run_id,
+                attempt_id=prepared.attempt_id,
+                lease=prepare.lease,
+                attempt_binding_digest=prepared.attempt_binding_digest,
+                planned_digest=prepared.planned_digest,
+                request_ref=pending.request_ref,
+            )
+        )
+
+
+async def test_dispatch_timeout_rolls_back_without_starting(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    _, command = await _authorized_attempt(run_chat_database_url, run_chat_schema)
+    repository = PostgresModelCallRepository(
+        run_chat_database_url, run_chat_schema, total_timeout_seconds=0.1
+    )
+    async with connect_pg(run_chat_database_url) as blocker:
+        async with blocker.transaction(), blocker.cursor() as cursor:
+            await execute_sql(
+                cursor,
+                "SELECT run_id FROM {} WHERE tenant_id=%s AND run_id=%s FOR UPDATE".format(
+                    qualified(run_chat_schema, "kokoro_agent_run")
+                ),
+                (command.tenant_id, command.run_id),
+            )
+            with pytest.raises(TimeoutError):
+                await repository.start_dispatch(command)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT status,dispatch_started_at FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (command.attempt_id,),
+        )
+        assert await cursor.fetchone() == {
+            "status": "authorized",
+            "dispatch_started_at": None,
+        }
 
 
 async def test_prepare_allocates_contiguous_ordinals(

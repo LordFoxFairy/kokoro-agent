@@ -7,11 +7,63 @@ from pathlib import Path
 
 import pytest
 
+from kokoro_agent.model.call_artifacts import (
+    encode_granted_artifact,
+    encode_requested_artifact,
+    strict_granted_artifact,
+)
+from kokoro_agent.model.call_models import ModelCallInputInvalid
 from kokoro_agent.model.usage_evidence import parse_evidence, validate_successor
 from kokoro_agent.model_usage_contract import generate_model_usage_models
+from kokoro_agent.protocol.model_usage_generated import (
+    AuthorizationGranted,
+    AuthorizationRequested,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = json.loads((ROOT / "contract/usage/v1/vectors.json").read_text())
+
+
+@pytest.mark.parametrize(
+    ("observation", "expected_bytes", "expected_digest"),
+    [
+        (
+            AuthorizationRequested(
+                state="requested_unknown", request_ref="billing-operation-a1"
+            ),
+            b'{"request_ref":"billing-operation-a1","state":"requested_unknown"}',
+            "15fbddf3e15802123e1473877688cc3bb73ee18cc151a6b2c899a9419f42da4e",
+        ),
+        (
+            AuthorizationGranted(
+                state="granted",
+                request_ref="billing-operation-a1",
+                admission_ref="billing-admission-a1",
+            ),
+            b'{"admission_ref":"billing-admission-a1",'
+            b'"request_ref":"billing-operation-a1","state":"granted"}',
+            "ce6a2f57272a469ff0c875e78c46ef27195ba0f43b28abd1ed55743760bbb59a",
+        ),
+    ],
+)
+def test_authorization_observation_has_stable_canonical_bytes_and_digest(
+    observation: AuthorizationRequested | AuthorizationGranted,
+    expected_bytes: bytes,
+    expected_digest: str,
+) -> None:
+    actual = (
+        encode_requested_artifact(observation.request_ref)
+        if isinstance(observation, AuthorizationRequested)
+        else encode_granted_artifact(observation.request_ref, observation.admission_ref)
+    )
+    assert actual == (expected_bytes, expected_digest)
+
+
+def test_semantically_valid_noncanonical_authorization_is_not_canonical() -> None:
+    raw = b'{ "state": "granted", "request_ref": "billing-operation-a1", "admission_ref": "billing-admission-a1" }'
+    AuthorizationGranted.model_validate_json(raw, strict=True)
+    with pytest.raises(ModelCallInputInvalid, match="not canonical"):
+        strict_granted_artifact(raw)
 
 
 @pytest.mark.parametrize("vector", VECTORS["positive"], ids=lambda row: row["id"])

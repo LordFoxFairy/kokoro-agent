@@ -79,6 +79,88 @@ class PreparedModelCall(BaseModel):
     replayed: bool
 
 
+class BeginModelCallAuthorization(BaseModel):
+    """Freeze the opaque Billing operation reference for one prepared attempt."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    request_ref: Opaque
+
+
+class AuthorizationPendingReceipt(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    attempt_id: Uuid
+    request_ref: Opaque
+    authorization_bytes: bytes
+    authorization_digest: Digest
+    newly_requested: bool
+
+
+class GrantModelCallAuthorization(BaseModel):
+    """Record a validated owner grant as the Agent usage observation."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    expected_authorization_digest: Digest
+    request_ref: Opaque
+    admission_ref: Opaque
+
+
+class ModelCallAuthorizationReceipt(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    attempt_id: Uuid
+    request_ref: Opaque
+    admission_ref: Opaque
+    authorization_bytes: bytes
+    authorization_digest: Digest
+    newly_recorded: bool
+
+
+class StartModelCallDispatch(BaseModel):
+    """Request the single durable transition that precedes provider I/O."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    authorization_digest: Digest
+    request_ref: Opaque
+    admission_ref: Opaque
+
+
+class ModelCallDispatchPermit(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    attempt_id: Uuid
+    authorization_digest: Digest
+    dispatch_started_at_ms: int = Field(ge=0)
+    newly_started: bool
+
+
 class ModelCallAuthorityLost(RuntimeError):
     pass
 
@@ -98,14 +180,32 @@ class ModelCallInputInvalid(ValueError):
 class ModelCallRepository(Protocol):
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall: ...
 
+    async def begin_authorization(
+        self, command: BeginModelCallAuthorization
+    ) -> AuthorizationPendingReceipt: ...
+
+    async def grant_authorization(
+        self, command: GrantModelCallAuthorization
+    ) -> ModelCallAuthorizationReceipt: ...
+
+    async def start_dispatch(
+        self, command: StartModelCallDispatch
+    ) -> ModelCallDispatchPermit: ...
+
 
 __all__ = [
     "AttemptBinding",
+    "AuthorizationPendingReceipt",
+    "BeginModelCallAuthorization",
+    "GrantModelCallAuthorization",
     "ModelCallAuthorityLost",
     "ModelCallIdentityConflict",
     "ModelCallInputInvalid",
     "ModelCallOrdinalExhausted",
+    "ModelCallAuthorizationReceipt",
+    "ModelCallDispatchPermit",
     "ModelCallRepository",
     "PrepareModelCall",
     "PreparedModelCall",
+    "StartModelCallDispatch",
 ]

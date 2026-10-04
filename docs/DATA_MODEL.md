@@ -1,6 +1,14 @@
-R189最新Root收据：完整工程18098 exit0（2175pass/365资源deselected、wheel/sdist及全部纯门0），最终a9c57172 prepare真PG56pass5.49s；全database267属于此前9df候选。仅prepare持久边界，runtime/provider/Billing/真实lostACK及当前列明P2门仍OPEN。
+## R192-AGENT-A2：既有表上的内部 transition，无DDL变化（2026-10-04）
 
-## R188-AGENT-A1-SCHEMA：attempt/evidence canonical SQL实施候选（2026-10-04）
+A2使用R188已发布的`kokoro_agent_model_call_attempt`与Run completeness列，没有新增表、列、索引、FK、outbox或Billing事实。Root隔离真实PostgreSQL定点 **70 passed / 0 failed**、完整database **281 passed / 0 skipped** 覆盖prepare、authorization begin/grant、唯一dispatch CAS、两连接竞争、authority/timeout回滚、canonical corruption拒绝及Run projection读回。
+
+事务仍固定锁`kokoro_agent_run`后锁目标attempt，以数据库时间重验tenant/run/owner/generation/expiry/terminal；begin写`authorization_pending/requested_unknown`，grant写`authorized/granted`，首次dispatch写DB毫秒`dispatch_started_at`与`dispatch_started`并同事务重算Run completeness。精确或advanced dispatch replay只读原时间且`newly_started=false`。所有authorization bytes必须是strict generated model的RFC8785 canonical bytes并与stored digest一致；同步篡改非canonical bytes及digest仍拒绝。
+
+尚无evidence repository writer/finalizer/runtime producer/Billing ACK/outbox。旧usage segment继续只是预算事实，不是计费真源；本轮不删除或双写。`model/call_artifacts.py`纯canonical/binding/recipe职责搬移已通过Root数据库/完整工程门与独立审查；canonical SQL、事务顺序与数据生命周期未改。
+
+## 历史基线：R188-AGENT-A1-SCHEMA canonical SQL（2026-10-04）
+
+> 以下“当前/尚无”均为R188/R189当时快照；R192现状以上方首节为准。
 
 > R189 prepare adapter不改schema：Run锁后用DB clock重验tenant/owner/generation/expiry/terminal，从持久RunRequest生成identity/input binding，核冻结recipe peer scope，分配`MAX(ordinal)+1`，同事务插prepared并从durable rows重算Run completeness。Root真实PG 56项及完整database 267项已通过；真实network lost-COMMIT-ACK、完整not-dispatched知识正反控、同identity并发/race输家零副作用与timeout全面恢复证据仍待验。
 

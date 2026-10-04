@@ -1,4 +1,14 @@
-## R189-AGENT-A1-PREPARE：持久事务已验，运行接线未完成（2026-10-04）
+## R192-AGENT-A2：内部授权/dispatch repository 已验，运行与收费链未接（2026-10-04）
+
+当前工作树已实现Agent内部`prepare`、authorization begin/grant与唯一dispatch CAS，并完成234行纯artifact模块/675行PostgreSQL adapter职责拆分。Root真实PostgreSQL定点70项通过、0失败、6.93s；完整database 281通过、0 skip、32.90s；完整工程自然exit0（2178通过、379资源deselected，lock/frozen-sync/Ruff 278 files/Pyright/contract/wheel/sdist均0，112.54s），独立审查0 P0/P1。自有临时数据库回收为absent且验证前后source hash一致；其中包含canonical corruption RED→GREEN、真实双连接owned lock chain、恰一dispatch authority、authority/ref/digest/terminal/timeout零写及Run completeness读回。该证据只绑定当前model/repository/integration切片，不代表provider或用户收费链。
+
+纯canonical JSON、attempt artifact binding及冻结recipe/peer-path校验现由`model/call_artifacts.py`拥有；SQL、锁、Row与Run projection留在adapter，无mixin、通用UoW或第二repository框架。上述最终门只验收内部repository片，矩阵仍非穷举。
+
+明确OPEN：runtime caller与provider外发、evidence append/finalizer、取消/失败封存、真实lost-COMMIT-ACK恢复、Billing Admission消费、evidence读取/ACK、预占/actual结算/释放与端到端用户费用。unknown不猜零；失败/取消的已核实实际用量政策仍由Billing owner实施。R188/R189下节是schema/prepare历史证据，不覆盖本节当前态。
+
+---
+
+## 历史基线：R189-AGENT-A1-PREPARE（2026-10-04）
 
 R189 prepare source/tests已进入当前工作树候选：仅实现trusted durable Run/recipe scope下的prepared insert、ordinal、immutable replay和同事务Run completeness重算。Root真实PG 56项及完整database 267项已通过。完整工程首轮2174通过、1失败、365 deselected：新repository导入`typing.cast`触发架构门，build未执行。移除逃逸后Root18098同完整门exit0：2175通过、365资源deselected（非业务通过），lock/frozen-sync/ruff/pyright/contract及wheel/sdist build均0，112.85s。最终a9c57172源码Root24104定点真实PG56通过5.49s；此前全database267通过绑定9df候选，不冒最新267重跑。自有数据库已回收，源码哈希前后相同；真实provider/费用链不在此证据内。
 

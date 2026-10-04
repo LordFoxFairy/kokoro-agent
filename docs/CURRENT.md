@@ -1,3 +1,13 @@
+## R195-A4-D0a 当前：逐物理模型调用接线设计已收敛，源码未实施（2026-10-04）
+
+Agent main `8c08ea4` 已提交A1–A3内部持久边界；Root实际303真PG与2178默认工程门通过。真实运行仍由`AgentFactory.build_deep_agent`把裸`BaseChatModel`交DeepAgents，A1–A3 repository没有runtime caller，故真实provider/Billing/收费链继续OPEN。
+
+下一最小目标是在每次main/subagent/handoff/tool-loop的真实model invocation与provider网络之间装配唯一adapter：绑定locked Run、System route、static recipe/peer path，依次执行prepare、Billing owner授权观察、唯一dispatch CAS与strict evidence append；仅`newly_started=true`外发，SDK隐藏retry、pending/unknown/timeout及重放均不得产生第二次网络效果。失败/取消按已批准政策仅结算已核实actual并释放其余预占；unknown不猜零。
+
+本轮只有四D0，未改source/test/schema/contract/generated/lock，未运行新验证。Billing experimental target尚未发布/部署/pin，且authenticated evidence read/ACK仍缺，因此本轮不创建client/endpoint或宣称真实收费。Agent evidence read边界属下一设计卡；支付渠道最后。
+
+---
+
 ## R195-A3b 当前：终态原子封存已实现并通过限定 owner 门（2026-10-04）
 
 本片基线 main `c3bf769`；Root 仅验收四个现 production 文件与一个现数据库 integration 文件：纯 strict builder/冻结事实校验、同cursor Evidence primitive、原Run finalizer接线及其显式runtime resource闭包。现终态事务在原Execution/Cancel/Quarantine/delivery-readiness门后锁Run→按attempt_id锁全部Attempts；验证immutable sealed heads，开放prepared/pending/authorized保存not_dispatched unresolved closure，dispatch_started保存unknown unresolved closure；唯一completeness重算与原interaction/Chat/outbox/control/Run终态同事务提交。未知不猜零、原预算usage不反填strict费用证据。

@@ -1,3 +1,29 @@
+## R195-A4-D0a：逐物理模型调用运行 seam（2026-10-04；仅设计）
+
+**当前态。** main `8c08ea4` 已实现 A1 prepare、A2 authorization/唯一 dispatch CAS、A3 strict evidence append及终态原子closure，并通过Root限定303真PG与2178默认工程门；生产运行仍把`model.factory.make_chat_model`返回的裸`BaseChatModel`直接交给`deepagents.create_deep_agent`，`run_agent.invoke_once`只在整个native invocation外聚合旧Run预算usage。`WorkerDependencies`未装配`ModelCallRepository`或Billing client，A1–A3没有runtime caller，因此尚无逐物理provider attempt、真实Billing admission、strict provider observation或收费闭环。
+
+**目标。** 下一实现片在每次真实chat-model invocation与provider网络之间放置唯一package-internal adapter：从受信Run/lease、System `ResolvedModel`、冻结static recipe及当前peer path构造A1 planned/attempt事实；按`prepare → begin_authorization → owner observation/grant → start_dispatch`推进，只有`newly_started=true`允许一次外发；response/error/cancel转换为完整usage/v1 canonical evidence后走A3 append。`false`、pending、unknown、timeout、失权及commit结果未知均不得重发。SDK隐藏retry必须关闭；若未来允许retry，每次实际网络attempt必须获得新attempt identity与独立Billing admission，不能躲在一次SDK调用内。
+
+取消或失败只结算已核实的实际消耗并释放其余预占；unknown不猜零、不自动整笔释放。该政策已批准，不再询问。Agent只产出执行/usage事实，不计算金额；Billing仍唯一拥有1.4倍可调销售规则、单位换算、舍入、预占、capture/release及reconciliation。当前Billing `3.0.0-experimental.1`只可作为D0目标引用，尚未发布/部署/pin，故本片不新增client/generated/endpoint或启用真实授权。Agent-owned authenticated evidence read边界是下一独立设计卡，不在A4-D0a预设API。
+
+### §8 放置与实施门
+
+| 项 | 裁决 |
+| --- | --- |
+| Owner | `kokoro-agent` model-call runtime为唯一writer；System拥有planned route，Billing拥有授权/金额/结算。 |
+| 当前事实 | provider链为`SupervisorExecutionMixin._consume_request/_start_run`→`AgentFactory.build/_build_feature/build_deep_agent`→System `ModelResolver.resolve`→`model_from_route/make_chat_model`→`deepagents.create_deep_agent`→`invoke_once`/`astream_events`→SDK。A1–A3 repository仅被测试调用。 |
+| 目标职责 | package-internal per-invocation adapter在真实provider I/O相邻处执行持久gate与strict observation；不成为第二Agent runtime，不发布wire API。 |
+| 位置比较 | **采用**在`model/`新增窄`call_runtime.py`目标，经`agent_factory.py`把底层`BaseChatModel`与受信Run/route/peer context装配后交DeepAgents；这样覆盖main/subagent/handoff/tool-loop每次调用且许可与网络相邻。**淘汰**在`run_agent.invoke_once`或`pump_run`按整Run包裹：看不到内部多次调用/SDK retry，无法逐attempt gate。**不单独采用**callback-only：未证明callback在所有stream/error/cancel/retry路径都能阻止网络，只可作为adapter内部观测输入。新文件仍须tests-first卡后才能创建。 |
+| 粒度 | adapter只编排现A1–A3 command与provider调用；canonical artifact留`call_artifacts/call_evidence`，SQL留Postgres adapters，provider构造留`model/factory.py`，worker只装配依赖。禁止万能UoW/facade。 |
+| 依赖 | model runtime可依赖model command/Protocol、usage codec及LangChain model协议；通过注入端口调用repository/未来正式Billing consumer。禁止import sibling Billing源码/SQL/DTO、环境读取、金额算法或BFF类型。 |
+| 数据/API | 本目标无DDL/HTTP/generated变化。System route与recipe/peer path逐项绑定；Billing request/admission refs保持opaque。strict evidence仍usage/v1 1.0.0。 |
+| 删除项 | 本片不删旧`RunUsageSegment`预算职责；逐attempt producer、公开投影与恢复全验后才移除其任何收费真源误用。不得保留裸provider旁路或双runtime；切换条件在后继实现卡一次关闭。 |
+| 验证 | tests-first须证明main/subagent多调用逐attempt、first permit恰一外发、false/lost-commit-ACK零重发、stream成功/失败/取消/unknown canonical evidence、terminal closure与刷新恢复；最终由Root用正式System/Billing HTTP、共享PG/Redis、真实provider及原浏览器验收。repository unit/mock不冒端到端。 |
+
+**精确后继候选写集（尚未授权）：** 新`src/kokoro_agent/model/call_runtime.py`；现`model/factory.py`、`agent_factory.py`、`worker/dependencies.py`、`worker/main.py`；现model-call integration及factory/native runtime测试。A1–A3 SQL/model默认冻结。Billing正式artifact发布后另授generated consumer/client精确路径；authenticated evidence read另卡。真正阻断仅是跨owner消费/发布与真实收费验收，不阻挡本D0、provider seam tests-first和strict observation设计。
+
+---
+
 ## R192-AGENT-A2：内部授权、唯一 dispatch 与 artifact 职责已验（2026-10-04）
 
 当前内部 operation 与artifact职责拆分已由Root最终验证：定点真实PostgreSQL 70 passed / 0 failed（6.93s），完整database **281 passed / 0 skipped（32.90s）**；完整工程自然exit 0（2178 passed、379资源deselected，lock/frozen-sync/Ruff 278 files/Pyright/contract/build均0，112.54s）。`model/call_artifacts.py`为234行纯模块，PostgreSQL adapter为675行。`prepare`、`begin_authorization`、`grant_authorization` 与 `start_dispatch` 均按固定 Run→Attempt 锁序、DB clock lease authority、canonical bytes/digest 和 immutable replay 工作；只有首次合法 `authorized -> dispatch_started` 返回 `newly_started=true`，精确及 advanced replay 保留原 DB 时间并返回 false。该证据只覆盖本地 repository 状态切片，不包含 provider 外发。

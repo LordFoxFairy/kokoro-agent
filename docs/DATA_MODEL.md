@@ -1,3 +1,13 @@
+## R195-A4-D0a：runtime接线不改变canonical SQL（2026-10-04）
+
+A4-D0a不增加表、列、索引、FK、outbox或Billing事实。目标runtime只使用现`kokoro_agent_model_call_attempt`、`kokoro_agent_model_usage_evidence`及Run completeness：每次物理模型调用先沿A1分配attempt/ordinal并冻结System route＋recipe/peer binding；授权与dispatch沿A2现状态机；provider observation沿A3 append。只有首次`newly_started=true`可外发，重放/未知提交不创建第二provider效果。
+
+旧`kokoro_agent_run_usage_segment`继续只服务预算和现公开Run投影，不是收费真源，不得用Run级聚合补造逐attempt evidence。失败/取消保存已核实actual；无法核实则unknown，绝不存known-zero替代。terminal closure继续将未外发attempt封存not_dispatched、已dispatch无可信观察封存unknown；它不替代runtime producer或Billing settlement。
+
+Billing Admission、金额、预占、capture/release、1.4倍可调销售规则、单位换算/舍入和reconciliation不落Agent SQL。当前无usage delivery outbox/ACK或authenticated evidence read数据边界；这些须各自设计门后实施。本片无retention/GC删除决定。
+
+---
+
 ## R192-AGENT-A2：既有表上的内部 transition，无DDL变化（2026-10-04）
 
 A2使用R188已发布的`kokoro_agent_model_call_attempt`与Run completeness列，没有新增表、列、索引、FK、outbox或Billing事实。Root隔离真实PostgreSQL定点 **70 passed / 0 failed**、完整database **281 passed / 0 skipped** 覆盖prepare、authorization begin/grant、唯一dispatch CAS、两连接竞争、authority/timeout回滚、canonical corruption拒绝及Run projection读回。

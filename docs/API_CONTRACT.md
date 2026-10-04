@@ -1,3 +1,13 @@
+## R195-A4-D0a：运行内接口与跨owner边界（2026-10-04；机器契约不变）
+
+A4-D0a不新增或修改HTTP、Redis、AG-UI、usage/v1、generated或Billing契约。目标只是Agent package-internal逐物理调用编排：每个真实model invocation必须先创建/重放A1 attempt，以Billing owner的opaque request/admission observation推进A2；仅`start_dispatch`返回`newly_started=true`授予本次一次provider外发，`false`只表示已存在dispatch事实且严禁再次外发，不证明provider结果。随后调用方提交完整usage/v1 canonical evidence给现A3接口。
+
+System `ResolvedModel`仍是唯一planned route来源；Agent把其model/provider/revision/digest/generation及冻结recipe peer path与locked Run identity绑定，不接受provider SDK或请求body自报替换。Billing target `createAdmission/getAdmission`、authorization/dispatch状态及ExecutionEvent引用只作为未发布目标依赖；Agent不复制其DTO、错误或金额字段，也不从`3.0.0-experimental.1`生成client。正式消费必须等Billing发布immutable tuple后pin并生成只读consumer。
+
+失败/取消只结算已核实的实际消耗并释放其余预占；unknown保持待核，不补零、不自动整笔释放。Agent evidence表达事实，Billing执行金额政策。SDK隐藏retry禁止；实际retry必须使用新attempt/admission。Billing ACK丢失按原identity/GET恢复，dispatch commit未知只读确认且不重发，evidence replay保持原event/revision/bytes/digest。Agent-owned authenticated evidence read seam与Billing ACK网络接线属下一卡，本节不预设endpoint。
+
+---
+
 ## R192-AGENT-A2：仅内部 operation，无机器契约变化（2026-10-04）
 
 当前内部片已由Root完整database 281项、完整工程2178项及独立审查0 P0/P1限定验证。已实现的`prepare/begin_authorization/grant_authorization/start_dispatch`是Agent进程内不可变 command/receipt 与 repository Protocol，不是HTTP、RPC、event或Billing wire。Root隔离真实PostgreSQL 70项通过证明内部authority、canonical observation、一次性dispatch permit与只读重放；它不发布新endpoint、错误码、schema版本、generated client或跨仓ACK。

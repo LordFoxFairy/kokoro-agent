@@ -1,6 +1,10 @@
+R189最新Root收据：完整工程18098 exit0（2175pass/365资源deselected、wheel/sdist及全部纯门0），最终a9c57172 prepare真PG56pass5.49s；全database267属于此前9df候选。仅prepare持久边界，runtime/provider/Billing/真实lostACK及当前列明P2门仍OPEN。
+
 ## R188-AGENT-A1-SCHEMA：内部数据合同实施候选（2026-10-04）
 
-当前canonical PostgreSQL数据合同已通过Root真实PG定点58项及完整database 254项；没有repository/runtime producer。A1不修改HTTP5/OpenAPI、RunRequest、BFF/AG-UI或Billing operation，不新增跨仓RPC。Billing v2 2.0.2仍是未部署experimental Run/invocation target，Agent/BFF无consumer pin；A1不复制其request/response或generic service receipt。
+> R189内部prepare候选不新增HTTP/跨仓contract。`PreparedModelCall`只是immutable creation receipt：`initial_status=prepared`/`initial_authorization_state=not_requested`是创建事实，不是current-state声明；合法推进后exact replay仅核不变binding并零写，不比较或回滚当前authorization/status/latest。
+
+当前canonical PostgreSQL数据合同已通过Root真实PG定点58项；prepare repository行为56项及完整database 267项通过，但没有runtime producer。完整工程门当前2174通过、1个architecture失败、365 deselected，失败为`typing.cast`逃逸且pytest失败后build未执行；当前候选已改为递归`JsonValue`校验，待Root完整复验。A1不修改HTTP5/OpenAPI、RunRequest、BFF/AG-UI或Billing operation，不新增跨仓RPC。Billing v2 2.0.2仍是未部署experimental Run/invocation target，Agent/BFF无consumer pin；A1不复制其request/response或generic service receipt。
 
 唯一机器语义来自已发布`contract/usage/v1` 1.0.0：小写UUID event/call/attempt；正ordinal/revision/lease generation；revision1无predecessor、后继精确引用前event/digest；同identity+revision+bytes+digest只读幂等，漂移冲突。authorization闭集`not_requested|requested_unknown|denied|granted`；只有granted的authorized attempt可dispatch。execution闭集`not_dispatched|completed|failed|cancelled|unknown`；usage为normalized或unresolved，totals和classification各自保留unknown。
 

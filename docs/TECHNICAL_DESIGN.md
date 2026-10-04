@@ -1,8 +1,12 @@
+R189最新Root收据：完整工程18098 exit0（2175pass/365资源deselected、wheel/sdist及全部纯门0），最终a9c57172 prepare真PG56pass5.49s；全database267属于此前9df候选。仅prepare持久边界，runtime/provider/Billing/真实lostACK及当前列明P2门仍OPEN。
+
 ## R188-AGENT-A1-SCHEMA：canonical schema 实施候选（2026-10-04）
+
+> R189 prepare实现已由Root在隔离真实PostgreSQL中验证56项，同轮完整database 267项通过：内部immutable call values/Protocol与PostgreSQL prepare adapter从锁定RunRequest复制可信身份/会话/输入摘要并核冻结recipe peer路径，不接受自报身份或授权。完整工程门当前为2174通过、1失败、365 deselected；唯一失败是新repository的`typing.cast`触发architecture门，随后build未执行。本次候选已用递归`JsonValue`校验移除该逃逸，正等待Root复跑完整门。真实lost-COMMIT-ACK、完整not-dispatched知识正反控、同identity并发/race输家零副作用及timeout全面恢复证据仍OPEN；尚无authorization/dispatch/evidence/finalizer/runtime wiring。
 
 ### 当前态与批准目标态
 
-当前Schema切片已按R2写入canonical DDL、catalog verifier与真实PG测试候选，Root真实fresh/漂移定点58通过、完整database 254通过；repository/runtime producer仍不存在。当前 Agent `main` 基线 `2d2ad9bb4d261bee6c71e35f0d68f419a785bf9c`：`kokoro_agent_run` 已有 tenant/lease/terminal 与三个旧usage总量；`kokoro_agent_run_usage_segment` 只按 `(run_id, lease_generation)`保存执行预算段。已发布`contract/usage/v1` 1.0.0精确定义event/call/attempt/revision/digest、authorization/execution observation及usage知识，但运行时尚无PG producer journal。
+当前Schema切片已按R2写入canonical DDL、catalog verifier并由Root真实fresh/漂移定点58通过；prepare repository已实现且真实PG 56项、全database 267项通过，runtime producer仍不存在。当前 Agent `main` 基线 `2d2ad9bb4d261bee6c71e35f0d68f419a785bf9c`：`kokoro_agent_run` 已有 tenant/lease/terminal 与三个旧usage总量；`kokoro_agent_run_usage_segment` 只按 `(run_id, lease_generation)`保存执行预算段。已发布`contract/usage/v1` 1.0.0精确定义event/call/attempt/revision/digest、authorization/execution observation及usage知识，但运行时尚无PG producer journal。
 
 Root批准A1仅含Agent attempt journal、immutable strict evidence revisions、Run completeness；不含Billing client、网络sender、外部ACK、usage outbox、价格或金额。A1只保存usage artifact已有authorization observation，不复制或解释Billing DTO。
 
@@ -65,7 +69,7 @@ Run：0 attempts=`none`；任一open/unknown=`unknown`；否则至少一partial=
 
 ### 阶段门
 
-候选实施仅两个新生产文件加现schema/facade/finalizer；先tests-only真实PG RED，Root另授后才写测试/DDL/source。本schema切片已经完成DDL/catalog与对应真实PG门；后继repository实施尚未获源码放行，须另以真实业务RED覆盖两连接ordinal、八态全部合法/非法CAS、unsealed/reconcile索引、重放漂移、旧fence、cancel、closure稳定identity/time/bytes、unknown commit重查、codec失败全回滚、terminal重放及completeness全真值。A1即使未来通过也不证明Billing、provider、BFF/Web或真实收费链。
+当前prepare实施仅两个新生产文件及现真实PG测试：schema DDL/catalog已完成，prepare/ordinal/可信binding/immutable replay/同事务completeness已由Root真实PG 56项及全database 267项验证。authorization、dispatch、evidence append、cancel、closure/finalizer、真实lost-COMMIT-ACK与runtime wiring仍须分别以真实业务RED授权；完整工程门还须Root复跑当前architecture修复并执行build。A1局部通过不证明Billing、provider、BFF/Web或真实收费链。
 
 ---
 

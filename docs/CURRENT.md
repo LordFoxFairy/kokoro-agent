@@ -1,10 +1,14 @@
-## R188-AGENT-A1-SCHEMA：持久化边界已由Root验证，运行接线未完成（2026-10-04）
+## R189-AGENT-A1-PREPARE：持久事务已验，运行接线未完成（2026-10-04）
+
+R189 prepare source/tests已进入当前工作树候选：仅实现trusted durable Run/recipe scope下的prepared insert、ordinal、immutable replay和同事务Run completeness重算。Root真实PG 56项及完整database 267项已通过。完整工程首轮2174通过、1失败、365 deselected：新repository导入`typing.cast`触发架构门，build未执行。移除逃逸后Root18098同完整门exit0：2175通过、365资源deselected（非业务通过），lock/frozen-sync/ruff/pyright/contract及wheel/sdist build均0，112.85s。最终a9c57172源码Root24104定点真实PG56通过5.49s；此前全database267通过绑定9df候选，不冒最新267重跑。自有数据库已回收，源码哈希前后相同；真实provider/费用链不在此证据内。
+
+真实lost-COMMIT-ACK、完整not-dispatched知识正反控、同identity并发/race输家零副作用、timeout全面恢复及runtime producer/provider/Billing/E2E仍OPEN；本片不构成运行账单或收费主链完成。
 
 基线Agent main `2d2ad9bb4d261bee6c71e35f0d68f419a785bf9c` 加已审四D0 R2与tests-only RED。Root已确认原RED为两项schema缺失失败、一项现Run正控通过。
 
 本片仅在唯一`database/schema.sql`实现两张Agent-owned表、八态CHECK/唯一键/真实索引与Run completeness；`infrastructure/schema.py`同步正式AGENT_TABLES、精确列/constraint inventory/index catalog门；三个获准测试文件覆盖fresh、状态/字节/digest/revision/time/count及catalog drift。四D0仅更新顶部当前态。没有migration/FK/第二schema、Billing/provider/HTTP/lock/generated变更。
 
-Root已实际复验：真实PostgreSQL定点58通过，全database 254通过/0失败（29.64s），自有临时数据库已回收、源码哈希前后相同。完整默认工程门2175通过、352资源类取消选择（非跳过验收），ruff格式275文件/检查、pyright、wheel/sdist构建均退出0；uv lock --check、uv sync --frozen与contract-check也实际退出0。资源证据见Root docs/progress.md R188及manifest `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r188-agent-schema-l1q_ndx5/manifest.json`。只验收本持久边界，不视为完整业务系统验收。evidence同表CHECK已与现usage/v1 codec对齐：not_dispatched+normalized、normalized known+complete、normalized unknown+complete均拒绝，normalized unknown+unknown保持合法。repository/model/runtime producer仍不存在，因此prepare/fence/finalizer的业务CAS尚未执行；Schema GREEN也不代表Billing、provider、正式收费或产品E2E完成。
+Root已实际复验：真实PostgreSQL定点58通过，全database 254通过/0失败（29.64s），自有临时数据库已回收、源码哈希前后相同。完整默认工程门2175通过、352资源类取消选择（非跳过验收），ruff格式275文件/检查、pyright、wheel/sdist构建均退出0；uv lock --check、uv sync --frozen与contract-check也实际退出0。资源证据见Root docs/progress.md R188及manifest `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r188-agent-schema-l1q_ndx5/manifest.json`。只验收本持久边界，不视为完整业务系统验收。evidence同表CHECK已与现usage/v1 codec对齐：not_dispatched+normalized、normalized known+complete、normalized unknown+complete均拒绝，normalized unknown+unknown保持合法。该R188证据当时尚无repository/model/runtime producer；现R189仅新增prepare repository并有独立56项真实PG证据，authorization/fence transition/finalizer及runtime producer仍未执行。Schema或prepare GREEN也不代表Billing、provider、正式收费或产品E2E完成。
 
 ---
 

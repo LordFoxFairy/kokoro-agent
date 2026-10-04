@@ -1,6 +1,10 @@
+R189最新Root收据：完整工程18098 exit0（2175pass/365资源deselected、wheel/sdist及全部纯门0），最终a9c57172 prepare真PG56pass5.49s；全database267属于此前9df候选。仅prepare持久边界，runtime/provider/Billing/真实lostACK及当前列明P2门仍OPEN。
+
 ## R188-AGENT-A1-SCHEMA：attempt/evidence canonical SQL实施候选（2026-10-04）
 
-当前`kokoro_agent_run`已有run/tenant/lease/terminal与旧usage totals；`kokoro_agent_run_usage_segment`服务预算。A1现已在唯一canonical DDL加入两张Agent表与Run completeness，并同步catalog verifier/真实PG测试候选；等待Root fresh/漂移验收。不新增outbox/Billing表/FK，且尚无repository/runtime writer。
+> R189 prepare adapter不改schema：Run锁后用DB clock重验tenant/owner/generation/expiry/terminal，从持久RunRequest生成identity/input binding，核冻结recipe peer scope，分配`MAX(ordinal)+1`，同事务插prepared并从durable rows重算Run completeness。Root真实PG 56项及完整database 267项已通过；真实network lost-COMMIT-ACK、完整not-dispatched知识正反控、同identity并发/race输家零副作用与timeout全面恢复证据仍待验。
+
+当前`kokoro_agent_run`已有run/tenant/lease/terminal与旧usage totals；`kokoro_agent_run_usage_segment`服务预算。A1已在唯一canonical DDL加入两张Agent表与Run completeness，并同步catalog verifier；prepare repository writer已实现并经上述真实PG验证，authorization/evidence/finalizer及runtime writer仍不存在。不新增outbox/Billing表/FK。
 
 ### `kokoro_agent_model_call_attempt`
 

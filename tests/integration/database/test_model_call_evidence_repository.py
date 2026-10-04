@@ -1,30 +1,60 @@
-"""Real-PostgreSQL schema gate for the approved A1 persistence boundary.
+"""Real-PostgreSQL gates for the approved A1 schema and prepare repository.
 
-This first tests-only slice intentionally binds only to the formal fresh installer
-and ``information_schema``.  The production repository seam does not exist yet,
-so behavioral cases are not represented by a stub, fake, import failure, skip, or
-xfail.  After the canonical tables and repository port are authorized, this same
-module will bind prepare/ordinal, authorization/dispatch CAS, immutable evidence,
-cancel, stale-fence, and terminal-finalizer cases to the real adapter, using two
-connections where concurrency is material.
+The production prepare seam binds trusted durable Run/recipe facts to the
+canonical attempt table and covers immutable replay, ordinal allocation, lease
+authority, peer scope, and same-transaction Run completeness. Root's isolated
+PostgreSQL run passed all 56 cases here; the full database gate passed 267 cases.
+Root remains the only runner and owner of PostgreSQL resources.
 
-The schema assertions now verify the implemented canonical target. They remain
-schema evidence, not runtime repository or provider evidence.
-The shared fixture installs the exact canonical Agent schema in a unique namespace
-and owns its cleanup; Root remains the only runner of the real PostgreSQL gate.
+Authorization/dispatch/evidence/finalizer and runtime-provider wiring are not
+implemented by this slice. Real lost-COMMIT-ACK recovery, the complete
+not-dispatched knowledge matrix, same-identity race-loser side effects, and
+comprehensive timeout recovery remain open rather than represented by mocks,
+skips, or import failures.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Collection
 from datetime import UTC, datetime
 from uuid import uuid4
+import hashlib
+import json
 
 import pytest
 from psycopg.errors import CheckViolation, UniqueViolation
 
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql
+from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
+from kokoro_agent.infrastructure.postgres_model_call_repository import (
+    PostgresModelCallRepository,
+)
+from kokoro_agent.model.call_models import (
+    ModelCallAuthorityLost,
+    ModelCallIdentityConflict,
+    ModelCallInputInvalid,
+    ModelCallOrdinalExhausted,
+    PrepareModelCall,
+)
+from kokoro_agent.protocol.control import (
+    ExecutionIdentity,
+    IdentityRef,
+    RunInput,
+    RunRequest,
+)
+from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.agents.definition import Agent
+from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
+from kokoro_agent.config import AppConfig
+from kokoro_agent.execution.runtime_profile_plan import (
+    RuntimeAssemblyPolicy,
+    prepare_feature,
+)
+from kokoro_agent.execution.runtime_profile_sources import production_manifest
+from kokoro_agent.features.definition import Feature
+from kokoro_agent.tools.toolbox import build_toolbox
 
 
 _TARGET_TABLES = {
@@ -51,6 +81,102 @@ _CURRENT_RUN_CONTROL_COLUMNS = {
 }
 _DIGEST = "a" * 64
 _OTHER_DIGEST = "b" * 64
+
+
+def _prepare_values() -> tuple[RunRequest, StaticRecipeBinding, PlannedBinding]:
+    request = RunRequest(
+        kind="run.request",
+        run_id="run-prepare-a1",
+        session_id="session-a1",
+        feature_key="chat",
+        selected_skill_source_refs=(),
+        execution_identity=ExecutionIdentity(
+            tenant_ref="tenant-a1",
+            actor=IdentityRef(kind="user", opaque_ref="actor-a1"),
+            subject=IdentityRef(kind="user", opaque_ref="subject-a1"),
+            identity_assertion_ref="assertion-a1",
+        ),
+        input=RunInput(message_id="message-a1", content="hello"),
+    )
+    recipe_bytes = json.dumps(
+        {
+            "domain_tag": "kokoro-agent:assembly-recipe:1",
+            "feature": {
+                "key": "chat",
+                "entry_agent": "assistant",
+                "handoffs": [],
+                "agents": [{"key": "assistant", "subagents": []}],
+            },
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    recipe = StaticRecipeBinding(
+        canonical_bytes=recipe_bytes,
+        fingerprint=hashlib.sha256(recipe_bytes).hexdigest(),
+    )
+    planned = PlannedBinding(
+        model="model-a1",
+        provider="provider-a1",
+        revision_id="revision-a1",
+        provider_model_name="provider-model-a1",
+        gateway_model_name="gateway-a1",
+        feature_key="chat",
+        revision="1",
+        generation="1",
+        tenant_generation="1",
+        digest=_DIGEST,
+        label=None,
+    )
+    return request, recipe, planned
+
+
+def _real_recipe(
+    feature: Feature, *, custom_subagents: str | None = None
+) -> StaticRecipeBinding:
+    config = AppConfig.from_env({})
+    plan = prepare_feature(
+        feature,
+        runtime_policy=RuntimeAssemblyPolicy.from_settings(
+            run_token_budget=17,
+            recursion_limit=43,
+            model=config.model,
+            sandbox=config.sandbox,
+        ),
+        manifest=production_manifest(),
+        toolbox=build_toolbox(fetch_allow_private=False, search=None),
+        subagent_catalog=build_subagent_catalog(custom_subagents),
+        delivery_available=False,
+    )
+    return StaticRecipeBinding(
+        canonical_bytes=plan.recipe_bytes, fingerprint=plan.fingerprint
+    )
+
+
+async def _insert_leased_prepare_run(
+    database_url: str,
+    schema: str,
+    request: RunRequest,
+    recipe: StaticRecipeBinding,
+) -> None:
+    async with connect_pg(database_url) as connection, connection.cursor() as cursor:
+        await execute_sql(
+            cursor,
+            """INSERT INTO {} (
+                run_id,tenant_id,request_json,assembly_recipe_bytes,
+                assembly_recipe_fingerprint,owner,lease_generation,lease_expires_at
+            ) VALUES (%s,%s,%s,%s,%s,'worker-a1',1,
+                      clock_timestamp() + interval '5 minutes')""".format(
+                qualified(schema, "kokoro_agent_run")
+            ),
+            (
+                request.run_id,
+                request.execution_identity.tenant_ref,
+                request.model_dump_json(),
+                recipe.canonical_bytes,
+                recipe.fingerprint,
+            ),
+        )
 
 
 async def _base_tables(database_url: str, schema: str) -> set[str]:
@@ -120,6 +246,432 @@ async def test_fresh_install_preserves_existing_run_fence_and_budget_columns(
         "fresh installer did not provide the existing Run authority/budget baseline: "
         f"{sorted(_missing(_CURRENT_RUN_CONTROL_COLUMNS, columns))}"
     )
+
+
+async def test_prepare_freezes_trusted_identity_and_exact_replay(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    command = PrepareModelCall(
+        request=request,
+        lease=LeaseFence(owner="worker-a1", generation=1),
+        call_id=str(uuid4()),
+        attempt_id=str(uuid4()),
+        planned=planned,
+        peer_path=("assistant",),
+        recipe=recipe,
+    )
+    created = await repository.prepare(command)
+    replayed = await repository.prepare(command)
+    assert created.attempt_ordinal == 1
+    assert replayed == created.model_copy(update={"replayed": True})
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """SELECT model_attempt_count,model_dispatched_attempt_count,
+                      model_sealed_attempt_count,model_unknown_attempt_count,
+                      model_usage_completeness FROM {} WHERE run_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_run")
+            ),
+            (request.run_id,),
+        )
+        assert await cursor.fetchone() == {
+            "model_attempt_count": 1,
+            "model_dispatched_attempt_count": 0,
+            "model_sealed_attempt_count": 0,
+            "model_unknown_attempt_count": 0,
+            "model_usage_completeness": "unknown",
+        }
+        await execute_sql(
+            cursor,
+            """UPDATE {} SET authorization_bytes=%s,authorization_digest=%s,
+                      authorization_state='granted',status='authorized'
+               WHERE attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (b'{"state":"granted"}', _DIGEST, command.attempt_id),
+        )
+    advanced_replay = await repository.prepare(command)
+    assert advanced_replay == created.model_copy(update={"replayed": True})
+
+
+async def test_prepare_allocates_contiguous_ordinals(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    call_id = str(uuid4())
+    commands = [
+        PrepareModelCall(
+            request=request,
+            lease=LeaseFence(owner="worker-a1", generation=1),
+            call_id=call_id,
+            attempt_id=str(uuid4()),
+            planned=planned,
+            peer_path=("assistant",),
+            recipe=recipe,
+        )
+        for _ in range(2)
+    ]
+    receipts = await asyncio.gather(
+        *(repository.prepare(command) for command in commands)
+    )
+    assert {item.attempt_id for item in receipts} == {
+        command.attempt_id for command in commands
+    }
+    assert sorted(item.attempt_ordinal for item in receipts) == [1, 2]
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """SELECT attempt_id,call_id,attempt_ordinal FROM {}
+               WHERE run_id=%s AND call_id=%s ORDER BY attempt_ordinal""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (request.run_id, call_id),
+        )
+        rows = await cursor.fetchall()
+        assert [
+            (str(row["attempt_id"]), str(row["call_id"]), row["attempt_ordinal"])
+            for row in rows
+        ] == sorted(
+            (
+                (item.attempt_id, item.call_id, item.attempt_ordinal)
+                for item in receipts
+            ),
+            key=lambda item: item[2],
+        )
+        await execute_sql(
+            cursor,
+            """SELECT model_attempt_count,model_dispatched_attempt_count,
+                      model_sealed_attempt_count,model_unknown_attempt_count,
+                      model_usage_completeness FROM {} WHERE run_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_run")
+            ),
+            (request.run_id,),
+        )
+        run = await cursor.fetchone()
+        assert run == {
+            "model_attempt_count": 2,
+            "model_dispatched_attempt_count": 0,
+            "model_sealed_attempt_count": 0,
+            "model_unknown_attempt_count": 0,
+            "model_usage_completeness": "unknown",
+        }
+
+
+async def test_prepare_rejects_peer_outside_locked_recipe(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    with pytest.raises(ModelCallInputInvalid):
+        await repository.prepare(
+            PrepareModelCall(
+                request=request,
+                lease=LeaseFence(owner="worker-a1", generation=1),
+                call_id=str(uuid4()),
+                attempt_id=str(uuid4()),
+                planned=planned,
+                peer_path=("not-declared",),
+                recipe=recipe,
+            )
+        )
+
+
+@pytest.mark.parametrize("kind", ["handoff", "subagent"])
+async def test_prepare_accepts_scope_from_real_runtime_recipe(
+    run_chat_database_url: str, run_chat_schema: str, kind: str
+) -> None:
+    request, _, planned = _prepare_values()
+    if kind == "handoff":
+        recipe = _real_recipe(
+            Feature(
+                key="chat",
+                agents=(
+                    Agent(key="assistant", prompt="a"),
+                    Agent(key="helper", prompt="h"),
+                ),
+                entry_agent="assistant",
+                handoffs=(("assistant", "helper"),),
+            )
+        )
+    else:
+        recipe = _real_recipe(
+            Feature(
+                key="chat",
+                agents=(Agent(key="assistant", prompt="a", subagents=("helper",)),),
+                entry_agent="assistant",
+            ),
+            custom_subagents='[{"name":"helper","description":"helper","system_prompt":"help"}]',
+        )
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    receipt = await PostgresModelCallRepository(
+        run_chat_database_url, run_chat_schema
+    ).prepare(
+        PrepareModelCall(
+            request=request,
+            lease=LeaseFence(owner="worker-a1", generation=1),
+            call_id=str(uuid4()),
+            attempt_id=str(uuid4()),
+            planned=planned,
+            peer_path=("assistant", "helper"),
+            recipe=recipe,
+        )
+    )
+    assert receipt.attempt_ordinal == 1
+
+
+async def test_prepare_same_attempt_across_runs_is_typed_conflict(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    other = request.model_copy(update={"run_id": "run-prepare-b1"})
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, other, recipe
+    )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    attempt_id = str(uuid4())
+    results = await asyncio.gather(
+        *[
+            repository.prepare(
+                PrepareModelCall(
+                    request=item,
+                    lease=LeaseFence(owner="worker-a1", generation=1),
+                    call_id=str(uuid4()),
+                    attempt_id=attempt_id,
+                    planned=planned,
+                    peer_path=("assistant",),
+                    recipe=recipe,
+                )
+            )
+            for item in (request, other)
+        ],
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(item, BaseException) for item in results) == 1
+    assert sum(isinstance(item, ModelCallIdentityConflict) for item in results) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "owner='stale-worker'",
+        "lease_generation=2",
+        "lease_expires_at=clock_timestamp() - interval '1 second'",
+        "terminal=TRUE,terminal_at=clock_timestamp(),interaction_phase='terminal'",
+    ],
+)
+async def test_prepare_stale_or_terminal_authority_writes_nothing(
+    run_chat_database_url: str, run_chat_schema: str, mutation: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "UPDATE {} SET {} WHERE run_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_run"), mutation
+            ),
+            (request.run_id,),
+        )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    with pytest.raises(ModelCallAuthorityLost):
+        await repository.prepare(
+            PrepareModelCall(
+                request=request,
+                lease=LeaseFence(owner="worker-a1", generation=1),
+                call_id=str(uuid4()),
+                attempt_id=str(uuid4()),
+                planned=planned,
+                peer_path=("assistant",),
+                recipe=recipe,
+            )
+        )
+
+
+async def test_prepare_rejects_exhausted_ordinal_without_projection_write(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    call_id = str(uuid4())
+    first = PrepareModelCall(
+        request=request,
+        lease=LeaseFence(owner="worker-a1", generation=1),
+        call_id=call_id,
+        attempt_id=str(uuid4()),
+        planned=planned,
+        peer_path=("assistant",),
+        recipe=recipe,
+    )
+    await repository.prepare(first)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "UPDATE {} SET attempt_ordinal=9223372036854775807 WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (first.attempt_id,),
+        )
+    with pytest.raises(ModelCallOrdinalExhausted):
+        await repository.prepare(first.model_copy(update={"attempt_id": str(uuid4())}))
+
+
+async def test_prepare_total_deadline_cancels_run_lock_wait_without_write(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    command = PrepareModelCall(
+        request=request,
+        lease=LeaseFence(owner="worker-a1", generation=1),
+        call_id=str(uuid4()),
+        attempt_id=str(uuid4()),
+        planned=planned,
+        peer_path=("assistant",),
+        recipe=recipe,
+    )
+    repository = PostgresModelCallRepository(
+        run_chat_database_url, run_chat_schema, total_timeout_seconds=0.1
+    )
+    async with connect_pg(run_chat_database_url) as blocker:
+        async with blocker.transaction(), blocker.cursor() as cursor:
+            await execute_sql(
+                cursor,
+                "SELECT run_id FROM {} WHERE run_id=%s FOR UPDATE".format(
+                    qualified(run_chat_schema, "kokoro_agent_run")
+                ),
+                (request.run_id,),
+            )
+            with pytest.raises(TimeoutError):
+                await repository.prepare(command)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT count(*) AS total FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (command.attempt_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["total"] == 0
+
+
+async def test_prepare_recompute_excludes_sealed_not_dispatched_from_unknown(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    first = await repository.prepare(
+        PrepareModelCall(
+            request=request,
+            lease=LeaseFence(owner="worker-a1", generation=1),
+            call_id=str(uuid4()),
+            attempt_id=str(uuid4()),
+            planned=planned,
+            peer_path=("assistant",),
+            recipe=recipe,
+        )
+    )
+    event_id = uuid4()
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            """INSERT INTO {} (event_id,tenant_id,run_id,attempt_id,call_id,
+                revision,evidence_bytes,evidence_digest,execution_outcome,usage_state,
+                totals_state,classification_state,sealed,observed_at)
+                VALUES (%s,%s,%s,%s,%s,1,%s,%s,'not_dispatched','unresolved',
+                        'unknown','unknown',TRUE,clock_timestamp())""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_usage_evidence")
+            ),
+            (
+                event_id,
+                first.tenant_id,
+                first.run_id,
+                first.attempt_id,
+                first.call_id,
+                b"{}",
+                _DIGEST,
+            ),
+        )
+        await execute_sql(
+            cursor,
+            """UPDATE {} SET status='not_dispatched',sealed_at=clock_timestamp(),
+                latest_revision=1,latest_event_id=%s,latest_evidence_digest=%s
+                WHERE attempt_id=%s""".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (event_id, _DIGEST, first.attempt_id),
+        )
+    await repository.prepare(
+        PrepareModelCall(
+            request=request,
+            lease=LeaseFence(owner="worker-a1", generation=1),
+            call_id=str(uuid4()),
+            attempt_id=str(uuid4()),
+            planned=planned,
+            peer_path=("assistant",),
+            recipe=recipe,
+        )
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT model_unknown_attempt_count FROM {} WHERE run_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_run")
+            ),
+            (request.run_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["model_unknown_attempt_count"] == 0
 
 
 @pytest.mark.parametrize(

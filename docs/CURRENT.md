@@ -1,3 +1,15 @@
+## R203-A4-SCOPE 当前：有限settle已实现并通过最终22路径门（2026-10-04）
+
+本节是当前事实；下方R198/R199取消描述为当时历史证据，不再表示当前裁决状态。
+
+本片已实现scope/fatal、显式native driver、系统门、投影cancel护栏及唯一配置默认，当前源码可验；artifact发布与既有3310进程消费仍待后继部署。取消返回前只允许latest checkpoint新增一条`__error__="CancelledError()"` pending audit；移除后完整CheckpointTuple/list全等，取消返回后数据库、checkpoint与provider均零写。
+
+候选实现使用invocation-local ContextVar `ModelCallScope`登记真实model-node task；正常/异常/取消均在任何seal/terminal前按专用5秒预算有限join。late register立即cancel、结果异常恰一次消费；deadline仍走typed fatal、Supervisor stop-accept与production exit70，不走普通失败/cleanup/lease release。production main的原SIGTERM取消、共享预算与drain语义现由包内单一私有入口承接，系统子进程门直接复用该入口证明合作任务正常退出而不触发fatal。
+
+Root43772在最终22路径上完成真实fresh PostgreSQL **306 passed / 133 warnings（45.03s）**、fatal/非法callback/production SIGTERM系统子进程 **3 passed（4.60s）**、默认工程 **2192 passed / 421资源deselected / 795既有warnings（117.20s）**，canonical 10项、lock/frozen-sync、Ruff 286文件、全Pyright、contract、wheel/sdist均exit 0，临时库回收且full source hash不变；独审0 P0/P1/P2。Billing正式准入、provider成功、evidence ACK、actual-only结算与完整用户链继续OPEN；GP/catalog/Swarm真实caller/recovery、artifact发布与3310消费仍OPEN，本片不构成Agent完整闭环。
+
+---
+
 ## R198-A4 当前：native主调用无Billing许可已fail-closed（2026-10-04）
 
 基线main `814e929`；冻结系统测试`test_model_call_runtime_chain.py` SHA256 `57bc7e…`。Root真实fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK已走正式`invoke_once`与现finalizer：实际provider POST=1、`run.completed`、0 attempt、completeness none，而目标为0 provider、safe failed、prepared后sealed closure，故1 failed/69 warnings（1.77s）；10项canonical CHECK正控通过，自有库absent且source hash不变。这是业务RED，不是fixture/import失败。
@@ -11,6 +23,8 @@
 Root50248在冻结源码上完成fresh PostgreSQL全database **304 passed / 0 skipped（41.39s）**；默认工程 **2182 passed / 416资源deselected（114.63s）**；lock/offline frozen sync、Ruff 283文件、全Pyright、contract、wheel/sdist均exit 0，自有库absent且source hash不变。独审`b010ef5`为0 P0/P1。16个旧工具/Skills/HITL/lifecycle单测仅以显式test-scope隔离非费用职责，不是model gate证据。
 
 GP/catalog/Swarm的frozen recipe与middleware registration已有静态闭合测试，但尚未冒称真实caller/recovery验收。实际model invocation digest、Billing正式准入/grant/dispatch、provider成功调用、evidence ACK、失败/取消actual结算及用户收费链仍OPEN；本片不生成fake grant、known-zero或第二协议。
+
+R199恢复门当前未提交：冻结系统测试SHA `41fe7814…`中terminal Supervisor recovery与原main负路通过；Root98757全database实际 **305 passed / 1 failed**。失败case已精确观察model prepare SQL/PID在自有Run锁等待并确认外层`CancelledError`传播，但锁释放后出现完整prepared/not_requested，证明锁定v3的model-node task脱离外层取消继续提交；自有库absent且source hash不变。这是当前`59034f4`上的业务RED，不是半写、fixture或收费事实。已批准目标仅为包内actual model-node task scope收束；生产尚未实现，checkpoint零后写、重复取消与有限drain仍待真实GREEN，现有R198验收不得被该RED覆盖或降级。 独审进一步确认repository 5秒与现shutdown budget均不覆盖SDK node/checkpoint全settle，锁定SDK又无公开强制终止API；因此两源码GREEN当前被真实生命周期前置阻断，Root须先裁决SDK公开close/wait升级或独立进程级终止方案。done task异常单次取回算法已收敛，但它不解除该阻断。
 
 ---
 

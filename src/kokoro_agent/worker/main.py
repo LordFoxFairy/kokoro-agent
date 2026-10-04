@@ -9,7 +9,7 @@ import logging
 import os
 import signal
 import socket
-from typing import Protocol
+from typing import Never, Protocol
 
 from dotenv import load_dotenv
 
@@ -46,6 +46,7 @@ from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
 )
 from kokoro_agent.streams.factory import make_stream
+from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
@@ -114,6 +115,33 @@ async def require_worker_drain(supervisor: _WorkerDrainer, *, timeout_s: float) 
         LOGGER.error("graceful shutdown failed: run or resource cleanup did not drain")
         raise RuntimeError("kokoro-agent worker shutdown drain failed")
     LOGGER.info("graceful shutdown: drained=true")
+
+
+async def _serve_until_shutdown(
+    supervisor: RunSupervisor,
+    bus: StreamProtocol,
+    *,
+    drain_timeout_s: float,
+) -> None:
+    """Own the production SIGTERM boundary around one Supervisor serve loop."""
+    serve_task = asyncio.create_task(supervisor.serve(bus))
+    loop = asyncio.get_running_loop()
+    shutdown_budget = ShutdownBudget(drain_timeout_s)
+
+    def request_shutdown() -> None:
+        shutdown_budget.begin(loop.time())
+        serve_task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, request_shutdown)
+    try:
+        try:
+            await serve_task
+        except asyncio.CancelledError:
+            await require_worker_drain(
+                supervisor, timeout_s=shutdown_budget.remaining(loop.time())
+            )
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
 
 
 class ShutdownBudget:
@@ -268,31 +296,27 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             consumer=_consumer_name(),
             heartbeat_s=config.lease_heartbeat_s,
             recursion_limit=runtime_policy.recursion_limit,
+            model_call_settle_timeout_s=config.model_call_settle_timeout_s,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
             outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
             chat_repository=chat_repository,
+            process_fatal=_exit_after_model_call_settlement_timeout,
         )
         LOGGER.info(
             "kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name()
         )
-        serve_task = asyncio.create_task(supervisor.serve(bus))
-        loop = asyncio.get_running_loop()
-        shutdown_budget = ShutdownBudget(config.drain_timeout_s)
-
-        def request_shutdown() -> None:
-            shutdown_budget.begin(loop.time())
-            serve_task.cancel()
-
         # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。
-        loop.add_signal_handler(signal.SIGTERM, request_shutdown)
-        try:
-            await serve_task
-        except asyncio.CancelledError:
-            await require_worker_drain(
-                supervisor, timeout_s=shutdown_budget.remaining(loop.time())
-            )
+        await _serve_until_shutdown(
+            supervisor,
+            bus,
+            drain_timeout_s=config.drain_timeout_s,
+        )
+
+
+def _exit_after_model_call_settlement_timeout(exit_code: int) -> Never:
+    os._exit(exit_code)
 
 
 def main() -> None:

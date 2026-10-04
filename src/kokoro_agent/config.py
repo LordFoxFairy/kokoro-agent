@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from kokoro_agent.config_file import load_config_file
+from kokoro_agent.model.call_scope import DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
@@ -246,6 +247,12 @@ class AppConfig(BaseModel):
     # 失控熔断：单 run 图步数上限（无限工具循环 → GraphRecursionError → run.failed）。
     recursion_limit: int = Field(
         default=100, gt=0, validation_alias="KOKORO_RECURSION_LIMIT"
+    )
+    model_call_settle_timeout_s: float = Field(
+        default=DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="KOKORO_MODEL_CALL_SETTLE_TIMEOUT_S",
     )
     # SIGTERM 优雅停机：限时等活跃 run 收尾（超时交 TTL 租约重拾）。
     drain_timeout_s: float = Field(

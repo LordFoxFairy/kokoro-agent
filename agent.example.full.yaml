@@ -47,6 +47,8 @@ subagents:
 limits:
   lease_heartbeat_s: 30
   recursion_limit: 100
+  # 单次native model-call task取消/收束预算；不替代SIGTERM drain预算。
+  model_call_settle_timeout_s: 5
   drain_timeout_s: 60
   run_token_budget: 0
 retention:

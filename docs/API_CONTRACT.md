@@ -1,3 +1,15 @@
+## R203-A4-SCOPE：包内有限settle与取消审计边界（2026-10-04；无机器契约变化）
+
+本节取代下方R198取消段的旧“实现门仍阻断”状态；旧段仅为历史快照。
+
+本片不新增HTTP/RPC/event/generated、RunErrorCode或usage/v1字段。每次`invoke_once`包内绑定唯一`ModelCallScope`，并把`astream_events`获取、公开run context、pump与interrupt读取放入一个同步登记的显式native driver task；middleware在repository/provider之前登记真实model-node task。caller以shield等待driver，首次取消立即启动同一固定deadline来cancel/join全部exact owned tasks。正常、普通异常、`asyncio.CancelledError`均须先有限join，再允许native-settled、usage seal、pause/reconcile或terminal；caller取消仍不映射`RunFailed`或用户cancel。
+
+唯一配置为正有限`model_call_settle_timeout_s`，默认5.0秒；production显式从AppConfig传入。deadline耗尽抛包内`ModelCallSettlementTimeout(BaseException)`，只含安全计数/phase。它绕过普通`Exception`映射；Supervisor先stop-accept，再调用NoReturn process-fatal执行`os._exit(70)`，callback违规返回也必须立即exit70兜底。该出口不走正常handle/sandbox cleanup、不释放lease、不生成terminal/evidence/费用结论；普通SIGTERM仍使用原graceful drain。
+
+显式driver、固定deadline及完整`serve→stop-intake→exit70`链已实现。Root43772在最终22路径上验证真实fresh PostgreSQL 306项、fatal/非法callback/production SIGTERM系统子进程3项、默认2192项（另421项资源deselected）以及全部静态、contract与build门；独审0 P0/P1/P2。唯一严格`__error__="CancelledError()"` pending audit不构成新wire、usage或费用事实。artifact发布与既有3310进程消费、Billing admission/dispatch/provider成功/evidence ACK及收费链仍OPEN。
+
+---
+
 ## R198-A4：包内identity与现有安全失败映射（2026-10-04；最低main caller已验，机器契约不变）
 
 A4不新增HTTP/RPC/event/generated或usage/v1字段。logical call仅为包内执行身份：RFC8785 locator绑定locked tenant/run、显式peer path及公开`ExecutionInfo(checkpoint_id, checkpoint_ns, task_id)`；根`checkpoint_ns=""`合法。固定namespace `a06d00e2-defa-5fe3-8f2c-10ecb19c1161`派生call UUID，固定namespace `64675e75-8af6-50b4-ade3-d413e5144dc9`以`{call_id}:1`派生首attempt UUID。node_attempt/metadata/time不入identity。
@@ -9,6 +21,8 @@ usage/v1现`input_digest`仍精确表示locked `RunRequest.input` canonical SHA-
 有合法identity时先留下`prepared/not_requested`，随后失败封闭且零handler/provider。现`invoke_once`把typed native异常转成单一RunFailed outcome，现terminal closure把该attempt封存为`not_dispatched + unresolved/missing_usage + actual unknown/not_observed`；这不等于known-zero、Billing denial或费用结清。正式Billing begin/grant/dispatch、evidence read/ACK仍OPEN。
 
 Root54105已以真fresh PostgreSQL/native loopback验证这一main负路径：0 provider、1 prepared/not_requested、safe failed及终态ND封存。Root50248又完成database 304、default 2182与contract/build全门；独审0 P0/P1。这些证据未发布新wire，也未覆盖GP/catalog/Swarm的真实caller/recovery、实际model invocation digest、Billing准入/dispatch、provider成功或收费。16个显式隔离的旧非费用unit case不作为model gate证据。
+
+取消收束仍无机器契约变化。`asyncio.CancelledError`保持包内执行取消并原样向worker传播，不映射`RunFailed`、`dependency_unavailable`或用户cancel，不调用terminal finalizer。scope不进入Runnable metadata/config/checkpoint、HTTP/event或usage/v1；done callback必须立即且仅一次取回task结果，非取消异常留在scope私有队列并由同一个owned cleanup task消费后给首次取消加note。当前SDK没有公开有限`wait_closed`终止保证，因此实现门保持阻断；超时返回后遗留task不构成合法取消合同。
 
 ---
 

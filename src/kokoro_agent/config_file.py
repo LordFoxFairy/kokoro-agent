@@ -67,6 +67,7 @@ _YAML_TO_ENV: dict[str, str] = {
     "subagents.custom_json": "KOKORO_CUSTOM_SUBAGENTS",
     "limits.lease_heartbeat_s": "KOKORO_LEASE_HEARTBEAT_S",
     "limits.recursion_limit": "KOKORO_RECURSION_LIMIT",
+    "limits.model_call_settle_timeout_s": "KOKORO_MODEL_CALL_SETTLE_TIMEOUT_S",
     "limits.drain_timeout_s": "KOKORO_DRAIN_TIMEOUT_S",
     "limits.run_token_budget": "KOKORO_RUN_TOKEN_BUDGET",
     "retention.events_ttl_s": "KOKORO_RETENTION_EVENTS_TTL_S",

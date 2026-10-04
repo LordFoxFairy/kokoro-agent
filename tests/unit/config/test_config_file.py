@@ -86,6 +86,20 @@ class TestConfigTree:
         assert config.sandbox.docker.image == "busybox"
         assert config.sandbox.docker.ttl == 900  # 未覆盖键保持 yaml 值
 
+    def test_model_call_settle_timeout_yaml_and_env_override(
+        self, tmp_path: Path
+    ) -> None:
+        tree = "limits:\n  model_call_settle_timeout_s: 0.75\n"
+        assert _config_from(tmp_path, tree).model_call_settle_timeout_s == 0.75
+        assert (
+            _config_from(
+                tmp_path,
+                tree,
+                {"KOKORO_MODEL_CALL_SETTLE_TIMEOUT_S": "0.5"},
+            ).model_call_settle_timeout_s
+            == 0.5
+        )
+
     def test_no_file_means_pure_env_behaviour(self) -> None:
         assert AppConfig.from_env({}) == AppConfig.from_env({"KOKORO_AGENT_CONFIG": ""})
 

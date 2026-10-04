@@ -16,6 +16,7 @@ from support.fakes import FakeRunRepository
 from kokoro_agent.tools.middleware import TerminalGuardMiddleware
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.model.factory import make_chat_model
+from kokoro_agent.model.call_scope import DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S
 from kokoro_agent.policy import ModelConfig
 
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend
@@ -335,6 +336,21 @@ def test_recursion_limit_env_parse() -> None:
     assert AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "12"}).recursion_limit == 12
     with pytest.raises(ValidationError):
         AppConfig.from_env({"KOKORO_RECURSION_LIMIT": "0"})
+
+
+def test_model_call_settle_timeout_uses_scope_default_and_validates_env() -> None:
+    field_default = AppConfig.model_fields["model_call_settle_timeout_s"].default
+    assert field_default is DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S
+    assert AppConfig.from_env({}).model_call_settle_timeout_s == 5.0
+    assert (
+        AppConfig.from_env(
+            {"KOKORO_MODEL_CALL_SETTLE_TIMEOUT_S": "0.25"}
+        ).model_call_settle_timeout_s
+        == 0.25
+    )
+    for invalid in ("0", "-1", "nan", "inf", "-inf"):
+        with pytest.raises(ValidationError):
+            AppConfig.from_env({"KOKORO_MODEL_CALL_SETTLE_TIMEOUT_S": invalid})
 
 
 def test_run_token_budget_env_parse() -> None:

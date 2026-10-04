@@ -1,3 +1,32 @@
+## R203-A4-SCOPE：invocation-local model-call有限收束候选与取消审计边界（2026-10-04）
+
+本节取代下方R198首节中“等待SDK公开终止/外部部署硬终止再裁决”的旧阻断描述；旧段只保留历史审计，不与本节并列为当前方案。
+
+**当前事实。** 本片已实现invocation-local scope、显式native driver、唯一配置默认、Supervisor有限fatal与production SIGTERM私有共用入口；artifact发布及既有3310进程消费仍待后继部署。Root43772在最终22路径上完成真实fresh PostgreSQL **306 passed / 133 warnings（45.03s）**、fatal与SIGTERM系统子进程 **3 passed（4.60s）**、默认工程 **2192 passed / 421资源deselected / 795既有warnings（117.20s）**，canonical 10项、lock/frozen-sync、Ruff 286文件、全Pyright、contract、wheel/sdist均exit 0，临时库回收且full source hash不变；独审0 P0/P1/P2。取消前checkpoint只允许一条严格`(task_id,"__error__","CancelledError()")` pending audit；除此之外完整CheckpointTuple、数据库事实与provider保持原快照，取消返回后零写。
+
+**唯一目标方案。** 每次`invoke_once`先创建并绑定一个包内`ModelCallScope` ContextVar，再创建唯一显式native driver task；`agent.astream_events`获取、`async with run`、`pump_run`与`interrupted()`全部在该driver内部，避免启动阶段阻塞在scope所有权之外。创建driver后立即以包内`register_owned_task`同步登记，并由caller以`asyncio.shield`等待；首次caller cancel因此立即返回scope边界，启动同一固定5秒settle并cancel/join exact driver与model-node tasks。scope不以run_id建全局表、不经Factory/Dependencies注入、不扫描`asyncio.all_tasks()`。`ModelCallRuntimeMiddleware.awrap_model_call`仍在任何repository/provider await前登记真实current task；所有登记task保留至done，callback恰一次读取结果。scope进入settling后late register立即cancel并拒绝，零prepare/provider。
+
+`invoke_once`的正常、普通异常及取消三路都必须在`on_native_settled`、usage seal、pause/reconcile或`finalize_terminal`之前退出scope并完成有限join。普通执行`except Exception -> run_failed_payload`仍位于scope body内；scope exit的`ModelCallSettlementTimeout(BaseException)`位于该handler外，绝不映射`run.failed`、用户cancel、known-zero或lease release。首个settle固定monotonic deadline，重复取消不延期；已有primary保留，native secondary仅附安全note。healthy join仅在所有登记task done且结果已消费时返回。
+
+专用`model_call_settle_timeout_s`唯一默认常量为5.0秒，`AppConfig`要求正有限；env为`KOKORO_MODEL_CALL_SETTLE_TIMEOUT_S`，YAML为`limits.model_call_settle_timeout_s`。普通embedding API可使用该合法默认，和`recursion_limit`默认同类，不是legacy fallback；production worker构造Supervisor时必须显式传config。它不复用repository 5秒或SIGTERM `drain_timeout_s`。
+
+**有限fatal出口。** timeout只证明本进程已失去可信执行所有权，不证明task停止。`SupervisorExecutionMixin._guarded`先于普通primary/finally路径捕获该typed fatal，调用Supervisor单一fatal seam：原子stop-accept、记录首次fatal、唤醒/取消serve accept task、固定secret-free critical log，然后调用`ProcessFatal: Callable[[int], Never]`。默认与production显式注入均为实际`os._exit(70)`；若错误注入的callback违反合同并返回，Supervisor必须立即以`os._exit(70)`兜底，不能抛异常后进入serve finally无限drain。fatal不进入handle/sandbox正常cleanup、不释放lease、不发布`run.failed`；普通完成、普通执行失败和SIGTERM继续原graceful路径。
+
+### §8 放置与实施闭集
+
+| 项 | 裁决 |
+| --- | --- |
+| Owner/当前 | Agent model-call runtime唯一writer；`call_runtime.py`登记真实model-node task，`run_agent.py`拥有显式native driver与单invoke顺序，Supervisor拥有worker intake/fatal出口；不合作task与fatal链已实现并通过Root43772最终22路径门。 |
+| 位置比较 | **采用**新`model/call_scope.py`：只承载ContextVar、exact-task登记、once-only outcome、固定deadline join与typed timeout。**淘汰**放`run_agent.py`形成执行万能文件；**淘汰**Supervisor per-run model registry/Factory注入，二者看不到真实middleware current task且扩大生命周期。 |
+| 粒度/依赖 | `run_agent -> call_scope`负责bind/join，`call_runtime -> call_scope`只登记；scope仅依赖Python asyncio/contextvars，不import SDK private、SQL、worker或provider。`supervisor_execution -> typed fatal`，Supervisor context只声明fatal seam/fields。 |
+| 数据/API | 无DDL、usage/v1、HTTP/RPC/event/generated变化。取消前已commit prepared保留；未commit prepare收到cancel须rollback。timeout不造终态/费用事实，lease保持供owner恢复。 |
+| 删除/禁止 | 不保留SDK abort-only、ContextVar与Supervisor registry双轨；不扫全局task、不访问Pregel private future、不切v2、不无限gather、不在timeout做handle/sandbox cleanup或外部I/O。 |
+| 验证 | Root43772真实PG证明cooperative取消与显式driver零后写；系统子进程从`serve`公开取消入口证明不合作deadline后先stop-intake再exit70、非法callback返回仍exit70，并经production共用入口证明普通SIGTERM合作drain；database/default/static/contract/build最终门均通过。 |
+
+**精确候选写集。** Production/config仅：新`model/call_scope.py`；现`model/call_runtime.py`、`execution/run_agent.py`、`config.py`、`config_file.py`、`agent.example.full.yaml`、`worker/supervisor_context.py`、`worker/supervisor.py`、`worker/supervisor_execution.py`、`worker/main.py`、`execution/runtime_profile_sources.py`。Tests仅：现`tests/integration/database/test_model_call_runtime_chain.py`、`tests/unit/execution/test_invoke.py`、`tests/unit/execution/test_supervisor.py`、`tests/unit/worker/test_main.py`、`tests/unit/config/test_config_file.py`、`tests/unit/config/test_config_summary.py`、`tests/unit/execution/test_runtime_profile_sources.py`；新`tests/unit/model/test_call_scope.py`与`tests/integration/test_model_call_fatal_exit.py`。除此之外先报Root，不扩SQL/contract/lock/provider/Billing。
+
+---
+
 ## R198-A4：原生task identity与无Billing许可fail-closed（2026-10-04；最低main caller已验）
 
 **当前事实。** 历史系统RED以fresh PostgreSQL/checkpoint/AgentFactory/DeepAgent/loopback SDK及正式`invoke_once`证明旧路径provider POST 1、`run.completed`、0 attempt。Root后续实施的13路径已将现main native caller接入`ModelCallRuntimeMiddleware`与真实`PostgresModelCallRepository`；无Billing consumer时先prepare，再在handler/provider前以现safe failure终止并由唯一terminal transaction封存。Root54105主调用真PG GREEN证明provider=0、prepare=1/not_requested、`dependency_unavailable,retryable=false`与sealed ND closure。Root50248冻结门证明database 304通过，default 2182通过/416资源deselected，lock/frozen-sync/Ruff283/Pyright/contract/wheel/sdist均0，自有库absent/source hash不变；独审0 P0/P1。
@@ -12,6 +41,12 @@ DeepAgents始终挂载的`general-purpose`必须成为每个peer recipe中首个
 
 **无Billing consumer生命周期。** 有合法identity时先以locked Run/lease、System route、recipe/peer执行A1 `prepare`，留下`prepared + authorization_state=not_requested`；没有正式consumer不得调用begin/grant，不造request/admission ref，抛包内typed `ModelCallAuthorizationUnavailable`。`invoke_once`已在native异常边界调用`run_failed_payload`，后继在`execution/failures.py`把该typed错误映射已发布`dependency_unavailable, retryable=false`，再调用唯一`finalize_terminal`。现closure实际为prepared/not_requested生成`execution.outcome=not_dispatched`、`usage.state=unresolved/reason=missing_usage`、`actual=unknown/not_observed`并seal；不写known-zero。terminal提交未知沿原exact retry，不重新handler/provider。
 
+**取消收束目标与当前阻断。** Root98757以真实PG锁图证明：外层`invoke_once`传播`CancelledError`后，锁定LangGraph v3公开`abort()`只关闭mux，独立Pregel model-node task仍可在Run锁释放后提交完整prepared；当前`59034f4`因此尚未满足取消零后写。目标scope仍要求middleware在任何await前同步登记实际model-node task，已cancel scope晚注册立即取消；但本仓现有`drain_timeout_s`只属于进程shutdown预算，repository 5秒期限也只覆盖prepare，二者都不是整个SDK node/checkpoint settle的现成保证。Python task cancel没有强制终止不响应task的公开能力，所以在“有限返回且零后台遗留”同时成立前，**两源码ContextVar实现继续阻断**，不得用无限gather、任意常量或fail-loud文字冒充终止。
+
+最小公开API方案比较：**优先前置**锁定SDK提供/升级到公开`aclose()/wait_closed(timeout)`，其合同必须cancel并等待全部Pregel node/checkpoint futures；**备选**由worker既有具名shutdown budget触发进程级drain并在期限到达后由外部进程owner终止/重启，需独立生命周期设计与系统门，不能塞进本片两源码；**淘汰**私有`_graph_aiter`/future遍历、只调`abort()`、切v2重写主链或超时后遗留task。prepare提交前取消仍须rollback零行；commit后保留完整prepared且provider0，不回删、不补零。
+
+异常单次取回算法固定为scope内`active`与`settled_errors`：登记task的done callback同步从active移除，并立即调用一次`task.exception()`；`CancelledError`单独记为已消费，非取消异常追加scope私有队列。`wait_quiescent()`只等待同一个owned cleanup task，在active为空后原子取走并清空settled errors，给首次取消添加note；已done-before-wait、重复取消和callback/wait竞争均只能消费一次。scope释放前队列必须为空，不建全局registry。该算法解决异常泄漏，但不解决上述SDK强制终止阻断；最终正确性仍由真实PG/outbox/checkpoint字节快照裁决。
+
 ### §8 精确放置与后继实施门
 
 | 项 | 裁决 |
@@ -24,6 +59,8 @@ DeepAgents始终挂载的`general-purpose`必须成为每个peer recipe中首个
 | 测试 | 现`tests/integration/database/test_model_call_runtime_chain.py`扩正式`invoke_once`生命周期、exact POST path/未知path拒绝/finally清理、prepared与terminal sealed事实；现`tests/unit/execution/test_invoke.py`只核typed error→existing failure tuple；现`test_runtime_profile_plan.py`覆盖排序BFS最短/同长lex/cycle/多入边/GP recipe，现`test_factory.py`显式断言main、Swarm peer与GP的middleware注册path；catalog逐child注册接线由静态源码审查核对。真实fresh PG/native/loopback已证明main caller无裸provider旁路；GP/catalog/Swarm目前只证明冻结registration，真实caller/recovery仍须后继系统门。 |
 | 删除/禁止 | 切换时主链不得保留裸provider旁路；不删旧Run预算usage。不随机UUID、metadata path、fake grant、known-zero、第二协议或通用UoW/facade。 |
 | 验证 | tests-first真实RED→窄GREEN；Ruff/全Pyright/contract/default/build；Root fresh PG + native HTTP验证0 provider、1 prepared后1 sealed closure、唯一terminal/exact retry。真实Billing/provider收费仍另门。 |
+
+取消切片预期位置仍是现`model/call_runtime.py`的包内scope与现`execution/run_agent.py`的每invoke bind/reset；但在SDK公开强制settle或独立进程级终止方案获批前不授源码。只调用`abort()`、访问私有SDK或超时后留后台task均淘汰。异常队列算法不需要新文件、manifest、SQL或wire变化。
 
 **已实施的限定生产/测试集：** 新`src/kokoro_agent/model/call_runtime.py`；现`model/call_models.py`、`agent_factory.py`、`agents/subagents.py`、`execution/runtime_profile_plan.py`、`worker/dependencies.py`、`worker/main.py`、`execution/failures.py`、`execution/runtime_profile_sources.py`；现`test_model_call_runtime_chain.py`、`test_invoke.py`、`test_runtime_profile_plan.py`与`test_factory.py`。若实现发现现recipe validator不能证明上述path，或需要schema/contract/generated/lock/新client，必须停下回Root裁决；本门未授权修改`call_artifacts.py`。
 

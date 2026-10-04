@@ -11,6 +11,9 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
+import os
+from typing import Never
 from uuid import uuid4
 from collections.abc import Mapping
 
@@ -35,9 +38,14 @@ from kokoro_agent.worker.supervisor_context import (
     BackendResolver,
     FeatureResolver,
     MAX_CONCURRENT_RUNS,
+    ProcessFatal,
     SandboxTeardown,
     SourceResolver,
     TraceFactory,
+)
+from kokoro_agent.model.call_scope import (
+    DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
+    ModelCallSettlementTimeout,
 )
 from kokoro_agent.worker.supervisor_control import SupervisorControlMixin
 from kokoro_agent.worker.supervisor_execution import SupervisorExecutionMixin
@@ -59,6 +67,10 @@ def _default_backend(_request: RunRequest) -> Backend:
     """Explicit default for embedders that do not expose sandbox teardown."""
 
     return "state"
+
+
+def _default_process_fatal(exit_code: int) -> Never:
+    os._exit(exit_code)
 
 
 class RunSupervisor(
@@ -83,6 +95,7 @@ class RunSupervisor(
         heartbeat_s: float = 30.0,
         max_concurrent: int = MAX_CONCURRENT_RUNS,
         recursion_limit: int = 100,
+        model_call_settle_timeout_s: float = DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
         events_ttl_s: int = 0,
         run_ttl_s: int = 0,
         # R4：published 但回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
@@ -90,7 +103,13 @@ class RunSupervisor(
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
         sandbox_teardown: SandboxTeardown | None = None,
         chat_repository: ChatRepository | None = None,
+        process_fatal: ProcessFatal = _default_process_fatal,
     ) -> None:
+        if (
+            not math.isfinite(model_call_settle_timeout_s)
+            or model_call_settle_timeout_s <= 0
+        ):
+            raise ValueError("model-call settle timeout must be positive and finite")
         self._interaction_reader = interaction_reader
         self._resume_attempts = {}
         self._boot_id = uuid4().hex
@@ -105,12 +124,17 @@ class RunSupervisor(
         self._consumer = consumer
         self._heartbeat_s = heartbeat_s
         self._recursion_limit = recursion_limit
+        self._model_call_settle_timeout_s = model_call_settle_timeout_s
         # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
         self._events_ttl_s = events_ttl_s
         self._run_ttl_s = run_ttl_s
         self._outbox_republish_ms = outbox_republish_ms
         self._sandbox_teardown = sandbox_teardown
         self._chat_repository = chat_repository
+        self._serve_task = None
+        self._model_call_fatal = None
+        self._intake_closed = False
+        self._process_fatal = process_fatal
         self._sem = asyncio.Semaphore(max_concurrent)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._assembly_tasks: set[asyncio.Task[None]] = set()
@@ -126,6 +150,21 @@ class RunSupervisor(
         self._emitters: dict[str, RunEmitter] = {}
         # 每次 claim/adopt/reclaim 都产生单调 generation；同一 owner 名复用也不能让旧任务续写。
         self._leases: dict[str, LeaseFence] = {}
+
+    def _fatal_model_call_settlement(self, error: ModelCallSettlementTimeout) -> None:
+        if self._model_call_fatal is not None:
+            return
+        self._model_call_fatal = error
+        self._intake_closed = True
+        serve_task = self._serve_task
+        if serve_task is not None and serve_task is not asyncio.current_task():
+            serve_task.cancel()
+        LOGGER.critical(
+            "model-call settlement timed out; stopping worker intake",
+            extra={"active_model_call_tasks": error.active_count, "exit_code": 70},
+        )
+        self._process_fatal(70)
+        os._exit(70)
 
     @property
     def control_listeners(self) -> Mapping[str, asyncio.Task[None]]:
@@ -251,6 +290,7 @@ class RunSupervisor(
         return handle
 
     async def serve(self, bus: StreamProtocol) -> None:
+        self._serve_task = asyncio.current_task()
         # PostgreSQL dispatch admission 是唯一 durable 真相；Redis 仅承载可重放通知。启动先修复
         # ingress 在落库后、XADD 前崩溃，或请求流被 maxlen 修剪造成的 pending 缺帧。
         await self._republish_pending_dispatches(bus)
@@ -264,6 +304,8 @@ class RunSupervisor(
             async for item in bus.subscribe(
                 REQUESTS_STREAM, group=CONSUMER_GROUP, consumer=self._consumer
             ):
+                if self._intake_closed:
+                    break
                 msg = parse_inbound(item.event)
                 if msg is None:
                     # 不可解析帧：DLQ 记录后 ACK（坏帧无 identity 不重投，不冒泡杀循环）。
@@ -297,10 +339,16 @@ class RunSupervisor(
                         msg.run_id,
                     )
                     await self._fail_terminal(bus, msg.run_id, error)
+        except asyncio.CancelledError:
+            fatal = self._model_call_fatal
+            if fatal is not None:
+                raise fatal from None
+            raise
         finally:
             heartbeat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat
+            self._serve_task = None
 
     async def drain(self, *, timeout_s: float) -> bool:
         """Wait run, assembly, and cleanup under one shared absolute deadline."""

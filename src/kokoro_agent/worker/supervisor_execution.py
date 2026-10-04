@@ -41,6 +41,7 @@ from kokoro_agent.execution.events import (
 )
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.model.call_scope import ModelCallSettlementTimeout
 from kokoro_agent.protocol import (
     RunErrorCode,
     RunRequest,
@@ -210,6 +211,7 @@ class SupervisorExecutionMixin(SupervisorContext):
         lease: LeaseFence,
     ) -> None:
         primary: BaseException | None = None
+        skip_cleanup = False
         try:
             await self._guarded_body(
                 bus,
@@ -221,11 +223,16 @@ class SupervisorExecutionMixin(SupervisorContext):
                 trace,
                 lease,
             )
+        except ModelCallSettlementTimeout as error:
+            skip_cleanup = True
+            self._fatal_model_call_settlement(error)
+            return
         except BaseException as error:
             primary = error
             raise
         finally:
-            await self._close_handle_after_primary(built, primary)
+            if not skip_cleanup:
+                await self._close_handle_after_primary(built, primary)
 
     async def _guarded_body(
         self,
@@ -357,6 +364,7 @@ class SupervisorExecutionMixin(SupervisorContext):
                     return "unknown"
                 return read.evidence.disposition
 
+            retry_sandbox_cleanup = True
             try:
                 terminal = await invoke_once(
                     emitter,
@@ -371,16 +379,24 @@ class SupervisorExecutionMixin(SupervisorContext):
                     trace=trusted_trace,
                     on_native_settled=on_native_settled,
                     recursion_limit=self._recursion_limit,
+                    model_call_settle_timeout_s=self._model_call_settle_timeout_s,
                     # 终态认领下沉到 invoke_once：认领与发终态相邻原子，cancel 无法穿插重复发。
                     finalize_terminal=finalize_terminal,
                     # 用量跨段累计真源：run.completed 报累计而非末段。
                     record_usage=record_usage,
                 )
+            except ModelCallSettlementTimeout:
+                # Process-fatal settlement cannot wait behind provider-owned
+                # sandbox teardown.  The durable cleanup intent remains for
+                # recovery by a healthy worker.
+                retry_sandbox_cleanup = False
+                raise
             finally:
                 # The terminal transaction durably queues sandbox cleanup in the same
                 # transaction.  A failed terminal publish must not skip the
                 # immediate attempt; heartbeat recovery remains the backstop.
-                await self._retry_sandbox_cleanups(run_id=run_id)
+                if retry_sandbox_cleanup:
+                    await self._retry_sandbox_cleanups(run_id=run_id)
         if terminal:
             if terminal_claimed:
                 self._emitters.pop(run_id, None)

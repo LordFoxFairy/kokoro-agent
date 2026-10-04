@@ -1,3 +1,15 @@
+## R203-A4-SCOPE：取消返回后零业务写保持现schema（2026-10-04；无DDL）
+
+本节取代下方R198取消段的旧未裁决状态；旧段仅为历史快照。
+
+本片不增加表、列、索引、CHECK、FK、outbox或金额事实。显式driver与有限settle已实现；Root43772真实PG 306项证明未commit prepare收到取消并回滚，Attempt/Evidence/Run/outbox与provider保持原快照，最终22路径database/default/static/contract/build门均通过。checkpointer只允许在取消返回前向latest checkpoint的pending_writes新增恰一条`(非空task_id,"__error__","CancelledError()")`审计，SDK不承诺该项的列表位置；移除唯一新增项后，既有pending逐值/顺序及完整CheckpointTuple列表必须与等待时全等，取消返回后至锁释放/prepare finished又必须完整全等。该审计不是Evidence、usage、known-zero或金额事实。
+
+若prepare在取消前已commit，该行仍是不可变审计事实，禁止回删、改写known-zero或推断收费。`ModelCallSettlementTimeout`不写`run.failed`、terminal、Evidence或lease release；Supervisor先stop-accept并以进程exit70切断不可信owner，持久事实由后继合法owner按原fence/recovery处理。普通成功/失败/SIGTERM数据路径不变。专用5秒settle预算是进程内执行边界，不进入数据库或机器artifact。
+
+显式native driver只改变包内生命周期所有权：`astream_events`获取至pump/interrupt读取均在同一已登记task内，首次取消用同一固定deadline收束；不增加checkpoint、Attempt或Evidence字段。deadline到期的NoReturn fatal及callback-return兜底均直接exit70，不得在退出前补terminal、seal、lease release或金额事实。发布与既有3310进程消费仍待Root提交/部署。
+
+---
+
 ## R198-A4：稳定identity已接main caller并复用现Attempt/Evidence，无DDL（2026-10-04）
 
 本片不增加表、列、索引、CHECK、FK或outbox。call_id由固定namespace `a06d00e2-defa-5fe3-8f2c-10ecb19c1161`与RFC8785 execution-info locator确定性派生；首attempt_id由`64675e75-8af6-50b4-ade3-d413e5144dc9`及`{call_id}:1`派生。locator绑定tenant/run/显式peer path/checkpoint_id/checkpoint_ns/task_id；根checkpoint_ns空字符串合法，node_attempt/time/metadata不入库。相同未完成task恢复命中现唯一键与immutable replay，不分配第二身份。
@@ -9,6 +21,8 @@ peer path在assembly recipe冻结前确定：从entry按target key排序BFS取�
 execution info非法时在prepare前fail closed且无行；typed dependency failure进入现唯一终态事务。terminal事务失败/ACK未知保留open prepared事实，原finalizer exact retry以同call/attempt identity封存；不得重新调用provider。本片无Billing client/ACK、post-terminal reconciler或GC变化。
 
 当前main native负路径已实际使用上述现表：Root54105真PG证明1个prepared/not_requested在0 provider后由终态事务封存为ND；唯一completeness SQL将sealed not_dispatched排除于unknown_count，因而该单attempt投影为unknown_count=0/completeness=complete，但Evidence仍是actual unknown与usage unresolved，不是known-zero或收费事实。Root50248全database 304通过且schema/contract未变；GP/catalog/Swarm真实caller/recovery与Billing/provider正路仍OPEN。
+
+取消不新增数据状态。prepare事务commit前收到model-node取消必须退出transaction并rollback，Attempt/Evidence与Run completeness保持原快照；若prepare已commit，则该完整canonical prepared/not_requested是审计事实，必须保留并由持久control/fence owner后继封存，禁止回删、改写known-zero或据此推断费用。Root98757当前真实RED正是外层取消后完整prepared晚提交，非半行或损坏投影；目标scope是否同时阻止checkpoint后写仍由真实公开checkpointer字节差量验证。 当前没有覆盖SDK node/checkpoint的具名有限settle预算；在公开终止保证或进程级owner方案获批前不得以超时返回并遗留task来放宽该数据零后写约束。
 
 ---
 

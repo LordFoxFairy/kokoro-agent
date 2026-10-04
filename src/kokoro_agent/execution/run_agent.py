@@ -25,6 +25,11 @@ from kokoro_agent.execution.events import (
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
+from kokoro_agent.model.call_scope import (
+    DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
+    ModelCallScope,
+    bind_model_call_scope,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +54,7 @@ async def invoke_once(
     ],
     trace: RunnableConfig | None = None,
     recursion_limit: int = 100,
+    model_call_settle_timeout_s: float = DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
 ) -> bool:
     """True=已发终态(completed/failed)；False=interrupt 暂停未发终态。
 
@@ -61,24 +67,43 @@ async def invoke_once(
         await emitter.emit(RunStartedPayload())
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
     with get_usage_metadata_callback() as usage_cb:
-        try:
-            run = await agent.astream_events(
-                payload,
-                version="v3",
-                config=config,
-                transformers=[CustomTransformer],
-            )
-            async with run:
-                await pump_run(emitter, run, source_for=source_for)
-                interrupted = await run.interrupted()
-            outcome: RunCompletedPayload | RunFailedPayload = RunCompletedPayload(
-                status="completed"
-            )
-        except ProgressPersistenceError:
-            raise
-        except Exception as error:  # noqa: BLE001 — execution failures become safe facts
-            outcome = run_failed_payload(error)
-        else:
+        scope = ModelCallScope(timeout_s=model_call_settle_timeout_s)
+        native_error: Exception | None = None
+        interrupted = False
+        with bind_model_call_scope(scope):
+
+            async def drive_native() -> bool:
+                run = await agent.astream_events(
+                    payload,
+                    version="v3",
+                    config=config,
+                    transformers=[CustomTransformer],
+                )
+                async with run:
+                    await pump_run(emitter, run, source_for=source_for)
+                    return await run.interrupted()
+
+            try:
+                try:
+                    driver = asyncio.create_task(drive_native())
+                    scope.register_owned_task(driver)
+                    interrupted = await asyncio.shield(driver)
+                    outcome: RunCompletedPayload | RunFailedPayload = (
+                        RunCompletedPayload(status="completed")
+                    )
+                except ProgressPersistenceError:
+                    raise
+                except Exception as error:  # noqa: BLE001 — safe execution fact
+                    native_error = error
+                    outcome = run_failed_payload(error)
+            except BaseException as primary:
+                await scope.settle(cancel_active=True, primary=primary)
+                raise
+            else:
+                await scope.settle(
+                    cancel_active=native_error is not None, primary=native_error
+                )
+        if native_error is None:
             # The SDK context has drained. Persistence failures deliberately sit
             # outside the native exception handler: no invented failed outcome.
             segment = _usage_totals(usage_cb.usage_metadata)

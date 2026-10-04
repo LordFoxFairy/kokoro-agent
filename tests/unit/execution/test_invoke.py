@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Never
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForLLMRun
@@ -1457,6 +1457,186 @@ async def test_r93_persistence_error_cancels_still_running_native_producer() -> 
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("model_node", ["model", "before_model"])
+async def test_projection_cleanup_does_not_repeat_cancel_owned_coroutines(
+    model_node: str,
+) -> None:
+    from collections.abc import AsyncIterator
+
+    from kokoro_agent.execution.protocols import (
+        AgentRunStream,
+        ModelStream,
+        SubagentRunStream,
+        ToolCallView,
+    )
+
+    from kokoro_agent.execution.publish_agent_events import pump_run
+
+    entered: set[str] = set()
+    cancelling: dict[str, int] = {}
+    all_entered = asyncio.Event()
+    cleanup_entered: set[str] = set()
+    all_cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    repeated_cancel: set[str] = set()
+    expected = {"text", "reasoning", "tools", "subagents", "custom"}
+
+    async def held(label: str) -> AsyncIterator[Never]:
+        task = asyncio.current_task()
+        assert task is not None
+        entered.add(label)
+        if entered == expected:
+            all_entered.set()
+        try:
+            await asyncio.Event().wait()
+            if False:
+                yield
+        finally:
+            cleanup_entered.add(label)
+            if cleanup_entered == expected:
+                all_cleanup_entered.set()
+            try:
+                await cleanup_release.wait()
+            except asyncio.CancelledError:
+                repeated_cancel.add(label)
+                await cleanup_release.wait()
+            cancelling[label] = task.cancelling()
+
+    class HeldModel:
+        namespace: list[str] = []
+        node: str | None = model_node
+        message_id: str | None = "cancel-segment"
+        output_message: AIMessage | None = None
+
+        @property
+        def text(self) -> AsyncIterator[Never]:
+            return held("text")
+
+        @property
+        def reasoning(self) -> AsyncIterator[Never]:
+            return held("reasoning")
+
+    class HeldRun:
+        @property
+        def messages(self) -> AsyncIterator[ModelStream]:
+            async def items() -> AsyncIterator[ModelStream]:
+                yield HeldModel()
+
+            return items()
+
+        @property
+        def tool_calls(self) -> AsyncIterator[ToolCallView]:
+            return held("tools")
+
+        @property
+        def subagents(self) -> AsyncIterator[SubagentRunStream]:
+            return held("subagents")
+
+        @property
+        def custom(self) -> AsyncIterator[Never]:
+            return held("custom")
+
+        async def interrupted(self) -> bool:
+            return False
+
+        async def __aenter__(self) -> HeldRun:
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    emitter = await RunEmitter.attach(FakeBus(), f"cancel-tree-{model_node}")
+    run: AgentRunStream = HeldRun()
+    task = asyncio.create_task(pump_run(emitter, run, source_for=_runtime_custom))
+    try:
+        async with asyncio.timeout(1):
+            await all_entered.wait()
+        task.cancel()
+        async with asyncio.timeout(1):
+            await all_cleanup_entered.wait()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        cleanup_release.set()
+        result = (await asyncio.gather(task, return_exceptions=True))[0]
+        assert isinstance(result, asyncio.CancelledError)
+        assert repeated_cancel == set()
+        assert cancelling == {label: 1 for label in expected}
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_invoke_cancellation_enters_finite_settle_with_uncooperative_driver() -> (
+    None
+):
+    from collections.abc import AsyncIterator
+
+    from kokoro_agent.model.call_scope import ModelCallSettlementTimeout
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_custom() -> AsyncIterator[Never]:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        if False:
+            yield
+
+    class HeldRun(FakeRunStream):
+        @property
+        def custom(self) -> AsyncIterator[Never]:
+            return held_custom()
+
+    async def unexpected_finalize(
+        _payload: RunCompletedPayload | RunFailedPayload,
+        _usage: tuple[int, int],
+    ) -> bool:
+        raise AssertionError("fatal settlement must not finalize")
+
+    async def unexpected_usage(_input: int, _output: int) -> tuple[int, int]:
+        raise AssertionError("fatal settlement must not seal usage")
+
+    async def unexpected_settled(
+        _seal: Callable[[], Awaitable[tuple[int, int]]],
+    ) -> Literal["active", "waiting", "unknown"]:
+        raise AssertionError("fatal settlement must not pass native-settled")
+
+    agent = FakeAgent(run=HeldRun())
+    emitter = await RunEmitter.attach(FakeBus(), "uncooperative-driver")
+    invoke_task = asyncio.create_task(
+        invoke_once(
+            emitter,
+            agent,
+            "thread-uncooperative-driver",
+            {"messages": [HumanMessage(content="hello")]},
+            initial=False,
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=unexpected_finalize,
+            record_usage=unexpected_usage,
+            on_native_settled=unexpected_settled,
+            model_call_settle_timeout_s=0.02,
+        )
+    )
+    try:
+        async with asyncio.timeout(1):
+            await entered.wait()
+        invoke_task.cancel()
+        done, _ = await asyncio.wait({invoke_task}, timeout=0.1)
+        assert invoke_task in done
+        error = invoke_task.exception()
+        assert isinstance(error, ModelCallSettlementTimeout)
+    finally:
+        release.set()
+        if not invoke_task.done():
+            invoke_task.cancel()
+        await asyncio.gather(invoke_task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("failure_source", ["todo", "text", "durable"])

@@ -15,6 +15,7 @@ from kokoro_agent.model.call_models import (
     ModelCallRepository,
     PrepareModelCall,
 )
+from kokoro_agent.model.call_scope import register_current_model_call_task
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_generated import PlannedBinding
 
@@ -49,6 +50,7 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         del handler
+        register_current_model_call_task()
         call_id, attempt_id = _logical_identity(request, self._request, self._peer_path)
         await self._repository.prepare(
             PrepareModelCall(

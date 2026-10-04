@@ -65,7 +65,7 @@ async def pump_run(
         await asyncio.gather(producer, drainer)
     finally:
         for task in (producer, drainer):
-            if not task.done():
+            if not task.done() and task.cancelling() == 0:
                 task.cancel()
         await asyncio.gather(producer, drainer, return_exceptions=True)
 
@@ -106,7 +106,7 @@ async def _consume(
         # gather propagates the first error without stopping siblings. Each
         # recursive run owns and joins its children before that error escapes.
         for task in tasks:
-            if not task.done():
+            if not task.done() and task.cancelling() == 0:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -126,7 +126,7 @@ async def _consume_messages(
                 await asyncio.gather(*drains)
             finally:
                 for drain in drains:
-                    if not drain.done():
+                    if not drain.done() and drain.cancelling() == 0:
                         drain.cancel()
                 await asyncio.gather(*drains, return_exceptions=True)
             continue
@@ -142,7 +142,7 @@ async def _consume_messages(
             text_full, _ = await asyncio.gather(text_task, reasoning_task)
         finally:
             for projection_task in (text_task, reasoning_task):
-                if not projection_task.done():
+                if not projection_task.done() and projection_task.cancelling() == 0:
                     projection_task.cancel()
             await asyncio.gather(text_task, reasoning_task, return_exceptions=True)
         final = model.output_message

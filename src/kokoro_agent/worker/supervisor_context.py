@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Never
 
 from langchain_core.runnables.config import RunnableConfig
 
@@ -19,6 +20,7 @@ from kokoro_agent.domain.run.repository import (
     SandboxBackendKind,
 )
 from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.model.call_scope import ModelCallSettlementTimeout
 from kokoro_agent.features.definition import Feature
 from kokoro_agent.policy import Backend
 from kokoro_agent.protocol import (
@@ -49,6 +51,7 @@ SourceResolver = Callable[[str], SubagentSource]
 BackendResolver = Callable[[RunRequest], Backend]
 FeatureResolver = Callable[[str], Feature]
 SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
+ProcessFatal = Callable[[int], Never]
 
 
 class SupervisorContext:
@@ -68,6 +71,7 @@ class SupervisorContext:
     _consumer: str
     _heartbeat_s: float
     _recursion_limit: int
+    _model_call_settle_timeout_s: float
     _events_ttl_s: int
     _run_ttl_s: int
     _outbox_republish_ms: int
@@ -84,6 +88,14 @@ class SupervisorContext:
     _control: dict[str, asyncio.Task[None]]
     _emitters: dict[str, RunEmitter]
     _leases: dict[str, LeaseFence]
+    _serve_task: asyncio.Task[None] | None
+    _model_call_fatal: ModelCallSettlementTimeout | None
+    _intake_closed: bool
+    _process_fatal: ProcessFatal
+
+    def _fatal_model_call_settlement(
+        self, error: ModelCallSettlementTimeout
+    ) -> None: ...
 
     async def _control_request(self, run_id: str) -> RunRequest | None: ...
 

@@ -1,10 +1,10 @@
-## R195-A4-D0a 当前：逐物理模型调用接线设计已收敛，源码未实施（2026-10-04）
+## R196-A4-D0b 当前：原生middleware seam已核，SDK隐藏retry已关闭（2026-10-04）
 
-Agent main `8c08ea4` 已提交A1–A3内部持久边界；Root实际303真PG与2178默认工程门通过。真实运行仍由`AgentFactory.build_deep_agent`把裸`BaseChatModel`交DeepAgents，A1–A3 repository没有runtime caller，故真实provider/Billing/收费链继续OPEN。
+Agent main `c7c6885`。锁定SDK核验确认LangChain `AgentMiddleware.awrap_model_call`在每个model node的`bind_tools/bind→ainvoke`之前执行；A4保留`call_runtime.py`业务职责但具体实现收敛为该middleware，旧BaseChatModel wrapper方案不并存。main/swarm peer用构造闭包持trusted Run/lease/System route/peer key；declarative subagent须逐spec显式path，Compiled/remote当前不在启用范围。
 
-下一最小目标是在每次main/subagent/handoff/tool-loop的真实model invocation与provider网络之间装配唯一adapter：绑定locked Run、System route、static recipe/peer path，依次执行prepare、Billing owner授权观察、唯一dispatch CAS与strict evidence append；仅`newly_started=true`外发，SDK隐藏retry、pending/unknown/timeout及重放均不得产生第二次网络效果。失败/取消按已批准政策仅结算已核实actual并释放其余预占；unknown不猜零。
+OpenAI 2.41.0与Anthropic 0.105.2默认`max_retries=2`；现`model/factory.py`五个实际构造均显式`max_retries=0`。Root真实锁定SDK→本地HTTP sandbox先得到5 failed/9 passed（五种故障均实际发3次），GREEN后14项通过：500/429/断开恰一次，五构造正常响应、OpenAI/Anthropic stream及取消/timeout清理保持。完整工程自然exit 0：lock/frozen-sync、Ruff 281文件、全Pyright、contract、2178 passed/415资源deselected/795既有warnings、wheel/sdist build均通过；独立审查0 P0/P1、保留stream错误矩阵未穷举P2。该证据不依赖Billing，也不代表真实provider或收费完成。
 
-本轮只有四D0，未改source/test/schema/contract/generated/lock，未运行新验证。Billing experimental target尚未发布/部署/pin，且authenticated evidence read/ACK仍缺，因此本轮不创建client/endpoint或宣称真实收费。Agent evidence read边界属下一设计卡；支付渠道最后。
+本轮代码范围仅`model/factory.py`与本地HTTP integration测试；无schema/contract/generated/lock变化，未重跑PostgreSQL，原303项仅为A3b历史证据。per-invocation middleware、Billing正式consumer、evidence read/ACK、真实provider与用户收费旅程继续OPEN。
 
 ---
 

@@ -85,6 +85,7 @@ def _build_openai_model(
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
             disable_streaming=settings.disable_streaming,
+            max_retries=0,
             extra_body=extra_body,
         )
     # openai 接受 api_key=None / base_url=None，无需按 None 分支。
@@ -93,6 +94,7 @@ def _build_openai_model(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         disable_streaming=settings.disable_streaming,
+        max_retries=0,
         reasoning_effort=_thinking_effort(model, off="minimal"),
     )
 
@@ -111,12 +113,14 @@ def _build_anthropic_model(
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
             disable_streaming=settings.disable_streaming,
+            max_retries=0,
             effort=effort,
         )
     return init_chat_model(
         model_spec,
         base_url=settings.anthropic_base_url,
         disable_streaming=settings.disable_streaming,
+        max_retries=0,
         effort=effort,
     )
 
@@ -141,6 +145,7 @@ def _build_litellm_model(
         api_key=settings.litellm_api_key,
         base_url=settings.litellm_base_url,
         disable_streaming=settings.disable_streaming,
+        max_retries=0,
         # 流式下也回 usage（stream_options.include_usage=true）：否则 usage_metadata 空 →
         # 终态 token_usage=None → session settle 捕获 0 → 计费不扣。对所有经网关的 OpenAI 兼容
         # 后端(生产 GLM/openai 及 dev ollama)一致生效，是计费闭环所需，非本地专用。

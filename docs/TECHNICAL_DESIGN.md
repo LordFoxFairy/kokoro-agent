@@ -1,26 +1,28 @@
-## R195-A4-D0a：逐物理模型调用运行 seam（2026-10-04；仅设计）
+## R196-A4-D0b：原生middleware seam与隐藏retry边界（2026-10-04；Retry已验，Middleware仍设计）
 
-**当前态。** main `8c08ea4` 已实现 A1 prepare、A2 authorization/唯一 dispatch CAS、A3 strict evidence append及终态原子closure，并通过Root限定303真PG与2178默认工程门；生产运行仍把`model.factory.make_chat_model`返回的裸`BaseChatModel`直接交给`deepagents.create_deep_agent`，`run_agent.invoke_once`只在整个native invocation外聚合旧Run预算usage。`WorkerDependencies`未装配`ModelCallRepository`或Billing client，A1–A3没有runtime caller，因此尚无逐物理provider attempt、真实Billing admission、strict provider observation或收费闭环。
+**当前态。** main `c7c6885`已提交A1–A3持久边界与A4-D0a；本工作树的独立Retry片已在`model/factory.py`五个实际SDK构造显式设置`max_retries=0`。锁定DeepAgents 0.6.6最终使用LangChain 1.3.2 `create_agent`；其async model node先组合`AgentMiddleware.awrap_model_call`，handler内部才执行`request.model.bind_tools/bind`及`ainvoke`。现`TerminalGuardMiddleware`与`TokenBudgetMiddleware`已沿同一hook逐model轮运行，但生产仍未装配model-call middleware/repository/Billing client，provider/Billing/收费链OPEN。OpenAI SDK 2.41.0与Anthropic SDK 0.105.2默认`max_retries=2`；本片只关闭同一permit内的SDK隐藏HTTP retry。
 
-**目标。** 下一实现片在每次真实chat-model invocation与provider网络之间放置唯一package-internal adapter：从受信Run/lease、System `ResolvedModel`、冻结static recipe及当前peer path构造A1 planned/attempt事实；按`prepare → begin_authorization → owner observation/grant → start_dispatch`推进，只有`newly_started=true`允许一次外发；response/error/cancel转换为完整usage/v1 canonical evidence后走A3 append。`false`、pending、unknown、timeout、失权及commit结果未知均不得重发。SDK隐藏retry必须关闭；若未来允许retry，每次实际网络attempt必须获得新attempt identity与独立Billing admission，不能躲在一次SDK调用内。
+**唯一具体形态。** 保留`model/call_runtime.py`的逐attempt业务职责，但实现为窄`AgentMiddleware.awrap_model_call`，不包装或继承`BaseChatModel`。middleware在handler前完成prepare/owner authorization observation/dispatch gate，只有`newly_started=true`才调用handler；返回、异常或取消后走strict evidence。淘汰D0a中“把BaseChatModel wrapper交DeepAgents”的具体方案，不保双轨。callback只能补充attempt-scoped partial observation，不能授dispatch。
 
-取消或失败只结算已核实的实际消耗并释放其余预占；unknown不猜零、不自动整笔释放。该政策已批准，不再询问。Agent只产出执行/usage事实，不计算金额；Billing仍唯一拥有1.4倍可调销售规则、单位换算、舍入、预占、capture/release及reconciliation。当前Billing `3.0.0-experimental.1`只可作为D0目标引用，尚未发布/部署/pin，故本片不新增client/generated/endpoint或启用真实授权。Agent-owned authenticated evidence read边界是下一独立设计卡，不在A4-D0a预设API。
+可信上下文由构造闭包传入：`build_deep_agent`已有locked `RunRequest`、`LeaseFence`、System `ResolvedModel`与当前`PreparedPeerPlan.agent.key`，不得从metadata或`runtime.context`猜。swarm各peer分别构造。declarative subagent须在`agents/subagents.py`逐spec装配显式subagent name/path的middleware，不能把一个run-level实例复用后再猜path。当前CompiledSubAgent/remote AsyncSubAgent未由本仓启用；后继若出现必须fail closed或另过正式evidence门，不冒本片覆盖。
 
 ### §8 放置与实施门
 
 | 项 | 裁决 |
 | --- | --- |
-| Owner | `kokoro-agent` model-call runtime为唯一writer；System拥有planned route，Billing拥有授权/金额/结算。 |
-| 当前事实 | provider链为`SupervisorExecutionMixin._consume_request/_start_run`→`AgentFactory.build/_build_feature/build_deep_agent`→System `ModelResolver.resolve`→`model_from_route/make_chat_model`→`deepagents.create_deep_agent`→`invoke_once`/`astream_events`→SDK。A1–A3 repository仅被测试调用。 |
-| 目标职责 | package-internal per-invocation adapter在真实provider I/O相邻处执行持久gate与strict observation；不成为第二Agent runtime，不发布wire API。 |
-| 位置比较 | **采用**在`model/`新增窄`call_runtime.py`目标，经`agent_factory.py`把底层`BaseChatModel`与受信Run/route/peer context装配后交DeepAgents；这样覆盖main/subagent/handoff/tool-loop每次调用且许可与网络相邻。**淘汰**在`run_agent.invoke_once`或`pump_run`按整Run包裹：看不到内部多次调用/SDK retry，无法逐attempt gate。**不单独采用**callback-only：未证明callback在所有stream/error/cancel/retry路径都能阻止网络，只可作为adapter内部观测输入。新文件仍须tests-first卡后才能创建。 |
-| 粒度 | adapter只编排现A1–A3 command与provider调用；canonical artifact留`call_artifacts/call_evidence`，SQL留Postgres adapters，provider构造留`model/factory.py`，worker只装配依赖。禁止万能UoW/facade。 |
-| 依赖 | model runtime可依赖model command/Protocol、usage codec及LangChain model协议；通过注入端口调用repository/未来正式Billing consumer。禁止import sibling Billing源码/SQL/DTO、环境读取、金额算法或BFF类型。 |
-| 数据/API | 本目标无DDL/HTTP/generated变化。System route与recipe/peer path逐项绑定；Billing request/admission refs保持opaque。strict evidence仍usage/v1 1.0.0。 |
-| 删除项 | 本片不删旧`RunUsageSegment`预算职责；逐attempt producer、公开投影与恢复全验后才移除其任何收费真源误用。不得保留裸provider旁路或双runtime；切换条件在后继实现卡一次关闭。 |
-| 验证 | tests-first须证明main/subagent多调用逐attempt、first permit恰一外发、false/lost-commit-ACK零重发、stream成功/失败/取消/unknown canonical evidence、terminal closure与刷新恢复；最终由Root用正式System/Billing HTTP、共享PG/Redis、真实provider及原浏览器验收。repository unit/mock不冒端到端。 |
+| Owner/职责 | Agent model-call runtime唯一writer；`call_runtime.py`只承接per-invocation middleware编排，System route与Billing金额owner不变。 |
+| 位置比较 | **采用**LangChain原生`AgentMiddleware.awrap_model_call`：在bind+ainvoke前且逐tool-loop model轮。**淘汰**BaseChatModel wrapper：需代理Pydantic、bind_tools/bind、ainvoke/astream/_agenerate/_astream，易旁路。**淘汰**Run外围/callback-only：前者非逐attempt，后者网络已开始。 |
+| 粒度/依赖 | 新普通`model/call_runtime.py`目标；main装配在`agent_factory.py`，逐spec path在`agents/subagents.py`；依赖现model Protocol/usage codec，不import Billing源码/SQL/DTO，不建UoW/framework。 |
+| 数据/API/删除 | 无DDL/wire/generated；不删Run预算usage。切换时不得保留裸provider旁路。evidence read另卡。 |
+| 验证 | 原生`create_deep_agent/create_agent`、真实bind_tools与本地HTTP SDK sandbox；直接调middleware或Mock不证明覆盖。最终正式Billing/provider/browser另门。 |
 
-**精确后继候选写集（尚未授权）：** 新`src/kokoro_agent/model/call_runtime.py`；现`model/factory.py`、`agent_factory.py`、`worker/dependencies.py`、`worker/main.py`；现model-call integration及factory/native runtime测试。A1–A3 SQL/model默认冻结。Billing正式artifact发布后另授generated consumer/client精确路径；authenticated evidence read另卡。真正阻断仅是跨owner消费/发布与真实收费验收，不阻挡本D0、provider seam tests-first和strict observation设计。
+### 可立即独立实施的R196-A4-Retry切片
+
+该切片无需等待Billing，只关闭隐藏SDK retry。tests-first唯一新文件采用`tests/integration/test_model_provider_retries.py`：它位于既有integration目录，以锁定OpenAI/Anthropic/LiteLLM-compatible/DeepSeek实际SDK对本地受控HTTP server发请求并统计真实request；淘汰`tests/unit/model`（mock/构造断言看不到SDK retry）与Docker-specific sandbox（无容器职责）。先证明当前500、429和连接/响应中断会产生多次请求的RED，并覆盖stream与正常200控制；不能用延长sleep或网络外部provider。
+
+GREEN已在现`src/kokoro_agent/model/factory.py`所有五个实际SDK构造显式设置`max_retries=0`，未改timeout/协议/路由。Root本地HTTP sandbox 14项通过：500/429/断开均恰一次request，五构造的正常响应、OpenAI/Anthropic stream及取消/timeout清理保持；完整工程自然exit 0（Ruff 281文件、全Pyright、contract、2178 passed/415资源deselected、wheel/sdist build均通过）。它只禁止SDK在同attempt内隐藏retry，不禁止上层owner在新attempt、新Billing admission与新dispatch permit下显式重试；独立审查保留stream错误矩阵未穷举P2。
+
+**后继写集：** Retry RED仅上述新integration文件；Root受控运行得到业务RED后，GREEN仅`model/factory.py`＋同测试。per-invocation middleware仍是后续独立tests-first卡；Billing consumer/evidence read/provider真实收费不在Retry片。
 
 ---
 

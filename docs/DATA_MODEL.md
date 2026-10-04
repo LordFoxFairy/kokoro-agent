@@ -1,10 +1,8 @@
-## R195-A4-D0a：runtime接线不改变canonical SQL（2026-10-04）
+## R196-A4-D0b：middleware与retry关闭无数据模型变化（2026-10-04）
 
-A4-D0a不增加表、列、索引、FK、outbox或Billing事实。目标runtime只使用现`kokoro_agent_model_call_attempt`、`kokoro_agent_model_usage_evidence`及Run completeness：每次物理模型调用先沿A1分配attempt/ordinal并冻结System route＋recipe/peer binding；授权与dispatch沿A2现状态机；provider observation沿A3 append。只有首次`newly_started=true`可外发，重放/未知提交不创建第二provider效果。
+采用`AgentMiddleware.awrap_model_call`或现已落地的五处SDK `max_retries=0`均不增加表、列、索引、FK、outbox或Billing事实。每个获准handler调用仍对应现有一个attempt；Root本地HTTP sandbox 14项与完整工程门通过后，隐藏SDK retry关闭，一次`newly_started=true`不再在同attempt内产生多个不可见HTTP attempt。未来显式retry必须新attempt/new ordinal/new admission，沿现A1–A3写入。本轮未重跑PostgreSQL；原303项是真实A3b历史证据且本片无SQL变化。
 
-旧`kokoro_agent_run_usage_segment`继续只服务预算和现公开Run投影，不是收费真源，不得用Run级聚合补造逐attempt evidence。失败/取消保存已核实actual；无法核实则unknown，绝不存known-zero替代。terminal closure继续将未外发attempt封存not_dispatched、已dispatch无可信观察封存unknown；它不替代runtime producer或Billing settlement。
-
-Billing Admission、金额、预占、capture/release、1.4倍可调销售规则、单位换算/舍入和reconciliation不落Agent SQL。当前无usage delivery outbox/ACK或authenticated evidence read数据边界；这些须各自设计门后实施。本片无retention/GC删除决定。
+declarative subagent的显式path来自受信spec并冻结进现planned/attempt binding；不新增metadata列或从trace反推。Compiled/remote subagent当前未启用，不能写入假默认path。旧Run usage segment仍仅预算；本片无evidence outbox/read/ACK、retention或金额变化。
 
 ---
 

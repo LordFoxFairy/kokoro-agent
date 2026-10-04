@@ -1,3 +1,11 @@
+## R226 当前：单 completion SDK执行限制，无公开契约变化（2026-10-04）
+
+Agent基线已为 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`；本两文件候选已通过Root147真实peer、451邻接与2253默认门、静态/contract/隔离build及独审0P0/P1/P2，待Root提交，完整证据与未执行资源范围见CURRENT。四文档回填后Root另跑build，本段不预报。
+
+正式LiteLLM SDK请求显式发 `n=1`，最终wire hook仅接受strict整数1；缺失或非法值在外发前以原safe bound error拒绝。原endpoint/model/output限制不变，不扩cap、不重写调用方override。这里变的是内部SDK最终请求约束，Agent公开HTTP5、usage/v1、System3.0固定收据、execution-proof和资金契约均未修改，也未发布technical-bound/read或Billing许可。输入有限上界、真实外部provider与UI整链保持OPEN；本peer证据不冒正式收费调用。
+
+---
+
 ## R216-AGENT-EXECUTION-D0：System 3.0 固定消费者边界（2026-10-04；候选已验待Root提交）
 
 本节对应 Root `docs/task.md::R216-AGENT-EXECUTION-D0` 与本仓 TECHNICAL_DESIGN 顶部当前方案。Agent 基线 `92b802e223547288c4a8dcaba56dfd2f0c327f93`；候选 consumer pin 已原子更新为下列3.0.0固定收据；限定消费者与安装门已验，但尚未提交/部署3.0。本片不修改 Agent HTTP5、usage/v1、RunRequest、AG-UI、execution-proof、Billing或canonical SQL契约。

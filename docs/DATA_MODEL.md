@@ -1,3 +1,11 @@
+## R226 当前：单 completion 无持久数据变化（2026-10-04）
+
+基线 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`；两文件single-completion候选已验待Root提交。正式LiteLLM构造固定n1与最终strict整数1 guard仅约束一个物理SDK请求，不变Run→Attempt锁序、lease、prepare/authorization/evidence/head、canonical SQL、公开wire或资金事实；没有新列/表/索引/Schema/generated/迁移。System context能力值仍不等于已证明的完整可收费输入上界。
+
+Root147真实peer、六邻门451、默认2253与静态/contract/clean archive build通过，独审877c9a05为0P0/P1/P2；精确manifest、554资源deselected/既有warnings及默认loopback诊断见CURRENT，不把default未运行资源算通过。本轮writer只回填文档；回填后build由Root另跑。后继technical bound/read持久事实及真实Billing expiry/dispatch permit仍未实现，本片不造grant、known-zero或免费路径；外部provider、费用与UI未闭，缺Billing正式native0provider保持。
+
+---
+
 ## R216-AGENT-EXECUTION-D0：技术执行界为消费值，不新增持久owner（2026-10-04；候选已验待Root提交）
 
 本片基线 Agent `main@92b802e223547288c4a8dcaba56dfd2f0c327f93`，任务为 Root `docs/task.md::R216-AGENT-EXECUTION-D0`。D0独审已归零；R218已另授既定tests-only并同步最终System `955bd587f46a771e43a4330d202d90a7d2d67262` 固定来源，R219候选已按授权更新source/机器receipt并通过Root真实PG/工程/installed门，但无DDL修改；System receipt唯一存于现provenance，不进数据库。TECHNICAL_DESIGN放置表与API_CONTRACT固定System3.0身份共同构成当前方案。

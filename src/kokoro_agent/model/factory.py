@@ -123,8 +123,11 @@ class ModelHttpClients:
         except ValueError:
             raise ValueError("model request JSON is invalid") from None
         cap = payload.get("max_completion_tokens")
+        completions = payload.get("n")
         if (
-            payload.get("model") != self.route.gateway_model_name
+            type(completions) is not int
+            or completions != 1
+            or payload.get("model") != self.route.gateway_model_name
             or type(cap) is not int
             or not 1 <= cap <= self.route.max_output_tokens
             or "max_tokens" in payload
@@ -300,6 +303,7 @@ def _build_litellm_model(
         disable_streaming=settings.disable_streaming,
         max_retries=0,
         max_completion_tokens=clients.route.max_output_tokens,
+        n=1,
         http_client=clients.sync,
         http_async_client=clients.async_client,
         use_responses_api=False,

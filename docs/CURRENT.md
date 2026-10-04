@@ -1,3 +1,13 @@
+## R226 当前：单物理请求固定一份 completion，候选已验待 Root 提交（2026-10-04）
+
+本片基线为已提交 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`；现两路径候选只改 `model/factory.py` 与既有真实 peer 测试。正式 LiteLLM 构造显式 `n=1`，公开 HTTPX 最终请求 hook 要求 strict 整数1，缺失/null/bool/float/string/0/负数/2均在网络前拒绝；不按n放大输出界，不静默改写override。原 endpoint/model/output cap/别名/JSON检查、其它provider和owned客户端生命周期保持。下方R216“d50前候选待提交”是历史阶段，不覆盖本基线。
+
+Root真实验收：完整 **147 peer passed**；六项邻接门 **451 passed / 657 warnings**；默认 **2253 passed / 554资源deselected / 795 warnings**（137.87秒）；lock/frozen-sync、Ruff287、Pyright、contract均exit0且source_same。隔离clean archive wheel/sdist build exit0；本次四文档回填后由Root再build，尚不预报结果。独审 `877c9a0545a2e56a2ce255d3a74db2a010e2b227039de479a13d090e16526350` 为0P0/P1/P2。默认门一条loopback线程诊断无详细trace，保留该观察，不猜产品根因。资源/审查证据均为Root执行，本writer本轮仅文档回填。
+
+证据：`/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r226-agent-n-green-g8xwlxo9/manifest.json`、`kokoro-r226-agent-adjacent-0_6a4whz/manifest.json`、`kokoro-r226-agent-engineering-k9gmo7gu/manifest.json`、`kokoro-r226-agent-build-wqehfs_0/manifest.json`（后三项同一临时父目录）；独审 `/tmp/r226-agent-n-independent-review.md`。两源码冻结SHA见 `/tmp/r225-agent-single-completion-green-manifest.json`。候选待Root提交；未修改公开机器契约、Schema或资金事实。可信有限输入上界、technical bound/read、Billing许可、外部provider与UI整链仍OPEN；正式native缺Billing仍0provider，3310未因本片启用。
+
+---
+
 ## R216/R219 当前：固定 System 3.0 与 SDK 硬界候选已验，待 Root 提交（2026-10-04）
 
 唯一任务为 Root `docs/task.md::R216-AGENT-EXECUTION-D0` 及其 R218/R219、R221-AGENT-DOC-FINAL 续记。Agent 基线 `main@92b802e223547288c4a8dcaba56dfd2f0c327f93`；原 writer 只在既定九 production/machine、八 tests、四 docs 内写入，Root 独占 Git、所有测试/资源与集成。

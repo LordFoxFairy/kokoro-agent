@@ -320,13 +320,14 @@ async def _model(
     monkeypatch: pytest.MonkeyPatch,
     *,
     output_cap: int | None = None,
+    disable_streaming: bool = False,
 ) -> BaseChatModel:
     base_url = peer.base_url
     if case.kind == "anthropic-environment":
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sandbox-anthropic-key")
 
     settings = ChatModelSettings(
-        disable_streaming=False,
+        disable_streaming=disable_streaming,
         openai_api_key=SecretStr("sandbox-openai-key"),
         openai_base_url=base_url,
         openai_reasoning=case.kind == "deepseek",
@@ -633,6 +634,7 @@ async def test_r216_public_client_final_wire_gate_rejects_invalid_bytes(
         await _model(_PROVIDER_CASES[2], peer, monkeypatch)
         clients = peer.model_clients[0]
         payload: dict[str, object] = {
+            "n": 1,
             "model": clients.route.gateway_model_name,
             "max_completion_tokens": clients.route.max_output_tokens,
         }
@@ -777,3 +779,251 @@ async def test_r216_sync_async_sdk_stream_and_invoke_upward_override_zero_reques
             else:
                 await runnable.ainvoke(messages)
         assert peer.request_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", [False, True], ids=["default", "explicit-one"])
+async def test_r225_single_completion_wire_positive(
+    monkeypatch: pytest.MonkeyPatch,
+    explicit: bool,
+) -> None:
+    async with _peer("openai", "ok") as peer:
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        overrides: dict[str, Any] = {"n": 1} if explicit else {}
+        response = await model.ainvoke([HumanMessage(content="hello")], **overrides)
+        assert getattr(response, "content") == "ok"
+        assert peer.request_count == 1
+        assert len(peer.requests) == 1
+        observed = peer.requests[0]
+        assert observed.request_line == b"POST /v1/chat/completions HTTP/1.1"
+        payload = TypeAdapter(dict[str, object]).validate_json(observed.body)
+        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["max_completion_tokens"] == clients.route.max_output_tokens
+        assert "max_tokens" not in payload
+        assert "max_output_tokens" not in payload
+        assert type(payload["n"]) is int
+        assert payload["n"] == 1
+        assert payload.get("stream") is not True
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "seam", ["invoke", "bind", "bind_tools", "extra_body", "native"]
+)
+async def test_r225_multiple_completions_rejected_before_peer(
+    monkeypatch: pytest.MonkeyPatch,
+    seam: str,
+) -> None:
+    failure: Exception | None = None
+    async with _peer("openai", "ok") as peer:
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        overrides: dict[str, Any] = {
+            "n": 2,
+            "max_completion_tokens": clients.route.max_output_tokens,
+        }
+        try:
+            await _invoke_overridden(
+                model,
+                seam,
+                {"extra_body": overrides} if seam == "extra_body" else overrides,
+            )
+        except Exception as error:
+            # Observe the peer even if an SDK wrapper changes the exception type.
+            failure = error
+        captured = tuple(peer.requests)
+        request_count = peer.request_count
+    assert clients.sync.is_closed and clients.async_client.is_closed
+    # Only synthetic request bodies are retained; never credentials or headers.
+    wire = [(item.request_line, item.body) for item in captured]
+    for observed in captured:
+        assert observed.request_line == b"POST /v1/chat/completions HTTP/1.1"
+        payload = TypeAdapter(dict[str, object]).validate_json(observed.body)
+        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["max_completion_tokens"] == clients.route.max_output_tokens
+        assert type(payload["n"]) is int and payload["n"] == 2
+        assert payload.get("stream") is not True
+    assert request_count == 0, {
+        "seam": seam,
+        "request_count": request_count,
+        "route_output_cap": clients.route.max_output_tokens,
+        "captured_wire": wire,
+        "exception_type": None if failure is None else type(failure).__name__,
+    }
+    assert captured == ()
+    assert isinstance(failure, (ValueError, openai.APIConnectionError))
+    guard_failure = (
+        failure.__cause__ if isinstance(failure, openai.APIConnectionError) else failure
+    )
+    assert isinstance(guard_failure, ValueError)
+    assert str(guard_failure) == "model request execution bound is invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("synchronous", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_r225_single_completion_sync_async_stream_wire_positive(
+    monkeypatch: pytest.MonkeyPatch,
+    synchronous: bool,
+    streaming: bool,
+) -> None:
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        model = await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        clients = peer.model_clients[0]
+        messages = [HumanMessage(content="hello")]
+        if synchronous:
+
+            def invoke() -> str:
+                if streaming:
+                    return "".join(chunk.text for chunk in model.stream(messages))
+                return model.invoke(messages).text
+
+            result = await asyncio.to_thread(invoke)
+        elif streaming:
+            result = "".join([chunk.text async for chunk in model.astream(messages)])
+        else:
+            result = (await model.ainvoke(messages)).text
+        assert result == "ok"
+        assert peer.request_count == 1
+        assert len(peer.requests) == 1
+        observed = peer.requests[0]
+        assert observed.request_line == b"POST /v1/chat/completions HTTP/1.1"
+        payload = TypeAdapter(dict[str, object]).validate_json(observed.body)
+        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["max_completion_tokens"] == clients.route.max_output_tokens
+        assert type(payload["n"]) is int and payload["n"] == 1
+        assert (payload.get("stream") is True) is streaming
+        assert "max_tokens" not in payload and "max_output_tokens" not in payload
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("synchronous", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    "invalid", ["null", "bool", "float", "string", "zero", "negative", "multiple"]
+)
+async def test_r225_extra_body_completion_override_hits_final_guard(
+    monkeypatch: pytest.MonkeyPatch,
+    synchronous: bool,
+    streaming: bool,
+    invalid: str,
+) -> None:
+    values: dict[str, object] = {
+        "null": None,
+        "bool": True,
+        "float": 1.0,
+        "string": "1",
+        "zero": 0,
+        "negative": -1,
+        "multiple": 2,
+    }
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        model = await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        clients = peer.model_clients[0]
+        # extra_body is merged after SDK parameter handling. Constructor n stays 1.
+        runnable = model.bind(extra_body={"n": values[invalid]})
+        messages = [HumanMessage(content="hello")]
+        with pytest.raises((ValueError, openai.APIConnectionError)) as caught:
+            if synchronous:
+
+                def invoke() -> None:
+                    if streaming:
+                        list(runnable.stream(messages))
+                    else:
+                        runnable.invoke(messages)
+
+                await asyncio.to_thread(invoke)
+            elif streaming:
+                async for _chunk in runnable.astream(messages):
+                    pass
+            else:
+                await runnable.ainvoke(messages)
+        assert peer.request_count == 0
+        assert peer.requests == []
+        error = caught.value
+        guard = (
+            error.__cause__ if isinstance(error, openai.APIConnectionError) else error
+        )
+        assert isinstance(guard, ValueError)
+        assert str(guard) == "model request execution bound is invalid"
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("synchronous", [False, True])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "one",
+        "missing",
+        "null",
+        "bool",
+        "float",
+        "string",
+        "zero",
+        "negative",
+        "multiple",
+    ],
+)
+async def test_r225_public_owned_client_requires_strict_single_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    synchronous: bool,
+    case: str,
+) -> None:
+    values: dict[str, object] = {
+        "one": 1,
+        "null": None,
+        "bool": True,
+        "float": 1.0,
+        "string": "1",
+        "zero": 0,
+        "negative": -1,
+        "multiple": 2,
+    }
+    async with _peer("openai", "ok") as peer:
+        await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        clients = peer.model_clients[0]
+        payload: dict[str, object] = {
+            "model": clients.route.gateway_model_name,
+            "max_completion_tokens": clients.route.max_output_tokens,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        if case != "missing":
+            payload["n"] = values[case]
+        raw = _json_bytes(payload)
+
+        async def send() -> int:
+            if synchronous:
+                response = await asyncio.to_thread(
+                    clients.sync.post, clients.endpoint, content=raw
+                )
+            else:
+                response = await clients.async_client.post(
+                    clients.endpoint, content=raw
+                )
+            return response.status_code
+
+        if case == "one":
+            assert await send() == 200
+            assert peer.request_count == 1
+            assert len(peer.requests) == 1
+            assert (
+                peer.requests[0].request_line == b"POST /v1/chat/completions HTTP/1.1"
+            )
+            assert peer.requests[0].body == raw
+        else:
+            # No SDK parameter validation here: this is the public final-wire seam.
+            with pytest.raises(
+                ValueError, match="^model request execution bound is invalid$"
+            ):
+                await send()
+            assert peer.request_count == 0
+            assert peer.requests == []
+    assert clients.sync.is_closed and clients.async_client.is_closed

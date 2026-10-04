@@ -1,3 +1,11 @@
+## R226 当前：单请求单 completion 最终界候选已验（2026-10-04）
+
+基线 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`，本地两文件候选待Root提交。现 `model/factory.py` 同一职责窄修：正式LiteLLM constructor显式 `n=1`；现 `ModelHttpClients._validate` 对最终JSON要求 `type(n) is int and n == 1`，与既有endpoint/model/owner output cap及别名/JSON拒绝规则共同执行。五公开override seam、sync/async与stream/nonstream均经过公开owned HTTPX hook；不用SDK private API，不改变其他provider或关闭所有权，不新增模块/协议/Schema/资金事实。
+
+Root完整147真实peer、六邻门451、默认2253及lock/sync/Ruff287/Pyright/contract通过，隔离wheel/sdist通过；独审877c9a05为0P0/P1/P2，manifest与资源筛选/warnings/loopback诊断见CURRENT本节。四文档回填后Root仍将再build，不冒已提交。此片仅限制同一物理请求的completion数量，**不证明输入token可信上界**；预授权technical exposure与授权后dispatch permit保持分层，正式bound/read、Billing grant、真实provider和用户页面仍未闭环。下方既有片段保留历史，不把旧candidate身份当当前HEAD。
+
+---
+
 ## R216-AGENT-EXECUTION-D0：固定 System 3.0 消费与逐调用执行界（2026-10-04；D0已审，候选已验待Root提交）
 
 本节是已验候选消费者切片的当前方案，不覆盖下方 R203 已验收的取消/fatal 事实；下方旧 System 2.0、无界 SDK 或待升级描述仅是历史快照。唯一任务卡在 Root `docs/task.md` 的 **R216-AGENT-EXECUTION-D0**，不另建计划中心。基线为 Agent `main@92b802e223547288c4a8dcaba56dfd2f0c327f93`，盘点时工作树 clean；本轮唯一 writer 为 Agent 固定 System 消费者与 SDK 执行限额设计，Root 独占 Git、资源和验收。D0只写四docs前缀且独审已归零；R218另授既定tests-only，本次同步API_CONTRACT所列最终955bd587固定来源。Root已核owner原件与19sources；R218/R219正式授九production/machine路径后，现九production/machine、八tests候选已完成Root限定验收；R221仅回填四docs，Root独占提交，3310未启用。

@@ -97,6 +97,47 @@ async def test_profile_schema_catalog_drift_rejected(
 @pytest.mark.parametrize(
     ("table", "mutation"),
     [
+        ("kokoro_agent_model_call_attempt", "DROP COLUMN final_request_digest"),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN final_request_digest DROP NOT NULL",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN final_request_digest SET DEFAULT repeat('0',64)",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN final_request_binding_version DROP NOT NULL",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN final_request_binding_version SET DEFAULT 1",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_final_request",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_final_request, ADD CONSTRAINT ck_model_attempt_final_request CHECK (TRUE)",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP COLUMN final_request_binding_version",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN final_request_binding_version TYPE bigint",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN final_request_digest TYPE varchar(64)",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_final_request, ADD CONSTRAINT ck_model_attempt_final_request CHECK (final_request_binding_version = 2)",
+        ),
         (
             "kokoro_agent_run",
             "DROP CONSTRAINT ck_kokoro_agent_run_model_usage",

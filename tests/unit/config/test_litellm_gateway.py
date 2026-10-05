@@ -20,6 +20,8 @@ import pytest
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from support.model_http_mechanism import ModelHttpMechanismClients
+
 from kokoro_agent.config import AppConfig
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.clients.system import ResolvedModel
@@ -175,8 +177,12 @@ def _route() -> ResolvedModel:
 
 
 @contextmanager
-def _owned_clients(config: AppConfig) -> Generator[ModelHttpClients]:
-    clients = ModelHttpClients(config.model, _route())
+def _owned_clients(
+    config: AppConfig, *, mechanism: bool = False
+) -> Generator[ModelHttpClients]:
+    clients = (ModelHttpMechanismClients if mechanism else ModelHttpClients)(
+        config.model, _route()
+    )
     try:
         yield clients
     finally:
@@ -276,7 +282,7 @@ def test_litellm_is_disabled_by_default(gateway: _GatewayServer) -> None:
 def test_litellm_invoke_hits_gateway_with_key(gateway: _GatewayServer) -> None:
     # 真 HTTP 假网关：证明请求打到网关地址、Authorization 带网关 key、body.model 为网关别名。
     config = _config(_base_url(gateway))
-    with _owned_clients(config) as clients:
+    with _owned_clients(config, mechanism=True) as clients:
         model = make_chat_model(
             config.model,
             ModelConfig(provider="litellm", name="gateway-alias"),
@@ -298,7 +304,7 @@ def test_litellm_invoke_hits_gateway_with_key(gateway: _GatewayServer) -> None:
 def test_litellm_streaming_over_gateway(gateway: _GatewayServer) -> None:
     # 流式可用：stream=True 走 SSE，分块拼回完整内容，请求同样落在网关且带网关 key。
     config = _config(_base_url(gateway))
-    with _owned_clients(config) as clients:
+    with _owned_clients(config, mechanism=True) as clients:
         model = make_chat_model(
             config.model,
             ModelConfig(provider="litellm", name="gateway-alias"),

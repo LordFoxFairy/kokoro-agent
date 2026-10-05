@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   attempt_binding_digest  TEXT NOT NULL,
   planned_bytes           BYTEA NOT NULL,
   planned_digest          TEXT NOT NULL,
+  final_request_binding_version INTEGER NOT NULL,
+  final_request_digest    TEXT NOT NULL,
   authorization_bytes     BYTEA NOT NULL,
   authorization_digest    TEXT NOT NULL,
   authorization_state     TEXT NOT NULL,
@@ -318,6 +320,9 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   CONSTRAINT ck_model_attempt_identity CHECK (
     length(trim(tenant_id)) > 0 AND length(run_id) > 0 AND length(lease_owner) > 0
     AND attempt_ordinal > 0 AND lease_generation > 0
+  ),
+  CONSTRAINT ck_model_attempt_final_request CHECK (
+    final_request_binding_version = 1 AND final_request_digest ~ '^[0-9a-f]{64}$'
   ),
   CONSTRAINT ck_model_attempt_bytes CHECK (
     octet_length(attempt_binding_bytes) BETWEEN 1 AND 65536

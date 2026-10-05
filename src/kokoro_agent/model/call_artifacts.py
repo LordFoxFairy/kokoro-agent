@@ -14,6 +14,7 @@ from kokoro_agent.model.call_models import (
     ModelCallInputInvalid,
     PrepareModelCall,
 )
+from kokoro_agent.model.request_profile import REQUEST_PROFILE
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_generated import (
     AuthorizationGranted,
@@ -47,6 +48,22 @@ def _digest(value: bytes) -> str:
 
 def encode_planned_artifact(planned: PlannedBinding) -> tuple[bytes, str]:
     return _canonical(planned.model_dump(mode="json"))
+
+
+def encode_final_request_digest(
+    *, endpoint: str, planned_digest: str, raw: bytes
+) -> str:
+    """Bind already validated final bytes, not a reconstruction of model input."""
+    envelope = {
+        "version": 1,
+        "request_profile": REQUEST_PROFILE,
+        "method": "POST",
+        "endpoint": endpoint,
+        "planned_digest": planned_digest,
+        "body_bytes": len(raw),
+        "body_sha256": _digest(raw),
+    }
+    return _digest(b"kokoro-agent:final-http-request:v1\n" + rfc8785.dumps(envelope))
 
 
 def encode_not_requested_artifact() -> tuple[bytes, str]:
@@ -224,6 +241,7 @@ def _require_str(value: Mapping[str, JsonValue], key: str) -> str:
 
 
 __all__ = [
+    "encode_final_request_digest",
     "encode_attempt_binding",
     "encode_granted_artifact",
     "encode_not_requested_artifact",

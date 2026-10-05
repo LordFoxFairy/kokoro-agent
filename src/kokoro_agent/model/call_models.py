@@ -56,6 +56,8 @@ class PrepareModelCall(BaseModel):
     planned: PlannedBinding
     peer_path: tuple[str, ...]
     recipe: StaticRecipeBinding
+    final_request_binding_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    final_request_digest: Digest
 
 
 class PreparedModelCall(BaseModel):
@@ -73,6 +75,8 @@ class PreparedModelCall(BaseModel):
     attempt_binding_digest: Digest
     planned_bytes: bytes
     planned_digest: Digest
+    final_request_binding_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    final_request_digest: Digest
     prepared_at_ms: int = Field(ge=0)
     initial_authorization_state: str = "not_requested"
     initial_status: str = "prepared"

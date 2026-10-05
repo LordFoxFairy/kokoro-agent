@@ -59,3 +59,15 @@ def test_sandbox_cleanup_is_durable_retryable_and_has_no_database_foreign_key() 
     assert "uq_kokoro_agent_sandbox_cleanup_resource unique" in sql
     assert "FOREIGN KEY" not in sql.upper()
     assert "REFERENCES" not in sql.upper()
+
+
+def test_final_request_facts_are_clean_slate_required_columns() -> None:
+    sql = " ".join(canonical_schema_sql().lower().split())
+    assert "final_request_binding_version integer not null," in sql
+    assert "final_request_digest text not null," in sql
+    assert (
+        "constraint ck_model_attempt_final_request check ( final_request_binding_version = 1 and final_request_digest ~ '^[0-9a-f]{64}$' )"
+        in sql
+    )
+    assert "final_request_binding_version integer not null default" not in sql
+    assert "final_request_digest text not null default" not in sql

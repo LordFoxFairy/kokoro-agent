@@ -9,6 +9,8 @@ claim that a LangGraph checkpoint was actually observed.
 
 from __future__ import annotations
 
+from support.model_http_mechanism import synthetic_final_digest
+
 from kokoro_agent.protocol import SkillProgressSink
 
 import asyncio
@@ -281,6 +283,8 @@ async def _open_model_attempts(
     ):
         prepared = await repository.prepare(
             PrepareModelCall(
+                final_request_binding_version=1,
+                final_request_digest=synthetic_final_digest(planned, run.input.content),
                 request=run,
                 lease=lease,
                 call_id=str(uuid4()),

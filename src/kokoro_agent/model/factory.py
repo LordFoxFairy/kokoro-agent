@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-import json
-import math
 
 import httpx
 
@@ -13,19 +11,26 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from kokoro_agent.policy import ModelConfig
 
 from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.model.usage_observation import (
-    claim_usage_request,
     observe_usage_response,
     observe_usage_response_async,
 )
 
 
-_WIRE_OBJECT = TypeAdapter(dict[str, object])
+from kokoro_agent.model.request_profile import validate_request_profile
+from kokoro_agent.model.call_runtime import (
+    freeze_final_model_request,
+    reject_final_model_request,
+)
+from kokoro_agent.model.call_models import (
+    ModelCallAuthorizationUnavailable,
+    ModelCallInputInvalid,
+)
 
 
 class ChatModelSettings(BaseModel):
@@ -44,26 +49,6 @@ class ChatModelSettings(BaseModel):
     litellm_enabled: bool
     litellm_base_url: str | None
     litellm_api_key: SecretStr | None
-
-
-def _request_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("model request JSON is invalid")
-        result[key] = value
-    return result
-
-
-def _finite_float(value: str) -> float:
-    number = float(value)
-    if not math.isfinite(number):
-        raise ValueError("model request JSON is invalid")
-    return number
-
-
-def _reject_nonfinite(_: str) -> object:
-    raise ValueError("model request JSON is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,41 +103,48 @@ class ModelHttpClients:
         object.__setattr__(self, "async_client", client)
 
     def _validate(self, request: httpx.Request, raw: bytes) -> None:
-        if request.method != "POST" or request.url != self.endpoint:
-            raise ValueError("model request endpoint is not bound")
-        try:
-            decoded: object = json.loads(
-                raw,
-                object_pairs_hook=_request_object,
-                parse_constant=_reject_nonfinite,
-                parse_float=_finite_float,
-            )
-        except (ValueError, UnicodeError):
-            raise ValueError("model request JSON is invalid") from None
-        try:
-            payload = _WIRE_OBJECT.validate_python(decoded, strict=True)
-        except ValueError:
-            raise ValueError("model request JSON is invalid") from None
-        cap = payload.get("max_completion_tokens")
-        completions = payload.get("n")
-        if (
-            type(completions) is not int
-            or completions != 1
-            or payload.get("model") != self.route.gateway_model_name
-            or type(cap) is not int
-            or not 1 <= cap <= self.route.max_output_tokens
-            or "max_tokens" in payload
-            or "max_output_tokens" in payload
-        ):
-            raise ValueError("model request execution bound is invalid")
+        validate_request_profile(
+            raw=raw,
+            method=request.method,
+            endpoint=str(request.url),
+            expected_endpoint=str(self.endpoint),
+            headers=request.headers.multi_items(),
+            model_name=self.route.gateway_model_name,
+            max_output_tokens=self.route.max_output_tokens,
+        )
 
     def _validate_sync(self, request: httpx.Request) -> None:
-        self._validate(request, request.read())
-        claim_usage_request(request, self.route)
+        try:
+            raw = request.content
+        except httpx.RequestNotRead:
+            reject_final_model_request(
+                ModelCallInputInvalid("model request must be materialized")
+            )
+        try:
+            self._validate(request, raw)
+        except ModelCallInputInvalid as error:
+            reject_final_model_request(error)
+        reject_final_model_request(
+            ModelCallAuthorizationUnavailable(
+                "synchronous model authorization is unavailable"
+            )
+        )
 
     async def _validate_async(self, request: httpx.Request) -> None:
-        self._validate(request, await request.aread())
-        claim_usage_request(request, self.route)
+        try:
+            raw = request.content
+        except httpx.RequestNotRead:
+            reject_final_model_request(
+                ModelCallInputInvalid("model request must be materialized")
+            )
+        await freeze_final_model_request(
+            route=self.route,
+            raw=raw,
+            method=request.method,
+            endpoint=str(request.url),
+            expected_endpoint=str(self.endpoint),
+            headers=request.headers.multi_items(),
+        )
 
     async def _close(self) -> None:
         errors: list[BaseException] = []

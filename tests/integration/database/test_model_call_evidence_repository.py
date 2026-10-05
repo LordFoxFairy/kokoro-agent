@@ -26,6 +26,8 @@ import pytest
 import rfc8785
 from psycopg.errors import CheckViolation, UniqueViolation
 
+from support.model_http_mechanism import synthetic_final_digest
+
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
@@ -466,6 +468,8 @@ async def test_prepare_freezes_trusted_identity_and_exact_replay(
     )
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
     command = PrepareModelCall(
+        final_request_binding_version=1,
+        final_request_digest=synthetic_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=str(uuid4()),
@@ -518,6 +522,8 @@ async def _prepared_attempt(
     await _insert_leased_prepare_run(database_url, schema, request, recipe)
     repository = PostgresModelCallRepository(database_url, schema)
     command = PrepareModelCall(
+        final_request_binding_version=1,
+        final_request_digest=synthetic_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=str(uuid4()),
@@ -1650,6 +1656,8 @@ async def test_prepare_allocates_contiguous_ordinals(
     call_id = str(uuid4())
     commands = [
         PrepareModelCall(
+            final_request_binding_version=1,
+            final_request_digest=synthetic_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=call_id,
@@ -1720,6 +1728,10 @@ async def test_prepare_rejects_peer_outside_locked_recipe(
     with pytest.raises(ModelCallInputInvalid):
         await repository.prepare(
             PrepareModelCall(
+                final_request_binding_version=1,
+                final_request_digest=synthetic_final_digest(
+                    planned, request.input.content
+                ),
                 request=request,
                 lease=LeaseFence(owner="worker-a1", generation=1),
                 call_id=str(uuid4()),
@@ -1764,6 +1776,8 @@ async def test_prepare_accepts_scope_from_real_runtime_recipe(
         run_chat_database_url, run_chat_schema
     ).prepare(
         PrepareModelCall(
+            final_request_binding_version=1,
+            final_request_digest=synthetic_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=str(uuid4()),
@@ -1793,6 +1807,10 @@ async def test_prepare_same_attempt_across_runs_is_typed_conflict(
         *[
             repository.prepare(
                 PrepareModelCall(
+                    final_request_binding_version=1,
+                    final_request_digest=synthetic_final_digest(
+                        planned, item.input.content
+                    ),
                     request=item,
                     lease=LeaseFence(owner="worker-a1", generation=1),
                     call_id=str(uuid4()),
@@ -1841,6 +1859,10 @@ async def test_prepare_stale_or_terminal_authority_writes_nothing(
     with pytest.raises(ModelCallAuthorityLost):
         await repository.prepare(
             PrepareModelCall(
+                final_request_binding_version=1,
+                final_request_digest=synthetic_final_digest(
+                    planned, request.input.content
+                ),
                 request=request,
                 lease=LeaseFence(owner="worker-a1", generation=1),
                 call_id=str(uuid4()),
@@ -1862,6 +1884,8 @@ async def test_prepare_rejects_exhausted_ordinal_without_projection_write(
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
     call_id = str(uuid4())
     first = PrepareModelCall(
+        final_request_binding_version=1,
+        final_request_digest=synthetic_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=call_id,
@@ -1894,6 +1918,8 @@ async def test_prepare_total_deadline_cancels_run_lock_wait_without_write(
         run_chat_database_url, run_chat_schema, request, recipe
     )
     command = PrepareModelCall(
+        final_request_binding_version=1,
+        final_request_digest=synthetic_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=str(uuid4()),
@@ -1942,6 +1968,8 @@ async def test_prepare_recompute_excludes_sealed_not_dispatched_from_unknown(
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
     first = await repository.prepare(
         PrepareModelCall(
+            final_request_binding_version=1,
+            final_request_digest=synthetic_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=str(uuid4()),
@@ -1986,6 +2014,8 @@ async def test_prepare_recompute_excludes_sealed_not_dispatched_from_unknown(
         )
     await repository.prepare(
         PrepareModelCall(
+            final_request_binding_version=1,
+            final_request_digest=synthetic_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=str(uuid4()),
@@ -2038,6 +2068,10 @@ async def test_attempt_table_accepts_each_approved_state_shape(
     has_latest: bool,
 ) -> None:
     prepared_at = datetime.now(UTC)
+    fixture_request, _, fixture_planned = _prepare_values()
+    final_digest = synthetic_final_digest(
+        fixture_planned, fixture_request.input.content
+    )
     async with connect_pg(run_chat_database_url) as connection:
         async with connection.cursor() as cursor:
             await execute_sql(
@@ -2048,9 +2082,10 @@ async def test_attempt_table_accepts_each_approved_state_shape(
                     attempt_binding_digest,planned_bytes,planned_digest,
                     authorization_bytes,authorization_digest,authorization_state,
                     status,prepared_at,dispatch_started_at,sealed_at,
-                    latest_revision,latest_event_id,latest_evidence_digest
+                    latest_revision,latest_event_id,latest_evidence_digest,
+                    final_request_binding_version,final_request_digest
                 ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s)""".format(
+                    %s,%s,%s,%s,%s,%s,1,%s)""".format(
                     qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
                 ),
                 (
@@ -2075,6 +2110,7 @@ async def test_attempt_table_accepts_each_approved_state_shape(
                     1 if has_latest else 0,
                     uuid4() if has_latest else None,
                     _DIGEST if has_latest else None,
+                    final_digest,
                 ),
             )
 
@@ -2103,6 +2139,10 @@ async def test_attempt_table_rejects_invalid_state_cross_products(
     has_latest: bool,
 ) -> None:
     prepared_at = datetime.now(UTC)
+    fixture_request, _, fixture_planned = _prepare_values()
+    final_digest = synthetic_final_digest(
+        fixture_planned, fixture_request.input.content
+    )
     async with connect_pg(run_chat_database_url) as connection:
         with pytest.raises(CheckViolation):
             async with connection.cursor() as cursor:
@@ -2114,9 +2154,10 @@ async def test_attempt_table_rejects_invalid_state_cross_products(
                         attempt_binding_digest,planned_bytes,planned_digest,
                         authorization_bytes,authorization_digest,authorization_state,
                         status,prepared_at,dispatch_started_at,sealed_at,
-                        latest_revision,latest_event_id,latest_evidence_digest
+                        latest_revision,latest_event_id,latest_evidence_digest,
+                        final_request_binding_version,final_request_digest
                     ) VALUES (%s,%s,%s,%s,1,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,
-                        %s,%s,%s,%s,%s,%s)""".format(
+                        %s,%s,%s,%s,%s,%s,1,%s)""".format(
                         qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
                     ),
                     (
@@ -2139,6 +2180,7 @@ async def test_attempt_table_rejects_invalid_state_cross_products(
                         1 if has_latest else 0,
                         uuid4() if has_latest else None,
                         _DIGEST if has_latest else None,
+                        final_digest,
                     ),
                 )
 
@@ -2151,6 +2193,10 @@ async def test_attempt_identity_and_evidence_revision_uniqueness_are_durable(
     call_id = uuid4()
     event_id = uuid4()
     prepared_at = datetime.now(UTC)
+    fixture_request, _, fixture_planned = _prepare_values()
+    final_digest = synthetic_final_digest(
+        fixture_planned, fixture_request.input.content
+    )
     async with connect_pg(run_chat_database_url) as connection:
         async with connection.cursor() as cursor:
             await execute_sql(
@@ -2161,10 +2207,11 @@ async def test_attempt_identity_and_evidence_revision_uniqueness_are_durable(
                     attempt_binding_digest,planned_bytes,planned_digest,
                     authorization_bytes,authorization_digest,authorization_state,
                     status,prepared_at,sealed_at,latest_revision,
-                    latest_event_id,latest_evidence_digest
+                    latest_event_id,latest_evidence_digest,
+                    final_request_binding_version,final_request_digest
                 ) VALUES (%s,'tenant-a1','run-a1',%s,1,'worker-a1',1,
                     %s,%s,%s,%s,%s,%s,'not_requested','not_dispatched',%s,
-                    %s,1,%s,%s)""".format(
+                    %s,1,%s,%s,1,%s)""".format(
                     qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
                 ),
                 (
@@ -2180,6 +2227,7 @@ async def test_attempt_identity_and_evidence_revision_uniqueness_are_durable(
                     prepared_at,
                     event_id,
                     _DIGEST,
+                    final_digest,
                 ),
             )
             await execute_sql(
@@ -2463,3 +2511,109 @@ async def test_run_completeness_count_constraints(
             with pytest.raises(CheckViolation):
                 async with connection.cursor() as cursor:
                     await execute_sql(cursor, statement, values)
+
+
+async def test_r246_final_request_receipt_exact_replay_and_drift(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    repository, command, created = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    assert created.final_request_binding_version == 1
+    assert created.final_request_digest == synthetic_final_digest(
+        command.planned, command.request.input.content
+    )
+
+    async def row() -> dict[str, object]:
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            await execute_sql(
+                cursor,
+                f"SELECT * FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s",
+                (command.attempt_id,),
+            )
+            value = await fetch_one(cursor)
+            assert value is not None
+            return dict(value)
+
+    before = await row()
+    replayed = await repository.prepare(command)
+    assert replayed == created.model_copy(update={"replayed": True})
+    changed = command.model_copy(
+        update={
+            "final_request_digest": synthetic_final_digest(
+                command.planned,
+                command.request.input.content + " changed-final-transform",
+            )
+        }
+    )
+    assert changed.final_request_digest != command.final_request_digest
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.prepare(changed)
+    assert await row() == before
+    outcomes = await asyncio.gather(
+        repository.prepare(command), repository.prepare(changed), return_exceptions=True
+    )
+    assert isinstance(outcomes[0], PreparedModelCall) and outcomes[0].replayed
+    assert isinstance(outcomes[1], ModelCallIdentityConflict)
+    assert await row() == before
+
+
+@pytest.mark.parametrize("fault", ["version", "digest"])
+async def test_r246_corrupt_final_request_blocks_transition_and_closure(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    fault: str,
+) -> None:
+    from kokoro_agent.model.call_evidence import build_terminal_closure_evidence
+
+    repository, command, created = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        table = qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+        await execute_sql(
+            cursor,
+            f"ALTER TABLE {table} DROP CONSTRAINT ck_model_attempt_final_request",
+        )
+        column, value = (
+            ("final_request_binding_version", 2)
+            if fault == "version"
+            else ("final_request_digest", "INVALID")
+        )
+        await execute_sql(
+            cursor,
+            f"UPDATE {table} SET {column}=%s WHERE attempt_id=%s",
+            (value, command.attempt_id),
+        )
+        await execute_sql(
+            cursor,
+            f"SELECT *,clock_timestamp() AS db_now FROM {table} WHERE attempt_id=%s",
+            (command.attempt_id,),
+        )
+        row = await fetch_one(cursor)
+        assert row is not None
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.prepare(command)
+    with pytest.raises(ModelCallIdentityConflict):
+        await repository.begin_authorization(
+            BeginModelCallAuthorization(
+                tenant_id=created.tenant_id,
+                run_id=created.run_id,
+                attempt_id=created.attempt_id,
+                lease=created.lease,
+                attempt_binding_digest=created.attempt_binding_digest,
+                planned_digest=created.planned_digest,
+                request_ref="r246-corrupt-qa",
+            )
+        )
+    database_now = row["db_now"]
+    assert isinstance(database_now, datetime)
+    with pytest.raises(ModelCallIdentityConflict):
+        build_terminal_closure_evidence(row, database_now)

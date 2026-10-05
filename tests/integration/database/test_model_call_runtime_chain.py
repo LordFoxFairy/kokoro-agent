@@ -1295,3 +1295,581 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
             == checkpoint_before
         )
         assert recovery_bus.acked == ["r199-terminal-duplicate"]
+
+
+async def test_r245_native_final_request_precedes_prepare_without_billing(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    checkpointer: BaseCheckpointSaver[str],
+    memory_store: BaseStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from kokoro_agent.model.factory import ModelHttpClients
+
+    sequence: list[str] = []
+    final_requests: list[tuple[str, str, bytes, asyncio.Task[object]]] = []
+    trace = _PrepareTaskTrace()
+    original_validator: Callable[[ModelHttpClients, httpx.Request], Awaitable[None]]
+    original_validator = TypeAdapter[
+        Callable[[ModelHttpClients, httpx.Request], Awaitable[None]]
+    ](Callable[[ModelHttpClients, httpx.Request], Awaitable[None]]).validate_python(
+        vars(ModelHttpClients)["_validate_async"], strict=True
+    )
+
+    async def observe_final_request(
+        clients: ModelHttpClients, final_request: httpx.Request
+    ) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        sequence.append("final_hook_enter")
+        final_requests.append(
+            (
+                final_request.method,
+                str(final_request.url),
+                final_request.content,
+                task,
+            )
+        )
+        await original_validator(clients, final_request)
+
+    class OrderedPostgresModelCallRepository(_TracingPostgresModelCallRepository):
+        async def prepare(self, command: PrepareModelCall) -> PreparedModelCall:
+            sequence.append("prepare_enter")
+            receipt = await super().prepare(command)
+            sequence.append("prepare_committed")
+            return receipt
+
+    # Observe the production hook in place; keep its sole registration and behavior.
+    monkeypatch.setattr(ModelHttpClients, "_validate_async", observe_final_request)
+    request = _request()
+    scope = RunScope.of(request)
+    await run_repository.enqueue_dispatch(
+        request, scope.namespace, f"r197:{request.run_id}"
+    )
+    lease = await run_repository.claim_dispatch(request, "r197-worker")
+    assert lease is not None
+
+    async with (
+        _OwnerAndProviderPeer() as peer,
+        SystemModelClient(peer.origin, SecretStr("r197-system-token")) as resolver,
+    ):
+        config = AppConfig.from_env(
+            {
+                "KOKORO_LITELLM_ENABLED": "1",
+                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
+                "KOKORO_LITELLM_API_KEY": "r197-gateway-key",
+            }
+        )
+        dependencies = WorkerDependencies(
+            model=config.model,
+            sandbox=config.sandbox,
+            runtime_policy=RuntimeAssemblyPolicy.from_settings(
+                run_token_budget=config.run_token_budget,
+                recursion_limit=config.recursion_limit,
+                model=config.model,
+                sandbox=config.sandbox,
+            ),
+            manifest=production_manifest(),
+            subagent_catalog=build_subagent_catalog(None),
+            toolbox=build_toolbox(fetch_allow_private=False, search=None),
+            checkpointer=checkpointer,
+            run_repository=run_repository,
+            model_call_repository=OrderedPostgresModelCallRepository(
+                run_chat_database_url,
+                run_chat_schema,
+                trace,
+                total_timeout_seconds=_PREPARE_TOTAL_TIMEOUT_SECONDS,
+            ),
+            memory_store=memory_store,
+            model_resolver=resolver,
+        )
+        handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        emitter = await RunEmitter.attach(
+            FakeBus(), request.run_id, outbox=run_repository, lease=lease
+        )
+
+        async def finalize_terminal(
+            payload: RunCompletedPayload | RunFailedPayload, usage: tuple[int, int]
+        ) -> bool:
+            await emitter.ensure_delivery_events()
+            snapshot = tuple(await run_repository.list_delivery_journal(request.run_id))
+            result = await run_repository.finalize_terminal(
+                request.run_id,
+                ExecutionTerminalAuthority(lease=lease),
+                RunTerminalOutcome(
+                    payload=payload,
+                    usage=RunUsageSegment(
+                        input_tokens=usage[0], output_tokens=usage[1]
+                    ),
+                ),
+                snapshot,
+            )
+            assert result.status != "deferred"
+            return result.status in {"committed", "replayed"}
+
+        async def record_usage(
+            input_tokens: int, output_tokens: int
+        ) -> tuple[int, int]:
+            totals = await run_repository.add_usage(
+                request.run_id, lease, input_tokens, output_tokens
+            )
+            assert totals is not None
+            return totals
+
+        async def on_native_settled(
+            _seal_usage: Callable[[], Awaitable[tuple[int, int]]],
+        ) -> Literal["active", "waiting", "unknown"]:
+            return "active"
+
+        def source_for(
+            _name: str,
+        ) -> Literal["built-in", "config-custom", "runtime-custom"]:
+            return "runtime-custom"
+
+        try:
+            terminal_claimed = await invoke_once(
+                emitter,
+                handle.runnable,
+                scope.scoped_thread_id,
+                {"messages": [HumanMessage(content="hello")]},
+                initial=True,
+                approval_tool_names=frozenset(),
+                source_for=source_for,
+                finalize_terminal=finalize_terminal,
+                record_usage=record_usage,
+                on_native_settled=on_native_settled,
+                recursion_limit=config.recursion_limit,
+            )
+        finally:
+            await handle.aclose()
+
+        facts = await _lifecycle_facts(
+            run_chat_database_url, run_chat_schema, request.run_id
+        )
+        assert {
+            "terminal_claimed": terminal_claimed,
+            "owner_requests": peer.owner_requests,
+            "provider_requests": peer.provider_requests,
+            "unknown_requests": peer.unknown_requests,
+            **facts,
+        } == {
+            "terminal_claimed": True,
+            "owner_requests": 1,
+            "provider_requests": 0,
+            "unknown_requests": [],
+            "run": {
+                "terminal": True,
+                "interaction_phase": "terminal",
+                "attempts": 1,
+                "dispatched": 0,
+                "sealed": 1,
+                "unknown": 0,
+                "completeness": "complete",
+            },
+            "attempt": {
+                "status": "not_dispatched",
+                "authorization_state": "not_requested",
+                "dispatched": False,
+                "latest_revision": 1,
+            },
+            "evidence": {
+                "outcome": "not_dispatched",
+                "usage_state": "unresolved",
+                "totals_state": "unknown",
+                "classification_state": "unknown",
+                "sealed": True,
+                "document": {
+                    "actual": {"reason": "not_observed", "state": "unknown"},
+                    "usage": {"reason": "missing_usage", "state": "unresolved"},
+                },
+            },
+            "terminal": {
+                "kind": "run.failed",
+                "payload": {
+                    "code": "dependency_unavailable",
+                    "retryable": False,
+                },
+            },
+        }
+
+        assert trace.entered.is_set()
+        assert trace.finished.is_set()
+        assert trace.outcome == "committed"
+
+        # Billing remains unavailable: only the freeze/prepare order should change.
+        assert sequence == ["final_hook_enter", "prepare_enter", "prepare_committed"]
+        assert len(final_requests) == 1
+        method, url, raw, hook_task = final_requests[0]
+        assert method == "POST"
+        assert url == f"{peer.origin}/v1/chat/completions"
+        assert hook_task is trace.task
+        body = _JSON_OBJECT.validate_json(raw, strict=True)
+        assert body["model"] == "gateway-model-r197"
+        assert body["n"] == 1
+        assert body["max_completion_tokens"] == 256
+        messages = _OBJECT_LIST.validate_python(body["messages"], strict=True)
+        assert any(
+            message.get("role") == "user" and message.get("content") == "hello"
+            for message in (
+                _JSON_OBJECT.validate_python(value, strict=True) for value in messages
+            )
+        )
+        from kokoro_agent.model.call_artifacts import encode_final_request_digest
+
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            await execute_sql(
+                cursor,
+                f"""SELECT final_request_binding_version,final_request_digest,
+                           planned_digest,attempt_binding_bytes
+                    FROM {qualified(run_chat_schema, "kokoro_agent_model_call_attempt")}
+                    WHERE run_id=%s""",
+                (request.run_id,),
+            )
+            stored = await fetch_one(cursor)
+            assert stored is not None
+        assert stored["final_request_binding_version"] == 1
+        assert stored["final_request_digest"] == encode_final_request_digest(
+            endpoint=url, planned_digest=str(stored["planned_digest"]), raw=raw
+        )
+        binding_bytes = stored["attempt_binding_bytes"]
+        assert isinstance(binding_bytes, bytes)
+        binding = _JSON_OBJECT.validate_json(binding_bytes, strict=True)
+        import rfc8785
+
+        assert (
+            binding["input_digest"]
+            == hashlib.sha256(
+                rfc8785.dumps(request.input.model_dump(mode="json"))
+            ).hexdigest()
+        )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "sdk_child",
+        "swallowed_denial",
+        "unrelated_error",
+        "two_claimants",
+        "late_child",
+        "owner_cancel",
+        "invalid_profile",
+        "materialization_failure",
+        "no_request",
+        "replay_drift",
+    ],
+)
+async def test_r246_final_request_lifecycle_real_sdk_and_pg(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    checkpointer: BaseCheckpointSaver[str],
+    memory_store: BaseStore,
+    mode: str,
+) -> None:
+    """Supplemental lifecycle seam; the original native graph case stays separate."""
+    from contextlib import AsyncExitStack
+    from openai import APIConnectionError
+    from langchain.agents.middleware import ModelRequest, ModelResponse
+    from langgraph.runtime import ExecutionInfo, Runtime
+    from kokoro_agent.domain.run.models import StaticRecipeBinding
+    from kokoro_agent.model.call_models import (
+        ModelCallAuthorizationUnavailable,
+        ModelCallInputInvalid,
+    )
+    from kokoro_agent.model.call_runtime import ModelCallRuntimeMiddleware
+    from kokoro_agent.model.call_scope import ModelCallScope, bind_model_call_scope
+    from kokoro_agent.model.factory import (
+        ModelHttpClients,
+        make_chat_model,
+        model_from_route,
+    )
+    from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+
+    request = _request()
+    run_scope = RunScope.of(request)
+    await run_repository.enqueue_dispatch(
+        request, run_scope.namespace, f"r246:{request.run_id}"
+    )
+    lease = await run_repository.claim_dispatch(request, "r246-worker")
+    assert lease is not None
+    trace = _PrepareTaskTrace()
+    repository = _TracingPostgresModelCallRepository(
+        run_chat_database_url,
+        run_chat_schema,
+        trace,
+        total_timeout_seconds=_PREPARE_TOTAL_TIMEOUT_SECONDS,
+    )
+    async with AsyncExitStack() as stack:
+        peer = await stack.enter_async_context(_OwnerAndProviderPeer())
+        resolver = await stack.enter_async_context(
+            SystemModelClient(peer.origin, SecretStr("r246-system-qa"))
+        )
+        config = AppConfig.from_env(
+            {
+                "KOKORO_LITELLM_ENABLED": "1",
+                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
+                "KOKORO_LITELLM_API_KEY": "r246-synthetic-key",
+            }
+        )
+        dependencies = WorkerDependencies(
+            model=config.model,
+            sandbox=config.sandbox,
+            runtime_policy=RuntimeAssemblyPolicy.from_settings(
+                run_token_budget=config.run_token_budget,
+                recursion_limit=config.recursion_limit,
+                model=config.model,
+                sandbox=config.sandbox,
+            ),
+            manifest=production_manifest(),
+            subagent_catalog=build_subagent_catalog(None),
+            toolbox=build_toolbox(fetch_allow_private=False, search=None),
+            checkpointer=checkpointer,
+            run_repository=run_repository,
+            model_call_repository=repository,
+            memory_store=memory_store,
+            model_resolver=resolver,
+        )
+        handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        stack.push_async_callback(handle.aclose)
+        route = await resolver.resolve(
+            tenant_id=request.execution_identity.tenant_ref,
+            feature_key=request.feature_key,
+            label=request.requested_model_label,
+            request_id="r246-lifecycle-route",
+        )
+        planned = PlannedBinding(
+            model=route.model_id,
+            provider=route.provider_id,
+            revision_id=route.revision_id,
+            provider_model_name=route.provider_model_name,
+            gateway_model_name=route.gateway_model_name,
+            feature_key=route.feature_key,
+            revision=str(route.revision),
+            generation=route.generation,
+            tenant_generation=route.tenant_generation,
+            digest=route.digest,
+            label=route.label_key,
+        )
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            await execute_sql(
+                cursor,
+                f"SELECT assembly_recipe_bytes,assembly_recipe_fingerprint FROM {qualified(run_chat_schema, 'kokoro_agent_run')} WHERE run_id=%s",
+                (request.run_id,),
+            )
+            row = await fetch_one(cursor)
+            assert row is not None
+        raw_recipe = row["assembly_recipe_bytes"]
+        assert isinstance(raw_recipe, bytes)
+        recipe = StaticRecipeBinding(
+            canonical_bytes=raw_recipe,
+            fingerprint=str(row["assembly_recipe_fingerprint"]),
+        )
+        frozen_recipe = _JSON_OBJECT.validate_json(raw_recipe, strict=True)
+        feature = _JSON_OBJECT.validate_python(frozen_recipe["feature"], strict=True)
+        entry_agent = feature["entry_agent"]
+        assert isinstance(entry_agent, str) and entry_agent
+        clients = ModelHttpClients(config.model, route)
+        stack.push_async_callback(clients.aclose)
+        model = make_chat_model(
+            config.model, model_from_route(route, None), model_clients=clients
+        )
+        middleware = ModelCallRuntimeMiddleware(
+            repository=repository,
+            request=request,
+            lease=lease,
+            planned=planned,
+            recipe=recipe,
+            peer_path=(entry_agent,),
+        )
+        model_request = ModelRequest(
+            model=model,
+            messages=[HumanMessage(content="r246-final-message")],
+            runtime=Runtime(
+                execution_info=ExecutionInfo(
+                    checkpoint_id=str(uuid4()),
+                    checkpoint_ns="",
+                    task_id=str(uuid4()),
+                )
+            ),
+        )
+        if mode in {"two_claimants", "owner_cancel"}:
+            blocker = await stack.enter_async_context(connect_pg(run_chat_database_url))
+            await stack.enter_async_context(blocker.transaction())
+            cursor = await stack.enter_async_context(blocker.cursor())
+            await execute_sql(
+                cursor,
+                f"SELECT run_id FROM {qualified(run_chat_schema, 'kokoro_agent_run')} WHERE run_id=%s FOR UPDATE",
+                (request.run_id,),
+            )
+        late_release = asyncio.Event()
+        late_tasks: list[asyncio.Task[object]] = []
+        unrelated = RuntimeError("r246-unrelated-handler-error")
+        sdk_failures: list[Exception] = []
+
+        async def handler(current: ModelRequest) -> ModelResponse:
+            if mode == "no_request":
+                return ModelResponse(result=[])
+            if mode == "invalid_profile":
+                await model.bind(extra_body={"n": 2}).ainvoke(current.messages)
+                pytest.fail("invalid final profile returned a response")
+            if mode == "materialization_failure":
+                await model.bind(extra_body={"invalid_json": object()}).ainvoke(
+                    current.messages
+                )
+                pytest.fail("non-JSON SDK payload returned a response")
+            if mode == "late_child":
+
+                async def late() -> object:
+                    await late_release.wait()
+                    return await model.ainvoke(current.messages)
+
+                late_tasks.append(asyncio.create_task(late()))
+                return ModelResponse(result=[])
+            if mode == "two_claimants":
+                first = asyncio.create_task(model.ainvoke(current.messages))
+                await trace.entered.wait()
+                second = asyncio.create_task(model.ainvoke(current.messages))
+                await asyncio.gather(first, second, return_exceptions=True)
+                return ModelResponse(result=[])
+            try:
+                response = await model.ainvoke(current.messages)
+            except Exception as error:
+                sdk_failures.append(error)
+                if mode == "swallowed_denial":
+                    return ModelResponse(result=[])
+                if mode == "unrelated_error":
+                    raise unrelated from None
+                raise
+            return ModelResponse(result=[response])
+
+        invocation = ModelCallScope(timeout_s=5.0)
+        failure: BaseException | None = None
+        with bind_model_call_scope(invocation):
+            owner = asyncio.create_task(
+                middleware.awrap_model_call(model_request, handler)
+            )
+            try:
+                async with asyncio.timeout(5.0):
+                    if mode == "owner_cancel":
+                        await trace.entered.wait()
+                        owner.cancel()
+                    await owner
+            except BaseException as error:
+                failure = error
+            finally:
+                if not owner.done():
+                    owner.cancel()
+                await asyncio.gather(owner, return_exceptions=True)
+                await invocation.settle(cancel_active=True, primary=failure)
+                late_release.set()
+                late_results = await asyncio.gather(*late_tasks, return_exceptions=True)
+        assert peer.provider_requests == 0
+        assert peer.unknown_requests == []
+        if mode == "unrelated_error":
+            assert failure is unrelated
+        elif mode in {"two_claimants", "invalid_profile"}:
+            assert isinstance(failure, ModelCallInputInvalid)
+        elif mode == "materialization_failure":
+            assert isinstance(failure, (TypeError, ValueError))
+            assert not isinstance(failure, ModelCallInputInvalid)
+        elif mode == "owner_cancel":
+            assert isinstance(failure, asyncio.CancelledError)
+        else:
+            assert isinstance(failure, ModelCallAuthorizationUnavailable)
+        if mode in {"invalid_profile", "materialization_failure", "no_request"}:
+            assert not trace.entered.is_set()
+        elif mode == "late_child":
+            assert not trace.entered.is_set()
+            assert len(late_results) == 1
+            assert isinstance(late_results[0], APIConnectionError)
+            assert isinstance(
+                late_results[0].__cause__, ModelCallAuthorizationUnavailable
+            )
+        else:
+            assert trace.entered.is_set() and trace.finished.is_set()
+            assert trace.task is not None and trace.task.done()
+            assert (
+                trace.task is not owner
+            )  # normal ainvoke uses locked SDK gather child
+        expected_attempts = (
+            0
+            if mode
+            in {
+                "late_child",
+                "two_claimants",
+                "owner_cancel",
+                "invalid_profile",
+                "materialization_failure",
+                "no_request",
+            }
+            else 1
+        )
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            await execute_sql(
+                cursor,
+                f"SELECT count(*) AS total FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} WHERE run_id=%s",
+                (request.run_id,),
+            )
+            assert await fetch_one(cursor) == {"total": expected_attempts}
+        if sdk_failures and mode != "unrelated_error":
+            assert sdk_failures[0].__cause__ is failure
+
+        if mode == "replay_drift":
+            from kokoro_agent.model.call_models import ModelCallIdentityConflict
+
+            async def persisted() -> dict[str, object]:
+                async with (
+                    connect_pg(run_chat_database_url) as connection,
+                    connection.cursor() as cursor,
+                ):
+                    await execute_sql(
+                        cursor,
+                        f"SELECT * FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} WHERE run_id=%s",
+                        (request.run_id,),
+                    )
+                    result = await fetch_one(cursor)
+                    assert result is not None
+                    return dict(result)
+
+            before = await persisted()
+            for changed in (True, False):
+                current = (
+                    model_request.override(
+                        messages=[HumanMessage(content="different final SDK body")]
+                    )
+                    if changed
+                    else model_request
+                )
+                next_scope = ModelCallScope(timeout_s=5.0)
+                next_error: BaseException | None = None
+                with bind_model_call_scope(next_scope):
+                    next_owner = asyncio.create_task(
+                        middleware.awrap_model_call(current, handler)
+                    )
+                    try:
+                        await next_owner
+                    except BaseException as error:
+                        next_error = error
+                    finally:
+                        await next_scope.settle(cancel_active=True, primary=next_error)
+                assert isinstance(
+                    next_error,
+                    ModelCallIdentityConflict
+                    if changed
+                    else ModelCallAuthorizationUnavailable,
+                )
+                assert await persisted() == before
+                assert peer.provider_requests == 0

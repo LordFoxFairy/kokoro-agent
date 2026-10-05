@@ -142,3 +142,13 @@ def test_pinned_runtime_distribution_dependency_closure_is_complete() -> None:
                 missing.add(key)
             pending.append((key, frozenset(dependency.extras)))
     assert not missing, f"unregistered runtime leaf dependencies: {sorted(missing)}"
+
+
+def test_final_request_profile_is_in_the_installed_assembly_closure() -> None:
+    module = import_module("kokoro_agent.execution.runtime_profile_sources")
+    manifest = module.production_manifest()
+    assembly = next(
+        source for source in manifest.sources if source.source_id == "assembly"
+    )
+    assert "model/request_profile.py" in assembly.resource_paths
+    assert "model/call_artifacts.py" in assembly.resource_paths

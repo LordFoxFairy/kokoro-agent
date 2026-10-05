@@ -1,3 +1,7 @@
+## R252 数据实施状态（2026-10-05）
+
+下方R245两required无DEFAULT普通列已在唯一canonical database/schema.sql、catalog verifier、prepare insert/read/receipt/replay及frozen validation同片接线；current候选R246 frozen21，起始正式基线29a7a18a，本次与源码同批交付。仍fresh-only，不迁移/回填/旧digest fallback。单纯64hex形状不能凭空证明body一致；receipt exact replay按现已冻结值核对。当前工程/installed-wheel与早前同SHA真实PG证据及未验财务链见CURRENT R252，不把新列或JSON资源界当财务授权。
+
 ## R245 最终 HTTP 请求事实数据 D0（2026-10-05；fresh 目标，未改 SQL）
 
 基线 `cb64537048d34ce6db5bea5f2e12e182ba88092c`，本次只有三D0前缀。现canonical `database/schema.sql` 与 `infrastructure/schema.py` 尚无本节新列，源码/测试/机器contract未改。下方R233等历史当前态不证明新final binding已实施。

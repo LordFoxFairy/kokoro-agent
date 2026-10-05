@@ -19,6 +19,8 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.language_models import BaseChatModel
 from pydantic import SecretStr, TypeAdapter
 
+from support.model_http_mechanism import ModelHttpMechanismClients
+
 from kokoro_agent.model.usage_observation import (
     PhysicalUsageObservation,
     capture_model_usage,
@@ -84,6 +86,7 @@ _FAILURE_CASES = (
 class _CapturedRequest:
     request_line: bytes
     body: bytes
+    sdk_profile_headers: tuple[tuple[bytes, bytes], ...] = ()
 
 
 @dataclass(slots=True)
@@ -153,7 +156,20 @@ class _LoopbackPeer:
                 await reader.readexactly(content_length) if content_length else b""
             )
             request_line = header_bytes.split(b"\r\n", 1)[0]
-            self.requests.append(_CapturedRequest(request_line, request_body))
+            sdk_headers = tuple(
+                (name.lower(), value.strip())
+                for line in header_bytes.split(b"\r\n")
+                for name, separator, value in (line.partition(b":"),)
+                if separator
+                and name.lower()
+                in {
+                    b"x-stainless-raw-response",
+                    b"x-stainless-helper-method",
+                }
+            )
+            self.requests.append(
+                _CapturedRequest(request_line, request_body, sdk_headers)
+            )
             self.request_count += 1
             self.first_request.set()
 
@@ -390,7 +406,7 @@ async def _model(
                     request_id="r216-sdk-route",
                 )
             assert owner.request_count == 1
-        clients = ModelHttpClients(settings, route)
+        clients = ModelHttpMechanismClients(settings, route)
         peer.model_clients.append(clients)
         return make_chat_model(
             settings,
@@ -681,9 +697,24 @@ async def test_r216_public_client_final_wire_gate_rejects_invalid_bytes(
             raw = raw[:-1] + b',"temperature":NaN}'
         with pytest.raises(ValueError):
             if synchronous:
-                await asyncio.to_thread(clients.sync.post, endpoint, content=raw)
+                await asyncio.to_thread(
+                    clients.sync.post,
+                    endpoint,
+                    content=raw,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                )
             else:
-                await clients.async_client.post(endpoint, content=raw)
+                await clients.async_client.post(
+                    endpoint,
+                    content=raw,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                )
         assert peer.request_count == 0
     assert clients.sync.is_closed and clients.async_client.is_closed
 
@@ -926,6 +957,9 @@ async def test_r225_single_completion_sync_async_stream_wire_positive(
         assert payload["max_completion_tokens"] == clients.route.max_output_tokens
         assert type(payload["n"]) is int and payload["n"] == 1
         assert (payload.get("stream") is True) is streaming
+        assert dict(observed.sdk_profile_headers).get(b"x-stainless-raw-response") == (
+            None if streaming else b"true"
+        )
         assert "max_tokens" not in payload and "max_output_tokens" not in payload
     assert clients.sync.is_closed and clients.async_client.is_closed
 
@@ -1029,11 +1063,22 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
         async def send() -> int:
             if synchronous:
                 response = await asyncio.to_thread(
-                    clients.sync.post, clients.endpoint, content=raw
+                    clients.sync.post,
+                    clients.endpoint,
+                    content=raw,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
                 )
             else:
                 response = await clients.async_client.post(
-                    clients.endpoint, content=raw
+                    clients.endpoint,
+                    content=raw,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
                 )
             return response.status_code
 
@@ -1945,3 +1990,144 @@ async def test_r232_synchronous_scope_owner_requires_completion(
         assert (result.projection_digest is not None) is mark_complete
         assert peer.request_count == 1
     assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("synchronous", [False, True])
+async def test_r246_production_owned_clients_without_scope_never_send(
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+    synchronous: bool,
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallAuthorizationUnavailable
+
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        mechanism = peer.model_clients[0]
+        production = ModelHttpClients(mechanism.settings, mechanism.route)
+        peer.model_clients.append(production)
+        model = make_chat_model(
+            production.settings,
+            model_from_route(production.route, None),
+            model_clients=production,
+        )
+        assert len(production.async_client.event_hooks["request"]) == 1
+        assert len(production.sync.event_hooks["request"]) == 1
+        with pytest.raises(openai.APIConnectionError) as caught:
+            if synchronous:
+
+                def invoke() -> None:
+                    if streaming:
+                        list(model.stream("r246-no-scope"))
+                    else:
+                        model.invoke("r246-no-scope")
+
+                await asyncio.to_thread(invoke)
+            elif streaming:
+                async for _ in model.astream("r246-no-scope"):
+                    pytest.fail("production request reached a response without scope")
+            else:
+                await model.ainvoke("r246-no-scope")
+        assert isinstance(caught.value.__cause__, ModelCallAuthorizationUnavailable)
+        assert peer.request_count == 0
+        assert peer.requests == []
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_r246_sdk_structured_helpers_keep_exact_header_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+) -> None:
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        value: str
+
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        clients = peer.model_clients[0]
+        content = '{"value":"ok"}'
+        if streaming:
+            peer.response_body = _stream_body("openai").replace(
+                b'"content":"ok"', b'"content":' + json.dumps(content).encode()
+            )
+        else:
+            peer.response_body = _json_bytes(
+                {
+                    "id": "chatcmpl-r246",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "sandbox-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+        sdk = openai.AsyncOpenAI(
+            api_key="synthetic-r246",
+            base_url=peer.base_url,
+            http_client=clients.async_client,
+            max_retries=0,
+        )
+        try:
+            if streaming:
+                async with sdk.chat.completions.stream(
+                    model=clients.route.gateway_model_name,
+                    n=1,
+                    max_completion_tokens=clients.route.max_output_tokens,
+                    messages=[{"role": "user", "content": "structured"}],
+                    response_format=StructuredAnswer,
+                ) as stream:
+                    async for _ in stream:
+                        pass
+                    result = await stream.get_final_completion()
+            else:
+                result = await sdk.chat.completions.parse(
+                    model=clients.route.gateway_model_name,
+                    n=1,
+                    max_completion_tokens=clients.route.max_output_tokens,
+                    messages=[{"role": "user", "content": "structured"}],
+                    response_format=StructuredAnswer,
+                )
+            parsed = result.choices[0].message.parsed
+            assert parsed is not None and parsed.value == "ok"
+            assert peer.request_count == 1
+            body = TypeAdapter(dict[str, object]).validate_json(peer.requests[0].body)
+            assert body["n"] == 1
+            assert body["model"] == clients.route.gateway_model_name
+            assert "response_format" in body
+            headers = dict(peer.requests[0].sdk_profile_headers)
+            assert headers[b"x-stainless-helper-method"] == (
+                b"chat.completions.stream" if streaming else b"chat.completions.parse"
+            )
+            # Direct public helpers do not request the legacy raw-response wrapper.
+            assert b"x-stainless-raw-response" not in headers
+        finally:
+            await sdk.close()
+
+
+async def test_r246_production_rejects_unmaterialized_stream_without_consuming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallInputInvalid
+
+    consumed = False
+
+    async def body() -> AsyncGenerator[bytes, None]:
+        nonlocal consumed
+        consumed = True
+        yield b"{}"
+
+    async with _peer("openai", "ok") as peer:
+        await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        mechanism = peer.model_clients[0]
+        clients = ModelHttpClients(mechanism.settings, mechanism.route)
+        peer.model_clients.append(clients)
+        with pytest.raises(ModelCallInputInvalid, match="must be materialized"):
+            await clients.async_client.post(clients.endpoint, content=body())
+        assert not consumed
+        assert peer.request_count == 0

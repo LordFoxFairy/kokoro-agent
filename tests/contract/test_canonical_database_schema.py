@@ -299,3 +299,12 @@ async def test_installer_keeps_failure_and_transaction_exit(
     assert exit_call is not None
     assert exit_call.args[0] is RuntimeError
     assert exit_call.args[1] is caught.value
+
+
+def test_final_request_columns_are_required_without_default() -> None:
+    schema = _schema().lower()
+    assert re.search(r"final_request_binding_version\s+integer not null,", schema)
+    assert re.search(r"final_request_digest\s+text not null,", schema)
+    assert "final_request_binding_version = 1" in schema
+    assert "final_request_digest ~ '^[0-9a-f]{64}$'" in schema
+    assert "ck_model_attempt_final_request" in schema

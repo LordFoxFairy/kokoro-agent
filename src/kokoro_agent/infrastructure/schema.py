@@ -435,6 +435,8 @@ async def _verify_model_evidence_schema(
         "attempt_binding_digest": "text",
         "planned_bytes": "bytea",
         "planned_digest": "text",
+        "final_request_binding_version": "integer",
+        "final_request_digest": "text",
         "authorization_bytes": "bytea",
         "authorization_digest": "text",
         "authorization_state": "text",
@@ -504,6 +506,7 @@ async def _verify_model_evidence_schema(
     check_names = {
         RUN_CLAIMS_TABLE: {"ck_kokoro_agent_run_model_usage"},
         MODEL_CALL_ATTEMPTS_TABLE: {
+            "ck_model_attempt_final_request",
             "ck_model_attempt_identity",
             "ck_model_attempt_bytes",
             "ck_model_attempt_latest",
@@ -544,6 +547,8 @@ async def _verify_model_evidence_schema(
         "model_attempt_count > 0 AND "
         "(model_sealed_attempt_count < model_attempt_count "
         "OR model_unknown_attempt_count > 0)))",
+        "ck_model_attempt_final_request": "CHECK (final_request_binding_version = 1 AND "
+        "final_request_digest ~ '^[0-9a-f]{64}$'::text)",
         "ck_model_attempt_bytes": "CHECK (octet_length(attempt_binding_bytes) >= 1 AND "
         "octet_length(attempt_binding_bytes) <= 65536 AND "
         "octet_length(planned_bytes) >= 1 AND "

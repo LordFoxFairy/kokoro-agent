@@ -185,6 +185,16 @@ def _validate_frozen_attempt(
     planned_bytes: bytes,
     authorization_bytes: bytes,
 ) -> None:
+    version = attempt.get("final_request_binding_version")
+    digest = attempt.get("final_request_digest")
+    if (
+        type(version) is not int
+        or version != 1
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ModelCallIdentityConflict("model-call frozen final request is invalid")
     for raw, digest in (
         (binding_bytes, attempt["attempt_binding_digest"]),
         (planned_bytes, attempt["planned_digest"]),

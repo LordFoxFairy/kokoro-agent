@@ -51,7 +51,10 @@ from kokoro_agent.model.call_artifacts import (
     recipe_feature_for_peer_path,
     strict_granted_artifact,
 )
-from kokoro_agent.model.call_evidence import validate_append_evidence
+from kokoro_agent.model.call_evidence import (
+    validate_append_evidence,
+    validate_frozen_attempt,
+)
 from kokoro_agent.protocol import RunRequest
 
 _MAX_INT64 = 9_223_372_036_854_775_807
@@ -356,6 +359,7 @@ class PostgresModelCallRepository:
             or attempt["authorization_digest"] != command.authorization_digest
         ):
             raise ModelCallIdentityConflict("model-call evidence identity conflicts")
+        validate_frozen_attempt(attempt)
         return attempt, database_now, terminal
 
     async def _lock_attempt(
@@ -407,6 +411,7 @@ class PostgresModelCallRepository:
             or attempt["planned_digest"] != command.planned_digest
         ):
             raise ModelCallIdentityConflict("model-call transition identity conflicts")
+        validate_frozen_attempt(attempt)
         return attempt, clock
 
     async def _execute_prepare(
@@ -543,9 +548,10 @@ class PostgresModelCallRepository:
                 attempt_id,tenant_id,run_id,call_id,attempt_ordinal,lease_owner,
                 lease_generation,attempt_binding_bytes,attempt_binding_digest,
                 planned_bytes,planned_digest,authorization_bytes,authorization_digest,
+                final_request_binding_version,final_request_digest,
                 authorization_state,status,prepared_at,created_at,updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                        'not_requested','prepared',%s,%s,%s) RETURNING prepared_at""",
+                        %s,%s,'not_requested','prepared',%s,%s,%s) RETURNING prepared_at""",
             (
                 command.attempt_id,
                 tenant,
@@ -560,6 +566,8 @@ class PostgresModelCallRepository:
                 planned_digest,
                 authorization_bytes,
                 authorization_digest,
+                command.final_request_binding_version,
+                command.final_request_digest,
                 prepared_at,
                 prepared_at,
                 prepared_at,
@@ -617,6 +625,8 @@ def _replay(
         binding_digest,
         planned_bytes,
         planned_digest,
+        command.final_request_binding_version,
+        command.final_request_digest,
     )
     actual = tuple(
         row[name]
@@ -630,6 +640,8 @@ def _replay(
             "attempt_binding_digest",
             "planned_bytes",
             "planned_digest",
+            "final_request_binding_version",
+            "final_request_digest",
         )
     )
     actual = (actual[0], actual[1], str(actual[2]), *actual[3:])
@@ -684,6 +696,8 @@ def _receipt(
         attempt_binding_digest=binding_digest,
         planned_bytes=planned_bytes,
         planned_digest=planned_digest,
+        final_request_binding_version=command.final_request_binding_version,
+        final_request_digest=command.final_request_digest,
         prepared_at_ms=millis,
         replayed=replayed,
     )

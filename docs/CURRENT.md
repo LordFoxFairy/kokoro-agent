@@ -1,3 +1,15 @@
+## R252 当前最终请求绑定：源码与发布物候选已验证（2026-10-05）
+
+切片起始正式基线29a7a18a；R246冻结21文件已经实现最终HTTPX materialized request身份与ordinary immutable replay，与本源码同批精确交付。下方R245“仅设计/尚无字段/handler前prepare”、R233“尚未交付”是历史记录，不是本片当前实现状态。
+
+实际范围：最终公开HTTPX hook严格验已有bytes/profile后冻结version1/domain-separated RFC8785 envelope摘要，mandatory scope与单claimant包含locked SDK child的取消/关闭；两required无DEFAULT普通列参与insert/read/receipt/replay/frozen validation，旧Run input_digest不偷换、没有兼容或回填。资源JSON profile不是token计数或费用上界；摘要只证明Agent→所绑网关的请求，不证明网关实际采购归属。缺Billing时仍typed authorization-unavailable且零provider send，绝不借技术prepare当财务许可。
+
+Root当前复验：默认2312passed/749默认资源marker deselected/795warnings（/tmp/r252-root-agent-default.log），contract checker0；lock/Ruff格式285/Rufflint/显式项目解释器完整Pyright0（/tmp/r252-root-agent-engineering-final.log）。当前wheel隔离安装后空cwd模块来源、入口help与contract0、隔离installed module来源正确，wheel内Schema/profile bytes相等，21源文件保持；/tmp/r252-agent-installed-wheel-receipt.json。R246真实owned-PG/locked SDK 589通过属于同21 SHA早前证据，首次26失败保留，不冒本轮新执行。冻结与汇总/tmp/r252-agent-release-root-receipt.json。
+
+这些是限定源码/工程/发布物证据，不是完整真实聊天、积分或页面验收。可信input/exposure bound、technical expiry与authenticated immutable read还未发布；Billing strict consumer/quote/hold/grant、Agent grant/CAS/real inference、sealed用量及结算释放/流水、完整BFF/浏览器用户链继续OPEN。原3310没有启用本候选、不调用真实模型/资金/共享资源。
+
+---
+
 ## R233 当前：单响应 usage 观察候选已验，待 Root Git 交付（2026-10-04）
 
 基线仍为 `main@f3050fccc458dae1491cc5b9b98af79d9ff838ce`；本片四 source/test 与四文档候选尚待 Root 精确提交。下方 R228–R232 的“未实现/待设计审查”是当时记录，不覆盖本节。现已实现公开 HTTPX raw tap、invocation-local capture、显式 SDK consumption marker、四编码有界观察与独立 projection_digest；它不是正式调用许可或财务 evidence。

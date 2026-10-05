@@ -1,3 +1,7 @@
+## R252 包内合同实施状态（2026-10-05）
+
+下方R245 required final_request_binding_version/digest与final hook已在当前R246 frozen21实现，本次从29a7a18a精确交付；算法/字段/版本没有改动。只有包内普通对象/数据库事实，没有发布execution-bound或authenticated immutable-read机器artifact，也没有Billing grant consumer。技术摘要不能替代可信token/exposure bound、实际provider attribution或费用授权；缺正式许可零send。验证和未验范围以CURRENT顶部R252为准，历史“未实现”仅保留时点。
+
 ## R245 最终 HTTP 请求绑定内部合同（2026-10-05；仅 D0，未实现/未发布）
 
 正式基线 `cb64537048d34ce6db5bea5f2e12e182ba88092c`；当前只有 handler 前 prepare/无 Billing fail-closed，尚无 final-binding 字段或 mandatory final hook。本节与 TECH/DATA 同批设计前缀；不把下方历史验收或本次文字当新源码/系统证据。

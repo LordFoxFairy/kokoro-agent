@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
+from dataclasses import dataclass
+
+from kokoro_agent.clients.system import ResolvedModel
+from kokoro_agent.model.call_artifacts import (
+    encode_final_request_digest,
+    encode_planned_artifact,
+)
+from kokoro_agent.model.request_profile import validate_request_profile
 from uuid import UUID, uuid5
+from typing import Never
 
 import rfc8785
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
@@ -21,6 +32,142 @@ from kokoro_agent.protocol.model_usage_generated import PlannedBinding
 
 _CALL_NAMESPACE = UUID("a06d00e2-defa-5fe3-8f2c-10ecb19c1161")
 _ATTEMPT_NAMESPACE = UUID("64675e75-8af6-50b4-ade3-d413e5144dc9")
+
+
+@dataclass(slots=True)
+class _FinalRequestScope:
+    owner: asyncio.Task[object]
+    repository: ModelCallRepository
+    request: RunRequest
+    lease: LeaseFence
+    call_id: str
+    attempt_id: str
+    planned: PlannedBinding
+    recipe: StaticRecipeBinding
+    peer_path: tuple[str, ...]
+    claimant: asyncio.Task[object] | None = None
+    closed: bool = False
+    denial: Exception | None = None
+
+    def require_active(self) -> None:
+        if self.owner.cancelling():
+            raise asyncio.CancelledError
+        if self.closed or self.owner.done():
+            raise ModelCallAuthorizationUnavailable("model-call final scope is closed")
+
+    def close(self) -> None:
+        self.closed = True
+        child = self.claimant
+        if child is not None and child is not self.owner and not child.done():
+            child.cancel()
+
+
+_FINAL_SCOPE: ContextVar[_FinalRequestScope | None] = ContextVar(
+    "kokoro_agent_final_request_scope", default=None
+)
+
+
+def reject_final_model_request(
+    error: ModelCallInputInvalid | ModelCallAuthorizationUnavailable,
+) -> Never:
+    """Preserve an owned pre-body failure across the locked SDK wrapper."""
+    scope = _FINAL_SCOPE.get()
+    if scope is not None:
+        scope.require_active()
+        if scope.denial is None:
+            scope.denial = error
+    raise error
+
+
+def _route_matches(planned: PlannedBinding, route: ResolvedModel) -> bool:
+    return (
+        planned.model == route.model_id
+        and planned.provider == route.provider_id
+        and planned.revision_id == route.revision_id
+        and planned.revision == str(route.revision)
+        and planned.digest == route.digest
+        and planned.generation == route.generation
+        and planned.tenant_generation == route.tenant_generation
+        and planned.provider_model_name == route.provider_model_name
+        and planned.gateway_model_name == route.gateway_model_name
+        and planned.feature_key == route.feature_key
+        and planned.label == route.label_key
+    )
+
+
+async def freeze_final_model_request(
+    *,
+    route: ResolvedModel,
+    raw: bytes,
+    method: str,
+    endpoint: str,
+    expected_endpoint: str,
+    headers: Sequence[tuple[str, str]],
+) -> None:
+    """Unique final-hook claimant; no authorization or network permit is returned."""
+    scope = _FINAL_SCOPE.get()
+    try:
+        if scope is not None:
+            scope.require_active()
+            if (
+                scope.claimant is not None
+                or scope.denial is not None
+                or not _route_matches(scope.planned, route)
+            ):
+                scope.close()
+                raise ModelCallInputInvalid(
+                    "model-call physical request claim conflicts"
+                )
+            task = asyncio.current_task()
+            if task is None:
+                raise ModelCallInputInvalid("model-call request task is unavailable")
+            scope.claimant = task
+            register_current_model_call_task()
+            scope.require_active()
+        if any(
+            name.lower() == "x-stainless-async" and value != "async:asyncio"
+            for name, value in headers
+        ):
+            raise ModelCallInputInvalid("model request async profile is invalid")
+        validate_request_profile(
+            raw=raw,
+            method=method,
+            endpoint=endpoint,
+            expected_endpoint=expected_endpoint,
+            headers=headers,
+            model_name=route.gateway_model_name,
+            max_output_tokens=route.max_output_tokens,
+        )
+        if scope is None:
+            raise ModelCallAuthorizationUnavailable(
+                "model-call final scope is unavailable"
+            )
+        _, planned_digest = encode_planned_artifact(scope.planned)
+        digest = encode_final_request_digest(
+            endpoint=endpoint, planned_digest=planned_digest, raw=raw
+        )
+        # No await separates the claim/active check from entry to real preparation.
+        await scope.repository.prepare(
+            PrepareModelCall(
+                request=scope.request,
+                lease=scope.lease,
+                call_id=scope.call_id,
+                attempt_id=scope.attempt_id,
+                planned=scope.planned,
+                peer_path=scope.peer_path,
+                recipe=scope.recipe,
+                final_request_binding_version=1,
+                final_request_digest=digest,
+            )
+        )
+        scope.require_active()
+        raise ModelCallAuthorizationUnavailable(
+            "model-call authorization consumer is unavailable"
+        )
+    except Exception as error:
+        if scope is not None and scope.denial is None:
+            scope.denial = error
+        raise
 
 
 class ModelCallRuntimeMiddleware(AgentMiddleware):
@@ -49,23 +196,48 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        del handler
         register_current_model_call_task()
+        owner = asyncio.current_task()
+        if owner is None:
+            raise ModelCallInputInvalid("model-call lifecycle owner is unavailable")
         call_id, attempt_id = _logical_identity(request, self._request, self._peer_path)
-        await self._repository.prepare(
-            PrepareModelCall(
-                request=self._request,
-                lease=self._lease,
-                call_id=call_id,
-                attempt_id=attempt_id,
-                planned=self._planned,
-                peer_path=self._peer_path,
-                recipe=self._recipe,
+        scope = _FinalRequestScope(
+            owner=owner,
+            repository=self._repository,
+            request=self._request,
+            lease=self._lease,
+            call_id=call_id,
+            attempt_id=attempt_id,
+            planned=self._planned,
+            recipe=self._recipe,
+            peer_path=self._peer_path,
+        )
+        token = _FINAL_SCOPE.set(scope)
+        try:
+            try:
+                await handler(request)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                if owner.cancelling():
+                    raise asyncio.CancelledError from None
+                denial = scope.denial
+                if denial is not None and (
+                    error is denial or error.__cause__ is denial
+                ):
+                    raise denial from None
+                raise
+            if owner.cancelling():
+                raise asyncio.CancelledError
+            if scope.denial is not None:
+                raise scope.denial
+            # A swallowed denial or absent physical request never grants success.
+            raise ModelCallAuthorizationUnavailable(
+                "model-call final request is unavailable"
             )
-        )
-        raise ModelCallAuthorizationUnavailable(
-            "model-call authorization consumer is unavailable"
-        )
+        finally:
+            scope.close()
+            _FINAL_SCOPE.reset(token)
 
 
 def _logical_identity(

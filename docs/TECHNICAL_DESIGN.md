@@ -1,3 +1,7 @@
+## R252 实施状态更正（2026-10-05）
+
+R245以下设计现由R246 frozen21实现，起始基线29a7a18a、与本源码同批交付；final HTTPX mandatory freeze/闭scope、唯一request profile、version1摘要与immutable prepare/replay已落实。具体当前验证与限制见CURRENT顶部R252；历史“没有最终摘要列/只设计/SDK前prepare”不再描述本候选。工程资源界不是input token或财务exposure bound，技术freeze不授权dispatch；缺Billing仍零send。无新模块、公开契约或兼容轨。
+
 ## R245 最终 HTTP 请求事实 D0（2026-10-05；仅设计，待 Root 与独审准入）
 
 **当前态。** 正式基线 `cb64537048d34ce6db5bea5f2e12e182ba88092c` 已有最终 HTTPX cap/n=1 guard、原生 model-call early fail-closed 与 usage observer；当前 middleware 在 SDK materialization 前 prepare，再因缺 Billing consumer 拒绝 handler。没有最终请求摘要列、mandatory final hook 或成功技术 bound。Root 本片只批准三设计面前缀，不批准源码、SQL、测试或 provider 执行。下方 R233「候选待提交」是历史；本节只替代 R198 的 prepare 具体位置目标，不改变其身份和零外发不变量。

@@ -1,3 +1,38 @@
+## R245 最终 HTTP 请求事实数据 D0（2026-10-05；fresh 目标，未改 SQL）
+
+基线 `cb64537048d34ce6db5bea5f2e12e182ba88092c`，本次只有三D0前缀。现canonical `database/schema.sql` 与 `infrastructure/schema.py` 尚无本节新列，源码/测试/机器contract未改。下方R233等历史当前态不证明新final binding已实施。
+
+### 唯一owner与两列长期事实
+
+目标仅在现 `kokoro_agent_model_call_attempt` 增加：
+
+| 普通列 | 目标约束/生命周期 |
+|---|---|
+| `final_request_binding_version` | INTEGER NOT NULL，无DEFAULT，CHECK = 1；首次prepare写后永久immutable。 |
+| `final_request_digest` | TEXT NOT NULL，无DEFAULT，CHECK 64 lowercase hex；same-attempt replay逐值相等，漂移冲突零第二效果。 |
+
+最终hook首次生成版本1domain-separated RFC8785 envelope摘要；唯一域/字段见同批API/TECH：method/exact endpoint/planned_digest/body_bytes/body_sha256/request_profile/version，原body不canonicalize。数据库不存body/envelope/header/prompt/tool schema全文；凭据不入摘要/日志。只有摘要时不能独立重建原body hash，frozen validator只校版本/形状及既有可验证bytes；syntactic合法hex腐化不虚称能凭空检出。
+
+新值属于最终Agent→LiteLLM请求事实，不是旧gate-observed摘要或token/许可。旧attempt_binding_bytes/digest、Run input_digest、planned/authorization/evidence bytes、call/attempt UUID、lease、ordinal、状态/时间、Run completeness与unique keys保持。无新表/index/FK/JSONB/outbox/Redis/TTL；fresh-only，无migration、默认旧digest、回填空值、compat alias或双写。
+
+### 唯一writer、验证与恢复
+
+prepare唯一位置目标移到现ModelHttpClients final HTTPX hook，SDK全部transform/materialization完成而transport前；原PostgresModelCallRepository锁Run→DB clock核tenant/lease/terminal→attempt的次序保持。首次insert、creation receipt、existing exact replay都包含两新required值；replay不改prepared_at/updated_at、状态或completeness，不再发第二请求。payload materialization失败没有final fact，不写空prepared代替。
+
+**完整数据接线不可漏：** `database/schema.sql`、`src/kokoro_agent/infrastructure/schema.py:_verify_model_evidence_schema`的exact column/type/null/default/check inventory及canonical CHECK文本；`model/call_models.py`、`call_artifacts.py`、`infrastructure/postgres_model_call_repository.py`的insert/read/receipt/replay；`model/call_evidence.py:_validate_frozen_attempt`统一新增版本/形状校验。`infrastructure/postgres_model_call_evidence.py`现finalizer SELECT *→build_terminal_closure_evidence必审查回归，仅在共享validator接线必要时窄改。append/transition读取同frozen row时复用同验证入口，不新建第二canonical validator，不把新字段偷塞usage1。
+
+所有现Prepare fixture为 `tests/integration/database/test_model_call_evidence_repository.py`、`test_run_interaction_transactions.py`；native入口在`test_model_call_runtime_chain.py`。新required值须来自具名synthetic最终capsule，同payload稳定、不同payload不同，不以统一常量掩盖变化。现`tests/contract/test_canonical_database_schema.py`、`test_repository_schema.py`、database `test_schema_installation.py`同步精确字段/约束断言，禁止放宽schema verifier。
+
+合法SDK child是唯一claimant而非另一个许可。middleware finally同步closed/reset/cancel独立claimant后传播，原run_agent.py100–105外层scope.settle统一收束；不重入全scope等待自己/driver。关闭前未claim或尚未prepare的child不得迟到写；等锁取消要求原transaction rollback；跨commit/ACK未知保留可能已提交完整prepared按identity恢复，不回删、不称closed可原子撤销DB提交。原ND closure仍not_dispatched+unresolved/missing_usage+actual unknown，不变known-zero。
+
+### 暂态资源、验证与未完成
+
+Root固定 `chat-completions-materialized-json-v1`：body8MiB、depth64、总nodes+keys131072、单container16384、string token4MiB、key4096、number128。只约束hook后materialized bytes的retention和有限strict解析；与response/artifact预算不同，不是token界或预materialization OOM保证。raw只在owned scope/claimant短时持有，取消/finally释放；外层settle负责返回/终态前确认登记task结束。无请求原文持久缓存/日志。
+
+下一真实验证必须同时覆盖fresh/drift、first-write/exact replay/漂移、terminal closure、两连接竞争、native合法child/双claim、等锁取消零迟到写、commit-ACK未知恢复、所有资源界/坏JSON及SDK-only原正控与production mandatory gate；本轮均未执行。当前只有D0，可信input bound/expiry/read、Billing quoteTTL/grant/capture与provider/用户费用链保持OPEN，零资金事实新增。
+
+---
+
 ## R233 当前暂态观察数据边界（2026-10-04；候选已验待提交）
 
 已实现的 usage observation 只在 invocation scope内保存有限raw buffer与解析scratch，退出后仅保冻结白名单presence/counts、安全reason及projection_digest；SDK归一0/合成total不写成provider报告。输入/decoded/window独立预算、JSON/SSE终态与marker owner规则沿下方已审设计，原typed JSON hook避免cast而不复制第二数据模型。Root310真实peer及installed observer/factory/assembly源闭包通过，完整收据见 CURRENT R233；内存payload预算不是RSS实测，也不是token/财务界。

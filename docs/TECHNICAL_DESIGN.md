@@ -1,3 +1,56 @@
+## R245 最终 HTTP 请求事实 D0（2026-10-05；仅设计，待 Root 与独审准入）
+
+**当前态。** 正式基线 `cb64537048d34ce6db5bea5f2e12e182ba88092c` 已有最终 HTTPX cap/n=1 guard、原生 model-call early fail-closed 与 usage observer；当前 middleware 在 SDK materialization 前 prepare，再因缺 Billing consumer 拒绝 handler。没有最终请求摘要列、mandatory final hook 或成功技术 bound。Root 本片只批准三设计面前缀，不批准源码、SQL、测试或 provider 执行。下方 R233「候选待提交」是历史；本节只替代 R198 的 prepare 具体位置目标，不改变其身份和零外发不变量。
+
+### 唯一冻结点与长期事实
+
+目标沿原 `ModelCallRuntimeMiddleware → LangChain/DeepAgents handler → SDK → ModelHttpClients`，在现公开 HTTPX request hook 冻结最终已 materialized JSON body；全部 messages/system/tools、model settings、extra_body 和 SDK 转换已发生，transport 尚未调用。不调整 middleware 顺序来冒充最终位置，不调用 SDK 私有序列化、不二次调用 SDK 重建请求。此事实只覆盖 Agent→已绑定 LiteLLM 的请求，不证明网关重写后的 provider/pricing account。
+
+唯一绑定 version 为整数 `1`，profile 为 `chat-completions-materialized-json-v1`。`E` 精确包含：`version=1`、上述 `request_profile`、`method="POST"`、公开 HTTPX URL 序列化的已验 `endpoint`、既有 `encode_planned_artifact` 的 `planned_digest`、原 body 的 `body_bytes` 与 `body_sha256`。`final_request_digest = SHA256(b"kokoro-agent:final-http-request:v1\n" + RFC8785(E))`。body 本身不 canonicalize，空白/成员次序改变也属不同 bytes；只对小 envelope 规范化。不纳凭据、Cookie 或 headers 原值。endpoint 无 userinfo/query/fragment，method/target/planned 来自同已验 route/可信闭包。Run `input_digest` 保持 locked RunRequest.input，call/attempt UUID 保持原 ExecutionInfo locator；禁止把新摘要混入 UUID 将漂移变为新身份。
+
+### 具名请求资源 profile（Root 选定 B 档）
+
+只接收公开 `Request.content` 已有的 bytes；未 materialized/任意 streaming upload、multipart、request 压缩拒绝，不先 `aread/join` 未知流。资源上限闭集：body **8,388,608 bytes**；JSON 容器深度 **64**（根计 1）；全文 JSON 值节点加 object key 节点 **131,072**；单 array 元素或 object 成员 **16,384**；单 string 原始 JSON token（含引号/escape） **4,194,304 bytes**；单 key token **4,096 bytes**；单 number ASCII token **128 bytes**。对象成员的 key 与 value 各计节点，容器本身亦计节点；数组顺序不改。这是唯一 v1，不保两档/动态环境切换。
+
+len(raw) 检查先于解析；随后迭代词法预算预检（字符串/escape/number/container 状态、至多深度界的 stack，无递归/回溯 regex/完整 token 列表），在 int/float 转换前限制 number token。再一次 strict UTF-8 + stdlib JSON 语法解析，拒 BOM、重复 decoded key、NaN/Infinity、非 finite float、孤立 surrogate、尾随文档和非 object 根；解析后迭代复核资源计数及原 model/cap/n 条件。预检只执行资源预算，不建立第二 JSON 语法真源。释放 decode 串/树后只保原 raw 引用及小 envelope/digest；不持久化/日志请求原文。
+
+这些界是新工程接纳政策，不是 token/context bound、所有上游合法输入必接纳或 SDK materialization 前 OOM 保证。现 RunInput 仅 min_length，HTTP ingress 1MiB、Skill entry 16MiB/批下载 128MiB、MCP 描述/结果未有该总界，均不推导本 profile；不挪用 response observer 4MiB/artifact 65536。峰值 RSS、延迟、并发能力未测，不写数值保证。超界 fail closed，不截断后重新报价。
+
+### 固定 header/SDK profile
+
+Content-Type 精确 application/json，Content-Length 等于 body bytes，Host 对应 exact endpoint；无 Content-Encoding/Transfer-Encoding。每 header 名最多一项；禁止 Cookie、OpenAI-Organization/Project、路由/账户 override 与未知 header。固定允许名：Host、Content-Length、Content-Type、Accept、Accept-Encoding、Connection、User-Agent、Authorization、X-Stainless-Lang/Package-Version/OS/Arch/Runtime/Runtime-Version/Async/Retry-Count/Read-Timeout/**Raw-Response/Helper-Method**。Accept=application/json，Retry-Count=0；正式 async 的 Async=async:asyncio；sync 机制测试可为 false，但生产 sync 无许可仍拒。
+
+`X-Stainless-Raw-Response` 可缺省或精确 **true**；`X-Stainless-Helper-Method` 可缺省或精确 **chat.completions.parse / chat.completions.stream**。Root 已核并裁定保留当前结构化 parse/stream，不允许任意 x-* 或通用 raw/stream 值。锁定 OpenAI `resources/chat/completions/completions.py` 的 with_raw_response 指向 `_legacy_response` wrapper（true），parse/stream helpers 给上述精确值；`_response.py` 其它 wrapper 的 raw/stream 不属于本 profile。普通 ainvoke/astream、structured parse/stream 必须各有真实 SDK header 正控。诊断 headers 不入摘要，也不证明实际归属；Authorization 仍由现 owned 凭据组装，不复制、记录或摘要其值。
+
+生产 owned client 的 request hook 必须仍为唯一获准 hook，保持 trust_env=false/redirect=false/retry=0。未来允许 send 前还须保证 `Request.stream` 对应同 immutable raw，并重核 method/target/header/后置 hook，不能只验 content 而任 stream 替换。本片无 send 成功分支。
+
+### Scope、typed failure 与取消（沿 R231 / R244 已裁）
+
+middleware 同步登记原 model node，建立 trusted attempt-local **lifecycle owner** 后调用原 handler，只为 SDK materialization；真正 prepare 移到 final hook，不保提前 prepare 的第二冻结路径。首个同 route physical claimant 可以是合法 `ainvoke → asyncio.gather` SDK child，不要求与 owner 同 Task。共享 ContextVar 对象不复制许可；首次 claim 在任何 await 前原子完成并调用现 `register_current_model_call_task` 登记实际 claimant。缺 scope、closed/cancelling owner、第二 claim、route 漂移均零 send；第二 claim sticky 拒绝且取消仍活动的独立第一 claimant。sync/to_thread 本片没有同步授权机制，生产零 send，不用 asyncio.run/成功回调放行。
+
+最终 hook 严格 profile→final binding→原 repository prepare→现 ModelCallAuthorizationUnavailable；无 Billing 不 begin/grant/dispatch。OpenAI 可能包装 hook 普通错误；只由 lifecycle owner 按同 scope 已登记错误对象及锁定 SDK 直接 cause 精确恢复，取消优先，无关 SDK callback 错误不被旧 denial 覆盖。SDK 吞掉已登记 denial 也不得返回成功。payload materialization 前失败没有 final prepared row，不用空摘要补行。
+
+middleware finally 只同步 closed/reset/cancel 独立 claimant 并传播，不调用全 scope.settle、不增 per-child wait。只有现 `execution/run_agent.py:100–105` 外层 settle 在 invoke_once 返回/终态持久化前收束所有已登记 task，沿既定有限 deadline/fatal 语义。owner 关闭后继承 child 也看到 closed，不能迟到 prepare；等锁中取消沿原事务 rollback；跨 commit/ACK 未知保留完整事实按原 identity 恢复，不假称 closed 原子撤销提交。真实各窗口仍待 Root 验证。
+
+### §8 放置、完整写集与验证
+
+| 项 | 本片目标决定 |
+|---|---|
+| Owner/当前 | Agent model-call 唯一 writer；现 factory 管 HTTPX/SDK lifecycle，call_runtime 管逐调用，repository 管 Agent DB。 |
+| 方案比较 | **采用**同 `model/` 普通 `request_profile.py` 承接纯资源预检/strict JSON/具名请求规则；**淘汰**把 scanner/解析全部堆进 factory。无新 package/通用 JSON engine；本阶段不创建文件。 |
+| 粒度/依赖 | factory 将公开 HTTPX 值送纯 profile，不把 HTTPX/SDK 对象送 repository；call_artifacts 负责小 envelope/hash，call_models 负责内部不可变值，runtime 负责 scope/typed 边界。request_profile 不依赖数据库/网络/Billing。 |
+| 数据/API | attempt 新两个 NOT NULL 普通列保存 version/digest；原 prepare/receipt/replay 同片，fresh canonical 与实际 schema verifier 一致。无 HTTP/usage 机器变更，API/DATA 本节同步。 |
+| 删除项 | 删除原 handler 前 prepare/提前 unavailable 位置；以 mandatory final hook 承接零外发，不留 gate-observed digest/双写/allow_unbound/fake grant。 |
+| 生产精确写集 | 新 `model/request_profile.py`；现 `model/factory.py`、`call_runtime.py`、`call_models.py`、`call_artifacts.py`、`call_evidence.py`、`infrastructure/postgres_model_call_repository.py`、`infrastructure/schema.py`、`database/schema.sql`、`execution/runtime_profile_sources.py`。现 `infrastructure/postgres_model_call_evidence.py` 必须审查回归；其 SELECT * 已带新列，只在共享 frozen 验证接线实际必要时窄改。路径均在 src/kokoro_agent 下（SQL 除外）。 |
+| Tests 精确起点 | 现 `tests/integration/test_model_provider_retries.py`、`tests/unit/config/test_litellm_gateway.py`、`tests/unit/agents/test_factory.py`；现 database `test_model_call_runtime_chain.py`、`test_model_call_evidence_repository.py`、`test_run_interaction_transactions.py`（全部现 Prepare fixture）、`test_schema_installation.py`；现 contract `test_canonical_database_schema.py`、`test_repository_schema.py`；新 profile unit 与现 `test_runtime_profile_sources.py` 必要窄跟随。 |
+| SDK-only 迁移 | 原 R196/216/225/230–232 正控通过**测试侧**真实 SDK/owned peer client 调同纯 profile/cap/observer逻辑；不复制算法、不 fake grant/MockTransport/monkeypatch生产许可。跨文件共用 setup 才在现 tests/support 放具名 helper，另随实现卡列明。保留请求次数/actual body/usage/压缩/stream/取消/child/close原断言。 |
+| 生产覆盖 | 生产 ModelHttpClients 缺 scope 一律零 POST；构造默认 n/cap/retry/ownedclient 接线与实际 native normal/stream/header/structured 路径仍单列验证，不能只验证测试重写的 constructor。非法 cap 原因分支不能被缺 scope 早拒冒通过。 |
+| 验证门 | Root 先真 native 既有入口 RED：当前 early unavailable 导致 final hook0；目标 hook1→prepare1→缺许可0transport→ND。再 exact replay/后置transform漂移、合法 SDK child/双claim、PG等锁取消/ACK未知、profile每界及schema drift；完整 lock/sync/Ruff/Pyright/contract/default/真实PG/build/installed。本次全未执行。 |
+
+可信 input-token bound/profile、bound expiry/read、Billing quoteTTL/许可、实际 provider/费用和用户链仍 OPEN。本 D0 不填数量/价格/期限、不授网络许可；源码/schema实施仍须 Root 与独审放行。
+
+---
+
 ## R233 当前实现与验收边界（2026-10-04；候选待 Root 提交）
 
 R228–R232 设计已落实为同 package 普通 `model/usage_observation.py`，现 factory 挂公开 HTTPX request/response hook，`execution/runtime_profile_sources.py`登记实际 assembly 闭包。唯一 route/request/response 观察允许 SDK 继承 child Task 的首次 claim；完成仍须原 scope owner 显式 `mark_sdk_consumption_complete()`、正常退出与原 JSON/SSE完整性条件合取。early-close/no-marker 未知，结构 misuse 永久未知，observer-only 预算/解析失败不新增 SDK 调用异常；raw bytes/backpressure/ownedclose 保持。JSON hook 实际构建私有 typed object 并运行时收窄，三处 cast 已删除，无类型逃生或任意 Mapping 复制。

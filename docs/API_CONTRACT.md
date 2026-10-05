@@ -1,3 +1,33 @@
+## R245 最终 HTTP 请求绑定内部合同（2026-10-05；仅 D0，未实现/未发布）
+
+正式基线 `cb64537048d34ce6db5bea5f2e12e182ba88092c`；当前只有 handler 前 prepare/无 Billing fail-closed，尚无 final-binding 字段或 mandatory final hook。本节与 TECH/DATA 同批设计前缀；不把下方历史验收或本次文字当新源码/系统证据。
+
+### 唯一版本与摘要域
+
+新增**包内** PrepareModelCall/PreparedModelCall required `final_request_binding_version=1`、`final_request_digest`（64 lowercase hex）；只由本次 final HTTPX hook 产生并由原 repository 首次冻结。唯一算法 `SHA256(b"kokoro-agent:final-http-request:v1\n" + RFC8785(E))`，E 精确字段为 `version=1`、`request_profile="chat-completions-materialized-json-v1"`、`method="POST"`、已验 exact `endpoint`、既有 canonical `planned_digest`、原 materialized body 的 `body_bytes` 与 `body_sha256`。body 不重新 canonicalize；不同 bytes 即漂移。不可改用 tuple-only/临时 gate hash；profile 不按请求切档。
+
+RunRequest.input 对应的旧 `input_digest`、ExecutionInfo 派生 call/attempt UUID、planned/authorization/usage-v1 bytes含义不变。新摘要不进入 usage1/HTTP5/Redis/BFF或公开 endpoint，不自报 body/header 身份，不产生 Billing 可读取 ref、成功 input bound 或许可。仅存摘要时 owner 不宣称能从DB独立重建原body。
+
+### 最终请求接纳 profile
+
+只接收已 materialized `Request.content` 的 JSON bytes；未知stream/multipart/request压缩拒绝。Root固定 B 档：body8,388,608；容器深度64（根1）；所有JSON值节点+object key节点131,072；单array元素/object成员16,384；单string原始token4,194,304 bytes；key token4,096；number token128。定义/预检→strict UTF-8/stdlib parse→复核顺序见 TECH 唯一细节，不复制另一parser规则。重复 decoded key/BOM/非finite/孤立surrogate/额外文档/非object根拒绝，原model/cap/n检查仍mandatory。是工程接纳限制，不是token数量、上游完整接纳或SDK materialization前内存保证。
+
+Header固定名单、值与method/target规则以 TECH R245 为准。必须包含锁定SDK的合法 `X-Stainless-Raw-Response` 缺省或 **true**、`X-Stainless-Helper-Method` 缺省或 **chat.completions.parse / chat.completions.stream**；不是任意 raw/stream或x-*。实际 with_raw_response 使用legacy wrapper true，parse/stream是精确helper标记，均不放松body/profile/mandatory gate。拒Cookie、组织/项目/路由账户override，Authorization不复制/摘要/记录；无新token读取接口。
+
+### 内部生命周期与失败
+
+middleware仅保存可信tuple/生命周期上下文并进入原SDK；首个同route final request claim可来自SDK gather child，不要求同owner Task。实际claimant在await前登记现ModelCallScope；唯一claim不因ContextVar继承而复制。最终hook先profile/摘要，再唯一prepare，然后无Billing typed unavailable，仍0transport；sync无正式授权一律拒绝。
+
+同attempt新version/digest不一致是现 ModelCallIdentityConflict，相同逐值replay返旧receipt不更新，不授第二外发。格式/资源错误复用ModelCallInputInvalid；没有新增wire error。SDK包装仅由owner按本scope精确错误对象/直接cause恢复；取消优先，无关callback错误保持，记录denial不得被正常SDK返回升级成功。materialization前失败没有final prepared row，不补Run digest/空串。
+
+middleware关闭只同步closed/reset/cancel独立claimant并传播；不在finally调用全scope.settle，不新增child等待API。现run_agent外层唯一settle在invoke_once返回/终态前收束；关闭后迟到child拒prepare，已commit/ACK未知不回删。并发claim/取消窗口待真实native与PG验证。
+
+SDK-only正控迁测试侧真实SDK/peer机制helper，调用同纯 `model/request_profile.py` 与cap/observer逻辑；生产无缺scope fallback/allow_unbound/fake grant。原actual body/次数/usage/stream/取消/关闭断言保留，并独立维护正式constructor/native mandatory门，含普通ainvoke/astream和structured parse/stream的header真实正控。
+
+本次仅文档。最终wire事实不代表可信token bound/expiry、authenticated bound read、Billing quoteTTL/grant/结算或真实provider成功；这些依赖保持OPEN，不修改其owner机器合同。
+
+---
+
 ## R233 当前内部观察 API 已验边界（2026-10-04；无机器发布）
 
 候选已实现 `capture_model_usage(route)`、`capture.mark_sdk_consumption_complete()`与冻结 `capture.snapshot()`。Root真实peer310验证合法完成、missing/null/explicit0、SDK合成total不冒原报告、四编码、marker/early-close/并发/unknown与资源关闭边界；完整工程、build、installed与独审收据集中于 CURRENT R233，尚待Root Git交付。下方“marker尚未实现/待设计准入”属于设计期历史。

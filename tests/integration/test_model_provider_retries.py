@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
+import zlib
+import zstandard
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -12,10 +15,14 @@ from typing import Any, Literal, TypeAlias
 import anthropic
 import openai
 import pytest
-from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.language_models import BaseChatModel
 from pydantic import SecretStr, TypeAdapter
 
+from kokoro_agent.model.usage_observation import (
+    PhysicalUsageObservation,
+    capture_model_usage,
+)
 from kokoro_agent.clients.system import SystemModelClient
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.model.factory import (
@@ -91,6 +98,10 @@ class _LoopbackPeer:
         default_factory=lambda: list[ModelHttpClients]()
     )
     route_data: dict[str, object] | None = None
+    response_body: bytes | None = None
+    response_encoding: str | None = None
+    held_tail_offset: int | None = None
+    sent_response_bodies: list[bytes] = field(default_factory=lambda: list[bytes]())
     first_request: asyncio.Event = field(default_factory=asyncio.Event)
     _server: asyncio.Server | None = None
     _writers: set[asyncio.StreamWriter] = field(
@@ -154,6 +165,9 @@ class _LoopbackPeer:
             status, content_type, body, extra_headers = _response(
                 self.protocol, self.mode
             )
+            if self.response_body is not None:
+                assert self.mode in {"ok", "stream"}
+                body = self.response_body
             if self.mode == "system-route" and self.route_data is not None:
                 body = _json_bytes({"data": self.route_data})
             if self.mode == "system-route" and request_line != (
@@ -165,6 +179,11 @@ class _LoopbackPeer:
                     b"{}",
                     "",
                 )
+            if self.response_encoding is not None:
+                extra_headers += f"Content-Encoding: {self.response_encoding}\r\n"
+            queued_body = (
+                body if self.held_tail_offset is None else body[: self.held_tail_offset]
+            )
             writer.write(
                 (
                     f"HTTP/1.1 {status}\r\n"
@@ -174,9 +193,17 @@ class _LoopbackPeer:
                     f"{extra_headers}"
                     "\r\n"
                 ).encode("ascii")
-                + body
+                + queued_body
             )
+            self.sent_response_bodies.append(queued_body)
             await writer.drain()
+            if self.held_tail_offset is not None:
+                await self._release_hanging_requests.wait()
+                if writer.is_closing():
+                    return
+                writer.write(body[self.held_tail_offset :])
+                self.sent_response_bodies.append(body[self.held_tail_offset :])
+                await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
@@ -1026,4 +1053,895 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
                 await send()
             assert peer.request_count == 0
             assert peer.requests == []
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("synchronous", [False, True], ids=["async", "sync"])
+@pytest.mark.parametrize("streaming", [False, True], ids=["json", "sse"])
+@pytest.mark.parametrize(
+    ("usage_present", "raw_usage", "expected_counts"),
+    [
+        pytest.param(False, None, None, id="usage-missing"),
+        pytest.param(True, None, None, id="usage-null"),
+        pytest.param(True, {"total_tokens": 0}, (0, 0, 0), id="counts-missing"),
+        pytest.param(
+            True,
+            {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
+            (0, 0, 0),
+            id="counts-null",
+        ),
+        pytest.param(
+            True,
+            {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            (0, 0, 0),
+            id="explicit-zero",
+        ),
+        pytest.param(
+            True,
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+            (2, 3, 5),
+            id="positive",
+        ),
+        pytest.param(
+            True,
+            {"prompt_tokens": 2, "completion_tokens": 3},
+            (2, 3, 5),
+            id="total-missing",
+        ),
+        pytest.param(
+            True,
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": None},
+            (2, 3, 5),
+            id="total-null",
+        ),
+    ],
+)
+async def test_r230_real_sdk_usage_presence_characterization(
+    monkeypatch: pytest.MonkeyPatch,
+    synchronous: bool,
+    streaming: bool,
+    usage_present: bool,
+    raw_usage: dict[str, int | None] | None,
+    expected_counts: tuple[int, int, int] | None,
+) -> None:
+    # The expected SDK normalization is a baseline, not a financial evidence oracle.
+    document = TypeAdapter(dict[str, object]).validate_json(_success_body("openai"))
+    document.pop("usage")
+    if usage_present:
+        document["usage"] = raw_usage
+    if streaming:
+        final: dict[str, object] = {
+            "id": "chatcmpl-sandbox",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "sandbox-model",
+            "choices": [],
+        }
+        if usage_present:
+            final["usage"] = raw_usage
+        # Keep the old content/stop events, but give this case its own final usage event.
+        events = _stream_body("openai").split(b"\n\n")[:2]
+        stop = TypeAdapter(dict[str, object]).validate_json(events[1][6:])
+        stop.pop("usage")
+        response_body = (
+            events[0]
+            + b"\n\ndata: "
+            + _json_bytes(stop)
+            + b"\n\ndata: "
+            + _json_bytes(final)
+            + b"\n\ndata: [DONE]\n\n"
+        )
+    else:
+        response_body = _json_bytes(document)
+
+    close_calls = {"sync": 0, "async": 0}
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        peer.response_body = response_body
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=not streaming
+        )
+        clients = peer.model_clients[0]
+        real_sync_close = clients.sync.close
+        real_async_close = clients.async_client.aclose
+
+        def counted_sync_close() -> None:
+            close_calls["sync"] += 1
+            real_sync_close()
+
+        async def counted_async_close() -> None:
+            close_calls["async"] += 1
+            await real_async_close()
+
+        # Delegate real public close methods; never replace the HTTP transport or SDK.
+        monkeypatch.setattr(clients.sync, "close", counted_sync_close)
+        monkeypatch.setattr(clients.async_client, "aclose", counted_async_close)
+        messages = [HumanMessage(content="hello")]
+        responses: list[AIMessage]
+        if synchronous:
+
+            def invoke() -> list[AIMessage]:
+                if streaming:
+                    return [chunk for chunk in model.stream(messages)]
+                return [model.invoke(messages)]
+
+            responses = await asyncio.to_thread(invoke)
+        elif streaming:
+            responses = [chunk async for chunk in model.astream(messages)]
+        else:
+            responses = [await model.ainvoke(messages)]
+        assert "".join(response.text for response in responses) == "ok"
+        assert peer.request_count == 1
+        assert peer.sent_response_bodies == [response_body]
+        raw_body = peer.sent_response_bodies[0]
+        raw_envelope = TypeAdapter(dict[str, object]).validate_json(
+            raw_body.split(b"\n\n")[-3][6:] if streaming else raw_body
+        )
+        assert ("usage" in raw_envelope) is usage_present
+        if usage_present:
+            assert raw_envelope["usage"] == raw_usage
+        usage_results = [
+            response.usage_metadata
+            for response in responses
+            if response.usage_metadata is not None
+        ]
+        if expected_counts is None:
+            assert usage_results == []
+        else:
+            assert len(usage_results) == 1
+            observed = usage_results[0]
+            assert (
+                observed["input_tokens"],
+                observed["output_tokens"],
+                observed["total_tokens"],
+            ) == expected_counts
+        # Missing/null counts and totals above deliberately remain absent/null on wire.
+        # The SDK zero/sum is therefore not proof that this peer reported those values.
+        assert len(peer.requests) == 1
+        request = peer.requests[0]
+        assert request.request_line == b"POST /v1/chat/completions HTTP/1.1"
+        payload = TypeAdapter(dict[str, object]).validate_json(request.body)
+        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["max_completion_tokens"] == clients.route.max_output_tokens
+        assert type(payload["n"]) is int and payload["n"] == 1
+        assert (payload.get("stream") is True) is streaming
+        assert "max_tokens" not in payload and "max_output_tokens" not in payload
+        assert close_calls == {"sync": 0, "async": 0}
+    assert clients.sync.is_closed and clients.async_client.is_closed
+    assert close_calls == {"sync": 1, "async": 1}
+    await clients.aclose()
+    assert close_calls == {"sync": 1, "async": 1}
+
+
+def _r231_body(usage: dict[str, object] | None, streaming: bool) -> bytes:
+    document = TypeAdapter(dict[str, object]).validate_json(_success_body("openai"))
+    document["usage"] = usage
+    if not streaming:
+        return _json_bytes(document)
+    content = _stream_body("openai").split(b"\n\n")[0]
+    final: dict[str, object] = {
+        "id": "chatcmpl-sandbox",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "sandbox-model",
+        "choices": [],
+        "usage": usage,
+    }
+    return content + b"\n\ndata: " + _json_bytes(final) + b"\n\ndata: [DONE]\n\n"
+
+
+def _r231_encoded(body: bytes, encoding: str) -> bytes:
+    if encoding == "gzip":
+        return gzip.compress(body)
+    if encoding == "deflate":
+        return zlib.compress(body)
+    if encoding == "zstd":
+        return zstandard.ZstdCompressor(write_checksum=True).compress(body)
+    assert encoding == "identity"
+    return body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["identity", "gzip", "deflate", "zstd"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("synchronous", [False, True])
+@pytest.mark.parametrize("shape", ["missing", "null", "zero", "positive", "no-total"])
+async def test_r231_capture_retains_physical_usage_presence(
+    monkeypatch: pytest.MonkeyPatch,
+    encoding: str,
+    streaming: bool,
+    synchronous: bool,
+    shape: str,
+) -> None:
+    shapes: dict[str, dict[str, object]] = {
+        "missing": {"total_tokens": 0},
+        "null": {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        },
+        "zero": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "positive": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        "no-total": {"prompt_tokens": 2, "completion_tokens": 3},
+    }
+    usage = shapes[shape]
+    close_calls = {"sync": 0, "async": 0}
+    raw = _r231_encoded(_r231_body(usage, streaming), encoding)
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        peer.response_body = raw
+        peer.response_encoding = encoding
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=not streaming
+        )
+        clients = peer.model_clients[0]
+        real_sync_close = clients.sync.close
+        real_async_close = clients.async_client.aclose
+
+        def counted_sync_close() -> None:
+            close_calls["sync"] += 1
+            real_sync_close()
+
+        async def counted_async_close() -> None:
+            close_calls["async"] += 1
+            await real_async_close()
+
+        monkeypatch.setattr(clients.sync, "close", counted_sync_close)
+        monkeypatch.setattr(clients.async_client, "aclose", counted_async_close)
+        with capture_model_usage(clients.route) as capture:
+            assert capture.snapshot().status == "pending"
+            if synchronous:
+
+                def invoke() -> str:
+                    if streaming:
+                        return "".join(chunk.text for chunk in model.stream("hello"))
+                    return model.invoke("hello").text
+
+                output = await asyncio.to_thread(invoke)
+            elif streaming:
+                output = "".join([chunk.text async for chunk in model.astream("hello")])
+            else:
+                output = (await model.ainvoke("hello")).text
+            capture.mark_sdk_consumption_complete()
+        result = capture.snapshot()
+        assert output == "ok"
+        assert result.status == "complete"
+        assert result.compression_integrity == "validated"
+        for raw_name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            count = result.counts[raw_name]
+            if raw_name not in usage:
+                assert count.presence == "missing" and count.value is None
+            elif usage[raw_name] is None:
+                assert count.presence == "null" and count.value is None
+            else:
+                assert count.presence == "reported" and count.value == usage[raw_name]
+        assert result.projection_digest is not None
+        assert capture.snapshot() is result
+        assert peer.sent_response_bodies == [raw]
+        assert peer.request_count == 1
+        wire = TypeAdapter(dict[str, object]).validate_json(peer.requests[0].body)
+        assert wire["n"] == 1
+        assert wire["max_completion_tokens"] == clients.route.max_output_tokens
+        assert close_calls == {"sync": 0, "async": 0}
+    assert clients.sync.is_closed and clients.async_client.is_closed
+    assert close_calls == {"sync": 1, "async": 1}
+    await clients.aclose()
+    assert close_calls == {"sync": 1, "async": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing-final",
+        "missing-done",
+        "conflict",
+        "duplicate",
+        "invalid-bool",
+        "invalid-relation",
+        "output-budget",
+        "event-budget",
+    ],
+)
+async def test_r231_capture_unknown_does_not_replace_sdk_response(
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    usage: dict[str, object] = {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+    }
+    streaming = fault in {
+        "missing-final",
+        "missing-done",
+        "conflict",
+        "duplicate",
+        "event-budget",
+    }
+    if fault == "invalid-bool":
+        usage["prompt_tokens"] = True
+    elif fault == "invalid-relation":
+        usage["total_tokens"] = 9
+    raw = _r231_body(usage, streaming)
+    if fault == "missing-final":
+        raw = raw.split(b"\n\n")[0] + b"\n\ndata: [DONE]\n\n"
+    elif fault == "missing-done":
+        raw = raw.replace(b"data: [DONE]\n\n", b"")
+    elif fault in {"conflict", "duplicate"}:
+        final = raw.split(b"\n\n")[1]
+        extra = (
+            final
+            if fault == "duplicate"
+            else final.replace(b'"total_tokens":5', b'"total_tokens":6').replace(
+                b'"completion_tokens":3', b'"completion_tokens":4'
+            )
+        )
+        raw = raw.replace(b"data: [DONE]", extra + b"\n\ndata: [DONE]")
+    elif fault == "event-budget":
+        raw = b":" + b"x" * 65536 + b"\n\n" + raw
+    elif fault == "output-budget":
+        raw = b" " * (4 * 1024 * 1024) + raw
+    encoding = "gzip" if fault == "output-budget" else "identity"
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        peer.response_body = _r231_encoded(raw, encoding)
+        peer.response_encoding = encoding
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=not streaming
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            if streaming:
+                output = "".join([chunk.text async for chunk in model.astream("hello")])
+            else:
+                output = (await model.ainvoke("hello")).text
+            capture.mark_sdk_consumption_complete()
+        assert output == "ok"
+        result = capture.snapshot()
+        assert result.status == ("complete" if fault == "duplicate" else "unresolved")
+        if fault != "duplicate":
+            assert result.projection_digest is None
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_r231_capture_cancel_and_ambiguous_requests_stay_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with _peer("openai", "hang") as peer:
+        model = await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        clients = peer.model_clients[0]
+        capture = capture_model_usage(clients.route)
+        with pytest.raises(asyncio.CancelledError):
+            with capture:
+                task = asyncio.create_task(model.ainvoke("hello"))
+                await asyncio.wait_for(peer.first_request.wait(), timeout=1)
+                task.cancel()
+                await task
+        assert capture.snapshot().status == "unresolved"
+        assert capture.snapshot().projection_digest is None
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+    async with _peer("openai", "ok") as peer:
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as ambiguous:
+            values = await asyncio.gather(model.ainvoke("a"), model.ainvoke("b"))
+        assert [value.text for value in values] == ["ok", "ok"]
+        assert ambiguous.snapshot().reason == "ambiguous_response"
+
+        async def independent() -> str | None:
+            with capture_model_usage(clients.route) as separate:
+                assert (await model.ainvoke("c")).text == "ok"
+                separate.mark_sdk_consumption_complete()
+            assert separate.snapshot().status == "complete"
+            return separate.snapshot().projection_digest
+
+        digests = await asyncio.gather(independent(), independent())
+        assert digests[0] is not None and digests[0] == digests[1]
+        assert peer.request_count == 4
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["gzip", "deflate", "zstd"])
+async def test_r231_done_does_not_prefetch_unconsumed_compression_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    encoding: str,
+) -> None:
+    raw = _r231_body(
+        {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, True
+    )
+    if encoding == "zstd":
+        compressor = zstandard.ZstdCompressor(write_checksum=True).compressobj()
+        prefix = compressor.compress(raw) + compressor.flush(
+            zstandard.COMPRESSOBJ_FLUSH_BLOCK
+        )
+        tail = compressor.flush(zstandard.COMPRESSOBJ_FLUSH_FINISH)
+    else:
+        compressor = zlib.compressobj(wbits=31 if encoding == "gzip" else 15)
+        prefix = compressor.compress(raw) + compressor.flush(zlib.Z_SYNC_FLUSH)
+        tail = compressor.flush(zlib.Z_FINISH)
+    assert tail
+    async with _peer("openai", "stream") as peer:
+        peer.response_body = prefix + tail
+        peer.response_encoding = encoding
+        peer.held_tail_offset = len(prefix)
+        model = await _model(_PROVIDER_CASES[2], peer, monkeypatch)
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            async with asyncio.timeout(2):
+                output = "".join([chunk.text async for chunk in model.astream("hello")])
+            capture.mark_sdk_consumption_complete()
+        assert output == "ok"
+        result = capture.snapshot()
+        assert result.status == "complete"
+        assert result.compression_integrity == "unverified_unconsumed_tail"
+        assert result.counts["total_tokens"].value == 5
+        assert peer.sent_response_bodies == [prefix]
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shape", ["members", "too-many-frames", "input-budget", "depth", "unknown-encoding"]
+)
+async def test_r231_encoding_budget_and_projection_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    shape: str,
+) -> None:
+    raw = _r231_body(
+        {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, False
+    )
+    encoding = "identity"
+    if shape in {"members", "too-many-frames"}:
+        encoder = zstandard.ZstdCompressor(write_checksum=True)
+        encoding = "zstd"
+        raw = encoder.compress(raw)
+        raw += encoder.compress(b"") * (1 if shape == "members" else 4096)
+    elif shape == "input-budget":
+        raw = b" " * (4 * 1024 * 1024) + raw
+    elif shape == "depth":
+        document = TypeAdapter(dict[str, object]).validate_json(raw)
+        document["irrelevant"] = [[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]
+        raw = _json_bytes(document)
+    else:
+        encoding = "unsupported-observer-encoding"
+    async with _peer("openai", "ok") as peer:
+        peer.response_body = raw
+        peer.response_encoding = encoding
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            assert (await model.ainvoke("hello")).text == "ok"
+            capture.mark_sdk_consumption_complete()
+        result = capture.snapshot()
+        assert result.status == ("complete" if shape == "members" else "unresolved")
+        if shape == "members":
+            assert result.compression_integrity == "validated"
+        else:
+            assert result.projection_digest is None
+            if shape == "input-budget":
+                assert result.reason == "input_budget_exhausted"
+            elif shape == "unknown-encoding":
+                assert result.reason == "unsupported_encoding"
+            elif shape == "depth":
+                assert result.reason == "depth_budget_exhausted"
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_r231_projection_digest_excludes_content_and_keeps_result_immutable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import FrozenInstanceError
+
+    results: list[PhysicalUsageObservation] = []
+    async with _peer("openai", "ok") as peer:
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        for body_text in ("first private content", "second private content"):
+            document = TypeAdapter(dict[str, object]).validate_json(
+                _r231_body(
+                    {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                    False,
+                )
+            )
+            document["choices"] = [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": body_text},
+                    "finish_reason": "stop",
+                }
+            ]
+            peer.response_body = _json_bytes(document)
+            with capture_model_usage(clients.route) as capture:
+                assert (await model.ainvoke("hello")).text == body_text
+                capture.mark_sdk_consumption_complete()
+            result = capture.snapshot()
+            assert body_text not in repr(result)
+            assert result.status == "complete"
+            results.append(result)
+            with pytest.raises(FrozenInstanceError):
+                setattr(result, "projection_digest", "tampered")
+        assert results[0].projection_digest == results[1].projection_digest
+        assert peer.request_count == 2
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["gzip", "deflate", "zstd"])
+@pytest.mark.parametrize("fault", ["checksum", "truncated"])
+async def test_r231_invalid_compression_preserves_sdk_failure_or_unknown(
+    monkeypatch: pytest.MonkeyPatch, encoding: str, fault: str
+) -> None:
+    raw = _r231_encoded(
+        _r231_body(
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, False
+        ),
+        encoding,
+    )
+    raw = raw[:-4] if fault == "truncated" else raw[:-1] + bytes([raw[-1] ^ 1])
+    async with _peer("openai", "ok") as peer:
+        peer.response_body = raw
+        peer.response_encoding = encoding
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        baseline_error: type[Exception] | None = None
+        baseline_output: str | None = None
+        try:
+            baseline_output = (await model.ainvoke("baseline")).text
+        except Exception as error:
+            baseline_error = type(error)
+        observed_error: type[Exception] | None = None
+        observed_output: str | None = None
+        capture = capture_model_usage(clients.route)
+        try:
+            with capture:
+                observed_output = (await model.ainvoke("observed")).text
+                capture.mark_sdk_consumption_complete()
+        except Exception as error:
+            observed_error = type(error)
+        assert observed_error is baseline_error
+        assert observed_output == baseline_output
+        assert capture.snapshot().status == "unresolved"
+        assert capture.snapshot().projection_digest is None
+        assert peer.request_count == 2
+        assert peer.sent_response_bodies == [raw, raw]
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("shape", "value"),
+    [
+        ("count", -1),
+        ("count", 1.5),
+        ("count", "2"),
+        ("count", 1 << 63),
+        ("details", []),
+        ("cached", 3),
+        ("reasoning", 4),
+        ("count", float("inf")),
+    ],
+)
+async def test_r231_invalid_raw_usage_is_not_repaired_by_sdk(
+    monkeypatch: pytest.MonkeyPatch, shape: str, value: object
+) -> None:
+    usage: dict[str, object] = {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+    }
+    if shape == "count":
+        usage["prompt_tokens"] = value
+    elif shape == "details":
+        usage["prompt_tokens_details"] = value
+    elif shape == "cached":
+        usage["prompt_tokens_details"] = {"cached_tokens": value}
+    else:
+        usage["completion_tokens_details"] = {"reasoning_tokens": value}
+    raw = _r231_body(usage, False)
+    async with _peer("openai", "ok") as peer:
+        peer.response_body = raw
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        capture = capture_model_usage(clients.route)
+        # Some invalid fields are also rejected by the locked SDK; that exception must
+        # propagate instead of turning the capture into a successful usage report.
+        try:
+            with capture:
+                response = await model.ainvoke("hello")
+                assert response.text == "ok"
+                capture.mark_sdk_consumption_complete()
+        except (TypeError, ValueError, OverflowError):
+            pass
+        assert capture.snapshot().status == "unresolved"
+        assert capture.snapshot().projection_digest is None
+        assert peer.sent_response_bodies == [raw]
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("usage_present", [False, True])
+async def test_r231_json_usage_object_missing_and_null_remain_distinct(
+    monkeypatch: pytest.MonkeyPatch, usage_present: bool
+) -> None:
+    document = TypeAdapter(dict[str, object]).validate_json(_r231_body(None, False))
+    if not usage_present:
+        del document["usage"]
+    raw = _json_bytes(document)
+    async with _peer("openai", "ok") as peer:
+        peer.response_body = raw
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            response = await model.ainvoke("hello")
+            assert response.text == "ok" and response.usage_metadata is None
+            capture.mark_sdk_consumption_complete()
+        result = capture.snapshot()
+        assert result.status == "complete"
+        assert result.usage_presence == ("null" if usage_present else "missing")
+        assert all(
+            count.presence == "missing" and count.value is None
+            for count in result.counts.values()
+        )
+        assert peer.sent_response_bodies == [raw]
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_r231_zstd_window_limit_does_not_limit_sdk_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    params = zstandard.ZstdCompressionParameters(
+        compression_level=1, window_log=23, write_content_size=0, write_checksum=1
+    )
+    compressor = zstandard.ZstdCompressor(compression_params=params).compressobj()
+    raw = (
+        compressor.compress(
+            _r231_body(
+                {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, False
+            )
+        )
+        + compressor.flush()
+    )
+    assert zstandard.get_frame_parameters(raw).window_size > 4 * 1024 * 1024
+    async with _peer("openai", "ok") as peer:
+        peer.response_body = raw
+        peer.response_encoding = "zstd"
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            assert (await model.ainvoke("hello")).text == "ok"
+            capture.mark_sdk_consumption_complete()
+        assert capture.snapshot().status == "unresolved"
+        assert capture.snapshot().projection_digest is None
+        assert peer.request_count == 1
+        assert peer.sent_response_bodies == [raw]
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "early_close", [False, True], ids=["invoke-no-marker", "stream-early-close"]
+)
+async def test_r232_capture_never_infers_sdk_consumption_from_raw_done(
+    monkeypatch: pytest.MonkeyPatch, early_close: bool
+) -> None:
+    raw = _r231_body(
+        {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, early_close
+    )
+    async with _peer("openai", "stream" if early_close else "ok") as peer:
+        # One transport write deliberately includes final usage and DONE. The caller
+        # still consumes only the first SDK item; raw buffering is not exhaustion.
+        peer.response_body = raw
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=not early_close
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            if early_close:
+                iterator = model.astream("hello")
+                try:
+                    first = await anext(iterator)
+                    assert first.text == "ok"
+                finally:
+                    assert isinstance(iterator, AsyncGenerator)
+                    await iterator.aclose()
+            else:
+                assert (await model.ainvoke("hello")).text == "ok"
+            # No future API call: this is the currently observable missing seam.
+        result = capture.snapshot()
+        assert peer.sent_response_bodies == [raw]
+        if early_close:
+            assert b"data: [DONE]\n\n" in peer.sent_response_bodies[0]
+            assert b'"choices":[],"usage"' in peer.sent_response_bodies[0]
+        assert peer.request_count == 1
+        wire = TypeAdapter(dict[str, object]).validate_json(peer.requests[0].body)
+        assert wire["n"] == 1
+        assert wire["max_completion_tokens"] == clients.route.max_output_tokens
+        assert result.status == "unresolved", (
+            "Raw response availability is not SDK caller consumption completion",
+            result.status,
+            result.reason,
+            len(raw),
+            peer.request_count,
+        )
+        assert result.reason == "sdk_consumption_incomplete"
+        assert result.projection_digest is None
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("synchronous", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_r232_completion_owner_normal_repeat_and_closed_snapshot(
+    monkeypatch: pytest.MonkeyPatch, synchronous: bool, streaming: bool
+) -> None:
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        peer.response_body = _r231_body(
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, streaming
+        )
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=not streaming
+        )
+        clients = peer.model_clients[0]
+        request_tasks: list[object] = []
+
+        async def record_request_task(_: object) -> None:
+            request_tasks.append(asyncio.current_task())
+
+        clients.async_client.event_hooks["request"].append(record_request_task)
+        owner = asyncio.current_task()
+        with capture_model_usage(clients.route) as capture:
+            if synchronous:
+
+                def invoke() -> str:
+                    if streaming:
+                        return "".join(chunk.text for chunk in model.stream("hello"))
+                    return model.invoke("hello").text
+
+                output = await asyncio.to_thread(invoke)
+            elif streaming:
+                output = "".join([chunk.text async for chunk in model.astream("hello")])
+            else:
+                output = (await model.ainvoke("hello")).text
+            assert output == "ok"
+            capture.mark_sdk_consumption_complete()
+            capture.mark_sdk_consumption_complete()
+            assert capture.snapshot().status == "pending"
+        result = capture.snapshot()
+        assert result.status == "complete"
+        if not synchronous and not streaming:
+            # The locked public ainvoke path uses a gather child task for the wire.
+            assert len(request_tasks) == 1 and request_tasks[0] is not owner
+        with pytest.raises(ValueError, match="^invalid usage capture completion$"):
+            capture.mark_sdk_consumption_complete()
+        assert capture.snapshot() is result
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "misuse",
+    ["child-task", "child-thread", "no-response", "wrong-scope", "second-request"],
+)
+async def test_r232_completion_misuse_cannot_be_repaired_by_owner(
+    monkeypatch: pytest.MonkeyPatch, misuse: str
+) -> None:
+    async with _peer("openai", "ok") as peer:
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        with capture_model_usage(clients.route) as capture:
+            if misuse != "no-response":
+                assert (await model.ainvoke("hello")).text == "ok"
+            if misuse == "second-request":
+                assert (await model.ainvoke("second")).text == "ok"
+            with pytest.raises(ValueError, match="^invalid usage capture completion$"):
+                if misuse == "child-task":
+
+                    async def child() -> None:
+                        capture.mark_sdk_consumption_complete()
+
+                    await asyncio.create_task(child())
+                elif misuse == "child-thread":
+                    await asyncio.to_thread(capture.mark_sdk_consumption_complete)
+                elif misuse == "wrong-scope":
+                    with capture_model_usage(clients.route):
+                        capture.mark_sdk_consumption_complete()
+                else:
+                    capture.mark_sdk_consumption_complete()
+            with pytest.raises(ValueError, match="^invalid usage capture completion$"):
+                capture.mark_sdk_consumption_complete()
+        result = capture.snapshot()
+        assert result.status == "unresolved" and result.projection_digest is None
+        assert result.reason == (
+            "ambiguous_response" if misuse == "second-request" else "capture_misuse"
+        )
+        assert peer.request_count == (
+            0 if misuse == "no-response" else 2 if misuse == "second-request" else 1
+        )
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_r232_scope_exception_overrides_valid_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with _peer("openai", "ok") as peer:
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=True
+        )
+        clients = peer.model_clients[0]
+        capture = capture_model_usage(clients.route)
+        sentinel = RuntimeError("caller failure")
+        with pytest.raises(RuntimeError) as raised:
+            with capture:
+                assert (await model.ainvoke("hello")).text == "ok"
+                capture.mark_sdk_consumption_complete()
+                raise sentinel
+        assert raised.value is sentinel
+        assert capture.snapshot().status == "unresolved"
+        assert capture.snapshot().reason == "scope_interrupted"
+        assert capture.snapshot().projection_digest is None
+        assert peer.request_count == 1
+    assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("mark_complete", [False, True])
+async def test_r232_synchronous_scope_owner_requires_completion(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool, mark_complete: bool
+) -> None:
+    async with _peer("openai", "stream" if streaming else "ok") as peer:
+        peer.response_body = _r231_body(
+            {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}, streaming
+        )
+        model = await _model(
+            _PROVIDER_CASES[2], peer, monkeypatch, disable_streaming=not streaming
+        )
+        clients = peer.model_clients[0]
+
+        def invoke() -> PhysicalUsageObservation:
+            with capture_model_usage(clients.route) as capture:
+                output = (
+                    "".join(chunk.text for chunk in model.stream("hello"))
+                    if streaming
+                    else model.invoke("hello").text
+                )
+                assert output == "ok"
+                if mark_complete:
+                    capture.mark_sdk_consumption_complete()
+            return capture.snapshot()
+
+        result = await asyncio.to_thread(invoke)
+        assert result.status == ("complete" if mark_complete else "unresolved")
+        assert result.reason == (
+            None if mark_complete else "sdk_consumption_incomplete"
+        )
+        assert (result.projection_digest is not None) is mark_complete
+        assert peer.request_count == 1
     assert clients.sync.is_closed and clients.async_client.is_closed

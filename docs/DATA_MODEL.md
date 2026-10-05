@@ -1,3 +1,39 @@
+## R233 当前暂态观察数据边界（2026-10-04；候选已验待提交）
+
+已实现的 usage observation 只在 invocation scope内保存有限raw buffer与解析scratch，退出后仅保冻结白名单presence/counts、安全reason及projection_digest；SDK归一0/合成total不写成provider报告。输入/decoded/window独立预算、JSON/SSE终态与marker owner规则沿下方已审设计，原typed JSON hook避免cast而不复制第二数据模型。Root310真实peer及installed observer/factory/assembly源闭包通过，完整收据见 CURRENT R233；内存payload预算不是RSS实测，也不是token/财务界。
+
+没有SQL、事务、Run/Attempt/Evidence持久artifact、canonical schema或generated变更；原计划/租约/财务封存事实保持。installed的RECORD/语义负控与恢复通过仅证明候选安装完整性，不证明财务sealed evidence已产生。Root尚未Git交付；native调用许可、可信技术输入bound/read、Billing与费用结算/用户3310仍 OPEN。下方未实现措辞为历史设计记录，不覆盖本节。
+
+---
+
+## R228 单响应 usage 内存观察（2026-10-04；R229回填待复审，无数据变更）
+
+基线 `main@f3050fccc458dae1491cc5b9b98af79d9ff838ce`，原R226待提交仅历史。本轮四文档前缀之外全部冻结；无SQL/contract/generated/Git/资源操作。唯一canonical仍`database/schema.sql`，Run→Attempt→Evidence/lease/terminal/completeness的owner、事务、锁序、tenant、幂等、retention全部不变；不新增表/列/索引/迁移/Redis或持久日志。
+
+R228拟新增的是**调用作用域内、逐物理响应的暂态观察**，不是现Attempt持久artifact：
+
+- ContextVar scope在调用者进入时创建；guard通过的单request claim绑定同不可变route，公开HTTPX response wrapper捕获该claim。两个独立scope互不污染；SDK继承child Task的唯一同route首次claim合法，同scope第二claim/route漂移/response冲突标ambiguous而不覆盖或累加。scope退出清理token并冻结结果，后续chunk/close不回写已交结果；不在ModelHttpClients/route上保存共享last_usage。
+- SDK读取时只复制已消费raw bytes至≤4MiB私有buffer并透明yield，不在线解码/预取；scope正常末冻结同immutable对象。zstd公开stream_reader第一遍对自有BytesIO（read_across_frames=True）逐read≤min(64KiB, remaining+1)，decoded累计≤4MiB；JSON scratch4MiB/SSE事件64KiB、4096事件/depth16/投影4KiB。完整读取全部自有buffer且parse成功才给模块私有不可外部伪造proof；失败或提前停不做第二遍。
+- 第一reader/window/parser/document释放后，凭同immutable buffer与同backend/window的proof，公开decompressobj逐frame核eof/checksum/unused_data，最多4096frame，不重新parse、不累计返回bytes；超界/错误/无进展/垃圾未知。每frame无输出参数界的安全来自前一遍全buffer有界证明，不靠content-size/close/截断。Scope异常/取消/transport失败释放所有buffer并保持原异常，结果冻结后迟到chunk不再回写；ownership仍AgentHandle/原SDK。
+- 输入4MiB、decoded4MiB、zstd window4MiB独立。当前锁定zstandard0.25.0 C backend的公开max_window_size实测传4194304，官方KiB矛盾不隐藏；其他Python minor/backend未外推已验。唯一reader-first路线，无在线writer/3.14标准库fallback/新依赖，Python>=3.11声明不变；跨minor installed/peer另验。gzip/deflate使用公开zlib有界解析及CRC/eof，identity直接解析，四编码覆盖。
+- 短时有界compressed buffer/document/frame可含内容但不日志/缓存/持久化/入结果。分阶段受控payload估算首遍JSON12MiB+68KiB、SSE8MiB+132KiB、次遍12MiB；冻结复制未证消除另加4MiB，BytesIO/unused_data/对象/native开销另计，非RSS承诺。阶段不能同时保有两个window/document或所有frame输出，退出释放与峰值待实测。
+- JSON需完整document与compression_integrity=validated。SSE final+DONE和正常scope完成逻辑观察；只缺未消费tail且无已知错误时记unverified_unconsumed_tail，不预读SDK、不冒整流receipt；已消费prefix坏编码仍unresolved。first pass在DONE后仍drain自有buffer至EOF以证明输出界，但不再采纳usage。相同final去重、冲突invalid，missing/null不填0、缺total不合成。
+- `projection_digest`绑定domain-separated RFC8785白名单投影，不是HTTP原文或published raw_usage_digest；invalid/不完整投影不给完整digest。没有把观察结果自动写成授权granted、actual verified、known-zero financial evidence或append到数据库。现`model/usage_evidence.py`发布codec与`contract/usage/v1`原bytes保持；内部原始presence与发布union生命周期不同，故不建立第二可编辑wire schema。
+
+R231窄修：暂态`mark_sdk_consumption_complete()`的owner线程/Task/ACTIVE只存内存，不入投影/digest/SQL。物理request claim不要求Task等于scope-enter Task：锁定SDK内部继承ContextVar的child Task或to_thread中的唯一、同route首次claim合法，经request extension绑定唯一response；第二物理claim、route漂移或response绑定冲突永久ambiguous/unresolved，不窥探SDK私有Task身份。
+
+scope进入时记录marker owner线程、当前asyncio Task身份与ACTIVE token。marker要求活动scope、ACTIVE为本capture、调用者同scope-enter owner且已有唯一绑定response；wrong-owner、scope错配、尚无response或多claim/route/绑定冲突等结构误用以固定safe ValueError拒绝，活动capture永久misuse/ambiguous unresolved，原owner后续marker不得挽回。scope外迟到marker也报safe ValueError，但已冻结snapshot不变；同owner合法重复marker幂等。
+
+输入/输出预算耗尽、unsupported content-type/encoding、坏压缩、JSON/SSE解析失败等观察unknown不是marker误用：SDK正常完成后合法owner标记不新增调用异常，保留原unknown reason且不升级complete。transport/SDK原异常继续传播，scope异常优先unresolved。
+
+complete是正常scope退出、合法owner marker、唯一同route request/response与既定JSON完整body/validated或SSE final+DONE/压缩完整性规则的合取；raw DONE、HTTPX close、marker任一单独均不充分。无marker的正常scope与early break/close固定sdk_consumption_incomplete。parent仅在invoke/ainvoke正常返回或stream/astream自然耗尽后标记；SDK child Task及to_thread单调用由parent await正常返回后标记，继承child自身无marker权限。break、close/aclose、GeneratorExit、取消或异常均不标记。 此窄修待Root终审、marker尚未实现；不是许可或收费证据，原buffer预算与资金owner不变。
+
+现已持久planned只含route身份，technical exposure/profile/可信expiry仍未持久冻结；预授权technical bound与授权后dispatch permit分层保持，Billing仍唯一资金许可owner。此观察片不拿System C推全部billable input、不拿Run budget/字符数算token、不从lease/cacheTTL造授权。正式middleware仍prepare后unavailable、terminal封not_dispatched，既有PG状态机不改。
+
+拟后继source仅新`model/usage_observation.py`、现`model/factory.py`和实际assembly闭包`execution/runtime_profile_sources.py`；现peer测试为主要系统门，runtime source登记/installed RECORD为闭包门。无机器合同生成需求；如果实现要求合同/Schema变化，停报Root重新准入。本D0未通过、测试未运行、provider/Billing/用户闭环未获新证据。R229已明确采用既有zstandard公开两遍路线以保持Python>=3.11声明，四D0回填待Root复审，跨minor实际安装/peer与backend单位门仍待执行。
+
+---
+
 ## R226 当前：单 completion 无持久数据变化（2026-10-04）
 
 基线 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`；两文件single-completion候选已验待Root提交。正式LiteLLM构造固定n1与最终strict整数1 guard仅约束一个物理SDK请求，不变Run→Attempt锁序、lease、prepare/authorization/evidence/head、canonical SQL、公开wire或资金事实；没有新列/表/索引/Schema/generated/迁移。System context能力值仍不等于已证明的完整可收费输入上界。

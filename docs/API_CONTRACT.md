@@ -1,3 +1,65 @@
+## R233 当前内部观察 API 已验边界（2026-10-04；无机器发布）
+
+候选已实现 `capture_model_usage(route)`、`capture.mark_sdk_consumption_complete()`与冻结 `capture.snapshot()`。Root真实peer310验证合法完成、missing/null/explicit0、SDK合成total不冒原报告、四编码、marker/early-close/并发/unknown与资源关闭边界；完整工程、build、installed与独审收据集中于 CURRENT R233，尚待Root Git交付。下方“marker尚未实现/待设计准入”属于设计期历史。
+
+本 API 仍仅包内单物理响应观察：projection_digest不是原HTTP bytes摘要或published raw_usage_digest，marker不是认证、grant或可结算声明。HTTP5/usage1/System3固定收据、公开schema与错误协议均未修改；没有新网络入口或财务完整性承诺。正式native caller、Billing许可、provider归属及sealed evidence producer仍 OPEN，本片不以接口存在代替资金授权。
+
+---
+
+## R228 usage 观察内部 API 候选（2026-10-04；R229回填待复审，无机器发布）
+
+当前基线 `main@f3050fccc458dae1491cc5b9b98af79d9ff838ce` 已有System3.0严格消费与n1/output guard；下方待提交是历史。R228仅四docs前缀，HTTP5、usage/v1、execution-proof、System955固定收据、RunRequest和Billing contract原bytes冻结。下一切片只产生内部观察，不定义新HTTP/API/事件/schema，也不认为真实provider或财务链已完成。
+
+### 包内 seam（Root已裁方向，待设计独审与实现验证）
+
+新普通`model/usage_observation.py`提供 `capture_model_usage(route)` context manager及冻结的`PhysicalUsageObservation`；`with ... as capture`可包sync或async SDK调用，正常退出后`capture.snapshot()`取单物理响应结果。活动scope只给pending；未响应/多响应/route冲突/并发共享均unresolved，不选择last_usage。ContextVar作用域退出恢复原token；每request独立claim，后续response wrapper不查询可能已经切换的当前scope。新scope可并发独立，子task继承scope不意味着可以混用两个物理响应；SDK内部child Task的唯一同route首次claim合法。
+
+结果是内部原始观察层：completion状态/闭集原因、source protocol、白名单计数字段presence与strict integer值、语义projection digest；不含tenant/payer/admission/金额/verified provider，不生成完整ModelUsageEvidence。成功响应model或gateway alias也不证明actual provider；无需修改现`PlannedBinding`或给它偷加metadata。内部presence区别missing/null/reported/invalid；只有显式整数0才reported0，bool不算integer，counts只接受非负且符合现usage1 Count上界。input/output/total齐全时关系必须相符；缺total保持未报告，不合成。cache_write没有本profile可信来源，继续unreported；已知subset必须≤其inclusive total。未验证service_tier或额外usage类别标unsupported，不默认为ordinary/free。
+
+### R231显式完成seam（当前窄修待Root独审）
+
+新增唯一内部方法 `capture.mark_sdk_consumption_complete()`，只能由scope owner在SDK invoke正常返回或stream正常耗尽后调用。正常scope退出仍必须有此标记；未标记（含提前break/close）为unresolved/sdk_consumption_incomplete，即使raw buffer已含final/DONE。异常/取消退出覆盖此前标记，不形成完成。
+
+scope进入时记录marker owner线程、当前asyncio Task身份与ACTIVE token。marker要求活动scope、ACTIVE为本capture、调用者同scope-enter owner且已有唯一绑定response；wrong-owner、scope错配、尚无response或多claim/route/绑定冲突等结构误用以固定safe ValueError拒绝，活动capture永久misuse/ambiguous unresolved，原owner后续marker不得挽回。scope外迟到marker也报safe ValueError，但已冻结snapshot不变；同owner合法重复marker幂等。
+
+物理request claim不要求Task等于scope-enter Task：锁定SDK内部继承ContextVar的child Task或to_thread中的唯一、同route首次claim合法，经request extension绑定唯一response；第二物理claim、route漂移或response绑定冲突永久ambiguous/unresolved，不窥探SDK私有Task身份。
+
+输入/输出预算耗尽、unsupported content-type/encoding、坏压缩、JSON/SSE解析失败等观察unknown不是marker误用：SDK正常完成后合法owner标记不新增调用异常，保留原unknown reason且不升级complete。transport/SDK原异常继续传播，scope异常优先unresolved。
+
+complete是正常scope退出、合法owner marker、唯一同route request/response与既定JSON完整body/validated或SSE final+DONE/压缩完整性规则的合取；raw DONE、HTTPX close、marker任一单独均不充分。无marker的正常scope与early break/close固定sdk_consumption_incomplete。parent仅在invoke/ainvoke正常返回或stream/astream自然耗尽后标记；SDK child Task及to_thread单调用由parent await正常返回后标记，继承child自身无marker权限。break、close/aclose、GeneratorExit、取消或异常均不标记。
+
+该marker是可信包内调用责任，不是认证、grant或可结算声明；无自动完成fallback，不改HTTP/schema或call_runtime。Root终审后另授marker source/tests；当前marker尚未实现。
+
+### JSON/SSE终态与观察透明性
+
+JSON必须完整且合法，SSE候选必须为choices=[]的final usage事件并后续收到DONE；usage:null普通chunk不计数。完全相同的final语义投影重复只去重一次，冲突永久invalid；不相加final_cumulative。缺final/DONE、提前close、取消/断流、scope异常退出为unresolved，既有SDK异常原样传出。正常DONE是协议终点，不为socket EOF强行预读；scope正常结束才取冻结完成结果。详细边界与预算见TECHNICAL_DESIGN同节。
+
+response hook的公开HTTPX raw tap仅将SDK已拉取bytes原样转发并复制到observer≤4MiB buffer；不在线decode，不用SDK stream作reader输入。scope正常末冻结同immutable compressed buffer再观察；输入超限停止复制/释放，SDK继续。无scope维持原行为；scope异常、取消、transport/close异常原样传播且观察unresolved，正常读取/backpressure/ownedclose不变，不预取SDK。
+
+Root唯一zstd路线为既有锁定zstandard0.25.0公开`stream_reader`读取自有BytesIO第一遍（read_across_frames=True，每read≤min(64KiB, remaining+1)，全decoded≤4MiB）→全owned EOF及parse成功生成模块私有`FIRST_PASS_BOUNDED_COMPLETE`→释放reader/window/parser scratch→同immutable buffer、同window/backend的公开`decompressobj(read_across_frames=False)`逐frame第二遍。第二遍仅核eof/checksum/unused_data、最多4096frame、无进展/垃圾拒绝；不重新解析，不留各frame输出。禁止外部布尔伪proof、变更buffer、失败/提前终止第一遍后二次decode；decompressobj自身无输出参数界，只有此前同buffer全量有界证明才允许调用。
+
+Root实测当前C backend `max_window_size`必须传4194304，非4096；官方KiB措辞矛盾保留，不跨minor/backend推广。无compression.zstd/在线writer/fallback/新依赖；Python>=3.11不变，3.11–3.13 installed/peer及backend单位复验仍未执行。gzip/deflate同scope-end使用公开zlib有界解码与完整性检查，identity直接有界解析；四编码首片覆盖，brotli/未知/坏编码unresolved且SDK原行为不变，不改Accept-Encoding/private decoder。正式native无Billing仍0provider。
+
+内部观察明确区分`compression_integrity=validated`与`unverified_unconsumed_tail`，其余未完成/错误仍unresolved/pending，不进入完整报告。JSON需完整document且validated。SSE正常scope+final+DONE只完成逻辑usage；自有前缀只缺压缩trailer、无已知decode/checksum错误且SDK正常因DONE停读时记unverified_unconsumed_tail，不补读SDK或冒整流认证；已消费prefix坏编码仍unresolved。全部自有frames校验完成且无garbage才validated。该字段是包内completion/reason，不发布新机器合同，不将projection_digest升级为raw_usage_digest。
+
+### digest材料与隐私（内部，不是raw HTTP摘要）
+
+拟固定domain为 `kokoro-agent:usage-observation-projection:v1\n`，SHA256输入为该domain字节加RFC8785规范化**白名单观察投影**。投影只含protocol、usage对象presence、prompt/completion/total及cache-read/reasoning等已选计数的missing/null/reported值标记、service-tier的闭集适用判定、未知类别存在标志；不含模型输出、prompt/tool参数、headers、token、cookie、任意上游字符串或request ID。合法integer规范化为十进制字符串，保missing与null区别；对象键序/空白不影响digest。invalid语法/超限未取得完整合法投影时digest=null，不把partial材料冒完整证明。
+
+投影拟采用一个闭集内部值（不是新wire schema）：`{version:1, protocol:"openai_chat_completions", usage_presence:"missing"|"null"|"object", counts:{prompt_tokens,completion_tokens,total_tokens,cached_tokens,reasoning_tokens}, service_tier:"absent"|"null"|"default"|"unsupported", unsupported_usage_category:boolean}`。每个count固定为`{presence:"missing"|"null"}`或`{presence:"reported",value:"<canonical decimal>"}`；details容器missing/null作为对应child missing，不宣称容器原文保真。错误count形状/类型不进入canonical投影，digest=null；未知成员仅投影为存在标志，不保存其名称/值。只对白名单观察语义承诺稳定摘要，不承诺还原整个usage对象。protocol是解析方言，不是provider身份或收费profile认证。
+
+这是明确的 **projection_digest**，不是原HTTPbytes/完整provider receipt/原usage对象byte digest；首片不写入published `raw_usage_digest`，也不从SDK归一metadata逆向造原响应。后继真正证据组装若要映射该字段，必须单独核现owner合同语义，不在本片暗改。原始content只存在消费者收到的网络chunk、observer有界compressed buffer及阶段内解析scratch，处理后丢弃，观察结果及日志只保上述投影或安全reason。
+
+Root预算：输入buffer4MiB、decoded累计4MiB、zstd window4MiB独立；JSON document4MiB/SSE事件64KiB、4096事件/4096frame、depth16/4KiB投影/单响应scope。parser遇DONE也要有界drain全部自有buffer完成第一遍证明，但不再采纳后续usage、不读SDK新bytes。预算耗尽unknown；decoder/scratch按阶段释放，snapshot只留白名单投影/安全状态。
+
+允许短时buffer/document/frame含当前内容，不日志/持久化/结果保留，scope正常/异常/取消/超限均释放。受控payload估算JSON首遍12MiB+68KiB、SSE首遍8MiB+132KiB、次遍12MiB；未证零拷贝冻结另加4MiB，BytesIO/unused_data复制与对象/native开销另计。非RSS或token/财务界，具体峰值/阶段释放由系统门验证。
+
+### 验证与OPEN
+
+现`tests/integration/test_model_provider_retries.py`先真实SDK/HTTP characterization，再capture oracle；无未来import假RED，不以Mock/构造参数代wire。原147 peer、n1/output guard、ownedclose与native缺Billing拒绝必须保持。原usage1机器/Schema门用于证明未漂移，不证明新观察已实现；本轮未运行任何门。Root审完本D0后另授test/source，输入可信界、technical-bound/read、真实Admission/expiry/dispatch、actual attribution和财务封存/ACK仍OPEN。
+
+---
+
 ## R226 当前：单 completion SDK执行限制，无公开契约变化（2026-10-04）
 
 Agent基线已为 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`；本两文件候选已通过Root147真实peer、451邻接与2253默认门、静态/contract/隔离build及独审0P0/P1/P2，待Root提交，完整证据与未执行资源范围见CURRENT。四文档回填后Root另跑build，本段不预报。

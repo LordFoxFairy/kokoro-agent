@@ -18,6 +18,11 @@ from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
 from kokoro_agent.policy import ModelConfig
 
 from kokoro_agent.clients.system import ResolvedModel
+from kokoro_agent.model.usage_observation import (
+    claim_usage_request,
+    observe_usage_response,
+    observe_usage_response_async,
+)
 
 
 _WIRE_OBJECT = TypeAdapter(dict[str, object])
@@ -90,14 +95,20 @@ class ModelHttpClients:
         endpoint = httpx.URL(str(base).rstrip("/") + "/chat/completions")
         object.__setattr__(self, "endpoint", endpoint)
         sync = httpx.Client(
-            event_hooks={"request": [self._validate_sync]},
+            event_hooks={
+                "request": [self._validate_sync],
+                "response": [observe_usage_response],
+            },
             follow_redirects=False,
             trust_env=False,
         )
         object.__setattr__(self, "sync", sync)
         try:
             client = httpx.AsyncClient(
-                event_hooks={"request": [self._validate_async]},
+                event_hooks={
+                    "request": [self._validate_async],
+                    "response": [observe_usage_response_async],
+                },
                 follow_redirects=False,
                 trust_env=False,
             )
@@ -137,9 +148,11 @@ class ModelHttpClients:
 
     def _validate_sync(self, request: httpx.Request) -> None:
         self._validate(request, request.read())
+        claim_usage_request(request, self.route)
 
     async def _validate_async(self, request: httpx.Request) -> None:
         self._validate(request, await request.aread())
+        claim_usage_request(request, self.route)
 
     async def _close(self) -> None:
         errors: list[BaseException] = []

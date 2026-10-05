@@ -1,3 +1,41 @@
+## R233 当前：单响应 usage 观察候选已验，待 Root Git 交付（2026-10-04）
+
+基线仍为 `main@f3050fccc458dae1491cc5b9b98af79d9ff838ce`；本片四 source/test 与四文档候选尚待 Root 精确提交。下方 R228–R232 的“未实现/待设计审查”是当时记录，不覆盖本节。现已实现公开 HTTPX raw tap、invocation-local capture、显式 SDK consumption marker、四编码有界观察与独立 projection_digest；它不是正式调用许可或财务 evidence。
+
+Root12295 最终工程九 step 全0：architecture **29 passed**、真实锁定 SDK/自有 HTTP peer **310 passed**、默认 **2253 passed / 717 按 marker deselected（包含 HTTP peers） / 795 warnings**，lock/frozen-sync/format/lint/types/contract 全0、source_same。Root36640 wheel/sdist build exit0。Root33857 installed v3 **pass / 18 steps**，RECORD 与语义篡改的两次 exit1 是预期拒绝，恢复 checker 0；隔离安装的 observer/factory/assembly 源 hash 精确匹配，源码不变、自有 venv 已删除。独审 no-cast 报告为0。
+
+证据：工程 `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r233-agent-engineering-770vsy5a/manifest.json`；构建 `/var/folders/gn/wbk8wfbd047_wvwkwtyn331r0000gn/T/kokoro-r233-agent-build-c8d_mi0t/manifest.json`；安装 `/tmp/kokoro-r233-agent-installed-root-v3.json`；独审 `/tmp/r233-agent-no-cast-review.md`。首次完整门2252/1的 cast 架构失败已窄修并复验；installed v2 新探针误用不存在的 PhysicalUsageCapture 导致 AttributeError，属于 Root 验证器错误，未据此改生产，历史保留。
+
+以上只验收限定候选；本次四文档回填未重跑资源，Git 交付与此后分发仍待 Root。正式 native caller/Admission/Billing/dispatch、可信 input bound/read、财务 sealed evidence/ACK/settlement、真实外部 provider 与用户3310链仍 OPEN；不把自有 peer 或 installed 源闭包当整链成功。
+
+---
+
+## R228 当前：原始 usage 观察设计候选（2026-10-04；R229回填未实现，待Root复审）
+
+Agent当前基线为Root已提交 `main@f3050fccc458dae1491cc5b9b98af79d9ff838ce`（Root派工时clean）；下方R226“候选待提交”保留为历史。此前147真实peer/451邻门/2253默认仅证明n1/output/ownership既定边界，不证明R228。唯一任务沿Root现台账，本轮原Agent owner从已冻结Web任务回归，只增加TECHNICAL_DESIGN/API_CONTRACT/DATA_MODEL/CURRENT当前前缀；原全文备份 `/tmp/r228-agent-usage-doc-before`，不修改历史正文。
+
+**源码事实：** 锁定SDK会对missing input/output填0、missing total合成sum；stream公开归一metadata不保原始缺失信息。现factory已有owned HTTPX最终request guard，没有response observer；Run callback是跨调用预算聚合，不是逐Attempt收费证据。下一独立切片拟为同model普通`usage_observation.py`加现factory公开HTTPX接线与实际runtime source inventory，不把新职责塞published usage_evidence codec。
+
+**R229唯一候选已回填：** 单响应invocation-local capture、missing/null不造0、缺total不合成；重复final去重、冲突/缺final/取消未知。SDK阶段只缓存已消费raw bytes≤4MiB并原样转发；正常scope末同immutable buffer→公开zstandard0.25.0 stream_reader有界第一遍（64KiB/read、全部自有buffer/read_across_frames=True）→私有bounded-complete proof→释放首遍scratch/window→same buffer逐frame decompressobj EOF/checksum/unused_data核。不是读取SDK stream，不在线writer/stdlibfallback、不改Accept-Encoding/加依赖。identity/gzip/deflate仍同阶段有界观察，四编码首片覆盖。
+
+输入/decoded/window各4MiB独立，JSON document4MiB/SSE事件64KiB、4096事件/4096frame、depth16/4KiB投影。Root当前锁C backend公开max_window_size实测传4194304，与官方KiB文档矛盾只按该backend事实记录，Python>=3.11声明不变，3.11–3.13 installed/peer/backend单位待验。分阶段payload估计JSON12MiB+68KiB/SSE8MiB+132KiB/次遍12MiB，冻结副本另加4MiB及其它复制/对象开销，绝非RSS或财务上界。所有raw scratch只短时内存且退出释放。
+
+JSON需validated；SSE DONE+正常scope可逻辑完成，未消费压缩尾显式unverified_unconsumed_tail，不预读SDK/冒整流认证。digest仍usage语义projection，绝不填published raw_usage_digest。Root独立报告 `/tmp/r229-agent-zstd-decision-review.md` 已裁路线；当前是四D0回填，整体待Root复审，尚未授source/tests，无新增生产能力。
+
+**R231/R232显式完成窄修（待Root终审）：** 唯一内部`capture.mark_sdk_consumption_complete()`。物理request claim不要求Task等于scope-enter Task：锁定SDK内部继承ContextVar的child Task或to_thread中的唯一、同route首次claim合法，经request extension绑定唯一response；第二物理claim、route漂移或response绑定冲突永久ambiguous/unresolved，不窥探SDK私有Task身份。
+
+scope进入时记录marker owner线程、当前asyncio Task身份与ACTIVE token。marker要求活动scope、ACTIVE为本capture、调用者同scope-enter owner且已有唯一绑定response；wrong-owner、scope错配、尚无response或多claim/route/绑定冲突等结构误用以固定safe ValueError拒绝，活动capture永久misuse/ambiguous unresolved，原owner后续marker不得挽回。scope外迟到marker也报safe ValueError，但已冻结snapshot不变；同owner合法重复marker幂等。
+
+输入/输出预算耗尽、unsupported content-type/encoding、坏压缩、JSON/SSE解析失败等观察unknown不是marker误用：SDK正常完成后合法owner标记不新增调用异常，保留原unknown reason且不升级complete。transport/SDK原异常继续传播，scope异常优先unresolved。
+
+complete是正常scope退出、合法owner marker、唯一同route request/response与既定JSON完整body/validated或SSE final+DONE/压缩完整性规则的合取；raw DONE、HTTPX close、marker任一单独均不充分。无marker的正常scope与early break/close固定sdk_consumption_incomplete。parent仅在invoke/ainvoke正常返回或stream/astream自然耗尽后标记；SDK child Task及to_thread单调用由parent await正常返回后标记，继承child自身无marker权限。break、close/aclose、GeneratorExit、取消或异常均不标记。 不是grant或费用证据。本轮只同步四当前前缀，候选四源码/测试保持冻结，marker源码暂缓至终审；既定两遍buffer路线不变。
+
+**下一步不是已完成：** Root先审四D0，之后只授现`tests/integration/test_model_provider_retries.py`真实SDK→自有HTTP peer characterization/业务oracle，再另授源码；缺import/Mock不当系统RED，现实现可能部分原本GREEN。原peer/guard/ownedclose和正式native缺Billing0provider不得弱化。无新HTTP/usage/schema/价格、假grant或known-zero；输入technical profile/bound/read、真实Admission/dispatch expiry、actual provider及财务封存/ACK/UI均仍OPEN。
+
+本轮未运行tests/collection/SDK/HTTP/PG/Redis/外部provider/构建/安装/Git。仅检查四原文完整suffix和非doc源hash保持；D0尚待Root独审与准入，不能称设计门已通过或新增生产能力。
+
+---
+
 ## R226 当前：单物理请求固定一份 completion，候选已验待 Root 提交（2026-10-04）
 
 本片基线为已提交 `main@d50bde5f5b19dc89f6a56640c9e464174dc52ab4`；现两路径候选只改 `model/factory.py` 与既有真实 peer 测试。正式 LiteLLM 构造显式 `n=1`，公开 HTTPX 最终请求 hook 要求 strict 整数1，缺失/null/bool/float/string/0/负数/2均在网络前拒绝；不按n放大输出界，不静默改写override。原 endpoint/model/output cap/别名/JSON检查、其它provider和owned客户端生命周期保持。下方R216“d50前候选待提交”是历史阶段，不覆盖本基线。

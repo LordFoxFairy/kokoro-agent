@@ -1,3 +1,30 @@
+## R252-AGENT-BOUND-D0：逐 attempt 保守执行界（2026-10-05；仅设计）
+
+**当前与目标。** 正式基线为 `fc379da2b09e08ca0349f249902f587d72efbc8f`。现 final HTTPX hook 已冻结 final-request version/digest、`n=1` 与实际 `max_completion_tokens`，System 3.0 同一 immutable revision 已给 `context_window/max_output_tokens`，prepare 已在 own PostgreSQL Run 锁下以 DB clock 核当前 lease；但没有 preauthorization bound artifact、有限 `valid_until`、Billing 可认证读取，也没有证明所绑gateway/model的billable input与inclusive category服从这些数值的可信保证。目标不是精确 tokenizer/count：首版目标为 `openai_chat_completions_capacity_v1` 的 **capacity-derived conservative joint constraints**；System 3.0 provenance只证明目录来源与immutable revision，不能单独把目录cap提升为可收费exposure。缺下述保证或正式 Billing consumer仍在hook后typed failure、0 provider send。
+
+唯一 bound 在现 prepare 根事务内与 attempt 首次插入一起生成、sealed且永久不可改；`bound_ref = "mcb_" + lowercase attempt UUID`，不依赖、也不包含后继 Billing `request_ref`。artifact canonical payload闭合 tenant/run/call/attempt/ordinal、原 lease owner/generation、现完整 planned binding及digest、final-request binding version/digest/profile、System 3.0固定provenance、joint constraints、revision=`1`、`sealed=true`、DB `sealed_at`和有限`valid_until`；外部digest为原canonical RFC8785 bytes的SHA-256，不把digest写进自身payload。planned ref同样由attempt确定为`mpb_<attempt UUID>`，复用现planned canonical bytes/digest；reader一次返回planned与bound两份原bytes，不复制第二planned DTO。
+
+joint constraints目标只允许unit=`token`：`0 <= input_total <= context_window`、`0 <= output_total <= final max_completion_tokens`、`total = input_total + output_total`，`input_cache_read`仅为`input_total`子集、`output_reasoning`仅为`output_total`子集；`input_cache_write`、未知category、未知模态/协议和无法证明的subset一律unsupported并在授权前fail closed。但生产artifact前必须先有**具名、可信、版本固定且绑定exact planned provider/model/gateway的 capacity-and-usage-semantics guarantee**，逐项证明billable input不超过context、output受final cap、cache/reasoning确为inclusive subset且没有未声明收费类别；Agent必须核其owner身份、version/digest与planned binding。当前System 3.0 artifact没有该保证，故当前bound producer与paid Admission正路必须保持不可用；本片不自行新增tokenizer/System合同、抓取浮动provider文档、接受YAML/header自报或编外凭据补洞。8 MiB JSON、字符数和Run budget也不能换算成token。保证正式发布后，Billing仍须在自己的完整tariff上按联合约束求安全上界，禁止把各maxima拼成actual vector；价格、environment、pricing account、model pricing version、汇率、normalization、quote TTL与金额均不进入本artifact。
+
+时间只量化一次：prepare事务把DB `clock_timestamp()`向下截断到唯一UTC毫秒值，原样同时用作persisted `prepared_at`与artifact `sealed_at`；`valid_until`把同锁内原始`lease_expires_at`也向下取整到不晚于原expiry的UTC毫秒，且量化后必须严格晚于sealed_at，否则fail closed。续租不延长旧bound。reader以同一向下毫秒规则取得新DB clock，要求Run仍非terminal、owner/generation仍等于artifact、当前lease未过期且向下量化的当前expiry不早于bound valid_until；stale/takeover/pause/expired均不给新授权读取成功。禁止Python/app clock、数据库隐式TIMESTAMPTZ(3)四舍五入或分别取两个now。artifact本身不回写、不按墙钟改状态，已成立的Billing Admission重放/结算语义仍由Billing永久snapshot裁决。
+
+### §8 放置表、依赖与停止线
+
+| 项 | R252 目标决定 |
+|---|---|
+| Owner | Agent model-call唯一写逐attempt planned/final/bound事实与reader；System只发布技术capability；Billing只写price/quote/hold/grant。Root负责Git、审查与资源。 |
+| 当前事实 | `call_runtime`唯一final hook；`call_artifacts/call_models`已有canonical planned/final摘要；`postgres_model_call_repository`已有Run→attempt锁、DB clock与lease；System 3.0没有capacity-and-usage semantics guarantee；HTTP reader与专用credential也尚未实现。 |
+| 目录方案 | **采用**计划中的`contract/model-call-bound/v1/{schema,vectors,manifest}`：preauthorization joint constraints有独立生命周期/version与消费者。**淘汰**复用`contract/usage/v1`：后者是post-call actual evidence，混入bound会把上界冒充观察值并造成breaking双义。计划沿现generator/checker/package模式，不建通用artifact框架。 |
+| 粒度 | 纯schema/codec与内部immutable值归现`model/call_{models,artifacts}.py`，编排归现`call_runtime.py`，事务/read归现repository，route归现HTTP server。只有约束算法确需独立变化原因时才准同package单文件`model/input_bound.py`；不新目录/进程。 |
+| 依赖 | System 3.0 provenance与现final bytes只是输入；正向producer另依赖Root后继批准、owner发布并固定的exact-binding capacity-and-usage guarantee。禁止运行时import System/Billing源码/数据库、SDK private tokenizer、浮动provider文档、YAML/header自报保证或caller body身份。保证不存在时整个bound/paid路径fail closed。 |
+| 数据/API | 只扩现attempt表普通bound字段和tenant+ref唯一访问；不建新表/JSONB/index family。internal-owner GET返回planned/bound canonical bytes+digests，prompt/body/credential/authorization bytes不返回。 |
+| 删除项 | 不留exact-token假profile、usage/v1 alias、可续期bound、health/cache/proof TTL fallback、免费/quantity=1/fake grant路径。现final digest/zero-send guard不删除。 |
+| 验证 | D0后先证明无可信guarantee时0 bound/0 send，再验合法固定guarantee与wrong owner/version/digest/binding/category负例；并验UTC毫秒向下量化、contract/generation/package、真实PG replay/冲突/lease race/rollback、真实HTTP auth+tenant+fence、SDK loopback 0-send及完整工程门。当前均未运行。 |
+
+**reader认证已裁决、尚未实现。** Billing→Agent bound reader使用HTTP进程专用 `SecretStr | None` 字段`billing_model_call_bound_reader_secret`，唯一环境名`KOKORO_AGENT_BILLING_MODEL_CALL_BOUND_READER_SECRET`；配置缺失/空白时route为503 fail closed。该credential只映射exact caller `kokoro-billing`并只授本GET，不复用现全入口`internal_secret_agent`、不接受后者fallback，也不信`x-kokoro-service`、actor/subject/body自报。Bearer以常量时间比较且不日志/持久化；认证后才把必填tenant header作为Billing的受信断言并与row逐值相等。字段只进入现`interfaces/http/main.py::AgentHttpConfig`及其env/file loader、safe summary和`interfaces/http/server.py::AgentConfig` protocol/route；worker `config.py::AppConfig`不消费inbound reader secret，禁止为对称或“统一配置”复制进去。无新auth模块/framework/config容器。
+
+剩余实现最大范围仍为现`model/call_models.py`、`call_artifacts.py`、`call_runtime.py`、`infrastructure/postgres_model_call_repository.py`、`database/schema.sql`、`interfaces/http/{main.py,server.py}`；计划的新bound schema/vectors/manifest、具名generator/generated model、contract checker/provenance/package清单；现`tests/unit/http/{test_http_main.py,test_server.py}`及对应unit/contract/真实PG/SDK/architecture测试。上述capacity guarantee的owner/source尚未批准，不在本卡擅增文件或合同；它是实现前置，不是TODO fallback。`config.py`、`factory.py`仍排除。源码、SQL、机器artifact、测试当前全部未授权。
+
 ## R252 实施状态更正（2026-10-05）
 
 R245以下设计现由R246 frozen21实现，起始基线29a7a18a、与本源码同批交付；final HTTPX mandatory freeze/闭scope、唯一request profile、version1摘要与immutable prepare/replay已落实。具体当前验证与限制见CURRENT顶部R252；历史“没有最终摘要列/只设计/SDK前prepare”不再描述本候选。工程资源界不是input token或财务exposure bound，技术freeze不授权dispatch；缺Billing仍零send。无新模块、公开契约或兼容轨。

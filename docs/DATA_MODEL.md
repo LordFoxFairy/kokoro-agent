@@ -1,3 +1,21 @@
+## R252-AGENT-BOUND-D0：现 Attempt 上的 immutable bound（2026-10-05；仅设计）
+
+唯一canonical仍是`database/schema.sql`；本节只冻结后继DDL目标，当前schema未含这些列。bound与现planned/final-request/authorization共享同一attempt生命周期，不建新表、migration目录、JSONB、outbox或金额事实。
+
+目标只扩`kokoro_agent_model_call_attempt`六个普通列：`execution_bound_artifact_version TEXT NOT NULL`、`execution_bound_ref TEXT NOT NULL`、`execution_bound_revision BIGINT NOT NULL`、`execution_bound_bytes BYTEA NOT NULL`、`execution_bound_digest TEXT NOT NULL`、`execution_bound_valid_until TIMESTAMPTZ(3) NOT NULL`。现`prepared_at`同时是artifact `sealed_at`，现lease owner/generation、planned bytes/digest、final binding version/digest和attempt identity均复用，不复制第二列；`sealed=true`与revision1由canonical bytes/普通revision列共同证明。无nullable阶段、DEFAULT、回填或旧row兼容；clean-slate fresh schema与producer同片切换。
+
+约束目标：artifact version精确`1.0.0`、revision精确1；ref精确匹配`^mcb_[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`并由现UUIDv5 attempt identity确定；bytes 1..65536；digest为64 lowercase hex且等于原canonical bytes SHA-256；`execution_bound_valid_until > prepared_at`。跨字段RFC8785/profile/System provenance/joint relation由同一pure codec在insert、replay、read逐次严格验证，CHECK不伪装能解析BYTEA语义。
+
+唯一新增索引/约束为 `UNIQUE (tenant_id, execution_bound_ref)`，服务tenant+ref点读；attempt PK及现`(run_id,status,attempt_id)` partial index继续服务状态/recovery。不加digest、expiry、provider/category或scan索引：无按这些字段查询的已证访问路径。ref全局由UUID决定仍必须带tenant查询，UUID不替代tenant授权；planned ref `mpb_<attempt UUID>`由read projection确定，不另落列/索引。
+
+首次prepare事务锁序保持 Run→Attempt：锁Run后只读一次原始`clock_timestamp()`，在SQL内向下截断为UTC毫秒`db_now_ms`，重验tenant、owner/generation、非terminal；同锁内原始`lease_expires_at`也以floor规则量化为不晚于原值的`lease_expiry_ms`。只有`lease_expiry_ms > db_now_ms`才允许继续；同一个`db_now_ms`原样绑定`prepared_at`与artifact `sealed_at`，`valid_until=lease_expiry_ms`，再与attempt insert及Run completeness同commit。禁止把微秒值交给TIMESTAMPTZ(3)隐式四舍五入、Python时间或第二次now。commit前取消/错误全部rollback；ACK unknown按同attempt exact replay逐值核原bytes/digest/time，不重新量化或生成新期限。续租不更新bound，takeover/pause/terminal不删除审计事实。
+
+reader只读事务按trusted tenant+bound ref命中Attempt，再读同Run；把唯一新DB clock与current lease expiry分别按同一floor-to-UTC-millisecond规则量化，要求stored lease owner/generation仍等于current、Run非terminal、current lease非null且`db_now_ms < execution_bound_valid_until <= current_lease_expiry_ms`，随后返回原planned/bound bytes。它不更新last-read、expiry、status、generation或authorization。stale/expired只阻止新的preauthorization owner read，不把既有Billing永久authorization改成expired，也不是release/known-zero证据。
+
+数据边界：bound bytes只含tenant/run/call/attempt/ordinal/lease与planned技术身份，以及未来Root批准后加入的exact capacity-guarantee机器身份；不含actor/subject、prompt/final body、credential、Billing request/admission、price/account/rate/FX/quote TTL/amount。System 3.0 provenance本身不证明计费cap；在guarantee owner/version/digest/binding尚未批准并纳入canonical schema前，六列只是目标DDL且不得插入伪bound。HTTP projection也不得额外暴露现`attempt_binding_bytes`或`authorization_bytes`。保留期与Attempt审计事实一致；没有独立GC。跨owner只发布canonical bytes/ref/digest，Billing不得读Agent表，Agent不得读Billing表。
+
+剩余SQL/tests范围仅现`database/schema.sql`、schema inventory/installer checker、model-call repository及其现真实PG/runtime/recovery测试；先验证无guarantee时零insert/零send，再覆盖fresh install、CHECK/UNIQUE、exact replay、digest/bytes corruption、tenant ref、毫秒floor边界、lease renew不延长、pause/takeover/terminal/expiry并发、rollback/ACK unknown和reader零写。专用Billing reader secret只在HTTP进程`SecretStr`配置中存在，不入本表、receipt、canonical bytes、日志或索引。SQL/测试本阶段未改未跑；capacity guarantee、config/route/schema/read部署均未实现。
+
 ## R252 数据实施状态（2026-10-05）
 
 下方R245两required无DEFAULT普通列已在唯一canonical database/schema.sql、catalog verifier、prepare insert/read/receipt/replay及frozen validation同片接线；current候选R246 frozen21，起始正式基线29a7a18a，本次与源码同批交付。仍fresh-only，不迁移/回填/旧digest fallback。单纯64hex形状不能凭空证明body一致；receipt exact replay按现已冻结值核对。当前工程/installed-wheel与早前同SHA真实PG证据及未验财务链见CURRENT R252，不把新列或JSON资源界当财务授权。

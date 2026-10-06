@@ -297,6 +297,7 @@ def test_http_config_has_exact_public_field_set_only() -> None:
         "database_schema",
         "lease_ttl_s",
         "internal_secret_agent",
+        "billing_model_call_reader_secret",
         "execution_proof",
     }
     assert all(
@@ -376,6 +377,7 @@ def test_http_env_mapping_is_never_iterated_or_read_outside_exact_allowlist() ->
         "KOKORO_AGENT_DATABASE_SCHEMA",
         "KOKORO_LEASE_TTL_S",
         "KOKORO_INTERNAL_SECRET_AGENT",
+        "KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET",
         "KOKORO_AGENT_EXECUTION_PROOF_PUBLIC_JWKS_FILE",
         "KOKORO_AGENT_EXECUTION_PROOF_HTTP_ACTIVE_KID",
         "KOKORO_AGENT_EXECUTION_PROOF_HTTP_ACTIVE_JWK_THUMBPRINT_SHA256",
@@ -648,6 +650,7 @@ def test_safe_config_log_is_allowlisted(caplog: pytest.LogCaptureFixture) -> Non
         "KOKORO_REDIS_URL": "redis://REDIS_SENTINEL",
         "KOKORO_AGENT_DATABASE_URL": "postgres://DB_SENTINEL",
         "KOKORO_INTERNAL_SECRET_AGENT": "TOKEN_SENTINEL",
+        "KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET": "BILLING_SENTINEL",
         "KOKORO_AGENT_EXECUTION_PROOF_PUBLIC_JWKS_FILE": "/PATH_SENTINEL",
         "KOKORO_AGENT_EXECUTION_PROOF_HTTP_ACTIVE_KID": "KID_SENTINEL",
         "KOKORO_AGENT_EXECUTION_PROOF_HTTP_ACTIVE_JWK_THUMBPRINT_SHA256": THUMBPRINT,
@@ -660,6 +663,7 @@ def test_safe_config_log_is_allowlisted(caplog: pytest.LogCaptureFixture) -> Non
         "REDIS_SENTINEL",
         "DB_SENTINEL",
         "TOKEN_SENTINEL",
+        "BILLING_SENTINEL",
         "PATH_SENTINEL",
         "KID_SENTINEL",
         THUMBPRINT,

@@ -8,16 +8,19 @@ is explicit, bounded, and delegates to :class:`AgentIngress`.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
 import logging
 import re
 import socket
 import threading
 from uuid import uuid4
+from uuid import UUID
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Protocol
+from typing import Protocol, cast
 from urllib.parse import parse_qs, urlsplit
 
 from pydantic import SecretStr, TypeAdapter
@@ -36,6 +39,10 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepositorySettings,
     make_chat_repository,
 )
+from kokoro_agent.infrastructure.postgres_model_call_repository import (
+    PostgresModelCallRepository,
+)
+from kokoro_agent.model.call_models import ModelCallEvidenceInvariantFailed
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 
 LOGGER = logging.getLogger(__name__)
@@ -56,13 +63,24 @@ _JWKS_IDENTITY_HEADERS = (
     "x-kokoro-actor-kind",
     "x-kokoro-identity-assertion-ref",
 )
+_MODEL_EVIDENCE = re.compile(
+    r"^/v1/model-call-attempts/([^/]+)/usage-evidence/([^/]+)$"
+)
+_BILLING_FORBIDDEN_HEADERS = tuple(
+    name for name in _JWKS_IDENTITY_HEADERS if name != "x-kokoro-tenant-ref"
+) + ("x-kokoro-service",)
+_TENANT_REF = re.compile(r"^[^\x00-\x20\x7f]{1,512}$")
 
 
 def _known_business_route(method: str, path: str) -> bool:
     if method == "GET":
-        return path in {"/healthz", "/readyz", "/v1/sessions"} or any(
-            pattern.fullmatch(path) is not None
-            for pattern in (_RUN_EVENTS, _SESSION_MESSAGES, _SESSION_EVENTS)
+        return (
+            _MODEL_EVIDENCE.fullmatch(path) is not None
+            or path in {"/healthz", "/readyz", "/v1/sessions"}
+            or any(
+                pattern.fullmatch(path) is not None
+                for pattern in (_RUN_EVENTS, _SESSION_MESSAGES, _SESSION_EVENTS)
+            )
         )
     if method == "POST":
         return path == "/v1/runs" or _RUN_CONTROL.fullmatch(path) is not None
@@ -93,6 +111,11 @@ class AgentConfig(Protocol):
 
     @property
     def internal_secret_agent(self) -> SecretStr | None: ...
+
+
+class _BillingReaderConfig(Protocol):
+    @property
+    def billing_model_call_reader_secret(self) -> SecretStr | None: ...
 
 
 _JSON_OBJECT = TypeAdapter(dict[str, object])
@@ -141,6 +164,34 @@ def _service_auth_failure(
     if scheme.lower() != "bearer" or not separator or token.strip() != secret_value:
         return 401, _error(
             "service_auth_failed", "Agent ingress authentication failed", request_id
+        )
+    return None
+
+
+def _billing_reader_auth_failure(
+    config: object, headers: Mapping[str, str], request_id: str
+) -> tuple[int, dict[str, object]] | None:
+    secret = cast(_BillingReaderConfig, config).billing_model_call_reader_secret
+    expected = "" if secret is None else secret.get_secret_value().strip()
+    if not expected:
+        return 503, _error(
+            "billing_model_call_reader_not_configured",
+            "Billing model-call reader authentication is not configured",
+            request_id,
+        )
+    authorization = headers.get("authorization", "").strip()
+    scheme, separator, token = authorization.partition(" ")
+    if (
+        scheme.lower() != "bearer"
+        or not separator
+        or not hmac.compare_digest(
+            token.strip().encode("utf-8"), expected.encode("utf-8")
+        )
+    ):
+        return 401, _error(
+            "billing_model_call_reader_auth_failed",
+            "Billing model-call reader authentication failed",
+            request_id,
         )
     return None
 
@@ -241,9 +292,81 @@ async def dispatch_request(
     request_id = _request_id(headers)
     if method == "GET" and path == "/healthz":
         return 200, {"status": "ok", "service": "kokoro-agent"}
-    auth_failure = _service_auth_failure(config, headers, request_id)
+    evidence_match = _MODEL_EVIDENCE.fullmatch(path) if method == "GET" else None
+    auth_failure = (
+        _billing_reader_auth_failure(config, headers, request_id)
+        if evidence_match is not None
+        else _service_auth_failure(config, headers, request_id)
+    )
     if auth_failure is not None:
         return auth_failure
+    if evidence_match is not None:
+        tenant = headers.get("x-kokoro-tenant-ref", "").strip()
+        content_length = headers.get("content-length", "").strip()
+        if (
+            _TENANT_REF.fullmatch(tenant) is None
+            or any(headers.get(name, "").strip() for name in _BILLING_FORBIDDEN_HEADERS)
+            or body is not None
+            or content_length not in {"", "0"}
+            or bool(headers.get("transfer-encoding", "").strip())
+        ):
+            return 403, _error(
+                "billing_model_call_reader_identity_forbidden",
+                "Billing model-call reader identity context is invalid",
+                request_id,
+            )
+        try:
+            attempt_id = str(UUID(evidence_match.group(1)))
+            event_id = str(UUID(evidence_match.group(2)))
+        except ValueError:
+            return 400, _error(
+                "invalid_model_call_evidence_identity",
+                "Model-call evidence identity is invalid",
+                request_id,
+            )
+        if attempt_id != evidence_match.group(1) or event_id != evidence_match.group(2):
+            return 400, _error(
+                "invalid_model_call_evidence_identity",
+                "Model-call evidence identity is invalid",
+                request_id,
+            )
+        repository = PostgresModelCallRepository(
+            config.database_url, config.database_schema, total_timeout_seconds=10.0
+        )
+        try:
+            evidence = await repository.read_final_evidence(
+                tenant, attempt_id, event_id
+            )
+        except ModelCallEvidenceInvariantFailed:
+            return 500, _error(
+                "model_call_evidence_invariant_failed",
+                "Persisted final model-call evidence is invalid",
+                request_id,
+            )
+        if evidence is None:
+            return 404, _error(
+                "model_call_evidence_not_found",
+                "Final model-call evidence was not found",
+                request_id,
+            )
+        encoded = (
+            base64.urlsafe_b64encode(evidence.evidence_bytes).rstrip(b"=").decode()
+        )
+        return 200, _envelope(
+            {
+                "attempt_id": evidence.attempt_id,
+                "event_id": evidence.event_id,
+                "artifact_version": "1.0.0",
+                "revision": str(evidence.revision),
+                "evidence_digest": evidence.evidence_digest,
+                "evidence_bytes_base64url": encoded,
+                "sealed": True,
+                "observed_at": evidence.observed_at.isoformat(
+                    timespec="milliseconds"
+                ).replace("+00:00", "Z"),
+            },
+            request_id,
+        )
     if (
         method == "GET"
         and path == "/readyz"
@@ -435,6 +558,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 "x-request-id",
                 "authorization",
                 "idempotency-key",
+                "content-length",
+                "transfer-encoding",
+                "x-kokoro-service",
                 *_JWKS_IDENTITY_HEADERS,
             )
         }
@@ -451,6 +577,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         self.send_header("content-type", content_type)
         self.send_header("cache-control", "no-store")
         self.send_header("content-length", str(len(encoded)))
+        response_request_id = self.__dict__.get("_response_request_id")
+        if isinstance(response_request_id, str):
+            self.send_header("x-request-id", response_request_id)
         if allow is not None:
             self.send_header("allow", allow)
         self.end_headers()
@@ -458,12 +587,25 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(encoded)
 
     def _json_response(
-        self, status: int, payload: dict[str, object], *, allow: str | None = None
+        self,
+        status: int,
+        payload: dict[str, object],
+        *,
+        allow: str | None = None,
+        request_id: str | None = None,
     ) -> None:
         encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self._send_representation(
-            status, "application/json; charset=utf-8", encoded, allow=allow
-        )
+        if request_id is not None:
+            self.__dict__["_response_request_id"] = request_id
+        try:
+            self._send_representation(
+                status,
+                "application/json; charset=utf-8",
+                encoded,
+                allow=allow,
+            )
+        finally:
+            self.__dict__.pop("_response_request_id", None)
 
     def _is_jwks_target(self) -> bool:
         return self.path.partition("?")[0] == _JWKS_PATH
@@ -525,14 +667,26 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         headers = self._headers()
         request_id = self._request_id_value()
         headers["x-request-id"] = request_id
+        evidence_target = False
         try:
             split = urlsplit(self.path)
             is_health_request = self.command == "GET" and split.path == "/healthz"
             config = None if is_health_request else self._config()
             if config is not None:
-                auth_failure = _service_auth_failure(config, headers, request_id)
+                evidence_target = (
+                    self.command == "GET"
+                    and _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                )
+                auth_failure = (
+                    _billing_reader_auth_failure(config, headers, request_id)
+                    if evidence_target
+                    else _service_auth_failure(config, headers, request_id)
+                )
                 if auth_failure is not None:
-                    self._json_response(*auth_failure)
+                    self._json_response(
+                        *auth_failure,
+                        request_id=request_id if evidence_target else None,
+                    )
                     return
                 if not self._try_admit_request():
                     self._json_response(
@@ -542,6 +696,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                             "Agent ingress is draining",
                             request_id,
                         ),
+                        request_id=request_id if evidence_target else None,
                     )
                     return
             if self.command not in {"GET", "POST"}:
@@ -576,7 +731,11 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 503,
                 _error("agent_unavailable", "Agent is unavailable", request_id),
             )
-        self._json_response(status, payload)
+        self._json_response(
+            status,
+            payload,
+            request_id=request_id if evidence_target else None,
+        )
 
     def do_GET(self) -> None:  # noqa: N802
         self._serve()

@@ -36,6 +36,86 @@ class Config:
     database_url: str = "postgres://unused"
     database_schema: str = "unused"
     internal_secret_agent: SecretStr | None = SecretStr("secret")
+    billing_model_call_reader_secret: SecretStr | None = None
+
+
+_EVIDENCE_PATH = (
+    "/v1/model-call-attempts/00000000-0000-4000-8000-000000000001/"
+    "usage-evidence/00000000-0000-4000-8000-000000000002"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("config", "headers", "path", "expected"),
+    [
+        (Config(), {}, _EVIDENCE_PATH, 503),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {"authorization": "Basic billing"},
+            _EVIDENCE_PATH,
+            401,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {"authorization": "Bearer wrong"},
+            "/v1/model-call-attempts/not-a-uuid/usage-evidence/not-a-uuid",
+            401,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {"authorization": "Bearer secret"},
+            _EVIDENCE_PATH,
+            401,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {"authorization": "Bearer billing"},
+            _EVIDENCE_PATH,
+            403,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {
+                "authorization": "Bearer billing",
+                "x-kokoro-tenant-ref": "tenant with space",
+            },
+            _EVIDENCE_PATH,
+            403,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {
+                "authorization": "Bearer billing",
+                "x-kokoro-tenant-ref": "tenant",
+                "content-length": "2",
+            },
+            _EVIDENCE_PATH,
+            403,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {
+                "authorization": "Bearer billing",
+                "x-kokoro-tenant-ref": "tenant",
+                "x-kokoro-subject-ref": "override",
+            },
+            _EVIDENCE_PATH,
+            403,
+        ),
+        (
+            Config(billing_model_call_reader_secret=SecretStr("billing")),
+            {"authorization": "Bearer billing", "x-kokoro-tenant-ref": "tenant"},
+            "/v1/model-call-attempts/not-a-uuid/usage-evidence/not-a-uuid",
+            400,
+        ),
+    ],
+)
+async def test_billing_evidence_reader_fails_closed_before_database(
+    config: Config, headers: dict[str, str], path: str, expected: int
+) -> None:
+    status, _ = await dispatch_request(config, "GET", path, {}, headers, None)
+    assert status == expected
 
 
 def _raw(server: tuple[str, int], request: bytes) -> bytes:

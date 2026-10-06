@@ -40,6 +40,7 @@ from kokoro_agent.model.call_models import (
     AuthorizationPendingReceipt,
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
+    FinalModelCallEvidence,
     ModelCallAuthorizationReceipt,
     ModelCallDispatchPermit,
     ModelCallEvidenceReceipt,
@@ -2069,6 +2070,13 @@ class _UnusedModelCallRepository:
         self, command: AppendModelCallEvidence
     ) -> ModelCallEvidenceReceipt:
         raise AssertionError(f"unexpected evidence: {command.attempt_id}")
+
+    async def read_final_evidence(
+        self, tenant_id: str, attempt_id: str, event_id: str
+    ) -> FinalModelCallEvidence | None:
+        raise AssertionError(
+            f"unexpected final evidence read: {tenant_id}/{attempt_id}/{event_id}"
+        )
 
 
 @pytest.fixture(autouse=True)

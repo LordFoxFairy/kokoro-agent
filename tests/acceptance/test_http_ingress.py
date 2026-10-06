@@ -11,18 +11,21 @@ from support.fakes import finish_run
 from support.fakes import repository_terminal_callback
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, LiteralString, Protocol
 
 import httpx
 import psycopg
 import pytest
+import rfc8785
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel as PydanticBaseModel
@@ -67,6 +70,7 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.domain.run.models import StaticRecipeBinding
 from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.execution.events import (
@@ -85,6 +89,18 @@ from kokoro_agent.infrastructure.postgres_run_repository import (
     RunRepositorySettings,
     make_run_repository,
 )
+from kokoro_agent.infrastructure.postgres_model_call_repository import (
+    PostgresModelCallRepository,
+)
+from kokoro_agent.model.call_models import (
+    AppendModelCallEvidence,
+    BeginModelCallAuthorization,
+    GrantModelCallAuthorization,
+    PrepareModelCall,
+    StartModelCallDispatch,
+)
+from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from support.model_http_mechanism import synthetic_final_digest
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
@@ -103,6 +119,8 @@ from kokoro_agent.streams.protocol import StreamItem
 _DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "")
 _REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "")
 _INTERNAL_SECRET = "acceptance-internal-secret"
+_BILLING_READER_SECRET = "acceptance-billing-model-call-reader-secret"
+_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v1\n"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
 
@@ -125,6 +143,8 @@ class _AcceptanceConfig:
     database_url: str
     database_schema: str
     internal_secret_agent: SecretStr | None
+    # RED-only protocol adaptation: production does not consume this field yet.
+    billing_model_call_reader_secret: SecretStr | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +163,14 @@ class _AcceptanceState:
 
 def _json_object(value: object) -> dict[str, JsonValue]:
     return _JSON_OBJECT.validate_python(value)
+
+
+def _utc_millis(value: int) -> str:
+    return (
+        wire_epoch_millis_to_utc(value)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _headers(subject: str = "subject") -> dict[str, str]:
@@ -363,6 +391,150 @@ async def _seed_claimed_run(state: _AcceptanceState, request: RunRequest) -> Non
         )
 
 
+async def _seed_final_model_usage_evidence(
+    state: _AcceptanceState,
+) -> tuple[str, str, bytes]:
+    """Create the RED precondition only through formal repositories."""
+    run_id = f"billing-evidence-{uuid.uuid4().hex}"
+    request = _request(run_id)
+    state.register_run(run_id)
+    recipe_bytes = json.dumps(
+        {
+            "domain_tag": "kokoro-agent:assembly-recipe:1",
+            "feature": {
+                "key": "chat",
+                "entry_agent": "assistant",
+                "handoffs": [],
+                "agents": [{"key": "assistant", "subagents": []}],
+            },
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    recipe = StaticRecipeBinding(
+        canonical_bytes=recipe_bytes,
+        fingerprint=hashlib.sha256(recipe_bytes).hexdigest(),
+    )
+    planned = PlannedBinding(
+        model="model-acceptance",
+        provider="provider-acceptance",
+        revision_id="revision-acceptance",
+        provider_model_name="provider-model-acceptance",
+        gateway_model_name="gateway-acceptance",
+        feature_key="chat",
+        revision="1",
+        generation="1",
+        tenant_generation="1",
+        digest="a" * 64,
+        label=None,
+    )
+    async with make_run_repository(state.config.run_repository) as runs:
+        await runs.enqueue_dispatch(
+            request,
+            runtime_namespace(request.execution_identity),
+            f"acceptance:{run_id}",
+        )
+        lease = await runs.claim_dispatch(request, "billing-evidence-worker")
+        assert lease is not None
+        await runs.freeze_or_verify_static_recipe(request, lease, recipe)
+    repository = PostgresModelCallRepository(
+        state.config.database_url, state.config.database_schema
+    )
+    prepared = await repository.prepare(
+        PrepareModelCall(
+            final_request_binding_version=1,
+            final_request_digest=synthetic_final_digest(planned, request.input.content),
+            request=request,
+            lease=lease,
+            call_id=str(uuid.uuid4()),
+            attempt_id=str(uuid.uuid4()),
+            planned=planned,
+            peer_path=("assistant",),
+            recipe=recipe,
+        )
+    )
+    pending = await repository.begin_authorization(
+        BeginModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            request_ref="billing-request-acceptance",
+        )
+    )
+    granted = await repository.grant_authorization(
+        GrantModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            expected_authorization_digest=pending.authorization_digest,
+            request_ref=pending.request_ref,
+            admission_ref="billing-admission-acceptance",
+        )
+    )
+    dispatch = await repository.start_dispatch(
+        StartModelCallDispatch(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            authorization_digest=granted.authorization_digest,
+            request_ref=granted.request_ref,
+            admission_ref=granted.admission_ref,
+        )
+    )
+    event_id = str(uuid.uuid4())
+    identity = json.loads(prepared.attempt_binding_bytes)
+    identity["event_id"] = event_id
+    dispatch_instant = _utc_millis(dispatch.dispatch_started_at_ms)
+    observed_instant = _utc_millis(dispatch.dispatch_started_at_ms + 1)
+    document = {
+        "artifact_version": "1.0.0",
+        "identity": identity,
+        "planned": json.loads(prepared.planned_bytes),
+        "actual": {"state": "unknown", "reason": "not_observed"},
+        "authorization_observation": json.loads(granted.authorization_bytes),
+        "execution": {
+            "outcome": "completed",
+            "seal": True,
+            "prepared_at": _utc_millis(prepared.prepared_at_ms),
+            "dispatch_started_at": dispatch_instant,
+        },
+        "revision": "1",
+        "predecessor": None,
+        "observed_at": observed_instant,
+        "usage": {
+            "state": "unresolved",
+            "reason": "missing_usage",
+            "raw_usage_digest": None,
+        },
+    }
+    digest = hashlib.sha256(_EVIDENCE_DOMAIN + rfc8785.dumps(document)).hexdigest()
+    document["digest"] = digest
+    evidence_bytes = rfc8785.dumps(document)
+    receipt = await repository.append_evidence(
+        AppendModelCallEvidence(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            authorization_digest=granted.authorization_digest,
+            evidence_bytes=evidence_bytes,
+        )
+    )
+    assert receipt.event_id == event_id
+    return prepared.attempt_id, event_id, evidence_bytes
+
+
 async def _seed_chat(state: _AcceptanceState, request: RunRequest) -> None:
     namespace = runtime_namespace(request.execution_identity)
     chat_message_id = f"message-{request.run_id}"
@@ -444,6 +616,118 @@ async def _read_matching(
 
 def _nested(payload: Mapping[str, JsonValue], key: str) -> dict[str, JsonValue]:
     return _json_object(payload[key])
+
+
+@pytest.mark.asyncio
+async def test_billing_reads_final_model_usage_evidence_by_exact_identity(
+    acceptance_state: _AcceptanceState,
+) -> None:
+    """Business RED: durable final evidence exists, but its owner GET is absent."""
+    attempt_id, event_id, evidence_bytes = await _seed_final_model_usage_evidence(
+        acceptance_state
+    )
+    assert evidence_bytes
+
+    config = replace(
+        acceptance_state.config,
+        billing_model_call_reader_secret=SecretStr(_BILLING_READER_SECRET),
+    )
+    server = create_http_server(
+        config,
+        "127.0.0.1",
+        0,
+        # This owner route does not consume execution-proof JWKS. Reuse the
+        # server's valid unavailable snapshot instead of inventing key material.
+        execution_proof_jwks=ExecutionProofJwksState.unavailable(),
+    )
+    thread = threading.Thread(
+        target=server.serve_forever,
+        name="agent-billing-evidence-red",
+        daemon=True,
+    )
+    acceptance_state.active_http_servers.add(id(server))
+    started = False
+    drained = False
+    try:
+        thread.start()
+        started = True
+        port = int(server.server_address[1])
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{port}", timeout=10.0
+        ) as client:
+            request_id = f"request-{uuid.uuid4().hex}"
+            response = await client.get(
+                f"/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+                headers={
+                    "Authorization": f"Bearer {_BILLING_READER_SECRET}",
+                    "x-kokoro-tenant-ref": "tenant",
+                    "x-request-id": request_id,
+                },
+            )
+            service_override = await client.get(
+                f"/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+                headers={
+                    "Authorization": f"Bearer {_BILLING_READER_SECRET}",
+                    "x-kokoro-tenant-ref": "tenant",
+                    "x-kokoro-service": "not-billing",
+                },
+            )
+            body_override = await client.request(
+                "GET",
+                f"/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+                headers={
+                    "Authorization": f"Bearer {_BILLING_READER_SECRET}",
+                    "x-kokoro-tenant-ref": "tenant",
+                },
+                content=b"{}",
+            )
+            non_ascii_bearer = await client.get(
+                f"/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+                headers=httpx.Headers(
+                    {
+                        "Authorization": "Bearer \N{LATIN SMALL LETTER E WITH ACUTE}",
+                        "X-Kokoro-Tenant-Ref": "tenant",
+                    },
+                    encoding="iso-8859-1",
+                ),
+            )
+        assert (
+            response.status_code,
+            service_override.status_code,
+            body_override.status_code,
+            non_ascii_bearer.status_code,
+        ) == (200, 403, 403, 401)
+        assert response.headers["x-request-id"] == request_id
+        assert response.headers["cache-control"] == "no-store"
+        data = _nested(_json_object(response.json()), "data")
+        assert data["attempt_id"] == attempt_id
+        assert data["event_id"] == event_id
+        assert data["revision"] == "1"
+        assert data["sealed"] is True
+        assert data["observed_at"] == json.loads(evidence_bytes)["observed_at"]
+        assert data["evidence_digest"] == json.loads(evidence_bytes)["digest"]
+        encoded = data["evidence_bytes_base64url"]
+        assert isinstance(encoded, str)
+        assert base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)) == (
+            evidence_bytes
+        )
+    finally:
+        try:
+            server.start_draining()
+            if started:
+                await asyncio.wait_for(asyncio.to_thread(server.shutdown), timeout=5)
+            drained = await asyncio.to_thread(server.wait_for_active_handlers, 5)
+        finally:
+            try:
+                server.server_close()
+            finally:
+                if started:
+                    await asyncio.to_thread(thread.join, 5)
+                stopped = not thread.is_alive()
+                if drained and stopped:
+                    acceptance_state.active_http_servers.remove(id(server))
+                assert stopped, "HTTP listener thread did not stop"
+        assert drained, "HTTP handlers did not drain within 5 seconds"
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,12 @@
         "scheme": "bearer",
         "bearerFormat": "opaque service credential",
         "description": "BFF or another trusted service credential. The credential is supplied by deployment, never by a browser."
+      },
+      "BillingModelCallReaderBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque service credential",
+        "description": "Dedicated kokoro-billing credential for exact model-call evidence reads."
       }
     },
     "parameters": {
@@ -1682,6 +1688,73 @@
             }
           }
         ]
+      },
+      "FinalModelCallUsageEvidence": {
+        "type": "object",
+        "required": [
+          "artifact_version",
+          "attempt_id",
+          "event_id",
+          "revision",
+          "evidence_bytes_base64url",
+          "evidence_digest",
+          "sealed",
+          "observed_at"
+        ],
+        "properties": {
+          "artifact_version": {
+            "type": "string",
+            "const": "1.0.0"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "evidence_bytes_base64url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 87382,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "evidence_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sealed": {
+            "type": "boolean",
+            "const": true
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FinalModelCallUsageEvidenceEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FinalModelCallUsageEvidence"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "responses": {
@@ -2533,6 +2606,138 @@
                 "description": "Exact GET representation byte length; HEAD returns no body with the same value."
               }
             },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Read one exact final model-call usage evidence artifact",
+        "operationId": "getFinalModelCallUsageEvidence",
+        "security": [
+          {
+            "BillingModelCallReaderBearer": []
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "candidate",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "model-usage-evidence.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact immutable sealed evidence head.",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalModelCallUsageEvidenceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Path identity is invalid.",
+            "x-kokoro-error-code": "invalid_model_call_evidence_identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Reader credential is invalid.",
+            "x-kokoro-error-code": "billing_model_call_reader_auth_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Tenant assertion or identity context is forbidden.",
+            "x-kokoro-error-code": "billing_model_call_reader_identity_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Evidence is absent or not visible.",
+            "x-kokoro-error-code": "model_call_evidence_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Persisted evidence violates owner invariants.",
+            "x-kokoro-error-code": "model_call_evidence_invariant_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Reader authentication or dependency is unavailable.",
+            "x-kokoro-error-code": "billing_model_call_reader_not_configured",
             "content": {
               "application/json": {
                 "schema": {

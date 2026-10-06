@@ -39,6 +39,7 @@ from kokoro_agent.model.call_models import (
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
     ModelCallAuthorityLost,
+    ModelCallEvidenceInvariantFailed,
     ModelCallIdentityConflict,
     ModelCallInputInvalid,
     ModelCallOrdinalExhausted,
@@ -1208,6 +1209,27 @@ async def test_evidence_first_observation_updates_head_and_run_atomically(
     assert getattr(receipt, "revision") == 1
     assert getattr(receipt, "evidence_digest") == evidence_digest
     assert getattr(receipt, "replayed") is False
+    published = await repository.read_final_evidence(
+        str(row["tenant_id"]), str(row["attempt_id"]), event_id
+    )
+    assert published is not None
+    assert published.evidence_bytes == evidence_bytes
+    assert published.evidence_digest == evidence_digest
+    assert published.revision == 1
+    assert (
+        await repository.read_final_evidence(
+            "other-tenant", str(row["attempt_id"]), event_id
+        )
+        is None
+    )
+    assert (
+        await repository.read_final_evidence(
+            str(row["tenant_id"]),
+            str(row["attempt_id"]),
+            "00000000-0000-4000-8000-000000000099",
+        )
+        is None
+    )
 
     async with (
         connect_pg(run_chat_database_url) as connection,
@@ -1238,6 +1260,91 @@ async def test_evidence_first_observation_updates_head_and_run_atomically(
             "model_unknown_attempt_count": 1,
             "model_usage_completeness": "unknown",
         }
+
+
+@pytest.mark.parametrize("head_field", ["latest_revision", "latest_evidence_digest"])
+async def test_final_evidence_reader_rejects_corrupt_attempt_head(
+    run_chat_database_url: str, run_chat_schema: str, head_field: str
+) -> None:
+    repository, dispatch, row = await _dispatched_attempt_row(
+        run_chat_database_url, run_chat_schema
+    )
+    event_id, evidence_bytes, _ = _strict_evidence(row, outcome="completed", revision=1)
+    await _append_evidence(
+        repository,
+        _append_command(row=row, lease=dispatch.lease, evidence_bytes=evidence_bytes),
+    )
+    corrupt: object = 2 if head_field == "latest_revision" else "b" * 64
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "UPDATE {} SET {}=%s WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt"),
+                head_field,
+            ),
+            (corrupt, row["attempt_id"]),
+        )
+    with pytest.raises(ModelCallEvidenceInvariantFailed):
+        await repository.read_final_evidence(
+            str(row["tenant_id"]), str(row["attempt_id"]), event_id
+        )
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "replacement"),
+    [
+        ("tenant_ref", "other-tenant"),
+        ("run_id", "other-run"),
+        ("call_id", "00000000-0000-4000-8000-000000000091"),
+        ("attempt_id", "00000000-0000-4000-8000-000000000092"),
+    ],
+)
+async def test_final_evidence_reader_rejects_self_consistent_foreign_artifact_identity(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    identity_field: str,
+    replacement: str,
+) -> None:
+    repository, dispatch, row = await _dispatched_attempt_row(
+        run_chat_database_url, run_chat_schema
+    )
+    event_id, evidence_bytes, _ = _strict_evidence(row, outcome="completed", revision=1)
+    await _append_evidence(
+        repository,
+        _append_command(row=row, lease=dispatch.lease, evidence_bytes=evidence_bytes),
+    )
+    document = json.loads(evidence_bytes)
+    document["identity"][identity_field] = replacement
+    document.pop("digest")
+    digest = hashlib.sha256(_EVIDENCE_DOMAIN + rfc8785.dumps(document)).hexdigest()
+    document["digest"] = digest
+    foreign_bytes = rfc8785.dumps(document)
+    parse_evidence(foreign_bytes)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "UPDATE {} SET evidence_bytes=%s,evidence_digest=%s WHERE event_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_usage_evidence")
+            ),
+            (foreign_bytes, digest, event_id),
+        )
+        await execute_sql(
+            cursor,
+            "UPDATE {} SET latest_evidence_digest=%s WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (digest, row["attempt_id"]),
+        )
+    with pytest.raises(ModelCallEvidenceInvariantFailed):
+        await repository.read_final_evidence(
+            str(row["tenant_id"]), str(row["attempt_id"]), event_id
+        )
 
 
 async def test_evidence_exact_replay_and_two_connection_same_revision_are_idempotent(

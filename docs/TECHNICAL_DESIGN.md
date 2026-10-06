@@ -1,3 +1,12 @@
+## T-A01.R257-A1 当前实现与验收边界（2026-10-06）
+
+正式源码已实现 final usage evidence 专用读取，Root有效目标404 RED后完成；现十四文件冻结与独立复审无剩余已证P0–P2。
+现HTTP host与loader只以专用Billing reader secret授予此具名读；一次有界repository SELECT核当前sealed head、immutable binding、canonical artifact与UTC瞬时点。没有新模块、进程或DDL。
+Root最终真实HTTP1与完整PG90通过（PG会话America/New_York），自有资源回收，正常owner/provider/资金未写或重载。
+此证据只接受读取切片；Billing admission/actual结算、bound guarantee、消费者装配、真实模型用户链仍OPEN，不把该读operation当付款许可。
+
+### 原A1实施前设计记录（下节为历史基线，当前事实以上文及机器契约为准）
+
 ## T-A01.R257-A1：Billing 专用 final model-call usage evidence 只读边界（D0，未实施）
 
 ### 当前事实与目标

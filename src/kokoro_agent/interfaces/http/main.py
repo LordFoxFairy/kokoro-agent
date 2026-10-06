@@ -53,6 +53,7 @@ class AgentHttpConfig(BaseModel):
     database_schema: str = Field(default="kokoro_agent", repr=False)
     lease_ttl_s: int = Field(default=DEFAULT_LEASE_TTL_S, gt=0)
     internal_secret_agent: SecretStr | None = Field(default=None, repr=False)
+    billing_model_call_reader_secret: SecretStr | None = Field(default=None, repr=False)
     execution_proof: HttpExecutionProofConfig | None = Field(default=None, repr=False)
 
     @field_validator("host", "redis_url", "database_url", "database_schema")
@@ -99,6 +100,9 @@ class AgentHttpConfig(BaseModel):
                 ),
                 "lease_ttl_s": value("KOKORO_LEASE_TTL_S", DEFAULT_LEASE_TTL_S),
                 "internal_secret_agent": value("KOKORO_INTERNAL_SECRET_AGENT", None),
+                "billing_model_call_reader_secret": source.get(
+                    "KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET"
+                ),
                 "execution_proof": proof,
             }
         )
@@ -160,6 +164,7 @@ def log_http_config_summary(
 ) -> None:
     config = composition.config
     secret = config.internal_secret_agent
+    billing_reader_secret = config.billing_model_call_reader_secret
     logger.info(
         "kokoro-agent HTTP config: %s",
         {
@@ -168,6 +173,10 @@ def log_http_config_summary(
             "lease_ttl_s": config.lease_ttl_s,
             "service_auth_configured": bool(
                 secret is not None and secret.get_secret_value().strip()
+            ),
+            "billing_model_call_reader_configured": bool(
+                billing_reader_secret is not None
+                and billing_reader_secret.get_secret_value().strip()
             ),
             "proof_descriptor_configured": config.execution_proof is not None,
             "ring_available": composition.jwks.available,

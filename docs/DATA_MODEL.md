@@ -1,3 +1,12 @@
+## T-A01.R257-A1 当前实现与验收边界（2026-10-06）
+
+正式源码已实现 final usage evidence 专用读取，Root有效目标404 RED后完成；现十四文件冻结与独立复审无剩余已证P0–P2。
+仍仅复用原attempt/evidence表，零DDL/index；按tenant+attempt+event exact读当前封口head。usage/v1摘要沿现domain+去digest的canonical payload，不是对包含digest的完整bytes作自指SHA。读取零写，返回原bytes且UTC与数据库会话时区无关。
+Root最终真实HTTP1与完整PG90通过（PG会话America/New_York），自有资源回收，正常owner/provider/资金未写或重载。
+此证据只接受读取切片；Billing admission/actual结算、bound guarantee、消费者装配、真实模型用户链仍OPEN，不把该读operation当付款许可。
+
+### 原A1实施前设计记录（下节为历史基线，当前事实以上文及机器契约为准）
+
 ## T-A01.R257-A1：final usage evidence 只读投影（D0，无Schema变化）
 
 本片复用现 `kokoro_agent_model_call_attempt` 与 `kokoro_agent_model_usage_evidence`，不新增表、列、索引、FK、view、receipt、

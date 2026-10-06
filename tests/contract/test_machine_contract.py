@@ -76,7 +76,10 @@ def test_every_operation_declares_governance_metadata() -> None:
     for operation in operations:
         assert operation["x-kokoro-owner"] == "kokoro-agent"
         assert operation["x-kokoro-visibility"] == "internal-owner"
-        assert operation["x-kokoro-stability"] == "stable"
+        if operation["operationId"] == "getFinalModelCallUsageEvidence":
+            assert operation["x-kokoro-stability"] == "candidate"
+        else:
+            assert operation["x-kokoro-stability"] == "stable"
         assert "x-kokoro-permission" in operation
 
 
@@ -87,6 +90,7 @@ def test_http_route_set_is_explicit() -> None:
         "/healthz",
         "/readyz",
         "/v1/execution-proof/jwks",
+        "/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
         "/v1/runs",
         "/v1/runs/{run_id}/control",
         "/v1/runs/{run_id}/events",

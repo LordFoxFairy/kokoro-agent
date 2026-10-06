@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated, Protocol
 
+from datetime import datetime
+
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
@@ -193,6 +195,20 @@ class ModelCallEvidenceReceipt(BaseModel):
     replayed: bool
 
 
+class FinalModelCallEvidence(BaseModel):
+    """Exact immutable sealed head published to the Billing reader."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    tenant_id: str
+    attempt_id: Uuid
+    event_id: Uuid
+    revision: int = Field(ge=1)
+    evidence_bytes: bytes = Field(min_length=1, max_length=65_536)
+    evidence_digest: Digest
+    observed_at: datetime
+
+
 class ModelCallAuthorityLost(RuntimeError):
     pass
 
@@ -206,6 +222,10 @@ class ModelCallOrdinalExhausted(RuntimeError):
 
 
 class ModelCallInputInvalid(ValueError):
+    pass
+
+
+class ModelCallEvidenceInvariantFailed(RuntimeError):
     pass
 
 
@@ -232,6 +252,10 @@ class ModelCallRepository(Protocol):
         self, command: AppendModelCallEvidence
     ) -> ModelCallEvidenceReceipt: ...
 
+    async def read_final_evidence(
+        self, tenant_id: str, attempt_id: str, event_id: str
+    ) -> FinalModelCallEvidence | None: ...
+
 
 __all__ = [
     "AttemptBinding",
@@ -239,6 +263,7 @@ __all__ = [
     "AuthorizationPendingReceipt",
     "BeginModelCallAuthorization",
     "GrantModelCallAuthorization",
+    "FinalModelCallEvidence",
     "ModelCallAuthorityLost",
     "ModelCallIdentityConflict",
     "ModelCallInputInvalid",
@@ -247,6 +272,7 @@ __all__ = [
     "ModelCallAuthorizationUnavailable",
     "ModelCallDispatchPermit",
     "ModelCallEvidenceReceipt",
+    "ModelCallEvidenceInvariantFailed",
     "ModelCallRepository",
     "PrepareModelCall",
     "PreparedModelCall",

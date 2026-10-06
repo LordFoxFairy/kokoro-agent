@@ -34,6 +34,7 @@ REQUIRED_PATHS = {
     "/readyz",
     "/v1/execution-proof/jwks",
     "/v1/runs",
+    "/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
     "/v1/runs/{run_id}/control",
     "/v1/runs/{run_id}/events",
     "/v1/sessions",

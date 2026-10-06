@@ -22,6 +22,8 @@ read只接受 `Authorization: Bearer <KOKORO_AGENT_BILLING_MODEL_CALL_BOUND_READ
 
 后继生成与消费顺序固定：可信capacity guarantee owner先正式发布并获Root准入 → Agent把exact guarantee identity纳入schema/vectors后生成manifest/parser/package provenance → Root固定commit/direct/source/archive digest并验producer/reader → Billing独立pin和strict consumer。usage/v1保持post-call actual evidence，不升版、不接受bound字段；System/Billing合同不由本仓复制。当前route/config/schema/guarantee均未实现，未运行contract/HTTP/PG/provider测试，缺任一前置仍0 bound/0 send。
 
+**R255 owner 边界澄清（仅 D0 对齐，未实现 reader）。** 本节目标 bound 只证明技术 planned binding 与本次执行界，不声明 actual provider attribution，也不发布 Billing 独占的商业 pricing account；实际 provider 归属由后继 strict sealed evidence 证明。后继 `request_ref` 由 Agent authorization 状态机绑定同一 attempt 与已冻结的 refs/digests，并供 Billing Admission 幂等身份核对，不作为 bound 生成或 reader 的前置。当前 `PlannedBinding` 闭集没有 `provider_account_ref`；若需要该技术账户身份，必须先由具名技术 owner 以固定版本正式发布，不从名称、credential 或商业账户推导。本次只澄清既有 owner 边界，不改变 guarantee 缺失时 fail closed、reader 专用认证或 DB 时钟/lease 规则，不新增机器字段或实现。
+
 ## R252 包内合同实施状态（2026-10-05）
 
 下方R245 required final_request_binding_version/digest与final hook已在当前R246 frozen21实现，本次从29a7a18a精确交付；算法/字段/版本没有改动。只有包内普通对象/数据库事实，没有发布execution-bound或authenticated immutable-read机器artifact，也没有Billing grant consumer。技术摘要不能替代可信token/exposure bound、实际provider attribution或费用授权；缺正式许可零send。验证和未验范围以CURRENT顶部R252为准，历史“未实现”仅保留时点。

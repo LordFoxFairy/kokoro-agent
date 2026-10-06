@@ -16,6 +16,8 @@ reader只读事务按trusted tenant+bound ref命中Attempt，再读同Run；把�
 
 剩余SQL/tests范围仅现`database/schema.sql`、schema inventory/installer checker、model-call repository及其现真实PG/runtime/recovery测试；先验证无guarantee时零insert/零send，再覆盖fresh install、CHECK/UNIQUE、exact replay、digest/bytes corruption、tenant ref、毫秒floor边界、lease renew不延长、pause/takeover/terminal/expiry并发、rollback/ACK unknown和reader零写。专用Billing reader secret只在HTTP进程`SecretStr`配置中存在，不入本表、receipt、canonical bytes、日志或索引。SQL/测试本阶段未改未跑；capacity guarantee、config/route/schema/read部署均未实现。
 
+**R255 owner 边界澄清（仅 D0 对齐，未实现 reader）。** 本节目标 bound 只证明技术 planned binding 与本次执行界，不声明 actual provider attribution，也不发布 Billing 独占的商业 pricing account；实际 provider 归属由后继 strict sealed evidence 证明。后继 `request_ref` 由 Agent authorization 状态机绑定同一 attempt 与已冻结的 refs/digests，并供 Billing Admission 幂等身份核对，不作为 bound 生成或 reader 的前置。当前 `PlannedBinding` 闭集没有 `provider_account_ref`；若需要该技术账户身份，必须先由具名技术 owner 以固定版本正式发布，不从名称、credential 或商业账户推导。本次只澄清既有 owner 边界，不改变 guarantee 缺失时 fail closed、reader 专用认证或 DB 时钟/lease 规则，不新增机器字段或实现。
+
 ## R252 数据实施状态（2026-10-05）
 
 下方R245两required无DEFAULT普通列已在唯一canonical database/schema.sql、catalog verifier、prepare insert/read/receipt/replay及frozen validation同片接线；current候选R246 frozen21，起始正式基线29a7a18a，本次与源码同批交付。仍fresh-only，不迁移/回填/旧digest fallback。单纯64hex形状不能凭空证明body一致；receipt exact replay按现已冻结值核对。当前工程/installed-wheel与早前同SHA真实PG证据及未验财务链见CURRENT R252，不把新列或JSON资源界当财务授权。

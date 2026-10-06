@@ -25,6 +25,8 @@ joint constraints目标只允许unit=`token`：`0 <= input_total <= context_wind
 
 剩余实现最大范围仍为现`model/call_models.py`、`call_artifacts.py`、`call_runtime.py`、`infrastructure/postgres_model_call_repository.py`、`database/schema.sql`、`interfaces/http/{main.py,server.py}`；计划的新bound schema/vectors/manifest、具名generator/generated model、contract checker/provenance/package清单；现`tests/unit/http/{test_http_main.py,test_server.py}`及对应unit/contract/真实PG/SDK/architecture测试。上述capacity guarantee的owner/source尚未批准，不在本卡擅增文件或合同；它是实现前置，不是TODO fallback。`config.py`、`factory.py`仍排除。源码、SQL、机器artifact、测试当前全部未授权。
 
+**R255 owner 边界澄清（仅 D0 对齐，未实现 reader）。** 本节目标 bound 只证明技术 planned binding 与本次执行界，不声明 actual provider attribution，也不发布 Billing 独占的商业 pricing account；实际 provider 归属由后继 strict sealed evidence 证明。后继 `request_ref` 由 Agent authorization 状态机绑定同一 attempt 与已冻结的 refs/digests，并供 Billing Admission 幂等身份核对，不作为 bound 生成或 reader 的前置。当前 `PlannedBinding` 闭集没有 `provider_account_ref`；若需要该技术账户身份，必须先由具名技术 owner 以固定版本正式发布，不从名称、credential 或商业账户推导。本次只澄清既有 owner 边界，不改变 guarantee 缺失时 fail closed、reader 专用认证或 DB 时钟/lease 规则，不新增机器字段或实现。
+
 ## R252 实施状态更正（2026-10-05）
 
 R245以下设计现由R246 frozen21实现，起始基线29a7a18a、与本源码同批交付；final HTTPX mandatory freeze/闭scope、唯一request profile、version1摘要与immutable prepare/replay已落实。具体当前验证与限制见CURRENT顶部R252；历史“没有最终摘要列/只设计/SDK前prepare”不再描述本候选。工程资源界不是input token或财务exposure bound，技术freeze不授权dispatch；缺Billing仍零send。无新模块、公开契约或兼容轨。

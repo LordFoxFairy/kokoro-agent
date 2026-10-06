@@ -1,3 +1,52 @@
+## T-A01.R257-A1：final model-call usage evidence internal-owner GET（D0，未进入机器契约）
+
+**当前态。** `contract/openapi/v1/openapi.json` 没有本operation；现 `/v1/runs/{run_id}/events` 是BFF/用户范围执行事件，
+不返回strict model usage artifact。下列目标只在Root安全裁决与真实RED后写入机器事实源，不是当前可调用接口。
+
+```text
+GET /v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}
+owner: kokoro-agent
+visibility: internal-owner
+stability: candidate（首次发布前）
+permission: kokoro-billing / model-usage-evidence.read
+idempotency: read-only
+```
+
+- path均为canonical UUID；tenant只来自认证成功后的受信上下文，不从body/query、actor/subject或未验证header取得。
+- 不提供list、`latest` alias、run/session lookup或cursor；Billing必须持有已绑定的exact attempt+event identity。
+- event必须匹配tenant/attempt且等于attempt current `latest_event_id/revision/digest`，attempt已sealed、evidence `sealed=true`；旧revision返回404。
+
+目标200表示如下；最终字段只由OpenAPI维护：
+
+```json
+{"data":{"artifact_version":"1.0.0","attempt_id":"UUID","event_id":"UUID","revision":"1","evidence_bytes_base64url":"BASE64URL_NO_PADDING","evidence_digest":"LOWERCASE_SHA256","sealed":true,"observed_at":"RFC3339_UTC"}}
+```
+
+`revision`为canonical十进制字符串；exact bytes用无填充base64url，digest对象是解码后原bytes。响应带`x-request-id`与
+`cache-control: no-store`且有界；不含prompt/request、authorization/planned raw bytes、credential、金额/价格/hold/ledger、Chat或用户资料。
+
+### 认证与错误
+
+Root已固定HTTP-only `billing_model_call_reader_secret` / `KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET`；旧bound-only名无alias/fallback。
+常量时间Bearer匹配只映射caller=`kokoro-billing`，具名helper只授`model-call-bound.read`与`model-usage-evidence.read`，本operation只要求`model-usage-evidence.read`；不产生全HTTP权限或通用权限引擎。
+共享`KOKORO_INTERNAL_SECRET_AGENT`及身份headers不得获得200。当前配置/helper/route未实施，不冒充受信caller或IAM token。
+
+| HTTP | 稳定语义 |
+|---|---|
+| 400 | 认证与tenant断言通过后，path/request形状非法；不回显输入。 |
+| 401 | reader credential缺失、Bearer scheme错误或值不匹配；静态secret没有token expiry语义。 |
+| 403 | credential已匹配，但tenant断言缺失/空白/畸形，或携带试图覆盖身份的service/actor/subject/assertion/body字段。 |
+| 404 | tenant不可见、attempt/event不匹配、非final、未sealed或不存在，统一不泄露。 |
+| 500 | persisted final evidence违反Agent不变量；非retryable，不暴露SQL/bytes。 |
+| 503 | reader auth未配置、数据库不可用或有界deadline；retryable由机器码固定。 |
+
+鉴权先于tenant断言、path UUID解析与任何SQL；未配置secret直接503，错误credential直接401。GET无body，不接受普通ExecutionIdentity headers替代service authorization。成功读取没有ACK含义且零写。只有transport失败和契约标记
+retryable的503可有限retry；404/500不自动retry。
+
+实现顺序：Root安全裁决 → OpenAPI与contract tests RED → 真实HTTP+PG 404业务RED → repository/server实现 → digest/provenance与
+consumer固定。验证error envelope、request-id/no-store、method/path负例、response size、base64 roundtrip与artifact digest。当前不改
+OpenAPI，Billing不得复制本文JSON提前造client。
+
 ## R252-AGENT-BOUND-D0：目标 artifact 与受认证 read（2026-10-05；未发布）
 
 本节只冻结后继机器语义；当前公开机器事实仍是既有HTTP5、execution-proof与usage/v1，下面的`model-call-bound/v1`、route、version和digest尚不存在，不能被Billing pin或用于授权。
@@ -18,7 +67,7 @@
 
 目标internal-owner operation为 `GET /v1/model-call-bounds/{bound_ref}`。成功仍用现request-id envelope，`data` closed字段为：`planned_binding_ref`、`planned_binding_digest`、`planned_binding_bytes_base64url`、`execution_bound_ref`、`execution_bound_digest`、`execution_bound_artifact_version`、`execution_bound_revision`、`execution_bound_bytes_base64url`；base64url无padding，consumer解码原bytes、strict parse、要求RFC8785逐字相等并重算两个digest。一次read同时关闭planned+bound tuple，不新增generic artifact endpoint；响应不含prompt/final body、actor/subject明文内容、authorization bytes、Billing request/admission、金额或secret。
 
-read只接受 `Authorization: Bearer <KOKORO_AGENT_BILLING_MODEL_CALL_BOUND_READER_SECRET>`；专用`SecretStr`常量时间匹配成功即唯一映射caller=`kokoro-billing`，现共享`KOKORO_INTERNAL_SECRET_AGENT`即使合法也不得fallback到本route。成功后才接受必填`x-kokoro-tenant-ref`作为该受信Billing caller的tenant断言并与artifact逐值相等；`x-kokoro-service`、actor/subject/assertion headers和body不参与认证或授权。URL ref也不构成权限。repository以tenant+ref定位后，在一个只读事务/同一DB clock核Run非terminal、原lease owner/generation仍current、当前lease未过期且未缩短到bound期限之前；错误tenant与unknown统一404 `model_call_bound_not_found`，stale fence/terminal为409 `model_call_bound_stale`，墙钟到期为410 `model_call_bound_expired`。专用secret缺/空或own dependency不可用为503 `agent_reader_unavailable`；credential缺失、scheme不为Bearer或值不匹配为401 `agent_reader_auth_failed`；credential已匹配但tenant断言缺失/空白/畸形，或携带试图覆盖身份的service/actor/subject/assertion/body字段，为403 `agent_reader_forbidden`。全部使用现安全error envelope且零业务写；deadline/取消有界、无自动重试、credential不进入error/log/metric label。当前route/config/schema仍未实现，不能先以shared bearer或header字符串通过contract测试冒充认证。
+read只接受 `Authorization: Bearer <KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET>`；专用`SecretStr`常量时间匹配成功即唯一映射caller=`kokoro-billing`，现共享`KOKORO_INTERNAL_SECRET_AGENT`即使合法也不得fallback到本route。成功后才接受必填`x-kokoro-tenant-ref`作为该受信Billing caller的tenant断言并与artifact逐值相等；`x-kokoro-service`、actor/subject/assertion headers和body不参与认证或授权。URL ref也不构成权限。repository以tenant+ref定位后，在一个只读事务/同一DB clock核Run非terminal、原lease owner/generation仍current、当前lease未过期且未缩短到bound期限之前；错误tenant与unknown统一404 `model_call_bound_not_found`，stale fence/terminal为409 `model_call_bound_stale`，墙钟到期为410 `model_call_bound_expired`。专用secret缺/空或own dependency不可用为503 `agent_reader_unavailable`；credential缺失、scheme不为Bearer或值不匹配为401 `agent_reader_auth_failed`；credential已匹配但tenant断言缺失/空白/畸形，或携带试图覆盖身份的service/actor/subject/assertion/body字段，为403 `agent_reader_forbidden`。全部使用现安全error envelope且零业务写；deadline/取消有界、无自动重试、credential不进入error/log/metric label。当前route/config/schema仍未实现，不能先以shared bearer或header字符串通过contract测试冒充认证。
 
 后继生成与消费顺序固定：可信capacity guarantee owner先正式发布并获Root准入 → Agent把exact guarantee identity纳入schema/vectors后生成manifest/parser/package provenance → Root固定commit/direct/source/archive digest并验producer/reader → Billing独立pin和strict consumer。usage/v1保持post-call actual evidence，不升版、不接受bound字段；System/Billing合同不由本仓复制。当前route/config/schema/guarantee均未实现，未运行contract/HTTP/PG/provider测试，缺任一前置仍0 bound/0 send。
 

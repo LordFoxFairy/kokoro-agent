@@ -1,3 +1,36 @@
+## T-A01.R257-A1：final usage evidence 只读投影（D0，无Schema变化）
+
+本片复用现 `kokoro_agent_model_call_attempt` 与 `kokoro_agent_model_usage_evidence`，不新增表、列、索引、FK、view、receipt、
+outbox或Billing字段。Agent仍是唯一writer；Billing只经版本化HTTP读取，不访问数据库。
+
+### 查询真值与不变量
+
+一次exact read输入为受信`tenant_id`、path `attempt_id`、path `event_id`。repository须在一个有界一致性读取中证明：
+
+1. attempt tenant等于受信tenant，evidence tenant/run/call/attempt逐项等于attempt；
+2. attempt `sealed_at IS NOT NULL`、`latest_revision > 0`且head三元组完整；
+3. `latest_event_id = event_id`，evidence revision/digest等于attempt head，evidence `sealed=TRUE`；
+4. bytes长度1..65,536，SHA-256等于digest，usage/v1 strict parser可解析且row/attempt immutable binding一致；
+5. 返回原bytes，不重编码usage JSON、不从旧Run token totals或Chat event重建、不选任意“最新看起来合法”的revision。
+
+现event PK与attempt head足够exact lookup；无list/range scan/due worker，故不加索引。若真实EXPLAIN/负载证明需要，另开schema卡。
+
+### 状态、事务与失败
+
+- writer继续现Run→attempt锁/head CAS；reader零写、不推进revision、不改`updated_at`，用单条join/query或明确repeatable-read snapshot避免
+  两时点混合。并发封口提交前404，提交后完整200，不允许新head配旧bytes。
+- 非final旧revision不暴露；合法sealed unknown/unresolved可以读取，Billing按其owner政策pending，Agent不改零、不判断收费。
+- tenant/identity不匹配与未sealed无差异错误；corruption和数据库故障分别映射500/503。
+
+### Retention与验证门
+
+attempt head/evidence在Billing admission replay、lost-ACK、unknown reconciliation或审计复算可能引用期间保持可读。当前无批准的跨owner
+terminal ACK/最短窗口；本片不增TTL、不把Run/event retention套到这些rows，也不以“读过一次”作为删除依据。ACK不属于本片模型。
+
+真实PG测试必须经正式repository创建/append/finalize，禁止直接INSERT正控；覆盖合法final、旧revision、错误tenant/attempt/event、
+unsealed、head/digest/bytes corruption、并发可见性、timeout/cancel及重复GET零写。schema catalog与fresh install须字节/对象集合不变；
+任何DDL/index/generated schema变化即越界并停交Root重裁。
+
 ## R252-AGENT-BOUND-D0：现 Attempt 上的 immutable bound（2026-10-05；仅设计）
 
 唯一canonical仍是`database/schema.sql`；本节只冻结后继DDL目标，当前schema未含这些列。bound与现planned/final-request/authorization共享同一attempt生命周期，不建新表、migration目录、JSONB、outbox或金额事实。
@@ -14,7 +47,7 @@ reader只读事务按trusted tenant+bound ref命中Attempt，再读同Run；把�
 
 数据边界：bound bytes只含tenant/run/call/attempt/ordinal/lease与planned技术身份，以及未来Root批准后加入的exact capacity-guarantee机器身份；不含actor/subject、prompt/final body、credential、Billing request/admission、price/account/rate/FX/quote TTL/amount。System 3.0 provenance本身不证明计费cap；在guarantee owner/version/digest/binding尚未批准并纳入canonical schema前，六列只是目标DDL且不得插入伪bound。HTTP projection也不得额外暴露现`attempt_binding_bytes`或`authorization_bytes`。保留期与Attempt审计事实一致；没有独立GC。跨owner只发布canonical bytes/ref/digest，Billing不得读Agent表，Agent不得读Billing表。
 
-剩余SQL/tests范围仅现`database/schema.sql`、schema inventory/installer checker、model-call repository及其现真实PG/runtime/recovery测试；先验证无guarantee时零insert/零send，再覆盖fresh install、CHECK/UNIQUE、exact replay、digest/bytes corruption、tenant ref、毫秒floor边界、lease renew不延长、pause/takeover/terminal/expiry并发、rollback/ACK unknown和reader零写。专用Billing reader secret只在HTTP进程`SecretStr`配置中存在，不入本表、receipt、canonical bytes、日志或索引。SQL/测试本阶段未改未跑；capacity guarantee、config/route/schema/read部署均未实现。
+剩余SQL/tests范围仅现`database/schema.sql`、schema inventory/installer checker、model-call repository及其现真实PG/runtime/recovery测试；先验证无guarantee时零insert/零send，再覆盖fresh install、CHECK/UNIQUE、exact replay、digest/bytes corruption、tenant ref、毫秒floor边界、lease renew不延长、pause/takeover/terminal/expiry并发、rollback/ACK unknown和reader零写。统一`billing_model_call_reader_secret`只在HTTP进程`SecretStr`配置中存在，唯一环境为`KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET`；旧bound-only名无alias；它只承载`model-call-bound.read`与`model-usage-evidence.read`，worker不消费，且不入本表、receipt、canonical bytes、日志或索引。SQL/测试本阶段未改未跑；capacity guarantee、config/route/schema/read部署均未实现。
 
 **R255 owner 边界澄清（仅 D0 对齐，未实现 reader）。** 本节目标 bound 只证明技术 planned binding 与本次执行界，不声明 actual provider attribution，也不发布 Billing 独占的商业 pricing account；实际 provider 归属由后继 strict sealed evidence 证明。后继 `request_ref` 由 Agent authorization 状态机绑定同一 attempt 与已冻结的 refs/digests，并供 Billing Admission 幂等身份核对，不作为 bound 生成或 reader 的前置。当前 `PlannedBinding` 闭集没有 `provider_account_ref`；若需要该技术账户身份，必须先由具名技术 owner 以固定版本正式发布，不从名称、credential 或商业账户推导。本次只澄清既有 owner 边界，不改变 guarantee 缺失时 fail closed、reader 专用认证或 DB 时钟/lease 规则，不新增机器字段或实现。
 

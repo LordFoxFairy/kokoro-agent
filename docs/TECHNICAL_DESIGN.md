@@ -1,3 +1,51 @@
+## T-A01.R257-A1：Billing 专用 final model-call usage evidence 只读边界（D0，未实施）
+
+### 当前事实与目标
+
+当前 `contract/usage/v1` 已由 Agent 发布 `1.0.0` strict usage artifact；现 `kokoro_agent_model_call_attempt` 与
+`kokoro_agent_model_usage_evidence` 已保存 attempt head、sealed final evidence、原 canonical bytes/digest、revision 与
+execution/usage completeness。`PostgresModelCallRepository` 已有写入、封口和重放校验，但 HTTP 只暴露面向 BFF 受信
+ExecutionIdentity 的 Run evidence；没有 Billing 可认证读取 final model-call usage evidence 的 operation，也没有 Billing ACK。
+现 HTTP `KOKORO_INTERNAL_SECRET_AGENT` 是 BFF/内部业务入口共享 bearer，只验证 secret，不证明调用者就是 Billing；
+`x-kokoro-service`、tenant header、actor/subject/body 都不能自行升级成 caller authority。因此当前真实系统行为是目标 GET 404。
+
+目标由 Agent 继续唯一拥有 actual model-call evidence：Billing 只能以专用途径按受信 tenant + attempt + evidence identity读取
+**已经成为该 attempt 当前 final head 的 immutable sealed evidence**。返回 artifact version、attempt/event/revision、原
+`evidence_bytes` 的无填充 base64url、`evidence_digest`、`sealed=true` 与 observation instant；不得返回 prompt、final request
+body、credential、authorization bytes、Run/Chat私人内容、金额、价格、hold、账本或 Billing 状态。读取不授予 grant、dispatch
+或结算许可，不写Agent/Billing事实，不把usage schema冒充消费ACK。
+
+### 放置与依赖裁决
+
+| 项 | D0 结论 |
+|---|---|
+| Owner | `kokoro-agent` / model-call evidence，唯一 writer 与 read contract owner；Billing只是固定artifact的service consumer。 |
+| 当前事实 | final rows已在唯一canonical SQL；`event_id` PK、attempt head与tenant/run/attempt绑定支持exact read；无专用Billing auth/route/query。 |
+| 方案A（采用） | 在现 `interfaces/http/server.py` 增exact internal-owner GET；在现model-call repository增具名只读query。若读写变化原因确实冲突，才在同`infrastructure/`新建一个evidence query文件。不建新模块/进程/表。 |
+| 方案B（淘汰） | 复用`/v1/runs/{run_id}/events`或Chat query：其身份、可见性和内容面属于BFF/用户投影，不证明Billing caller，也不是immutable usage bytes。 |
+| 方案C（淘汰） | Billing直读Agent PostgreSQL、复制schema/codec或Agent push generic receipt：违反owner边界并丢失head/tenant复核。 |
+| 依赖 | 允许现usage/v1 codec、HTTP config/server、repository/PG primitives；禁止import Billing类型/SDK/SQL，不依赖BFF identity headers，不读取Billing数据。 |
+| 数据 | 无DDL/index变化。一次read一致取得attempt/evidence，验证sealed、latest event/digest/revision、bytes digest与strict parser。 |
+| 删除/兼容 | 无旧endpoint可兼容；不加alias、list/search、latest-by-tenant、free/grant fallback，不扩旧Run evidence为混合响应。 |
+
+### 身份与安全裁决（已固定，尚未实施）
+
+Root采用既有bound-reader批准的Billing专用caller模式，并clean-slate统一为HTTP进程字段
+`billing_model_call_reader_secret: SecretStr | None`与唯一环境`KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET`；旧bound-only名无alias/fallback。
+Bearer常量时间匹配只映射caller=`kokoro-billing`，只授`model-call-bound.read`与`model-usage-evidence.read`两个具名operation，本A1只实现后者；
+不构建通用权限引擎，不授其它HTTP route。共享`KOKORO_INTERNAL_SECRET_AGENT`与身份headers均不得替代。字段只进入HTTP-only
+loader/safe summary与server具名helper，worker不消费。认证先于tenant/path/SQL；未配置503、错误401，认证后tenant才受信。
+当前loader/helper/route均未实施，不冒充已有受信caller，也不杜撰IAM token。
+
+### 生命周期、资源界与验证门
+
+- GET只读；仅transport/契约标记503可有限retry。现evidence bytes上限65,536，base64url前先验长度与digest，不流式拼接、不返回任意JSON列。
+- attempt/evidence在Billing reconciliation、unknown与lost-ACK仍可能引用期间不得被retention删除。当前无跨owner ACK/窗口，本片不杜撰TTL。
+- 真实RED：正式Agent HTTP + 真实PG先经现repository写入并封口合法final evidence，再以待裁Billing auth请求目标GET；当前必须404。
+  GREEN覆盖exact bytes/digest、wrong tenant/attempt/event、旧revision、unsealed、corrupt bytes、auth、DB timeout、并发封口一致性、重复GET零写；
+  再过contract/check、Ruff、Pyright、pure、真实PG/HTTP acceptance与build。Mock、直接INSERT或共享BFF secret成功都不算。
+- 本片通过也只发布evidence read；Billing admission/settlement、Agent Billing client、provider、ACK、BFF/Web与实际扣费继续OPEN。
+
 ## R252-AGENT-BOUND-D0：逐 attempt 保守执行界（2026-10-05；仅设计）
 
 **当前与目标。** 正式基线为 `fc379da2b09e08ca0349f249902f587d72efbc8f`。现 final HTTPX hook 已冻结 final-request version/digest、`n=1` 与实际 `max_completion_tokens`，System 3.0 同一 immutable revision 已给 `context_window/max_output_tokens`，prepare 已在 own PostgreSQL Run 锁下以 DB clock 核当前 lease；但没有 preauthorization bound artifact、有限 `valid_until`、Billing 可认证读取，也没有证明所绑gateway/model的billable input与inclusive category服从这些数值的可信保证。目标不是精确 tokenizer/count：首版目标为 `openai_chat_completions_capacity_v1` 的 **capacity-derived conservative joint constraints**；System 3.0 provenance只证明目录来源与immutable revision，不能单独把目录cap提升为可收费exposure。缺下述保证或正式 Billing consumer仍在hook后typed failure、0 provider send。
@@ -21,7 +69,7 @@ joint constraints目标只允许unit=`token`：`0 <= input_total <= context_wind
 | 删除项 | 不留exact-token假profile、usage/v1 alias、可续期bound、health/cache/proof TTL fallback、免费/quantity=1/fake grant路径。现final digest/zero-send guard不删除。 |
 | 验证 | D0后先证明无可信guarantee时0 bound/0 send，再验合法固定guarantee与wrong owner/version/digest/binding/category负例；并验UTC毫秒向下量化、contract/generation/package、真实PG replay/冲突/lease race/rollback、真实HTTP auth+tenant+fence、SDK loopback 0-send及完整工程门。当前均未运行。 |
 
-**reader认证已裁决、尚未实现。** Billing→Agent bound reader使用HTTP进程专用 `SecretStr | None` 字段`billing_model_call_bound_reader_secret`，唯一环境名`KOKORO_AGENT_BILLING_MODEL_CALL_BOUND_READER_SECRET`；配置缺失/空白时route为503 fail closed。该credential只映射exact caller `kokoro-billing`并只授本GET，不复用现全入口`internal_secret_agent`、不接受后者fallback，也不信`x-kokoro-service`、actor/subject/body自报。Bearer以常量时间比较且不日志/持久化；认证后才把必填tenant header作为Billing的受信断言并与row逐值相等。字段只进入现`interfaces/http/main.py::AgentHttpConfig`及其env/file loader、safe summary和`interfaces/http/server.py::AgentConfig` protocol/route；worker `config.py::AppConfig`不消费inbound reader secret，禁止为对称或“统一配置”复制进去。无新auth模块/framework/config容器。
+**reader认证已裁决、尚未实现。** Billing→Agent bound reader使用HTTP进程专用 `SecretStr | None` 字段`billing_model_call_reader_secret`，唯一环境名`KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET`；配置缺失/空白时route为503 fail closed。该credential只映射exact caller `kokoro-billing`并只授`model-call-bound.read`与`model-usage-evidence.read`两个具名operation；本bound route只消费`model-call-bound.read`，不复用现全入口`internal_secret_agent`、不接受后者fallback，也不信`x-kokoro-service`、actor/subject/body自报。Bearer以常量时间比较且不日志/持久化；认证后才把必填tenant header作为Billing的受信断言并与row逐值相等。字段只进入现`interfaces/http/main.py::AgentHttpConfig`及其env/file loader、safe summary和`interfaces/http/server.py::AgentConfig` protocol/route；worker `config.py::AppConfig`不消费inbound reader secret，禁止为对称或“统一配置”复制进去。无新auth模块/framework/config容器。
 
 剩余实现最大范围仍为现`model/call_models.py`、`call_artifacts.py`、`call_runtime.py`、`infrastructure/postgres_model_call_repository.py`、`database/schema.sql`、`interfaces/http/{main.py,server.py}`；计划的新bound schema/vectors/manifest、具名generator/generated model、contract checker/provenance/package清单；现`tests/unit/http/{test_http_main.py,test_server.py}`及对应unit/contract/真实PG/SDK/architecture测试。上述capacity guarantee的owner/source尚未批准，不在本卡擅增文件或合同；它是实现前置，不是TODO fallback。`config.py`、`factory.py`仍排除。源码、SQL、机器artifact、测试当前全部未授权。
 

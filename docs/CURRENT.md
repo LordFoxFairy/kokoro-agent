@@ -1,3 +1,25 @@
+## R353-A-S06 当前：Storage v3 Artifact delivery 候选已实施（2026-10-08）
+
+Agent既有作品交付消费者已从Storage v2单轨切到正式owner
+`d13f33acfc7a482d61ebffc58e7b2667b58ae197` v3；完整vendor/generated v2 closure已删除，
+原generator可重复生成v3。生产仍只允许七个Artifact RPC，身份、conversation scope、signed URL
+origin/expiry/header/redirect、scan/final与最终产品摘要保持。
+
+PUT 2xx现在必须返回合法opaque `x-amz-version-id`。started journal使用精确version2三阶段，
+先持久upload_id，再把A与固定`delivery-v2` Complete command/digest在一次keep-first transition中
+持久，之后才Complete(A)。同call未知A并发可有多个物理PUT候选，但只有durable winner继续；loser
+零Complete/Artifact。已知A恢复不读工作区、不再PUT；locator漂移失败关闭。旧started-v1只返回
+typed unknown并保持started/terminal barrier，旧succeeded最终结果继续原样重放。
+
+本writer实际证据：具名行为RED **1 failed**；聚焦contract/unit **86 passed**；Storage generator
+drift、contract checker、Pyright通过。默认纯门 **2331 passed / 756 deselected / 2 failed**；两失败
+均在369受保护基线文件（既有`interfaces/http/server.py` cast与`contract_check.py` 200行阈值），
+未越界修改。未运行PG/Redis/MinIO/Storage/scanner/服务；Root负责真实PostgreSQL monotonic/CAS/lease
+及正式Storage+versioned ObjectStore的late-B、Complete ACK-loss、无文件恢复、单FINAL和最终提交。
+本片只是S06必要Artifact前置，不代表Skills产品链或正常环境已激活。
+
+---
+
 ## R252 当前最终请求绑定：源码与发布物候选已验证（2026-10-05）
 
 切片起始正式基线29a7a18a；R246冻结21文件已经实现最终HTTPX materialized request身份与ordinary immutable replay，与本源码同批精确交付。下方R245“仅设计/尚无字段/handler前prepare”、R233“尚未交付”是历史记录，不是本片当前实现状态。
@@ -926,7 +948,7 @@ retry/resume/takeover严格比较，route revision/health/凭据排除。P2仅25
 **本 worker 实测（非 Root 验收）：**
 
 - tests-only首轮RED **45 failed/32 passed**，最小GREEN77；追加同源投影/缺metadata/未知provider RED **5 failed/78 passed**→GREEN83；来源不可变/metadata挂载漂移RED **2 failed/47 passed**→聚焦GREEN88；预算0/未知subagent RED **2 failed/49 passed**。日志 `/tmp/kokoro-agent-profile-p1-red.log`、`/tmp/kokoro-agent-profile-p1-red-r2.log`、`/tmp/kokoro-agent-profile-p1-red-r3.log`、`/tmp/kokoro-agent-profile-p1-red-r4.log`。
-- 首轮完整default真实 **1585 passed/1 failed/6 skipped/192 deselected/57.99s**：新模块cast违反既有architecture门；已用逐值运行时校验与sound TypeGuard修复，未改门或配置。历史 `/tmp/kokoro-agent-profile-p1-full-gates-r2.log` 保留。较早Pyright8→2类型诊断及full-gates-r1的测试lambda类型2错亦保留，不记为最终PASS。
+- 首轮完整default真实 **1586 passed/1 failed/6 skipped/192 deselected/57.99s**：新模块cast违反既有architecture门；已用逐值运行时校验与sound TypeGuard修复，未改门或配置。历史 `/tmp/kokoro-agent-profile-p1-full-gates-r2.log` 保留。较早Pyright8→2类型诊断及full-gates-r1的测试lambda类型2错亦保留，不记为最终PASS。
 - 修复后焦点三文件＋现architecture **117 passed**（3.80s），日志 `/tmp/kokoro-agent-profile-p1-green-r4.log`；Ruff/Pyright不放宽，当前模块497行。
 - 最终完整离线门 `/tmp/kokoro-agent-profile-p1-full-gates-r3.log` **exit0**：`uv lock --check --offline`、`uv sync --frozen --offline`、Ruff format254/check、Pyright0 errors/0 warnings、contract-check、default pytest **1588 passed/6 skipped/192 deselected/364 warnings/57.26s**、wheel/sdist build全部通过。现LangChain deprecation/beta及Pyright新版本提示保留，不在本片升级依赖。
 - `uv run --frozen --offline python scripts/generate_failure_models.py --check` exit0，日志 `/tmp/kokoro-agent-profile-p1-generator-check.log`；机器contract仍HTTP3.0。

@@ -1,5 +1,20 @@
 # kokoro-agent 验收矩阵
 
+## R353-A-S06 Storage v3 Artifact consumer 候选验收
+
+- 正式owner pin：Storage `d13f33acfc7a482d61ebffc58e7b2667b58ae197`，Proto组合SHA-256
+  `47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9`；v2 vendor/generated
+  删除，v3隔离codegen drift通过。
+- 行为RED：v3-only pin具名测试 **1 failed**；实现后聚焦contract/unit **86 passed**。
+- 纯门：contract checker与Pyright通过；默认pytest **2331 passed / 756 deselected / 2 failed**。
+  两失败属于任务卡369受保护基线（既有cast与200行边界），没有放宽或越界修复。
+- 已覆盖：17 RPC生成/七操作allowlist、PUT version ACK边界、三阶段精确journal、全部command
+  `delivery-v2`、A+Complete identity、selected CAS loser零Complete/Artifact、pending selected零PUT恢复、
+  local/server A冲突、started-v1 typed unknown保持started，以及旧succeeded/event形状不变。
+- 仍由Root执行：真实PostgreSQL锁/并发/rollback/lease，正式Storage+versioned ObjectStore+scanner的
+  late B、ACK未知、无文件恢复与单FINAL；未启动PG/Redis/MinIO/服务/浏览器。本门不代表S06、
+  BFF/Web或完整Skills UI完成。
+
 ## R145 strict usage离线artifact验收
 
 R145实测：42项usage行为、2174项默认纯测试通过，301资源节点未选、0 skip；正规生成、lock、Ruff、Pyright、build均exit0。仓外wheel实际installed checker正常/恢复exit0，缺manifest、篡改vectors、篡改runtime均exit1；详细失败历史、manifest与边界见CURRENT顶部。已知非null raw_usage_digest不得改写或抹除（含unresolved→normalized），已知normalized profile_assessment精确保持，null→known合法；本片不证明provider/runtime/Billing结算。

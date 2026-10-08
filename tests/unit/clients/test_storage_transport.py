@@ -9,7 +9,7 @@ from protobuf.wkt import Timestamp
 
 from kokoro_agent.clients.storage import StorageClientError
 from kokoro_agent.clients.storage_transport import StorageDeliveryTransport
-from kokoro_agent.generated.kokoro.storage.v2 import storage_pb as pb
+from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 
 
 class _Stub:
@@ -55,7 +55,7 @@ async def test_signed_put_never_carries_internal_service_secret() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200)
+        return httpx.Response(200, headers={"x-amz-version-id": "version-A"})
 
     async with StorageDeliveryTransport(
         "http://127.0.0.1:4010",
@@ -63,7 +63,7 @@ async def test_signed_put_never_carries_internal_service_secret() -> None:
         "secret",
         put_transport=httpx.MockTransport(handler),
     ) as transport:
-        await transport.put(
+        source_version_id = await transport.put(
             pb.TransferReference(
                 url="http://127.0.0.1:9000/upload-1",
                 method="PUT",
@@ -74,6 +74,7 @@ async def test_signed_put_never_carries_internal_service_secret() -> None:
             ),
             b"final report",
         )
+        assert source_version_id == "version-A"
         assert len(seen) == 1
         assert seen[0].content == b"final report"
         assert seen[0].headers["content-type"] == "application/pdf"
@@ -148,3 +149,35 @@ async def test_signed_put_rejects_cross_origin_expired_and_redirect() -> None:
                 b"bytes",
             )
         assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "null", " ", "bad\nvalue", "x" * 513],
+)
+async def test_signed_put_requires_bounded_opaque_source_version(
+    value: str | None,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        headers = {} if value is None else {"x-amz-version-id": value}
+        return httpx.Response(200, headers=headers)
+
+    async with StorageDeliveryTransport(
+        "http://127.0.0.1:4010",
+        "http://127.0.0.1:9000",
+        "secret",
+        put_transport=httpx.MockTransport(handler),
+    ) as transport:
+        with pytest.raises(StorageClientError, match="VERSION_ID_INVALID") as exc:
+            await transport.put(
+                pb.TransferReference(
+                    url="http://127.0.0.1:9000/upload",
+                    method="PUT",
+                    required_headers={"content-type": "application/pdf"},
+                    expires_at=Timestamp.from_datetime(
+                        datetime.now(timezone.utc) + timedelta(minutes=5)
+                    ),
+                ),
+                b"bytes",
+            )
+        assert exc.value.retryable

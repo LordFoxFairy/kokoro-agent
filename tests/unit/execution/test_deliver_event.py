@@ -228,7 +228,7 @@ async def test_terminal_barrier_rejects_incomplete_delivery_intent() -> None:
     store.tool_journal[("r1", "t1")] = {
         "name": "deliver",
         "status": "started",
-        "result": '{"version":1}',
+        "result": '{"version":2}',
         "is_error": False,
     }
     emitter = await RunEmitter.attach(bus, "r1", outbox=store, lease=lease)

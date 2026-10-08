@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import cast
 
 import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
+from deepagents.backends.local_shell import LocalShellBackend
 
 from kokoro_agent.clients.storage import (
     DeliveryRecoveryRequest,
@@ -19,8 +22,9 @@ from kokoro_agent.clients.storage import (
 from kokoro_agent.clients.storage_delivery import StorageDeliveryClient
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.domain.run.models import ToolJournalRecord
-from kokoro_agent.generated.kokoro.storage.v2 import storage_pb as pb
+from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
+from kokoro_agent.tools.deliver import make_deliver_tool
 
 
 _IDENTITY = ExecutionIdentity(
@@ -43,12 +47,19 @@ _CONTENT = b"final report"
 _HASH = hashlib.sha256(_CONTENT).hexdigest()
 
 
+def _digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 class FakeRuns:
     def __init__(self) -> None:
         self.current = True
         self.request = _RUN
         self.intents: list[tuple[str, str, str]] = []
         self.last_intent: str | None = None
+        self.reject_selected = False
 
     async def get_request(self, run_id: str) -> RunRequest | None:
         assert run_id == _RUN.run_id
@@ -71,6 +82,8 @@ class FakeRuns:
         self, run_id: str, lease: LeaseFence, tool_call_id: str, intent: str
     ) -> bool:
         self.intents.append((run_id, tool_call_id, intent))
+        if self.reject_selected and "source_version_id" in json.loads(intent):
+            return False
         self.last_intent = intent
         return self.current
 
@@ -83,12 +96,16 @@ class FakeTransport:
         self.completed = False
         self.fail_artifact_once = False
         self.after_create: Callable[[], None] | None = None
+        self.after_put: Callable[[], None] | None = None
         self.bad_reference = False
         self.missing_reference = False
         self.invalid_reference_on_put = False
         self.connect_error: Code | None = None
         self.finalize_reply_lost = False
         self.artifact_kind_override: pb.ArtifactKind | None = None
+        self.fail_complete_once = False
+        self.pending_source_version: str | None = None
+        self.put_version = "version-A"
 
     async def call(self, method: str, request: object, headers: dict[str, str]):
         self.calls.append((method, request, headers))
@@ -116,8 +133,16 @@ class FakeTransport:
                 expected_size_bytes=len(_CONTENT),
                 mime_type="application/pdf",
                 asset_id="asset-1" if self.completed else None,
+                source_version_id=(
+                    "version-A" if self.completed else self.pending_source_version
+                ),
             )
         if method == "complete_upload":
+            assert isinstance(request, pb.CompleteUploadRequest)
+            assert request.source_version_id == "version-A"
+            if self.fail_complete_once:
+                self.fail_complete_once = False
+                raise StorageClientError("network", retryable=True)
             self.completed = True
             return pb.CompleteUploadResponse(
                 upload_id="upload-1", asset_id="asset-1", scan_state=self.scan
@@ -156,11 +181,14 @@ class FakeTransport:
             )
         raise AssertionError(method)
 
-    async def put(self, reference: pb.TransferReference, content: bytes) -> None:
+    async def put(self, reference: pb.TransferReference, content: bytes) -> str:
         assert reference.method == "PUT"
         if self.invalid_reference_on_put:
             raise StorageClientError("STORAGE_UPLOAD_REFERENCE_INVALID")
         self.puts.append(content)
+        if self.after_put is not None:
+            self.after_put()
+        return self.put_version
 
 
 def _request() -> DeliveryRequest:
@@ -206,6 +234,72 @@ async def test_publish_uses_canonical_conversation_scope_and_stable_commands() -
     assert isinstance(create, pb.CreateArtifactRequest)
     assert create.artifact_id == ""
     assert create.source_run_id == "run-1"
+    complete = transport.calls[1][1]
+    assert isinstance(complete, pb.CompleteUploadRequest)
+    assert complete.source_version_id == "version-A"
+    assert complete.command is not None
+    seed = _digest(["run-1", "tool-1"])
+    assert complete.command.command_id == _digest(
+        ["delivery-v2", seed, "complete_upload"]
+    )
+    assert complete.command.request_digest == _digest(
+        [
+            "delivery-v2",
+            "complete_upload",
+            ["upload-1", _HASH, len(_CONTENT), "version-A"],
+        ]
+    )
+    intents = [json.loads(value) for _, _, value in runs.intents]
+    assert [set(value) for value in intents] == [
+        {
+            "version",
+            "run_id",
+            "session_id",
+            "tenant_ref",
+            "subject_ref",
+            "tool_call_id",
+            "path",
+            "title",
+            "note",
+            "mime_type",
+            "size_bytes",
+            "content_sha256",
+        },
+        {
+            "version",
+            "run_id",
+            "session_id",
+            "tenant_ref",
+            "subject_ref",
+            "tool_call_id",
+            "path",
+            "title",
+            "note",
+            "mime_type",
+            "size_bytes",
+            "content_sha256",
+            "upload_id",
+        },
+        {
+            "version",
+            "run_id",
+            "session_id",
+            "tenant_ref",
+            "subject_ref",
+            "tool_call_id",
+            "path",
+            "title",
+            "note",
+            "mime_type",
+            "size_bytes",
+            "content_sha256",
+            "upload_id",
+            "source_version_id",
+            "complete_command_id",
+            "complete_request_digest",
+        },
+    ]
+    assert all(value["version"] == 2 for value in intents)
 
 
 async def test_stale_lease_prevents_first_external_call() -> None:
@@ -223,6 +317,159 @@ async def test_lease_lost_after_upload_admission_prevents_signed_put() -> None:
         await StorageDeliveryClient(runs, transport).publish(_request())
     assert [name for name, _, _ in transport.calls] == ["create_upload"]
     assert transport.puts == []
+
+
+async def test_same_lease_selected_cas_loser_is_retryable_and_never_completes() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.reject_selected = True
+    transport.put_version = "version-B"
+    with pytest.raises(StorageClientError, match="INTENT_NOT_DURABLE") as exc:
+        await StorageDeliveryClient(runs, transport).publish(_request())
+    assert exc.value.retryable
+    assert runs.current
+    assert transport.puts == [_CONTENT]
+    assert "complete_upload" not in [name for name, _, _ in transport.calls]
+    assert "create_artifact" not in [name for name, _, _ in transport.calls]
+
+
+async def test_pending_selected_intent_recovers_without_workspace_or_second_put() -> (
+    None
+):
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.fail_complete_once = True
+    client = StorageDeliveryClient(runs, transport)
+    with pytest.raises(StorageClientError, match="network"):
+        await client.publish(_request())
+    selected = json.loads(runs.last_intent or "{}")
+    assert selected["source_version_id"] == "version-A"
+    assert len(transport.puts) == 1
+
+    receipt = await client.recover(_recovery())
+
+    assert receipt is not None and receipt.artifact_id == "artifact-1"
+    assert len(transport.puts) == 1
+    assert [name for name, _, _ in transport.calls].count("create_upload") == 1
+    assert [name for name, _, _ in transport.calls].count("complete_upload") == 2
+
+
+async def test_selected_locator_mismatch_never_completes() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.fail_complete_once = True
+    client = StorageDeliveryClient(runs, transport)
+    with pytest.raises(StorageClientError):
+        await client.publish(_request())
+    transport.pending_source_version = "version-B"
+    before = [name for name, _, _ in transport.calls].count("complete_upload")
+
+    with pytest.raises(StorageClientError, match="SOURCE_VERSION_CONFLICT"):
+        await client.recover(_recovery())
+
+    assert [name for name, _, _ in transport.calls].count("complete_upload") == before
+
+
+async def test_owner_source_version_without_durable_selection_fails_closed() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.after_put = lambda: setattr(runs, "current", False)
+    with pytest.raises(StorageClientError, match="INTENT_NOT_DURABLE"):
+        await StorageDeliveryClient(runs, transport).publish(_request())
+    admitted = json.loads(runs.intents[-2][2])
+    runs.current = True
+    runs.last_intent = json.dumps(admitted)
+    transport.pending_source_version = "version-A"
+
+    with pytest.raises(StorageClientError, match="SOURCE_VERSION_CONFLICT"):
+        await StorageDeliveryClient(runs, transport).recover(_recovery())
+    assert [name for name, _, _ in transport.calls].count("complete_upload") == 0
+
+
+def _recovery_intent(*, stage: str, upload_id: object = "upload-1") -> str:
+    value: dict[str, object] = {
+        "version": 2,
+        "run_id": "run-1",
+        "session_id": "conversation-1",
+        "tenant_ref": "tenant-1",
+        "subject_ref": "user-1",
+        "tool_call_id": "tool-1",
+        "path": "/report.pdf",
+        "title": "Report",
+        "note": "",
+        "mime_type": "application/pdf",
+        "size_bytes": len(_CONTENT),
+        "content_sha256": _HASH,
+    }
+    if stage in {"admitted", "selected"}:
+        value["upload_id"] = upload_id
+    if stage == "selected":
+        value.update(
+            {
+                "source_version_id": "version-A",
+                "complete_command_id": "0" * 64,
+                "complete_request_digest": "0" * 64,
+            }
+        )
+    return json.dumps(value)
+
+
+@pytest.mark.parametrize("stage", ["admitted", "selected"])
+@pytest.mark.parametrize("upload_id", [None, ""])
+async def test_recovery_rejects_non_string_or_empty_upload_for_closed_stage(
+    stage: str, upload_id: object
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.last_intent = _recovery_intent(stage=stage, upload_id=upload_id)
+
+    with pytest.raises(StorageClientError, match="DELIVERY_INTENT_INVALID"):
+        await StorageDeliveryClient(runs, transport).recover(_recovery())
+
+    assert transport.calls == [] and transport.puts == []
+
+
+async def test_recovery_allows_only_frozen_stage_to_have_no_upload() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.last_intent = _recovery_intent(stage="frozen")
+
+    assert await StorageDeliveryClient(runs, transport).recover(_recovery()) is None
+    assert transport.calls == [] and transport.puts == []
+
+
+async def test_corrupt_closed_stage_stops_actual_tool_before_workspace_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.last_intent = _recovery_intent(stage="selected", upload_id=None)
+    backend = LocalShellBackend(root_dir=tmp_path, virtual_mode=True)
+    original_download = backend.adownload_files
+    downloads = 0
+
+    async def counted_download(paths: list[str]):
+        nonlocal downloads
+        downloads += 1
+        return await original_download(paths)
+
+    monkeypatch.setattr(backend, "adownload_files", counted_download)
+
+    def tool_call_id(_run_id: str) -> str:
+        return "tool-1"
+
+    monkeypatch.setattr(
+        "kokoro_agent.tools.deliver.current_delivery_tool_call_id", tool_call_id
+    )
+    tool = make_deliver_tool(
+        backend,
+        StorageDeliveryClient(runs, transport),
+        namespace="local:conversation-1",
+        run_id="run-1",
+        identity=_IDENTITY,
+        lease=_LEASE,
+    )
+
+    invoke = tool.coroutine
+    assert invoke is not None
+    result = await invoke(path="/report.pdf", title="Report")
+
+    assert isinstance(result, str) and "DELIVERY_INTENT_INVALID" in result
+    assert downloads == 0
+    assert transport.calls == [] and transport.puts == []
 
 
 async def test_infected_scan_never_creates_artifact() -> None:

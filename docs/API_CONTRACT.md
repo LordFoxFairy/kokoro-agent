@@ -1,16 +1,14 @@
-## R353-A-S06：Storage v3 Artifact consumer contract（D0，未实施；2026-10-08）
+## R353-A-S06：Storage v3 Artifact consumer contract（候选已实施；2026-10-08）
 
-### 当前态与权威来源
+### Wire authority 与可见性
 
-本片不新增 Agent public HTTP/OpenAPI、Redis event 或浏览器字段。当前生产生成 client 指向 v2；目标唯一 wire authority 是 Storage commit `d13f33acfc7a482d61ebffc58e7b2667b58ae197` 的 `contract/proto/kokoro/common/v1/common.proto` 与 `contract/proto/kokoro/storage/v3/storage.proto`，组合 SHA-256 `47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9`。本文件只记录 Agent 消费约束，不复制 owner message/schema。
+本片不新增 Agent public HTTP/OpenAPI、Redis event 或浏览器字段。唯一 wire authority 是 Storage commit `d13f33acfc7a482d61ebffc58e7b2667b58ae197` 的 `kokoro/common/v1/common.proto` 与 `kokoro/storage/v3/storage.proto`，组合 SHA-256 `47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9`。Agent vendor pin与原generator已单轨切到 `kokoro.storage.v3.StorageService`；完整17 RPC生成可见，但生产只允许 `CreateUpload/CompleteUpload/AbortUpload/GetUploadStatus/GetScanStatus/CreateArtifact/FinalizeArtifact` 七操作，其余继续 `STORAGE_OPERATION_FORBIDDEN`。v2 vendor/generated已删除，无alias/fallback/双pin。
 
-Agent vendor pin/codegen 一次切到 `kokoro.storage.v3.StorageService`，生成物可见完整17 RPC，但 `StorageDeliveryTransport.call` 继续只允许 `CreateUpload/CompleteUpload/AbortUpload/GetUploadStatus/GetScanStatus/CreateArtifact/FinalizeArtifact` 七操作；其它十操作即使生成存在仍返回现 `STORAGE_OPERATION_FORBIDDEN`。删除 v2 vendor/generated，不注册 alias、fallback或双 pin。
+### PUT ACK、Complete 与status核验
 
-### PUT ACK、Complete identity 与响应核验
+signed PUT继续只允许批准 object origin、PUT、未过期且不超过901秒、exact `content-type` required header、无redirect/cookie/bearer/internal secret。2xx必须返回合法 `x-amz-version-id`：1..512、非空/纯空白/字面`null`、无C0/DEL。consumer不trim已接受值，原样返回、持久、摘要和发送。A不是授权或CLEAN证明，只能与同upload/descriptor/trusted conversation scope一起发v3 Complete。
 
-`signed PUT` 仍只允许受控 object origin、`PUT`、未过期且≤901秒、exact `content-type` required header、无redirect/cookie/bearer/internal secret。2xx 必须返回合法 `x-amz-version-id`。正式d13 validator的上限是512字符并拒绝空/纯空白/字面`null`/C0或DEL；consumer采用同上限，可更严拒绝其它全Unicode空白，但只用空白检查作准入，不trim已接受值。A逐字符原样返回、持久、摘要与发送。A不是授权/clean证明，只能与同upload/descriptor/可信scope一起发v3 Complete。
-
-所有新owner command沿现 `_digest` 的Python确定性JSON字节编码，**不是**RFC8785/JCS：`json.dumps(value, sort_keys=True, separators=(",",":"), ensure_ascii=True).encode("utf-8")`：
+全部owner command使用既有确定性JSON编码与新 `delivery-v2` namespace：
 
 ```text
 seed = SHA256(JSON([run_id, tool_call_id]))
@@ -19,23 +17,19 @@ request_digest = SHA256(JSON(["delivery-v2", stage, fields]))
 complete.fields = [upload_id, content_sha256, size_bytes, source_version_id]
 ```
 
-`source_version_id`、`complete_command_id` 与 `complete_request_digest` 必须在首次Complete前同一次source-selected journal transition持久化；repository在现方法内重算上式并核exact identity，partial/额外键/错阶段均拒。出站request使用持久exact identity，不临时换A。Complete回应继续核upload_id/asset_id；未知响应先GetUploadStatus，不生成新command。
+此JSON为Python `sort_keys=True`、compact separators、默认`ensure_ascii=True`，不是RFC8785/JCS。A与Complete command/digest在首次Complete前同一次selected journal transition持久化；outbound Complete使用该exact identity与A。
 
-GetUploadStatus 必须逐项匹配 frozen upload_id、expected_sha256、expected_size_bytes、mime_type，并对存在的 source_version_id 与本地 A exact比较。`PENDING + local A + owner A/absent` 重放原 Complete(A)；`COMPLETED` 还要求 same A + asset_id；两边都无A只允许有workspace bytes的 publish路径取得B。本地/owner A冲突、owner A而本地无durable Complete identity、completed缺A/asset均不继续副作用。
+GetUploadStatus逐项匹配 upload_id、expected_sha256、expected_size_bytes、mime_type。`PENDING + local A + owner同A或缺省A` 只重发Complete(A)，零PUT；`COMPLETED`还要求同A与asset_id。两边无A时recover不产生副作用，publish持有原bytes才可重新PUT。本地/owner A冲突、owner有A而本地无durable selected identity、completed缺A/asset都失败关闭。
 
-### 新增内部 typed error
+### 内部 typed errors 与稳定成功形状
 
 | code | retryable | 语义 |
 |---|---:|---|
-| `STORAGE_UPLOAD_VERSION_ID_INVALID` | true | PUT可能已写入但2xx ACK没有合法version identity；不Complete，可在无A状态按规则重PUT。 |
-| `DELIVERY_INTENT_VERSION_UNSUPPORTED` | false | middleware对started-v1早返回`status=error` typed unknown；不调用handler/finish，row保持started并继续阻断terminal。 |
+| `STORAGE_UPLOAD_VERSION_ID_INVALID` | true | PUT可能已成功，但2xx ACK没有可持久的version identity；不Complete。 |
+| `DELIVERY_INTENT_VERSION_UNSUPPORTED` | false | started-v1专用unknown诊断；不调用handler/recover/finish，row保持started。 |
 | `DELIVERY_SOURCE_VERSION_CONFLICT` | false | local/server locator不一致，或server locator没有对应本地durable Complete identity。 |
 
-原 `DELIVERY_INTENT_NOT_DURABLE`、`DELIVERY_UPLOAD_MISMATCH`、`DELIVERY_COMPLETION_MISMATCH`、scan/final错误及 Connect retry分类保持；不把内部 code 加进公开OpenAPI。缺ACK不得改报普通成功，冲突不得标retryable制造B。
-
-### 成功摘要与兼容边界
-
-成功 `DeliveryReceipt` 与 `DeliverResult` 仍只含 artifact/asset、Storage权威kind、digest、size、MIME及replay信息；不向Chat/BFF暴露A。旧已成功version1流程按既有 final journal/result/event重放，不调用v3、不删除或重发Artifact。只有未完成started v1 fail-closed。正式配对、真实owner和S06产品链验收前，此D0不是可调用能力声明。
+既有 lease、身份、origin、scan/final、Connect错误分类保持。成功 `DeliveryReceipt`/`DeliverResult` 仍只含artifact/asset、Storage权威kind、digest、size、MIME与replay信息，不向Chat/BFF暴露A。旧 succeeded结果直接重放最终摘要，不调用v3。纯contract/codegen已通过；真实owner配对及S06产品链由Root另验。
 
 ## T-A01.R257-A1 当前实现与验收边界（2026-10-06）
 

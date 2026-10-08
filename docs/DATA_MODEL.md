@@ -1,36 +1,28 @@
-## R353-A-S06：Artifact delivery intent v2（D0，无Schema变化；2026-10-08）
+## R353-A-S06：Artifact delivery intent v2（候选已实施，无Schema变化；2026-10-08）
 
-### 当前事实与目标数据边界
+### 唯一事实与存储位置
 
-Agent canonical SQL不变。现 `kokoro_agent_tool_journal` 已以 `(run_id,tool_call_id)` 保存 `name/status/result/is_error`；delivery在 `status=started` 时把 `result` 用作Agent-owned恢复意图，成功后同一行被最终 `DeliverResult`替换。现 `journal_delivery_intent` 虽有active lease锁、row `FOR UPDATE`与prior-loop，但只检查`version == 1`，`bool`可与整数混同，任意新增key没有阶段闭集；删除旧值为null的key还会被`proposed.get(key) == None`误当keep。目标必须在现方法内补精确验证，而非仅把版本常量改成2；无需新表、列、索引、FK、view、outbox、Redis key、第二receipt或新模块。
+Agent canonical SQL未变化。既有 `kokoro_agent_tool_journal` 继续以 `(run_id,tool_call_id)` 保存 `name/status/result/is_error`：delivery在started时用result保存Agent-owned恢复意图，成功后同一行由原 `DeliverResult`整体替换。Storage继续唯一保存Upload source intent、指定对象版本、scan、Asset与Artifact；Agent不保存bucket/key/ETag/scan结论，不读Storage数据库。没有新表、列、索引、FK、view、outbox、Redis key、第二receipt或新模块。
 
-Storage继续唯一保存 Upload的source intent、指定版本身份、scan、Asset与Artifact；Agent不保存bucket/key/ETag/scan结论，不读Storage数据库。S06的Skill draft/package/revision/installation仍是Platform事实，不写入本journal。
+### version2精确阶段
 
-### started intent version2 闭集
-
-| 阶段 | 必须字段 | 允许下一步 |
+| 阶段 | 精确键集 | 允许推进 |
 |---|---|---|
-| frozen | `version=2, run_id, session_id, tenant_ref, subject_ref, tool_call_id, path, title, note, mime_type, size_bytes, content_sha256` | 只增加`upload_id` |
-| admitted | frozen全部 + 非空`upload_id` | 无A时PUT；不得Complete |
-| source selected | admitted全部 + 合法原文`source_version_id` + 64位小写hex `complete_command_id`/`complete_request_digest` | 只可Complete同A、status恢复或最终完成 |
+| frozen | `version=2,run_id,session_id,tenant_ref,subject_ref,tool_call_id,path,title,note,mime_type,size_bytes,content_sha256` | 只加`upload_id` |
+| admitted | frozen全部 + 非空`upload_id` | 只加selected三键 |
+| selected | admitted全部 + `source_version_id,complete_command_id,complete_request_digest` | exact重放/Complete同A |
 
-允许的完整key集合仅为上表三种，初次只能frozen，之后只允许同阶段exact重放、frozen→admitted、admitted→source-selected。`type(version) is int and version == 2`；拒绝未知/额外key。每次UPDATE要求`prior.keys() <= proposed.keys()`，再以现Python确定性JSON编码（`sort_keys=True`、compact separators、默认`ensure_ascii=True`；非RFC8785）比较每个prior value，类型与值都exact，不能用`dict.get`把missing与null等同。A与两个Complete identity必须三键同现，repository在现方法内按`delivery-v2`公式重算并核固定值；禁止删键、改值、null占位、跳阶段、部分写或从owner status/current HEAD猜本地字段。source-selected事务提交前不得发Complete。SQL仍只更新started行；失败/旧lease零写。
+初次只准frozen；允许同阶段JSON-exact重放、frozen→admitted、admitted→selected。`type(version) is int and version == 2`，size为非负strict int，摘要为64位小写hex，A为1..512且拒绝空白/`null`/C0/DEL。每次UPDATE要求prior keys为proposed keys子集，既有值同时比较JSON类型和值；missing不等于null，bool不等于int。selected三键必须同现，repository以 `delivery-v2` 公式重算Complete command/digest，拒绝额外键、删键、跳阶段、partial三键或任一漂移。失败/旧lease零写。
 
-字段校验：`version`必须精确整数2（bool不算）；size为非负整数且与frozen bytes一致；digest/两个Complete identity为64位小写SHA-256；A对齐正式d13范围1..512、非纯空白/`null`/C0/DEL。consumer可更严格拒绝其它全Unicode空白，但不得trim/规范化accepted A；upload/run/session/tenant/subject/tool/path/title/MIME沿现有可信值与有界规则。恢复重新取得可信Run并逐项匹配，不从请求body覆盖tenant/subject/session。
+### 事务、并发、恢复与历史
 
-### 恢复、完成与历史状态
+每次 `journal_delivery_intent` 在同一数据库事务中锁active lease和原journal row；row lock不跨Create/PUT网络调用。PUT取得A后，A与两个Complete identity在一次selected UPDATE中keep-first；提交前不发Complete。同一call无durable A时允许多个物理PUT候选，只有一个locator可持久；loser零Complete/Artifact并停止。之后同call按winner A恢复，零PUT；Agent不以current HEAD猜测或删除loser对象。
 
-- middleware只把 `deliver + started + version2` 识别为可恢复；handler先recover，所以selected A不依赖工作区文件。
-- status pending：本地A存在时只用A；owner A存在必须等于本地A。两边无A时recover不写，publish有原bytes才可PUT B并先持久B。
-- status completed：要求same A、asset_id及原descriptor，随后才scan/finalize。A不表示CLEAN。
-- Complete/scan/final响应未知保持started，重入同tool_call和同命令；成功后现有tool finish把result整体替换为最终产品摘要。终态协调器仍把任一started视为未闭合，不能凭Storage状态跳过journal completion。
-- started version1不迁移、不自动添加字段、不重PUT、不Abort/删除owner对象。middleware早返回`status=error`及`unknown_outcome: DELIVERY_INTENT_VERSION_UNSUPPORTED`，不调用handler或journal finish，所以原row保持started且terminal继续阻断。succeeded行已是最终DeliverResult，不按started版本解析；旧Artifact与delivery event保持可读/可重放，不被v3切换误退役。
+pending且本地已有A时只Complete同A；owner若报告A必须完全相同。两边无A时recover返回未完成，publish持有原bytes才可生成新候选。completed要求同A、asset_id和原descriptor。Complete/scan/final ACK未知保持started并以同命令恢复；最终finish才把result替换为产品摘要。terminal barrier继续拒绝任一started。
 
-### 并发、retention与验证
+started version1不迁移、不补A、不重PUT、不finish；middleware返回typed unknown且row保持started。旧succeeded行已经是最终摘要，不解析started版本、不访问Storage、不退役Artifact/event。retention与GC保持既有规则。
 
-journal row锁只覆盖各短事务，不跨Create/PUT网络调用；因此同一tool_call在尚无durable A时可以发生两次物理PUT A/B，本片不冒称绝无重复PUT。source-selected transition只允许一个durable locator：CAS winner提交A；loser写B失败后不新建lease、零Complete/Artifact并停止。之后任何同call worker先读已知A即零PUT，只恢复A；Complete ACK loss同样继续A。未知B不由Agent猜current或盲删。local/server漂移为确定冲突。现Run/terminal retention与delivery event barrier不改；本片不新增GC，未完成v1也不靠定时任务猜测清理。
-
-真实PostgreSQL须证明base→upload→A+Complete identity三步单调、精确key闭集、missing-vs-null、bool-version、部分三键、额外键、任一旧键/locator/identity漂移全回滚、两个候选locator只有一个durable winner且loser零Complete/Artifact、lease loss零写且零后续owner调用、v1保持started而succeeded旧结果照常重放。真实Storage须另证versioned PUT late B不改变A、status/Complete ACK loss与无文件恢复只产一个FINAL；这些资源门由Root执行，不以纯单测代替。
+纯测试已覆盖三阶段键集、A+Complete identity、CAS loser零Complete/Artifact、无文件pending恢复、locator冲突、old-v1 middleware与old succeeded/event行为；真实PostgreSQL仍须由Root验证锁/CAS/rollback/lease，正式Storage+versioned ObjectStore须验证late B、ACK loss、scanner和单FINAL。本候选不以纯门替代资源验收。
 
 ## T-A01.R257-A1 当前实现与验收边界（2026-10-06）
 

@@ -26,12 +26,34 @@ from kokoro_agent.clients.storage import (
 )
 from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
 from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
-from kokoro_agent.generated.kokoro.storage.v2 import storage_pb as pb
+from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.clients.storage_transport import DeliveryTransport
 from kokoro_agent.protocol import ArtifactKind, RunRequest
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _Response = TypeVar("_Response")
+_BASE_INTENT_KEYS = frozenset(
+    {
+        "version",
+        "run_id",
+        "session_id",
+        "tenant_ref",
+        "subject_ref",
+        "tool_call_id",
+        "path",
+        "title",
+        "note",
+        "mime_type",
+        "size_bytes",
+        "content_sha256",
+    }
+)
+_ADMITTED_INTENT_KEYS = _BASE_INTENT_KEYS | {"upload_id"}
+_SELECTED_INTENT_KEYS = _ADMITTED_INTENT_KEYS | {
+    "source_version_id",
+    "complete_command_id",
+    "complete_request_digest",
+}
 _ARTIFACT_KIND_FROM_OWNER: dict[int, ArtifactKind] = {
     int(pb.ArtifactKind.DOCUMENT): "document",
     int(pb.ArtifactKind.CODE): "code",
@@ -72,9 +94,44 @@ def _digest(value: object) -> str:
 
 def _command(seed: str, stage: str, fields: object) -> CommandIdentity:
     return CommandIdentity(
-        command_id=_digest(["delivery", seed, stage]),
-        request_digest=_digest(["delivery-v1", stage, fields]),
+        command_id=_digest(["delivery-v2", seed, stage]),
+        request_digest=_digest(["delivery-v2", stage, fields]),
     )
+
+
+def _intent_stage(value: Mapping[str, object]) -> str:
+    keys = frozenset(value)
+    if type(value.get("version")) is not int or value["version"] != 2:
+        raise StorageClientError("DELIVERY_INTENT_VERSION_UNSUPPORTED")
+    if keys == _BASE_INTENT_KEYS:
+        return "frozen"
+    if keys == _ADMITTED_INTENT_KEYS:
+        return "admitted"
+    if keys == _SELECTED_INTENT_KEYS:
+        return "selected"
+    raise StorageClientError("DELIVERY_INTENT_INVALID")
+
+
+def _source_version(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 512
+        or value == "null"
+        or not value.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise StorageClientError("DELIVERY_INTENT_INVALID")
+    return value
+
+
+def _owner_source_version(status: pb.GetUploadStatusResponse) -> str | None:
+    if not status.has_field("source_version_id"):
+        return None
+    try:
+        return _source_version(status.source_version_id)
+    except StorageClientError as exc:
+        raise StorageClientError("DELIVERY_SOURCE_VERSION_CONFLICT") from exc
 
 
 def _artifact_kind(mime: str) -> pb.ArtifactKind:
@@ -151,6 +208,7 @@ class StorageDeliveryClient:
             frozen = _JSON_OBJECT.validate_json(recorded.result)
         except ValidationError as exc:
             raise StorageClientError("DELIVERY_INTENT_INVALID") from exc
+        stage = _intent_stage(frozen)
         run = await self._canonical(
             DeliveryRequest(
                 request_id=request.request_id,
@@ -168,7 +226,7 @@ class StorageDeliveryClient:
             )
         )
         expected = {
-            "version": 1,
+            "version": 2,
             "run_id": run.run_id,
             "session_id": run.session_id,
             "tenant_ref": run.execution_identity.tenant_ref,
@@ -178,7 +236,9 @@ class StorageDeliveryClient:
             "title": request.title,
             "note": request.note,
         }
-        if any(frozen.get(key) != value for key, value in expected.items()):
+        if any(
+            key not in frozen or frozen[key] != value for key, value in expected.items()
+        ):
             raise StorageClientError("DELIVERY_INTENT_MISMATCH")
         digest = frozen.get("content_sha256")
         size = frozen.get("size_bytes")
@@ -192,11 +252,32 @@ class StorageDeliveryClient:
             or size < 0
             or not isinstance(mime, str)
             or not mime
-            or (upload_id is not None and not isinstance(upload_id, str))
         ):
             raise StorageClientError("DELIVERY_INTENT_INVALID")
-        if not upload_id:
+        if stage == "frozen":
             return None
+        if not isinstance(upload_id, str) or not upload_id:
+            raise StorageClientError("DELIVERY_INTENT_INVALID")
+        source_version_id = (
+            _source_version(frozen.get("source_version_id"))
+            if stage == "selected"
+            else None
+        )
+        seed = _digest([request.run_id, request.tool_call_id])
+        complete_command = (
+            _command(
+                seed,
+                "complete_upload",
+                [upload_id, digest, size, source_version_id],
+            )
+            if source_version_id is not None
+            else None
+        )
+        if complete_command is not None and (
+            frozen.get("complete_command_id") != complete_command.command_id
+            or frozen.get("complete_request_digest") != complete_command.request_digest
+        ):
+            raise StorageClientError("DELIVERY_INTENT_INVALID")
         owner_request = DeliveryRequest(
             request_id=request.request_id,
             run_id=request.run_id,
@@ -226,14 +307,46 @@ class StorageDeliveryClient:
             or status.mime_type != mime
         ):
             raise StorageClientError("DELIVERY_UPLOAD_MISMATCH")
+        owner_source_version = _owner_source_version(status)
+        if source_version_id is None:
+            if owner_source_version is not None:
+                raise StorageClientError("DELIVERY_SOURCE_VERSION_CONFLICT")
+        elif (
+            owner_source_version is not None
+            and owner_source_version != source_version_id
+        ):
+            raise StorageClientError("DELIVERY_SOURCE_VERSION_CONFLICT")
         if status.state == pb.UploadState.PENDING:
-            return None
-        if status.state != pb.UploadState.COMPLETED or not status.asset_id:
+            if source_version_id is None or complete_command is None:
+                return None
+            completed = _expect(
+                await self._call(
+                    owner_request,
+                    "complete_upload",
+                    pb.CompleteUploadRequest(
+                        command=complete_command,
+                        upload_id=upload_id,
+                        content_sha256=digest,
+                        size_bytes=size,
+                        source_version_id=source_version_id,
+                    ),
+                ),
+                pb.CompleteUploadResponse,
+            )
+            if completed.upload_id != upload_id or not completed.asset_id:
+                raise StorageClientError("DELIVERY_COMPLETION_MISMATCH")
+            asset_id = completed.asset_id
+        elif (
+            status.state != pb.UploadState.COMPLETED
+            or source_version_id is None
+            or owner_source_version != source_version_id
+            or not status.asset_id
+        ):
             raise StorageClientError("DELIVERY_UPLOAD_NOT_COMPLETED")
-        await self._require_clean(owner_request, status.asset_id)
-        return await self._finalize(
-            owner_request, asset_id=status.asset_id, size_bytes=size
-        )
+        else:
+            asset_id = status.asset_id
+        await self._require_clean(owner_request, asset_id)
+        return await self._finalize(owner_request, asset_id=asset_id, size_bytes=size)
 
     async def _call(
         self, request: DeliveryRequest, method: str, message: object
@@ -265,10 +378,10 @@ class StorageDeliveryClient:
 
     async def _put(
         self, request: DeliveryRequest, reference: pb.TransferReference
-    ) -> None:
+    ) -> str:
         await self._canonical(request)
         try:
-            await self._transport.put(reference, request.content)
+            return await self._transport.put(reference, request.content)
         except (httpx.HTTPError, TimeoutError) as exc:
             raise StorageClientError(
                 "STORAGE_UPLOAD_PUT_FAILED", retryable=True
@@ -284,7 +397,7 @@ class StorageDeliveryClient:
             request.tool_call_id,
             json.dumps(value, sort_keys=True, separators=(",", ":")),
         ):
-            raise StorageClientError("DELIVERY_INTENT_NOT_DURABLE")
+            raise StorageClientError("DELIVERY_INTENT_NOT_DURABLE", retryable=True)
 
     async def _abort_unstarted_upload(
         self, request: DeliveryRequest, seed: str, upload_id: str
@@ -338,7 +451,7 @@ class StorageDeliveryClient:
             raise StorageClientError("DELIVERY_METADATA_INVALID")
         seed = _digest([request.run_id, request.tool_call_id])
         frozen: dict[str, object] = {
-            "version": 1,
+            "version": 2,
             "run_id": run.run_id,
             "session_id": run.session_id,
             "tenant_ref": run.execution_identity.tenant_ref,
@@ -360,15 +473,44 @@ class StorageDeliveryClient:
                     recorded = _JSON_OBJECT.validate_json(prior.result)
                 except ValidationError as exc:
                     raise StorageClientError("DELIVERY_INTENT_INVALID") from exc
-                if any(recorded.get(key) != value for key, value in frozen.items()):
+                _intent_stage(recorded)
+                if any(
+                    key not in recorded or recorded[key] != value
+                    for key, value in frozen.items()
+                ):
                     raise StorageClientError("DELIVERY_INTENT_MISMATCH")
                 frozen.update(recorded)
+        stage = _intent_stage(frozen)
         await self._intent(request, frozen)
 
         upload_id_value = frozen.get("upload_id")
         if upload_id_value is not None and not isinstance(upload_id_value, str):
             raise StorageClientError("DELIVERY_INTENT_INVALID")
         upload_id = upload_id_value
+        source_version_id = (
+            _source_version(frozen.get("source_version_id"))
+            if stage == "selected"
+            else None
+        )
+        complete_command = (
+            _command(
+                seed,
+                "complete_upload",
+                [
+                    upload_id,
+                    request.content_sha256,
+                    len(request.content),
+                    source_version_id,
+                ],
+            )
+            if upload_id is not None and source_version_id is not None
+            else None
+        )
+        if complete_command is not None and (
+            frozen.get("complete_command_id") != complete_command.command_id
+            or frozen.get("complete_request_digest") != complete_command.request_digest
+        ):
+            raise StorageClientError("DELIVERY_INTENT_INVALID")
         asset_id: str | None = None
         if upload_id:
             status = _expect(
@@ -380,12 +522,27 @@ class StorageDeliveryClient:
                 pb.GetUploadStatusResponse,
             )
             if (
-                status.expected_sha256 != request.content_sha256
+                status.upload_id != upload_id
+                or status.expected_sha256 != request.content_sha256
                 or status.expected_size_bytes != len(request.content)
                 or status.mime_type != request.mime_type
             ):
                 raise StorageClientError("DELIVERY_UPLOAD_MISMATCH")
+            owner_source_version = _owner_source_version(status)
+            if source_version_id is None:
+                if owner_source_version is not None:
+                    raise StorageClientError("DELIVERY_SOURCE_VERSION_CONFLICT")
+            elif (
+                owner_source_version is not None
+                and owner_source_version != source_version_id
+            ):
+                raise StorageClientError("DELIVERY_SOURCE_VERSION_CONFLICT")
             if status.state == pb.UploadState.COMPLETED:
+                if (
+                    source_version_id is None
+                    or owner_source_version != source_version_id
+                ):
+                    raise StorageClientError("DELIVERY_SOURCE_VERSION_CONFLICT")
                 asset_id = status.asset_id or None
             elif status.state != pb.UploadState.PENDING:
                 raise StorageClientError("DELIVERY_UPLOAD_NOT_PENDING")
@@ -400,7 +557,7 @@ class StorageDeliveryClient:
                 request.content_sha256,
             ],
         )
-        if asset_id is None:
+        if asset_id is None and source_version_id is None:
             created = _expect(
                 await self._call(
                     request,
@@ -433,24 +590,46 @@ class StorageDeliveryClient:
                 await self._abort_unstarted_upload(request, seed, upload_id)
                 raise StorageClientError("STORAGE_UPLOAD_REFERENCE_INVALID")
             try:
-                await self._put(request, created.upload_reference)
+                source_version_id = await self._put(request, created.upload_reference)
             except StorageClientError as exc:
                 if exc.code == "STORAGE_UPLOAD_REFERENCE_INVALID":
                     await self._abort_unstarted_upload(request, seed, upload_id)
                 raise
+            complete_command = _command(
+                seed,
+                "complete_upload",
+                [
+                    upload_id,
+                    request.content_sha256,
+                    len(request.content),
+                    source_version_id,
+                ],
+            )
+            frozen.update(
+                {
+                    "source_version_id": source_version_id,
+                    "complete_command_id": complete_command.command_id,
+                    "complete_request_digest": complete_command.request_digest,
+                }
+            )
+            await self._intent(request, frozen)
+        if asset_id is None:
+            if (
+                upload_id is None
+                or source_version_id is None
+                or complete_command is None
+            ):
+                raise StorageClientError("DELIVERY_INTENT_INVALID")
             completed = _expect(
                 await self._call(
                     request,
                     "complete_upload",
                     pb.CompleteUploadRequest(
-                        command=_command(
-                            seed,
-                            "complete_upload",
-                            [upload_id, request.content_sha256, len(request.content)],
-                        ),
+                        command=complete_command,
                         upload_id=upload_id,
                         content_sha256=request.content_sha256,
                         size_bytes=len(request.content),
+                        source_version_id=source_version_id,
                     ),
                 ),
                 pb.CompleteUploadResponse,

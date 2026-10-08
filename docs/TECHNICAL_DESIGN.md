@@ -1,44 +1,43 @@
-## R353-A-S06：Agent Artifact Delivery 固定 Storage v3（D0，未实施；2026-10-08）
+## R353-A-S06：Agent Artifact Delivery 固定 Storage v3（候选已实施；2026-10-08）
 
-### 当前事实、必要性与完成边界
+### 当前事实、必要性与边界
 
-当前标准 worker 在配置 Storage 时装配 `StorageDeliveryTransport`/`StorageDeliveryClient`，普通 `deliver` 工具先恢复 started journal，未完成时读取工作区，再执行 Upload→CLEAN Asset→FINAL Artifact。生产 client 与生成路由仍固定 `kokoro.storage.v2.StorageService`；正式 Storage `d13f33acfc7a482d61ebffc58e7b2667b58ae197` 只注册 v3，因此正常产物首个 CreateUpload 会落到未注册路径。现 PUT 又丢弃 `x-amz-version-id`，Complete/状态恢复未绑定正式 v3 必需的 `source_version_id`，pending 重放会再次 PUT。
+本切片已把既有 `StorageDeliveryTransport` / `StorageDeliveryClient` 从已退役 v2 单轨切到 Storage commit `d13f33acfc7a482d61ebffc58e7b2667b58ae197` 的 v3；vendored Proto 组合 SHA-256 为 `47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9`。生成 client 暴露 owner 的 17 RPC，生产 dispatch 仍只允许 Artifact delivery 的七操作。v2 vendor/generated closure 已删除，无 alias、fallback、双 pin、代理、新进程或新表。
 
-这是计划 S06 四入口最终保存/验证/发布/安装所需的 Artifact 依赖前置，不把 Agent 变成 Skill owner：Platform 仍拥有草稿/包/发布/安装，Storage 仍拥有 bytes、Upload source intent、Asset/Artifact；Agent 只修既有作品交付消费者。完成本片不代表 S06、BFF/Web、正常 Storage 激活或 Skills UI 完成。
+这是 S06 四入口最终保存/验证/发布/安装所需的 Artifact 前置，不改变 owner：Platform 继续拥有 Skill 草稿、包、发布和安装；Storage 继续拥有 bytes、Upload source intent、Asset/Artifact；Agent 只拥有既有 Run lease、tool journal 和 delivery 编排。它不代表 S06、BFF/Web、正常 Storage 激活或 Skills UI 已完成。
 
-### 放置与依赖裁决
+### 放置与唯一调用顺序
 
-| 项 | D0 结论 |
-|---|---|
-| Owner | `kokoro-agent` 只写既有 Run lease/tool journal 与 Artifact delivery intent；Storage 是 Upload/bytes/source/Asset/Artifact 唯一 writer。 |
-| 当前入口 | `worker/main.py` 仍原位装配；`tools/deliver.py` 仍先 `recover()`、后读工作区/`publish()`；成功继续写既有 `DeliverResult` 与 delivery event。 |
-| 采用位置 | 扩现 `clients/storage_transport.py`、`clients/storage_delivery.py`、`infrastructure/postgres_run_effects.py`、`tools/middleware.py`、runtime source inventory 与既有 Storage codegen。 |
-| 淘汰方案 | 不建 generic workflow/import/capability service，不建 v2 proxy/alias、第二 client、feature flag、双 pin 或第二 journal。它们均会复制 delivery/source intent。 |
-| 数据 | 复用 `kokoro_agent_tool_journal.result` JSON；无表、列、索引、view、Redis key、outbox或进程。 |
-| Wire | 只固定正式 d13 v3 owner bytes/generated 17 RPC；生产 dispatch 仍只允许原七个 Artifact RPC。 |
-| 删除 | 同切删除完整 `contract/storage/v2` 与 generated storage/v2 closure；无 fallback/双 decoder。 |
+实现只扩既有 `clients/storage_transport.py`、`clients/storage_delivery.py`、`infrastructure/postgres_run_effects.py`、`tools/middleware.py`、runtime source inventory 与原 Storage generator。标准 worker/`tools/deliver.py` 入口不变：先在读取工作区前 `recover()`，未恢复时才读取 bytes 并 `publish()`；最终仍返回原 `DeliveryReceipt`/`DeliverResult` 并走原 delivery event。
 
-### started intent v2 与精确 A 状态机
+started intent 固定 `version=2`，只允许三组精确键：
 
-新 started intent 固定 `version=2`，只允许三个精确key集合：frozen基础字段 `run_id/session_id/tenant_ref/subject_ref/tool_call_id/path/title/note/mime_type/size_bytes/content_sha256`；admitted在其上只增加 `upload_id`；source-selected再一次原子增加 `source_version_id`、`complete_command_id`、`complete_request_digest`。repository必须以 `type(version) is int and version == 2`、阶段闭集和字段类型校验输入；prior keys必须是proposed keys子集且每个既有值按确定性JSON编码完全相等，禁止额外键、删键、null占位、跳阶段或A/Complete三键部分写入。selected阶段还须在现方法内重算并验证固定Complete identity，不能只检查64位形状。
+1. frozen：`version,run_id,session_id,tenant_ref,subject_ref,tool_call_id,path,title,note,mime_type,size_bytes,content_sha256`；
+2. admitted：frozen 加非空 `upload_id`；
+3. selected：admitted 原子加 `source_version_id,complete_command_id,complete_request_digest`。
 
-`source_version_id` 是 PUT 2xx 响应 `x-amz-version-id` 的原始 opaque 值。正式d13 `src/integrations/object-store/validation.ts:89-98` 的范围是1..512、非纯空白、非字面 `null`、无C0/DEL；consumer使用相同512上限，并可更保守拒绝额外“全Unicode空白”输入，但检查空白不等于trim：一旦接受，必须逐字符原样持久/摘要/发送，不解码、改大小写或用ETag/current HEAD代替。
+唯一顺序为冻结基础意图→CreateUpload→持久 upload_id→signed PUT 得 A→有效 lease 下持久 A 与 Complete identity 三键→Complete(A)。repository 以 `type(version) is int`、精确阶段键集、字段类型、prior keys 子集和 JSON 类型/值完全相等守门；初次只准 frozen，同阶段可 exact replay，只准逐阶段推进。selected 阶段在原事务方法内重算 Complete identity；缺键、额外键、missing/null混同、bool版本、跳阶段或旧值漂移均零写。row lock 只覆盖每次 journal 事务，不跨网络 PUT。
 
-调用顺序唯一为：冻结基础意图→CreateUpload→持久 `upload_id`→PUT 得 A→在有效 lease 下持久 `{A, Complete identity}`→Complete(A)。A 持久化失败、CAS输掉或 lease 丢失后，Complete/Artifact副作用必须为零。所有 v3 owner command 使用新 `delivery-v2` namespace，防止复用旧 v2 receipt。摘要输入不是RFC8785/JCS：精确沿现Python `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")` 的确定性字节；`seed=SHA256(JSON([run_id,tool_call_id]))`，`command_id=SHA256(JSON(["delivery-v2",seed,stage]))`，`request_digest=SHA256(JSON(["delivery-v2",stage,fields]))`。Complete 的 `fields` 精确为 `[upload_id,content_sha256,size_bytes,source_version_id]`，同 command 改 A 必为 digest conflict。
+### source locator、命令与并发
 
-恢复先用可信 Run/lease 重建 conversation scope，再以 status 逐项核 `upload_id/hash/size/MIME/A`。completed 必须有同 A 与 asset_id；pending 且本地 A、owner A或缺省时都只 Complete 同 A，零 PUT，并可在工作区文件消失时继续 scan/finalize。pending 且两边都无 A 时，`recover()` 返回未完成；仅 `publish()` 在仍有原 bytes 时可 replay CreateUpload、PUT 新 B、先持久 B 后首次 Complete。任一 local/server locator 不一致，或 server 有 A 但本地无对应 durable A/Complete identity，都失败关闭，禁止采用 current HEAD或重 PUT B。
+PUT 2xx 必须带 `x-amz-version-id`。A 按正式 owner validator 限制在 1..512 字符，拒绝纯空白、字面 `null`、C0/DEL；接受值逐字符原样持久、摘要和发送，不 trim、不拿 ETag/current HEAD 代替。所有 owner command 都改用 `delivery-v2` namespace。摘要沿现 Python `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")`，不是 RFC8785/JCS：
 
-### 实际 journal/replay 生命周期
+```text
+seed = SHA256(JSON([run_id, tool_call_id]))
+command_id = SHA256(JSON(["delivery-v2", seed, stage]))
+request_digest = SHA256(JSON(["delivery-v2", stage, fields]))
+complete.fields = [upload_id, content_sha256, size_bytes, source_version_id]
+```
 
-middleware 只有 `started + version2` 才重入同一 tool_call；`deliver` 首先调用 `recover()`，故已持久 A 可在读取工作区前完成。`journal_delivery_intent` 继续锁 active lease与原row，但目标不是把`version == 1`机械改为2：必须在现方法内实施上述精确key/stage/type/JSON-exact/Complete identity校验，再执行keep-first UPDATE。成功后现 `journal_tool_finished` 原子把started intent替换成原 `DeliverResult`；终态barrier仍拒任何started，成功event仍只从已完成结果重建。
+同一 call 在尚无 durable A 时可能有两个 worker 各自完成物理 PUT A/B；本实现只承诺一个 selected locator 能 keep-first 持久化。CAS loser/lease loser在选定持久化失败后停止，零 Complete/Artifact，不新建 lease。后续读取 winner A 的同一 call 零 PUT。
 
-row锁只覆盖每次journal事务，不跨Create/PUT网络段。同一call在尚无durable A时可能有两个worker都完成物理PUT A/B；允许承诺的边界是只有一个source-selected locator能提交。CAS loser不得新建lease，也不得Complete/Artifact；之后同call读到winner A必须零PUT并只恢复A。未知B由Storage既有生命周期处理，Agent不按current HEAD猜选或盲删。
+### 恢复、历史状态与停止线
 
-middleware对旧 `deliver + started + version1` 走专门早返回：不调用handler/recover，不调用`journal_tool_finished`，返回 `status=error` 且内容含稳定typed诊断 `unknown_outcome: DELIVERY_INTENT_VERSION_UNSUPPORTED`；数据库行保持started，故terminal barrier继续阻断。不得自动补 A、重 PUT、升级JSON或当工具成功；交现有运维/fixture显式处置。旧 `succeeded` journal 已保存最终 DeliverResult，不再解析 started version、不重访 Storage，也不退役/重建既有 Artifact。最终 `DeliveryReceipt`/Chat event 不新增 provider locator；A 的恢复责任只存在于 started intent，完成事实与source receipt由 Storage拥有。
+恢复逐项验证 trusted Run/conversation scope 与 upload_id/hash/size/MIME/A。`PENDING + local A + owner同A或未报告A` 直接重发持久 Complete(A)，零 PUT且不依赖工作区文件；两边无A时 `recover()` 返回未完成，只有仍持 bytes 的 `publish()` 可重放 CreateUpload、PUT B、先持久B再Complete。`COMPLETED` 必须报告同A与asset_id。local/server A冲突或server有A而本地无durable selected identity都以 typed conflict 停止。
 
-### 实施与验收停止线
+middleware只把 `deliver + started + version2` 作为可恢复意图。旧 started-v1 返回 `status=error` 与 `DELIVERY_INTENT_VERSION_UNSUPPORTED`，不进handler/recover、不finish，row保持started并继续阻断terminal；旧 succeeded结果仍按最终 DeliverResult 重放，不访问Storage或退役Artifact。最终产品摘要和公开事件不暴露A。
 
-先落具名 RED，再单一 writer 改最小现有文件；不扩 Run/HITL/Billing、公开HTTP/event字段或 timeout。纯门之后由 Root 用真实 PostgreSQL 验 monotonic/fence，再与正式 d13、versioned ObjectStore、scanner 验 A、late B、Complete ACK loss、无文件恢复和单一FINAL。S06四创建路径、BFF/Web与正常环境激活继续独立验收。
+当前候选纯门：具名RED 1 failed；聚焦 contract/unit 86 passed；默认纯测试 2331 passed、756 deselected，另有2个受保护基线失败（`interfaces/http/server.py`既有cast、`contract_check.py`既有200行阈值），未据此越界修改。Pyright与codegen drift已通过。真实 PostgreSQL 的阶段/CAS/lease、正式 Storage+versioned ObjectStore+scanner 的 late-B/ACK-loss/无文件恢复/单FINAL由 Root 后续执行；本候选不冒充资源或产品整链验收。
 
 ## T-A01.R257-A1 当前实现与验收边界（2026-10-06）
 

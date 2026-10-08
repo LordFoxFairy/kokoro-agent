@@ -11,7 +11,10 @@ Model owner 的领域模型。
   需要的 MCP 配置读取面；注册、启停、凭据和路径由 Capability public contract 负责。MCP grant
   细节留在 client 内部。适配器用 `McpClientError` 表达 Capability 读取不可用；已声明 MCP 直接失败，不回退部署定义；无声明时不调用 client。
 - `storage.py`：`DeliveryClient.publish()` 是 GA 发布产物的唯一 Storage Artifact
-  facade。GA 不组装 bucket key，不持有 upload/asset/artifact 生命周期。
+  facade。`storage_transport.py` 固定正式 Storage v3 并只开放七个 delivery RPC；signed PUT
+  返回原始 object version。`storage_delivery.py` 先以 tool journal v2 keep-first 持久
+  upload/version/Complete identity，再 Complete、scan 与 finalize。GA 不组装 bucket key，
+  不持有 Storage 的 upload/asset/artifact 生命周期。
 
 后续新增 client 时，按 owner contract 拆文件；Agent/Feature 只能依赖协议，具体 HTTP、Connect
 或 SDK 实现由部署通过 `WorkerClients` 注入。标准 CLI 不直读 owner 私库；本地内存实现仅是测试

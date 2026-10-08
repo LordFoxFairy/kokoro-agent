@@ -15,6 +15,11 @@ def test_production_manifest_has_real_resource_closures() -> None:
         assert descriptor["files"]
     assert manifest.descriptor("native")["version"] == "0.6.6"
     assert manifest.dynamic_edges
+    composition = next(
+        source for source in manifest.sources if source.source_id == "composition"
+    )
+    assert "generated/kokoro/storage/v3/storage_pb.py" in composition.resource_paths
+    assert not any("storage/v2" in path for path in composition.resource_paths)
 
 
 def test_unknown_duplicate_and_missing_source_fail_closed() -> None:

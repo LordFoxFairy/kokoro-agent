@@ -7,15 +7,26 @@ from kokoro_agent.domain.run.models import CancelTerminalAuthority, RunTerminalO
 
 import json
 import asyncio
+import hashlib
+from pathlib import Path
 import pytest
 from typing import Any
 
+from deepagents.backends.local_shell import LocalShellBackend
+from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.messages import ToolMessage
+from langgraph.prebuilt.tool_node import ToolRuntime
+
 from support.fakes import FakeBus
+from kokoro_agent.clients.storage import StorageClientError
+from kokoro_agent.clients.storage_delivery import StorageDeliveryClient
 from kokoro_agent.domain.run.repository import RunRepository, LeaseFence
 from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepository
 from kokoro_agent.domain.run.scope import RunScope
-from kokoro_agent.tools.deliver import DeliverResult
+from kokoro_agent.tools.deliver import DeliverResult, make_deliver_tool
+from kokoro_agent.tools.middleware import ToolEffectJournalMiddleware
 from kokoro_agent.protocol import (
     DeliveryCreatedPayload,
     ExecutionIdentity,
@@ -80,6 +91,120 @@ def _payload() -> DeliveryCreatedPayload:
     )
 
 
+def _delivery_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+class _BarrierStorageTransport:
+    def __init__(
+        self,
+        *,
+        source_version_id: str,
+        content: bytes,
+        put_ready: asyncio.Event,
+        release_put: asyncio.Event,
+        complete_entered: asyncio.Event | None = None,
+        release_complete: asyncio.Event | None = None,
+    ) -> None:
+        self.source_version_id = source_version_id
+        self.content = content
+        self.put_ready = put_ready
+        self.release_put = release_put
+        self.complete_entered = complete_entered
+        self.release_complete = release_complete
+        self.calls: list[str] = []
+        self.puts = 0
+
+    async def call(
+        self, method: str, request: object, headers: dict[str, str]
+    ) -> object:
+        del headers
+        self.calls.append(method)
+        content_sha256 = hashlib.sha256(self.content).hexdigest()
+        if method == "get_upload_status":
+            return pb.GetUploadStatusResponse(
+                upload_id="upload-1",
+                state=pb.UploadState.PENDING,
+                expected_sha256=content_sha256,
+                expected_size_bytes=len(self.content),
+                mime_type="application/pdf",
+            )
+        if method == "create_upload":
+            return pb.CreateUploadResponse(
+                upload_id="upload-1",
+                upload_reference=pb.TransferReference(
+                    url="http://127.0.0.1:9000/upload-1", method="PUT"
+                ),
+            )
+        if method == "complete_upload":
+            assert isinstance(request, pb.CompleteUploadRequest)
+            assert request.source_version_id == self.source_version_id
+            if self.complete_entered is not None:
+                self.complete_entered.set()
+            if self.release_complete is not None:
+                await self.release_complete.wait()
+            return pb.CompleteUploadResponse(
+                upload_id="upload-1",
+                asset_id="asset-1",
+                scan_state=pb.ScanState.CLEAN,
+            )
+        if method == "get_scan_status":
+            return pb.GetScanStatusResponse(
+                asset_id="asset-1", state=pb.ScanState.CLEAN
+            )
+        if method == "create_artifact":
+            assert isinstance(request, pb.CreateArtifactRequest)
+            return pb.CreateArtifactResponse(
+                artifact_id="artifact-1",
+                asset_id="asset-1",
+                content_sha256=content_sha256,
+                state=pb.ArtifactState.DRAFT,
+                kind=request.kind,
+                title="Report",
+                source_run_id="delivery-outbox-run",
+            )
+        if method == "finalize_artifact":
+            return pb.FinalizeArtifactResponse(
+                artifact_id="artifact-1",
+                asset_id="asset-1",
+                content_sha256=content_sha256,
+                state=pb.ArtifactState.FINAL,
+            )
+        raise AssertionError(method)
+
+    async def put(self, reference: pb.TransferReference, content: bytes) -> str:
+        assert reference.method == "PUT"
+        assert content == self.content
+        self.puts += 1
+        self.put_ready.set()
+        await self.release_put.wait()
+        return self.source_version_id
+
+
+def _tool_request() -> ToolCallRequest:
+    runtime: ToolRuntime[Any, Any] = ToolRuntime(
+        state=None,
+        context=None,
+        config={},
+        stream_writer=lambda _chunk: None,
+        tool_call_id="tool-1",
+        store=None,
+    )
+    return ToolCallRequest(
+        tool_call={
+            "name": "deliver",
+            "args": {"path": "/report.pdf", "title": "Report", "note": ""},
+            "id": "tool-1",
+            "type": "tool_call",
+        },
+        tool=None,
+        state=None,
+        runtime=runtime,
+    )
+
+
 async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_frame(
     run_repository: RunRepository,
     chat_repository: PostgresChatRepository,
@@ -91,7 +216,7 @@ async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_fram
         run.run_id, lease, "tool-1", "deliver"
     )
     frozen = {
-        "version": 1,
+        "version": 2,
         "run_id": run.run_id,
         "session_id": run.session_id,
         "tenant_ref": "tenant-1",
@@ -99,6 +224,7 @@ async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_fram
         "tool_call_id": "tool-1",
         "path": "/report.pdf",
         "title": "Report",
+        "note": "",
         "mime_type": "application/pdf",
         "size_bytes": 6,
         "content_sha256": "a" * 64,
@@ -116,9 +242,34 @@ async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_fram
     assert not await run_repository.journal_delivery_intent(
         run.run_id, lease, "tool-1", json.dumps(frozen)
     )
+    seed = _delivery_digest([run.run_id, "tool-1"])
+    complete_fields = ["upload-1", "a" * 64, 6, "version-A"]
+    selected = {
+        **progressed,
+        "source_version_id": "version-A",
+        "complete_command_id": _delivery_digest(
+            ["delivery-v2", seed, "complete_upload"]
+        ),
+        "complete_request_digest": _delivery_digest(
+            ["delivery-v2", "complete_upload", complete_fields]
+        ),
+    }
+    assert await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(selected)
+    )
+    for invalid in (
+        {**selected, "extra": "forbidden"},
+        {key: value for key, value in selected.items() if key != "note"},
+        {**selected, "source_version_id": "version-B"},
+        {**selected, "complete_request_digest": "0" * 64},
+        {**selected, "version": True},
+    ):
+        assert not await run_repository.journal_delivery_intent(
+            run.run_id, lease, "tool-1", json.dumps(invalid)
+        )
     journal = await run_repository.get_tool_journal(run.run_id, "tool-1")
     assert journal is not None
-    assert json.loads(journal.result) == progressed
+    assert json.loads(journal.result) == selected
 
     bus = FakeBus()
     emitter = await RunEmitter.attach(
@@ -155,6 +306,254 @@ async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_fram
         original.index,
         original.timestamp,
     )
+
+
+async def test_same_lease_locator_candidates_keep_one_selected_intent(
+    run_repository: RunRepository,
+) -> None:
+    run = _request()
+    lease = await run_repository.try_claim(run, "worker-1")
+    assert lease is not None
+    assert await run_repository.journal_tool_started(
+        run.run_id, lease, "tool-1", "deliver"
+    )
+    frozen = {
+        "version": 2,
+        "run_id": run.run_id,
+        "session_id": run.session_id,
+        "tenant_ref": "tenant-1",
+        "subject_ref": "user-1",
+        "tool_call_id": "tool-1",
+        "path": "/report.pdf",
+        "title": "Report",
+        "note": "",
+        "mime_type": "application/pdf",
+        "size_bytes": 6,
+        "content_sha256": "a" * 64,
+    }
+    admitted = {**frozen, "upload_id": "upload-1"}
+    assert await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(frozen)
+    )
+    assert await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(admitted)
+    )
+    seed = _delivery_digest([run.run_id, "tool-1"])
+
+    def selected(source_version_id: str) -> dict[str, object]:
+        fields = ["upload-1", "a" * 64, 6, source_version_id]
+        return {
+            **admitted,
+            "source_version_id": source_version_id,
+            "complete_command_id": _delivery_digest(
+                ["delivery-v2", seed, "complete_upload"]
+            ),
+            "complete_request_digest": _delivery_digest(
+                ["delivery-v2", "complete_upload", fields]
+            ),
+        }
+
+    ready = 0
+    both_ready = asyncio.Event()
+
+    async def compete(candidate: dict[str, object]) -> bool:
+        nonlocal ready
+        ready += 1
+        if ready == 2:
+            both_ready.set()
+        await both_ready.wait()
+        return await run_repository.journal_delivery_intent(
+            run.run_id, lease, "tool-1", json.dumps(candidate)
+        )
+
+    candidates = [selected("version-A"), selected("version-B")]
+    outcomes = await asyncio.gather(*(compete(candidate) for candidate in candidates))
+    assert sorted(outcomes) == [False, True]
+    winner = candidates[outcomes.index(True)]
+    loser = candidates[outcomes.index(False)]
+
+    journal = await run_repository.get_tool_journal(run.run_id, "tool-1")
+    assert journal is not None
+    assert journal.status == "started"
+    assert json.loads(journal.result) == winner
+    assert await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(winner)
+    )
+    assert not await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(loser)
+    )
+    assert not await run_repository.journal_delivery_intent(
+        run.run_id,
+        LeaseFence(owner=lease.owner, generation=lease.generation + 1),
+        "tool-1",
+        json.dumps(winner),
+    )
+    for invalid in (
+        {**winner, "version": True},
+        {key: value for key, value in winner.items() if key != "source_version_id"},
+        admitted,
+    ):
+        assert not await run_repository.journal_delivery_intent(
+            run.run_id, lease, "tool-1", json.dumps(invalid)
+        )
+    preserved = await run_repository.get_tool_journal(run.run_id, "tool-1")
+    assert preserved is not None
+    assert json.loads(preserved.result) == winner
+    assert await run_repository.journal_tool_finished(
+        run.run_id,
+        lease,
+        "tool-1",
+        DeliverResult(
+            status="delivered",
+            artifact_id="artifact-1",
+            asset_id="asset-1",
+            artifact_kind="document",
+            path="/report.pdf",
+            title="Report",
+            mime="application/pdf",
+            size=6,
+            content_hash="a" * 64,
+            note="",
+        ).model_dump_json(),
+        False,
+    )
+    final = await run_repository.get_tool_journal(run.run_id, "tool-1")
+    assert final is not None and final.status == "succeeded"
+
+
+async def test_same_lease_cas_loser_crosses_client_deliver_and_middleware_without_finish(
+    run_repository: RunRepository,
+    tmp_path: Path,
+) -> None:
+    run = _request()
+    lease = await run_repository.try_claim(run, "worker-1")
+    assert lease is not None
+    assert await run_repository.journal_tool_started(
+        run.run_id, lease, "tool-1", "deliver"
+    )
+    content = b"report"
+    content_sha256 = hashlib.sha256(content).hexdigest()
+    frozen = {
+        "version": 2,
+        "run_id": run.run_id,
+        "session_id": run.session_id,
+        "tenant_ref": run.execution_identity.tenant_ref,
+        "subject_ref": run.execution_identity.subject.opaque_ref,
+        "tool_call_id": "tool-1",
+        "path": "/report.pdf",
+        "title": "Report",
+        "note": "",
+        "mime_type": "application/pdf",
+        "size_bytes": len(content),
+        "content_sha256": content_sha256,
+    }
+    assert await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(frozen)
+    )
+    admitted = {**frozen, "upload_id": "upload-1"}
+    assert await run_repository.journal_delivery_intent(
+        run.run_id, lease, "tool-1", json.dumps(admitted)
+    )
+    (tmp_path / "report.pdf").write_bytes(content)
+
+    a_put_ready = asyncio.Event()
+    b_put_ready = asyncio.Event()
+    release_a_put = asyncio.Event()
+    release_b_put = asyncio.Event()
+    a_complete_entered = asyncio.Event()
+    release_a_complete = asyncio.Event()
+    transport_a = _BarrierStorageTransport(
+        source_version_id="version-A",
+        content=content,
+        put_ready=a_put_ready,
+        release_put=release_a_put,
+        complete_entered=a_complete_entered,
+        release_complete=release_a_complete,
+    )
+    transport_b = _BarrierStorageTransport(
+        source_version_id="version-B",
+        content=content,
+        put_ready=b_put_ready,
+        release_put=release_b_put,
+    )
+
+    def handler(transport: _BarrierStorageTransport):
+        tool = make_deliver_tool(
+            LocalShellBackend(root_dir=tmp_path, virtual_mode=True),
+            StorageDeliveryClient(run_repository, transport),
+            namespace="local:conversation-1",
+            run_id=run.run_id,
+            identity=run.execution_identity,
+            lease=lease,
+        )
+        invoke = tool.coroutine
+        assert invoke is not None
+
+        async def call(_request: ToolCallRequest) -> ToolMessage:
+            result = await invoke(path="/report.pdf", title="Report", note="")
+            return ToolMessage(
+                content=result,
+                tool_call_id="tool-1",
+                name="deliver",
+            )
+
+        return call
+
+    middleware_a = ToolEffectJournalMiddleware(
+        run_repository=run_repository, run_id=run.run_id, lease=lease
+    )
+    middleware_b = ToolEffectJournalMiddleware(
+        run_repository=run_repository, run_id=run.run_id, lease=lease
+    )
+    task_a = asyncio.create_task(
+        middleware_a.awrap_tool_call(_tool_request(), handler(transport_a))
+    )
+    task_b = asyncio.create_task(
+        middleware_b.awrap_tool_call(_tool_request(), handler(transport_b))
+    )
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(a_put_ready.wait(), b_put_ready.wait()), timeout=2
+        )
+        release_a_put.set()
+        await asyncio.wait_for(a_complete_entered.wait(), timeout=2)
+        selected = await run_repository.get_tool_journal(run.run_id, "tool-1")
+        assert selected is not None and selected.status == "started"
+        selected_bytes = selected.result
+        assert json.loads(selected_bytes)["source_version_id"] == "version-A"
+        assert not task_a.done()
+
+        release_b_put.set()
+        with pytest.raises(StorageClientError) as loser:
+            await asyncio.wait_for(task_b, timeout=2)
+        assert loser.value.code == "DELIVERY_INTENT_NOT_DURABLE"
+        assert loser.value.retryable
+        assert transport_b.puts == 1
+        assert "complete_upload" not in transport_b.calls
+        assert "create_artifact" not in transport_b.calls
+        assert "finalize_artifact" not in transport_b.calls
+        preserved = await run_repository.get_tool_journal(run.run_id, "tool-1")
+        assert preserved is not None and preserved.status == "started"
+        assert preserved.result == selected_bytes
+
+        release_a_complete.set()
+        result = await asyncio.wait_for(task_a, timeout=2)
+        assert isinstance(result, ToolMessage) and result.status == "success"
+        delivered = DeliverResult.model_validate_json(result.text)
+        assert delivered.artifact_id == "artifact-1"
+        assert transport_a.calls.count("complete_upload") == 1
+        assert transport_a.calls.count("create_artifact") == 1
+        final = await run_repository.get_tool_journal(run.run_id, "tool-1")
+        assert final is not None and final.status == "succeeded"
+        assert final.result == result.text
+    finally:
+        release_a_put.set()
+        release_b_put.set()
+        release_a_complete.set()
+        for task in (task_a, task_b):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(task_a, task_b, return_exceptions=True)
 
 
 async def test_concurrent_same_tool_stages_one_event_and_sends_once(

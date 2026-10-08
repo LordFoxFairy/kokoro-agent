@@ -12,8 +12,8 @@ from pyqwest import Client, HTTPTransport
 from kokoro_agent.clients.platform_tokens import validate_owner_url
 from kokoro_agent.clients.platform_transport import BoundedConnectTransport
 from kokoro_agent.clients.storage import StorageClientError
-from kokoro_agent.generated.kokoro.storage.v2 import storage_pb as pb
-from kokoro_agent.generated.kokoro.storage.v2.storage_connect import (
+from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
+from kokoro_agent.generated.kokoro.storage.v3.storage_connect import (
     StorageServiceClient,
 )
 
@@ -23,7 +23,7 @@ class DeliveryTransport(Protocol):
         self, method: str, request: object, headers: dict[str, str]
     ) -> object: ...
 
-    async def put(self, reference: pb.TransferReference, content: bytes) -> None: ...
+    async def put(self, reference: pb.TransferReference, content: bytes) -> str: ...
 
 
 class StorageDeliveryTransport:
@@ -112,7 +112,7 @@ class StorageDeliveryTransport:
             return await self._client.finalize_artifact(request, headers=metadata)
         raise StorageClientError("STORAGE_OPERATION_FORBIDDEN")
 
-    async def put(self, reference: pb.TransferReference, content: bytes) -> None:
+    async def put(self, reference: pb.TransferReference, content: bytes) -> str:
         try:
             transfer_origin = _origin(reference.url, allow_root_path=False)
         except ValueError as exc:
@@ -139,6 +139,19 @@ class StorageDeliveryTransport:
         ) as response:
             if response.status_code // 100 != 2:
                 raise StorageClientError("STORAGE_UPLOAD_PUT_FAILED", retryable=True)
+            source_version_id = response.headers.get("x-amz-version-id")
+            if (
+                source_version_id is None
+                or not source_version_id
+                or len(source_version_id) > 512
+                or source_version_id == "null"
+                or not source_version_id.strip()
+                or any(ord(char) < 32 or ord(char) == 127 for char in source_version_id)
+            ):
+                raise StorageClientError(
+                    "STORAGE_UPLOAD_VERSION_ID_INVALID", retryable=True
+                )
+            return source_version_id
 
 
 def _origin(value: str, *, allow_root_path: bool) -> tuple[str, str, int]:

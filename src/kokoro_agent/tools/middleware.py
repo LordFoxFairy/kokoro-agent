@@ -398,13 +398,35 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             value = _DELIVERY_INTENT.validate_json(result)
         except ValidationError:
             return False
-        return value.get("version") == 1
+        return type(value.get("version")) is int and value["version"] == 2
 
     def _replay(self, recorded: object, *, tool_id: str, name: str) -> ToolMessage:
         # recorded: ToolJournalRecord（repository 层导出）——按状态短路。
         status = getattr(recorded, "status", "started")
         if status == "started":
             metrics.record_tool_unknown_outcome()
+            result = getattr(recorded, "result", "")
+            if name == "deliver" and isinstance(result, str) and result:
+                try:
+                    intent = _DELIVERY_INTENT.validate_json(result)
+                except ValidationError:
+                    intent = None
+                if (
+                    intent is not None
+                    and type(intent.get("version")) is int
+                    and intent["version"] == 1
+                ):
+                    return ToolMessage(
+                        content=(
+                            f"{_UNKNOWN_OUTCOME_PREFIX} "
+                            "DELIVERY_INTENT_VERSION_UNSUPPORTED: durable delivery "
+                            "intent version 1 requires operator reconciliation; not "
+                            "re-executed automatically."
+                        ),
+                        tool_call_id=tool_id,
+                        name=name,
+                        status="error",
+                    )
             return ToolMessage(
                 content=(
                     f"{_UNKNOWN_OUTCOME_PREFIX} tool {name!r} started but its outcome was never "

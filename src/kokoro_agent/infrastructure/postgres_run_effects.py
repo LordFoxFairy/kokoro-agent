@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
@@ -17,6 +20,104 @@ from kokoro_agent.infrastructure.schema import (
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 
 _INTENT = TypeAdapter(dict[str, JsonValue])
+_DELIVERY_BASE_KEYS = frozenset(
+    {
+        "version",
+        "run_id",
+        "session_id",
+        "tenant_ref",
+        "subject_ref",
+        "tool_call_id",
+        "path",
+        "title",
+        "note",
+        "mime_type",
+        "size_bytes",
+        "content_sha256",
+    }
+)
+_DELIVERY_ADMITTED_KEYS = _DELIVERY_BASE_KEYS | {"upload_id"}
+_DELIVERY_SELECTED_KEYS = _DELIVERY_ADMITTED_KEYS | {
+    "source_version_id",
+    "complete_command_id",
+    "complete_request_digest",
+}
+
+
+def _json_exact(left: JsonValue, right: JsonValue) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _json_exact(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_exact(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _delivery_stage(value: dict[str, JsonValue]) -> int | None:
+    if type(value.get("version")) is not int or value["version"] != 2:
+        return None
+    keys = frozenset(value)
+    if keys == _DELIVERY_BASE_KEYS:
+        stage = 0
+    elif keys == _DELIVERY_ADMITTED_KEYS:
+        stage = 1
+    elif keys == _DELIVERY_SELECTED_KEYS:
+        stage = 2
+    else:
+        return None
+    text_keys = _DELIVERY_BASE_KEYS - {"version", "size_bytes"}
+    if any(not isinstance(value[key], str) for key in text_keys):
+        return None
+    size = value["size_bytes"]
+    digest = value["content_sha256"]
+    if (
+        type(size) is not int
+        or size < 0
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+    ):
+        return None
+    if stage >= 1 and (
+        not isinstance(value["upload_id"], str) or not value["upload_id"]
+    ):
+        return None
+    if stage == 2:
+        source_version = value["source_version_id"]
+        if (
+            not isinstance(source_version, str)
+            or not source_version
+            or len(source_version) > 512
+            or source_version == "null"
+            or not source_version.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in source_version)
+        ):
+            return None
+        seed = _delivery_digest([value["run_id"], value["tool_call_id"]])
+        fields = [
+            value["upload_id"],
+            value["content_sha256"],
+            value["size_bytes"],
+            source_version,
+        ]
+        if value["complete_command_id"] != _delivery_digest(
+            ["delivery-v2", seed, "complete_upload"]
+        ) or value["complete_request_digest"] != _delivery_digest(
+            ["delivery-v2", "complete_upload", fields]
+        ):
+            return None
+    return stage
+
+
+def _delivery_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 class PostgresRunEffects:
@@ -153,16 +254,18 @@ class PostgresRunEffects:
     async def journal_delivery_intent(
         self, run_id: str, lease: LeaseFence, tool_call_id: str, intent: str
     ) -> bool:
-        """Freeze the file/identity before owner I/O and monotonically record upload_id.
+        """Freeze delivery, then keep-first the upload and selected object version.
 
         The existing journal row is the sole Agent-owned intent; no second table or
-        cross-owner transaction is introduced. Recovery may only advance upload_id.
+        cross-owner transaction is introduced. A row lock protects each local stage
+        transition, but deliberately does not span signed ObjectStore PUT.
         """
         try:
             proposed = _INTENT.validate_json(intent)
         except ValidationError:
             return False
-        if proposed.get("version") != 1:
+        proposed_stage = _delivery_stage(proposed)
+        if proposed_stage is None:
             return False
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
@@ -190,9 +293,21 @@ class PostgresRunEffects:
                             prior = _INTENT.validate_json(previous)
                         except ValidationError:
                             return False
+                        prior_stage = _delivery_stage(prior)
+                        if (
+                            prior_stage is None
+                            or proposed_stage < prior_stage
+                            or proposed_stage > prior_stage + 1
+                            or not prior.keys() <= proposed.keys()
+                        ):
+                            return False
                         for key, value in prior.items():
-                            if proposed.get(key) != value:
+                            if key not in proposed or not _json_exact(
+                                proposed[key], value
+                            ):
                                 return False
+                    elif proposed_stage != 0:
+                        return False
                     await execute_sql(
                         cur,
                         """

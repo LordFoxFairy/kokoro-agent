@@ -11,6 +11,15 @@ identity-scoped session history/replay，以及本仓 Redis control/event envelo
 - Redis 命令和事件的运行时模型：[`src/kokoro_agent/protocol/`](../src/kokoro_agent/protocol/)。
 - PostgreSQL 事实：[`database/schema.sql`](../database/schema.sql)，不属于 API contract。
 
+## Pinned Storage consumer input
+
+`storage/v3/provenance.json` 固定 kokoro-storage commit
+`d13f33acfc7a482d61ebffc58e7b2667b58ae197` 的 common v1 与 Storage v3 Proto；owner
+组合 SHA-256 为 `47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9`。
+`scripts/generate_storage_consumer.py --check` 在隔离 Python 3.11 环境重生成并逐字节比较
+`generated/kokoro/storage/v3`。生成面含 owner 全部 17 RPC，生产 Artifact delivery dispatch
+只开放原七操作。v2 pin/generated 已删除；无 alias、fallback 或双 pin。
+
 ## Pinned Platform consumer input
 
 `platform/v1/provenance.json` pins two read-only Proto inputs plus the complete 17-file

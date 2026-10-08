@@ -120,9 +120,9 @@ generated/kokoro/platform/v1/__init__.py
 generated/kokoro/platform/v1/platform_runtime_connect.py
 generated/kokoro/platform/v1/platform_runtime_pb.py
 generated/kokoro/storage/__init__.py
-generated/kokoro/storage/v2/__init__.py
-generated/kokoro/storage/v2/storage_connect.py
-generated/kokoro/storage/v2/storage_pb.py
+generated/kokoro/storage/v3/__init__.py
+generated/kokoro/storage/v3/storage_connect.py
+generated/kokoro/storage/v3/storage_pb.py
 generated/platform_request_projector.py
 infrastructure/__init__.py
 infrastructure/chat_mappers.py

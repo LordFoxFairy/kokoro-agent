@@ -1,4 +1,4 @@
-"""Regenerate only the Storage v2 client from fixed owner contract bytes."""
+"""Regenerate only the Storage v3 client from fixed owner contract bytes."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-PIN = ROOT / "contract/storage/v2/provenance.json"
-PROTO = ROOT / "contract/storage/v2/proto"
+PIN = ROOT / "contract/storage/v3/provenance.json"
+PROTO = ROOT / "contract/storage/v3/proto"
 GENERATED = ROOT / "src/kokoro_agent/generated/kokoro"
 STORAGE_OUTPUT = GENERATED / "storage"
 COMMON_OUTPUT = GENERATED / "common/v1/common_pb.py"
@@ -26,7 +26,7 @@ def _file_hash(path: Path) -> str:
 
 def _verify_pin() -> dict[str, object]:
     pin = json.loads(PIN.read_text(encoding="utf-8"))
-    if pin["owner_commit"] != "d5cfc442c675e32363ae767f5ec662a9e0d9eaea":
+    if pin["owner_commit"] != "d13f33acfc7a482d61ebffc58e7b2667b58ae197":
         raise SystemExit("Storage owner commit drift")
     for source in pin["sources"]:
         if _file_hash(ROOT / source["path"]) != source["sha256"]:
@@ -40,7 +40,7 @@ def _verify_pin() -> dict[str, object]:
         raise SystemExit("Storage owner combined digest drift")
     if owner_data["files"] != [
         "kokoro/common/v1/common.proto",
-        "kokoro/storage/v2/storage.proto",
+        "kokoro/storage/v3/storage.proto",
     ]:
         raise SystemExit("Storage owner source inventory drift")
     return pin["codegen"]

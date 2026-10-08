@@ -11,6 +11,7 @@ from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 from support.fakes import FakeRunRepository, request
+from kokoro_agent.clients.storage import StorageClientError
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.tools.middleware import (
     RunSupersededError,
@@ -184,7 +185,7 @@ async def test_durable_deliver_intent_reenters_same_tool_call_only() -> None:
     store.tool_journal[("rn", "c1")] = {
         "name": "deliver",
         "status": "started",
-        "result": '{"version":1}',
+        "result": '{"version":2}',
         "is_error": False,
     }
     observed: list[str | None] = []
@@ -197,6 +198,80 @@ async def test_durable_deliver_intent_reenters_same_tool_call_only() -> None:
     assert isinstance(result, ToolMessage) and result.text == "delivered"
     assert observed == ["c1"]
     assert current_delivery_tool_call_id("rn") is None
+
+
+async def test_started_v1_delivery_stays_started_with_typed_unknown_outcome() -> None:
+    store = FakeRunRepository()
+    store.tool_journal[("rn", "c1")] = {
+        "name": "deliver",
+        "status": "started",
+        "result": '{"version":1}',
+        "is_error": False,
+    }
+    handler = _Handler("MUST NOT RUN")
+
+    result = await (await _mw(store)).awrap_tool_call(_request("deliver"), handler)
+
+    assert isinstance(result, ToolMessage) and result.status == "error"
+    assert "DELIVERY_INTENT_VERSION_UNSUPPORTED" in result.text
+    assert handler.calls == 0
+    assert store.tool_journal[("rn", "c1")]["status"] == "started"
+    assert store.tool_journal[("rn", "c1")]["result"] == '{"version":1}'
+
+
+async def test_retryable_delivery_intent_failure_never_finishes_winner_intent() -> None:
+    store = FakeRunRepository()
+    selected = (
+        '{"version":2,"run_id":"rn","session_id":"conversation-1",'
+        '"tenant_ref":"tenant-1","subject_ref":"user-1",'
+        '"tool_call_id":"c1","path":"/report.pdf","title":"Report",'
+        '"note":"","mime_type":"application/pdf","size_bytes":12,'
+        f'"content_sha256":"{"a" * 64}","upload_id":"upload-1",'
+        '"source_version_id":"version-A","complete_command_id":"command-A",'
+        '"complete_request_digest":"digest-A"}'
+    )
+    store.tool_journal[("rn", "c1")] = {
+        "name": "deliver",
+        "status": "started",
+        "result": selected,
+        "is_error": False,
+    }
+
+    async def losing_handler(_request: ToolCallRequest) -> ToolMessage:
+        raise StorageClientError("DELIVERY_INTENT_NOT_DURABLE", retryable=True)
+
+    with pytest.raises(StorageClientError, match="DELIVERY_INTENT_NOT_DURABLE"):
+        await (await _mw(store)).awrap_tool_call(_request("deliver"), losing_handler)
+
+    assert store.tool_journal[("rn", "c1")] == {
+        "name": "deliver",
+        "status": "started",
+        "result": selected,
+        "is_error": False,
+    }
+
+
+async def test_succeeded_delivery_replays_final_result_without_version_gate() -> None:
+    store = FakeRunRepository()
+    final = (
+        '{"status":"delivered","artifact_id":"artifact-1","asset_id":"asset-1",'
+        '"artifact_kind":"document","path":"/report.pdf","title":"Report",'
+        '"mime":"application/pdf","size":12,"content_hash":"abc123","note":""}'
+    )
+    store.tool_journal[("rn", "c1")] = {
+        "name": "deliver",
+        "status": "succeeded",
+        "result": final,
+        "is_error": False,
+    }
+    handler = _Handler("MUST NOT RUN")
+
+    result = await (await _mw(store)).awrap_tool_call(_request("deliver"), handler)
+
+    assert isinstance(result, ToolMessage) and result.status == "success"
+    assert result.text == final
+    assert handler.calls == 0
+    assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
 
 
 async def test_deliver_without_frozen_intent_remains_unknown_outcome() -> None:

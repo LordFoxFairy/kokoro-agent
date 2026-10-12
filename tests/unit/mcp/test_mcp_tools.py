@@ -16,8 +16,11 @@ from pydantic import ValidationError
 import kokoro_agent.mcp.tools as tools_mod
 from kokoro_agent.mcp.config import (
     McpConfigError,
+    McpHttpServerConfig,
     McpServerConfig,
+    McpStdioServerConfig,
     load_mcp_servers,
+    parse_mcp_server_config,
     select_servers,
 )
 from kokoro_agent.mcp.servers import build_connections
@@ -61,11 +64,12 @@ class _BoomClient:
 
 def _config(**overrides: object) -> McpServerConfig:
     base: dict[str, object] = {
+        "transport": "streamable_http",
         "url": "http://localhost:9/mcp",
         "allowed_tools": ["ok", "also_ok"],
     }
     base.update(overrides)
-    return McpServerConfig.model_validate(base)
+    return parse_mcp_server_config(base)
 
 
 REGISTRY = {"srv": _config()}
@@ -184,6 +188,37 @@ def test_mcp_timeout_must_be_positive() -> None:
         _config(timeout_s=-1)
 
 
+def test_stdio_connection_uses_standard_adapter_shape_without_http_egress() -> None:
+    server = McpStdioServerConfig(
+        command="node",
+        args=["server.mjs"],
+        cwd="/srv/mcp",
+        env={"MCP_TOKEN": "token"},
+        allowed_tools=["search"],
+    )
+    connection = build_connections({"local": server}, egress_mode="strict")["local"]
+    assert connection == {
+        "transport": "stdio",
+        "command": "node",
+        "args": ["server.mjs"],
+        "cwd": "/srv/mcp",
+        "env": {"MCP_TOKEN": "token"},
+    }
+
+
+def test_stdio_config_rejects_http_only_fields() -> None:
+    with pytest.raises(ValidationError):
+        parse_mcp_server_config(
+            {
+                "transport": "stdio",
+                "command": "node",
+                "args": [],
+                "url": "https://not-allowed.example/mcp",
+                "allowed_tools": ["search"],
+            }
+        )
+
+
 # --- 部署注册表加载（KOKORO_MCP_CONFIG yaml） ---
 
 
@@ -193,6 +228,7 @@ def test_load_mcp_servers_resolves_env_placeholder(tmp_path: Path) -> None:
     config.write_text(
         "servers:\n"
         "  gh:\n"
+        "    transport: streamable_http\n"
         "    url: https://mcp.example/x\n"
         "    allowed_tools: [t]\n"
         "    headers:\n"
@@ -200,6 +236,7 @@ def test_load_mcp_servers_resolves_env_placeholder(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     registry = load_mcp_servers(str(config), {"GH_MCP_TOKEN": "Bearer real-token"})
+    assert isinstance(registry["gh"], McpHttpServerConfig)
     assert registry["gh"].headers == {"authorization": "Bearer real-token"}
 
 
@@ -208,6 +245,7 @@ def test_load_mcp_servers_missing_env_ref_fails_loud(tmp_path: Path) -> None:
     config.write_text(
         "servers:\n"
         "  gh:\n"
+        "    transport: streamable_http\n"
         "    url: https://mcp.example/x\n"
         "    allowed_tools: [t]\n"
         "    headers: {authorization: '${NO_SUCH_TOKEN}'}\n",
@@ -220,11 +258,28 @@ def test_load_mcp_servers_missing_env_ref_fails_loud(tmp_path: Path) -> None:
 def test_load_mcp_servers_unknown_key_fails_loud(tmp_path: Path) -> None:
     config = tmp_path / "mcp.yaml"
     config.write_text(
-        "servers:\n  gh:\n    url: https://x\n    allowed_tools: [t]\n    tokens: {a: b}\n",
+        "servers:\n  gh:\n    transport: streamable_http\n    url: https://x\n    allowed_tools: [t]\n    tokens: {a: b}\n",
         encoding="utf-8",
     )
     with pytest.raises(Exception):
         load_mcp_servers(str(config), {})
+
+
+def test_load_mcp_servers_resolves_stdio_environment_reference(tmp_path: Path) -> None:
+    config = tmp_path / "mcp.yaml"
+    config.write_text(
+        "servers:\n"
+        "  local:\n"
+        "    transport: stdio\n"
+        "    command: node\n"
+        "    args: [server.mjs]\n"
+        "    env: {MCP_TOKEN: '${MCP_TOKEN}'}\n"
+        "    allowed_tools: [search]\n",
+        encoding="utf-8",
+    )
+    registry = load_mcp_servers(str(config), {"MCP_TOKEN": "resolved"})
+    assert isinstance(registry["local"], McpStdioServerConfig)
+    assert registry["local"].env == {"MCP_TOKEN": "resolved"}
 
 
 def test_load_mcp_servers_absent_path_is_empty_registry() -> None:

@@ -50,7 +50,7 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
     from kokoro_agent.tools.toolset import resolve_declared_mcp
     from kokoro_agent.clients.mcp import McpClientError
     from kokoro_agent.agents.definition import Agent
-    from kokoro_agent.mcp.config import McpServerConfig
+    from kokoro_agent.mcp.config import McpHttpServerConfig
     from kokoro_agent.protocol import (
         RunRequest,
         RunInput,
@@ -82,8 +82,10 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
             Agent(key="mcp", prompt="mcp", mcp=("local",)),
             None,
             {
-                "local": McpServerConfig(
-                    url="https://mcp.test", allowed_tools=["search"]
+                "local": McpHttpServerConfig(
+                    transport="streamable_http",
+                    url="https://mcp.test",
+                    allowed_tools=["search"],
                 )
             },
         )

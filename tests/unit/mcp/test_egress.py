@@ -6,7 +6,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from kokoro_agent.mcp.config import McpServerConfig
+from kokoro_agent.mcp.config import McpServerConfig, parse_mcp_server_config
 from kokoro_agent.mcp.egress import (
     EgressBlocked,
     GuardedTransport,
@@ -153,7 +153,9 @@ def test_egress_mode_from_env_defaults_strict() -> None:
 
 
 def _config(url: str) -> McpServerConfig:
-    return McpServerConfig.model_validate({"url": url, "allowed_tools": ["t"]})
+    return parse_mcp_server_config(
+        {"transport": "streamable_http", "url": url, "allowed_tools": ["t"]}
+    )
 
 
 def test_build_connections_attaches_guard_in_strict_not_off() -> None:

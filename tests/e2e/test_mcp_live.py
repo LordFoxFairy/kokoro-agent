@@ -11,15 +11,21 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import sys
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 
-from kokoro_agent.mcp.config import McpServerConfig
+from kokoro_agent.mcp.config import (
+    McpHttpServerConfig,
+    McpServerConfig,
+    McpStdioServerConfig,
+)
 from kokoro_agent.mcp.egress import configure_egress_mode, current_egress_mode
 from kokoro_agent.mcp.tools import make_mcp_tools
 
@@ -79,7 +85,7 @@ def mcp_base_url():
 
 def _registry(url: str, allowed: list[str]) -> dict[str, McpServerConfig]:
     return {
-        "fx": McpServerConfig(
+        "fx": McpHttpServerConfig(
             transport="streamable_http", url=url, allowed_tools=allowed, timeout_s=10
         )
     }
@@ -112,3 +118,40 @@ async def test_live_unreachable_degrades_per_call() -> None:
         call_tool.ainvoke({"server": "fx", "tool": "echo", "arguments": {}}), timeout=30
     )
     assert "error" in result
+
+
+async def test_live_stdio_roundtrip_via_standard_adapter(tmp_path: Path) -> None:
+    """The Agent launches a local standard MCP server on demand, without a custom protocol."""
+
+    fixture = tmp_path / "stdio_fixture.py"
+    fixture.write_text(
+        "from mcp.server.fastmcp import FastMCP\n"
+        "server = FastMCP('stdio-fixture')\n"
+        "@server.tool()\n"
+        "def echo(text: str) -> str:\n"
+        "    return f'echo:{text}'\n"
+        "server.run(transport='stdio')\n",
+        encoding="utf-8",
+    )
+    registry: dict[str, McpServerConfig] = {
+        "stdio": McpStdioServerConfig(
+            command=sys.executable,
+            args=[str(fixture)],
+            allowed_tools=["echo"],
+        )
+    }
+    list_tool, describe_tool, call_tool = make_mcp_tools(["stdio"], registry)
+
+    listed: str = await asyncio.wait_for(list_tool.ainvoke({}), timeout=15)
+    assert "stdio/echo" in listed
+    described: str = await asyncio.wait_for(
+        describe_tool.ainvoke({"server": "stdio", "tool": "echo"}), timeout=15
+    )
+    assert "text" in described
+    result: str = await asyncio.wait_for(
+        call_tool.ainvoke(
+            {"server": "stdio", "tool": "echo", "arguments": {"text": "本地"}}
+        ),
+        timeout=15,
+    )
+    assert "echo:本地" in result

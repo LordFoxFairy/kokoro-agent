@@ -228,8 +228,14 @@ def make_mcp_tools(
                 callbacks=Callbacks(on_elicitation=_on_elicitation),
             )
             try:
-                raw = await client.get_tools(server_name=server)
-            except Exception as exc:  # 运行时不可达=外部常态：该次调用降级，不炸 run。
+                if config.timeout_s is None:
+                    raw = await client.get_tools(server_name=server)
+                else:
+                    async with asyncio.timeout(config.timeout_s):
+                        raw = await client.get_tools(server_name=server)
+            except (
+                Exception
+            ) as exc:  # 运行时不可达/超时=外部常态：该次调用降级，不炸 run。
                 raise McpConnectionError(
                     f"mcp server {server!r} unreachable: {exc}"
                 ) from exc
@@ -297,18 +303,34 @@ def make_mcp_tools(
         found = await _find_tool(server, tool)
         if isinstance(found, str):
             return found
-        if runtime is None:
-            # 无工具运行时（如单测直调 ainvoke）：不接 elicitation 桥，直接调用。
-            try:
-                return _stringify_result(
-                    await _invoke_bound_tool(found, arguments or {}, _DETACHED_CONFIG)
+        entry = granted[server]
+        assert not isinstance(entry, McpServerUnavailable)
+        try:
+            if runtime is None:
+                # 无工具运行时（如单测直调 ainvoke）：不接 elicitation 桥，直接调用。
+                if entry.timeout_s is None:
+                    result = await _invoke_bound_tool(
+                        found, arguments or {}, _DETACHED_CONFIG
+                    )
+                else:
+                    async with asyncio.timeout(entry.timeout_s):
+                        result = await _invoke_bound_tool(
+                            found, arguments or {}, _DETACHED_CONFIG
+                        )
+                return _stringify_result(result)
+            # tool_call_id 在图内工具节点恒有值（幂等锚）；类型上收窄空值兜底。
+            if entry.timeout_s is None:
+                return await _call_with_elicitation(
+                    found, server, tool, arguments, runtime.tool_call_id or ""
                 )
-            except Exception as exc:  # 远端执行失败：错误文本给模型自纠，不炸 run。
-                return f"error: {mcp_tool_name(server, tool)} 调用失败：{exc}"
-        # tool_call_id 在图内工具节点恒有值（幂等锚）；类型上收窄空值兜底。
-        return await _call_with_elicitation(
-            found, server, tool, arguments, runtime.tool_call_id or ""
-        )
+            async with asyncio.timeout(entry.timeout_s):
+                return await _call_with_elicitation(
+                    found, server, tool, arguments, runtime.tool_call_id or ""
+                )
+        except TimeoutError:
+            return f"error: {mcp_tool_name(server, tool)} 调用超时。"
+        except Exception as exc:  # 远端执行失败：错误文本给模型自纠，不炸 run。
+            return f"error: {mcp_tool_name(server, tool)} 调用失败：{exc}"
 
     return (
         StructuredTool(

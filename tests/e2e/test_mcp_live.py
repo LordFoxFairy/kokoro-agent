@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import sys
 import threading
@@ -45,6 +46,14 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def _echo(text: str) -> str:
@@ -124,12 +133,19 @@ async def test_live_stdio_roundtrip_via_standard_adapter(tmp_path: Path) -> None
     """The Agent launches a local standard MCP server on demand, without a custom protocol."""
 
     fixture = tmp_path / "stdio_fixture.py"
+    pid_file = tmp_path / "stdio.pid"
     fixture.write_text(
         "from mcp.server.fastmcp import FastMCP\n"
         "server = FastMCP('stdio-fixture')\n"
         "@server.tool()\n"
         "def echo(text: str) -> str:\n"
         "    return f'echo:{text}'\n"
+        "@server.tool()\n"
+        "def wait(seconds: float) -> str:\n"
+        "    import os, pathlib, time\n"
+        "    pathlib.Path(os.environ['PID_FILE']).write_text(str(os.getpid()))\n"
+        "    time.sleep(seconds)\n"
+        "    return 'finished'\n"
         "server.run(transport='stdio')\n",
         encoding="utf-8",
     )
@@ -137,7 +153,9 @@ async def test_live_stdio_roundtrip_via_standard_adapter(tmp_path: Path) -> None
         "stdio": McpStdioServerConfig(
             command=sys.executable,
             args=[str(fixture)],
-            allowed_tools=["echo"],
+            allowed_tools=["echo", "wait"],
+            timeout_s=1,
+            env={"PID_FILE": str(pid_file)},
         )
     }
     list_tool, describe_tool, call_tool = make_mcp_tools(["stdio"], registry)
@@ -155,3 +173,18 @@ async def test_live_stdio_roundtrip_via_standard_adapter(tmp_path: Path) -> None
         timeout=15,
     )
     assert "echo:本地" in result
+    timed_out: str = await asyncio.wait_for(
+        call_tool.ainvoke(
+            {"server": "stdio", "tool": "wait", "arguments": {"seconds": 5}}
+        ),
+        timeout=5,
+    )
+    assert "调用超时" in timed_out
+    deadline = time.monotonic() + 3
+    while not pid_file.exists() and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    assert pid_file.exists()
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    while _process_exists(pid) and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    assert not _process_exists(pid)

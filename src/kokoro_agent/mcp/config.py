@@ -39,6 +39,7 @@ class _McpServerBase(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     allowed_tools: list[_NonEmpty]
+    timeout_s: int | None = Field(default=None, gt=0)
 
 
 class McpHttpServerConfig(_McpServerBase):
@@ -49,7 +50,6 @@ class McpHttpServerConfig(_McpServerBase):
 
     transport: Literal["streamable_http"]
     url: _NonEmpty
-    timeout_s: int | None = Field(default=None, gt=0)
     headers: dict[str, str] | None = None
 
 

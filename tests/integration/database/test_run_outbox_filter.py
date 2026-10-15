@@ -49,6 +49,10 @@ async def test_list_unpublished_outbox_returns_only_queued_rows(
     assert first is not None
     assert second is not None
 
+    # The first live critical row creates the durable receipt ledger atomically;
+    # heartbeat reconciliation must not flag it as lost before Session ACKs.
+    assert not (await run_repository.reconcile_receipts(request.run_id)).receipt_state_lost
+
     await run_repository.mark_critical_published(request.run_id, first.durable_seq)
 
     unpublished = await run_repository.list_unpublished_outbox()

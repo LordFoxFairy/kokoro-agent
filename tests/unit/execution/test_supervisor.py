@@ -534,17 +534,32 @@ async def test_cancel_running_emits_cancelled() -> None:
     await sup.dispatch(bus, request("r5"))
     await asyncio.sleep(0)
 
-    await sup.dispatch(
-        bus, _inbound({"kind": "run.cancel", "command_id": "dec_wire", "run_id": "r5"})
+    cancellation = asyncio.create_task(
+        sup.dispatch(
+            bus,
+            _inbound({"kind": "run.cancel", "command_id": "dec_wire", "run_id": "r5"}),
+        )
     )
-    await _drain(sup)
+    try:
+        # Observe without cancelling the observer/operation: a timeout signal
+        # would itself release the stuck native task and mask a lost cancel.
+        settled, _ = await asyncio.wait({cancellation}, timeout=1.0)
+        assert cancellation in settled, (
+            "cancel must settle while native work stays gated"
+        )
+        await cancellation
+        await _drain(sup)
 
-    completed = find_event(bus.run_events("r5"), RunCompleted)
-    assert completed.payload.status == "cancelled"
-    terminals = [
-        e for e in bus.run_events("r5") if e.kind in {"run.completed", "run.failed"}
-    ]
-    assert len(terminals) == 1
+        completed = find_event(bus.run_events("r5"), RunCompleted)
+        assert completed.payload.status == "cancelled"
+        terminals = [
+            e for e in bus.run_events("r5") if e.kind in {"run.completed", "run.failed"}
+        ]
+        assert len(terminals) == 1
+    finally:
+        gate.set()
+        await asyncio.gather(cancellation, return_exceptions=True)
+        await asyncio.gather(*tuple(sup.tasks.values()), return_exceptions=True)
 
 
 async def test_cancel_unknown_run_dropped() -> None:

@@ -1,10 +1,14 @@
-## MC-01 历史用量契约冻结前置（2026-10-16；源码候选，非正常激活）
+## MC-01 历史契约冻结与取消边界（2026-10-16；本地源码，非正常激活）
 
 本片在既有 `codex/model-connections` 实施已批准设计的历史证据保护：公共 contract checker 固定 usage/v1 manifest 原字节 SHA，再执行原 source/生成物/语义 vectors 检查，拒绝历史 schema/vectors 与 manifest 被一起重写。原六个来源与 manifest 不变；不新造历史源码副本、执行开关、版本表或 decoder fallback。新增 checker 走现有 provenance inventory、wheel audit 和 RECORD 边界。
 
 基线 `b762c96` 的聚焦门实际 189 PASS/1 FAIL，唯一失败是旧源码行数门 `200 < 200`；现删除该无业务 oracle 的 quota，原 schema/provenance 正负例全部保留。新增两例在公共检查自然 RED（未拒绝自洽重生）后 GREEN。主方 Python3.11.14 定向三文件 191 PASS；Ruff/Pyright/contract-check、lock/frozen sync、原生成器 check、wheel/sdist build 均通过。隔离 installed 环境按原 lock/hash 安装，checker通过；去掉新 audit 资产确实拒绝，原字节恢复后通过，自有环境已清理。独审无确定 P0–P2。
 
-完整默认检查未通过：在原 cancel-running 行为处停住，独立有界复现确认 `invoke_once` 的 native driver 仍等 gate，而 cancel handler 正等待原执行 task；12秒诊断终止信号后的“1 passed”不计通过。主方明确终止原完整检查（143），没有重置资源或把观察超时当进程已结束。Python3.11 标准库 wait_for 在 future 已完成与外部 cancel 同拍时返回结果的路径，是后继待验证根因；本切片 runtime 源码未改。不能以定向与 installed 门冒完整 Agent 验收。
+历史冻结已本地提交 `81e37c4`。完整默认检查初次在原 cancel-running 行为处停住，独立有界复现确认 native driver 仍等 gate，而 cancel handler 正等待原执行 task；12秒诊断终止信号后的“1 passed”不计通过。主方确认进程身份后终止原完整检查（143），没有把观察超时当进程已结束。
+
+后继局部修复已保留原5秒 live publish 预算，换为 `asyncio.timeout` 内直接 await。Python3.11 的 wait_for 在内部 future 已完成与外部 cancel 同拍时直接返回结果，旧代码由此丢失取消；不再创建该竞争 child future，不新增 catch/shield、不改 outbox/终态/模型许可。原 cancel 测试仅增加不取消目标的有界观察，真实 RED 为任务未退出，GREEN 后仍核 cancelled 与唯一终态；新两参数覆盖预算耗尽和 caller cancel 的异常分类、publisher 退出与 critical outbox queued 保留。
+
+主方最终四既有文件 212 PASS/4原资源排除/2 SDK warnings；Ruff、Pyright、contract-check、wheel/sdist build 均通过，wheel 中 runtime bytes 与冻结源一致，独审无确定 P0–P2。完整默认检查现在能收束：2345 PASS/2 FAIL/759 原资源排除/2 SDK warnings，135.23秒、exit1。两 FAIL 是未修改的原 `interfaces/http/server.py` cast 架构门，以及原 `skills/package.py` 深嵌套 JSON 在 Python3.11 泄漏 RecursionError；未删断言、skip 或冒全仓通过，后继在原边界局部修复。
 
 后继仍待：System4 strict route/pin、provider-bound 私有凭据、owned direct/LiteLLM wire、usage2 producer/完整历史 reader 分派、旧未 sealed attempt 屏障、HTTP6 及 Billing 正式消费。当前 producer 仍 v1，HTTP5/System3 consumer 仍在；新 System4 正常启用和真实模型发送均未发生。用户登录/角色/积分/正常进程不变，远端 CI/PR/merge 暂停。
 

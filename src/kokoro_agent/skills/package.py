@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NoReturn
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 
 class SkillPackageError(ValueError):
@@ -34,13 +34,15 @@ def _manifest(raw: bytes, skill_id: str, revision: int) -> None:
 
     if len(raw) > 16384 or raw.startswith(b"\xef\xbb\xbf"):
         _fail("package_manifest_invalid")
+    manifest: dict[str, object] | None
     try:
         value: object = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs)
-    except (ValueError, UnicodeError):
-        _fail("package_manifest_invalid")
-    try:
         manifest = TypeAdapter(dict[str, object]).validate_python(value, strict=True)
-    except ValidationError:
+    except (ValueError, UnicodeError, RecursionError):
+        manifest = None
+    if manifest is None:
+        # Raise outside the decoder exception scope: its context may retain
+        # private package input, even when the public error message is stable.
         _fail("package_manifest_invalid")
     if set(manifest) != {
         "schema_version",

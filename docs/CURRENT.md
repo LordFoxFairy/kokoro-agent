@@ -1,4 +1,4 @@
-## MC-01 历史契约冻结与取消边界（2026-10-16；本地源码，非正常激活）
+## MC-01 历史契约、取消与输入边界（2026-10-16；本地源码，非正常激活）
 
 本片在既有 `codex/model-connections` 实施已批准设计的历史证据保护：公共 contract checker 固定 usage/v1 manifest 原字节 SHA，再执行原 source/生成物/语义 vectors 检查，拒绝历史 schema/vectors 与 manifest 被一起重写。原六个来源与 manifest 不变；不新造历史源码副本、执行开关、版本表或 decoder fallback。新增 checker 走现有 provenance inventory、wheel audit 和 RECORD 边界。
 
@@ -8,7 +8,12 @@
 
 后继局部修复已保留原5秒 live publish 预算，换为 `asyncio.timeout` 内直接 await。Python3.11 的 wait_for 在内部 future 已完成与外部 cancel 同拍时直接返回结果，旧代码由此丢失取消；不再创建该竞争 child future，不新增 catch/shield、不改 outbox/终态/模型许可。原 cancel 测试仅增加不取消目标的有界观察，真实 RED 为任务未退出，GREEN 后仍核 cancelled 与唯一终态；新两参数覆盖预算耗尽和 caller cancel 的异常分类、publisher 退出与 critical outbox queued 保留。
 
-主方最终四既有文件 212 PASS/4原资源排除/2 SDK warnings；Ruff、Pyright、contract-check、wheel/sdist build 均通过，wheel 中 runtime bytes 与冻结源一致，独审无确定 P0–P2。完整默认检查现在能收束：2345 PASS/2 FAIL/759 原资源排除/2 SDK warnings，135.23秒、exit1。两 FAIL 是未修改的原 `interfaces/http/server.py` cast 架构门，以及原 `skills/package.py` 深嵌套 JSON 在 Python3.11 泄漏 RecursionError；未删断言、skip 或冒全仓通过，后继在原边界局部修复。
+主方最终四既有文件 212 PASS/4原资源排除/2 SDK warnings；Ruff、Pyright、contract-check、wheel/sdist build 均通过，wheel 中 runtime bytes 与冻结源一致，独审无确定 P0–P2。上一轮完整默认检查收束为 2345 PASS/2 FAIL/759 原资源排除/2 SDK warnings，135.23秒、exit1。两 FAIL 是当时未修改的原 `interfaces/http/server.py` cast 架构门，以及原 `skills/package.py` 深嵌套 JSON 在 Python3.11 泄漏 RecursionError；该轮未删断言、skip 或冒全仓通过。
+
+**本轮边界修复。** HTTP `AgentConfig` 显式声明正式 HTTP 配置已有的 Billing reader 属性，删除 helper 的 `object/cast`；HTTP 测试改用真实 HTTP 配置，替身补齐相同属性，不扩大 worker 配置、不加 `getattr`、默认兼容或第二认证路径。manifest 在原16KiB预算内合并解码/strict根类型验证，捕获递归错误后退出异常作用域才抛固定 `package_manifest_invalid`；旧 owner ZIP vectors 与字段/类型/范围/身份规则保持，坏包不保留含私有输入的 decoder context/cause。
+
+原两例在修复前真实 RED；原深嵌套回归扩成深层数组/错误根类型/坏JSON三类，全部核固定错误和无异常context/cause，真实3 RED→GREEN。主方冻结7源码/测试路径：重点7文件420 PASS，HTTP root29 PASS；Python3.11.14完整默认2349 PASS/759原资源排除/2 SDK warnings、134.82秒、exit0。保留一条无 traceback 的后台HTTP线程诊断，证据未定位到本片，不宣称运行日志全无异常。格式、Ruff、Pyright、contract、lock、wheel/sdist build均0；独立临时venv按原lock/hash安装最终wheel，8步通过，含installed合法包/三类坏包隐私、独立HTTP reader准入，以及缺audit资产拒绝→恢复通过，自有环境已删除。只读独审无确定P0–P2；测试数量不是产品完成量，759资源用例未运行，不冒PG/Redis、正常产品或正式模型发送验收。
+
 
 后继仍待：System4 strict route/pin、provider-bound 私有凭据、owned direct/LiteLLM wire、usage2 producer/完整历史 reader 分派、旧未 sealed attempt 屏障、HTTP6 及 Billing 正式消费。当前 producer 仍 v1，HTTP5/System3 consumer 仍在；新 System4 正常启用和真实模型发送均未发生。用户登录/角色/积分/正常进程不变，远端 CI/PR/merge 暂停。
 

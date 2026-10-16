@@ -39,16 +39,30 @@ def test_owner_zip_profile_vectors(vector: dict[str, object]) -> None:
         assert str(error.value) == vector["expectedReason"]
 
 
-def test_deeply_nested_manifest_is_stable_invalid_not_recursion_escape() -> None:
+@pytest.mark.parametrize(
+    "manifest_bytes",
+    [
+        b"[" * 6000 + b"0" + b"]" * 6000,
+        b'["PRIVATE_MANIFEST_SENTINEL"]',
+        b'{"PRIVATE_MANIFEST_SENTINEL":',
+    ],
+    ids=["deeply-nested", "wrong-root-type", "malformed-json"],
+)
+def test_invalid_manifest_has_stable_error_without_retaining_private_decoder_context(
+    manifest_bytes: bytes,
+) -> None:
     import io
     import zipfile
     from kokoro_agent.skills.package import SkillPackageError, validate_package
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("manifest.json", b"[" * 6000 + b"0" + b"]" * 6000)
+        archive.writestr("manifest.json", manifest_bytes)
         archive.writestr("SKILL.md", b"# Skill")
-    with pytest.raises(SkillPackageError, match="package_manifest_invalid"):
+    with pytest.raises(SkillPackageError, match="package_manifest_invalid") as error:
         validate_package(
             buffer.getvalue(), skill_id="skill-1", revision=1, manifest_identity=None
         )
+    assert error.value.__context__ is None
+    assert error.value.__cause__ is None
+    assert "PRIVATE_MANIFEST_SENTINEL" not in str(error.value)

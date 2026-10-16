@@ -1,3 +1,29 @@
+## MC-01 Agent 原子消费者本地验收（2026-10-16；未正常激活）
+
+同一分支已接System4精确20源receipt、provider/ref双绑定私有凭据、direct默认/LiteLLM可选、usage2唯一新写、sealed usage1按显式版本读取、HTTP6实际证据版本与旧未sealed启动屏障。SQL、冻结v1原字节、最终请求摘要格式不变；旧全局网关配置/别名退出。启动屏障允许合法v2恢复，旧worker停止仍须部署侧另证。
+
+实际SDK+PG two_claimants失败已定位：连接调用前取消计数0、driver返回时1，旧代码继续SET/等待锁直到第二次取消。原边界补“连接期间新增取消”检查并finally close，未改driver/依赖/超时/资金许可；原分支2.22秒PASS。独审指出初版绝对计数会误伤已捕获取消的sandbox cleanup，真实1RED/3PASS后改比较进入/返回计数，四状态回归与原SQL边界共7PASS，P2已复核关闭。此独立修复本地提交321df90。
+
+最终Python3.11.14默认 `uv run --frozen pytest -q`：2386PASS/765原资源排除/2SDKwarnings，140.69秒、exit0。无traceback本地HTTP线程诊断仍保留，不冒日志全净。五个直接受影响文件真PG/独占受管Redis/自有HTTP peer：520PASS/10warnings，59.32秒、exit0，无排除two_claimants；包括HTTP ingress、model evidence、runtime chain、Run交互事务和SDK重试边界。首次缺显式Redis分配导致37fixture前提错误的运行已保留，不算通过；正式补配自有临时PG库与既有Redis14锁后重跑，临时库删除且库清单不变、Redis自有keys归零，不清共享数据。
+
+Ruff/格式/Pyright、三生成器check、完整contract-check、lock-check、wheel/sdist build均通过；最终wheel23个变更运行时文件与源逐字相等，独立临时venv按原lock/hash安装8步通过，包含缺v2 audit明确拒绝→恢复通过，环境已清理。只读独审无剩余确定P0–P2；未增加UI suite/源字符串quota，未改依赖/SQL/正常进程，零真实模型发送。
+
+本片是候选源码验收，不是全产品完成：Billing资金consumer/新证据pin、正常System+Agent切换与正式许可调用、Admin运营CRUD及正常服务身份仍待后继；不以离线peer冒真实模型或收费验收。远端CI/push/PR/merge及Rootgitlink保持不动。
+
+---
+
+## MC-01 原子消费者候选（2026-10-16；未提交、未激活）
+
+在9c641d5后继续原批准方案：System4精确20源receipt、provider/ref双绑定私有凭据快照、direct默认/LiteLLM可选owned客户端、usage2唯一producer、sealed usage1显式历史reader、HTTP6实际版本和启动屏障。凭据文件受当前uid/0400或0600/单硬链接/regular/限长/重复键/读中变更约束；旧全局网关配置退出。屏障在消费命令前只读扫描未sealed planned，拒旧/坏/未知版本，不阻合法v2恢复；旧worker停止另属部署前置。未改SQL、历史v1来源或normal Agent/System。
+
+本轮真实TDD：worker装配2行为RED→2GREEN；非合法端口URL泄漏httpx.InvalidURL的1RED→严格脱敏ValidationError GREEN。配置/模型/factory聚焦248PASS；新增私有快照正向、重复键/引用、symlink/hardlink/非法key及隐私边界。完整默认初轮2380PASS/2FAIL/763原资源排除，失败为两处HTTP5/System3旧pin断言，按已批准HTTP6/System4更新精确值且保留全receipt/hash/原JWKS断言；JWKS聚焦38PASS，第二次完整默认结果另行记录。
+
+真实PostgreSQL自有临时库：第一轮107PASS/1FAIL；新增sealed v1/v2原字节读取和terminal只读重放、启动旧/未知/坏planned拒绝及合法v2恢复均通过。排除独立失败项后的补充执行109PASS/1明确deselected/2SDKwarnings，23.03秒；不是完整资源门通过。未解失败为既有真实SDK+PG two_claimants分支：预期ModelCallInputInvalid却收到TimeoutError，单独重跑稳定复现，任务第一次cancel后仍pending，外层超时才以第二次cancel收束。仅保留诊断，不放宽5秒预算、不删用例/断言、不改依赖或冒称历史失败；根因仍待继续定位。全部自有临时库清理且库清单不变，normal数据不动，零模型发送。
+
+Ruff/格式/Pyright/contract/lock/build通过；最终wheel独立venv按原lock/hash安装8步通过，含v1/v2严格读取、缺v2 audit确实拒绝→恢复通过，自有环境已清理。只读独审未见确定P0–P2，不替代失败资源门。完整交付仍OPEN，不提交/推送/改PR/合并，不激活本候选，也不宣称Billing资金消费者、聊天或后台产品已闭环。
+
+---
+
 ## MC-01 usage2 离线契约前置（2026-10-16；本地候选，未切生产读写）
 
 既有批准设计下新增独立 usage/v2 schema/vectors/manifest、有限 compiler/generator、严格 semantic decoder 与 generated model。planned 以显式 binding_version=2.0.0 与 request_model 表示唯一请求模型，provider_model_name 保留声明含义；不纳入 endpoint、连接快照、凭据引用或密钥。公共 checker 显式校验冻结 v1 与 v2，自有 inventory 合并进原 wheel/RECORD 闭包，不新增协议选择 fallback。原 v1 六来源及 manifest 与 HEAD 原字节一致。
@@ -1523,3 +1549,5 @@ The working implementation now contains the isolated private Ed25519 loader, anc
 A2a remains the accepted pure signer, and A2c provides the standalone statement-time reader and run-scoped supplier. IAM verifier and the inactive Platform owner contract have since been released in their owner repositories; worker private-loader composition, Agent Platform call sites, and real Agent→Platform→IAM transport remain incomplete.
 
 production signer call site 仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。
+
+最终默认复跑：`uv run --frozen pytest -q` 2382 PASS/765原资源排除/2 SDK warnings，143.47秒、exit0；保留无traceback的本地HTTP线程诊断，不冒日志全净。`ruff check/format --check`、Pyright、contract-check、lock-check、wheel/sdist build均0，installed8steps0。PG具名two_claimants失败继续OPEN，109PASS/1deselected不替代完整资源门；本候选仍未提交、未激活。

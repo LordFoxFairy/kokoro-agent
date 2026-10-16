@@ -10,7 +10,7 @@
 
 本节不授权删除历史记录、复位共享数据库/Redis、自动补齐旧连接或绕过 Billing。数据切换及恢复方案未冻结前，仅允许独立协议适配器/自有 peer 的验证，不激活新正式调用。
 
-2026-10-16 前置源码已增加独立 usage/v2 artifact、strict decoder 与发布/安装检查；只验证离线文档，不写入 call/attempt/evidence。当前 repository、producer 与 HTTP5 reader 仍用 v1，显式版本分派及旧未sealed屏障没有实施，不因 artifact 存在而默认完成数据切换。canonical SQL 与原历史 v1 来源字节均未改变。
+2026-10-16 前置提交9c641d5仅增加独立 usage/v2 artifact。后继未提交候选已接入v2唯一producer、按已验证evidence版本选择历史reader、HTTP6与启动屏障；canonical SQL及冻结v1来源原字节不变。屏障只读取未sealed planned，拒旧/未知/非法版本，允许合法v2恢复，且不修改任何attempt；旧worker停止仍须部署层另行证明。新源未激活，资金消费者尚未接线，不因候选源码或隔离fixture而宣称应用数据已切换。
 
 ---
 

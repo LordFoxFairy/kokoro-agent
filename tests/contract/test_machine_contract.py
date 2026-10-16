@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "5.0.0"
+    assert _object(document["info"])["version"] == "6.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -548,7 +548,7 @@ def test_r95_http5_version_is_explicit_without_changing_proof_version() -> None:
         json.loads((ROOT / "contract/execution-proof/v1/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "1.0.0"
-    assert _object(document["info"])["version"] == "5.0.0"
+    assert _object(document["info"])["version"] == "6.0.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -929,7 +929,7 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
     matches = [record for record in records if record["owner"] == "kokoro-system"]
     assert len(matches) == 1
     receipt = matches[0]
-    assert receipt["version"] == "3.0.0"
+    assert receipt["version"] == "4.0.0"
     assert set(receipt) == {
         "owner",
         "contract",
@@ -941,18 +941,18 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
         "operations",
     }
     assert set(_object(receipt["provenance"])) == {"path", "sha256"}
-    assert len(_object(receipt["source_sha256"])) == 19
+    assert len(_object(receipt["source_sha256"])) == 20
     assert receipt["operations"] == ["POST /v1/system/model-catalog/resolve"]
     # Root verified this immutable release against Git objects, not a checkout.
-    # The canonical hash binds every receipt field and all 19 source path/hashes.
+    # The canonical hash binds every receipt field and all 20 source path/hashes.
     import hashlib
 
-    assert receipt["source_commit"] == "955bd587f46a771e43a4330d202d90a7d2d67262"
+    assert receipt["source_commit"] == "7f479f654c535077874d9cf63d1b25437e9420b6"
     canonical = json.dumps(
         receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
     assert hashlib.sha256(canonical).hexdigest() == (
-        "aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b"
+        "4c3e8f4eeb314252f2543f8b994081aa5ffe5670e3cb39128b36bd8c34a44d01"
     )
 
 

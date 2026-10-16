@@ -431,7 +431,7 @@ def canonical_profile(profile: Mapping[str, object]) -> bytes:
                     "recursion_limit": _positive,
                     "disable_streaming": _boolean,
                     "openai_reasoning": _boolean,
-                    "litellm_enabled": _boolean,
+                    "model_allow_loopback_http": _boolean,
                     "toolbox": _toolbox_options,
                     "delivery_available": _boolean,
                 },

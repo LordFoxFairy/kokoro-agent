@@ -10,6 +10,12 @@ System 返回与 revision/digest 绑定的连接快照。Agent 从其完整 base
 
 保留 trust_env=False、禁止重定向、SDK 自动重试为零、最终 endpoint/model/body/output cap 验证、每次新发送独立 attempt、取消有限 join 与 fatal 处理。网关失败不自动切 direct、账户或模型。直连连接同样需要正式 Billing 授权；现 prepare 后缺资金 consumer 的拒绝路径继续生效。
 
+### 已批准 worker 凭据绑定的落地表示
+
+worker 启动配置只接 `KOKORO_MODEL_CREDENTIALS_FILE` 的规范绝对路径，读取一次进程私有快照；配置文件内不写密钥。文件为 strict `{version:"1.0.0", credentials:[{provider_id,secret_handle_ref,api_key}]}`，ref 是 System 的 opaque handle，不解释为 URL/文件/环境变量。每条 ref 唯一且必须同时匹配 route provider_id，缺失/错配发送前拒绝；没有默认账号、旧网关key或OPENAI_API_KEY回退。只读当前用户拥有的0400/0600普通文件，拒symlink、过大、重复JSON键和读中变更；错误不携文件/密钥原文。快照只传 worker 模型构造，不进入 HTTP 配置、runtime profile、usage 或日志；部署轮换需显式重启，不在调用中重绑定历史连接。
+
+System4连接值遵循 owner canonical URL；仅显式 `KOKORO_MODEL_ALLOW_LOOPBACK_HTTP` 才接受 HTTP loopback，默认HTTPS。完整base URL前缀后只追加协议资源`/chat/completions`，不猜测或去重`/v1`。direct/LiteLLM只区分连接拓扑，ModelConfig.provider 表示`openai_chat_completions`执行协议。旧全局KOKORO_LITELLM_*配置及yaml对应键随切换退役并明确拒绝；非正式native OpenAI/Anthropic声明保留原能力，不自动授予正式发送许可。
+
 ### 必须先解决的契约影响
 
 PlannedBinding 并非只存在于 factory：现 canonical `contract/usage/v1/schema.json`、其 generated reader、call_artifacts/call_evidence、agent_factory 与 Billing pin 均含 provider_model_name/gateway_model_name。新生产路径以 request_model 替换 gateway 专属执行名称，保留 provider_model_name 的既有声明元数据与其余 planned/数量编码/actual/authorization/successor 语义。System provider/revision_id/digest 已定位不可变连接，final request digest 已包含 endpoint、planned digest 与真实 body hash，因此不把协议/拓扑/URL/secret reference 再复制到 usage planned。正式直连仍需最小 breaking usage 2.0.0 和 HTTP 6.0.0：新 planned 增加显式 binding_version=2.0.0，并以 request_model 替换 gateway_model_name；独立 v2 生成器更新 v2 reader/manifest，公共 provenance 沿既有入口更新，不手改生成物或改变冻结的 v1 生成链。
@@ -28,7 +34,7 @@ v2 首次写入前，仅在旧 schema/配置仍匹配且旧组合可恢复时允
 
 实施顺序：两 owner 先冻结本节最小表示/历史读取及切换屏障 → System owner artifact → Agent 严格 route client/secret 配置/适配器 → Agent 正式 planned/evidence contract 及 durable producer/reader → 下游 pin → 本地启动器装配两种连接 → 隔离真实调用。后三者的运行启用依赖资金 consumer 正式接线；SDK→自有 HTTP peer 可独立验证 wire，但不是付费链验收。
 
-后继写区复用现 clients/system.py、config.py、worker/main.py、model/factory.py、agent_factory.py、model/call_*、request_profile 及既有 contract generator/tests，不建立新的 runtime/服务/共享 DTO 中心。原 KOKORO_LITELLM_* 只可在明确 LiteLLM 连接中保有其语义；新生产路径的全局配置与别名一次退出，不保留双读。
+后继写区复用现 clients/system.py、config.py、worker/main.py、model/factory.py、agent_factory.py、model/call_*、request_profile 及既有 contract generator/tests，不建立新的 runtime/服务/共享 DTO 中心。原 KOKORO_LITELLM_* 全局配置一次退出（即使空值也拒绝），可选LiteLLM仅使用System连接快照和同一provider-bound凭据机制，不保留双读。
 
 用户已批准本设计。System4 owner 已在独立候选发布固定连接快照；Agent 技术接线继续按上述顺序实施，不重复申请设计确认。
 

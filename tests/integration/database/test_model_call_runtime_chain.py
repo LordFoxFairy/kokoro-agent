@@ -24,6 +24,7 @@ from kokoro_agent.agent_factory import AgentFactory, AgentHandle
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.clients.system import SystemModelClient
 from kokoro_agent.config import AppConfig
+from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.domain.run.models import (
     ExecutionTerminalAuthority,
     RunTerminalOutcome,
@@ -208,7 +209,7 @@ class _OwnerAndProviderPeer:
                 await reader.readexactly(content_length)
             if request_line == "POST /v1/system/model-catalog/resolve HTTP/1.1":
                 self.owner_requests += 1
-                body = _system_route_body()
+                body = _system_route_body(self.origin + "/v1")
                 content_type = "application/json"
                 status = "200 OK"
             elif request_line == "POST /v1/chat/completions HTTP/1.1":
@@ -248,7 +249,7 @@ def _content_length(headers: bytes) -> int:
     return 0
 
 
-def _system_route_body() -> bytes:
+def _system_route_body(base_url: str) -> bytes:
     return json.dumps(
         {
             "data": {
@@ -260,10 +261,15 @@ def _system_route_body() -> bytes:
                 "generation": "1",
                 "tenant_generation": "1",
                 "provider_model_name": "provider-model-r197",
-                "gateway_model_name": "gateway-model-r197",
+                "request_model": "gateway-model-r197",
                 "feature_key": "chat",
                 "label_key": "default",
-                "transport": "litellm",
+                "connection": {
+                    "protocol": "openai_chat_completions",
+                    "connection_type": "direct",
+                    "base_url": base_url,
+                    "secret_handle_ref": "runtime-chain-model-key",
+                },
                 "context_window": 8192,
                 "max_output_tokens": 256,
             }
@@ -773,12 +779,15 @@ async def test_r198_unpublished_billing_fails_closed_and_seals_not_dispatched(
         _OwnerAndProviderPeer() as peer,
         SystemModelClient(peer.origin, SecretStr("r197-system-token")) as resolver,
     ):
-        config = AppConfig.from_env(
-            {
-                "KOKORO_LITELLM_ENABLED": "1",
-                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
-                "KOKORO_LITELLM_API_KEY": "r197-gateway-key",
-            }
+        config = AppConfig(
+            model_allow_loopback_http=True,
+            model_credentials=(
+                ModelCredential(
+                    provider_id="10000000-0000-4000-8000-000000000002",
+                    secret_handle_ref="runtime-chain-model-key",
+                    api_key=SecretStr("r197-gateway-key"),
+                ),
+            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -931,12 +940,15 @@ async def test_r199_prepare_lock_cancellation_propagates_and_rolls_back(
         _OwnerAndProviderPeer() as peer,
         SystemModelClient(peer.origin, SecretStr("r199-system-token")) as resolver,
     ):
-        config = AppConfig.from_env(
-            {
-                "KOKORO_LITELLM_ENABLED": "1",
-                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
-                "KOKORO_LITELLM_API_KEY": "r199-gateway-key",
-            }
+        config = AppConfig(
+            model_allow_loopback_http=True,
+            model_credentials=(
+                ModelCredential(
+                    provider_id="10000000-0000-4000-8000-000000000002",
+                    secret_handle_ref="runtime-chain-model-key",
+                    api_key=SecretStr("r199-gateway-key"),
+                ),
+            ),
         )
         prepare_trace = _PrepareTaskTrace()
         dependencies = WorkerDependencies(
@@ -1153,12 +1165,15 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
         _OwnerAndProviderPeer() as peer,
         SystemModelClient(peer.origin, SecretStr("r199-system-token")) as resolver,
     ):
-        config = AppConfig.from_env(
-            {
-                "KOKORO_LITELLM_ENABLED": "1",
-                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
-                "KOKORO_LITELLM_API_KEY": "r199-gateway-key",
-            }
+        config = AppConfig(
+            model_allow_loopback_http=True,
+            model_credentials=(
+                ModelCredential(
+                    provider_id="10000000-0000-4000-8000-000000000002",
+                    secret_handle_ref="runtime-chain-model-key",
+                    api_key=SecretStr("r199-gateway-key"),
+                ),
+            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -1356,12 +1371,15 @@ async def test_r245_native_final_request_precedes_prepare_without_billing(
         _OwnerAndProviderPeer() as peer,
         SystemModelClient(peer.origin, SecretStr("r197-system-token")) as resolver,
     ):
-        config = AppConfig.from_env(
-            {
-                "KOKORO_LITELLM_ENABLED": "1",
-                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
-                "KOKORO_LITELLM_API_KEY": "r197-gateway-key",
-            }
+        config = AppConfig(
+            model_allow_loopback_http=True,
+            model_credentials=(
+                ModelCredential(
+                    provider_id="10000000-0000-4000-8000-000000000002",
+                    secret_handle_ref="runtime-chain-model-key",
+                    api_key=SecretStr("r197-gateway-key"),
+                ),
+            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -1590,7 +1608,7 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         make_chat_model,
         model_from_route,
     )
-    from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+    from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
     request = _request()
     run_scope = RunScope.of(request)
@@ -1611,12 +1629,15 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         resolver = await stack.enter_async_context(
             SystemModelClient(peer.origin, SecretStr("r246-system-qa"))
         )
-        config = AppConfig.from_env(
-            {
-                "KOKORO_LITELLM_ENABLED": "1",
-                "KOKORO_LITELLM_BASE_URL": f"{peer.origin}/v1",
-                "KOKORO_LITELLM_API_KEY": "r246-synthetic-key",
-            }
+        config = AppConfig(
+            model_allow_loopback_http=True,
+            model_credentials=(
+                ModelCredential(
+                    provider_id="10000000-0000-4000-8000-000000000002",
+                    secret_handle_ref="runtime-chain-model-key",
+                    api_key=SecretStr("r246-synthetic-key"),
+                ),
+            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -1645,11 +1666,12 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
             request_id="r246-lifecycle-route",
         )
         planned = PlannedBinding(
+            binding_version="2.0.0",
             model=route.model_id,
             provider=route.provider_id,
             revision_id=route.revision_id,
             provider_model_name=route.provider_model_name,
-            gateway_model_name=route.gateway_model_name,
+            request_model=route.request_model,
             feature_key=route.feature_key,
             revision=str(route.revision),
             generation=route.generation,
@@ -1778,7 +1800,14 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         if mode == "unrelated_error":
             assert failure is unrelated
         elif mode in {"two_claimants", "invalid_profile"}:
-            assert isinstance(failure, ModelCallInputInvalid)
+            assert isinstance(failure, ModelCallInputInvalid), {
+                "failure_type": type(failure).__name__,
+                "prepare_outcome": trace.outcome,
+                "prepare_finished": trace.finished.is_set(),
+                "prepare_task": None
+                if trace.task is None
+                else _task_snapshot(trace.task),
+            }
         elif mode == "materialization_failure":
             assert isinstance(failure, (TypeError, ValueError))
             assert not isinstance(failure, ModelCallInputInvalid)

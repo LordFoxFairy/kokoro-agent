@@ -10,6 +10,8 @@ Agent 不给普通 Web/BFF 返回上游地址、secret reference 或密钥。请
 
 同一 evidence GET 在 HTTP6 中按已验证 evidence 的 artifact_version 返回 envelope 与原 bytes：明确接受冻结历史1.0.0和当前2.0.0，未知版本拒绝；不按当前部署常量返回1.0.0。新 planned 仅接受显式2.0.0，旧未sealed attempt须由旧producer收束后才切换。历史 v1 decoder 不生产新请求，解析失败不重试另一版本；不得把旧记录重新执行。Billing 当前只有目标artifact/pin，实际 reader/资金consumer尚未接通，需后继正式pin并验证，不能称已可消费。
 
+worker 私有凭据文件与loopback开关的精确表示见技术方案MC01；不新增HTTP字段或浏览器凭据入口。System4的connection/protocol/type/base_url/secret_handle_ref仅在内部严格消费，不投影到usage planned。
+
 验证包括直连/实际网关的协议 wire、同 path 多连接、alias/request model 绑定、缺/错凭据、错误 artifact 与取消零发送、最终限额、usage 绑定和历史读取不变。自有 peer 不称真实 provider/gateway；远端收费与归属仍需来源及正式资金准入证据。
 
 ---

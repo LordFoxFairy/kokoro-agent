@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Protocol
+from typing import Annotated, Literal, Protocol
 
 from datetime import datetime
 
@@ -10,7 +10,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.protocol.model_usage_generated import (
+from kokoro_agent.protocol.model_usage_v2_generated import (
     Digest,
     IdentityRef,
     Lease,
@@ -200,6 +200,7 @@ class FinalModelCallEvidence(BaseModel):
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
+    artifact_version: Literal["1.0.0", "2.0.0"]
     tenant_id: str
     attempt_id: Uuid
     event_id: Uuid

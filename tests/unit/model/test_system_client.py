@@ -7,9 +7,30 @@ from typing import Any
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
-from kokoro_agent.clients.system import ModelResolutionError, SystemModelClient
+from kokoro_agent.clients.system import (
+    ModelConnection,
+    ModelResolutionError,
+    SystemModelClient,
+)
+
+
+@pytest.mark.parametrize(
+    "base_url", ["https://model.test:invalid/private", "https://[broken/private"]
+)
+def test_malformed_connection_url_is_a_sanitized_validation_error(
+    base_url: str,
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        ModelConnection(
+            protocol="openai_chat_completions",
+            connection_type="direct",
+            base_url=base_url,
+            secret_handle_ref="private-key-ref",
+        )
+    assert base_url not in str(caught.value)
+    assert "private-key-ref" not in str(caught.value)
 
 
 def route_payload() -> dict[str, Any]:
@@ -23,8 +44,13 @@ def route_payload() -> dict[str, Any]:
             "generation": "9007199254740993",
             "tenant_generation": "3",
             "provider_model_name": "provider-model",
-            "transport": "litellm",
-            "gateway_model_name": "gateway-model",
+            "connection": {
+                "protocol": "openai_chat_completions",
+                "connection_type": "direct",
+                "base_url": "https://model.test/prefix/v1",
+                "secret_handle_ref": "model-key-v1",
+            },
+            "request_model": "gateway-model",
             "feature_key": "chat",
             "label_key": "fast",
             "context_window": 4096,
@@ -69,7 +95,8 @@ async def test_resolves_trusted_tenant_and_opaque_label_without_provider_credent
             label="fast",
             request_id="request-1",
         )
-    assert route.gateway_model_name == "gateway-model"
+    assert route.request_model == "gateway-model"
+    assert route.connection.connection_type == "direct"
     assert route.generation == "9007199254740993"
 
 
@@ -135,7 +162,7 @@ async def test_owner_errors_are_sanitized(
         ("model_id", "11111111-1111-0111-8111-111111111111"),
         ("provider_id", "22222222-2222-4222-1222-222222222222"),
         ("digest", "invalid"),
-        ("gateway_model_name", ""),
+        ("request_model", ""),
         ("provider_id", "not-a-uuid"),
     ],
 )
@@ -347,7 +374,10 @@ async def test_r216_binds_strict_positive_int32_execution_limits(
         result = await resolver.resolve(
             tenant_id="tenant", feature_key="chat", label="fast", request_id="r216"
         )
-    assert asdict(result) == payload["data"]
+    assert {
+        **asdict(result),
+        "connection": result.connection.model_dump(mode="json"),
+    } == payload["data"]
 
 
 @pytest.mark.parametrize(

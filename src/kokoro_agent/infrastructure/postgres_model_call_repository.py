@@ -56,11 +56,12 @@ from kokoro_agent.model.call_artifacts import (
     strict_granted_artifact,
 )
 from kokoro_agent.model.call_evidence import (
-    parse_evidence,
+    parse_stored_evidence,
     validate_append_evidence,
     validate_frozen_attempt,
 )
 from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 _MAX_INT64 = 9_223_372_036_854_775_807
 
@@ -98,6 +99,58 @@ class PostgresModelCallRepository:
         self._total_timeout_seconds = total_timeout_seconds
         self._lock_timeout_ms = lock_timeout_ms
         self._statement_timeout_ms = statement_timeout_ms
+
+    async def assert_current_producer_ready(self) -> None:
+        """Reject unsealed legacy attempts before the worker consumes commands.
+
+        Sealed history remains readable. Valid current attempts remain available
+        for ordinary lease recovery; this is not an all-attempts drain gate.
+        Deployment must separately stop old producers before starting this worker.
+        """
+        invalid = False
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction():
+                    async with connection.cursor() as cursor:
+                        await execute_sql(cursor, "SET TRANSACTION READ ONLY")
+                        await execute_sql(
+                            cursor,
+                            f"SET LOCAL lock_timeout='{self._lock_timeout_ms}ms'",
+                        )
+                        await execute_sql(
+                            cursor,
+                            f"SET LOCAL statement_timeout='{self._statement_timeout_ms}ms'",
+                        )
+                    async with connection.cursor(
+                        name="model_producer_startup"
+                    ) as cursor:
+                        await execute_sql(
+                            cursor,
+                            "SELECT CASE WHEN octet_length(planned_bytes) <= 65536 "
+                            "THEN planned_bytes END AS planned_bytes "
+                            f"FROM {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)} "
+                            "WHERE sealed_at IS NULL",
+                        )
+                        while (row := await fetch_one(cursor)) is not None:
+                            try:
+                                raw = bytes(row["planned_bytes"])
+                                if len(raw) > 65_536:
+                                    raise ValueError
+                                planned = PlannedBinding.model_validate_json(
+                                    raw, strict=True
+                                )
+                                if (
+                                    rfc8785.dumps(planned.model_dump(mode="json"))
+                                    != raw
+                                ):
+                                    raise ValueError
+                            except (TypeError, ValueError, RecursionError):
+                                invalid = True
+                                break
+        if invalid:
+            raise RuntimeError(
+                "unsealed legacy model attempts prevent current producer startup"
+            )
 
     async def read_final_evidence(
         self, tenant_id: str, attempt_id: str, event_id: str
@@ -139,9 +192,9 @@ class PostgresModelCallRepository:
         if row is None:
             return None
         try:
-            validate_frozen_attempt(row)
             evidence_bytes = bytes(row["evidence_bytes"])
-            artifact = parse_evidence(evidence_bytes)
+            artifact = parse_stored_evidence(evidence_bytes)
+            validate_frozen_attempt(row, artifact_version=artifact.artifact_version)
             observed_at = datetime.fromisoformat(
                 artifact.observed_at.replace("Z", "+00:00")
             )
@@ -174,6 +227,7 @@ class PostgresModelCallRepository:
             return FinalModelCallEvidence.model_validate(
                 {
                     "tenant_id": tenant_id,
+                    "artifact_version": artifact.artifact_version,
                     "attempt_id": attempt_id,
                     "event_id": str(row["evidence_event_id"]),
                     "revision": row["evidence_revision"],

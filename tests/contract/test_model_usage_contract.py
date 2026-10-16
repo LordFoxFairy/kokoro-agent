@@ -327,3 +327,51 @@ def test_usage_versions_have_distinct_strict_decoders_and_digest_domains() -> No
         parse_evidence(raw_v2)
     with pytest.raises(ValueError):
         parse_v2(raw_v1)
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_new_terminal_closure_only_produces_current_usage_binding(version: str) -> None:
+    import hashlib
+    from datetime import datetime
+    import rfc8785
+    from kokoro_agent.model.call_evidence import build_terminal_closure_evidence
+    from kokoro_agent.model.call_models import ModelCallIdentityConflict
+
+    vectors = json.loads((ROOT / f"contract/usage/{version}/vectors.json").read_bytes())
+    document = json.loads(vectors["positive"][0]["json_utf8"])
+    identity = document["identity"]
+    binding = rfc8785.dumps({k: v for k, v in identity.items() if k != "event_id"})
+    planned = rfc8785.dumps(document["planned"])
+    authorization = rfc8785.dumps({"state": "not_requested"})
+    prepared = datetime.fromisoformat(
+        document["execution"]["prepared_at"].replace("Z", "+00:00")
+    )
+    attempt = {
+        "tenant_id": identity["tenant_ref"],
+        "run_id": identity["run_id"],
+        "call_id": identity["call_id"],
+        "attempt_id": identity["attempt_id"],
+        "attempt_ordinal": int(identity["attempt_ordinal"]),
+        "lease_owner": identity["lease"]["owner"],
+        "lease_generation": int(identity["lease"]["generation"]),
+        "attempt_binding_bytes": binding,
+        "attempt_binding_digest": hashlib.sha256(binding).hexdigest(),
+        "planned_bytes": planned,
+        "planned_digest": hashlib.sha256(planned).hexdigest(),
+        "authorization_bytes": authorization,
+        "authorization_digest": hashlib.sha256(authorization).hexdigest(),
+        "authorization_state": "not_requested",
+        "prepared_at": prepared,
+        "dispatch_started_at": None,
+        "status": "prepared",
+        "final_request_binding_version": 1,
+        "final_request_digest": "a" * 64,
+    }
+    if version == "v1":
+        with pytest.raises(ModelCallIdentityConflict):
+            build_terminal_closure_evidence(attempt, prepared)
+    else:
+        raw, result = build_terminal_closure_evidence(attempt, prepared)
+        assert result.evidence.artifact_version == "2.0.0"
+        assert result.evidence.planned.binding_version == "2.0.0"
+        assert json.loads(raw)["execution"]["outcome"] == "not_dispatched"

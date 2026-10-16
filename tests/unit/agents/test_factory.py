@@ -35,6 +35,8 @@ from kokoro_agent.protocol import (
 )
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.model.factory import ChatModelSettings, ModelHttpClients
+from kokoro_agent.model.credentials import ModelCredential
+from kokoro_agent.clients.system import ModelConnection
 from kokoro_agent.model.call_models import (
     AppendModelCallEvidence,
     AuthorizationPendingReceipt,
@@ -93,7 +95,13 @@ class RouteResolver:
             generation="1",
             tenant_generation="1",
             provider_model_name="provider-name",
-            gateway_model_name="gateway-name",
+            request_model="gateway-name",
+            connection=ModelConnection(
+                protocol="openai_chat_completions",
+                connection_type="direct",
+                base_url="https://model-unit.invalid/v1",
+                secret_handle_ref="model-unit-key",
+            ),
             feature_key=feature_key,
             label_key=label or "default",
             context_window=4096,
@@ -150,7 +158,7 @@ def _factory(
         *,
         model_clients: ModelHttpClients,
     ) -> BaseChatModel:
-        assert _model.provider == "litellm"
+        assert _model.provider == "openai_chat_completions"
         assert _model.name == "gateway-name"
         return LocalFakeChatModel()
 
@@ -169,9 +177,13 @@ def _factory(
     active_config = config or AppConfig.from_env({})
     active_config = active_config.model_copy(
         update={
-            "litellm_enabled": True,
-            "litellm_base_url": "http://model-unit.invalid/v1",
-            "litellm_api_key": SecretStr("unit-model-key"),
+            "model_credentials": (
+                ModelCredential(
+                    provider_id="provider",
+                    secret_handle_ref="model-unit-key",
+                    api_key=SecretStr("unit-model-key"),
+                ),
+            ),
         }
     )
     clients = WorkerClients()

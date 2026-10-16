@@ -173,12 +173,6 @@ async def worker_model_resolver(
         raise ValueError(
             "System model resolver URL and service credential are required"
         )
-    if (
-        not config.litellm_enabled
-        or config.litellm_base_url is None
-        or config.litellm_api_key is None
-    ):
-        raise ValueError("System model routing requires a configured LiteLLM gateway")
     async with SystemModelClient(
         config.system_base_url,
         config.internal_secret_agent,
@@ -258,6 +252,11 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             )
         ) as chat_repository,
     ):
+        model_call_repository = PostgresModelCallRepository(
+            config.run_repository.database_url,
+            config.run_repository.schema_name,
+        )
+        await model_call_repository.assert_current_producer_ready()
         interaction_checkpointer = make_interaction_checkpointer(
             saver=saver, reader=interaction_reader, repository=run_repository
         )
@@ -271,10 +270,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             toolbox=toolbox_from_config(config),
             checkpointer=interaction_checkpointer,
             run_repository=run_repository,
-            model_call_repository=PostgresModelCallRepository(
-                config.run_repository.database_url,
-                config.run_repository.schema_name,
-            ),
+            model_call_repository=model_call_repository,
             memory_store=memory_store,
             # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
             # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。

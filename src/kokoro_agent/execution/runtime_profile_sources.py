@@ -45,7 +45,7 @@ __init__.py agent_factory.py policy.py agents/definition.py agents/subagent_cata
 agents/subagents.py agents/native_profile.py features/definition.py
 execution/runtime_profile.py execution/runtime_profile_plan.py execution/runtime_profile_sources.py
 execution/protocols.py tools/toolset.py tools/toolbox.py tools/registry.py
-clients/system.py model/factory.py model/usage_observation.py model/call_runtime.py model/call_scope.py model/call_models.py model/call_artifacts.py model/request_profile.py
+clients/system.py model/credentials.py model/factory.py model/usage_observation.py model/call_runtime.py model/call_scope.py model/call_models.py model/call_artifacts.py model/request_profile.py
 worker/dependencies.py worker/main.py
 """,
     ),
@@ -156,6 +156,8 @@ model/call_models.py
 model/usage_evidence.py
 observability.py
 protocol/model_usage_generated.py
+protocol/model_usage_v2_generated.py
+model/usage_evidence_v2.py
 skills/__init__.py
 streams/__init__.py
 streams/factory.py

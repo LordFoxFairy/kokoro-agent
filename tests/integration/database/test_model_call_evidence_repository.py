@@ -34,6 +34,12 @@ from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
 from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
 )
+from kokoro_agent.infrastructure.postgres_model_call_evidence import (
+    close_model_call_attempts_for_terminal,
+)
+from kokoro_agent.model.usage_evidence import (
+    parse_evidence as parse_historical_evidence,
+)
 from kokoro_agent.model.call_models import (
     AppendModelCallEvidence,
     BeginModelCallAuthorization,
@@ -47,14 +53,14 @@ from kokoro_agent.model.call_models import (
     PreparedModelCall,
     StartModelCallDispatch,
 )
-from kokoro_agent.model.usage_evidence import parse_evidence
+from kokoro_agent.model.usage_evidence_v2 import parse_evidence
 from kokoro_agent.protocol.control import (
     ExecutionIdentity,
     IdentityRef,
     RunInput,
     RunRequest,
 )
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.config import AppConfig
@@ -91,7 +97,7 @@ _CURRENT_RUN_CONTROL_COLUMNS = {
 }
 _DIGEST = "a" * 64
 _OTHER_DIGEST = "b" * 64
-_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v1\n"
+_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v2\n"
 
 
 def _utc_millis(value: int) -> str:
@@ -112,7 +118,7 @@ def _strict_completed_evidence(
     identity = json.loads(prepared.attempt_binding_bytes)
     identity["event_id"] = event_id
     document = {
-        "artifact_version": "1.0.0",
+        "artifact_version": "2.0.0",
         "identity": identity,
         "planned": json.loads(prepared.planned_bytes),
         "actual": {"state": "unknown", "reason": "not_observed"},
@@ -196,7 +202,7 @@ def _strict_evidence(
             "raw_usage_digest": None,
         }
     document = {
-        "artifact_version": "1.0.0",
+        "artifact_version": "2.0.0",
         "identity": identity,
         "planned": json.loads(_raw_bytes(row["planned_bytes"])),
         "actual": {"state": "unknown", "reason": "not_observed"},
@@ -328,11 +334,12 @@ def _prepare_values() -> tuple[RunRequest, StaticRecipeBinding, PlannedBinding]:
         fingerprint=hashlib.sha256(recipe_bytes).hexdigest(),
     )
     planned = PlannedBinding(
+        binding_version="2.0.0",
         model="model-a1",
         provider="provider-a1",
         revision_id="revision-a1",
         provider_model_name="provider-model-a1",
-        gateway_model_name="gateway-a1",
+        request_model="gateway-a1",
         feature_key="chat",
         revision="1",
         generation="1",
@@ -575,6 +582,66 @@ async def _authorized_attempt(
         request_ref=granted.request_ref,
         admission_ref=granted.admission_ref,
     )
+
+
+@pytest.mark.parametrize(
+    "planned_version", ["current", "historical", "unknown", "malformed"]
+)
+async def test_worker_startup_preserves_current_recovery_but_rejects_unsealed_legacy(
+    run_chat_database_url: str, run_chat_schema: str, planned_version: str
+) -> None:
+    repository, command, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    raw = prepared.planned_bytes
+    if planned_version != "current":
+        planned = json.loads(raw)
+        if planned_version == "historical":
+            planned.pop("binding_version")
+            planned["gateway_model_name"] = planned.pop("request_model")
+        elif planned_version == "unknown":
+            planned["binding_version"] = "99.0.0"
+        raw = b"{" if planned_version == "malformed" else rfc8785.dumps(planned)
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            await execute_sql(
+                cursor,
+                "UPDATE {} SET planned_bytes=%s,planned_digest=%s WHERE attempt_id=%s".format(
+                    qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+                ),
+                (raw, hashlib.sha256(raw).hexdigest(), command.attempt_id),
+            )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT * FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (command.attempt_id,),
+        )
+        before = await fetch_one(cursor)
+    if planned_version == "current":
+        await repository.assert_current_producer_ready()
+    else:
+        with pytest.raises(RuntimeError, match="legacy model attempts"):
+            await repository.assert_current_producer_ready()
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT * FROM {} WHERE attempt_id=%s".format(
+                qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+            ),
+            (command.attempt_id,),
+        )
+        assert await fetch_one(cursor) == before
 
 
 async def _dispatched_attempt_row(
@@ -1213,6 +1280,7 @@ async def test_evidence_first_observation_updates_head_and_run_atomically(
         str(row["tenant_id"]), str(row["attempt_id"]), event_id
     )
     assert published is not None
+    assert published.artifact_version == "2.0.0"
     assert published.evidence_bytes == evidence_bytes
     assert published.evidence_digest == evidence_digest
     assert published.revision == 1
@@ -2724,3 +2792,96 @@ async def test_r246_corrupt_final_request_blocks_transition_and_closure(
     assert isinstance(database_now, datetime)
     with pytest.raises(ModelCallIdentityConflict):
         build_terminal_closure_evidence(row, database_now)
+
+
+@pytest.mark.parametrize("artifact_version", ["1.0.0", "2.0.0"])
+async def test_sealed_history_reads_exact_version_and_terminal_replay_writes_nothing(
+    run_chat_database_url: str, run_chat_schema: str, artifact_version: str
+) -> None:
+    repository, dispatch, row = await _dispatched_attempt_row(
+        run_chat_database_url, run_chat_schema
+    )
+    event_id, raw, digest = _strict_evidence(row, outcome="completed", revision=1)
+    await repository.append_evidence(
+        _append_command(row=row, lease=dispatch.lease, evidence_bytes=raw)
+    )
+    if artifact_version == "1.0.0":
+        # Install an internally consistent historical fixture, never emit v1
+        # through the current writer or reinterpret its bytes using v2 models.
+        document = json.loads(raw)
+        planned = document["planned"]
+        planned.pop("binding_version")
+        planned["gateway_model_name"] = planned.pop("request_model")
+        planned_raw = rfc8785.dumps(planned)
+        document["artifact_version"] = "1.0.0"
+        document.pop("digest")
+        digest = hashlib.sha256(
+            b"kokoro-agent:model-usage-evidence:v1\n" + rfc8785.dumps(document)
+        ).hexdigest()
+        document["digest"] = digest
+        raw = rfc8785.dumps(document)
+        parse_historical_evidence(raw)
+        async with connect_pg(run_chat_database_url) as connection:
+            async with connection.transaction(), connection.cursor() as cursor:
+                await execute_sql(
+                    cursor,
+                    "UPDATE {} SET planned_bytes=%s,planned_digest=%s,latest_evidence_digest=%s WHERE attempt_id=%s".format(
+                        qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+                    ),
+                    (
+                        planned_raw,
+                        hashlib.sha256(planned_raw).hexdigest(),
+                        digest,
+                        dispatch.attempt_id,
+                    ),
+                )
+                await execute_sql(
+                    cursor,
+                    "UPDATE {} SET evidence_bytes=%s,evidence_digest=%s WHERE event_id=%s".format(
+                        qualified(run_chat_schema, "kokoro_agent_model_usage_evidence")
+                    ),
+                    (raw, digest, event_id),
+                )
+
+    async def snapshot() -> dict[str, object]:
+        result: dict[str, object] = {}
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            for table in (
+                "kokoro_agent_model_call_attempt",
+                "kokoro_agent_model_usage_evidence",
+                "kokoro_agent_run",
+            ):
+                await execute_sql(
+                    cursor,
+                    "SELECT * FROM {} WHERE tenant_id=%s AND run_id=%s".format(
+                        qualified(run_chat_schema, table)
+                    ),
+                    (dispatch.tenant_id, dispatch.run_id),
+                )
+                result[table] = await cursor.fetchall()
+        return result
+
+    before = await snapshot()
+    published = await repository.read_final_evidence(
+        dispatch.tenant_id, dispatch.attempt_id, event_id
+    )
+    assert published is not None
+    assert published.artifact_version == artifact_version
+    assert published.evidence_bytes == raw
+    assert published.evidence_digest == digest
+    # Sealed legacy rows must not block current producer startup.
+    await repository.assert_current_producer_ready()
+    async with connect_pg(run_chat_database_url) as connection:
+        async with connection.transaction(), connection.cursor() as cursor:
+            await close_model_call_attempts_for_terminal(
+                cursor,
+                schema=run_chat_schema,
+                tenant_id=dispatch.tenant_id,
+                run_id=dispatch.run_id,
+                database_now=datetime.now(UTC),
+                allow_create=False,
+            )
+    assert await snapshot() == before

@@ -1,3 +1,39 @@
+## MC-01：默认直连与可选 LiteLLM 的 Agent 设计门（2026-10-15；目标，未实施）
+
+用户已批准 Agent 默认直接请求配置的模型地址，LiteLLM 是受支持的可选连接。当前 `84502e6` 的 System client、worker 启动门和 factory 仍仅支持 System `transport=litellm`；临时启动器曾把外部 URL/key 注入 KOKORO_LITELLM_*。本节不宣称该限制已解除。
+
+System 拥有模型/技术连接与发布 revision；Agent 消费固定 owner artifact，拥有实际模型请求、取消、attempt 与 usage；Billing 继续独占资金准入/结算。Browser/BFF 不取得模型密钥，不增加中间代理进程。目标选择已批准的协议适配器加显式连接，而非让 ModelConfig.provider 同时表示协议和 LiteLLM 部署。
+
+首片以既有 OpenAI-compatible Chat Completions 为执行协议，同时支持 direct 和 litellm 连接；共享 owned HTTPX/SDK wire 校验与生命周期。无 LiteLLM 配置不阻止 direct。既有非正式原生模型构造保留，但不自动获得 System 路由/其他 API 的正式能力声明。
+
+System 返回与 revision/digest 绑定的连接快照。Agent 从其完整 base URL 与协议资源规则得到唯一 endpoint，不再依赖全局 gateway URL；不再把 provider 名称、请求模型名和网关别名互相猜测。相同 path、不同地址/账户必须保持独立连接。secret reference 仅由 worker 部署侧解析，不进入 HTTP root 配置、普通 API、日志、持久证据或 BFF；凭据与 provider 绑定不符、缺失、配置损坏均在发送前失败。
+
+保留 trust_env=False、禁止重定向、SDK 自动重试为零、最终 endpoint/model/body/output cap 验证、每次新发送独立 attempt、取消有限 join 与 fatal 处理。网关失败不自动切 direct、账户或模型。直连连接同样需要正式 Billing 授权；现 prepare 后缺资金 consumer 的拒绝路径继续生效。
+
+### 必须先解决的契约影响
+
+PlannedBinding 并非只存在于 factory：现 canonical `contract/usage/v1/schema.json`、其 generated reader、call_artifacts/call_evidence、agent_factory 与 Billing pin 均含 provider_model_name/gateway_model_name。新生产路径以 request_model 替换 gateway 专属执行名称，保留 provider_model_name 的既有声明元数据与其余 planned/数量编码/actual/authorization/successor 语义。System provider/revision_id/digest 已定位不可变连接，final request digest 已包含 endpoint、planned digest 与真实 body hash，因此不把协议/拓扑/URL/secret reference 再复制到 usage planned。正式直连仍需最小 breaking usage 2.0.0 和 HTTP 6.0.0：新 planned 增加显式 binding_version=2.0.0，并以 request_model 替换 gateway_model_name；原生成器更新 active reader、manifest/provenance，不手改生成物。
+
+历史 evidence 字节/hash 保持原事实；旧记录读取与新请求生产分开，严禁把解析失败当新旧 fallback。现证据外层已有 artifact_version，旧 planned_bytes 无独立版本标识，因此采用下表的明确分派和切换屏障，不新增版本表或仅为此新增版本列。
+
+| 记录 | Producer 与读取选择 | HTTP/下游与恢复 |
+| --- | --- | --- |
+| 已 sealed usage 1.0.0 | 原 producer 不再写入；按 evidence 自带 artifact_version=1.0.0 选择冻结 v1 schema/decoder，校验原字节/原 digest domain | 同一 evidence GET 返回原 bytes，envelope version 取已验证证据，不硬编码；新 HTTP6 reader 明确支持历史1与当前2 |
+| 旧未 sealed attempt | 切换前由旧 worker 在原 lease/fence 下完成取消/closure；旧 planned 只由旧 producer 解释 | 未全部 sealed 或仍有旧 worker/lease 时禁止启用新 producer；unknown/财务 pending 可保留于 sealed 证据，不被变成成功/免费 |
+| 新 usage 2.0.0 | 只由新 producer 写入；planned 的显式 binding_version=2.0.0 选严格 v2 decoder，缺失/非法不回退 v1 | 外层 artifact_version=2.0.0；v2 digest domain 与 canonical schema/manifest 固定；资金消费者 pin 后才有资格读新格式 |
+
+v1 schema/decoder 仅作为不可编辑的历史 artifact 保留；只有 v2 是新的可编辑事实源和执行生产格式，不维持两个可切换执行协议。HTTP envelope version 必须与解码出的 evidence version 一致；未知版本失败闭合。final_request_binding_version 仍专指未变的最终请求摘要格式，不借用为 usage/planned 版本。
+
+v2 首次写入前，仅在旧 schema/配置仍匹配且旧组合可恢复时允许回到旧部署；首次 v2 写入后禁止直接回滚到不识别 v2 的旧 worker/reader。失败时停止新 dispatch，保留当前版本的历史读取和未知记录，修复后前向恢复。具体资源/数据切换须独立授权，不以此表自动执行 DDL。
+
+实施顺序：两 owner 先冻结本节最小表示/历史读取及切换屏障 → System owner artifact → Agent 严格 route client/secret 配置/适配器 → Agent 正式 planned/evidence contract 及 durable producer/reader → 下游 pin → 本地启动器装配两种连接 → 隔离真实调用。后三者的运行启用依赖资金 consumer 正式接线；SDK→自有 HTTP peer 可独立验证 wire，但不是付费链验收。
+
+后继写区复用现 clients/system.py、config.py、worker/main.py、model/factory.py、agent_factory.py、model/call_*、request_profile 及既有 contract generator/tests，不建立新的 runtime/服务/共享 DTO 中心。原 KOKORO_LITELLM_* 只可在明确 LiteLLM 连接中保有其语义；新生产路径的全局配置与别名一次退出，不保留双读。
+
+本轮是文档设计门，不运行 provider、不修改数据库或真实部署。上述 usage2/HTTP6 与历史读取表为本轮设计目标，仍待独审/用户确认，未生成 artifact 或完成运行验收。
+
+---
+
 ## R353-A-S06：Agent Artifact Delivery 固定 Storage v3（候选已实施；2026-10-08）
 
 ### 当前事实、必要性与边界

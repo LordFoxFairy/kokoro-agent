@@ -1,3 +1,17 @@
+## MC-01：模型连接消费者契约（2026-10-15；目标，未发布）
+
+System 当前固定 artifact 3.0.0 不变。用户已确定默认 direct、可选 LiteLLM；后继只从 System 正规发布的 breaking artifact 接收明确协议、连接与唯一请求模型绑定，version/commit/artifact/provenance 一起 pin。旧 payload 缺少新连接字段时拒绝，不从本机环境补成成功 route。
+
+Agent 不给普通 Web/BFF 返回上游地址、secret reference 或密钥。请求中任意自报 endpoint/provider/account 不覆盖 System 路由与 worker secret 配置。资金授权、tenant/subject/Run/lease fencing 和现有 AG-UI 网络边界不因拓扑变化而改变。
+
+现 usage `PlannedBinding` 的两份旧模型名称属于已发布机器契约。目标最小 usage 2.0.0 保留 provider_model_name 的声明元数据与其余语义，仅以 request_model 替换 gateway 专属执行名称，增加显式 planned binding_version；不重复嵌入 System 的整个连接快照。由原生成器更新 active reader、manifest、HTTP6 artifact 和消费者 pin；不在 System 或 Root 复制一份可编辑 usage schema。
+
+同一 evidence GET 在 HTTP6 中按已验证 evidence 的 artifact_version 返回 envelope 与原 bytes：明确接受冻结历史1.0.0和当前2.0.0，未知版本拒绝；不按当前部署常量返回1.0.0。新 planned 仅接受显式2.0.0，旧未sealed attempt须由旧producer收束后才切换。历史 v1 decoder 不生产新请求，解析失败不重试另一版本；不得把旧记录重新执行。Billing 当前只有目标artifact/pin，实际 reader/资金consumer尚未接通，需后继正式pin并验证，不能称已可消费。
+
+验证包括直连/实际网关的协议 wire、同 path 多连接、alias/request model 绑定、缺/错凭据、错误 artifact 与取消零发送、最终限额、usage 绑定和历史读取不变。自有 peer 不称真实 provider/gateway；远端收费与归属仍需来源及正式资金准入证据。
+
+---
+
 ## R353-A-S06：Storage v3 Artifact consumer contract（候选已实施；2026-10-08）
 
 ### Wire authority 与可见性

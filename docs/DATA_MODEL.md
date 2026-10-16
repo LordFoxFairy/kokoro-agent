@@ -1,3 +1,17 @@
+## MC-01：模型连接与调用证据边界（2026-10-15；目标，无数据写入）
+
+基线 `84502e6`。Agent 不复制 System provider/model 目录，不落密钥或上游 credential reference；部署配置解析后的密钥只在 worker 客户端生命周期使用。技术连接选择来自 System，逐调用 evidence/final request digest 仍属于 Agent。
+
+目标 planned binding 通过既有 provider/revision_id/digest 定位 System 不可变连接，仅以 request_model 替换 gateway 专属执行名称，并保留 provider_model_name 声明元数据。最终 method/endpoint/实际 body 已由 final request digest 绑定，无需再复制协议/拓扑/URL/凭据引用。secret 值、key hash 或配置文件内容不进入证据；planned 不是 actual attribution。unknown/partial 用量与授权 not_requested/pending 的原含义保持。
+
+现 call_artifacts 的 planned 编码直接来自 usage PlannedBinding，而其旧字段又由 canonical usage/v1 生成；因此这不是单一 factory 字段改名。目标 usage2 的 planned bytes 自带 binding_version=2.0.0，sealed evidence 沿既有外层 artifact_version 明确分派历史1/current2；复用现 call/attempt/evidence 表与原事务，不新增版本表/列或JSON配置中心。旧未sealed planned 没有该版本字段，只由切换前旧producer解释并完成原closure；新producer启动前必须证明旧worker/lease已停且旧attempt全sealed，不用缺字段回退来恢复旧执行。
+
+切换先停止接收旧绑定的新 Run，并使既有活动 lease/attempt 有界收束；已发送、授权未知或结算 pending 的记录按原恢复协议处理，不改成未发送或免费。历史 evidence 原字节/摘要不重写，旧绑定不能被新 producer 复用；冻结v1 decoder仅供按证据version的历史读取，只有v2可生产。HTTP envelope按实际证据version投影，final_request_binding_version保有原摘要格式含义，不拿来冒充usage版本。v2首写后不回滚旧reader；异常停止dispatch并保当前读取/前向恢复，不建立双轨执行协议。
+
+本节不授权删除历史记录、复位共享数据库/Redis、自动补齐旧连接或绕过 Billing。数据切换及恢复方案未冻结前，仅允许独立协议适配器/自有 peer 的验证，不激活新正式调用。
+
+---
+
 ## R353-A-S06：Artifact delivery intent v2（候选已实施，无Schema变化；2026-10-08）
 
 ### 唯一事实与存储位置

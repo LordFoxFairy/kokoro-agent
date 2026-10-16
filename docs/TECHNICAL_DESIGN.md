@@ -1,4 +1,4 @@
-## MC-01：默认直连与可选 LiteLLM 的 Agent 设计门（2026-10-15；目标，未实施）
+## MC-01：默认直连与可选 LiteLLM 的 Agent 设计门（2026-10-16；已批准，历史契约前置已实现）
 
 用户已批准 Agent 默认直接请求配置的模型地址，LiteLLM 是受支持的可选连接。当前 `84502e6` 的 System client、worker 启动门和 factory 仍仅支持 System `transport=litellm`；临时启动器曾把外部 URL/key 注入 KOKORO_LITELLM_*。本节不宣称该限制已解除。
 
@@ -30,7 +30,11 @@ v2 首次写入前，仅在旧 schema/配置仍匹配且旧组合可恢复时允
 
 后继写区复用现 clients/system.py、config.py、worker/main.py、model/factory.py、agent_factory.py、model/call_*、request_profile 及既有 contract generator/tests，不建立新的 runtime/服务/共享 DTO 中心。原 KOKORO_LITELLM_* 只可在明确 LiteLLM 连接中保有其语义；新生产路径的全局配置与别名一次退出，不保留双读。
 
-本轮是文档设计门，不运行 provider、不修改数据库或真实部署。上述 usage2/HTTP6 与历史读取表为本轮设计目标，仍待独审/用户确认，未生成 artifact 或完成运行验收。
+用户已批准本设计。System4 owner 已在独立候选发布固定连接快照；Agent 技术接线继续按上述顺序实施，不重复申请设计确认。
+
+第一前置切片已把 v1 历史闭包固定到原 manifest 的完整字节 SHA-256。原 schema、vectors、generator、compiler、semantic decoder 与 generated model 都保持原路径和原字节；不复制一套旧源码，也不随新生成器重生历史 manifest。`usage_history_contract.py` 仅作为现有公共 contract checker 的只读发布校验：先核原 manifest 固定摘要，再调用原完整 source/生成物/语义向量检查。即使 schema 或向量被协调修改并重生一个自洽 manifest，公共检查仍拒绝，且失败不修复输入。新版生产格式后续必须使用独立 v2 路径，只有 v2 可编辑；本切片当前仍保留原 v1 producer，不冒称已切到 v2 或完成历史版本分派。
+
+无 HTTP/usage wire、数据库、资金或正式运行切换。删去旧 checker 的 import 字符串/200 行数断言；其独有风险由现有公共 checker 实际 schema/provenance 正负向验证承接，新增两例覆盖历史自洽重写风险，不加 UI suite。
 
 ---
 

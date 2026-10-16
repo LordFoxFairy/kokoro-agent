@@ -13,9 +13,10 @@
     "src/kokoro_agent/chat_contract_check.py",
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
-    "src/kokoro_agent/system_consumer_contract.py"
+    "src/kokoro_agent/system_consumer_contract.py",
+    "src/kokoro_agent/usage_history_contract.py"
   ],
-  "combined_sha256": "36780452c1f1e851674d8880d0367d11aabd7ea33a81cb2484424a20ab1aabd8",
+  "combined_sha256": "c3c8938b46dbbdeaca0f20051d85c89d9cac49b6dc84c84429f375ae75d1148b",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",

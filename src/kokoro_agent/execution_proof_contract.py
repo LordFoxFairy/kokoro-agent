@@ -40,6 +40,7 @@ OWNER_SOURCE_FILES = (
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
+    "src/kokoro_agent/usage_history_contract.py",
 )
 HEADER_FIELDS = {"typ", "alg", "kid"}
 TAMPER_FIELDS = set(

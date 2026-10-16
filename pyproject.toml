@@ -118,6 +118,7 @@ kokoro_agent = ["prompts/*.md"]
 ]
 "share/kokoro-agent/audit/src/kokoro_agent" = [
   "src/kokoro_agent/system_consumer_contract.py",
+  "src/kokoro_agent/usage_history_contract.py",
   "src/kokoro_agent/model_usage_contract.py",
   "src/kokoro_agent/chat_contract_check.py",
   "src/kokoro_agent/contract_check.py",

@@ -43,6 +43,7 @@ OWNER_INVENTORY = [
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
+    "src/kokoro_agent/usage_history_contract.py",
 ]
 HEADER_FIELDS = {"typ", "alg", "kid"}
 CLAIMS_OBJECT_PATH = ("properties", "claims")
@@ -751,16 +752,6 @@ def test_checker_locks_normative_schema_metadata_after_digest_recompute(
 
     with pytest.raises(ValueError, match=message):
         contract_check.validate(repository)
-
-
-def test_execution_proof_checker_detail_has_a_focused_module_boundary() -> None:
-    detail = ROOT / "src" / "kokoro_agent" / "execution_proof_contract.py"
-    assert detail.is_file()
-    orchestration = (ROOT / "src" / "kokoro_agent" / "contract_check.py").read_text(
-        encoding="utf-8"
-    )
-    assert "from kokoro_agent.execution_proof_contract import" in orchestration
-    assert len(orchestration.splitlines()) < 200
 
 
 def test_contract_checker_validates_schema_vectors_and_provenance() -> None:

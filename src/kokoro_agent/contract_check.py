@@ -26,6 +26,7 @@ from kokoro_agent.platform_binding_contract import (
     validate_platform_binding_artifact,
 )
 from kokoro_agent.system_consumer_contract import validate_system_consumer_receipt
+from kokoro_agent.usage_history_contract import validate_usage_history
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
@@ -178,7 +179,7 @@ def validate(root: Path = ROOT) -> None:
     generate_failure_models(root, check=True)
     validate_execution_proof_contract(root)
     validate_platform_binding_artifact(root)
-    model_usage_contract.validate_model_usage_contract(root)
+    validate_usage_history(root)
 
 
 def main() -> int:

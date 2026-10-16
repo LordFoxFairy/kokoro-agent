@@ -174,3 +174,41 @@ def test_evidence_size_and_depth_are_bounded_before_model_validation() -> None:
         parse_evidence(b" " * 65536 + legal)
     with pytest.raises(ValueError, match="nesting"):
         parse_evidence(b"[" * 17 + b"null" + b"]" * 17)
+
+
+@pytest.mark.parametrize("mutation", ["schema", "vectors"])
+def test_public_checker_rejects_coordinated_rewrite_of_historical_usage_v1(
+    tmp_path: Path, mutation: str
+) -> None:
+    """A self-consistent rebuilt manifest must not redefine a published decoder."""
+    import shutil
+
+    from kokoro_agent import contract_check
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_usage_contract import (
+        USAGE_AUDIT_FILES,
+        generate_model_usage_artifact,
+        validate_model_usage_contract,
+    )
+
+    shutil.copytree(ROOT / "contract", tmp_path / "contract")
+    for relative in {*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES}:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    contract_check.validate(tmp_path)
+    path = tmp_path / f"contract/usage/v1/{mutation}.json"
+    document = json.loads(path.read_bytes())
+    if mutation == "schema":
+        document["title"] += " rewritten"
+    else:
+        document["positive"][0]["id"] += "-rewritten"
+    path.write_text(json.dumps(document, indent=2) + "\n")
+    generate_model_usage_artifact(tmp_path, check=False)
+    # The old integrity check accepts the coordinated regeneration. Its new
+    # caller must additionally bind the exact immutable historical release.
+    validate_model_usage_contract(tmp_path)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError, match="historical usage v1 release"):
+        contract_check.validate(tmp_path)
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before

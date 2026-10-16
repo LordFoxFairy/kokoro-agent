@@ -12,7 +12,7 @@ System 返回与 revision/digest 绑定的连接快照。Agent 从其完整 base
 
 ### 必须先解决的契约影响
 
-PlannedBinding 并非只存在于 factory：现 canonical `contract/usage/v1/schema.json`、其 generated reader、call_artifacts/call_evidence、agent_factory 与 Billing pin 均含 provider_model_name/gateway_model_name。新生产路径以 request_model 替换 gateway 专属执行名称，保留 provider_model_name 的既有声明元数据与其余 planned/数量编码/actual/authorization/successor 语义。System provider/revision_id/digest 已定位不可变连接，final request digest 已包含 endpoint、planned digest 与真实 body hash，因此不把协议/拓扑/URL/secret reference 再复制到 usage planned。正式直连仍需最小 breaking usage 2.0.0 和 HTTP 6.0.0：新 planned 增加显式 binding_version=2.0.0，并以 request_model 替换 gateway_model_name；原生成器更新 active reader、manifest/provenance，不手改生成物。
+PlannedBinding 并非只存在于 factory：现 canonical `contract/usage/v1/schema.json`、其 generated reader、call_artifacts/call_evidence、agent_factory 与 Billing pin 均含 provider_model_name/gateway_model_name。新生产路径以 request_model 替换 gateway 专属执行名称，保留 provider_model_name 的既有声明元数据与其余 planned/数量编码/actual/authorization/successor 语义。System provider/revision_id/digest 已定位不可变连接，final request digest 已包含 endpoint、planned digest 与真实 body hash，因此不把协议/拓扑/URL/secret reference 再复制到 usage planned。正式直连仍需最小 breaking usage 2.0.0 和 HTTP 6.0.0：新 planned 增加显式 binding_version=2.0.0，并以 request_model 替换 gateway_model_name；独立 v2 生成器更新 v2 reader/manifest，公共 provenance 沿既有入口更新，不手改生成物或改变冻结的 v1 生成链。
 
 历史 evidence 字节/hash 保持原事实；旧记录读取与新请求生产分开，严禁把解析失败当新旧 fallback。现证据外层已有 artifact_version，旧 planned_bytes 无独立版本标识，因此采用下表的明确分派和切换屏障，不新增版本表或仅为此新增版本列。
 
@@ -34,7 +34,9 @@ v2 首次写入前，仅在旧 schema/配置仍匹配且旧组合可恢复时允
 
 第一前置切片已把 v1 历史闭包固定到原 manifest 的完整字节 SHA-256。原 schema、vectors、generator、compiler、semantic decoder 与 generated model 都保持原路径和原字节；不复制一套旧源码，也不随新生成器重生历史 manifest。`usage_history_contract.py` 仅作为现有公共 contract checker 的只读发布校验：先核原 manifest 固定摘要，再调用原完整 source/生成物/语义向量检查。即使 schema 或向量被协调修改并重生一个自洽 manifest，公共检查仍拒绝，且失败不修复输入。新版生产格式后续必须使用独立 v2 路径，只有 v2 可编辑；本切片当前仍保留原 v1 producer，不冒称已切到 v2 或完成历史版本分派。
 
-无 HTTP/usage wire、数据库、资金或正式运行切换。删去旧 checker 的 import 字符串/200 行数断言；其独有风险由现有公共 checker 实际 schema/provenance 正负向验证承接，新增两例覆盖历史自洽重写风险，不加 UI suite。
+后继前置切片已实现独立 `contract/usage/v2` schema/vectors/manifest、`generate_model_usage_v2_models.py`、`model_usage_v2_contract.py`、严格 v2 semantic decoder 和只读 generated model。v2 compiler 固定批准的 planned 精确形状、Opaque 非空/控制字符/UTF-8 上界及 evidence 版本，拒绝协调重生后的放宽。v2 不导入、转译或重生 v1；原公共 checker 显式校验历史 v1 与 v2，两份自有 audit inventory 合并进入已有 wheel/RECORD 闭包。3 正向、29 反向、10 successor pair 覆盖独立 digest domain、版本错配、旧字段、连接/凭据字段越界与 request_model 漂移。
+
+该 v2 artifact 仍是离线候选；producer、durable planned/evidence reader 与 HTTP 没有切换，公共检查支持两版不等于正式历史读取已完成。数据库、资金和正常运行不变。旧 checker 的 import 字符串/200 行数断言已退役；实际 schema/provenance 正负向验证承接其独有风险，不新增 UI suite。
 
 ---
 

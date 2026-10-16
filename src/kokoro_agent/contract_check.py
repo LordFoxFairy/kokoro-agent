@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
-from kokoro_agent import model_usage_contract
+from kokoro_agent import model_usage_contract, model_usage_v2_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
     generate_failure_models,
@@ -180,6 +180,7 @@ def validate(root: Path = ROOT) -> None:
     validate_execution_proof_contract(root)
     validate_platform_binding_artifact(root)
     validate_usage_history(root)
+    model_usage_v2_contract.validate_model_usage_contract(root)
 
 
 def main() -> int:
@@ -187,6 +188,7 @@ def main() -> int:
         {
             *OWNER_SOURCE_FILES,
             *model_usage_contract.USAGE_AUDIT_FILES,
+            *model_usage_v2_contract.USAGE_AUDIT_FILES,
             "contract/provenance.json",
             PLATFORM_PROVENANCE_RELATIVE,
             *(record[0] for record in EXPECTED_EXECUTION_SOURCES),

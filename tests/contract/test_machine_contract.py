@@ -666,6 +666,9 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
 
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
     from kokoro_agent.platform_binding_contract import EXPECTED_EXECUTION_SOURCES
 
     with (ROOT / "pyproject.toml").open("rb") as source:
@@ -680,6 +683,7 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
     required = {
         *OWNER_SOURCE_FILES,
         *USAGE_AUDIT_FILES,
+        *USAGE_V2_AUDIT_FILES,
         "contract/provenance.json",
         "contract/platform/v1/provenance.json",
         *(record[0] for record in EXPECTED_EXECUTION_SOURCES),
@@ -720,10 +724,13 @@ def test_explicit_checker_rejects_incomplete_assets_without_repair_or_fallback(
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
 
     root = tmp_path / "explicit-source-fixture"
     shutil.copytree(ROOT / "contract", root / "contract")
-    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES):
+    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES):
         path = root / source
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((ROOT / source).read_bytes())
@@ -823,10 +830,13 @@ def test_r216_public_checker_rejects_system_dependency_receipt_tamper(
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
 
     root = tmp_path / "r216-receipt-source"
     shutil.copytree(ROOT / "contract", root / "contract")
-    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES):
+    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES):
         target = root / source
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / source).read_bytes())

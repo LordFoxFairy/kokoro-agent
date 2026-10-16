@@ -4,7 +4,9 @@ System 当前固定 artifact 3.0.0 不变。用户已确定默认 direct、可�
 
 Agent 不给普通 Web/BFF 返回上游地址、secret reference 或密钥。请求中任意自报 endpoint/provider/account 不覆盖 System 路由与 worker secret 配置。资金授权、tenant/subject/Run/lease fencing 和现有 AG-UI 网络边界不因拓扑变化而改变。
 
-现 usage `PlannedBinding` 的两份旧模型名称属于已发布机器契约。目标最小 usage 2.0.0 保留 provider_model_name 的声明元数据与其余语义，仅以 request_model 替换 gateway 专属执行名称，增加显式 planned binding_version；不重复嵌入 System 的整个连接快照。由原生成器更新 active reader、manifest、HTTP6 artifact 和消费者 pin；不在 System 或 Root 复制一份可编辑 usage schema。
+现 usage `PlannedBinding` 的两份旧模型名称属于已发布机器契约。最小 usage 2.0.0 保留 provider_model_name 的声明元数据与其余语义，仅以 request_model 替换 gateway 专属执行名称，增加显式 planned binding_version=2.0.0；不重复嵌入 System 的整个连接快照。独立 v2 schema/generator/strict decoder/manifest 已在候选源码实现，公共发布检查和安装资产闭包同时验证冻结 v1 与 v2；v1 六份来源和 manifest 原字节不变。v2 evidence 使用独立 v2 digest domain，跨版本输入不回退，3 正向、29 反向及10 successor pair 由公共检查执行。不在 System 或 Root 复制一份可编辑 usage schema。
+
+本前置切片不改变 HTTP5、System3 pin、RunRequest、AG-UI、SQL 或实际 producer。HTTP6、durable 历史读取分派及 Billing 消费固定仍待后继原子切换；现调用不会因为安装了 v2 模型而自动写 v2。
 
 同一 evidence GET 在 HTTP6 中按已验证 evidence 的 artifact_version 返回 envelope 与原 bytes：明确接受冻结历史1.0.0和当前2.0.0，未知版本拒绝；不按当前部署常量返回1.0.0。新 planned 仅接受显式2.0.0，旧未sealed attempt须由旧producer收束后才切换。历史 v1 decoder 不生产新请求，解析失败不重试另一版本；不得把旧记录重新执行。Billing 当前只有目标artifact/pin，实际 reader/资金consumer尚未接通，需后继正式pin并验证，不能称已可消费。
 

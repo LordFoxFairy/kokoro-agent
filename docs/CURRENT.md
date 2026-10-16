@@ -1,3 +1,15 @@
+## MC-01 usage2 离线契约前置（2026-10-16；本地候选，未切生产读写）
+
+既有批准设计下新增独立 usage/v2 schema/vectors/manifest、有限 compiler/generator、严格 semantic decoder 与 generated model。planned 以显式 binding_version=2.0.0 与 request_model 表示唯一请求模型，provider_model_name 保留声明含义；不纳入 endpoint、连接快照、凭据引用或密钥。公共 checker 显式校验冻结 v1 与 v2，自有 inventory 合并进原 wheel/RECORD 闭包，不新增协议选择 fallback。原 v1 六来源及 manifest 与 HEAD 原字节一致。
+
+v2 向量为3正向、29反向和10 successor pair，覆盖跨版本、digest domain、旧字段与 model 漂移。既有 suite 内扩展编译器自洽schema变异与公共检查负控，不新增 UI suite、不锁定CSS/源码字符串。独审发现 root planned 引用漏pin及函数内import违反原架构门；前者2个真实RED后补同一shape guard，后者改回顶层import，未改架构断言。修复后 usage+architecture 90 PASS；首轮完整默认2360 PASS/1 FAIL的原失败证据保留。最终 Python3.11.14 完整默认2363 PASS/759原资源排除/2 SDK warnings，138.50秒、exit0；保留一条无traceback的后台HTTP线程诊断，不冒称日志全无异常或资源用例已通过。
+
+Ruff/Pyright/8文件格式、原/新生成器check、完整contract checker、lock、wheel/sdist build通过；独立临时venv按原lock/hash安装最终wheel，8步含v1/v2正反例、跨版本拒绝、缺v2审计资产确实拒绝→恢复checker通过，环境已清理。首次离线安装因缓存没有固定版本boto3-stubs-lite而失败，随后按同一lock/hash正常下载完成，无依赖或lock变化。只读独审两项P2关闭，无剩余确定P0–P2。
+
+当前 producer/持久化/HTTP5/System3 pin仍原样；System4连接消费、provider-bound凭据、direct/LiteLLM wire、usage2 producer及完整历史reader、旧未sealed屏障、HTTP6与Billing消费仍待后继原子实施。未操作正常进程、应用库、凭据或模型发送；这只是离线契约交付，不是聊天/费用/后台产品验收。
+
+---
+
 ## MC-01 历史契约、取消与输入边界（2026-10-16；本地源码，非正常激活）
 
 本片在既有 `codex/model-connections` 实施已批准设计的历史证据保护：公共 contract checker 固定 usage/v1 manifest 原字节 SHA，再执行原 source/生成物/语义 vectors 检查，拒绝历史 schema/vectors 与 manifest 被一起重写。原六个来源与 manifest 不变；不新造历史源码副本、执行开关、版本表或 decoder fallback。新增 checker 走现有 provenance inventory、wheel audit 和 RECORD 边界。

@@ -10,6 +10,8 @@
 
 本节不授权删除历史记录、复位共享数据库/Redis、自动补齐旧连接或绕过 Billing。数据切换及恢复方案未冻结前，仅允许独立协议适配器/自有 peer 的验证，不激活新正式调用。
 
+2026-10-16 前置源码已增加独立 usage/v2 artifact、strict decoder 与发布/安装检查；只验证离线文档，不写入 call/attempt/evidence。当前 repository、producer 与 HTTP5 reader 仍用 v1，显式版本分派及旧未sealed屏障没有实施，不因 artifact 存在而默认完成数据切换。canonical SQL 与原历史 v1 来源字节均未改变。
+
 ---
 
 ## R353-A-S06：Artifact delivery intent v2（候选已实施，无Schema变化；2026-10-08）

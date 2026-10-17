@@ -37,9 +37,11 @@ from kokoro_agent.protocol import (
     RunRequest,
     SkillPhase,
     SkillProgressSink,
-    SkillProgressCommitted,
 )
-from kokoro_agent.execution.events import ProgressPersistenceError
+from kokoro_agent.execution.events import (
+    ProgressPersistenceError,
+    confirm_skill_progress,
+)
 from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
@@ -161,7 +163,7 @@ async def _preflight(
         except ProgressPersistenceError:
             raise
         except Exception:
-            await _confirm_progress(
+            await confirm_skill_progress(
                 progress, SkillPhase(phase="failed", error_code="skill_resolve_failed")
             )
             raise
@@ -172,21 +174,11 @@ async def _preflight(
             except ProgressPersistenceError:
                 raise
             except Exception:
-                await _confirm_progress(
+                await confirm_skill_progress(
                     progress, SkillPhase(phase="failed", error_code="skill_load_failed")
                 )
                 raise
     return _ResolvedCapabilities(skills=skills, mcp={}, skill_reader=reader)
-
-
-async def _confirm_progress(progress: SkillProgressSink, phase: SkillPhase) -> None:
-    confirmation = await progress(phase)
-    try:
-        SkillProgressCommitted.model_validate(confirmation)
-    except ValueError as error:
-        raise ProgressPersistenceError(
-            "Skill progress has no durable confirmation"
-        ) from error
 
 
 async def build_deep_agent(
@@ -198,6 +190,7 @@ async def build_deep_agent(
     plan: PreparedPeerPlan,
     recipe: StaticRecipeBinding,
     capabilities: _ResolvedCapabilities,
+    progress: SkillProgressSink,
     name: str | None = None,
 ) -> AgentHandle:
     if plan.agent is not agent:
@@ -345,7 +338,15 @@ async def build_deep_agent(
             ),
             middleware=(
                 *main_chain,
-                RunSkillsMiddleware(backend=native_backend, sources=[SKILLS_ROOT]),
+                RunSkillsMiddleware.for_selected(
+                    backend=native_backend,
+                    sources=[SKILLS_ROOT],
+                    progress=progress,
+                    expected_skill_paths=tuple(
+                        f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md"
+                        for skill in resolved_skills
+                    ),
+                ),
             ),
             backend=native_backend,
             # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
@@ -443,11 +444,11 @@ class AgentFactory:
         async def before_load() -> None:
             nonlocal loading
             if not loading:
-                await _confirm_progress(progress, SkillPhase(phase="loading"))
+                await confirm_skill_progress(progress, SkillPhase(phase="loading"))
                 loading = True
 
         if request.selected_skill_source_refs:
-            await _confirm_progress(progress, SkillPhase(phase="resolving"))
+            await confirm_skill_progress(progress, SkillPhase(phase="resolving"))
         skills = {
             peer.agent.key: await _preflight(
                 peer.agent, self._dependencies, request, lease, progress, before_load
@@ -455,7 +456,7 @@ class AgentFactory:
             for peer in prepared.peers
         }
         if request.selected_skill_source_refs:
-            await _confirm_progress(progress, SkillPhase(phase="ready"))
+            await confirm_skill_progress(progress, SkillPhase(phase="ready"))
         # MCP is not a Skill phase. All peer Skill preflights precede MCP assembly.
         capabilities: dict[str, _ResolvedCapabilities] = {}
         for peer in prepared.peers:
@@ -479,6 +480,7 @@ class AgentFactory:
                 plan=peer,
                 recipe=recipe,
                 capabilities=capabilities[peer.agent.key],
+                progress=progress,
             )
         built_agents: list[AgentHandle] = []
         try:
@@ -493,6 +495,7 @@ class AgentFactory:
                         recipe=recipe,
                         name=peer.agent.key,
                         capabilities=capabilities[peer.agent.key],
+                        progress=progress,
                     )
                 )
             native = create_swarm(

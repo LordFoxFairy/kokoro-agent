@@ -12,7 +12,7 @@ from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 VECTOR = json.loads(
     (
         Path(__file__).parents[3]
-        / "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json"
+        / "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json"
     ).read_bytes()
 )["vectors"][0]
 
@@ -28,8 +28,8 @@ class Sender:
             revision=1,
             scope_kind=pb.SkillScopeKind.PERSONAL,
             package_asset_ref="asset-1",
-            content_digest=VECTOR["zipSha256"],
-            manifest_identity=VECTOR["manifestIdentity"],
+            content_digest=VECTOR["archive_sha256"],
+            manifest_identity=VECTOR["expected"]["manifestIdentity"],
         )
 
     async def send(
@@ -42,8 +42,8 @@ class Sender:
             return pb.ResolveVisibleSkillResponse(source=self.source)
         return pb.GetApprovedSkillPackageReferenceResponse(
             asset_ref="asset-1",
-            content_digest=VECTOR["zipSha256"],
-            manifest_identity=VECTOR["manifestIdentity"],
+            content_digest=VECTOR["archive_sha256"],
+            manifest_identity=VECTOR["expected"]["manifestIdentity"],
             transfer_reference=pb.PackageTransferReference(method="GET"),
         )
 
@@ -56,7 +56,7 @@ class Transfer:
         self, reference: pb.PackageTransferReference, content_digest: str
     ) -> bytes:
         self.calls += 1
-        return base64.b64decode(VECTOR["zipBase64"])
+        return base64.b64decode(VECTOR["archive_base64"])
 
 
 @pytest.mark.asyncio
@@ -67,7 +67,7 @@ async def test_typed_resolve_and_each_read_authorizes_without_byte_cache() -> No
     client = PlatformSkillClient(sender, transfer)
     skills = await client.resolve(("skill:skill-1",))
     first = await client.load_package(skills[0])
-    assert first["SKILL.md"] == b"# Skill"
+    assert first["SKILL.md"] == base64.b64decode(VECTOR["files_base64"]["SKILL.md"])
     assert await client.load_package(skills[0]) == first
     assert len(sender.calls) == 3 and transfer.calls == 2
     sender.deny = True
@@ -108,7 +108,7 @@ async def test_backend_reauthorizes_all_read_surfaces_and_preserves_binary() -> 
         revision=1,
         asset_ref="asset",
         content_digest="a" * 64,
-        manifest_identity="zip-v1:sha256:" + "b" * 64,
+        manifest_identity="skill-md-v1:sha256:" + "b" * 64,
     )
     reader = Reader()
     backend = TypedSkillBackend((skill,), reader)
@@ -155,7 +155,7 @@ async def test_backend_canonical_id_paths_no_alias_and_all_writes_denied() -> No
             revision=1,
             asset_ref="asset",
             content_digest="a" * 64,
-            manifest_identity="zip-v1:sha256:" + "b" * 64,
+            manifest_identity="skill-md-v1:sha256:" + "b" * 64,
         )
         for key in ("Same.Name", "same.Name", "x" * 191)
     )
@@ -194,7 +194,7 @@ async def test_backend_download_and_grep_have_aggregate_budgets() -> None:
         revision=1,
         asset_ref="asset",
         content_digest="a" * 64,
-        manifest_identity="zip-v1:sha256:" + "b" * 64,
+        manifest_identity="skill-md-v1:sha256:" + "b" * 64,
     )
     backend = TypedSkillBackend((skill,), Reader())
     path = "/" + skill.path_segment + "/SKILL.md"

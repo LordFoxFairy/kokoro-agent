@@ -1,3 +1,23 @@
+## 2026-10-17 当前 Skill 包消费切换（profile 1.1.0 候选已实现）
+
+### Owner 与固定发行
+
+基线84502e6。独立固定 Platform `e1b5484f162a42652bbc576cebb0f48f52809272` 的 skill-package-profile-v1/1.1.0 与vectors；原v4 Proto/request projector/24 execution proofs继续精确固定其原发行，六个Skill source/download message定义与当前owner逐字节相等。本片不虚构v11、不激活新RPC/任意active图，也不导入sibling源码。generator/hash checker和wheel audit inventory同片承接两份新artifact，generated RPC输出无需改变。
+
+### 单一 metadata 事实与本进程安全
+
+Platform唯一裁决FAILSAFE frontmatter业务合法性及当前资格；Agent每次read重新取Approved并核asset/contentSHA/manifest三绑定，既有传输先验完整ZIP SHA。随后纯validator保ZIP32、CRC、路径/NFC、结构/目录、展开与根1MiB/UTF8预算，最后比较原始SKILL.md身份并原字节只读返回。删除旧manifest.json/schema1解析和无用skill_id/revision参数，不合成文件、不做zip-v1/v2 fallback，不缓存bytes或授权。
+
+最初PyYAML重复业务校验候选在70个合成差分中误拒两个owner合法NEL边界；另试ruamel也非即插等价，均已删除，无新依赖或lock变化。owner随后1.1.0正式区分全部30向量的owner验收与24个consumer安全向量，原archive/expected逐项不变；6个owner-only YAML反例继续由真实owner验证，不把重复业务解析误当下载授权。历史v4 ZIP归档仍精确审计，原ZIP结构类反例继续对当前validator执行，旧合法manifest不复活。ZIP与caller/tenant/lease撤权边界不因这个分层省略。
+
+### 原生加载覆盖与实际边界
+
+RunSkillsMiddleware保留DeepAgents官方parser/prompt；for_selected工厂固定本Run exact虚拟文件路径，graph entry清旧metadata后核结果路径集合及数量。遗漏、同名覆盖、未绑定选择显式停止于模型前；不把已声明选择静默降为空集。同步/异步、不同Run刷新和同RunHITL沿原边界，无新框架、协议、进程、Schema或权限；进度沿既有持久化边界。SDK合法owner包的EOF marker及同名选择仍可能被其parser跳过/覆盖，本片将这两种情况从静默继续改为确定失败，不声称已让所有owner合法格式都被SDK正向消费；该正向支持仍为后继。
+
+产品执行只用async v3：native异常经原Run绑定的可信progress sink写failed/skill_load_failed并验证durable ACK，复用execution.events中的原确认逻辑；禁止另造未持久的失败状态。ProgressPersistenceError原样传播，取消不转成业务失败。sync SDK hook只做覆盖守门、不声明durable phase。原preflight ready后发生native失败，BFF既有同anchor最新activity投影可接受failed，不加第二条网络协议或绕过lease/fence。
+
+原正常产品446字节根SKILL.md包在新纯validator与真实SDK GREEN，整体SHA与原Markdown身份精确不变；受控reader不代表正常Run准入/模型执行或产品全验收。最终完整pytest为2350 PASS/1既存FAIL/759资源deselected，失败文件与基线相同，完整合并门未满足；其余工程门、codegen drift及仓外installed-wheel合同/同包检查通过，详见CURRENT。所有验证使用自有隔离env，原共享.venv的旧editable指向及正常Agent服务保持原样，不以错误checkout的import冒当前runtime成功。无真实模型/Tool/Billing请求，远端与Root gitlink暂停。
+
 ## R353-A-S06：Agent Artifact Delivery 固定 Storage v3（候选已实施；2026-10-08）
 
 ### 当前事实、必要性与边界

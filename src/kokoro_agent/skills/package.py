@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import struct
 import unicodedata
@@ -11,8 +10,6 @@ import zlib
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NoReturn
-
-from pydantic import TypeAdapter, ValidationError
 
 
 class SkillPackageError(ValueError):
@@ -23,47 +20,8 @@ def _fail(reason: str = "package_zip_invalid") -> NoReturn:
     raise SkillPackageError(reason)
 
 
-def _manifest(raw: bytes, skill_id: str, revision: int) -> None:
-    def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, value in items:
-            if key in result:
-                _fail("package_manifest_invalid")
-            result[key] = value
-        return result
-
-    if len(raw) > 16384 or raw.startswith(b"\xef\xbb\xbf"):
-        _fail("package_manifest_invalid")
-    try:
-        value: object = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs)
-    except (ValueError, UnicodeError):
-        _fail("package_manifest_invalid")
-    try:
-        manifest = TypeAdapter(dict[str, object]).validate_python(value, strict=True)
-    except ValidationError:
-        _fail("package_manifest_invalid")
-    if set(manifest) != {
-        "schema_version",
-        "skill_id",
-        "revision",
-        "entry",
-    }:
-        _fail("package_manifest_invalid")
-    if (
-        type(manifest["schema_version"]) is not int
-        or manifest["schema_version"] != 1
-        or type(manifest["revision"]) is not int
-        or not 1 <= manifest["revision"] <= 9007199254740991
-        or type(manifest["skill_id"]) is not str
-        or manifest["entry"] != "SKILL.md"
-    ):
-        _fail("package_manifest_invalid")
-    if manifest["skill_id"] != skill_id or manifest["revision"] != revision:
-        _fail("package_identity_mismatch")
-
-
 def validate_package(
-    payload: bytes, *, skill_id: str, revision: int, manifest_identity: str | None
+    payload: bytes, *, manifest_identity: str | None
 ) -> Mapping[str, bytes]:
     """Return only fully verified original file bytes; no partial package escapes."""
     length = len(payload)
@@ -239,11 +197,16 @@ def validate_package(
         position = finish
     if position != central:
         _fail()
-    if "manifest.json" not in files or "SKILL.md" not in files:
+    if "SKILL.md" not in files:
         _fail("package_manifest_invalid")
-    raw_manifest = files["manifest.json"]
-    _manifest(raw_manifest, skill_id, revision)
-    identity = "zip-v1:sha256:" + hashlib.sha256(raw_manifest).hexdigest()
+    raw_markdown = files["SKILL.md"]
+    if len(raw_markdown) > 1048576:
+        _fail("package_manifest_invalid")
+    try:
+        raw_markdown.decode("utf-8")
+    except UnicodeError:
+        _fail("package_manifest_invalid")
+    identity = "skill-md-v1:sha256:" + hashlib.sha256(raw_markdown).hexdigest()
     if manifest_identity is not None and manifest_identity != identity:
         _fail("package_identity_mismatch")
     return MappingProxyType(files)

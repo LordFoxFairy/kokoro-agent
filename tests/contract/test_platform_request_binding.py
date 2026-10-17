@@ -190,6 +190,10 @@ def test_v3_vendor_rejects_extra_file_even_with_unchanged_provenance(
         "missing",
         "extra",
         "path-substitution",
+        "package-owner",
+        "package-inventory",
+        "package-payload-rehashed",
+        "package-extra-file",
     ],
 )
 def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
@@ -229,8 +233,27 @@ def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
     elif tamper == "path-substitution":
         sources[0]["path"] = sources[1]["path"]
         sources[0]["sha256"] = sources[1]["sha256"]
-    else:
+    elif not tamper.startswith("package-"):
         raise AssertionError(tamper)
+    if tamper.startswith("package-"):
+        package_pin = _object(pin["package_profile"])
+        package_sources = [_object(value) for value in _list(package_pin["sources"])]
+        if tamper == "package-owner":
+            package_pin["owner_commit"] = "0" * 40
+        elif tamper == "package-inventory":
+            package_sources.pop()
+        elif tamper == "package-payload-rehashed":
+            target = repository / _string(package_sources[0]["path"])
+            target.write_text("{}\n")
+            package_sources[0]["sha256"] = hashlib.sha256(
+                target.read_bytes()
+            ).hexdigest()
+        elif tamper == "package-extra-file":
+            (repository / "contract/platform/v1/skill-package/extra.json").write_text(
+                "{}\n"
+            )
+        package_pin["sources"] = package_sources
+        pin["package_profile"] = package_pin
     execution["sources"] = sources
     pin["execution_operations"] = execution
     _write_json(pin_path, pin)

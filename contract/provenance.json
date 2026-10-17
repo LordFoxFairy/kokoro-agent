@@ -15,7 +15,7 @@
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py"
   ],
-  "combined_sha256": "36780452c1f1e851674d8880d0367d11aabd7ea33a81cb2484424a20ab1aabd8",
+  "combined_sha256": "a8ccc05fbe0393a18694cdd88198fe0f06a7be611c2e81ee15bcaf0f4052d2dc",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",

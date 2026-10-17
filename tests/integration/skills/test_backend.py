@@ -35,7 +35,7 @@ def _skill() -> ResolvedSkill:
         revision=1,
         asset_ref="asset-1",
         content_digest="a" * 64,
-        manifest_identity="zip-v1:sha256:" + "b" * 64,
+        manifest_identity="skill-md-v1:sha256:" + "b" * 64,
     )
 
 

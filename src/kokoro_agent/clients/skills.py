@@ -107,7 +107,9 @@ class PlatformSkillClient:
                 or not source.package_asset_ref
                 or len(source.package_asset_ref) > 2048
                 or re.fullmatch(r"[0-9a-f]{64}", source.content_digest) is None
-                or re.fullmatch(r"zip-v1:sha256:[0-9a-f]{64}", source.manifest_identity)
+                or re.fullmatch(
+                    r"skill-md-v1:sha256:[0-9a-f]{64}", source.manifest_identity
+                )
                 is None
             ):
                 raise SkillClientError("SKILL_SOURCE_INVALID")
@@ -154,8 +156,6 @@ class PlatformSkillClient:
             )
             package = validate_package(
                 payload,
-                skill_id=skill.skill_id,
-                revision=skill.revision,
                 manifest_identity=skill.manifest_identity,
             )
             return package

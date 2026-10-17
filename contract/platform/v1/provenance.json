@@ -141,5 +141,20 @@
         "sha256": "18ef03a3d7ea84f0e2a38c6e625146f607b96689957210052116b557008024fc"
       }
     ]
+  },
+  "package_profile": {
+    "owner_commit": "e1b5484f162a42652bbc576cebb0f48f52809272",
+    "sources": [
+      {
+        "path": "contract/platform/v1/skill-package/skill-package-profile-v1.json",
+        "owner_path": "contract/execution-operations/skill-package-profile-v1.json",
+        "sha256": "99f9893ef0fd44eed51e377b8b1ba7a303dd06acd55729a0c341d677989d3c9b"
+      },
+      {
+        "path": "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json",
+        "owner_path": "contract/execution-operations/skill-package-profile-v1.vectors.json",
+        "sha256": "c94d3461b8b08908474b6725098b771d6608dbd2777446ff09fd680c5cfd6a63"
+      }
+    ]
   }
 }

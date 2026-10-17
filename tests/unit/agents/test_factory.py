@@ -675,7 +675,7 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
     vector = json.loads(
         (
             Path(__file__).parents[3]
-            / "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json"
+            / "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json"
         ).read_bytes()
     )["vectors"][0]
     calls: list[str] = []
@@ -698,14 +698,14 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
                         revision=1,
                         scope_kind=pb.SkillScopeKind.PERSONAL,
                         package_asset_ref="asset",
-                        content_digest=vector["zipSha256"],
-                        manifest_identity=vector["manifestIdentity"],
+                        content_digest=vector["archive_sha256"],
+                        manifest_identity=vector["expected"]["manifestIdentity"],
                     )
                 )
             return pb.GetApprovedSkillPackageReferenceResponse(
                 asset_ref="asset",
-                content_digest=vector["zipSha256"],
-                manifest_identity=vector["manifestIdentity"],
+                content_digest=vector["archive_sha256"],
+                manifest_identity=vector["expected"]["manifestIdentity"],
                 transfer_reference=pb.PackageTransferReference(method="GET"),
             )
 
@@ -714,7 +714,7 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
             self, reference: pb.PackageTransferReference, content_digest: str
         ) -> bytes:
             calls.append("GET")
-            return base64.b64decode(vector["zipBase64"])
+            return base64.b64decode(vector["archive_base64"])
 
     class Platform(WorkerPlatformRuntime):
         def __init__(self) -> None:
@@ -1038,9 +1038,103 @@ async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
         assert "capability-alpha" not in model.observed[-1]
 
 
+@pytest.mark.parametrize(
+    "native_gap",
+    ["closing-marker-at-eof", "duplicate-name", "progress-store-unavailable"],
+)
+async def test_selected_native_skill_coverage_failure_stops_before_model(
+    monkeypatch: pytest.MonkeyPatch, native_gap: str
+) -> None:
+    class Reader(CheckpointSkillReader):
+        async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+            if native_gap != "duplicate-name":
+                return {"SKILL.md": b"---\nname: alpha\ndescription: Owner valid\n---"}
+            return {"SKILL.md": b"---\nname: shared\ndescription: Owner valid\n---\n"}
+
+    platform = CheckpointSkillPlatform()
+    object.__setattr__(platform, "reader", Reader())
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    model = PromptRecordingModel()
+
+    def make_model(*_: object, **_kwargs: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
+    selected = (
+        ("skill:alpha",)
+        if native_gap != "duplicate-name"
+        else ("skill:alpha", "skill:beta")
+    )
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": selected}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import SkillPhase, SkillProgressCommitted
+
+    durable_progress = await _r93_progress(repository, request, lease)
+
+    async def progress(phase: SkillPhase) -> SkillProgressCommitted:
+        if native_gap == "progress-store-unavailable" and phase.phase == "failed":
+            raise ProgressPersistenceError("native phase store unavailable")
+        return await durable_progress(phase)
+
+    handle = await factory.build(request, lease, progress)
+    try:
+        error = (
+            ProgressPersistenceError
+            if native_gap == "progress-store-unavailable"
+            else SkillClientError
+        )
+        message = (
+            "native phase store unavailable"
+            if native_gap == "progress-store-unavailable"
+            else "SKILL_NATIVE_LOAD_INCOMPLETE"
+        )
+        with pytest.raises(error, match=message):
+            run = await handle.runnable.astream_events(
+                {"messages": [HumanMessage(content="start")]},
+                version="v3",
+                config={"configurable": {"thread_id": "native-coverage-" + native_gap}},
+                transformers=[CustomTransformer],
+            )
+            async with run:
+                await asyncio.gather(
+                    _collect_messages(run.messages),
+                    _drain(run.tool_calls),
+                    _drain(run.subagents),
+                    _drain(run.custom),
+                )
+        assert model.observed == []
+        import json
+
+        phases = [
+            json.loads(row.payload_json)
+            for row in repository.chat_repository.records
+            if row.event_type == "activity"
+            and json.loads(row.payload_json).get("activity") == "skill"
+        ]
+        if native_gap == "progress-store-unavailable":
+            assert phases[-1]["phase"] == "ready"
+            assert all(phase["phase"] != "failed" for phase in phases)
+        else:
+            assert phases[-1]["phase"] == "failed"
+            assert phases[-1]["error_code"] == "skill_load_failed"
+    finally:
+        await handle.aclose()
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("selected", [False, True])
 async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutating_state(
     asynchronous: bool,
+    selected: bool,
 ) -> None:
     from deepagents.backends.protocol import BackendProtocol, LsResult
     from deepagents.middleware.skills import SkillsState
@@ -1054,13 +1148,32 @@ async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutatin
         async def als(self, path: str) -> LsResult:
             return self.ls(path)
 
-    middleware = RunSkillsMiddleware(backend=WarningBackend(), sources=["/skills/"])
+    from kokoro_agent.protocol import SkillPhase, SkillProgressCommitted
+
+    async def progress(phase: SkillPhase) -> SkillProgressCommitted:
+        assert phase.phase == "failed"
+        return SkillProgressCommitted(source_index=1)
+
+    middleware = RunSkillsMiddleware.for_selected(
+        backend=WarningBackend(),
+        progress=progress,
+        sources=["/skills/"],
+        expected_skill_paths=("/skills/selected/SKILL.md",) if selected else (),
+    )
     state: SkillsState = {
         "messages": [],
         "skills_metadata": [],
         "skills_load_errors": ["old-error"],
     }
     runtime = Runtime()
+    if selected:
+        with pytest.raises(SkillClientError, match="SKILL_NATIVE_LOAD_INCOMPLETE"):
+            if asynchronous:
+                await middleware.abefore_agent(state, runtime, {})
+            else:
+                middleware.before_agent(state, runtime, {})
+        assert state["skills_load_errors"] == ["old-error"]
+        return
     result = (
         await middleware.abefore_agent(state, runtime, {})
         if asynchronous

@@ -1,3 +1,17 @@
+## 2026-10-17 当前 Skill 包消费切换（源码候选，正常Agent未激活）
+
+基线84502e6，分支codex/skills-current-package。Platform e1b5484f162a42652bbc576cebb0f48f52809272 的独立profile1.1.0/两份artifact已精确固定；client/纯ZIP校验器/checker/generator/audit资源同片切当前SKILL.md身份，删除旧manifest解析和无用server-ID入参。无Proto/Schema/新依赖或lock变更，既有24proof/原v4请求图保持；6个Skill source/download message与当前owner逐字节相同。
+
+既有测试先对当前包/client实际RED 11 FAIL/39 PASS；旧shared .venv的editable指向另一个checkout，pytest因明确pythonpath=src确实测当前源码，但纯Python探针需另行修正import证据。本片新建ignored自有env并frozen sync，当前Python模块来源已核对为本仓。尝试PyYAML metadata重复校验70差分发现2个合法NEL误拒，ruamel候选也不等价；两者均删除，未加runtime依赖或修改共享env。按owner1.1.0分层，全部30原反例仍由owner验收，24个consumer向量及历史ZIP结构类反例由Agent验证。
+
+新发现原生loader会静默跳EOF合法包/覆盖同名选择；新增同一factory内两项实际RED（均DID NOT RAISE且曾触达本地Fake模型），现exact路径/数量守门使其在模型前显式失败，未替换SDK parser。首次测试误对frozen fixture赋值的TypeError已纠正，不计产品RED。独审另发现native失败后durable phase仍ready；同一用例扩断言再RED，现async v3经原可信progress sink/ACK确认failed，存储失败保留ProgressPersistenceError、不伪造业务失败。取消/HITL/Run刷新边界保持；sync hook仅SDK调用，不冒产品进度入口。7项相关守门/1.69s、原factory 72项/29.97s和受控HTTP＋真实SDK 4项/0.98s通过，停写复审无新增确定P0–P2。
+
+最终自有env源门：uv lock --check、uv sync --frozen、Ruff format/check、显式解释器全Pyright、kokoro-agent-contract-check、固定generator --check、uv build均exit0。默认pytest完整结束：2350 PASS、1 FAIL、759默认资源deselected、819 warnings、136.88s。唯一失败为既有test_no_type_escape_hatches：interfaces/http/server.py导入cast；该文件与84502e6逐字节相同，本片未改，未删除/放宽断言，完整合并门仍未满足。较早494 PASS/1 FAIL的主动中断结果不算完整门。未运行PG/Redis等资源套件，本片无数据/事务变更。
+
+原正常446字节ZIP修后纯校验及真实SDK metadata/原文读取GREEN，完整归档SHA和Markdown identity精确匹配原收据；reader/source为受控port，不冒真实Run资格/执行成功。wheel和sdist中11份受影响runtime/contract文件逐字节匹配冻结源；仅在自有env非editable安装wheel后，仓外空cwd验证模块来自site-packages、完整contract checker及同一446字节包均通过。共享原env未改，自有env随后恢复本仓editable。初次发布物探针误要求sdist包含既有未发行的开发generator，已改为明确runtime/contract发行清单；未因此改包规则或源码。
+
+正常Agent、平台/登录/资金/角色/密钥/数据库均未改动或重启，无真实模型、Tool或Billing请求。正常服务尚未加载该候选；SDK对EOF/同名的正向产品支持、项目默认安装/来源模型、正式执行授权和完整用户链仍OPEN，远端/Root index/gitlink暂停。原普通App/BFF/Platform保持现入口，不把本片pure/owned-loopback证据当正常全产品验收。
+
 ## R353-A-S06 当前：Storage v3 Artifact delivery 候选已实施（2026-10-08）
 
 Agent既有作品交付消费者已从Storage v2单轨切到正式owner

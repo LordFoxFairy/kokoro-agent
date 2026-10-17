@@ -1,3 +1,33 @@
+## 当前 Skills 与 MC-01 组合（2026-10-17，本地验证中）
+
+保留System4/provider-bound连接与usage2/HTTP6及显式历史reader，同时消费Platform当前SKILL.md包profile1.1与精确原生发现。无新owner、协议版本、Schema或依赖；旧manifest.json校验器及异常测试随已批准profile退休，不恢复兼容解析。两条源分支已独立验证，但组合尚未验收，不激活正常worker或模型发送。下列是各分支历史记录。
+
+## 2026-10-17 exact Skill 原生发现（既定模型内修复）
+
+当前锁定DeepAgents0.6.6按name去重且要求frontmatter闭合行后有换行；这不是Platform的包身份或选择规则。修复只落skills backend/middleware与factory接线：每个已解析exact选择使用独立的原生SkillsMiddleware发现，再按原选择顺序合并metadata并核完整路径覆盖；仍使用SDK公开parser、prompt和state，不导入私有函数或另写YAML parser。发现专用只读backend在已重新授权、原包/Markdown身份验证后向SDK提供追加一个行终止符的文本视图；工具backend和所有下载/正文仍返回原始bytes，不重写包、不创建别名或覆盖同名选择。
+
+发现view不对模型/工具开放，不缓存授权或bytes；每项仅有一个已解析exact来源，避免整目录重复扫描造成平方级下载。错误/撤权/取消仍中止于模型前，原durable failed边界保留。无新owner/API/Schema/依赖或正常服务变更。复用原factory/skills测试，先验证EOF与同名两个正向失败，再核原文、撤权、Run刷新及HITL。正常Run/Billing授权和产品整链仍独立验收。
+
+## 2026-10-17 当前 Skill 包消费切换（profile 1.1.0 候选已实现）
+
+### Owner 与固定发行
+
+基线84502e6。独立固定 Platform `e1b5484f162a42652bbc576cebb0f48f52809272` 的 skill-package-profile-v1/1.1.0 与vectors；原v4 Proto/request projector/24 execution proofs继续精确固定其原发行，六个Skill source/download message定义与当前owner逐字节相等。本片不虚构v11、不激活新RPC/任意active图，也不导入sibling源码。generator/hash checker和wheel audit inventory同片承接两份新artifact，generated RPC输出无需改变。
+
+### 单一 metadata 事实与本进程安全
+
+Platform唯一裁决FAILSAFE frontmatter业务合法性及当前资格；Agent每次read重新取Approved并核asset/contentSHA/manifest三绑定，既有传输先验完整ZIP SHA。随后纯validator保ZIP32、CRC、路径/NFC、结构/目录、展开与根1MiB/UTF8预算，最后比较原始SKILL.md身份并原字节只读返回。删除旧manifest.json/schema1解析和无用skill_id/revision参数，不合成文件、不做zip-v1/v2 fallback，不缓存bytes或授权。
+
+最初PyYAML重复业务校验候选在70个合成差分中误拒两个owner合法NEL边界；另试ruamel也非即插等价，均已删除，无新依赖或lock变化。owner随后1.1.0正式区分全部30向量的owner验收与24个consumer安全向量，原archive/expected逐项不变；6个owner-only YAML反例继续由真实owner验证，不把重复业务解析误当下载授权。历史v4 ZIP归档仍精确审计，原ZIP结构类反例继续对当前validator执行，旧合法manifest不复活。ZIP与caller/tenant/lease撤权边界不因这个分层省略。
+
+### 原生加载覆盖与实际边界
+
+RunSkillsMiddleware保留DeepAgents官方parser/prompt；for_selected工厂固定本Run exact虚拟文件路径，graph entry清旧metadata后核结果路径集合及数量。遗漏、同名覆盖、未绑定选择显式停止于模型前；不把已声明选择静默降为空集。同步/异步、不同Run刷新和同RunHITL沿原边界，无新框架、协议、进程、Schema或权限；进度沿既有持久化边界。SDK合法owner包的EOF marker及同名选择仍可能被其parser跳过/覆盖，本片将这两种情况从静默继续改为确定失败，不声称已让所有owner合法格式都被SDK正向消费；该正向支持仍为后继。
+
+产品执行只用async v3：native异常经原Run绑定的可信progress sink写failed/skill_load_failed并验证durable ACK，复用execution.events中的原确认逻辑；禁止另造未持久的失败状态。ProgressPersistenceError原样传播，取消不转成业务失败。sync SDK hook只做覆盖守门、不声明durable phase。原preflight ready后发生native失败，BFF既有同anchor最新activity投影可接受failed，不加第二条网络协议或绕过lease/fence。
+
+原正常产品446字节根SKILL.md包在新纯validator与真实SDK GREEN，整体SHA与原Markdown身份精确不变；受控reader不代表正常Run准入/模型执行或产品全验收。最终完整pytest为2350 PASS/1既存FAIL/759资源deselected，失败文件与基线相同，完整合并门未满足；其余工程门、codegen drift及仓外installed-wheel合同/同包检查通过，详见CURRENT。所有验证使用自有隔离env，原共享.venv的旧editable指向及正常Agent服务保持原样，不以错误checkout的import冒当前runtime成功。无真实模型/Tool/Billing请求，远端与Root gitlink暂停。
+
 ## MC-01：默认直连与可选 LiteLLM 的 Agent 设计门（2026-10-16；已批准，历史契约前置已实现）
 
 用户已批准 Agent 默认直接请求配置的模型地址，LiteLLM 是受支持的可选连接。当前 `84502e6` 的 System client、worker 启动门和 factory 仍仅支持 System `transport=litellm`；临时启动器曾把外部 URL/key 注入 KOKORO_LITELLM_*。本节不宣称该限制已解除。

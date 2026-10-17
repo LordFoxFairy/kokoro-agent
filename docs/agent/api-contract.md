@@ -1,3 +1,9 @@
+## 2026-10-17 Skill 当前包消费（不改本仓 wire）
+
+独立固定 Platform e1b5484f162a42652bbc576cebb0f48f52809272 的 skill-package-profile-v1/1.1.0；新source仅接受skill-md-v1:sha256身份，server skill/revision来自正式source而非archive。Platform负责metadata业务准入；Agent须每read重新批准三绑定、校验整体ZIP SHA、归档安全/根UTF8与预算/原字节identity。manifest.json可选且非authority，无旧格式fallback。现HTTP/Run/AG-UI和v4执行proof/RPC字段不变，不授新的caller/调用权限。
+
+原生SDK加载结果必须覆盖本Run全部exact路径；遗漏/同名覆盖以安全SkillClientError停止而非携部分技能调用模型。产品async v3在原可信progress sink确认failed/skill_load_failed后传播错误，存储/ACK失败保持ProgressPersistenceError，取消不伪装业务失败；sync SDK hook不承诺产品进度。不增加新HTTP错误域，本轮不宣称所有合法owner YAML均被SDK正向接受。完整事实及尚未激活的正常环境见CURRENT。
+
 # kokoro-agent v1 API 契约
 
 状态：Agent-owned 当前契约，2026-09-02。

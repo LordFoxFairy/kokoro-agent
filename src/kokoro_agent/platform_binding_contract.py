@@ -140,6 +140,24 @@ EXPECTED_EXECUTION_SOURCES = (
     ),
 )
 
+EXPECTED_PACKAGE_OWNER_COMMIT = "e1b5484f162a42652bbc576cebb0f48f52809272"
+EXPECTED_PACKAGE_SOURCES = (
+    (
+        "contract/platform/v1/skill-package/skill-package-profile-v1.json",
+        "contract/execution-operations/skill-package-profile-v1.json",
+        "99f9893ef0fd44eed51e377b8b1ba7a303dd06acd55729a0c341d677989d3c9b",
+    ),
+    (
+        "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json",
+        "contract/execution-operations/skill-package-profile-v1.vectors.json",
+        "c94d3461b8b08908474b6725098b771d6608dbd2777446ff09fd680c5cfd6a63",
+    ),
+)
+PLATFORM_AUDIT_FILES = (
+    PLATFORM_PROVENANCE_RELATIVE,
+    *(record[0] for record in EXPECTED_EXECUTION_SOURCES + EXPECTED_PACKAGE_SOURCES),
+)
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _OBJECT = TypeAdapter(dict[str, object])
 _OBJECT_LIST = TypeAdapter(list[object])
@@ -675,24 +693,23 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         raw_zip = base64.b64decode(str(vector["zipBase64"]), validate=True)
         if hashlib.sha256(raw_zip).hexdigest() != vector["zipSha256"]:
             raise PlatformRequestBindingError("ZIP vector digest drift")
-        identity = vector.get("manifestIdentity")
-        if identity is not None and not isinstance(identity, str):
-            raise PlatformRequestBindingError("ZIP vector identity drift")
-        try:
-            validate_package(
-                raw_zip,
-                skill_id=str(vector["skillId"]),
-                revision=int(str(vector["revision"])),
-                manifest_identity=identity,
-            )
-        except SkillPackageError as error:
-            if str(error) != vector["expectedReason"]:
-                raise PlatformRequestBindingError(
-                    "ZIP negative vector reason drift"
-                ) from None
-        else:
-            if vector["expectedReason"] != "none":
-                raise PlatformRequestBindingError("ZIP negative vector accepted")
+        # This immutable ZIP-v1 archive inventory is historical evidence only.
+        # Current package semantics come from the independently pinned profile.
+        if vector.get("expectedReason") in {
+            "package_zip_invalid",
+            "package_zip_unsafe",
+            "package_limit_exceeded",
+        }:
+            try:
+                validate_package(raw_zip, manifest_identity=None)
+            except SkillPackageError as error:
+                if str(error) != vector["expectedReason"]:
+                    raise PlatformRequestBindingError(
+                        "historical ZIP structure negative drift"
+                    ) from None
+            else:
+                raise PlatformRequestBindingError("historical malformed ZIP accepted")
+    _validate_current_package_profile(root, pin)
 
     positive_document = _object(
         strict_parse_raw_json((artifact / "vectors/positive.json").read_bytes()),
@@ -841,3 +858,87 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
             f"command negative vector accepted: {vector.get('name')}"
         )
     return len(positives), len(negatives), len(vectors)
+
+
+def _validate_current_package_profile(root: Path, pin: JsonObject) -> None:
+    package_pin = _object(pin.get("package_profile"), label="current package pin")
+    _exact_keys(package_pin, {"owner_commit", "sources"}, label="current package pin")
+    if package_pin.get("owner_commit") != EXPECTED_PACKAGE_OWNER_COMMIT:
+        raise PlatformRequestBindingError("current package owner commit drift")
+    records = [
+        _object(value, label="package source")
+        for value in _list(package_pin.get("sources"), label="package sources")
+    ]
+    expected_records = [
+        {"path": path, "owner_path": owner_path, "sha256": digest}
+        for path, owner_path, digest in EXPECTED_PACKAGE_SOURCES
+    ]
+    if records != expected_records:
+        raise PlatformRequestBindingError("current package source inventory drift")
+    artifact = root / "contract/platform/v1/skill-package"
+    if artifact.is_symlink() or {entry.name for entry in artifact.iterdir()} != {
+        Path(path).name for path, _, _ in EXPECTED_PACKAGE_SOURCES
+    }:
+        raise PlatformRequestBindingError("current package artifact tree drift")
+    for path, _, digest in EXPECTED_PACKAGE_SOURCES:
+        source = root / path
+        if (
+            source.is_symlink()
+            or not source.is_file()
+            or hashlib.sha256(source.read_bytes()).hexdigest() != digest
+        ):
+            raise PlatformRequestBindingError("current package artifact digest drift")
+    profile = _object(
+        strict_parse_raw_json((root / EXPECTED_PACKAGE_SOURCES[0][0]).read_bytes()),
+        label="current package profile",
+    )
+    if profile.get("vectors_sha256") != EXPECTED_PACKAGE_SOURCES[1][2]:
+        raise PlatformRequestBindingError("current package vectors binding drift")
+    document = _object(
+        strict_parse_raw_json((root / EXPECTED_PACKAGE_SOURCES[1][0]).read_bytes()),
+        label="current package vectors",
+    )
+    vectors = [
+        _object(value, label="package vector")
+        for value in _list(document.get("vectors"), label="package vector inventory")
+    ]
+    if len(vectors) != 30 or len({row.get("name") for row in vectors}) != 30:
+        raise PlatformRequestBindingError("current package vector inventory drift")
+    if (
+        sum(
+            vector.get("validation_stage") == "owner-and-consumer" for vector in vectors
+        )
+        != 24
+    ):
+        raise PlatformRequestBindingError("current consumer vector scope drift")
+    for vector in vectors:
+        payload = base64.b64decode(str(vector["archive_base64"]), validate=True)
+        if hashlib.sha256(payload).hexdigest() != vector["archive_sha256"]:
+            raise PlatformRequestBindingError("current package vector digest drift")
+        if vector.get("validation_stage") == "owner-only":
+            continue
+        expected = _object(vector["expected"], label="package vector outcome")
+        identity = expected.get("manifestIdentity")
+        try:
+            result = validate_package(
+                payload,
+                manifest_identity=identity if isinstance(identity, str) else None,
+            )
+        except SkillPackageError as error:
+            if str(error) != expected.get("reason"):
+                raise PlatformRequestBindingError(
+                    "current package negative vector drift"
+                ) from None
+        else:
+            if "reason" in expected:
+                raise PlatformRequestBindingError(
+                    "current package negative vector accepted"
+                )
+            files = _object(vector["files_base64"], label="package vector files")
+            if dict(result) != {
+                name: base64.b64decode(str(value), validate=True)
+                for name, value in files.items()
+            }:
+                raise PlatformRequestBindingError(
+                    "current package original bytes drift"
+                )

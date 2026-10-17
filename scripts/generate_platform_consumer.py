@@ -39,6 +39,7 @@ def _generate(destination: Path) -> None:
         *pin["sources"],
         *pin["generation_inputs"],
         *execution_sources,
+        *pin["package_profile"]["sources"],
     ]:
         actual = hashlib.sha256((ROOT / source["path"]).read_bytes()).hexdigest()
         if actual != source["sha256"]:

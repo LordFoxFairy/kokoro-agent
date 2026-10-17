@@ -132,6 +132,18 @@ class ProgressPersistenceError(RuntimeError):
     """A durable progress write is unconfirmed; never a business failure."""
 
 
+async def confirm_skill_progress(
+    progress: SkillProgressSink, phase: SkillPhase
+) -> None:
+    confirmation = await progress(phase)
+    try:
+        SkillProgressCommitted.model_validate(confirmation)
+    except ValueError as error:
+        raise ProgressPersistenceError(
+            "Skill progress has no durable confirmation"
+        ) from error
+
+
 class ProgressAuthorityLost(ProgressPersistenceError):
     """The original execution lease no longer permits ordinary progress."""
 

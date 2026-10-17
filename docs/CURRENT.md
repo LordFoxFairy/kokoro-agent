@@ -1,3 +1,39 @@
+## 当前 Skills 与 MC-01 组合（2026-10-17，本地候选已验证，正常未激活）
+
+组合父版本2d5ce12与887aabc：保留System4/provider-bound连接、usage2/HTTP6及显式历史reader，同时消费Platform当前SKILL.md profile1.1与精确原生发现；旧manifest校验器不恢复，无新owner/协议版本/Schema/依赖。factory保model/planned/recipe绑定、exact包/SDK发现及durable failed/取消/HITL边界。
+
+资源初跑497 PASS/27 FAIL，原因是测试helper直接SDK lazy bootstrap先初始化未获正式准入的registry，污染同进程后继生产recipe检查。tests/support/deepagents.py现经既有prepare_native_recipe再创建SDK图，不改生产guard、不reset registry、不删负控或skip。同六资源文件复跑524 PASS；原追踪与失败日志保留，不将fixture初始化误称正式模型服务失败。
+
+最终407份源/测试/契约/文档停写冻结（唯一承接变化为该helper），主方自有venv Python3.11重跑uv lock --check、uv sync --frozen、Ruff format/check、显式解释器Pyright、failure/usage2/Platform三generator --check、contract checker、完整默认pytest及wheel/sdist构建共11门均0。默认2392 PASS/766资源deselected/2原提醒；另六精确HTTP/模型证据/运行链/事务/重试/Skills文件在自有随机PG数据库及锁定空Redis14上524 PASS，最后own DB删除、其他DB名称集合保持、Redis前后0，不等于全部资源套件。正常env/服务未改，无真实模型或Tool调用。
+
+wheel和sdist的186份runtime Python文件逐字匹配冻结源；从仓外空目录非editable安装wheel，完整contract checker、真实项目D版ZIP的当前identity校验、System4/usage2导入均0，临时安装环境删除。只读review无确定P0–P2。上述门后仅本段文档更新，runtime/test/contract字节保持，git diff检查通过。
+
+这完成可提交的本地组合，不代表正常System/Agent已激活或全产品已验收。当前正常BFF仍固定Agent HTTP5而候选HTTP6只有usage-evidence路径及两响应schema变化；后继消费者、Billing正式reader/许可/结算、正常Skills执行/回放及来源旅程仍待闭环。未改正常账号/权限/积分/配置，不用受控SDK/本地安装替代真实模型与资金准入。远端CI/push/PR/merge及Root index/gitlink继续暂停。
+
+## 2026-10-17 exact Skill 原生发现（本地组件验收）
+
+在8f574ef上修复两个明确正向缺口：合法frontmatter闭合于EOF、多个exact来源具有相同name。factory只接线；skills backend提供发现专用行终止文本视图，middleware逐exact调用SDK公开发现再按选择顺序合并并核路径覆盖；原生parser/prompt/state未复制，工具仍读取原包bytes。无新文件、依赖、owner契约、Schema、授权或正常服务变更，未让同名覆盖变为隐式选择规则。
+
+原两个正向用例实际RED均SKILL_NATIVE_LOAD_INCOMPLETE，修后8项定向通过；原负控改用真实invalid metadata，failed持久化/失败存储负控仍保留。完整factory＋显式SDK读取＋架构106 PASS/1既存FAIL；完整默认2351 PASS/760资源deselected/1既存FAIL。唯一失败仍为原server.py的cast架构检查，文件与8f574ef同SHA，未放宽或删除门禁。第一次Pyright发现本片optional TypedDict键直接索引，已正规setdefault明确构造；末轮相关五文件145 PASS、完整Ruff格式/lint与显式解释器Pyright通过。contract checker与Platform generator drift、lock/frozen sync通过，独审未发现确定P0–P2；原SDK beta/deprecation提醒保留。
+
+随后独立清除该既存cast技术债：HTTP AgentConfig Protocol明确声明正式配置已有的reader secret，直接typed读取；删除object/cast和重复私有protocol，不改任何鉴权分支/比较/返回码。原测试改用AgentHttpConfig及显式None替身，零新case；原架构RED后378项HTTP/架构回归通过，独审无确定P0–P2。停写最终九门lock/frozen sync/Ruff格式/lint/Pyright/contract/generator/default/build全0，完整默认2352 PASS/760资源deselected；此前FAIL据实保留但已被此最终结果取代。发布物另核runtime源码字节，正常共享env与服务未动。
+
+这只证明受控reader/模型替身下真实SDK与Run装配行为，不是正式模型、Tool、Billing或正常登录执行验收；未运行PG/Redis等资源套件。正常Agent/配置/身份/积分未动，远端及Root index/gitlink仍暂停。正常组合与剩余格式/授权、Admin current配对和真实执行仍待后继；工程源门已通过，全产品/资源验收仍未完成，不冒整个Skills/MCP闭环。
+
+## 2026-10-17 当前 Skill 包消费切换（源码候选，正常Agent未激活）
+
+基线84502e6，分支codex/skills-current-package。Platform e1b5484f162a42652bbc576cebb0f48f52809272 的独立profile1.1.0/两份artifact已精确固定；client/纯ZIP校验器/checker/generator/audit资源同片切当前SKILL.md身份，删除旧manifest解析和无用server-ID入参。无Proto/Schema/新依赖或lock变更，既有24proof/原v4请求图保持；6个Skill source/download message与当前owner逐字节相同。
+
+既有测试先对当前包/client实际RED 11 FAIL/39 PASS；旧shared .venv的editable指向另一个checkout，pytest因明确pythonpath=src确实测当前源码，但纯Python探针需另行修正import证据。本片新建ignored自有env并frozen sync，当前Python模块来源已核对为本仓。尝试PyYAML metadata重复校验70差分发现2个合法NEL误拒，ruamel候选也不等价；两者均删除，未加runtime依赖或修改共享env。按owner1.1.0分层，全部30原反例仍由owner验收，24个consumer向量及历史ZIP结构类反例由Agent验证。
+
+新发现原生loader会静默跳EOF合法包/覆盖同名选择；新增同一factory内两项实际RED（均DID NOT RAISE且曾触达本地Fake模型），现exact路径/数量守门使其在模型前显式失败，未替换SDK parser。首次测试误对frozen fixture赋值的TypeError已纠正，不计产品RED。独审另发现native失败后durable phase仍ready；同一用例扩断言再RED，现async v3经原可信progress sink/ACK确认failed，存储失败保留ProgressPersistenceError、不伪造业务失败。取消/HITL/Run刷新边界保持；sync hook仅SDK调用，不冒产品进度入口。7项相关守门/1.69s、原factory 72项/29.97s和受控HTTP＋真实SDK 4项/0.98s通过，停写复审无新增确定P0–P2。
+
+最终自有env源门：uv lock --check、uv sync --frozen、Ruff format/check、显式解释器全Pyright、kokoro-agent-contract-check、固定generator --check、uv build均exit0。默认pytest完整结束：2350 PASS、1 FAIL、759默认资源deselected、819 warnings、136.88s。唯一失败为既有test_no_type_escape_hatches：interfaces/http/server.py导入cast；该文件与84502e6逐字节相同，本片未改，未删除/放宽断言，完整合并门仍未满足。较早494 PASS/1 FAIL的主动中断结果不算完整门。未运行PG/Redis等资源套件，本片无数据/事务变更。
+
+原正常446字节ZIP修后纯校验及真实SDK metadata/原文读取GREEN，完整归档SHA和Markdown identity精确匹配原收据；reader/source为受控port，不冒真实Run资格/执行成功。wheel和sdist中11份受影响runtime/contract文件逐字节匹配冻结源；仅在自有env非editable安装wheel后，仓外空cwd验证模块来自site-packages、完整contract checker及同一446字节包均通过。共享原env未改，自有env随后恢复本仓editable。初次发布物探针误要求sdist包含既有未发行的开发generator，已改为明确runtime/contract发行清单；未因此改包规则或源码。
+
+正常Agent、平台/登录/资金/角色/密钥/数据库均未改动或重启，无真实模型、Tool或Billing请求。正常服务尚未加载该候选；SDK对EOF/同名的正向产品支持、项目默认安装/来源模型、正式执行授权和完整用户链仍OPEN，远端/Root index/gitlink暂停。原普通App/BFF/Platform保持现入口，不把本片pure/owned-loopback证据当正常全产品验收。
+
 ## MC-01 Agent 原子消费者本地验收（2026-10-16；未正常激活）
 
 同一分支已接System4精确20源receipt、provider/ref双绑定私有凭据、direct默认/LiteLLM可选、usage2唯一新写、sealed usage1按显式版本读取、HTTP6实际证据版本与旧未sealed启动屏障。SQL、冻结v1原字节、最终请求摘要格式不变；旧全局网关配置/别名退出。启动屏障允许合法v2恢复，旧worker停止仍须部署侧另证。

@@ -21,8 +21,7 @@ from kokoro_agent.execution_proof_contract import (
     validate_http_provenance,
 )
 from kokoro_agent.platform_binding_contract import (
-    EXPECTED_EXECUTION_SOURCES,
-    PLATFORM_PROVENANCE_RELATIVE,
+    PLATFORM_AUDIT_FILES,
     validate_platform_binding_artifact,
 )
 from kokoro_agent.system_consumer_contract import validate_system_consumer_receipt
@@ -190,8 +189,7 @@ def main() -> int:
             *model_usage_contract.USAGE_AUDIT_FILES,
             *model_usage_v2_contract.USAGE_AUDIT_FILES,
             "contract/provenance.json",
-            PLATFORM_PROVENANCE_RELATIVE,
-            *(record[0] for record in EXPECTED_EXECUTION_SOURCES),
+            *PLATFORM_AUDIT_FILES,
         }
     )
     validate(root)

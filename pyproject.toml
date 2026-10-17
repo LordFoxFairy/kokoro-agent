@@ -77,6 +77,10 @@ kokoro_agent = ["prompts/*.md"]
 "share/kokoro-agent/audit/contract/platform/v1" = [
   "contract/platform/v1/provenance.json",
 ]
+"share/kokoro-agent/audit/contract/platform/v1/skill-package" = [
+  "contract/platform/v1/skill-package/skill-package-profile-v1.json",
+  "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json",
+]
 "share/kokoro-agent/audit/contract/platform/v1/execution-operations/v4" = [
   "contract/platform/v1/execution-operations/v4/command-identities.json",
   "contract/platform/v1/execution-operations/v4/command-schemas.json",

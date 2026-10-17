@@ -388,7 +388,7 @@ async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
     vector = json.loads(
         (
             Path(__file__).parents[2]
-            / "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json"
+            / "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json"
         ).read_bytes()
     )["vectors"][0]
     claims: list[dict[str, Any]] = []
@@ -420,15 +420,15 @@ async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
                     revision=1,
                     scope_kind=pb.SkillScopeKind.PERSONAL,
                     package_asset_ref="asset",
-                    content_digest=vector["zipSha256"],
-                    manifest_identity=vector["manifestIdentity"],
+                    content_digest=vector["archive_sha256"],
+                    manifest_identity=vector["expected"]["manifestIdentity"],
                 )
             )
         assert isinstance(request, pb.GetApprovedSkillPackageReferenceRequest)
         return pb.GetApprovedSkillPackageReferenceResponse(
             asset_ref="asset",
-            content_digest=vector["zipSha256"],
-            manifest_identity=vector["manifestIdentity"],
+            content_digest=vector["archive_sha256"],
+            manifest_identity=vector["expected"]["manifestIdentity"],
             transfer_reference=pb.PackageTransferReference(
                 method="GET",
                 url="https://objects.test/pkg",
@@ -443,7 +443,7 @@ async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
         gets += 1
         assert "authorization" not in request.headers
         return httpx.Response(
-            200, stream=httpx.ByteStream(base64.b64decode(vector["zipBase64"]))
+            200, stream=httpx.ByteStream(base64.b64decode(vector["archive_base64"]))
         )
 
     async with (
@@ -458,7 +458,9 @@ async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
         current = replace(runtime, lease_reader=reader, packages=packages)
         client = current.skills_for_run(leased_run())
         skills = await client.resolve(("skill:skill-1",))
-        assert (await client.load_package(skills[0]))["SKILL.md"] == b"# Skill"
+        assert (await client.load_package(skills[0]))["SKILL.md"] == base64.b64decode(
+            vector["files_base64"]["SKILL.md"]
+        )
         await client.load_package(skills[0])
         assert gets == 2 and len(claims) == 3
         assert len({c["jti"] for c in claims}) == 3

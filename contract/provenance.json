@@ -16,7 +16,7 @@
     "src/kokoro_agent/system_consumer_contract.py",
     "src/kokoro_agent/usage_history_contract.py"
   ],
-  "combined_sha256": "3881dbd3200e7309782f023ad85e0f7e1d560000f0b02f868e222664edd84157",
+  "combined_sha256": "52ab65eb104380311e704c4250eaecdaa9452ed57adb9e29fc89e647d28137a7",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",

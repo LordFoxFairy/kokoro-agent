@@ -307,6 +307,7 @@ def _prepare_values() -> tuple[RunRequest, StaticRecipeBinding, PlannedBinding]:
         run_id="run-prepare-a1",
         session_id="session-a1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant-a1",

@@ -297,6 +297,7 @@ def _request() -> RunRequest:
         run_id=f"run-r197-{suffix}",
         session_id=f"session-r197-{suffix}",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant-r197",

@@ -24,8 +24,8 @@ from kokoro_agent.execution_proof_negative_specs import (
 
 
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
-SCHEMA_RELATIVE = "contract/execution-proof/v1/schema.json"
-VECTORS_RELATIVE = "contract/execution-proof/v1/vectors.json"
+SCHEMA_RELATIVE = "contract/execution-proof/v2/schema.json"
+VECTORS_RELATIVE = "contract/execution-proof/v2/vectors.json"
 PROVENANCE_RELATIVE = "contract/provenance.json"
 OWNER_SOURCE_FILES = (
     OPENAPI_RELATIVE,
@@ -49,7 +49,7 @@ TAMPER_FIELDS = set(
 )
 CLAIM_FIELDS: set[str] = set(
     "contract_version iss aud tenant_ref actor subject run_id execution_session_id "
-    "lease_generation operation request_binding_sha256 iat exp jti".split()
+    "lease_generation operation request_binding_sha256 iat exp jti execution_binding".split()
 )
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 JTI_PATTERN = "^[A-Za-z0-9_-]{21}[AQgw]$"
@@ -93,7 +93,7 @@ def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
     record = _http_contract_object(
         provenance.get("http_contract"), source="HTTP provenance"
     )
-    if record.get("version") != "6.0.0" or record.get("path") != OPENAPI_RELATIVE:
+    if record.get("version") != "7.0.0" or record.get("path") != OPENAPI_RELATIVE:
         raise ValueError("HTTP direct provenance identity is invalid")
     expected = hashlib.sha256((root / OPENAPI_RELATIVE).read_bytes()).hexdigest()
     if record.get("sha256") != expected:
@@ -243,8 +243,8 @@ def _require_non_empty_string(spec: object, *, source: str) -> None:
 def _validate_schema_metadata(schema: dict[str, object]) -> None:
     expected = _load_json_object(
         b'{"$schema":"https://json-schema.org/draft/2020-12/schema",'
-        b'"$id":"https://kokoro.dev/contracts/agent/execution-proof/v1/schema.json",'
-        b'"x-kokoro-contract-version":"1.0.0","x-kokoro-wire-format":"compact-jws",'
+        b'"$id":"https://kokoro.dev/contracts/agent/execution-proof/v2/schema.json",'
+        b'"x-kokoro-contract-version":"2.0.0","x-kokoro-wire-format":"compact-jws",'
         b'"x-kokoro-canonicalization":"RFC 8785","x-kokoro-string-normalization":"none",'
         b'"x-kokoro-base64url-padding":"forbidden",'
         b'"x-kokoro-compact-jws-max-bytes":16384,'
@@ -262,7 +262,7 @@ def _validate_schema_metadata(schema: dict[str, object]) -> None:
     for name, value in expected.items():
         if not json_exact(schema.get(name), value):
             if name == "x-kokoro-contract-version":
-                raise ValueError("execution proof version must be 1.0.0")
+                raise ValueError("execution proof version must be 2.0.0")
             label = name.removeprefix("x-kokoro-").replace("-", " ")
             raise ValueError(f"execution proof {label} metadata is not exact")
 
@@ -290,7 +290,7 @@ def _validate_execution_schema(schema: dict[str, object]) -> None:
     claims = _object(root["claims"], source="claims schema")
     properties = _require_properties(claims, CLAIM_FIELDS, "claims")
     exact_constants = (
-        ("contract_version", "1.0.0"),
+        ("contract_version", "2.0.0"),
         ("aud", "https://kokoro.dev/resources/iam-execution-authorization"),
     )
     for name, value in exact_constants:
@@ -298,6 +298,47 @@ def _validate_execution_schema(schema: dict[str, object]) -> None:
         _expect_json(actual, {"const": value}, source=f"{name} schema")
     for name in ("iss", "tenant_ref", "run_id", "execution_session_id"):
         _require_non_empty_string(properties[name], source=f"{name} schema")
+    _expect_json(
+        properties["execution_binding"],
+        {
+            "anyOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "identity_assertion_ref",
+                        "project_ref",
+                        "selection_digest",
+                    ],
+                    "properties": {
+                        "identity_assertion_ref": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 255,
+                            "pattern": "^[^\\s\\x00-\\x1f\\x7f]+$",
+                        },
+                        "project_ref": {
+                            "anyOf": [
+                                {"type": "null"},
+                                {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 255,
+                                    "pattern": "^[^\\s\\x00-\\x1f\\x7f]+$",
+                                },
+                            ]
+                        },
+                        "selection_digest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                        },
+                    },
+                },
+            ]
+        },
+        source="execution binding schema",
+    )
     _validate_claim_schemas(properties)
 
 
@@ -774,8 +815,8 @@ def _validate_provenance(root: Path, provenance: dict[str, object]) -> None:
     if not json_exact(sources, list(OWNER_SOURCE_FILES)):
         raise ValueError("source_files must equal ordered owner inventory")
     proof = _object(provenance.get("execution_proof"), source="proof provenance")
-    if proof.get("version") != "1.0.0":
-        raise ValueError("execution proof provenance version must be 1.0.0")
+    if proof.get("version") != "2.0.0":
+        raise ValueError("execution proof provenance version must be 2.0.0")
     for name, relative in (("schema", SCHEMA_RELATIVE), ("vectors", VECTORS_RELATIVE)):
         record = _object(proof.get(name), source=f"proof {name} provenance")
         if record.get("path") != relative:
@@ -800,8 +841,8 @@ def validate_execution_proof_contract(root: Path) -> None:
     vectors = _read_json(root / VECTORS_RELATIVE)
     provenance = _read_json(root / PROVENANCE_RELATIVE)
     _validate_execution_schema(schema)
-    if vectors.get("contract_version") != "1.0.0":
-        raise ValueError("execution proof vector version must be 1.0.0")
+    if vectors.get("contract_version") != "2.0.0":
+        raise ValueError("execution proof vector version must be 2.0.0")
     positive = _object(vectors.get("positive"), source="positive vector")
     header, claims = _validate_positive(positive, schema)
     tampered = _object(vectors.get("tampered_signature"), source="tampered signature")

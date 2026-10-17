@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "6.0.0"
+    assert _object(document["info"])["version"] == "7.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -542,13 +542,13 @@ def test_owner_checker_rejects_relaxed_hitl_required_fields(
 
 
 # R95 HTTP5 target assertions are additive: HTTP4 baseline assertions above remain.
-def test_r95_http5_version_is_explicit_without_changing_proof_version() -> None:
+def test_current_http7_and_proof2_versions_are_explicit() -> None:
     document = _document()
     proof = _object(
-        json.loads((ROOT / "contract/execution-proof/v1/schema.json").read_text())
+        json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
-    assert proof["x-kokoro-contract-version"] == "1.0.0"
-    assert _object(document["info"])["version"] == "6.0.0"
+    assert proof["x-kokoro-contract-version"] == "2.0.0"
+    assert _object(document["info"])["version"] == "7.0.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -710,7 +710,7 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
     [
         "contract/openapi/v1/openapi.json",
         "contract/provenance.json",
-        "contract/execution-proof/v1/vectors.json",
+        "contract/execution-proof/v2/vectors.json",
         "contract/platform/v1/execution-operations/v4/command-identities.json",
         "src/kokoro_agent/protocol/run_failure_generated.py",
         "scripts/generate_failure_models.py",

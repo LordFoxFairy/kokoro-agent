@@ -12,6 +12,7 @@ def _request(run_id: str) -> RunRequest:
         run_id=run_id,
         session_id="session-outbox-filter",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant-outbox-filter",

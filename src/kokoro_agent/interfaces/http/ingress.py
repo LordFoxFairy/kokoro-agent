@@ -71,6 +71,7 @@ class LaunchBody(BaseModel):
     run_id: str
     session_id: str
     feature_key: str
+    project_ref: str | None
     selected_skill_source_refs: list[str]
     message_id: str
     content: str
@@ -98,7 +99,7 @@ class LaunchReceipt:
 
 
 def _canonical_fence(request: RunRequest) -> str:
-    payload = request.model_dump(mode="json", exclude_none=True)
+    payload = request.model_dump(mode="json")
     encoded = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode()
@@ -116,6 +117,7 @@ def _parse_launch(
             run_id=launch.run_id,
             session_id=launch.session_id,
             feature_key=launch.feature_key,
+            project_ref=launch.project_ref,
             selected_skill_source_refs=tuple(launch.selected_skill_source_refs),
             execution_identity=execution_identity,
             input=RunInput(message_id=launch.message_id, content=launch.content),
@@ -227,20 +229,17 @@ class AgentIngress:
             )
         except DispatchConflict as error:
             raise IngressError(409, "run_identity_conflict", str(error)) from error
-        trace = request.trace or {}
-        project_ref_value = trace.get("project_ref")
-        project_ref = project_ref_value if isinstance(project_ref_value, str) else None
         await self._chat_service.ensure_session(
             request.execution_identity,
             request.session_id,
-            project_ref=project_ref,
+            project_ref=request.project_ref,
             title=request.input.content.strip() or "Kokoro chat",
             updated_at=time.time_ns() // 1_000_000,
         )
         if admission.publish_required:
             await self._bus.publish(
                 REQUESTS_STREAM,
-                request.model_dump(mode="json", exclude_none=True),
+                request.model_dump(mode="json"),
                 maxlen=REQUESTS_MAXLEN,
             )
         return LaunchReceipt(

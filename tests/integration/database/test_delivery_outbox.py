@@ -66,6 +66,7 @@ def _request() -> RunRequest:
         run_id="delivery-outbox-run",
         session_id="conversation-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant-1",

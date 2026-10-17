@@ -63,6 +63,7 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
         run_id="run",
         session_id="session",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",
@@ -155,6 +156,7 @@ async def test_toolset_materialization_consumes_the_shared_plan(
         run_id="run",
         session_id="session",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",

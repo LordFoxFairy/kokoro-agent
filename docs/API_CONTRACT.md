@@ -1,3 +1,7 @@
+## HTTP7与execution-proof2目标（2026-10-17）
+
+HTTP7仍/v1，仅LaunchRequest新增required nullable project_ref，所有producer显式提供，Redis发布/恢复保留null。proof唯一current2.0.0增required execution_binding:null或closed {identity_assertion_ref,project_ref(nullable),selection_digest(64hex)}；refs不重复塞JWT，由IAM读BFF并核摘要。旧v1仅冻结历史artifact，无runtime fallback。JWKS/签名算法和现Platform请求digest不变。
+
 ## MC-01：模型连接消费者契约（2026-10-15；目标，未发布）
 
 System 当前固定 artifact 3.0.0 不变。用户已确定默认 direct、可选 LiteLLM；后继只从 System 正规发布的 breaking artifact 接收明确协议、连接与唯一请求模型绑定，version/commit/artifact/provenance 一起 pin。旧 payload 缺少新连接字段时拒绝，不从本机环境补成成功 route。

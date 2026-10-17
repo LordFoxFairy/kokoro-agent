@@ -148,6 +148,7 @@ async def test_actual_http_dispatch_serializes_typed_launch_and_replay(
             "run_id": "run-1",
             "session_id": "session-1",
             "feature_key": "chat",
+            "project_ref": None,
             "selected_skill_source_refs": [],
             "message_id": "message-1",
             "content": "hello",

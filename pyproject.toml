@@ -67,9 +67,9 @@ kokoro_agent = ["prompts/*.md"]
 "share/kokoro-agent/audit/contract" = [
   "contract/provenance.json",
 ]
-"share/kokoro-agent/audit/contract/execution-proof/v1" = [
-  "contract/execution-proof/v1/schema.json",
-  "contract/execution-proof/v1/vectors.json",
+"share/kokoro-agent/audit/contract/execution-proof/v2" = [
+  "contract/execution-proof/v2/schema.json",
+  "contract/execution-proof/v2/vectors.json",
 ]
 "share/kokoro-agent/audit/contract/openapi/v1" = [
   "contract/openapi/v1/openapi.json",

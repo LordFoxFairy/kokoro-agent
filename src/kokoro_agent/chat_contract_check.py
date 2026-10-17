@@ -266,8 +266,8 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
-    if _object(document.get("info"), source="info").get("version") != "6.0.0":
-        raise ValueError("failure profiles require HTTP 6.0.0")
+    if _object(document.get("info"), source="info").get("version") != "7.0.0":
+        raise ValueError("failure profiles require HTTP 7.0.0")
     schemas = _object(
         _object(document.get("components"), source="components").get("schemas"),
         source="schemas",
@@ -385,7 +385,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact]
     provenance["http_contract"] = {
-        "version": "6.0.0",
+        "version": "7.0.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }

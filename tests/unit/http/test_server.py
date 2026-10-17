@@ -231,6 +231,7 @@ async def test_launch_requires_trusted_identity_before_opening_dependencies() ->
             "run_id": "run-1",
             "session_id": "session-1",
             "feature_key": "chat",
+            "project_ref": None,
             "selected_skill_source_refs": [],
             "message_id": "message-1",
             "content": "hello",

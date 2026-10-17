@@ -115,6 +115,7 @@ def _request(feature_key: str) -> RunRequest:
         run_id=f"run-{feature_key}",
         session_id="session",
         feature_key=feature_key,
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",
@@ -260,7 +261,10 @@ async def test_selected_skill_source_fails_before_any_external_construction(
     resolver = RouteResolver()
     factory, repository = _factory(monkeypatch, resolver)
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": ("skill:exact-revision",)}
+        update={
+            "project_ref": None,
+            "selected_skill_source_refs": ("skill:exact-revision",),
+        }
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -420,7 +424,7 @@ async def test_all_peers_preflight_before_any_backend_or_model(
 
     monkeypatch.setattr(agent_factory_module, "make_backend_for_run", forbidden)
     request = _request("peer_gate").model_copy(
-        update={"selected_skill_source_refs": ("skill:required",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:required",)}
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -440,7 +444,7 @@ async def test_selected_features_require_external_clients(
     resolver = RouteResolver()
     factory, repository = _factory(monkeypatch, resolver)
     request = _request(feature_key).model_copy(
-        update={"selected_skill_source_refs": ("skill:required",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:required",)}
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -766,7 +770,10 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
 
     factory, repository = _factory(monkeypatch, Resolver(), platform=Platform())
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": ("skill:skill-1",) if selected else ()}
+        update={
+            "project_ref": None,
+            "selected_skill_source_refs": ("skill:skill-1",) if selected else (),
+        }
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -866,6 +873,7 @@ async def test_factory_skill_metadata_is_current_run_not_session(
         request = _request("chat").model_copy(
             update={
                 "run_id": f"metadata-{index}",
+                "project_ref": None,
                 "selected_skill_source_refs": tuple(
                     f"skill:{name}" for name in selected
                 ),
@@ -945,7 +953,7 @@ async def test_factory_skill_metadata_survives_same_run_hitl_with_guard(
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": ("skill:alpha",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:alpha",)}
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -1011,6 +1019,7 @@ async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
         request = _request("chat").model_copy(
             update={
                 "run_id": f"failure-{index}",
+                "project_ref": None,
                 "selected_skill_source_refs": (f"skill:{name}",),
             }
         )
@@ -1077,7 +1086,7 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
     monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
     selected = ("skill:alpha",)
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": selected}
+        update={"project_ref": None, "selected_skill_source_refs": selected}
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -1169,7 +1178,7 @@ async def test_selected_exact_skills_load_without_name_override_or_newline_requi
         else ("skill:alpha",)
     )
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": selected}
+        update={"project_ref": None, "selected_skill_source_refs": selected}
     )
     lease = await repository.try_claim(request)
     assert lease is not None
@@ -1754,6 +1763,7 @@ async def test_r91_real_factory_skill_io_observes_durable_phase(
     object.__setattr__(platform, "reader", ObservedReader())
     request = _request("chat").model_copy(
         update={
+            "project_ref": None,
             "selected_skill_source_refs": ("skill:alpha",) if selected else (),
         }
     )
@@ -1806,7 +1816,7 @@ async def test_r91_factory_does_no_skill_io_without_first_durable_phase(
     factory, repository = _factory(monkeypatch, RouteResolver(), platform=platform)
     repository.chat_repository = RejectProgress()
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": ("skill:alpha",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:alpha",)}
     )
     kinds, caught = await _r91_dispatch_real_factory(factory, repository, request)
     assert platform.reader.calls == [], (
@@ -1835,7 +1845,7 @@ async def test_r91_mcp_failure_does_not_relabel_successful_skill_preflight(
 
     monkeypatch.setattr(agent_factory_module, "resolve_declared_mcp", unavailable_mcp)
     request = _request("chat").model_copy(
-        update={"selected_skill_source_refs": ("skill:alpha",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:alpha",)}
     )
     kinds, caught = await _r91_dispatch_real_factory(factory, repository, request)
     assert caught is None
@@ -1893,7 +1903,7 @@ async def test_r93_second_peer_skill_failure_has_no_ready(
         monkeypatch, RouteResolver(), FeatureCatalog((feature,)), platform=platform
     )
     req = _request("peer_progress").model_copy(
-        update={"selected_skill_source_refs": ("skill:alpha",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:alpha",)}
     )
     kinds, caught = await _r91_dispatch_real_factory(factory, repository, req)
     assert caught is None

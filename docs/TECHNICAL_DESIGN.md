@@ -1,3 +1,7 @@
+## 项目可信执行接线（2026-10-17，按已确认方案）
+
+RunRequest/Launch以required nullable project_ref保存canonical项目，trace不授权限。现request_json原子冻结与幂等保持，无新表。per-lease supplier从durable request/identity计算原有序refs的UTF8紧凑JSON SHA256，签入proof2 execution_binding（稳定identity_assertion_ref、nullable project_ref、selection_digest）。非Run可显式null；三项SkillSource读由IAM要求完整绑定并在线BFF核当前事实，Platform只核该项目安装与原exact allowlist。原DIRECT_USER_CURRENT、lease、取消、unknown/FIFO不删，不新增网关、不激活模型/Tool/Billing或冒ADR035 barrier完成。
+
 ## 当前 Skills 与 MC-01 组合（2026-10-17，本地验证中）
 
 保留System4/provider-bound连接与usage2/HTTP6及显式历史reader，同时消费Platform当前SKILL.md包profile1.1与精确原生发现。无新owner、协议版本、Schema或依赖；旧manifest.json校验器及异常测试随已批准profile退休，不恢复兼容解析。两条源分支已独立验证，但组合尚未验收，不激活正常worker或模型发送。下列是各分支历史记录。

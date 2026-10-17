@@ -1,3 +1,11 @@
+## 项目可信上下文：HTTP7/proof2（2026-10-17，本地候选）
+
+Launch/RunRequest新增required nullable project_ref，原request_json保存，首次/恢复Redis发布保留null；ensure_session不再由trace取项目。per-lease supplier重验原exact类后从Python dump重建request，冻结canonical项目、原stable assertion和ordered refs摘要；只有三项SkillSource读签execution_binding，MCP等原operation明确null，不收窄原assertion域。signer重建不可变binding并核签；旧v1 artifact原字节保留但无旧runtime fallback，新current2.0.0与HTTP7.0.0由原checker/provenance/failure generator/wheel闭包验证。无新Agent表/服务/依赖。
+
+原suite实际RED→GREEN；独审两P2（forged refs未重验、受限assertion误伤非Skills）已修并保subclass负控。主方完整unit/contract2397 PASS、24原筛选deselected（136.86s），最后98项定向PASS；Ruff格式/lint、显式自有venv Pyright、contract checker、uv lock --check、uv build均0。初次Pyright误用全局解释器导致2679导入误报，改显式解释器为0，不关闭类型检查；首次向量padding/摘要与原16KiB夹具未迁移及旧版本断言失败据实保留，现重签/刷新正规digest并保持16384/16385硬边界。原资源suite尚未重跑，本片不是全产品或真实跨仓验收。
+
+正常Agent/配置/库/角色/积分不改；模型/Tool/Billing不启用，远端CI/push/PR/merge及Root index/gitlink暂停。后继IAM固定proof2与BFF internal1，Platform独立project-only安装与exact allowlist，最后真实HTTP/PG整链；ADR035即时撤权barrier仍不冒完成。
+
 ## 当前 Skills 与 MC-01 组合（2026-10-17，本地候选已验证，正常未激活）
 
 组合父版本2d5ce12与887aabc：保留System4/provider-bound连接、usage2/HTTP6及显式历史reader，同时消费Platform当前SKILL.md profile1.1与精确原生发现；旧manifest校验器不恢复，无新owner/协议版本/Schema/依赖。factory保model/planned/recipe绑定、exact包/SDK发现及durable failed/取消/HITL边界。

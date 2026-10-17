@@ -1,3 +1,7 @@
+## 项目执行冻结（2026-10-17）
+
+使用原dispatch/Run request_json持久保存正式project_ref与有序selected_skill_source_refs，断言稳定ref仍ExecutionIdentity原字段；proof supplier只读冻结值计算摘要，无新项目/授权表和无跨owner SQL。迁移/正常旧Run不由trace补权限；本轮仅自有隔离fresh资源验收，不激活正常旧worker或模型/扣费。
+
 ## MC-01：模型连接与调用证据边界（2026-10-15；目标，无数据写入）
 
 基线 `84502e6`。Agent 不复制 System provider/model 目录，不落密钥或上游 credential reference；部署配置解析后的密钥只在 worker 客户端生命周期使用。技术连接选择来自 System，逐调用 evidence/final request digest 仍属于 Agent。

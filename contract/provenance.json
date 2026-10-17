@@ -3,8 +3,8 @@
   "contract": "openapi/v1/openapi.json",
   "source_files": [
     "contract/openapi/v1/openapi.json",
-    "contract/execution-proof/v1/schema.json",
-    "contract/execution-proof/v1/vectors.json",
+    "contract/execution-proof/v2/schema.json",
+    "contract/execution-proof/v2/vectors.json",
     "src/kokoro_agent/protocol/control.py",
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py",
@@ -16,13 +16,13 @@
     "src/kokoro_agent/system_consumer_contract.py",
     "src/kokoro_agent/usage_history_contract.py"
   ],
-  "combined_sha256": "52ab65eb104380311e704c4250eaecdaa9452ed57adb9e29fc89e647d28137a7",
+  "combined_sha256": "18e688d450ca351acc2f6706f87a70d668aad0ca9c0b2ffdc022bb106bab17a6",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
-      "sha256": "c970ee3b72901cf0288157e0e5aaa8509b5d1fee98eec250b76594981085f676",
+      "sha256": "48a638be93289b58f082335d2a455fc84301792cc76635c7ae201c507b369b35",
       "source": "contract/openapi/v1/openapi.json",
-      "source_sha256": "e4d30178f2330744b374788abf7e6d23bbf8d7841dcd01537063c705dc18a8db",
+      "source_sha256": "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3",
       "generator": "scripts/generate_failure_models.py"
     }
   ],
@@ -66,19 +66,19 @@
     }
   ],
   "execution_proof": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "schema": {
-      "path": "contract/execution-proof/v1/schema.json",
-      "sha256": "264f2a86230ccdc20c46ff8664407c2a6f382c664970539274cca569f178ab5f"
+      "path": "contract/execution-proof/v2/schema.json",
+      "sha256": "d10b547d1a2be7db837e36b2399b05296b30861bc0ef23b3b7547d269a4d95c4"
     },
     "vectors": {
-      "path": "contract/execution-proof/v1/vectors.json",
-      "sha256": "a65b9b4a1c6da8c25bf012ec0aa9c04de037f5e166c1cd7cbee7df340dc17c41"
+      "path": "contract/execution-proof/v2/vectors.json",
+      "sha256": "73e548b49538d0a3d0493207583b7c2822daeb1bea5b35c739e945fe795aa624"
     }
   },
   "http_contract": {
-    "version": "6.0.0",
+    "version": "7.0.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "e4d30178f2330744b374788abf7e6d23bbf8d7841dcd01537063c705dc18a8db"
+    "sha256": "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3"
   }
 }

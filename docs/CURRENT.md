@@ -4,7 +4,9 @@
 
 原两个正向用例实际RED均SKILL_NATIVE_LOAD_INCOMPLETE，修后8项定向通过；原负控改用真实invalid metadata，failed持久化/失败存储负控仍保留。完整factory＋显式SDK读取＋架构106 PASS/1既存FAIL；完整默认2351 PASS/760资源deselected/1既存FAIL。唯一失败仍为原server.py的cast架构检查，文件与8f574ef同SHA，未放宽或删除门禁。第一次Pyright发现本片optional TypedDict键直接索引，已正规setdefault明确构造；末轮相关五文件145 PASS、完整Ruff格式/lint与显式解释器Pyright通过。contract checker与Platform generator drift、lock/frozen sync通过，独审未发现确定P0–P2；原SDK beta/deprecation提醒保留。
 
-这只证明受控reader/模型替身下真实SDK与Run装配行为，不是正式模型、Tool、Billing或正常登录执行验收；未运行PG/Redis等资源套件。正常Agent/配置/身份/积分未动，远端及Root index/gitlink仍暂停。正常组合与剩余格式/授权、Admin current配对和真实执行仍待后继；完整工程合并门未满足，不冒整个Skills/MCP闭环。
+随后独立清除该既存cast技术债：HTTP AgentConfig Protocol明确声明正式配置已有的reader secret，直接typed读取；删除object/cast和重复私有protocol，不改任何鉴权分支/比较/返回码。原测试改用AgentHttpConfig及显式None替身，零新case；原架构RED后378项HTTP/架构回归通过，独审无确定P0–P2。停写最终九门lock/frozen sync/Ruff格式/lint/Pyright/contract/generator/default/build全0，完整默认2352 PASS/760资源deselected；此前FAIL据实保留但已被此最终结果取代。发布物另核runtime源码字节，正常共享env与服务未动。
+
+这只证明受控reader/模型替身下真实SDK与Run装配行为，不是正式模型、Tool、Billing或正常登录执行验收；未运行PG/Redis等资源套件。正常Agent/配置/身份/积分未动，远端及Root index/gitlink仍暂停。正常组合与剩余格式/授权、Admin current配对和真实执行仍待后继；工程源门已通过，全产品/资源验收仍未完成，不冒整个Skills/MCP闭环。
 
 ## 2026-10-17 当前 Skill 包消费切换（源码候选，正常Agent未激活）
 

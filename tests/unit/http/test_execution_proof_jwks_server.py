@@ -31,6 +31,7 @@ class Config:
     database_url: str = "postgres://unused"
     database_schema: str = "unused"
     internal_secret_agent: SecretStr | None = SecretStr("secret")
+    billing_model_call_reader_secret: SecretStr | None = None
 
 
 @pytest.fixture

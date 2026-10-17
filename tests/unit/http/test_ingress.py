@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import pytest
 from pydantic import JsonValue, SecretStr, TypeAdapter
 
-from kokoro_agent.config import AppConfig
+from kokoro_agent.interfaces.http.main import AgentHttpConfig
 import kokoro_agent.interfaces.http.server as http_server
 
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
@@ -419,7 +419,7 @@ async def _dispatch_evidence_query(
     monkeypatch.setattr(http_server, "make_run_repository", run_resource)
     monkeypatch.setattr(http_server, "make_chat_repository", chat_resource)
     return await http_server.dispatch_request(
-        AppConfig(internal_secret_agent=SecretStr("test-only-secret")),
+        AgentHttpConfig(internal_secret_agent=SecretStr("test-only-secret")),
         "GET",
         "/v1/runs/run-1/events",
         query,

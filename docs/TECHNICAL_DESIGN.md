@@ -1,3 +1,9 @@
+## 2026-10-17 exact Skill 原生发现（既定模型内修复）
+
+当前锁定DeepAgents0.6.6按name去重且要求frontmatter闭合行后有换行；这不是Platform的包身份或选择规则。修复只落skills backend/middleware与factory接线：每个已解析exact选择使用独立的原生SkillsMiddleware发现，再按原选择顺序合并metadata并核完整路径覆盖；仍使用SDK公开parser、prompt和state，不导入私有函数或另写YAML parser。发现专用只读backend在已重新授权、原包/Markdown身份验证后向SDK提供追加一个行终止符的文本视图；工具backend和所有下载/正文仍返回原始bytes，不重写包、不创建别名或覆盖同名选择。
+
+发现view不对模型/工具开放，不缓存授权或bytes；每项仅有一个已解析exact来源，避免整目录重复扫描造成平方级下载。错误/撤权/取消仍中止于模型前，原durable failed边界保留。无新owner/API/Schema/依赖或正常服务变更。复用原factory/skills测试，先验证EOF与同名两个正向失败，再核原文、撤权、Run刷新及HITL。正常Run/Billing授权和产品整链仍独立验收。
+
 ## 2026-10-17 当前 Skill 包消费切换（profile 1.1.0 候选已实现）
 
 ### Owner 与固定发行

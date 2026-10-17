@@ -56,7 +56,11 @@ from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
 from kokoro_agent.sandbox.backend import backend_resource
-from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
+from kokoro_agent.skills.backend import (
+    TypedSkillBackend,
+    SkillDiscoveryBackend,
+    SKILLS_ROOT,
+)
 from kokoro_agent.skills.middleware import RunSkillsMiddleware
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
@@ -342,8 +346,16 @@ async def build_deep_agent(
                     backend=native_backend,
                     sources=[SKILLS_ROOT],
                     progress=progress,
-                    expected_skill_paths=tuple(
-                        f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md"
+                    discovery_backends=tuple(
+                        (
+                            f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md",
+                            _with_native_skills(
+                                None,
+                                SkillDiscoveryBackend(
+                                    (skill,), capabilities.skill_reader
+                                ),
+                            ),
+                        )
                         for skill in resolved_skills
                     ),
                 ),

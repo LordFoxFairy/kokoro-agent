@@ -1,3 +1,11 @@
+## 2026-10-17 exact Skill 原生发现（本地组件验收）
+
+在8f574ef上修复两个明确正向缺口：合法frontmatter闭合于EOF、多个exact来源具有相同name。factory只接线；skills backend提供发现专用行终止文本视图，middleware逐exact调用SDK公开发现再按选择顺序合并并核路径覆盖；原生parser/prompt/state未复制，工具仍读取原包bytes。无新文件、依赖、owner契约、Schema、授权或正常服务变更，未让同名覆盖变为隐式选择规则。
+
+原两个正向用例实际RED均SKILL_NATIVE_LOAD_INCOMPLETE，修后8项定向通过；原负控改用真实invalid metadata，failed持久化/失败存储负控仍保留。完整factory＋显式SDK读取＋架构106 PASS/1既存FAIL；完整默认2351 PASS/760资源deselected/1既存FAIL。唯一失败仍为原server.py的cast架构检查，文件与8f574ef同SHA，未放宽或删除门禁。第一次Pyright发现本片optional TypedDict键直接索引，已正规setdefault明确构造；末轮相关五文件145 PASS、完整Ruff格式/lint与显式解释器Pyright通过。contract checker与Platform generator drift、lock/frozen sync通过，独审未发现确定P0–P2；原SDK beta/deprecation提醒保留。
+
+这只证明受控reader/模型替身下真实SDK与Run装配行为，不是正式模型、Tool、Billing或正常登录执行验收；未运行PG/Redis等资源套件。正常Agent/配置/身份/积分未动，远端及Root index/gitlink仍暂停。正常组合与剩余格式/授权、Admin current配对和真实执行仍待后继；完整工程合并门未满足，不冒整个Skills/MCP闭环。
+
 ## 2026-10-17 当前 Skill 包消费切换（源码候选，正常Agent未激活）
 
 基线84502e6，分支codex/skills-current-package。Platform e1b5484f162a42652bbc576cebb0f48f52809272 的独立profile1.1.0/两份artifact已精确固定；client/纯ZIP校验器/checker/generator/audit资源同片切当前SKILL.md身份，删除旧manifest解析和无用server-ID入参。无Proto/Schema/新依赖或lock变更，既有24proof/原v4请求图保持；6个Skill source/download message与当前owner逐字节相同。

@@ -1040,16 +1040,14 @@ async def test_factory_checkpoint_skill_refresh_failure_never_uses_old_metadata(
 
 @pytest.mark.parametrize(
     "native_gap",
-    ["closing-marker-at-eof", "duplicate-name", "progress-store-unavailable"],
+    ["invalid-metadata", "progress-store-unavailable"],
 )
 async def test_selected_native_skill_coverage_failure_stops_before_model(
     monkeypatch: pytest.MonkeyPatch, native_gap: str
 ) -> None:
     class Reader(CheckpointSkillReader):
         async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
-            if native_gap != "duplicate-name":
-                return {"SKILL.md": b"---\nname: alpha\ndescription: Owner valid\n---"}
-            return {"SKILL.md": b"---\nname: shared\ndescription: Owner valid\n---\n"}
+            return {"SKILL.md": b"not frontmatter"}
 
     platform = CheckpointSkillPlatform()
     object.__setattr__(platform, "reader", Reader())
@@ -1065,11 +1063,7 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
         return model
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
-    selected = (
-        ("skill:alpha",)
-        if native_gap != "duplicate-name"
-        else ("skill:alpha", "skill:beta")
-    )
+    selected = ("skill:alpha",)
     request = _request("chat").model_copy(
         update={"selected_skill_source_refs": selected}
     )
@@ -1130,6 +1124,78 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
         await handle.aclose()
 
 
+@pytest.mark.parametrize("format", ["closing-marker-at-eof", "duplicate-name"])
+async def test_selected_exact_skills_load_without_name_override_or_newline_requirement(
+    monkeypatch: pytest.MonkeyPatch, format: str
+) -> None:
+    class Reader(CheckpointSkillReader):
+        async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+            return {
+                "SKILL.md": (
+                    b"---\nname: shared\ndescription: Owner valid\n---"
+                    + (b"\nExact instructions." if format == "duplicate-name" else b"")
+                )
+            }
+
+    platform = CheckpointSkillPlatform()
+    object.__setattr__(platform, "reader", Reader())
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    model = PromptRecordingModel()
+
+    def make_model(*_: object, **_kwargs: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_model)
+    selected = (
+        ("skill:alpha", "skill:beta")
+        if format == "duplicate-name"
+        else ("skill:alpha",)
+    )
+    request = _request("chat").model_copy(
+        update={"selected_skill_source_refs": selected}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    config: RunnableConfig = {
+        "configurable": {"thread_id": "exact-discovery-" + format}
+    }
+    try:
+        run = await handle.runnable.astream_events(
+            {"messages": [HumanMessage(content="start")]},
+            version="v3",
+            config=config,
+            transformers=[CustomTransformer],
+        )
+        async with run:
+            await asyncio.gather(
+                _collect_messages(run.messages),
+                _drain(run.tool_calls),
+                _drain(run.subagents),
+                _drain(run.custom),
+            )
+        state = await handle.runnable.aget_state(config)
+        expected = [
+            f"/.skills/{name}/SKILL.md"
+            for name in (("YWxwaGE", "YmV0YQ") if len(selected) == 2 else ("YWxwaGE",))
+        ]
+        assert [item["path"] for item in state.values["skills_metadata"]] == expected
+        assert [item["name"] for item in state.values["skills_metadata"]] == [
+            "shared"
+        ] * len(selected)
+        assert model.observed
+        assert all(path in model.observed[-1] for path in expected)
+    finally:
+        await handle.aclose()
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("selected", [False, True])
 async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutating_state(
@@ -1158,7 +1224,9 @@ async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutatin
         backend=WarningBackend(),
         progress=progress,
         sources=["/skills/"],
-        expected_skill_paths=("/skills/selected/SKILL.md",) if selected else (),
+        discovery_backends=(("/skills/selected/SKILL.md", WarningBackend()),)
+        if selected
+        else (),
     )
     state: SkillsState = {
         "messages": [],

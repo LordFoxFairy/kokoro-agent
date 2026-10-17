@@ -4,26 +4,32 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import pytest
+
 from deepagents.backends import CompositeBackend, StateBackend
 from deepagents.backends.protocol import PERMISSION_DENIED
 from deepagents.middleware.skills import SkillsMiddleware, SkillsState
 from langgraph.runtime import Runtime
 
 from kokoro_agent.clients.skills import ResolvedSkill
-from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
+from kokoro_agent.skills.backend import (
+    TypedSkillBackend,
+    SkillDiscoveryBackend,
+    SKILLS_ROOT,
+)
 
 
 class _Reader:
-    def __init__(self) -> None:
+    def __init__(self, *, closing_at_eof: bool = False) -> None:
         self.calls: list[ResolvedSkill] = []
+        self.markdown = b"---\nname: style\ndescription: Writing style guide\n---" + (
+            b"" if closing_at_eof else b"\nLead with the conclusion."
+        )
 
     async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
         self.calls.append(skill)
         return {
-            "SKILL.md": (
-                b"---\nname: style\ndescription: Writing style guide\n---\n"
-                b"Lead with the conclusion."
-            ),
+            "SKILL.md": self.markdown,
             "references/examples.md": b"A concise example.",
         }
 
@@ -39,8 +45,11 @@ def _skill() -> ResolvedSkill:
     )
 
 
-async def test_native_route_lists_and_lazily_reads_authorized_skill() -> None:
-    reader = _Reader()
+@pytest.mark.parametrize("closing_at_eof", [False, True])
+async def test_native_route_lists_and_lazily_reads_authorized_skill(
+    closing_at_eof: bool,
+) -> None:
+    reader = _Reader(closing_at_eof=closing_at_eof)
     route = TypedSkillBackend((_skill(),), reader)
     backend = CompositeBackend(default=StateBackend(), routes={SKILLS_ROOT: route})
 
@@ -52,11 +61,23 @@ async def test_native_route_lists_and_lazily_reads_authorized_skill() -> None:
         f"{SKILLS_ROOT}c3R5bGU/"
     ]
     assert downloaded[0].content is not None
-    assert b"Lead with the conclusion" in downloaded[0].content
+    assert downloaded[0].content == reader.markdown
     assert [entry["path"] for entry in nested.entries or []] == [
         f"{SKILLS_ROOT}c3R5bGU/references/examples.md"
     ]
     assert reader.calls == [_skill()] * 3
+
+    discovery = CompositeBackend(
+        default=StateBackend(),
+        routes={SKILLS_ROOT: SkillDiscoveryBackend((_skill(),), reader)},
+    )
+    native = SkillsMiddleware(backend=discovery, sources=[SKILLS_ROOT])
+    metadata = await native.abefore_agent({"messages": []}, Runtime(), {})
+    assert metadata is not None
+    assert [item["name"] for item in metadata["skills_metadata"]] == ["style"]
+    # Discovery has no effect on progressive-disclosure reads or downloads.
+    original = await backend.adownload_files([f"{SKILLS_ROOT}c3R5bGU/SKILL.md"])
+    assert original[0].content == reader.markdown
 
 
 async def test_native_skills_middleware_loads_metadata_from_route() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import Protocol
 
@@ -240,4 +241,25 @@ class TypedSkillBackend(BackendProtocol):
         ]
 
 
-__all__ = ["TypedSkillBackend", "SKILLS_ROOT"]
+class SkillDiscoveryBackend(TypedSkillBackend):
+    """Metadata-only SDK view; never used as the model's file/tool backend.
+
+    The SDK consumes a line-terminated text stream. Adding its terminator here
+    admits a closing frontmatter marker at EOF without changing the verified
+    package, its identity, or any bytes returned by the normal backend.
+    """
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        responses = await super().adownload_files(paths)
+        return [
+            replace(response, content=response.content + b"\n")
+            if response.error is None
+            and response.content is not None
+            and (parts := self._parts(response.path)) is not None
+            and parts[1] == "SKILL.md"
+            else response
+            for response in responses
+        ]
+
+
+__all__ = ["TypedSkillBackend", "SkillDiscoveryBackend", "SKILLS_ROOT"]

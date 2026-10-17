@@ -31,6 +31,7 @@ class RunSkillsMiddleware(SkillsMiddleware):
 
     _expected_skill_paths: frozenset[str] | None = None
     _progress: SkillProgressSink | None = None
+    _discoveries: tuple[SkillsMiddleware, ...] = ()
 
     @classmethod
     def for_selected(
@@ -38,11 +39,19 @@ class RunSkillsMiddleware(SkillsMiddleware):
         *,
         backend: BackendProtocol,
         sources: Sequence[str],
-        expected_skill_paths: Sequence[str],
+        discovery_backends: Sequence[tuple[str, BackendProtocol]],
         progress: SkillProgressSink,
     ) -> RunSkillsMiddleware:
         middleware = cls(backend=backend, sources=sources)
-        middleware._expected_skill_paths = frozenset(expected_skill_paths)
+        middleware._expected_skill_paths = frozenset(
+            path for path, _ in discovery_backends
+        )
+        if len(middleware._expected_skill_paths) != len(discovery_backends):
+            raise SkillClientError("SKILL_SOURCE_INVALID")
+        middleware._discoveries = tuple(
+            SkillsMiddleware(backend=discovery, sources=sources)
+            for _, discovery in discovery_backends
+        )
         middleware._progress = progress
         return middleware
 
@@ -68,10 +77,32 @@ class RunSkillsMiddleware(SkillsMiddleware):
         update.setdefault("skills_load_errors", [])
         return update
 
+    @staticmethod
+    def _merge(updates: Sequence[SkillsStateUpdate | None]) -> SkillsStateUpdate:
+        """Names are display metadata, not precedence keys for exact selections."""
+        result = SkillsStateUpdate(skills_metadata=[], skills_load_errors=[])
+        for update in updates:
+            if update is None:
+                raise RuntimeError("native Skill loader returned no state update")
+            result["skills_metadata"].extend(update.get("skills_metadata", []))
+            result.setdefault("skills_load_errors", []).extend(
+                update.get("skills_load_errors", [])
+            )
+        return result
+
     def before_agent(
         self, state: SkillsState, runtime: Runtime, config: RunnableConfig
     ) -> SkillsStateUpdate:
         """SDK-only sync hook; product Run progress uses async v3 below."""
+        if self._discoveries:
+            return self._loaded(
+                self._merge(
+                    [
+                        discovery.before_agent(self._unloaded(state), runtime, config)
+                        for discovery in self._discoveries
+                    ]
+                )
+            )
         return self._loaded(
             super().before_agent(self._unloaded(state), runtime, config)
         )
@@ -80,6 +111,17 @@ class RunSkillsMiddleware(SkillsMiddleware):
         self, state: SkillsState, runtime: Runtime, config: RunnableConfig
     ) -> SkillsStateUpdate:
         try:
+            if self._discoveries:
+                return self._loaded(
+                    self._merge(
+                        [
+                            await discovery.abefore_agent(
+                                self._unloaded(state), runtime, config
+                            )
+                            for discovery in self._discoveries
+                        ]
+                    )
+                )
             return self._loaded(
                 await super().abefore_agent(self._unloaded(state), runtime, config)
             )

@@ -1,3 +1,11 @@
+## 三项SkillSource运行闭环（2026-10-17，隔离验收）
+
+真实组合发现现RunPlatformClient只允许resolve/package、遗漏已批准discover：实际调用在网络前报PLATFORM_REQUEST_INVALID。原transport快照测试增加discovery等价项，实际1 RED/3 PASS；现只在原typed request/response/allowlist和生成stub分支补DiscoverVisibleSkills，不加协议、client或宽泛透传。token→逐次新proof→原binding→bounded Connect保持，MCP原case仍通过。HTTP7/proof2机器artifact字节不改。
+
+最终原unit/contract2398 PASS/24原标记deselected/2原LangChain提醒（134.64秒），transport/supplier56 PASS；Ruff格式/lint、显式venv Pyright和contract checker均0。此前真实Agent HTTP/Run/lease三文件159 PASS/0 SKIP。Root隔离组合1 PASS/0 SKIP：真实BFF durable Chat及正式派发→Agent HTTP/PG lease/签名proof2/JWKS→IAM当前PG+在线BFF读→Platform Prisma→原生Skills发现/原Markdown；另核required-null direct Run、空冻结选择、未选拒绝、项目不继承个人安装、安装停用含已缓存backend、当前成员撤销、专用凭据轮换/缺失、同proof在Move和ABA后拒绝。Storage为自有冻结ZIP peer，非正常Storage/模型/Tool/Billing验收。
+
+所有临时库回收、数据库名清单保持、Redis14起终0且未flush、HTTP/子进程退出；正常服务和配置未激活，远端与Root index/gitlink暂停。下列旧“项目上下文仍缺失/资源未跑”仅是阶段历史，不覆盖本段；ADR035严格即时撤权barrier不由在线多次检查冒充。
+
 ## 项目可信上下文：HTTP7/proof2（2026-10-17，本地候选）
 
 Launch/RunRequest新增required nullable project_ref，原request_json保存，首次/恢复Redis发布保留null；ensure_session不再由trace取项目。per-lease supplier重验原exact类后从Python dump重建request，冻结canonical项目、原stable assertion和ordered refs摘要；只有三项SkillSource读签execution_binding，MCP等原operation明确null，不收窄原assertion域。signer重建不可变binding并核签；旧v1 artifact原字节保留但无旧runtime fallback，新current2.0.0与HTTP7.0.0由原checker/provenance/failure generator/wheel闭包验证。无新Agent表/服务/依赖。

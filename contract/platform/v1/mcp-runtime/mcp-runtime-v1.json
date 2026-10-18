@@ -1,0 +1,86 @@
+{
+  "profile": "mcp-runtime-material-v1",
+  "version": "1.1.0",
+  "owner": "Platform/MCP",
+  "visibility": "internal-owner",
+  "status": "prepared",
+  "routable": false,
+  "runtime_verified": false,
+  "package_name": "kokoro.platform.v1",
+  "service": "kokoro.platform.v1.McpRuntimeService",
+  "operations": [
+    {
+      "method": "kokoro.platform.v1.McpRuntimeService/ResolveMcpRuntimeConnection",
+      "operation": "mcp.resolve_runtime_connection",
+      "caller": "agent",
+      "workload_surface": "tenant_execution",
+      "execution_proof": "required_current_E2",
+      "binding_version": "3.0.0"
+    },
+    {
+      "method": "kokoro.platform.v1.McpRuntimeService/AcquireMcpRuntimeCredential",
+      "operation": "mcp.acquire_runtime_credential",
+      "caller": "agent",
+      "workload_surface": "tenant_execution",
+      "execution_proof": "required_current_E2",
+      "binding_version": "3.0.0"
+    }
+  ],
+  "transports": ["streamable_http", "stdio"],
+  "credential_uses": ["discovery", "invocation"],
+  "semantics": {
+    "authority": "verified current caller/run/session/actor/tenant; no request-supplied identity",
+    "resolution": "opaque purpose-bound reference for the exact current resource binding; not an invocation grant",
+    "discovery": "trusted Agent initialize and tools/list/describe only; never tools/call",
+    "invocation": "current durable grant/audit plus original argument bytes, approval value/presence and idempotency key",
+    "credential_expiry": "minimum of 30s, resolution expiry, credential expiry and invocation grant expiry when applicable",
+    "secret_delivery": "single Run memory only; no-store; never receipt/outbox/log/journal/cache/Web",
+    "proof_excluded_from_binding": true,
+    "opaque_references_and_arguments": "SHA-256 of original bytes, not plaintext or parsed/reserialized JSON",
+    "unknown_or_mixed_input": "reject before authorization or credential access",
+    "package_download": "stdio Acquire requires a GET reference as erasable UTF-8 bytes, exact immutable package size and current Storage expiry; Resolve stays secret-free",
+    "package_download_binding": "enclosing resolution_ref_sha256 binds runtime artifact, staging source version, ZIP digest and entrypoint; publisher/asset identity stays owner-only",
+    "package_download_expiry": "material deadline is the minimum of resolution, credential, grant and Storage expiry; it does not revoke an already signed URL",
+    "activation": "owner implementation + IAM fixed operation artifact + Agent fixed consumer + isolated chain acceptance required"
+  },
+  "limits": {
+    "identifier": 191,
+    "tenant": 255,
+    "selector": 512,
+    "resolutionRef": 8192,
+    "typedArgumentsBytes": 1048576,
+    "credentialLifetimeSeconds": 30
+  },
+  "inputs": [
+    {
+      "path": "contract/proto/kokoro/platform/v1/mcp_runtime.proto",
+      "bytes": 3952,
+      "sha256": "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17"
+    },
+    {
+      "path": "contract/descriptor/mcp-runtime-v1.binpb",
+      "bytes": 97709,
+      "sha256": "41fcab4fce74502e2a74e00a8c03d8d7ac913d5ee9e41adb764ef72f0620b955"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/v1/mcp_runtime_pb.ts",
+      "bytes": 20870,
+      "sha256": "0dad7af6d2d9d6b359f88d37fa113f7f53db9267356126f9f7fe7ff1c499136e"
+    },
+    {
+      "path": "src/modules/mcp/runtime/mcp-runtime-request-binding.ts",
+      "bytes": 5299,
+      "sha256": "a6c8aede60a5fa5f4666d311fa3cfc3577c6af94aacfaa68c5349c3a60f2efdf"
+    },
+    {
+      "path": "src/modules/mcp/runtime/mcp-runtime-rpc-input.ts",
+      "bytes": 3535,
+      "sha256": "5f8f8c7f3abe0c0372aa6feeb251b5da2b749a440067bcd21ea1e6ad352f2522"
+    },
+    {
+      "path": "contract/execution-operations/mcp-runtime-request-vectors-v1.json",
+      "bytes": 6440,
+      "sha256": "1217049c5a0833349765ab6d364771264f2dcfda410cb1c63b24abc7dcf2a397"
+    }
+  ]
+}

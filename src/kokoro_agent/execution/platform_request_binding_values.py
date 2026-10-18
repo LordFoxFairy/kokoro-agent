@@ -74,6 +74,18 @@ def project_nonempty_string(value: object, *, label: str) -> str:
     return _utf8(value, label=label, nonempty=True)
 
 
+def project_bounded_text(value: object, *, label: str, maximum: int) -> str:
+    """Owner Runtime text domain: valid UTF-8, ECMAScript trim and UTF-16 length."""
+    text = _utf8(value, label=label, nonempty=True)
+    if (
+        len(text.encode("utf-16-be")) // 2 > maximum
+        or text.strip(_ECMASCRIPT_TRIM_CHARACTERS) != text
+        or any(ord(character) < 32 or ord(character) == 127 for character in text)
+    ):
+        raise PlatformRequestBindingError(f"{label} is outside the runtime text domain")
+    return text
+
+
 def project_boolean(value: object, *, label: str) -> bool:
     if type(value) is not bool:
         raise PlatformRequestBindingError(f"{label} must be a boolean")

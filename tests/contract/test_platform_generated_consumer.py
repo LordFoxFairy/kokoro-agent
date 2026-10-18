@@ -14,8 +14,10 @@ ROOT = Path(__file__).parents[2]
 PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 EXPECTED_SOURCE_DIGESTS = {
     "contract/platform/v1/proto/kokoro/common/v1/common.proto": "65025b86a89119954bfbc7ad8eb89d59109ae7f390db5ee1a68f016eefa7da08",
-    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "8ccab4aee4efdfd8210f2e5f02ae8ec85c2c470e90451915209406e16621289a",
+    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "e6ae73055a6e03a6a3c188fbede2e35480977f9cd50eae994e7bdb8ace982503",
+    "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto": "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17",
 }
+
 EXPECTED_RPC_SHAPES = {
     "SkillCatalogService": {
         "GetSkillPackageUpload": (
@@ -138,7 +140,7 @@ EXPECTED_RPC_SHAPES = {
 
 def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
     pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
+    assert pin["owner_commit"] == "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == EXPECTED_SOURCE_DIGESTS
@@ -147,21 +149,58 @@ def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
 
 
 def test_platform_generated_async_client_contains_all_owner_rpcs() -> None:
-    from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_connect
+    from kokoro_agent.generated.kokoro.platform.v1 import (
+        platform_runtime_connect,
+        mcp_runtime_connect,
+    )
 
-    methods = {
-        name
-        for name, value in vars(platform_runtime_connect).items()
-        if name.endswith("ServiceClient") and isinstance(value, type)
-        for name, value in vars(value).items()
-        if callable(value) and not name.startswith("_") and name != "close"
-    }
-    assert len(methods) == 34
+    for filename, generated in (
+        ("platform_runtime.proto", platform_runtime_connect),
+        ("mcp_runtime.proto", mcp_runtime_connect),
+    ):
+        # The pinned source hash anchors the complete inventory, including generated
+        # management methods which the execution transport must never expose.
+        expected = _rpc_shapes(filename)
+        actual = {
+            name.removesuffix("Client"): {
+                method
+                for method, value in vars(client).items()
+                if callable(value) and not method.startswith("_") and method != "close"
+            }
+            for name, client in vars(generated).items()
+            if name.endswith("ServiceClient") and isinstance(client, type)
+        }
+        assert actual == {
+            service: {
+                re.sub(r"(?<!^)(?=[A-Z])", "_", method).lower() for method in methods
+            }
+            for service, methods in expected.items()
+        }
 
 
 def test_pinned_platform_proto_matches_the_exact_owner_rpc_shapes() -> None:
+    actual = _rpc_shapes("platform_runtime.proto")
+    # Every original 34-method ABI is retained; complete current input is hash-pinned.
+    assert sum(map(len, EXPECTED_RPC_SHAPES.values())) == 34
+    for service, methods in EXPECTED_RPC_SHAPES.items():
+        assert {name: actual[service][name] for name in methods} == methods
+    assert _rpc_shapes("mcp_runtime.proto") == {
+        "McpRuntimeService": {
+            "ResolveMcpRuntimeConnection": (
+                "ResolveMcpRuntimeConnectionRequest",
+                "ResolveMcpRuntimeConnectionResponse",
+            ),
+            "AcquireMcpRuntimeCredential": (
+                "AcquireMcpRuntimeCredentialRequest",
+                "AcquireMcpRuntimeCredentialResponse",
+            ),
+        }
+    }
+
+
+def _rpc_shapes(filename: str) -> dict[str, dict[str, tuple[str, str]]]:
     source = (
-        ROOT / "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto"
+        ROOT / "contract/platform/v1/proto/kokoro/platform/v1" / filename
     ).read_text(encoding="utf-8")
     actual: dict[str, dict[str, tuple[str, str]]] = {}
     service: str | None = None
@@ -171,13 +210,13 @@ def test_pinned_platform_proto_matches_the_exact_owner_rpc_shapes() -> None:
             service = service_name
             actual[service_name] = {}
         elif match := re.fullmatch(
-            r"  rpc (\w+)\(kokoro\.platform\.v1\.(\w+)\) returns "
-            r"\(kokoro\.platform\.v1\.(\w+)\);",
+            r"  rpc (\w+)\((?:kokoro\.platform\.v1\.)?(\w+)\) returns "
+            r"\((?:kokoro\.platform\.v1\.)?(\w+)\);",
             line,
         ):
             assert service is not None
             actual[service][match.group(1)] = (match.group(2), match.group(3))
-    assert actual == EXPECTED_RPC_SHAPES
+    return actual
 
 
 def test_platform_generated_messages_and_async_client_are_importable() -> None:

@@ -1,7 +1,7 @@
 {
   "owner": "kokoro-platform",
   "owner_repository": "apps/kokoro-capability",
-  "owner_commit": "6a09913a96c686b316bfe707b823d039e625607a",
+  "owner_commit": "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6",
   "sources": [
     {
       "owner_path": "contract/proto/kokoro/common/v1/common.proto",
@@ -11,13 +11,18 @@
     {
       "owner_path": "contract/proto/kokoro/platform/v1/platform_runtime.proto",
       "path": "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
-      "sha256": "8ccab4aee4efdfd8210f2e5f02ae8ec85c2c470e90451915209406e16621289a"
+      "sha256": "e6ae73055a6e03a6a3c188fbede2e35480977f9cd50eae994e7bdb8ace982503"
+    },
+    {
+      "path": "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto",
+      "owner_path": "contract/proto/kokoro/platform/v1/mcp_runtime.proto",
+      "sha256": "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17"
     }
   ],
   "generation_inputs": [
     {
       "path": "contract/platform/v1/codegen.json",
-      "sha256": "8e9cdbc3dc9affd47a6729392422c0a8a556e0564b2e9050783a9dba36400d20"
+      "sha256": "985cc9b4147979da4a35ce3eb6f34948d42f9276a959e111f393dc72ed2e6e48"
     }
   ],
   "codegen": {
@@ -154,6 +159,48 @@
         "path": "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json",
         "owner_path": "contract/execution-operations/skill-package-profile-v1.vectors.json",
         "sha256": "c94d3461b8b08908474b6725098b771d6608dbd2777446ff09fd680c5cfd6a63"
+      }
+    ]
+  },
+  "runtime_material": {
+    "owner_commit": "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6",
+    "profile": "mcp-runtime-material-v1",
+    "version": "1.1.0",
+    "sources": [
+      {
+        "path": "contract/platform/v1/mcp-runtime/mcp-runtime-v1.json",
+        "owner_path": "contract/execution-operations/mcp-runtime-v1.json",
+        "sha256": "16b052f16193c01b1d110df9b9fb75aec66698771f87ee3ff0e595e1c47d09d4"
+      },
+      {
+        "path": "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto",
+        "owner_path": "contract/proto/kokoro/platform/v1/mcp_runtime.proto",
+        "sha256": "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17"
+      },
+      {
+        "path": "contract/platform/v1/mcp-runtime/mcp-runtime-v1.binpb",
+        "owner_path": "contract/descriptor/mcp-runtime-v1.binpb",
+        "sha256": "41fcab4fce74502e2a74e00a8c03d8d7ac913d5ee9e41adb764ef72f0620b955"
+      },
+      {
+        "path": "contract/platform/v1/mcp-runtime/mcp_runtime_pb.ts",
+        "owner_path": "src/generated/proto/kokoro/platform/v1/mcp_runtime_pb.ts",
+        "sha256": "0dad7af6d2d9d6b359f88d37fa113f7f53db9267356126f9f7fe7ff1c499136e"
+      },
+      {
+        "path": "contract/platform/v1/mcp-runtime/mcp-runtime-request-binding.ts",
+        "owner_path": "src/modules/mcp/runtime/mcp-runtime-request-binding.ts",
+        "sha256": "a6c8aede60a5fa5f4666d311fa3cfc3577c6af94aacfaa68c5349c3a60f2efdf"
+      },
+      {
+        "path": "contract/platform/v1/mcp-runtime/mcp-runtime-rpc-input.ts",
+        "owner_path": "src/modules/mcp/runtime/mcp-runtime-rpc-input.ts",
+        "sha256": "5f8f8c7f3abe0c0372aa6feeb251b5da2b749a440067bcd21ea1e6ad352f2522"
+      },
+      {
+        "path": "contract/platform/v1/mcp-runtime/mcp-runtime-request-vectors-v1.json",
+        "owner_path": "contract/execution-operations/mcp-runtime-request-vectors-v1.json",
+        "sha256": "1217049c5a0833349765ab6d364771264f2dcfda410cb1c63b24abc7dcf2a397"
       }
     ]
   }

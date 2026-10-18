@@ -66,6 +66,7 @@ clients/skill_package_transport.py clients/platform_credentials.py clients/platf
 clients/platform_transport.py execution/execution_proof_keys.py execution/execution_proof_profile.py
 execution/execution_proof_signer.py execution/execution_proof_supplier.py
 execution/platform_request_binding.py execution/platform_request_binding_values.py
+execution/mcp_runtime_request_binding.py
 """,
     ),
     ("core", "tools/ask_user_question.py"),
@@ -119,6 +120,8 @@ generated/kokoro/platform/__init__.py
 generated/kokoro/platform/v1/__init__.py
 generated/kokoro/platform/v1/platform_runtime_connect.py
 generated/kokoro/platform/v1/platform_runtime_pb.py
+generated/kokoro/platform/v1/mcp_runtime_connect.py
+generated/kokoro/platform/v1/mcp_runtime_pb.py
 generated/kokoro/storage/__init__.py
 generated/kokoro/storage/v3/__init__.py
 generated/kokoro/storage/v3/storage_connect.py

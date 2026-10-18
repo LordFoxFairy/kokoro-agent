@@ -25,7 +25,8 @@ def test_runtime_binding_uses_current_platform_v4_owner_release() -> None:
 
     pin = _json(PIN_PATH)
     execution = _object(pin["execution_operations"])
-    assert pin["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
+    assert pin["owner_commit"] == "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6"
+    assert execution["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
     assert execution["aggregate_sha256"] == (
         "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
     )
@@ -141,7 +142,7 @@ def _request_from_owner_vector(
 def test_vendored_execution_operation_artifact_matches_owner_provenance() -> None:
     pin = _json(PIN_PATH)
     execution = _object(pin["execution_operations"])
-    assert execution["owner_commit"] == pin["owner_commit"]
+    assert execution["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
     assert execution["aggregate_sha256"] == EXPECTED_AGGREGATE
     sources = [_object(source) for source in _list(execution["sources"])]
     assert len(sources) == 21
@@ -194,6 +195,10 @@ def test_v3_vendor_rejects_extra_file_even_with_unchanged_provenance(
         "package-inventory",
         "package-payload-rehashed",
         "package-extra-file",
+        "runtime-owner",
+        "runtime-inventory",
+        "runtime-payload-rehashed",
+        "runtime-extra-file",
     ],
 )
 def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
@@ -233,7 +238,7 @@ def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
     elif tamper == "path-substitution":
         sources[0]["path"] = sources[1]["path"]
         sources[0]["sha256"] = sources[1]["sha256"]
-    elif not tamper.startswith("package-"):
+    elif not tamper.startswith(("package-", "runtime-")):
         raise AssertionError(tamper)
     if tamper.startswith("package-"):
         package_pin = _object(pin["package_profile"])
@@ -254,6 +259,25 @@ def test_execution_pin_rejects_metadata_and_exact_inventory_drift(
             )
         package_pin["sources"] = package_sources
         pin["package_profile"] = package_pin
+    if tamper.startswith("runtime-"):
+        runtime_pin = _object(pin["runtime_material"])
+        runtime_sources = [_object(value) for value in _list(runtime_pin["sources"])]
+        if tamper == "runtime-owner":
+            runtime_pin["owner_commit"] = "0" * 40
+        elif tamper == "runtime-inventory":
+            runtime_sources.pop()
+        elif tamper == "runtime-payload-rehashed":
+            target = repository / _string(runtime_sources[0]["path"])
+            target.write_text("{}\n")
+            runtime_sources[0]["sha256"] = hashlib.sha256(
+                target.read_bytes()
+            ).hexdigest()
+        elif tamper == "runtime-extra-file":
+            (repository / "contract/platform/v1/mcp-runtime/extra.json").write_text(
+                "{}\n"
+            )
+        runtime_pin["sources"] = runtime_sources
+        pin["runtime_material"] = runtime_pin
     execution["sources"] = sources
     pin["execution_operations"] = execution
     _write_json(pin_path, pin)

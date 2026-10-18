@@ -1,3 +1,25 @@
+## D6-B Agent Runtime 固定消费实施门（2026-10-18）
+
+依赖为Platform c3decfd runtime-material-v1 1.1及IAM c05c646（两exact操作已固定）。Agent只消费现Runtime两读与原Connector/Connection/Authorize，沿当前LeasedRun token/proof supplier，不新增owner/RPC/身份/Schema/模型或计费调用。现正式MCP读取仅Protocol、worker尚未提供实现，不把部署YAML或过去本地live测试当受管执行链已通。
+
+### 唯一Proto与发行物
+
+当前Agent主Proto固定6a09913，新增Runtime导入当前Platform主Proto。对比确认主Proto截至c3decfd仅增加定义/字段，没有删改旧行。采用单一canonical主Proto升级至c3decfd，正规生成同一package全部Python类型与stubs；不并排旧模块、不手改生成物、不另造HTTP客户端。common Proto保原SHA；原v4 execution binding树和Skill package profile保持独立原commit/SHA，顶层Proto owner pin与execution artifact pin分别命名其职责，不用单个旧commit冒两个事实。新增Runtime原始profile/完整descriptor/request vectors和profile输入的原始源字节固定到同一c3decfd，实际使用的wrapper/已消费消息与父图做字节/语义对照。build-only checker/generator/package audit覆盖完整闭包，不在运行路径读仓外文件。
+
+### 请求、传输与当前能力边界
+
+在现唯一project_request_binding入口承接两个exact generated请求，与原24操作共用binding_version=3/JCS和受信tenant；新Runtime投影按owner固定源/向量核原bytes SHA、显式approval presence、用途oneof和闭集/界限，proof不入摘要。生成/边界分工按当前模块，不使用prefix放行、JSON修补或手写第二套wire。RunPlatformClient/PlatformTransport同一租户token池及fresh proof/deadline/取消/错误脱敏扩展新两方法，严格dispatch闭集从6到8，不把生成stub中其他新增管理RPC开放。旧6操作正向/负控与原请求摘要保持。
+
+后续run-bound MCP reader从owner当前Connector/Connection/capability候选建立精确target，Resolve/Acquire不得由模型自报tenant/run/URL/command/env；每次发现或invoke重验当前引用，invoke必须原grant/arguments/approval/idempotency，不把discovery材料用于call。HTTP仅按当前owner规范endpoint/header；stdio按原runtime_artifact_ref、source版本、ZIP SHA、size与entrypoint核下载。共享既有受控ObjectStore origin/无cookie或bearer/禁止redirect/有界GET原语，MCP有独立manifest与安全解包/逐文件hash/入口验证，不借Skills授权。无任意命令fallback；临时目录和环境仅属同Run，退出/取消/超时/HITL及时关session/回收子进程/清材料。
+
+### 本片顺序与验收
+
+1. 先固定唯一Proto/Runtime发行物与正规生成、原消费者保持；新增Runtime请求proof向量及Native client往返，用现私有env和受控owner验证后提交。
+2. 再接精确读取/下载/包校验与现稳定三MCP工具，清除对应旧部署旁路/长期材料cache，保持允许工具集和Run/HITL/取消/幂等保障；未知结果不自动重发call。
+3. 受控本地标准MCP fixture验initialize/list/call与声明摘要、准入/撤权/过期/重放/取消/超时/回收，随后跨owner真实组合与产品页面对照。完整Python门和相关真实I/O证据绑定最终commit，生成/单测不冒整链成功。
+
+写区为现contract/platform/v1、唯一Platform generator/build-only checker/包audit，execution请求投影、clients现传输/独立runtime读取、mcp现工具与package校验、worker当前装配及具名原测试/必要文档；数据Schema/模型/计费/聊天/项目及其他owner不动。正常Agent/配置/服务、模型/实际外部工具/扣费/CI/远端仍暂停；已有D6授权只在本地受控fixture开展生命周期验证，正式执行启用另按产品配对确认。未完成项明确保留，不将设计或生成类型称产品完成。
+
 ## 2026-10-17 exact Skill 原生发现（既定模型内修复）
 
 当前锁定DeepAgents0.6.6按name去重且要求frontmatter闭合行后有换行；这不是Platform的包身份或选择规则。修复只落skills backend/middleware与factory接线：每个已解析exact选择使用独立的原生SkillsMiddleware发现，再按原选择顺序合并metadata并核完整路径覆盖；仍使用SDK公开parser、prompt和state，不导入私有函数或另写YAML parser。发现专用只读backend在已重新授权、原包/Markdown身份验证后向SDK提供追加一个行终止符的文本视图；工具backend和所有下载/正文仍返回原始bytes，不重写包、不创建别名或覆盖同名选择。

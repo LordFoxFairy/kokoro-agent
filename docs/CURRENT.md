@@ -1,3 +1,13 @@
+## D6-B Runtime 1.1 固定消费者交付（2026-10-18）
+
+本片沿 887aabc 基线完成已审设计的第一步：唯一主 Proto 与 Runtime 完整原始闭包固定 Platform c3decfd，正规生成同一 Python package；原 v4 execution 与 Skill profile 保持各自原 pin。唯一 JCS 入口承接两项 exact Runtime 请求，按原 bytes、approval presence、用途及闭集验证；同 RunPlatformClient 的 strict dispatch 从六项扩到八项，继续使用快照、fresh proof、同 token 池、deadline/取消与错误脱敏。无管理 stub 放行、第二套 wire 或 Schema/配置变更。
+
+主方完整默认 2359 PASS、760 资源类 deselected；lock/frozen sync、全 Ruff format/check、Pyright、contract、生成漂移均通过。原 owner 五向量及回归、未知字段/边界、发行物篡改覆盖已执行；新增三个风险例及原篡改例的四种 Runtime 参数，无 UI 套件。完整默认首次 2358 PASS/1 FAIL 暴露显式 runtime resource 清单漏新三文件，仅补生产清单、原断言保留后完整复跑通过。独审含最终清单修复未发现确定 P0–P2。
+
+实际 Python 客户端到 c3decfd Nest Native binary 的 HTTP/stdio 两分支共 2 PASS，owner 独立核请求摘要和原材料解码；IAM 与 store/Storage 是受控 fixture，不冒真实 IAM/PG 或工具执行。独占源码 wheel/sdist 构建、全部 Platform audit 原字节及 wheel 安装后 contract smoke 通过，候选已回收、正常 dist 未覆盖。收据仅 Root ignored var/dev/agent-mcp-runtime-consumer-20261018。
+
+仍 OPEN：run-bound MCP reader、精确下载/包与入口校验、标准三工具生命周期及撤权/取消/恢复整链；正常产品配对与 Manus 对照、手册及 PR 聚合。正常服务、库、账号/权限/积分/任务开关未动；模型、实际外部工具、扣费、CI 与远端保持暂停。本片不代表整个功能或合并门完成。
+
 ## 2026-10-17 exact Skill 原生发现（本地组件验收）
 
 在8f574ef上修复两个明确正向缺口：合法frontmatter闭合于EOF、多个exact来源具有相同name。factory只接线；skills backend提供发现专用行终止文本视图，middleware逐exact调用SDK公开发现再按选择顺序合并并核路径覆盖；原生parser/prompt/state未复制，工具仍读取原包bytes。无新文件、依赖、owner契约、Schema、授权或正常服务变更，未让同名覆盖变为隐式选择规则。

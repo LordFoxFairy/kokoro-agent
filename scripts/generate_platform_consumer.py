@@ -40,6 +40,7 @@ def _generate(destination: Path) -> None:
         *pin["generation_inputs"],
         *execution_sources,
         *pin["package_profile"]["sources"],
+        *pin["runtime_material"]["sources"],
     ]:
         actual = hashlib.sha256((ROOT / source["path"]).read_bytes()).hexdigest()
         if actual != source["sha256"]:
@@ -279,6 +280,8 @@ _PLATFORM_OUTPUTS = (
     Path("kokoro/platform/v1/platform_runtime_pb.py"),
     Path("kokoro/platform/v1/platform_runtime_connect.py"),
     Path("platform_request_projector.py"),
+    Path("kokoro/platform/v1/mcp_runtime_pb.py"),
+    Path("kokoro/platform/v1/mcp_runtime_connect.py"),
 )
 _SHARED_OUTPUTS = (
     Path("__init__.py"),

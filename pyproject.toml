@@ -76,6 +76,7 @@ kokoro_agent = ["prompts/*.md"]
 ]
 "share/kokoro-agent/audit/contract/platform/v1" = [
   "contract/platform/v1/provenance.json",
+  "contract/platform/v1/codegen.json",
 ]
 "share/kokoro-agent/audit/contract/platform/v1/skill-package" = [
   "contract/platform/v1/skill-package/skill-package-profile-v1.json",
@@ -133,6 +134,17 @@ kokoro_agent = ["prompts/*.md"]
   "src/kokoro_agent/protocol/events.py",
   "src/kokoro_agent/protocol/run_failure_generated.py",
   "src/kokoro_agent/protocol/streams.py",
+]
+
+"share/kokoro-agent/audit/contract/platform/v1/proto/kokoro/common/v1" = ["contract/platform/v1/proto/kokoro/common/v1/common.proto"]
+"share/kokoro-agent/audit/contract/platform/v1/proto/kokoro/platform/v1" = ["contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto", "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto"]
+"share/kokoro-agent/audit/contract/platform/v1/mcp-runtime" = [
+  "contract/platform/v1/mcp-runtime/mcp-runtime-v1.json",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-v1.binpb",
+  "contract/platform/v1/mcp-runtime/mcp_runtime_pb.ts",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-request-binding.ts",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-rpc-input.ts",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-request-vectors-v1.json",
 ]
 
 [tool.pytest.ini_options]

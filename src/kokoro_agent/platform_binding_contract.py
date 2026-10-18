@@ -16,6 +16,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_json_schema
 
+from kokoro_agent.mcp_runtime_contract import (
+    MCP_RUNTIME_SOURCES,
+    validate_mcp_runtime_artifact,
+)
 from kokoro_agent.execution.execution_proof_profile import MAX_SAFE_INTEGER
 from kokoro_agent.skills.package import SkillPackageError, validate_package
 from kokoro_agent.execution.platform_request_binding_values import (
@@ -26,7 +30,8 @@ from kokoro_agent.execution.platform_request_binding_values import (
 
 JsonObject: TypeAlias = dict[str, object]
 PLATFORM_PROVENANCE_RELATIVE = "contract/platform/v1/provenance.json"
-EXPECTED_OWNER_COMMIT = "6a09913a96c686b316bfe707b823d039e625607a"
+EXPECTED_OWNER_COMMIT = "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6"
+EXPECTED_EXECUTION_OWNER_COMMIT = "6a09913a96c686b316bfe707b823d039e625607a"
 EXPECTED_OWNER_REPOSITORY = "apps/kokoro-capability"
 EXPECTED_AGGREGATE = "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
 EXPECTED_OWNER_PROVENANCE_SHA256 = (
@@ -155,6 +160,10 @@ EXPECTED_PACKAGE_SOURCES = (
 )
 PLATFORM_AUDIT_FILES = (
     PLATFORM_PROVENANCE_RELATIVE,
+    "contract/platform/v1/codegen.json",
+    "contract/platform/v1/proto/kokoro/common/v1/common.proto",
+    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
+    *(record[0] for record in MCP_RUNTIME_SOURCES),
     *(record[0] for record in EXPECTED_EXECUTION_SOURCES + EXPECTED_PACKAGE_SOURCES),
 )
 
@@ -473,7 +482,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
         pin.get("owner") != "kokoro-platform"
         or pin.get("owner_repository") != EXPECTED_OWNER_REPOSITORY
         or pin.get("owner_commit") != EXPECTED_OWNER_COMMIT
-        or execution.get("owner_commit") != EXPECTED_OWNER_COMMIT
+        or execution.get("owner_commit") != EXPECTED_EXECUTION_OWNER_COMMIT
         or execution.get("aggregate_sha256") != EXPECTED_AGGREGATE
     ):
         raise PlatformRequestBindingError("Platform execution artifact pin is invalid")
@@ -710,6 +719,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
             else:
                 raise PlatformRequestBindingError("historical malformed ZIP accepted")
     _validate_current_package_profile(root, pin)
+    validate_mcp_runtime_artifact(root, pin)
 
     positive_document = _object(
         strict_parse_raw_json((artifact / "vectors/positive.json").read_bytes()),

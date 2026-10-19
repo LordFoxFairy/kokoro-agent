@@ -290,7 +290,6 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             model_call_settle_timeout_s=config.model_call_settle_timeout_s,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
-            outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
             chat_repository=chat_repository,
             process_fatal=_exit_after_model_call_settlement_timeout,

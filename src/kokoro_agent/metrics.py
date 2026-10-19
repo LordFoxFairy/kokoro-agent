@@ -27,7 +27,7 @@ CONTROL_DELIVERY = Counter(
 )
 
 # R4 critical outbox 相位：queued=分配 durable_seq 落行；published=发布确认；
-# republished=宽限期无回执/崩溃后补发；receipt_state_lost=manifest 缺失告警。
+# republished=queued 崩溃后补发；receipt_state_lost=Run/已存在回执账本的 manifest 缺失。
 OUTBOX = Counter(
     "kokoro_agent_outbox_total",
     "critical outbox transitions",

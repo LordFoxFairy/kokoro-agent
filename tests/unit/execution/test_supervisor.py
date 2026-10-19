@@ -2098,8 +2098,10 @@ async def test_heartbeat_nack_terminates_orphaned_paused_run() -> None:
     assert run.run_id not in await store.list_paused()
 
 
-async def test_heartbeat_republishes_stale_published_outbox() -> None:
-    # published 后回执一直不来、超宽限期（events 流被修剪/丢失）→ 心跳重发（复用固定身份）。
+async def test_heartbeat_preserves_published_notifications_without_external_ack(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Redis notifications may expire; HTTP Chat replay is the compensation source.
     store = FakeRunRepository()
     await store.try_claim(request("r-stale"))
     store.outbox["r-stale"] = [
@@ -2114,16 +2116,15 @@ async def test_heartbeat_republishes_stale_published_outbox() -> None:
             "published_at": 0,
         }
     ]
-    store.clock_ms = 60_000  # 远超默认宽限期 30s；无回执、无 manifest。
+    original = [dict(row) for row in store.outbox["r-stale"]]
+    store.clock_ms = 60_000
     bus = FakeBus()
     sup, _ = _supervisor(FakeAgent(), store=store)
     await sup.heartbeat_once(bus)
-    started = [e for e in bus.run_events("r-stale") if e.kind == "run.started"]
-    assert (
-        len(started) == 1
-        and started[0].durable_seq == 1
-        and started[0].event_id == "e1"
-    )
+    await sup.heartbeat_once(bus)
+    assert bus.run_events("r-stale") == []
+    assert store.outbox["r-stale"] == original
+    assert "receipt_state_lost" not in caplog.text
 
 
 @pytest.mark.parametrize("resuming", [False, True], ids=["initial", "resume"])

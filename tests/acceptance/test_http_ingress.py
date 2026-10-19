@@ -2821,3 +2821,134 @@ async def test_todo_complete_replacement_replays_over_http_with_scoped_cursor(
             assert await runs.next_event_index(run_id) == source_watermark
     finally:
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_expired_notifications_do_not_republish_and_http_chat_survives_run_retention(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Redis notifications are lossy; scoped PostgreSQL Chat is durable replay."""
+    config = acceptance_state.config
+    run_id = f"notification-retention-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
+    launched = await http_client.post(
+        "/v1/runs", headers=_headers(), json=_launch_body(run_id)
+    )
+    assert launched.status_code == 202
+    stream = RedisStream(acceptance_state.redis_url)
+    runs = PostgresRunRepository(
+        config.database_url, ttl_ms=10_000, schema=config.database_schema
+    )
+    chat = PostgresChatRepository(config.database_url, schema=config.database_schema)
+    agent = FakeAgent(run=text_run("durable without notification ACK"))
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(runnable=agent, tool_descriptions={})
+
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=build,
+        run_repository=runs,
+        approval_tool_names=lambda _request: frozenset(),
+        trace_factory=lambda _request: None,
+        source_for=lambda _name: "runtime-custom",
+        consumer="notification-retention-worker",
+        run_ttl_s=60,
+        chat_repository=chat,
+    )
+    try:
+        request = await runs.get_pending_dispatch(run_id)
+        assert request is not None
+        await supervisor.dispatch(stream, request)
+        outcomes = await asyncio.gather(*tuple(supervisor.tasks.values()))
+        assert all(outcome is None for outcome in outcomes)
+        assert await runs.is_terminal(run_id)
+        assert await stream.read_all(run_events_stream(run_id))
+        replay_path = "/v1/sessions/session-1/events?after_seq=0&limit=100"
+        replay = await http_client.get(replay_path, headers=_headers())
+        assert replay.status_code == 200
+        before_chat = _nested(_json_object(replay.json()), "data")
+        events = before_chat["events"]
+        assert isinstance(events, list) and len(events) > 1
+        assert _json_object(events[-1])["event_type"] == "run.completed"
+        cursor = _json_object(events[0])["seq"]
+        assert isinstance(cursor, int)
+        tail_path = f"/v1/sessions/session-1/events?after_seq={cursor}&limit=100"
+        tail = await http_client.get(tail_path, headers=_headers())
+        assert tail.status_code == 200
+        before_tail = _nested(_json_object(tail.json()), "data")
+        assert before_tail["events"] == events[1:]
+        async with connect_pg(config.database_url) as connection:
+            await connection.execute(
+                sql.SQL(
+                    "UPDATE {} SET published_at=clock_timestamp()-INTERVAL '61 seconds' WHERE run_id=%s"
+                ).format(sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)),
+                (run_id,),
+            )
+            await connection.commit()
+            before_outbox = await connection.execute(
+                sql.SQL("SELECT * FROM {} WHERE run_id=%s ORDER BY durable_seq").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)
+                ),
+                (run_id,),
+            )
+            published = await before_outbox.fetchall()
+            assert published and all(row["status"] == "published" for row in published)
+            for table in (RUN_RECEIPTS_TABLE, RUN_RECEIPT_MANIFESTS_TABLE):
+                result = await connection.execute(
+                    sql.SQL("SELECT count(*) AS count FROM {} WHERE run_id=%s").format(
+                        sql.Identifier(config.database_schema, table)
+                    ),
+                    (run_id,),
+                )
+                count = await result.fetchone()
+                assert count is not None and count["count"] == 0
+        # Expire only this registered notification key; never reset a Redis DB.
+        await stream.expire(run_events_stream(run_id), 0)
+        assert await stream.read_all(run_events_stream(run_id)) == []
+        for _ in range(2):
+            await supervisor.heartbeat_once(stream)
+            assert await stream.read_all(run_events_stream(run_id)) == []
+        assert "receipt_state_lost" not in caplog.text
+        async with connect_pg(config.database_url) as connection:
+            result = await connection.execute(
+                sql.SQL("SELECT * FROM {} WHERE run_id=%s ORDER BY durable_seq").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)
+                ),
+                (run_id,),
+            )
+            assert await result.fetchall() == published
+            await connection.execute(
+                sql.SQL(
+                    "UPDATE {} SET terminal_at=clock_timestamp()-INTERVAL '61 seconds' WHERE run_id=%s"
+                ).format(sql.Identifier(config.database_schema, RUN_CLAIMS_TABLE)),
+                (run_id,),
+            )
+            await connection.commit()
+        await supervisor.heartbeat_once(stream)
+        assert await runs.get_request(run_id) is None
+        async with connect_pg(config.database_url) as connection:
+            result = await connection.execute(
+                sql.SQL("SELECT count(*) AS count FROM {} WHERE run_id=%s").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)
+                ),
+                (run_id,),
+            )
+            count = await result.fetchone()
+            assert count is not None and count["count"] == 0
+        for route, expected in ((replay_path, before_chat), (tail_path, before_tail)):
+            response = await http_client.get(route, headers=_headers())
+            assert response.status_code == 200
+            assert _nested(_json_object(response.json()), "data") == expected
+        other_subject = await http_client.get(
+            replay_path, headers=_headers("other-subject")
+        )
+        assert other_subject.status_code == 200
+        assert _nested(_json_object(other_subject.json()), "data")["events"] == []
+    finally:
+        assert await supervisor.drain(timeout_s=2)
+        await stream.aclose()

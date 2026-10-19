@@ -46,8 +46,8 @@ LOGGER = logging.getLogger(__name__)
 
 class SupervisorRecoveryMixin(SupervisorContext):
     async def _republish_outbox(self, bus: StreamProtocol) -> None:
-        # 崩溃/瞬时故障后 queued 的 critical 行：按 seq 序补发到事件流（复用固定 event_id/durable_seq，
-        # session 按 [run_id,durable_seq] unique 去重）。补发成功后置 published。
+        # queued critical facts recover their exact durable Chat identity before
+        # publishing a lossy Redis notification. Only successful publish marks them.
         try:
             frames = await self._run_repository.list_unpublished_outbox()
         except Exception:  # noqa: BLE001 — 补发扫描降级不阻断 serve 启动
@@ -153,8 +153,8 @@ class SupervisorRecoveryMixin(SupervisorContext):
         # 存活期间同样补发 queued critical outbox；不是只有启动时才扫描。
         await self._republish_pending_dispatches(bus)
         await self._republish_outbox(bus)
-        # R4 critical outbox 回执对账：推进 consumed/GC 已确认行，rejected NACK 终局，
-        # receipt_state_lost 告警（session 落回执后收敛；无回执时纯 no-op，不影响 live 面）。
+        # Preserve existing receipt GC/quarantine without requiring an external
+        # ACK producer. Published notifications are not periodically retransmitted.
         for run_id in await self._run_repository.list_open_outbox_runs():
             await self._reconcile_run_receipts(bus, run_id)
         await self._retry_sandbox_cleanups()
@@ -170,37 +170,20 @@ class SupervisorRecoveryMixin(SupervisorContext):
 
     async def _reconcile_run_receipts(self, bus: StreamProtocol, run_id: str) -> None:
         try:
-            outcome = await self._run_repository.reconcile_receipts(
-                run_id, self._outbox_republish_ms
-            )
+            outcome = await self._run_repository.reconcile_receipts(run_id)
         except Exception:  # noqa: BLE001 — 单 run 对账降级不杀心跳，下一拍重试
             LOGGER.exception("receipt reconcile failed run_id=%s", run_id)
             return
-        # published 无回执超宽限期：复用固定 durable_seq/event_id 重发（session 去重幂等无害）。
-        for frame in outcome.republish:
-            try:
-                await self._persist_outbox_chat(frame)
-                await bus.publish(
-                    run_events_stream(frame.run_id),
-                    outbox_wire_event(frame),
-                    maxlen=RUN_EVENTS_MAXLEN,
-                )
-                metrics.record_outbox("republished")
-            except Exception:  # noqa: BLE001 — 单帧重发失败下一宽限窗再试，不阻断其余
-                LOGGER.exception(
-                    "stale outbox republish failed run_id=%s seq=%s",
-                    run_id,
-                    frame.durable_seq,
-                )
         if outcome.rejected_seq is not None:
             await self._terminate_contract_incompatible(
                 bus, run_id, outcome.rejected_seq
             )
         elif outcome.receipt_state_lost:
-            # manifest 行缺失且未 close：不删 outbox（reconcile 已保守跳过），ERROR 告警待排查。
+            # A missing Run or a receipt ledger without its manifest is corrupt;
+            # no outbox rows were removed by reconciliation in that case.
             metrics.record_outbox("receipt_state_lost")
             LOGGER.error(
-                "receipt_state_lost: manifest missing before close, run_id=%s", run_id
+                "receipt_state_lost: Run or receipt manifest missing, run_id=%s", run_id
             )
 
     async def _heartbeat_loop(self, bus: StreamProtocol) -> None:

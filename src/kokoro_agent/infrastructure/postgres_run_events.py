@@ -300,9 +300,7 @@ class PostgresRunEvents:
                 rows = await fetch_all(cur)
         return [str(row["run_id"]) for row in rows]
 
-    async def reconcile_receipts(
-        self, run_id: str, republish_grace_ms: int = 30_000
-    ) -> ReceiptReconcile:
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
         now = self._context.clock()
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
@@ -320,10 +318,7 @@ class PostgresRunEvents:
                     await execute_sql(
                         cur,
                         """
-                        SELECT durable_seq, event_id, kind, status, index_value,
-                               (extract(epoch FROM occurred_at) * 1000)::bigint AS timestamp,
-                               payload_json,
-                               (extract(epoch FROM published_at) * 1000)::bigint AS published_at
+                        SELECT durable_seq, event_id
                         FROM {}
                         WHERE run_id = %s AND status IN ('queued', 'published')
                         ORDER BY durable_seq ASC
@@ -356,29 +351,6 @@ class PostgresRunEvents:
                         # The finalizer validates the receipt against its exact outbox
                         # identity and commits quarantine atomically with termination.
                         return ReceiptReconcile(rejected_seq=rejected[0])
-                    republish: list[OutboxFrame] = []
-                    for row in live_rows:
-                        durable_seq = int(row["durable_seq"])
-                        published_at = row["published_at"]
-                        if (
-                            row["status"] == "published"
-                            and durable_seq not in receipts
-                            and published_at is not None
-                            and now - int(published_at) >= republish_grace_ms
-                        ):
-                            republish.append(outbox_row_to_frame(row, run_id=run_id))
-                    for frame in republish:
-                        await execute_sql(
-                            cur,
-                            """
-                            UPDATE {}
-                            SET published_at = to_timestamp(%s / 1000.0)
-                            WHERE run_id = %s AND durable_seq = %s
-                            """.format(
-                                qualified(self._context.schema, RUN_OUTBOX_TABLE)
-                            ),
-                            (now, run_id, frame.durable_seq),
-                        )
                     await execute_sql(
                         cur,
                         """
@@ -393,9 +365,9 @@ class PostgresRunEvents:
                     )
                     manifest = await fetch_one(cur)
                     if manifest is None:
-                        return ReceiptReconcile(
-                            receipt_state_lost=True, republish=republish
-                        )
+                        # HTTP Chat replay does not produce raw transport ACKs.
+                        # Empty receipt state is normal; a partial ledger is not.
+                        return ReceiptReconcile(receipt_state_lost=bool(receipts))
                     consumed = int(manifest["consumed_seq"])
                     advanced = consumed
                     while True:
@@ -495,7 +467,6 @@ class PostgresRunEvents:
                     return ReceiptReconcile(
                         consumed_through=advanced if advanced > consumed else None,
                         close_requested=close_requested,
-                        republish=republish,
                     )
 
     async def delivery_ready_on_cursor(

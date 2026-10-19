@@ -74,7 +74,6 @@ class SupervisorContext:
     _model_call_settle_timeout_s: float
     _events_ttl_s: int
     _run_ttl_s: int
-    _outbox_republish_ms: int
     _sandbox_teardown: SandboxTeardown | None
     _chat_repository: ChatRepository | None
     _sem: asyncio.Semaphore

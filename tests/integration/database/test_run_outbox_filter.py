@@ -94,6 +94,61 @@ async def test_started_competing_connections_and_lost_ack_reuse_original_frame(
     assert await run_repository.next_event_index(request.run_id) == 2
 
 
+async def test_published_notification_needs_no_external_receipt_but_preserves_loss_detection(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    from psycopg import sql
+
+    from kokoro_agent.infrastructure.postgres import connect_pg
+    from kokoro_agent.infrastructure.schema import RUN_OUTBOX_TABLE, RUN_RECEIPTS_TABLE
+
+    request = _request("published-notification")
+    lease = await run_repository.try_claim(request, "notification-worker")
+    assert lease is not None
+    frame = await run_repository.stage_critical_frame(
+        request.run_id, lease, "run.started", 1_700_000_000_000, "{}", terminal=False
+    )
+    assert frame is not None
+    await run_repository.mark_critical_published(request.run_id, frame.durable_seq)
+    outbox = sql.Identifier(run_chat_schema, RUN_OUTBOX_TABLE)
+    async with connect_pg(run_chat_database_url) as conn:
+        # Arrange an old notification without sleeping or inventing external ACKs.
+        await conn.execute(
+            sql.SQL(
+                "UPDATE {} SET published_at=clock_timestamp()-INTERVAL '61 seconds' WHERE run_id=%s"
+            ).format(outbox),
+            (request.run_id,),
+        )
+        before = await (
+            await conn.execute(
+                sql.SQL("SELECT * FROM {} WHERE run_id=%s").format(outbox),
+                (request.run_id,),
+            )
+        ).fetchall()
+    for _ in range(2):
+        outcome = await run_repository.reconcile_receipts(request.run_id)
+        assert not outcome.receipt_state_lost
+    async with connect_pg(run_chat_database_url) as conn:
+        after = await (
+            await conn.execute(
+                sql.SQL("SELECT * FROM {} WHERE run_id=%s").format(outbox),
+                (request.run_id,),
+            )
+        ).fetchall()
+        assert after == before
+        # A persisted receipt without its manifest really is damaged state;
+        # retiring the nonexistent external ACK dependency must not hide it.
+        await conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id,durable_seq,event_id,status) VALUES (%s,%s,%s,'persisted')"
+            ).format(sql.Identifier(run_chat_schema, RUN_RECEIPTS_TABLE)),
+            (request.run_id, frame.durable_seq, frame.event_id),
+        )
+    assert (await run_repository.reconcile_receipts(request.run_id)).receipt_state_lost
+
+
 def _todo_projection(request: RunRequest, source_index: int, *, empty: bool = False):
     from datetime import UTC, datetime
 

@@ -256,10 +256,6 @@ class AppConfig(BaseModel):
     run_token_budget: int = Field(
         default=0, ge=0, validation_alias="KOKORO_RUN_TOKEN_BUDGET"
     )
-    # R4：critical 帧 published 后回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
-    outbox_republish_ms: int = Field(
-        default=30_000, gt=0, validation_alias="KOKORO_OUTBOX_REPUBLISH_MS"
-    )
     # OBS-1 metrics 端点端口（None=关，缺省关：worker 无常驻 HTTP 面，仅 e2e/部署显式开）。
     metrics_port: int | None = Field(
         default=None, ge=1, le=65535, validation_alias="KOKORO_AGENT_METRICS_PORT"

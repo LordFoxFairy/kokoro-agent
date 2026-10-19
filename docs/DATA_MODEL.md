@@ -1,3 +1,7 @@
+## 通知重试收敛的数据边界（2026-10-19，实施门）
+
+canonical database/schema.sql不改，不增删表/列/索引、不迁移或重写历史。正常无外部receipt/manifest时保留published outbox至既有Run TTL；已有watermark的原GC和active delivery保护仍按原Run行锁核验，不引入提前删除资格。receipt已存在却manifest缺失仍为损坏，rejected原终态隔离保持。Chat历史不随此变更释放；无新manifest writer或跨ownerSQL，正常库不操作。
+
 ## D6-B MCP 静态选择的内部表示（2026-10-18）
 
 无DDL/新表/跨owner数据访问。受信Agent代码的明确Connection引用投影进现有静态recipe/profile的mcp数组：每项仅connection_id，不保存URL、command、env、credential或invocation grant。不重写历史recipe、journal或已保存bytes；恢复仍使用原静态绑定一致性检查。当前材料仅在单次SDK session内，发现/授权不是持久缓存。原tool journal是唯一MCP调用幂等/unknown-outcome事实，新增ContextVar只把已记账call ID送到工具，不构成第二份事实。

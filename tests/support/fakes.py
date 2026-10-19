@@ -816,10 +816,7 @@ class FakeRunRepository:
             if any(row["status"] in ("queued", "published") for row in rows)
         )
 
-    async def reconcile_receipts(
-        self, run_id: str, republish_grace_ms: int = 30_000
-    ) -> ReceiptReconcile:
-        now = self.clock_ms
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
         rows = self.outbox.get(run_id, [])
         live = [r for r in rows if r["status"] in ("queued", "published")]
         if not live:
@@ -828,32 +825,9 @@ class FakeRunRepository:
         rejected = sorted(s for s, r in receipts.items() if r["status"] == "rejected")
         if rejected:
             return ReceiptReconcile(rejected_seq=rejected[0])
-        # published 无回执且超宽限期 → 重发候选（touch published_at 复位计时）。
-        stale = [
-            r
-            for r in live
-            if r["status"] == "published"
-            and _as_int(r["durable_seq"]) not in receipts
-            and r.get("published_at") is not None
-            and now - _as_int(r["published_at"]) >= republish_grace_ms
-        ]
-        republish = [
-            OutboxFrame(
-                run_id=run_id,
-                durable_seq=_as_int(r["durable_seq"]),
-                event_id=str(r["event_id"]),
-                kind=str(r["kind"]),
-                index=_as_int(r["index"]),
-                timestamp=_as_int(r["timestamp"]),
-                payload_json=str(r["payload_json"]),
-            )
-            for r in stale
-        ]
-        for r in stale:
-            r["published_at"] = now
         manifest = self.manifests.get(run_id)
         if manifest is None:
-            return ReceiptReconcile(receipt_state_lost=True, republish=republish)
+            return ReceiptReconcile(receipt_state_lost=bool(receipts))
         consumed = _as_int(manifest.get("consumed_seq") or 0)
         by_seq = {_as_int(r["durable_seq"]): r for r in rows}
         advanced = consumed
@@ -886,7 +860,6 @@ class FakeRunRepository:
         return ReceiptReconcile(
             consumed_through=advanced if advanced > consumed else None,
             close_requested=close_requested,
-            republish=republish,
         )
 
     async def record_control_delivery(

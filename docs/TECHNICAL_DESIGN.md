@@ -1,3 +1,11 @@
+## 内部通知重试收敛（2026-10-19，本地验证，未激活）
+
+沿已接受ADR-003：PG Run/outbox/Chat是事实，Redis只作可丢失通知，BFF通过HTTP Chat补读。只退休published等待外部ACK的周期重发及其宽限配置/返回字段；queued仍按原identity先恢复Chat再发布、成功才标published。started/delivery保原两事务补偿，terminal保原原子提交；control私有回执不冒公开Chat。
+
+无receipt也无manifest是未参与旧回执账本的正常状态，不报丢失；已有receipt却缺manifest、或缺Run仍报真实损坏，rejected仍原子隔离。原watermark GC、active delivery映射、Run TTL、sandbox cleanup/resume intent围栏均不改变，不提前删published、Chat或历史回执，不补造manifest/ACK或新增网关/API/表。删除闲置outbox_republish_ms配置和republish内部结果，不保alias。只在原Agent模块/测试内改，BFF无需配对新协议。以真实PG/Redis无人工seed主路径、历史损坏负控、queued恢复和原终态/清理回归验证；正常worker仍停用。
+
+真实HTTP验收从正式launch读取持久派发，真实PG/Redis＋仅产出本地文本的FakeAgent自然终态；自有通知key expire后两次heartbeat不复活、不更改published行、不误报receipt_state_lost。按原Run TTL回收Run/outbox后，HTTP Chat全页、游标和身份隔离仍保持。此例旧HEAD首次heartbeat真实失败，当前与历史损坏/GC/control负控16PASS；未运行模型、外部工具或正常worker。Root旧Storage smoke另有旧API与Storage v2缺口，不作为本片入口、不恢复alias。
+
 ## D6-B 明确 Connection 的正式 Agent 装配（2026-10-18，本地候选）
 
 承接用户确认：Agent.mcp只接受受信代码中的McpConnectionRef(connection_id)，静态recipe/profile保存闭集Connection记录，字符串名称不再解析；inspect仅展示ID。删除部署YAML/command registry、shared-secret secret-resolver和可注入的旧MCP client/deployment字段，保留原HTTP egress策略。没有新owner、RPC、Run字段、数据表或网关。

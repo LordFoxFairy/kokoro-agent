@@ -364,12 +364,13 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         try:
             result = await handler(request)
         except GraphInterrupt:
-            # 工具内 interrupt（MCP elicitation / request_input 等 HITL 暂停）≠崩溃：GraphInterrupt
-            # 穿透中间件、resume 后工具按设计从头重进。撤销本次 started 行（视同无行）再原样重抛，
-            # 否则合法重入会被守门误判 unknown-outcome。真进程死不走 except 路径，守门语义不变。
-            await self._run_repository.clear_tool_journal(
-                self._run_id, self._lease, tool_id
-            )
+            # MCP elicitation is inside an already-sent tools/call. Preserve started:
+            # teardown cannot prove zero effects, so resume must not resend the call.
+            # Other local pre-effect pauses retain their established re-entry behavior.
+            if name != "mcp_call":
+                await self._run_repository.clear_tool_journal(
+                    self._run_id, self._lease, tool_id
+                )
             raise
         finally:
             if token is not None:

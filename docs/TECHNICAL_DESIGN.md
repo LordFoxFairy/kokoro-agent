@@ -1,3 +1,11 @@
+## D6-B 当前材料到标准 SDK session（2026-10-18，生产声明接线后继）
+
+复用上一门的 Runtime1.1 pin。本片仅实现有界内容/传输及 session 生命周期：原 Skill ZIP/GET 基元提取到具名 archive/transport，保留原 Skill 策略和向量；MCP独立严格 mcp.json、完整文件 SHA/portable path/执行位与外层 SHA/入口核验。每份当前材料只存在一次 SDK session：下载期限/大小/签名 origin 和受控 header，标准 stdio 临时目录/入口，或 HTTP strict egress；结束、取消和 GraphInterrupt 先关闭 SDK/子进程再删目录，丢弃解码的 credential 引用，不声称 Python immutable bytes 物理归零。无重试、长期工具 cache、部署命令拼装或新 owner/Schema。
+
+MCP tools/call 已发送后的 elicitation 不是零副作用证明：保留 journal started 为 unknown outcome，恢复不自动重发原调用；一般本地前置暂停保持原语义。GraphInterrupt 在 SDK task group 退场后原样传播，不变成通用异常组或成功结果。
+
+用户本轮已确认下一片将受信 Agent 声明改为明确 Connection 引用、删除旧名称/YAML回退。选择由 Agent代码持有，不新增Run/body字段；现GetConnection/GetConnector与原v4 ListMcpServerDeclarations精确读取当前目标和完整Server digest（GetServer只支持global，不能拿来读private）。仅新增第九个正式既有读dispatch，不造列表RPC或自行拼declaration digest。该声明/worker/per-invoke grant接线尚未实施，不把本片session组件称为完整managed工具链或正常激活。
+
 ## D6-B Agent Runtime 固定消费实施门（2026-10-18）
 
 依赖为Platform c3decfd runtime-material-v1 1.1及IAM c05c646（两exact操作已固定）。Agent只消费现Runtime两读与原Connector/Connection/Authorize，沿当前LeasedRun token/proof supplier，不新增owner/RPC/身份/Schema/模型或计费调用。现正式MCP读取仅Protocol、worker尚未提供实现，不把部署YAML或过去本地live测试当受管执行链已通。

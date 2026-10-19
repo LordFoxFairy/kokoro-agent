@@ -62,7 +62,7 @@ protocol/__init__.py protocol/control.py protocol/events.py protocol/streams.py 
         "skills",
         """
 skills/backend.py skills/middleware.py skills/package.py clients/skills.py
-clients/skill_package_transport.py clients/platform_credentials.py clients/platform_tokens.py
+clients/skill_package_transport.py clients/package_transport.py clients/platform_credentials.py clients/platform_tokens.py
 clients/platform_transport.py execution/execution_proof_keys.py execution/execution_proof_profile.py
 execution/execution_proof_signer.py execution/execution_proof_supplier.py
 execution/platform_request_binding.py execution/platform_request_binding_values.py
@@ -73,7 +73,10 @@ execution/mcp_runtime_request_binding.py
     ("memory", "tools/memory.py"),
     ("web_fetch", "tools/web_fetch.py"),
     ("web_search", "tools/web_search.py"),
-    ("mcp", "mcp/tools.py mcp/config.py mcp/servers.py mcp/egress.py clients/mcp.py"),
+    (
+        "mcp",
+        "mcp/tools.py mcp/config.py mcp/servers.py mcp/egress.py mcp/package.py mcp/managed_session.py clients/mcp.py clients/mcp_package_transport.py",
+    ),
     (
         "delivery",
         "tools/deliver.py clients/storage.py clients/storage_delivery.py clients/storage_transport.py",
@@ -128,6 +131,7 @@ generated/kokoro/storage/v3/storage_connect.py
 generated/kokoro/storage/v3/storage_pb.py
 generated/platform_request_projector.py
 infrastructure/__init__.py
+infrastructure/package_archive.py
 infrastructure/chat_mappers.py
 infrastructure/checkpoints.py
 infrastructure/checkpoint_interactions.py

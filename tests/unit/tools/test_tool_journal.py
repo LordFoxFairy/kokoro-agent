@@ -311,7 +311,7 @@ async def test_concurrent_journal_loser_replays_winner_without_executing() -> No
 
 
 async def test_tool_internal_interrupt_clears_started_then_resume_reenters() -> None:
-    # 工具内 GraphInterrupt（MCP elicitation / request_input 等 HITL 暂停）≠崩溃：撤销 started 行、
+    # 本地工具的前置 GraphInterrupt 暂停≠崩溃：撤销 started 行、
     # 原样重抛 interrupt；resume 后工具从头重进不被守门拦，正常执行并记账。
     store = FakeRunRepository()
 
@@ -329,6 +329,21 @@ async def test_tool_internal_interrupt_clears_started_then_resume_reenters() -> 
     assert isinstance(result, ToolMessage) and result.text == "wrote after resume"
     assert handler.calls == 1
     assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
+
+
+async def test_mcp_interrupt_keeps_unknown_outcome_and_never_reissues_call() -> None:
+    # Elicitation occurs after tools/call was sent; a pause is not proof of zero effects.
+    store = FakeRunRepository()
+
+    async def interrupting(_request: ToolCallRequest) -> ToolMessage:
+        raise GraphInterrupt()
+
+    with pytest.raises(GraphInterrupt):
+        await (await _mw(store)).awrap_tool_call(_request("mcp_call"), interrupting)
+    handler = _Handler("MUST NOT RUN")
+    result = await (await _mw(store)).awrap_tool_call(_request("mcp_call"), handler)
+    assert isinstance(result, ToolMessage) and result.status == "error"
+    assert "unknown_outcome" in result.text and handler.calls == 0
 
 
 async def test_stale_generation_never_enters_tool_handler() -> None:

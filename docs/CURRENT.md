@@ -1,3 +1,11 @@
+## D6-B 包与标准 MCP session 生命周期（2026-10-18，本地组件）
+
+沿02083ecc实现共享有界ZIP/GET基元及独立MCP manifest、外层SHA/逐文件/入口/执行位校验；Skill原策略和向量保持。标准SDK HTTP/stdio session具名组件已实现，取消/暂停关闭session、回收子进程和临时目录、释放材料引用；不承诺Python不可变bytes物理归零。MCP已发call后的GraphInterrupt保留journal started，恢复返回unknown outcome、不自动重发；普通本地前置暂停保持原语义。
+
+主方停写工程验证：Ruff全格式/lint、Pyright、contract、正规Platform生成漂移、lock/frozen sync均通过；默认2364 PASS/764资源类deselected。独占wheel/sdist构建及Python源码逐字审计通过；实际受控标准SDK生命周期4 PASS（stdio往返/取消/HITL退场和HTTP往返），无模型或外部提供方。HTTP fixture显式loopback egress=off，不冒生产strict egress。独审两P2（内部下载头、辅助执行位）均有RED/GREEN并关闭，最终未发现确定P0–P2。
+
+生产接线仍OPEN：用户已批准受信Agent代码使用明确Connection引用，删除名称/YAML回退；下一片沿既有当前Connection/Connector/ListServerDeclarations读取、per-invoke grant和原三工具/worker接线，不新增API/表。现组件尚未被生产worker调用，不把测试往返称整链。正常服务/库/配置/权限/积分/任务、模型/扣费/CI/远端未动。原始失败和本地收据只在Root ignored var/dev/mcp-lifecycle-20261018；完整需求和合并门未完成。
+
 ## D6-B Runtime 1.1 固定消费者交付（2026-10-18）
 
 本片沿 887aabc 基线完成已审设计的第一步：唯一主 Proto 与 Runtime 完整原始闭包固定 Platform c3decfd，正规生成同一 Python package；原 v4 execution 与 Skill profile 保持各自原 pin。唯一 JCS 入口承接两项 exact Runtime 请求，按原 bytes、approval presence、用途及闭集验证；同 RunPlatformClient 的 strict dispatch 从六项扩到八项，继续使用快照、fresh proof、同 token 池、deadline/取消与错误脱敏。无管理 stub 放行、第二套 wire 或 Schema/配置变更。

@@ -6,6 +6,8 @@ Model owner 的领域模型。
 ## 当前协议
 
 - `skills.py`：`PlatformSkillClient`按已冻结exact ref调用Run-bound Resolve/Approved，每次读取重新授权并校验完整包，无名称grant与bytes授权缓存。
+- `package_transport.py`：共享固定ObjectStore origin的有界原始GET，禁止cookie、redirect和自动重试；具体owner策略由包装客户端裁决。
+- `mcp_package_transport.py`：MCP短时精确大小/受控headers下载，独立于Skill授权，不接收内部凭据头。
 - `skill_package_transport.py`：固定ObjectStore origin的GET transport，空owner headers、无cookie/bearer、期限/32MiB/hash验证，不复用Artifact PUT凭据。
 - `mcp.py`：`McpClient`，接收名称、`ExecutionIdentity` 与 GA 派生 namespace，只暴露本次运行
   需要的 MCP 配置读取面；注册、启停、凭据和路径由 Capability public contract 负责。MCP grant
@@ -22,5 +24,5 @@ fixture。
 
 - `platform_credentials.py`：worker-only exact owner-file snapshot、tenant/generation 高水位与安全读取。
 - `platform_tokens.py`：IAM Basic/form token exchange、generation cache/singleflight/rotation/cancel 生命周期。
-- `platform_transport.py`：六个首批 generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
-  Skill typed reader已接入；MCP后续切片、Platform v4激活与安装产品链仍待验。
+- `platform_transport.py`：八个 exact generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
+  Skill typed reader与两项Runtime传输已接入；MCP生产resolver/worker后续切片、Platform v4激活与安装产品链仍待验。

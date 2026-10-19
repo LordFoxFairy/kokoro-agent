@@ -119,8 +119,8 @@ async def _call_with_elicitation(
     """在工具节点执行栈上跑 mcp_call，并把中途的 elicitation 请求桥接为 request_input 暂停。
 
     request_id=mcp_call 的 tool_id（工具边界幂等锚）。首个 elicitation 触发 request_input：首跑抛
-    GraphInterrupt 挂起（in-flight 调用随之 teardown），resume/replay 时 request_input 原地返回人给的
-    value，桥回 ElicitResult(accept) 让 server 续跑；reject→decline。多轮 elicitation 逐个走同一循环。
+    GraphInterrupt 挂起（in-flight 调用随之 teardown），同一会话仍活跃时可将人给的 value 桥回 ElicitResult；reject→decline。
+    真正挂起会关闭会话，journal 保留 unknown outcome，恢复不重新发送原 tools/call。
     """
     bridge = _ElicitBridge()
     token = _ELICIT_BRIDGE.set(bridge)
@@ -164,7 +164,7 @@ async def _call_with_elicitation(
             next_task.cancel()
         if not invoke_task.done():
             invoke_task.cancel()
-        # 挂起/异常路径下 in-flight 调用的收尾：其结局无关紧要（replay 会重跑），吞掉清理噪声。
+        # 挂起/异常路径下 in-flight 调用的收尾：远端可能已有效果，journal 保留 unknown outcome，吞掉清理噪声。
         with contextlib.suppress(BaseException):
             await invoke_task
 

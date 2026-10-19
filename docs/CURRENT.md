@@ -1,3 +1,7 @@
+## HTTP 控制回执字段纠正（2026-10-19）
+
+BFF→正式 Agent HTTP 实链发现内部入账 run_id 泄入 ControlReceipt，被固定消费者严格拒绝。现 ingress 正常/重放和入队失败统一显式投影原 canonical 字段；内部持久回执与作用域不变，不新增 API/Schema 或放宽 BFF。原 receipt 单元测试直接校验机器 schema，并以内部双 command key/不同 digest 承接跨 Run 幂等保护。正常服务未重载，完整产品与合并验收不因本局部提前完成。
+
 ## MCP 与已批准 proof2 分支整合（2026-10-18，本地候选，正常未激活）
 
 真实跨仓验收首次到IAM即401，确认不是MCP连接配置：当前MCP分支签proof1，IAM已精确固定另一已完成分支e8fbd8f的proof2。整合codex/model-connections@952febad到原Skills/MCP分支，四文档冲突保留双方历史；源码自动合并，保HTTP7/proof2/System4/usage2与当前MCP单轨实现，不重写既定模型、不复活proof1、名称/YAML或模型网关回退。正常服务/配置/数据库均不切换；已有模型代码只作本地源码组合，不发送模型或扣费请求。

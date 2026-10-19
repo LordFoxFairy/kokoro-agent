@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from typing import Any, cast
+from pathlib import Path
+
+from jsonschema import validate
 
 import pytest
 
@@ -116,6 +121,16 @@ class ChatRepository:
     pass
 
 
+def _validate_http_receipt(receipt: object) -> None:
+    # Validate actual adapter output against the published owner schema, not an internal repository DTO.
+    document = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "contract/openapi/v1/openapi.json"
+        ).read_text()
+    )
+    validate(receipt, document["components"]["schemas"]["ControlReceipt"])
+
+
 def _ingress(bus: Bus, run_repository: ReceiptRepository) -> AgentIngress:
     return AgentIngress(
         bus=cast(Any, bus),
@@ -138,6 +153,8 @@ async def test_control_reuses_pending_command_receipt_for_safe_republish() -> No
         "run-1", body, command_id="cmd-1", execution_identity=_identity()
     )
 
+    _validate_http_receipt(first)
+    _validate_http_receipt(second)
     assert first["status"] == "pending"
     assert first["replayed"] is False
     assert second["status"] == "pending"
@@ -210,6 +227,7 @@ async def test_control_receipt_replay_returns_terminal_status_without_republishi
         "run-1", body, command_id="cmd-1", execution_identity=_identity()
     )
 
+    _validate_http_receipt(replay)
     assert replay["status"] == "succeeded"
     assert replay["replayed"] is True
     assert len(bus.published) == 1
@@ -229,8 +247,13 @@ async def test_same_idempotency_key_is_scoped_to_the_run() -> None:
         "run-2", body, command_id="shared-key", execution_identity=_identity()
     )
 
-    assert first["run_id"] == "run-1"
-    assert second["run_id"] == "run-2"
+    _validate_http_receipt(first)
+    _validate_http_receipt(second)
+    assert set(run_repository.commands) == {
+        ("run-1", "shared-key"),
+        ("run-2", "shared-key"),
+    }
+    assert first["request_digest"] != second["request_digest"]
     assert first["command_id"] == second["command_id"] == "shared-key"
     assert len(bus.published) == 2
 
@@ -247,7 +270,7 @@ async def test_control_publish_failure_persists_failed_receipt() -> None:
         execution_identity=_identity(),
     )
 
-    assert failed["run_id"] == "run-1"
+    _validate_http_receipt(failed)
     assert failed["command_id"] == "cmd-1"
     assert failed["status"] == "failed"
     assert failed["error_code"] == "control_enqueue_failed"

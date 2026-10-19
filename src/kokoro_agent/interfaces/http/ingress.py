@@ -44,6 +44,7 @@ from kokoro_agent.protocol import (
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.protocol.control import control_request_digest
 from kokoro_agent.domain.run.interactions import InteractionRunMissing
+from kokoro_agent.domain.run.models import ControlAdmissionReceipt
 from kokoro_agent.domain.run.repository import (
     ControlCommandConflict,
     DispatchConflict,
@@ -191,6 +192,20 @@ def _parse_control(
         ) from error
 
 
+def _control_receipt_payload(
+    receipt: ControlAdmissionReceipt, *, replayed: bool
+) -> dict[str, object]:
+    # Repository scope is internal; expose only the published HTTP ControlReceipt.
+    return {
+        **receipt.model_dump(
+            mode="json",
+            include={"command_id", "request_digest", "status", "error_code"},
+            exclude_none=True,
+        ),
+        "replayed": replayed,
+    }
+
+
 def _event_json(event: object) -> dict[str, Any]:
     try:
         parsed = agent_event_adapter.validate_python(event)
@@ -297,14 +312,8 @@ class AgentIngress:
                 receipt = admission.receipt.model_copy(
                     update={"status": "failed", "error_code": "control_enqueue_failed"}
                 )
-                return {
-                    **receipt.model_dump(mode="json", exclude_none=True),
-                    "replayed": admission.replayed,
-                }
-        return {
-            **admission.receipt.model_dump(mode="json", exclude_none=True),
-            "replayed": admission.replayed,
-        }
+                return _control_receipt_payload(receipt, replayed=admission.replayed)
+        return _control_receipt_payload(admission.receipt, replayed=admission.replayed)
 
     async def evidence(
         self,

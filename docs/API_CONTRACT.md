@@ -1,3 +1,7 @@
+## HTTP7 ControlReceipt 输出收敛（2026-10-19）
+
+`POST /v1/runs/{run_id}/control` 继续按原正式 `ControlReceipt` 输出 command_id、request_digest、status、replayed 和可选 error_code；内部入账模型的 run_id 不属于该 HTTP 数据体。首次、命令重放和 Redis 入队失败均通过同一个字段白名单映射，禁止直接序列化内部模型。命令摘要与可信身份/session/Run 核验不变；HTTP7 artifact、版本与 BFF 固定消费者均不变，无旧/新响应回退。
+
 ## D6-B MCP 当前运行消费者（2026-10-18，本地候选）
 
 不新增外部HTTP/OpenAPI、Run请求或owner RPC。现RunPlatformClient exact allowlist由8扩至9，仅增加固定v4已有的ListMcpServerDeclarations；唯一Proto/Runtime1.1 pin及原proof算法不变。Agent代码声明为McpConnectionRef(connection_id)，不是名称、URL或执行命令。稳定三工具的公开name/description/schema保持，server参数只匹配本Run已声明Connection ID。

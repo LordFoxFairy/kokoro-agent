@@ -1,3 +1,11 @@
+## 2026-10-19 现有执行能力集成交付
+
+本轮集成本地fffd38e与最新main815b4c1既有事实：保HTTP7/proof2、精确Skills与MCP生命周期、已批准model-connections/usage2源码及published通知不重发；同时保main首帧/终态原子receipt manifest。重复初始化SQL收敛在原PostgresRunRepositoryContext，通过原cursor/Run锁/事务调用，ON CONFLICT不覆盖任何水位/关闭标志；没有新模块、连接、事务框架或Schema。原800行边界保持，不通过抬高阈值或压空行隐藏问题。
+
+旧资源fixture已按正式manifest事实配对：自有Run显式制造manifest缺失并保损坏检测；已有行UPDATE并断言一行；通知retention核receipt=0与完整零水位/false标志，不假设manifest不存在。原GC、取消、重启恢复、outbox不变、HTTP Chat持久replay及主体隔离断言保留。
+
+430输入停写后frozen/offline依赖、lock、Ruff格式/lint、锁定Pyright1.1.409、contract checker、默认2399 PASS/773按marker未选、wheel/sdist均通过；完整outbox/delivery/HTTP ingress及terminal交互真实PostgreSQL＋Redis62 PASS/0 SKIP，专属Redis14在既有排他锁内前后0key、自有测试库回收且catalog核等。初次测试失败与无效未锁定工具尝试保留为诊断，不计最终通过；独立审查发现的fixture/残留import均已收敛，正常源430输入原样保留。此为源码/组件交付，不自动启正常Agent、模型、外部工具或扣费，不代表其余owner/Root/页面已完成。以下阶段段落为历史。
+
 # kokoro-agent
 
 Kokoro 的 GA 执行底座：直接使用 DeepAgents 的 agent loop、state、checkpoint 和 interrupt；需要多个

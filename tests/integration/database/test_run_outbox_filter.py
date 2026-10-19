@@ -50,6 +50,12 @@ async def test_list_unpublished_outbox_returns_only_queued_rows(
     assert first is not None
     assert second is not None
 
+    # The first live critical row creates the durable receipt ledger atomically;
+    # heartbeat reconciliation must not flag it as lost before Session ACKs.
+    assert not (
+        await run_repository.reconcile_receipts(request.run_id)
+    ).receipt_state_lost
+
     await run_repository.mark_critical_published(request.run_id, first.durable_seq)
 
     unpublished = await run_repository.list_unpublished_outbox()
@@ -102,7 +108,11 @@ async def test_published_notification_needs_no_external_receipt_but_preserves_lo
     from psycopg import sql
 
     from kokoro_agent.infrastructure.postgres import connect_pg
-    from kokoro_agent.infrastructure.schema import RUN_OUTBOX_TABLE, RUN_RECEIPTS_TABLE
+    from kokoro_agent.infrastructure.schema import (
+        RUN_OUTBOX_TABLE,
+        RUN_RECEIPTS_TABLE,
+        RUN_RECEIPT_MANIFESTS_TABLE,
+    )
 
     request = _request("published-notification")
     lease = await run_repository.try_claim(request, "notification-worker")
@@ -146,6 +156,15 @@ async def test_published_notification_needs_no_external_receipt_but_preserves_lo
             ).format(sql.Identifier(run_chat_schema, RUN_RECEIPTS_TABLE)),
             (request.run_id, frame.durable_seq, frame.event_id),
         )
+        # First-frame admission now creates the manifest atomically. Corrupt only
+        # this test-owned Run explicitly, rather than assuming it was never made.
+        deleted = await conn.execute(
+            sql.SQL("DELETE FROM {} WHERE run_id=%s").format(
+                sql.Identifier(run_chat_schema, RUN_RECEIPT_MANIFESTS_TABLE)
+            ),
+            (request.run_id,),
+        )
+        assert deleted.rowcount == 1
     assert (await run_repository.reconcile_receipts(request.run_id)).receipt_state_lost
 
 

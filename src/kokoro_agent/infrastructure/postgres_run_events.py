@@ -185,6 +185,11 @@ class PostgresRunEvents:
                         """.format(qualified(self._context.schema, RUN_CLAIMS_TABLE)),
                         (seq, index + 1, fence, run_id),
                     )
+                    # The supervisor may reconcile immediately after publishing a
+                    # first critical frame. Establish its receipt ledger in the
+                    # same transaction as that frame so recovery never observes
+                    # a live outbox without a manifest.
+                    await self._context.ensure_receipt_manifest(cur, run_id, timestamp)
                     await self.insert_frame_on_cursor(
                         cur,
                         OutboxFrame(

@@ -753,6 +753,8 @@ class PostgresRunLeases:
                             ),
                             (run_id, fence_seq),
                         )
+                    # Terminal-first frames share the original ledger transaction.
+                    await self._context.ensure_receipt_manifest(cur, run_id, now)
                     for frame in frames:
                         await events.insert_frame_on_cursor(
                             cur, frame, superseded=quarantine

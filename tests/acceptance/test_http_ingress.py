@@ -1478,11 +1478,10 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
             await cursor.execute(
                 sql.SQL(
                     """
-                INSERT INTO {} (
-                    run_id, persisted_seq, projected_seq, consumed_seq,
-                    producer_close_requested, producer_closed, updated_at
-                ) VALUES (%s, %s, %s, 0, FALSE, FALSE,
-                          to_timestamp(%s / 1000.0))
+                UPDATE {} SET persisted_seq=%s, projected_seq=%s, consumed_seq=0,
+                    producer_close_requested=FALSE, producer_closed=FALSE,
+                    updated_at=to_timestamp(%s / 1000.0)
+                WHERE run_id=%s
                 """
                 ).format(
                     sql.Identifier(
@@ -1491,12 +1490,13 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
                     )
                 ),
                 (
-                    current_request.run_id,
                     staged.durable_seq,
                     staged.durable_seq,
                     clock_ms[0],
+                    current_request.run_id,
                 ),
             )
+            assert cursor.rowcount == 1
     reconciled = await repository.reconcile_receipts(current_request.run_id)
     assert reconciled.consumed_through == staged.durable_seq
 
@@ -2898,15 +2898,31 @@ async def test_expired_notifications_do_not_republish_and_http_chat_survives_run
             )
             published = await before_outbox.fetchall()
             assert published and all(row["status"] == "published" for row in published)
-            for table in (RUN_RECEIPTS_TABLE, RUN_RECEIPT_MANIFESTS_TABLE):
-                result = await connection.execute(
-                    sql.SQL("SELECT count(*) AS count FROM {} WHERE run_id=%s").format(
-                        sql.Identifier(config.database_schema, table)
-                    ),
-                    (run_id,),
-                )
-                count = await result.fetchone()
-                assert count is not None and count["count"] == 0
+            result = await connection.execute(
+                sql.SQL("SELECT count(*) AS count FROM {} WHERE run_id=%s").format(
+                    sql.Identifier(config.database_schema, RUN_RECEIPTS_TABLE)
+                ),
+                (run_id,),
+            )
+            count = await result.fetchone()
+            assert count is not None and count["count"] == 0
+            result = await connection.execute(
+                sql.SQL(
+                    "SELECT persisted_seq,projected_seq,consumed_seq,"
+                    "producer_close_requested,producer_closed FROM {} WHERE run_id=%s"
+                ).format(
+                    sql.Identifier(config.database_schema, RUN_RECEIPT_MANIFESTS_TABLE)
+                ),
+                (run_id,),
+            )
+            # The owner creates an empty ledger atomically, not an external ACK.
+            assert await result.fetchone() == {
+                "persisted_seq": 0,
+                "projected_seq": 0,
+                "consumed_seq": 0,
+                "producer_close_requested": False,
+                "producer_closed": False,
+            }
         # Expire only this registered notification key; never reset a Redis DB.
         await stream.expire(run_events_stream(run_id), 0)
         assert await stream.read_all(run_events_stream(run_id)) == []

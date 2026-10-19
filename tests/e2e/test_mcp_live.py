@@ -1,190 +1,253 @@
-"""MCP live 集成：进程内 FastMCP(streamable-http) 真服务器 × langchain-mcp-adapters 全链。
+"""Real owned MCP HTTP × current run client × stable tools and durable journal.
 
-覆盖单测 fake client 够不到的整合面：真 HTTP 传输、白名单过滤、mcp__ 重命名、
-真实调用往返、不可达 fail-closed。无外部依赖，可进 CI。
+Owner responses are controlled; this is not actual IAM/Platform acceptance.
+Retired YAML/command tests are replaced, not preserved as a compatibility runtime.
 """
-
-# BaseTool.ainvoke 上游注解含裸 dict（langchain-core Runnable 泛型缺口）：仅豁免该子代理访问。
-# pyright: reportUnknownMemberType=false
 
 from __future__ import annotations
 
+# BaseTool.ainvoke is the upstream unparameterized test boundary.
+# pyright: reportUnknownMemberType=false
+
 import asyncio
-import os
+from collections.abc import AsyncGenerator
 import socket
-import sys
-import threading
-import time
-from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 import uvicorn
+from langchain_core.messages import ToolMessage
 from mcp.server.fastmcp import FastMCP
+from pydantic import JsonValue, TypeAdapter
 
-from kokoro_agent.mcp.config import (
-    McpHttpServerConfig,
-    McpServerConfig,
-    McpStdioServerConfig,
-)
-from kokoro_agent.mcp.egress import configure_egress_mode, current_egress_mode
+from kokoro_agent.clients.mcp import McpClientError, McpConnectionRef
+from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as p
+from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as r
 from kokoro_agent.mcp.tools import make_mcp_tools
+from support.managed_mcp import ManagedMcpOwner
+from support.fakes import FakeRunRepository
+from support.tool_journal import journal_middleware as _mw, journal_request as _request
+
+pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture(autouse=True)
-def egress_off() -> Iterator[None]:
-    # 本地 127.0.0.1 fixture：关连接期 egress 防线放行环回（strict 缺省会拒 loopback）。
-    previous = current_egress_mode()
-    configure_egress_mode("off")
-    try:
-        yield
-    finally:
-        configure_egress_mode(previous)
+@pytest.fixture
+async def managed_owner() -> AsyncGenerator[ManagedMcpOwner, None]:
+    mcp = FastMCP("owned-managed", stateless_http=True)
 
+    def echo(
+        text: str, maximum: int = 0, metadata: dict[str, str] | None = None
+    ) -> str:
+        owner.tool_calls += 1
+        return f"echo:{text}:{maximum}:{metadata}"
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _process_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
-def _echo(text: str) -> str:
-    """Echo the given text back."""
-    return f"echo:{text}"
-
-
-def _secret(text: str) -> str:
-    """Must never be exposed (outside the allowlist)."""
-    return "leak"
-
-
-def _build_fixture_app() -> FastMCP:
-    # stateless：每请求独立会话，适配 adapters 的短连接调用模式。
-    server = FastMCP("fixture", stateless_http=True)
-    server.add_tool(_echo, name="echo")
-    server.add_tool(_secret, name="secret")
-    return server
-
-
-@pytest.fixture(scope="module")
-def mcp_base_url():
-    port = _free_port()
-    app = _build_fixture_app().streamable_http_app()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 15
-    while time.time() < deadline and not server.started:
-        time.sleep(0.05)
-    if not server.started:
-        raise RuntimeError("fixture mcp server failed to start")
-    yield f"http://127.0.0.1:{port}/mcp"
-    server.should_exit = True
-    thread.join(timeout=5)
-
-
-def _registry(url: str, allowed: list[str]) -> dict[str, McpServerConfig]:
-    return {
-        "fx": McpHttpServerConfig(
-            transport="streamable_http", url=url, allowed_tools=allowed, timeout_s=10
+    mcp.add_tool(echo)
+    schema = TypeAdapter(dict[str, JsonValue]).validate_python(
+        (await mcp.list_tools())[0].inputSchema
+    )
+    app = uvicorn.Server(
+        uvicorn.Config(
+            mcp.streamable_http_app(), log_level="error", timeout_graceful_shutdown=1
         )
+    )
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        task = asyncio.create_task(app.serve(sockets=[sock]))
+        try:
+
+            async def ready() -> None:
+                while not app.started:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(ready(), 5)
+            owner = ManagedMcpOwner(
+                endpoint=f"http://127.0.0.1:{port}/mcp", schemas={"echo": schema}
+            )
+            yield owner
+        finally:
+            app.should_exit = True
+            await asyncio.wait_for(task, 5)
+
+
+async def test_real_sdk_current_owner_and_journal_roundtrip(
+    managed_owner: ManagedMcpOwner,
+) -> None:
+    client = PlatformMcpClient(
+        managed_owner, packages=None, run_id="rn", egress_mode="off"
+    )
+    ref = McpConnectionRef(connection_id="connection-1")
+    await client.check((ref,))
+    tools = make_mcp_tools((ref,), client, run_id="rn")
+    assert "connection-1/echo" in await tools[0].ainvoke({})
+    assert '"text"' in await tools[1].ainvoke(
+        {"server": "connection-1", "tool": "echo"}
+    )
+    store = FakeRunRepository()
+    journal = await _mw(store)
+
+    async def invoke(request: object) -> ToolMessage:
+        output = await tools[2].ainvoke(
+            {"server": "connection-1", "tool": "echo", "arguments": {"text": "本地"}}
+        )
+        return ToolMessage(content=output, name="mcp_call", tool_call_id="c1")
+
+    first = await journal.awrap_tool_call(_request("mcp_call"), invoke)
+    assert isinstance(first, ToolMessage) and "echo:本地" in first.text
+    before = len(managed_owner.requests)
+    await journal.awrap_tool_call(_request("mcp_call"), invoke)
+    assert len(managed_owner.requests) == before
+    grants = [
+        req
+        for req in managed_owner.requests
+        if isinstance(req, p.AuthorizeMcpToolRequest)
+    ]
+    uses = [
+        req.credential_use.field
+        for req in managed_owner.requests
+        if isinstance(req, r.AcquireMcpRuntimeCredentialRequest)
+        and req.credential_use is not None
+    ]
+    assert len(grants) == 1 and uses == ["discovery", "discovery", "invocation"]
+    managed_owner.revoked = True
+    assert "CURRENT_READ_FAILED" in await tools[1].ainvoke(
+        {"server": "connection-1", "tool": "echo"}
+    )
+
+
+async def test_wrong_grant_schema_and_resolution_never_reach_call(
+    managed_owner: ManagedMcpOwner,
+) -> None:
+    client = PlatformMcpClient(
+        managed_owner, packages=None, run_id="rn", egress_mode="off"
+    )
+    ref = McpConnectionRef(connection_id="connection-1")
+    for kind in ("bad_grant", "bad_resolution", "bad_schema"):
+        setattr(managed_owner, kind, True)
+        with pytest.raises((McpClientError, RuntimeError)):
+            await client.call_tool(ref, "echo", {"text": "never"}, tool_call_id=kind)
+        assert managed_owner.tool_calls == 0
+        setattr(managed_owner, kind, False)
+    managed_owner.endpoint = "http://127.0.0.1:1/mcp"
+    from kokoro_agent.mcp.managed_session import McpSessionError
+
+    with pytest.raises(McpSessionError, match="MCP_SESSION_FAILED"):
+        await client.call_tool(
+            ref, "echo", {"text": "unreachable"}, tool_call_id="unreachable"
+        )
+    assert managed_owner.tool_calls == 0
+
+
+async def test_arguments_are_frozen_before_any_owner_await(
+    managed_owner: ManagedMcpOwner,
+) -> None:
+    client = PlatformMcpClient(
+        managed_owner, packages=None, run_id="rn", egress_mode="off"
+    )
+    nested: dict[str, JsonValue] = {"key": "original"}
+    arguments: dict[str, JsonValue] = {
+        "text": "original",
+        "maximum": 9223372036854775807,
+        "metadata": nested,
     }
 
+    def mutate() -> None:
+        arguments.update(text="mutated-after-grant")
+        nested.update(key="mutated-after-grant")
 
-async def test_live_roundtrip_via_stable_surface(mcp_base_url: str) -> None:
-    # 稳定三工具全链：list（白名单过滤 secret）→ describe（schema）→ call（真调用往返）。
-    list_tool, describe_tool, call_tool = make_mcp_tools(
-        ["fx"], _registry(mcp_base_url, ["echo"])
+    managed_owner.on_authorize = mutate
+    result = await client.call_tool(
+        McpConnectionRef(connection_id="connection-1"),
+        "echo",
+        arguments,
+        tool_call_id="mutation",
     )
-    listed: str = await list_tool.ainvoke({})
-    assert "fx/echo" in listed and "secret" not in listed
-    described: str = await describe_tool.ainvoke({"server": "fx", "tool": "echo"})
-    assert "text" in described
-    result: str = await call_tool.ainvoke(
-        {"server": "fx", "tool": "echo", "arguments": {"text": "你好"}}
+    assert "echo:original" in result.model_dump_json()
+    assert "9223372036854775807" in result.model_dump_json()
+    assert "mutated-after-grant" not in result.model_dump_json()
+    assert arguments["text"] == "mutated-after-grant"
+
+
+async def test_managed_stdio_current_grant_roundtrip_removes_process_and_files() -> (
+    None
+):
+    from copy import deepcopy
+    import os
+    import json
+    from pathlib import Path
+    import httpx
+    from protobuf import Oneof
+    from mcp.types import TextContent
+    from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
+    from integration.test_mcp_managed_session import fixture
+
+    payload, stdio_resolution, stdio_material = fixture()
+    assert (
+        stdio_resolution.transport is not None
+        and stdio_resolution.transport.field == "stdio"
     )
-    # MCP 工具返回标准 content blocks（外部载荷）：稳定面已序列化为字符串。
-    assert "echo:你好" in result
-
-
-async def test_live_unreachable_degrades_per_call() -> None:
-    # 惰性连接：装配不炸；运行时不可达降级为 error 文本（不炸 run）。
-    list_tool, _, call_tool = make_mcp_tools(
-        ["fx"], _registry(f"http://127.0.0.1:{_free_port()}/mcp", ["echo"])
+    assert (
+        stdio_material.transport is not None
+        and stdio_material.transport.field == "stdio"
     )
-    listed: str = await asyncio.wait_for(list_tool.ainvoke({}), timeout=30)
-    assert "不可达" in listed
-    result: str = await asyncio.wait_for(
-        call_tool.ainvoke({"server": "fx", "tool": "echo", "arguments": {}}), timeout=30
+    stdio = deepcopy(stdio_resolution.transport.value)
+    credential = deepcopy(stdio_material.transport.value)
+    local = FastMCP("metadata-only")
+
+    async def echo(wait: bool = False) -> dict[str, JsonValue]:
+        return {}
+
+    local.add_tool(echo)
+    schema = TypeAdapter(dict[str, JsonValue]).validate_python(
+        (await local.list_tools())[0].inputSchema
     )
-    assert "error" in result
 
+    class StdioOwner(ManagedMcpOwner):
+        async def send(self, request: object, *, timeout_s: float = 10) -> object:
+            # The public sender protocol is narrowed by actual call sites below.
+            if not isinstance(
+                request,
+                (
+                    p.GetMcpConnectionRequest,
+                    p.GetMcpConnectorRequest,
+                    p.ListMcpServerDeclarationsRequest,
+                    p.AuthorizeMcpToolRequest,
+                    r.ResolveMcpRuntimeConnectionRequest,
+                    r.AcquireMcpRuntimeCredentialRequest,
+                ),
+            ):
+                raise AssertionError(type(request))
+            response = await super().send(request, timeout_s=timeout_s)
+            if isinstance(response, p.ListMcpServerDeclarationsResponse):
+                response.servers[0].transport = p.McpTransport.STDIO
+            if (
+                isinstance(response, r.ResolveMcpRuntimeConnectionResponse)
+                and response.resolution is not None
+            ):
+                response.resolution.transport = Oneof("stdio", deepcopy(stdio))
+            if isinstance(response, r.AcquireMcpRuntimeCredentialResponse):
+                response.transport = Oneof("stdio", deepcopy(credential))
+            return response
 
-async def test_live_stdio_roundtrip_via_standard_adapter(tmp_path: Path) -> None:
-    """The Agent launches a local standard MCP server on demand, without a custom protocol."""
+    owner = StdioOwner(endpoint="unused", schemas={"echo": schema})
 
-    fixture = tmp_path / "stdio_fixture.py"
-    pid_file = tmp_path / "stdio.pid"
-    fixture.write_text(
-        "from mcp.server.fastmcp import FastMCP\n"
-        "server = FastMCP('stdio-fixture')\n"
-        "@server.tool()\n"
-        "def echo(text: str) -> str:\n"
-        "    return f'echo:{text}'\n"
-        "@server.tool()\n"
-        "def wait(seconds: float) -> str:\n"
-        "    import os, pathlib, time\n"
-        "    pathlib.Path(os.environ['PID_FILE']).write_text(str(os.getpid()))\n"
-        "    time.sleep(seconds)\n"
-        "    return 'finished'\n"
-        "server.run(transport='stdio')\n",
-        encoding="utf-8",
-    )
-    registry: dict[str, McpServerConfig] = {
-        "stdio": McpStdioServerConfig(
-            command=sys.executable,
-            args=[str(fixture)],
-            allowed_tools=["echo", "wait"],
-            timeout_s=1,
-            env={"PID_FILE": str(pid_file)},
+    async def get(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=httpx.ByteStream(payload))
+
+    async with McpPackageTransport(
+        "https://objects.test", transport=httpx.MockTransport(get)
+    ) as packages:
+        client = PlatformMcpClient(owner, packages=packages, run_id="stdio")
+        result = await client.call_tool(
+            McpConnectionRef(connection_id="connection-1"),
+            "echo",
+            {},
+            tool_call_id="stdio-call",
         )
-    }
-    list_tool, describe_tool, call_tool = make_mcp_tools(["stdio"], registry)
-
-    listed: str = await asyncio.wait_for(list_tool.ainvoke({}), timeout=15)
-    assert "stdio/echo" in listed
-    described: str = await asyncio.wait_for(
-        describe_tool.ainvoke({"server": "stdio", "tool": "echo"}), timeout=15
-    )
-    assert "text" in described
-    result: str = await asyncio.wait_for(
-        call_tool.ainvoke(
-            {"server": "stdio", "tool": "echo", "arguments": {"text": "本地"}}
-        ),
-        timeout=15,
-    )
-    assert "echo:本地" in result
-    timed_out: str = await asyncio.wait_for(
-        call_tool.ainvoke(
-            {"server": "stdio", "tool": "wait", "arguments": {"seconds": 5}}
-        ),
-        timeout=5,
-    )
-    assert "调用超时" in timed_out
-    deadline = time.monotonic() + 3
-    while not pid_file.exists() and time.monotonic() < deadline:
-        await asyncio.sleep(0.05)
-    assert pid_file.exists()
-    pid = int(pid_file.read_text(encoding="utf-8"))
-    while _process_exists(pid) and time.monotonic() < deadline:
-        await asyncio.sleep(0.05)
-    assert not _process_exists(pid)
+    assert isinstance(result.content[0], TextContent)
+    value = json.loads(result.content[0].text)
+    assert not Path(value["cwd"]).exists()
+    with pytest.raises(ProcessLookupError):
+        os.kill(value["pid"], 0)

@@ -195,3 +195,50 @@ async def test_runtime_calls_share_fresh_proof_snapshot_and_exact_dispatch(
             "mcp.acquire_runtime_credential",
         ]
         assert bindings[1] == bindings[2]
+
+
+async def test_current_declarations_use_existing_connection_rpc_and_fresh_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.generated.kokoro.platform.v1.platform_runtime_connect import (
+        McpConnectionServiceClient,
+    )
+    from kokoro_agent.generated.kokoro.common.v1 import common_pb
+
+    proofs: list[str] = []
+
+    class Tokens:
+        async def token(self, tenant_id: str) -> str:
+            return "TOKEN"
+
+    class Proofs:
+        async def issue(self, operation: str, request_binding_sha256: str) -> str:
+            assert operation == "mcp.list_server_declarations"
+            proofs.append(request_binding_sha256)
+            return "fresh"
+
+    async def declarations(
+        self: object, request: pb.ListMcpServerDeclarationsRequest, **kwargs: Any
+    ) -> pb.ListMcpServerDeclarationsResponse:
+        assert (
+            request.execution_proof == "fresh"
+            and request.page is not None
+            and request.page.limit == 1
+        )
+        assert kwargs["headers"] == {"authorization": "Bearer TOKEN"}
+        return pb.ListMcpServerDeclarationsResponse()
+
+    monkeypatch.setattr(
+        McpConnectionServiceClient, "list_mcp_server_declarations", declarations
+    )
+    request = pb.ListMcpServerDeclarationsRequest(
+        request_id="read",
+        connector_id=pb.McpConnectorId(value="connector"),
+        page=common_pb.PageRequest(limit=1),
+    )
+    async with PlatformTransport("http://127.0.0.1:1") as transport:
+        client = RunPlatformClient(
+            tenant_id="tenant", tokens=Tokens(), proofs=Proofs(), transport=transport
+        )
+        await client.send(request)
+    assert len(proofs) == 1 and request.execution_proof == ""

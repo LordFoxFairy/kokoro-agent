@@ -6,7 +6,6 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from kokoro_agent.mcp.config import McpServerConfig, parse_mcp_server_config
 from kokoro_agent.mcp.egress import (
     EgressBlocked,
     GuardedTransport,
@@ -14,7 +13,6 @@ from kokoro_agent.mcp.egress import (
     egress_mode_from_env,
     is_forbidden_ip,
 )
-from kokoro_agent.mcp.servers import build_connections
 
 _FORBIDDEN = [
     "0.0.0.0",
@@ -152,15 +150,6 @@ def test_egress_mode_from_env_defaults_strict() -> None:
     )  # fail-safe
 
 
-def _config(url: str) -> McpServerConfig:
-    return parse_mcp_server_config(
-        {"transport": "streamable_http", "url": url, "allowed_tools": ["t"]}
-    )
-
-
-def test_build_connections_attaches_guard_in_strict_not_off() -> None:
-    servers = {"a": _config("https://mcp.example/x")}
-    strict = build_connections(servers, egress_mode="strict")
-    off = build_connections(servers, egress_mode="off")
-    assert "httpx_client_factory" in strict["a"]
-    assert "httpx_client_factory" not in off["a"]
+def test_http_factory_retains_strict_default_and_explicit_fixture_off() -> None:
+    assert build_mcp_client_factory("strict") is not None
+    assert build_mcp_client_factory("off") is None

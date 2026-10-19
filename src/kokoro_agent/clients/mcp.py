@@ -1,36 +1,55 @@
-"""Capability public contract 的 MCP 读取面。
-
-GA 只依赖这个窄协议。具体的 HTTP/gRPC 客户端由 worker 装配；测试替身可以实现同一协议，
-但不能让 Agent/Feature 直接依赖 Capability 的数据库结构。
-"""
+"""Typed trusted Connection selection and the narrow run-bound MCP tool port."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+import re
 from typing import Protocol
+from kokoro_agent.domain.run.models import LeasedRun
 
-from kokoro_agent.protocol import ExecutionIdentity
-from kokoro_agent.mcp.config import McpServerConfig, McpServerEntry
+from langchain_mcp_adapters.callbacks import Callbacks
+from mcp.types import CallToolResult
+from pydantic import JsonValue
 
 
-class McpClientError(Exception):
-    """Capability MCP read failed before a server connection was attempted."""
+class McpClientError(RuntimeError):
+    """Fixed safe category; no endpoint, credential or upstream exception."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class McpConnectionRef:
+    connection_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.connection_id) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,190}", self.connection_id)
+            is None
+        ):
+            raise ValueError("MCP_CONNECTION_REF_INVALID")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class McpTool:
+    name: str
+    description: str
+    input_schema: dict[str, JsonValue]
 
 
 class McpClient(Protocol):
-    """GA 在一次运行中需要的 MCP 配置读取面。
-
-    Callers provide only the names declared by an Agent. Snapshot/grant details stay inside the
-    client implementation and never become Feature or Session fields.
-    """
-
-    async def resolve(
+    async def check(self, references: Sequence[McpConnectionRef]) -> None: ...
+    async def list_tools(self, reference: McpConnectionRef) -> tuple[McpTool, ...]: ...
+    async def call_tool(
         self,
-        selectors: Sequence[str],
-        identity: ExecutionIdentity,
-        namespace: str,
-        deployment: Mapping[str, McpServerConfig],
-    ) -> Mapping[str, McpServerEntry]: ...
+        reference: McpConnectionRef,
+        tool: str,
+        arguments: dict[str, JsonValue],
+        *,
+        tool_call_id: str,
+        callbacks: Callbacks | None = None,
+    ) -> CallToolResult: ...
 
 
-__all__ = ["McpClient", "McpClientError"]
+class RunMcpFactory(Protocol):
+    def mcp_for_run(self, leased_run: LeasedRun) -> McpClient: ...

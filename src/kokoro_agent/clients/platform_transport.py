@@ -31,6 +31,7 @@ PlatformRequest: TypeAlias = (
     pb.ResolveVisibleSkillRequest
     | pb.GetApprovedSkillPackageReferenceRequest
     | pb.GetMcpConnectorRequest
+    | pb.ListMcpServerDeclarationsRequest
     | pb.GetMcpConnectionRequest
     | pb.ListMcpConnectorCapabilitiesRequest
     | pb.AuthorizeMcpToolRequest
@@ -41,6 +42,7 @@ PlatformResponse: TypeAlias = (
     pb.ResolveVisibleSkillResponse
     | pb.GetApprovedSkillPackageReferenceResponse
     | pb.GetMcpConnectorResponse
+    | pb.ListMcpServerDeclarationsResponse
     | pb.GetMcpConnectionResponse
     | pb.ListMcpConnectorCapabilitiesResponse
     | pb.AuthorizeMcpToolResponse
@@ -52,6 +54,7 @@ _ALLOWED = (
     pb.GetApprovedSkillPackageReferenceRequest,
     pb.GetMcpConnectorRequest,
     pb.GetMcpConnectionRequest,
+    pb.ListMcpServerDeclarationsRequest,
     pb.ListMcpConnectorCapabilitiesRequest,
     pb.AuthorizeMcpToolRequest,
     runtime.ResolveMcpRuntimeConnectionRequest,
@@ -219,6 +222,10 @@ class PlatformTransport:
                     )
                 case pb.ListMcpConnectorCapabilitiesRequest():
                     return await self._authorization.list_mcp_connector_capabilities(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case pb.ListMcpServerDeclarationsRequest():
+                    return await self._connections.list_mcp_server_declarations(
                         request, headers=headers, timeout_ms=timeout_ms
                     )
                 case pb.AuthorizeMcpToolRequest():

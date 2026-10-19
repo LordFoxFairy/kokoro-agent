@@ -9,9 +9,8 @@ Model owner 的领域模型。
 - `package_transport.py`：共享固定ObjectStore origin的有界原始GET，禁止cookie、redirect和自动重试；具体owner策略由包装客户端裁决。
 - `mcp_package_transport.py`：MCP短时精确大小/受控headers下载，独立于Skill授权，不接收内部凭据头。
 - `skill_package_transport.py`：固定ObjectStore origin的GET transport，空owner headers、无cookie/bearer、期限/32MiB/hash验证，不复用Artifact PUT凭据。
-- `mcp.py`：`McpClient`，接收名称、`ExecutionIdentity` 与 GA 派生 namespace，只暴露本次运行
-  需要的 MCP 配置读取面；注册、启停、凭据和路径由 Capability public contract 负责。MCP grant
-  细节留在 client 内部。适配器用 `McpClientError` 表达 Capability 读取不可用；已声明 MCP 直接失败，不回退部署定义；无声明时不调用 client。
+- `mcp.py`：明确Connection引用与当前工具port；不接受名称/URL/command或外部grant。
+- `mcp_runtime.py`：LeasedRun装配的当前Connection/Connector/逐页Server读取、发现/调用材料分离及逐次原参数授权；无长期cache、自动重试或旧YAML fallback。
 - `storage.py`：`DeliveryClient.publish()` 是 GA 发布产物的唯一 Storage Artifact
   facade。`storage_transport.py` 固定正式 Storage v3 并只开放七个 delivery RPC；signed PUT
   返回原始 object version。`storage_delivery.py` 先以 tool journal v2 keep-first 持久
@@ -24,5 +23,5 @@ fixture。
 
 - `platform_credentials.py`：worker-only exact owner-file snapshot、tenant/generation 高水位与安全读取。
 - `platform_tokens.py`：IAM Basic/form token exchange、generation cache/singleflight/rotation/cancel 生命周期。
-- `platform_transport.py`：八个 exact generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
-  Skill typed reader与两项Runtime传输已接入；MCP生产resolver/worker后续切片、Platform v4激活与安装产品链仍待验。
+- `platform_transport.py`：九个 exact generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
+  Skill typed reader与两项Runtime传输已接入；MCP当前resolver/worker已装配，正常组合与approval整链仍待验、Platform v4激活与安装产品链仍待验。

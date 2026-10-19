@@ -362,12 +362,13 @@ _AGENT_OPERATIONS = {
     "skill.get_approved_package_reference",
     "mcp.get_connector",
     "mcp.get_connection",
+    "mcp.list_server_declarations",
     "mcp.list_connector_capabilities",
     "mcp.authorize_tool",
 }
 
 
-def test_six_agent_rpc_v3_positive_and_negative_owner_binding_vectors() -> None:
+def test_selected_agent_rpc_v3_positive_and_negative_owner_binding_vectors() -> None:
     from kokoro_agent.execution.platform_request_binding import (
         PlatformRequestBindingError,
         project_request_binding,
@@ -415,7 +416,7 @@ def test_six_agent_rpc_v3_positive_and_negative_owner_binding_vectors() -> None:
                 strict_parse_raw_json(_decode(vector["rawBase64"])), binding=matching
             )
         rejected += 1
-    assert rejected == 24
+    assert rejected == 29
 
 
 def test_authorize_tool_hashes_the_actual_raw_typed_argument_bytes() -> None:

@@ -30,7 +30,7 @@ from deepagents.backends.state import StateBackend
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
-from kokoro_agent.mcp.config import McpServerEntry
+from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import (
@@ -142,7 +142,7 @@ async def _settle_resource_cleanup(
 @dataclass(frozen=True, slots=True)
 class _ResolvedCapabilities:
     skills: tuple[ResolvedSkill, ...]
-    mcp: Mapping[str, McpServerEntry]
+    mcp: McpClient | None
     skill_reader: SkillClient | None
 
 
@@ -182,7 +182,7 @@ async def _preflight(
                     progress, SkillPhase(phase="failed", error_code="skill_load_failed")
                 )
                 raise
-    return _ResolvedCapabilities(skills=skills, mcp={}, skill_reader=reader)
+    return _ResolvedCapabilities(skills=skills, mcp=None, skill_reader=reader)
 
 
 async def build_deep_agent(
@@ -267,8 +267,6 @@ async def build_deep_agent(
             agent=agent,
             plan=plan.tools,
             toolbox=dependencies.toolbox,
-            mcp_servers=dependencies.mcp_servers,
-            mcp_client=dependencies.mcp_client,
             backend=native_backend,
             delivery=dependencies.delivery,
             lease=lease,
@@ -476,8 +474,8 @@ class AgentFactory:
             mcp = await resolve_declared_mcp(
                 request,
                 peer.agent,
-                self._dependencies.mcp_client,
-                self._dependencies.mcp_servers,
+                self._dependencies.platform,
+                lease,
             )
             capabilities[peer.agent.key] = _ResolvedCapabilities(
                 skills=resolved.skills, mcp=mcp, skill_reader=resolved.skill_reader

@@ -160,13 +160,7 @@ class AppConfig(BaseModel):
         default=None, validation_alias="KOKORO_CUSTOM_BACKEND_TEARDOWN"
     )
 
-    # MCP server 部署注册表 yaml：wire 只传 names，定义在此解析；headers 值 ${ENV} 占位。
-    mcp_config: OptStr = Field(default=None, validation_alias="KOKORO_MCP_CONFIG")
-    # Capability public endpoint 与内部调用凭据；具体 owner client 由部署在 worker 启动时注入。
-    # 标准 CLI 不据此直读 Capability 私库。
-    capability_base_url: OptStr = Field(
-        default=None, validation_alias="KOKORO_CAPABILITY_BASE_URL"
-    )
+    # System owner reader credential; MCP uses the run-bound Platform token/proof client.
     internal_secret_agent: OptSecret = Field(
         default=None, validation_alias="KOKORO_INTERNAL_SECRET_AGENT"
     )

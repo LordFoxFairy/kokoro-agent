@@ -45,6 +45,16 @@ def current_delivery_tool_call_id(run_id: str) -> str | None:
     return current[1] if current is not None and current[0] == run_id else None
 
 
+_MCP_CALL: ContextVar[tuple[str, str] | None] = ContextVar(
+    "kokoro_mcp_call", default=None
+)
+
+
+def current_mcp_tool_call_id(run_id: str) -> str | None:
+    current = _MCP_CALL.get()
+    return current[1] if current is not None and current[0] == run_id else None
+
+
 class ToolPolicyMiddleware(AgentMiddleware):
     def __init__(
         self,
@@ -361,6 +371,9 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         token = (
             _DELIVERY_CALL.set((self._run_id, tool_id)) if name == "deliver" else None
         )
+        mcp_token = (
+            _MCP_CALL.set((self._run_id, tool_id)) if name == "mcp_call" else None
+        )
         try:
             result = await handler(request)
         except GraphInterrupt:
@@ -375,8 +388,10 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         finally:
             if token is not None:
                 _DELIVERY_CALL.reset(token)
+            if mcp_token is not None:
+                _MCP_CALL.reset(mcp_token)
         if isinstance(result, ToolMessage):
-            if name == "deliver" and result.text.startswith("error:"):
+            if name in {"deliver", "mcp_call"} and result.text.startswith("error:"):
                 result = result.model_copy(update={"status": "error"})
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。

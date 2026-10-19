@@ -1,3 +1,13 @@
+## D6-B 明确 Connection 的正式 MCP 接线（2026-10-18，本地源码交付）
+
+沿59dca62及用户确认，Agent静态声明改为McpConnectionRef闭集记录；删除名称/YAML/command registry和旧shared-secret resolver，不做兼容。Worker按原LeasedRun装配同token/proof/Connect的PlatformMcpClient，strict dispatch仅承接现有第九项ListServerDeclarations；每次发现/调用鲜读当前Connection/Connector/声明及scope交集，调用先取原per-invoke grant再取用途绑定材料，随后标准SDK单session。原三工具保持schema数据而非动态注册，call ID只来自原journal，远端isError记failed、已发调用暂停仍unknown且不重发。没有新API、表、权限、依赖或网关。
+
+主方最终停写门：Ruff全格式/lint、Pyright、contract、正规Platform生成、lock/frozen sync通过；默认2353 PASS/765资源类deselected/927上游提醒。独占wheel/sdist构建对419工程输入无漂移，所有runtime Python和Platform audit原字节相等；Python3.11安装wheel原contract smoke及当前六模块实际安装来源/旧模块消失均通过。真实自有标准SDK生命周期8 PASS（原session4＋当前client/三工具/journal的HTTP与受管stdio4），新增factory实际native构造1 PASS，无模型请求。删除旧入口对应测试，承接当前引用/撤权/SDK风险，不以数量扩测试。
+
+独审三项确定风险均以实际RED/GREEN收敛：首次owner await前深快照参数，禁止授权后嵌套对象变更；仅过滤未批准scope的单工具；参数raw JSON保留合法大整数，不误用proof JCS安全整数域。另独立schema摘要按owner JS数值域配对、Node交叉验证，不放宽原proof。原始失败、设置失败和收据仅Root ignored var/dev/mcp-production-link-20261018；最终静态复核无新的确定P0–P2。
+
+限定证据：HTTP/stdio标准SDK、真实子进程/ZIP/下载与journal已跑；该组当前owner为受控port，HTTP仅fixture显式loopback egress=off，不冒真实IAM/Platform/Storage/PG或生产strict egress整链。正式approval证据消费、实际多owner组合及正常产品加载、Manus全页面对照仍OPEN；不伪造approval_ref、不重启正常服务。正常库/配置/登录/权限/积分/任务、模型/扣费/CI/远端和Root index/gitlink未动。整个goal与merge门未完成。
+
 ## D6-B 包与标准 MCP session 生命周期（2026-10-18，本地组件）
 
 沿02083ecc实现共享有界ZIP/GET基元及独立MCP manifest、外层SHA/逐文件/入口/执行位校验；Skill原策略和向量保持。标准SDK HTTP/stdio session具名组件已实现，取消/暂停关闭session、回收子进程和临时目录、释放材料引用；不承诺Python不可变bytes物理归零。MCP已发call后的GraphInterrupt保留journal started，恢复返回unknown outcome、不自动重发；普通本地前置暂停保持原语义。

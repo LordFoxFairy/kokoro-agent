@@ -58,7 +58,7 @@ def _profile() -> dict[str, Any]:
                     "prompt": "  保持原文  ",
                     "tools": [_tool()],
                     "implicit_tools": [_tool("task")],
-                    "mcp": ["declared"],
+                    "mcp": [{"connection_id": "declared"}],
                     "subagents": [
                         {
                             "name": "helper",
@@ -545,3 +545,17 @@ def test_hitl_transaction_sources_are_explicit_installed_resources() -> None:
         if required.intersection(source.resource_paths):
             descriptor = manifest.descriptor(source.source_id)
             assert descriptor["files"]
+
+
+def test_profile_accepts_only_explicit_mcp_connection_records() -> None:
+    api = _api()
+    profile = _profile()
+    profile["feature"]["agents"][0]["mcp"] = [{"connection_id": "connection-1"}]
+    assert b'"connection_id":"connection-1"' in api.canonical_profile(profile)
+    for wrong in [
+        ["connection-1"],
+        [{"connection_id": "connection-1", "url": "https://endpoint.test"}],
+    ]:
+        profile["feature"]["agents"][0]["mcp"] = wrong
+        with pytest.raises(ValueError):
+            api.canonical_profile(profile)

@@ -1,3 +1,11 @@
+## D6-B MCP 当前运行消费者（2026-10-18，本地候选）
+
+不新增外部HTTP/OpenAPI、Run请求或owner RPC。现RunPlatformClient exact allowlist由8扩至9，仅增加固定v4已有的ListMcpServerDeclarations；唯一Proto/Runtime1.1 pin及原proof算法不变。Agent代码声明为McpConnectionRef(connection_id)，不是名称、URL或执行命令。稳定三工具的公开name/description/schema保持，server参数只匹配本Run已声明Connection ID。
+
+同一调用固定原typed_arguments_json与SHA、Run/call派生idempotency，Authorize回包须匹配connector/connection/server/selector/原SHA及当前grant/audit/expiry，再用同一原bytes取得invocation材料。approval缺省与空字符串不互换，不接受模型注入的grant/approval/tenant/run或runtime调用ID。Discovery只用于list/describe。跨owner失败和SDK错误不返回URL/header/env/原异常；标准MCP isError映射原journal failed，GraphInterrupt或取消的不确定副作用不重发。
+
+schema采用owner当前JSON Number语义；typed arguments只需是严格JSON对象（至多1MiB），大整数不误套proof安全整数域。静态profile的mcp是闭集[{connection_id}]，旧名称数组不作兼容恢复；旧历史绑定原样保存，新构建仍经原fingerprint一致性检查。生产当前准入/实际IAM组合尚未据此宣称验收。
+
 ## R353-A-S06：Storage v3 Artifact consumer contract（候选已实施；2026-10-08）
 
 ### Wire authority 与可见性

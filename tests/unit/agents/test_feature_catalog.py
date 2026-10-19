@@ -6,6 +6,7 @@ import pytest
 from dataclasses import replace
 
 from kokoro_agent.agents import GENERAL_AGENT, MUSIC_AGENT
+from kokoro_agent.clients.mcp import McpConnectionRef
 from kokoro_agent.features import (
     CHAT_FEATURE,
     FEATURE_CATALOG,
@@ -56,17 +57,21 @@ def test_feature_rejects_mixed_backends() -> None:
 
 
 def test_feature_can_narrow_agent_capabilities_without_a_new_role_type() -> None:
-    configured = MUSIC_AGENT.configured(mcp=("music_provider",))
+    configured = MUSIC_AGENT.configured(
+        mcp=(McpConnectionRef(connection_id="music_provider"),)
+    )
     assert configured.key == MUSIC_AGENT.key
     assert not hasattr(configured, "skills")
-    assert configured.mcp == ("music_provider",)
+    assert configured.mcp == (McpConnectionRef(connection_id="music_provider"),)
     assert not hasattr(MUSIC_AGENT, "skills")
     assert MUSIC_AGENT.mcp == ()
 
 
-def test_agent_mcp_surface_contains_names_only() -> None:
-    configured = replace(MUSIC_AGENT, mcp=("music_provider",))
-    assert configured.mcp == ("music_provider",)
+def test_agent_mcp_surface_contains_connection_refs_only() -> None:
+    configured = replace(
+        MUSIC_AGENT, mcp=(McpConnectionRef(connection_id="music_provider"),)
+    )
+    assert configured.mcp == (McpConnectionRef(connection_id="music_provider"),)
     assert not hasattr(configured, "mcp_grants")
 
 

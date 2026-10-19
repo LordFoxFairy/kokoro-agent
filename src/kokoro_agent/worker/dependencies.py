@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from kokoro_agent.worker.platform import WorkerPlatformRuntime
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
 from kokoro_agent.execution.runtime_profile_sources import SourceManifest
@@ -14,8 +13,6 @@ from kokoro_agent.execution.runtime_profile_sources import SourceManifest
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
-from kokoro_agent.mcp.config import McpServerConfig
-from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.model.call_models import ModelCallRepository
@@ -30,7 +27,6 @@ from kokoro_agent.tools.toolbox import ProcessToolbox
 class WorkerClients:
     """Optional owner clients selected once by the deployment entrypoint."""
 
-    mcp: McpClient | None = None
     delivery: DeliveryClient | None = None
     model_resolver: ModelResolver | None = None
 
@@ -54,12 +50,6 @@ class WorkerDependencies:
     model_call_repository: ModelCallRepository
     memory_store: BaseStore
     platform: WorkerPlatformRuntime | None = None
-    # MCP server 部署注册表（KOKORO_MCP_CONFIG）：wire names 在此解析，凭据不上 wire。
-    mcp_servers: Mapping[str, McpServerConfig] = field(
-        default_factory=dict[str, McpServerConfig]
-    )
-    # MCP public client：声明存在而 client 缺席时 fail closed；部署 YAML 不作授权 fallback。
-    mcp_client: McpClient | None = None
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。
     delivery: DeliveryClient | None = None
     model_resolver: ModelResolver | None = None

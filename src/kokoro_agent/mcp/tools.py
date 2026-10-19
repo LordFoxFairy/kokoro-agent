@@ -2,8 +2,8 @@
 
 模型永远只见 mcp_list_tools / mcp_describe_tool / mcp_call——远端 server 的
 schema/顺序漂移、本 run 的 server 集差异都不改工具面字节，前缀缓存不被打穿。
-连接惰性化：装配期只校验名字（配置即授权边界，未知名 fail-loud），
-首次使用才连；运行时不可达降级为该次调用的 error 文本（不拖死 run）。
+装配只接受明确Connection引用；每次发现与调用重新核当前owner状态。
+标准SDK连接惰性化，凭据不缓存，错误只返回固定类别。
 """
 
 # BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，create_deep_agent 同类豁免）。
@@ -13,27 +13,26 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Sequence
 from contextvars import ContextVar
 from typing import Any
 
 from langchain.tools import ToolRuntime
-from langchain_core.runnables.config import RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.callbacks import CallbackContext, Callbacks
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp.shared.context import RequestContext
-from mcp.types import ElicitRequestFormParams, ElicitRequestParams, ElicitResult
+from mcp.types import (
+    ElicitRequestFormParams,
+    ElicitRequestParams,
+    ElicitResult,
+    CallToolResult,
+)
+from langgraph.errors import GraphInterrupt
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from kokoro_agent.hitl import InputRejected, request_input
-from kokoro_agent.mcp.config import (
-    McpServerConfig,
-    McpServerEntry,
-    McpServerUnavailable,
-    select_servers,
-)
-from kokoro_agent.mcp.servers import McpConnectionError, build_connections
+from kokoro_agent.clients.mcp import McpClient, McpClientError, McpConnectionRef
+from kokoro_agent.tools.middleware import current_mcp_tool_call_id
 
 
 def mcp_tool_name(server: str, tool: str) -> str:
@@ -85,35 +84,10 @@ async def _on_elicitation(
     return await bridge.submit(params)
 
 
-def _stringify_result(result: object) -> str:
-    # MCP 工具返回标准 content blocks（外部载荷）：稳定面统一收敛为字符串。
-    return (
-        result
-        if isinstance(result, str)
-        else json.dumps(result, ensure_ascii=False, default=str)
-    )
-
-
-# 内层 adapter 工具经空 callbacks 调用：与 langgraph 回调树脱钩，避免作为嵌套工具泄漏进 v3 投影
-# （模型只见稳定三工具，远端工具往返是 mcp_call 的实现细节，不单独上 wire）。
-_DETACHED_CONFIG: RunnableConfig = {"callbacks": []}
-
-
-async def _invoke_bound_tool(
-    tool: BaseTool, arguments: object, config: RunnableConfig
-) -> object:
-    """Invoke an adapter tool at the single untyped ``BaseTool`` edge."""
-
-    invoke: Any = getattr(tool, "ainvoke")
-    result: object = await invoke(arguments, config)
-    return result
-
-
 async def _call_with_elicitation(
-    found: BaseTool,
+    invocation: Awaitable[CallToolResult],
     server: str,
     tool: str,
-    arguments: dict[str, JsonValue] | None,
     request_id: str,
 ) -> str:
     """在工具节点执行栈上跑 mcp_call，并把中途的 elicitation 请求桥接为 request_input 暂停。
@@ -124,9 +98,7 @@ async def _call_with_elicitation(
     """
     bridge = _ElicitBridge()
     token = _ELICIT_BRIDGE.set(bridge)
-    invoke_task: asyncio.Task[object] = asyncio.ensure_future(
-        _invoke_bound_tool(found, arguments or {}, _DETACHED_CONFIG)
-    )
+    invoke_task: asyncio.Future[CallToolResult] = asyncio.ensure_future(invocation)
     next_task: asyncio.Task[_ElicitItem] | None = None
     try:
         while True:
@@ -137,9 +109,12 @@ async def _call_with_elicitation(
             )
             if invoke_task.done():
                 exc = invoke_task.exception()
+                if isinstance(exc, GraphInterrupt):
+                    raise exc
                 if exc is not None:  # 远端执行失败：错误文本给模型自纠，不炸 run。
-                    return f"error: {mcp_tool_name(server, tool)} 调用失败：{exc}"
-                return _stringify_result(invoke_task.result())
+                    return "error: MCP_TOOL_CALL_FAILED"
+                result = invoke_task.result()
+                return ("error: " if result.isError else "") + result.model_dump_json()
             params, fut = next_task.result()
             next_task = None
             outcome = request_input(
@@ -207,90 +182,50 @@ MCP_TOOL_METADATA: tuple[tuple[str, str, type[BaseModel]], ...] = (
 
 
 def make_mcp_tools(
-    server_names: Sequence[str],
-    registry: Mapping[str, McpServerEntry],
+    references: Sequence[McpConnectionRef],
+    client: McpClient | None,
+    *,
+    run_id: str,
 ) -> tuple[StructuredTool, StructuredTool, StructuredTool]:
-    """per-run 闭包三工具。装配期校验名字但不连接；run 内按 server 缓存 tools/list。
-
-    定义表可含占名不可用位（McpServerUnavailable：注册表禁用遮蔽 / secret:path P2）：
-    装配不炸，list 标注不可用，describe/call 返回 error 文本（同不可达降级轴）。
-    """
-
-    # 未知名在装配期 fail-loud（配置即授权边界）；连接推迟到首次使用。
-    granted = select_servers(registry, server_names)
-    tools_cache: dict[str, list[BaseTool]] = {}
-
-    async def _server_tools(server: str, config: McpServerConfig) -> list[BaseTool]:
-        if server not in tools_cache:
-            # elicitation callback 随 client 烘进每个工具：ainvoke 建会话时用它把中途请求桥给执行任务。
-            client = MultiServerMCPClient(
-                build_connections({server: config}),
-                callbacks=Callbacks(on_elicitation=_on_elicitation),
-            )
-            try:
-                if config.timeout_s is None:
-                    raw = await client.get_tools(server_name=server)
-                else:
-                    async with asyncio.timeout(config.timeout_s):
-                        raw = await client.get_tools(server_name=server)
-            except (
-                Exception
-            ) as exc:  # 运行时不可达/超时=外部常态：该次调用降级，不炸 run。
-                raise McpConnectionError(
-                    f"mcp server {server!r} unreachable: {exc}"
-                ) from exc
-            allowed = frozenset(config.allowed_tools)
-            tools_cache[server] = [t for t in raw if t.name in allowed]
-        return tools_cache[server]
+    """One stable tool surface; every read/call rechecks current owner authorization."""
+    granted = {ref.connection_id: ref for ref in references}
+    if len(granted) != len(references) or granted and client is None:
+        raise McpClientError("MCP_CLIENT_REQUIRED")
 
     async def list_tools() -> str:
         if not granted:
             return "本次运行没有可用的 MCP server。"
+        assert client is not None
         lines: list[str] = []
-        for server, entry in granted.items():
-            if isinstance(entry, McpServerUnavailable):
-                lines.append(f"{server}: [不可用] {entry.reason}")
-                continue
+        for server, reference in granted.items():
             try:
-                tools = await _server_tools(server, entry)
-            except McpConnectionError as exc:
-                lines.append(f"{server}: [不可达] {exc}")
-                continue
-            if not tools:
-                lines.append(f"{server}: （白名单内无可用工具）")
-            for tool in tools:
-                summary = (
-                    (tool.description or "").strip().splitlines()[0]
-                    if tool.description
-                    else ""
+                tools = await client.list_tools(reference)
+                lines.extend(
+                    f"{server}/{tool.name} — {tool.description.splitlines()[0] if tool.description else ''}"
+                    for tool in tools
                 )
-                lines.append(f"{server}/{tool.name} — {summary}")
+                if not tools:
+                    lines.append(f"{server}: （白名单内无可用工具）")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                lines.append(f"{server}: [不可达] MCP_CURRENT_READ_FAILED")
         return "\n".join(lines)
 
-    async def _find_tool(server: str, tool: str) -> BaseTool | str:
-        entry = granted.get(server)
-        if entry is None:
-            return f"error: MCP server {server!r} 不在本次运行的授权集内（用 mcp_list_tools 查看）。"
-        if isinstance(entry, McpServerUnavailable):
-            return f"error: MCP server {server!r} 不可用：{entry.reason}"
-        try:
-            tools = await _server_tools(server, entry)
-        except McpConnectionError as exc:
-            return f"error: {exc}"
-        for candidate in tools:
-            if candidate.name == tool:
-                return candidate
-        return f"error: server {server!r} 没有名为 {tool!r} 的工具（或不在白名单内）。"
-
     async def describe_tool(server: str, tool: str) -> str:
-        found = await _find_tool(server, tool)
-        if isinstance(found, str):
-            return found
-        # 上游注解声称 type[BaseModel]，但 adapters 工具运行时给 dict（live e2e 实证）：dict 分支优先。
-        schema: object = found.tool_call_schema
-        raw: object = schema if isinstance(schema, dict) else schema.model_json_schema()
-        rendered = json.dumps(raw, ensure_ascii=False, default=str)
-        return f"{server}/{tool}\n{(found.description or '').strip()}\n参数 schema：{rendered}"
+        reference = granted.get(server)
+        if reference is None or client is None:
+            return "error: MCP_CONNECTION_NOT_DECLARED"
+        try:
+            tools = await client.list_tools(reference)
+            found = next((value for value in tools if value.name == tool), None)
+            if found is None:
+                return "error: MCP_TOOL_NOT_ALLOWED"
+            return f"{server}/{tool}\n{found.description}\n参数 schema：{json.dumps(found.input_schema, ensure_ascii=False)}"
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return "error: MCP_CURRENT_READ_FAILED"
 
     async def call_tool(
         server: str,
@@ -300,53 +235,49 @@ def make_mcp_tools(
         runtime: ToolRuntime[Any, Any] | None = None,
         **_injected: object,
     ) -> str:
-        found = await _find_tool(server, tool)
-        if isinstance(found, str):
-            return found
-        entry = granted[server]
-        assert not isinstance(entry, McpServerUnavailable)
+        del (
+            runtime,
+            _injected,
+        )  # The model/framework field is not a journal-bound call identity.
+        reference = granted.get(server)
+        call_id = current_mcp_tool_call_id(run_id)
+        if reference is None or client is None:
+            return "error: MCP_CONNECTION_NOT_DECLARED"
+        if call_id is None:
+            return "error: MCP_JOURNAL_CALL_REQUIRED"
         try:
-            if runtime is None:
-                # 无工具运行时（如单测直调 ainvoke）：不接 elicitation 桥，直接调用。
-                if entry.timeout_s is None:
-                    result = await _invoke_bound_tool(
-                        found, arguments or {}, _DETACHED_CONFIG
-                    )
-                else:
-                    async with asyncio.timeout(entry.timeout_s):
-                        result = await _invoke_bound_tool(
-                            found, arguments or {}, _DETACHED_CONFIG
-                        )
-                return _stringify_result(result)
-            # tool_call_id 在图内工具节点恒有值（幂等锚）；类型上收窄空值兜底。
-            if entry.timeout_s is None:
-                return await _call_with_elicitation(
-                    found, server, tool, arguments, runtime.tool_call_id or ""
-                )
-            async with asyncio.timeout(entry.timeout_s):
-                return await _call_with_elicitation(
-                    found, server, tool, arguments, runtime.tool_call_id or ""
-                )
-        except TimeoutError:
-            return f"error: {mcp_tool_name(server, tool)} 调用超时。"
-        except Exception as exc:  # 远端执行失败：错误文本给模型自纠，不炸 run。
-            return f"error: {mcp_tool_name(server, tool)} 调用失败：{exc}"
+            return await _call_with_elicitation(
+                client.call_tool(
+                    reference,
+                    tool,
+                    arguments or {},
+                    tool_call_id=call_id,
+                    callbacks=Callbacks(on_elicitation=_on_elicitation),
+                ),
+                server,
+                tool,
+                call_id,
+            )
+        except (asyncio.CancelledError, GraphInterrupt):
+            raise
+        except Exception:
+            return "error: MCP_TOOL_CALL_FAILED"
 
     return (
         StructuredTool(
-            name="mcp_list_tools",
+            name=MCP_TOOL_METADATA[0][0],
             description=MCP_0_DESCRIPTION,
             args_schema=ListToolsArgs,
             coroutine=list_tools,
         ),
         StructuredTool(
-            name="mcp_describe_tool",
+            name=MCP_TOOL_METADATA[1][0],
             description=MCP_1_DESCRIPTION,
             args_schema=DescribeToolArgs,
             coroutine=describe_tool,
         ),
         StructuredTool(
-            name="mcp_call",
+            name=MCP_TOOL_METADATA[2][0],
             description=MCP_2_DESCRIPTION,
             args_schema=CallToolArgs,
             coroutine=call_tool,

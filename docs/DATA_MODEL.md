@@ -1,3 +1,7 @@
+## D6-B MCP 静态选择的内部表示（2026-10-18）
+
+无DDL/新表/跨owner数据访问。受信Agent代码的明确Connection引用投影进现有静态recipe/profile的mcp数组：每项仅connection_id，不保存URL、command、env、credential或invocation grant。不重写历史recipe、journal或已保存bytes；恢复仍使用原静态绑定一致性检查。当前材料仅在单次SDK session内，发现/授权不是持久缓存。原tool journal是唯一MCP调用幂等/unknown-outcome事实，新增ContextVar只把已记账call ID送到工具，不构成第二份事实。
+
 ## R353-A-S06：Artifact delivery intent v2（候选已实施，无Schema变化；2026-10-08）
 
 ### 唯一事实与存储位置

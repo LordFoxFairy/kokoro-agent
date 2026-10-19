@@ -193,7 +193,6 @@ def _factory(
             run_repository=repository,
             model_call_repository=_UnusedModelCallRepository(),
             memory_store=InMemoryStore(),
-            mcp_client=clients.mcp,
             delivery=delivery or clients.delivery,
             platform=platform,
             model_resolver=resolver,
@@ -2425,3 +2424,48 @@ async def test_r216_repeated_close_cancellation_settles_owned_async_client(
     await handle.aclose()
     assert calls == ["sync", "async"]
     assert clients.sync.is_closed and clients.async_client.is_closed
+
+
+async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.clients.mcp import McpConnectionRef
+    from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+    from support.managed_mcp import ManagedMcpOwner
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+
+    owner = ManagedMcpOwner(endpoint="https://unused.test/mcp", schemas={"echo": {}})
+    leased: list[LeasedRun] = []
+
+    class Platform(WorkerPlatformRuntime):
+        def __init__(self) -> None:
+            pass
+
+        def mcp_for_run(self, leased_run: LeasedRun) -> PlatformMcpClient:
+            leased.append(leased_run)
+            return PlatformMcpClient(
+                owner, packages=None, run_id=leased_run.request.run_id
+            )
+
+    agent = Agent(
+        key="typed",
+        prompt="typed",
+        mcp=(McpConnectionRef(connection_id="connection-1"),),
+    )
+    feature = Feature(key="typed", agents=(agent,), entry_agent="typed")
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,)), platform=Platform()
+    )
+    request = _request("typed")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        assert leased == [LeasedRun(request=request, lease=lease)]
+        assert len(owner.requests) == 3
+        assert handle.describe_tool("mcp_call") is not None
+    finally:
+        await handle.aclose()

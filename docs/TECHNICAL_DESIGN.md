@@ -1,3 +1,13 @@
+## D6-B 明确 Connection 的正式 Agent 装配（2026-10-18，本地候选）
+
+承接用户确认：Agent.mcp只接受受信代码中的McpConnectionRef(connection_id)，静态recipe/profile保存闭集Connection记录，字符串名称不再解析；inspect仅展示ID。删除部署YAML/command registry、shared-secret secret-resolver和可注入的旧MCP client/deployment字段，保留原HTTP egress策略。没有新owner、RPC、Run字段、数据表或网关。
+
+WorkerPlatformRuntime按LeasedRun构建同一token/proof/Connect的PlatformMcpClient，strict dispatch只新增既有ListMcpServerDeclarations第九项。每次发现/调用先核当前Connection/Connector；该read使用limit=1、最多32页，Server/capabilities对应同一entry并取owner完整digest，不用global-only GetServer或重组聚合digest。候选为当前allowed工具与已批scope交集，单工具缺scope不使其它工具失效；无跨调用授权/metadata/credential缓存。
+
+调用ID只来自既有tool journal ContextVar；idempotency含Run＋call ID。首次owner I/O前冻结完整参数JSON bytes和深快照，原bytes分别用于Authorize、Acquire与digest，SDK只接同一快照。参数使用标准有限JSON序列化，保留合法大整数，不套用proof安全整数或schema的IEEE754域。无正式approval证据时不构造approval_ref；owner仍最终拒绝未获准调用。原grant/当前target/digest/TTL核验后Resolve→Acquire invocation→标准SDK session→实时工具schema核验→一次tools/call。发现只取discovery材料，绝不用于invoke。MCP isError记录为journal failed；取消、过期或已发调用HITL保留unknown outcome，不自动重发。
+
+schema摘要单独复现owner finite ECMAScript Number域/UTF-16排序后JCS；Node bigint边界交叉核验，不修改proof encoder。包/HTTP/stdio由上一片具名session持资源，关闭/取消释放；HTTP默认strict且不读取环境代理，loopback off仅隔离fixture。生产配置/服务尚未重载；真实IAM/Platform/Storage组合、正式approval准入和页面完整操作仍为后继，不把受控owner端口测试冒全链完成。
+
 ## D6-B 当前材料到标准 SDK session（2026-10-18，生产声明接线后继）
 
 复用上一门的 Runtime1.1 pin。本片仅实现有界内容/传输及 session 生命周期：原 Skill ZIP/GET 基元提取到具名 archive/transport，保留原 Skill 策略和向量；MCP独立严格 mcp.json、完整文件 SHA/portable path/执行位与外层 SHA/入口核验。每份当前材料只存在一次 SDK session：下载期限/大小/签名 origin 和受控 header，标准 stdio 临时目录/入口，或 HTTP strict egress；结束、取消和 GraphInterrupt 先关闭 SDK/子进程再删目录，丢弃解码的 credential 引用，不声称 Python immutable bytes 物理归零。无重试、长期工具 cache、部署命令拼装或新 owner/Schema。

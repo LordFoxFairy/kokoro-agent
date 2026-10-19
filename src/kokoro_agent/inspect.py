@@ -62,7 +62,7 @@ def describe_catalog(catalog: FeatureCatalog) -> CatalogDescription:
                 if key in {agent.key for agent in feature.agents}
             ),
             tools=tuple(tool.name for tool in agents_by_key[key].tools),
-            mcp=agents_by_key[key].mcp,
+            mcp=tuple(ref.connection_id for ref in agents_by_key[key].mcp),
             subagents=agents_by_key[key].subagents,
             backend=agents_by_key[key].backend,
             approval_tools=tuple(sorted(agents_by_key[key].permissions.approval_tools)),

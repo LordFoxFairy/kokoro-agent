@@ -47,7 +47,6 @@ from kokoro_agent.infrastructure.postgres_model_call_repository import (
 )
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.streams.protocol import StreamProtocol
-from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -276,10 +275,6 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
                 config.run_repository.schema_name,
             ),
             memory_store=memory_store,
-            # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
-            # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。
-            mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
-            mcp_client=owner_clients.mcp,
             delivery=delivery,
             model_resolver=model_resolver,
         )

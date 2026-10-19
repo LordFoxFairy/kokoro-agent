@@ -29,7 +29,7 @@ async def test_default_worker_clients_leave_agent_core_available() -> None:
     clients = WorkerClients()
     assert not hasattr(clients, "skill_client")
     assert not hasattr(clients, "skill_reader")
-    assert clients.mcp is None
+    assert not hasattr(clients, "mcp")
     assert clients.delivery is None
     assert clients.model_resolver is None
 

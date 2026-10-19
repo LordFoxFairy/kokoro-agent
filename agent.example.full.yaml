@@ -34,7 +34,6 @@ sandbox:
     factory: my_pkg.sandbox:make_backend
     teardown: my_pkg.sandbox:destroy_backend
 mcp:
-  config: "{}"
   egress_mode: strict
 web_tools:
   fetch_allow_private: false

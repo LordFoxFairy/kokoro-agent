@@ -309,7 +309,7 @@ def prepare_feature(
                 "key": agent.key,
                 "prompt": agent.prompt,
                 "tools": selected_tools,
-                "mcp": agent.mcp,
+                "mcp": tuple({"connection_id": ref.connection_id} for ref in agent.mcp),
                 "subagents": (
                     subagents.general_purpose_profile(),
                     *selected.as_profile(),

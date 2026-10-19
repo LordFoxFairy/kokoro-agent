@@ -7,6 +7,8 @@ never serialized. The execution assembly/freeze stage is a separate slice.
 
 from __future__ import annotations
 
+from kokoro_agent.clients.mcp import McpConnectionRef
+
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
@@ -350,7 +352,19 @@ def _agent(value: object) -> dict[str, JsonValue]:
             "prompt": _text,
             "tools": lambda v: _array(v, _tool),
             "implicit_tools": lambda v: _array(v, _tool),
-            "mcp": _strings,
+            "mcp": lambda v: _array(
+                v,
+                lambda item: _record(
+                    item,
+                    {
+                        "connection_id": lambda value: (
+                            McpConnectionRef(
+                                connection_id=_nonempty(value)
+                            ).connection_id
+                        ),
+                    },
+                ),
+            ),
             "subagents": lambda v: _array(v, _subagent),
             "delivery": lambda v: _record(
                 v, {"declared": _boolean, "mounted": _boolean}

@@ -170,6 +170,7 @@ def build_mcp_client_factory(
             headers=headers,
             auth=auth,
             follow_redirects=False,
+            trust_env=False,
         )
 
     return factory

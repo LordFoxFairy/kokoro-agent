@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 import rfc8785
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
@@ -15,8 +16,13 @@ from kokoro_agent.model.call_models import (
     ModelCallIdentityConflict,
     ModelCallInputInvalid,
 )
-from kokoro_agent.model.usage_evidence import parse_evidence
+from kokoro_agent.model.usage_evidence import parse_evidence as parse_v1
+from kokoro_agent.model.usage_evidence_v2 import parse_evidence
 from kokoro_agent.protocol.model_usage_generated import (
+    ModelUsageEvidence as HistoricalEvidence,
+    PlannedBinding as HistoricalPlanned,
+)
+from kokoro_agent.protocol.model_usage_v2_generated import (
     AuthorizationGranted,
     AuthorizationNotRequested,
     AuthorizationRequested,
@@ -25,14 +31,14 @@ from kokoro_agent.protocol.model_usage_generated import (
 )
 
 _MAX_INT64 = 9_223_372_036_854_775_807
-_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v1\n"
+_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v2\n"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
 
 class ValidatedModelCallEvidence(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    evidence: ModelUsageEvidence
+    evidence: ModelUsageEvidence | HistoricalEvidence
     event_id: str
     revision: int
     digest: str
@@ -41,6 +47,23 @@ class ValidatedModelCallEvidence(BaseModel):
     usage_state: str
     totals_state: str
     classification_state: str
+
+
+def parse_stored_evidence(raw: bytes) -> ModelUsageEvidence | HistoricalEvidence:
+    """Explicit sealed-history dispatch; an invalid version never tries another reader."""
+    if len(raw) > 65536:
+        raise ValueError("stored model evidence exceeds its bound")
+    document = _JSON_OBJECT.validate_json(raw, strict=True)
+    version = document.get("artifact_version")
+    if version == "1.0.0":
+        evidence: ModelUsageEvidence | HistoricalEvidence = parse_v1(raw)
+    elif version == "2.0.0":
+        evidence = parse_evidence(raw)
+    else:
+        raise ValueError("stored model evidence version is unsupported")
+    if not evidence.execution.seal:
+        raise ValueError("stored model evidence is not sealed")
+    return evidence
 
 
 def validate_append_evidence(
@@ -57,6 +80,55 @@ def validate_append_evidence(
         evidence = parse_evidence(raw)
     except ValueError as error:
         raise ModelCallInputInvalid("model-call evidence is invalid") from error
+    return _validate_evidence_binding(
+        raw,
+        evidence=evidence,
+        attempt_binding_bytes=attempt_binding_bytes,
+        planned_bytes=planned_bytes,
+        authorization_bytes=authorization_bytes,
+        prepared_at=prepared_at,
+        dispatch_started_at=dispatch_started_at,
+        database_now=database_now,
+    )
+
+
+def validate_sealed_evidence(
+    raw: bytes,
+    *,
+    attempt_binding_bytes: bytes,
+    planned_bytes: bytes,
+    authorization_bytes: bytes,
+    prepared_at: datetime,
+    dispatch_started_at: datetime | None,
+    database_now: datetime,
+) -> ValidatedModelCallEvidence:
+    try:
+        evidence = parse_stored_evidence(raw)
+    except ValueError as error:
+        raise ModelCallInputInvalid("stored model-call evidence is invalid") from error
+    return _validate_evidence_binding(
+        raw,
+        evidence=evidence,
+        attempt_binding_bytes=attempt_binding_bytes,
+        planned_bytes=planned_bytes,
+        authorization_bytes=authorization_bytes,
+        prepared_at=prepared_at,
+        dispatch_started_at=dispatch_started_at,
+        database_now=database_now,
+    )
+
+
+def _validate_evidence_binding(
+    raw: bytes,
+    *,
+    evidence: ModelUsageEvidence | HistoricalEvidence,
+    attempt_binding_bytes: bytes,
+    planned_bytes: bytes,
+    authorization_bytes: bytes,
+    prepared_at: datetime,
+    dispatch_started_at: datetime | None,
+    database_now: datetime,
+) -> ValidatedModelCallEvidence:
     if rfc8785.dumps(evidence.model_dump(mode="json")) != raw:
         raise ModelCallInputInvalid("model-call evidence is not canonical")
     revision = int(evidence.revision)
@@ -133,7 +205,7 @@ def build_terminal_closure_evidence(
         "incomplete_response" if status == "dispatch_started" else "missing_usage"
     )
     document: dict[str, JsonValue] = {
-        "artifact_version": "1.0.0",
+        "artifact_version": "2.0.0",
         "identity": identity,
         "planned": _json_object(planned_bytes),
         "actual": {"state": "unknown", "reason": "not_observed"},
@@ -170,12 +242,17 @@ def build_terminal_closure_evidence(
     return raw, artifact
 
 
-def validate_frozen_attempt(attempt: Mapping[str, object]) -> None:
+def validate_frozen_attempt(
+    attempt: Mapping[str, object],
+    *,
+    artifact_version: Literal["1.0.0", "2.0.0"] = "2.0.0",
+) -> None:
     _validate_frozen_attempt(
         attempt,
         _bytes(attempt["attempt_binding_bytes"]),
         _bytes(attempt["planned_bytes"]),
         _bytes(attempt["authorization_bytes"]),
+        artifact_version=artifact_version,
     )
 
 
@@ -184,6 +261,8 @@ def _validate_frozen_attempt(
     binding_bytes: bytes,
     planned_bytes: bytes,
     authorization_bytes: bytes,
+    *,
+    artifact_version: Literal["1.0.0", "2.0.0"] = "2.0.0",
 ) -> None:
     version = attempt.get("final_request_binding_version")
     digest = attempt.get("final_request_digest")
@@ -208,7 +287,12 @@ def _validate_frozen_attempt(
             )
     try:
         binding = AttemptBinding.model_validate_json(binding_bytes, strict=True)
-        PlannedBinding.model_validate_json(planned_bytes, strict=True)
+        if artifact_version == "1.0.0":
+            HistoricalPlanned.model_validate_json(planned_bytes, strict=True)
+        elif artifact_version == "2.0.0":
+            PlannedBinding.model_validate_json(planned_bytes, strict=True)
+        else:
+            raise ValueError("unsupported model binding version")
     except ValueError as error:
         raise ModelCallIdentityConflict(
             "model-call frozen artifact is invalid"

@@ -1,4 +1,4 @@
-"""Exact runtime values and canonical encoding for execution-proof V1."""
+"""Exact runtime values and canonical encoding for execution-proof V2."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import rfc8785
 from kokoro_agent.protocol import IdentityRef
 
 
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "2.0.0"
 TYPE = "kokoro-agent-execution+jwt"
 ALGORITHM = "EdDSA"
 AUDIENCE = "https://kokoro.dev/resources/iam-execution-authorization"
@@ -22,6 +22,7 @@ MAX_COMPACT_JWS_BYTES = 16 * 1024
 HEADER_FIELDS = frozenset({"typ", "alg", "kid"})
 CLAIM_FIELDS = frozenset(
     {
+        "execution_binding",
         "contract_version",
         "iss",
         "aud",
@@ -45,7 +46,7 @@ _JSON_VALUE: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 class ExecutionProofProfileError(ValueError):
-    """The proposed dynamic claims do not satisfy the exact V1 profile."""
+    """The proposed dynamic claims do not satisfy the exact V2 profile."""
 
 
 def _non_empty(value: object) -> bool:
@@ -148,6 +149,40 @@ def canonical_json_bytes(value: object) -> bytes:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ExecutionBinding:
+    """Immutable BFF intent reference; source permission is still checked online."""
+
+    identity_assertion_ref: str
+    project_ref: str | None
+    selection_digest: str
+
+    def __post_init__(self) -> None:
+        refs = (
+            (self.identity_assertion_ref,)
+            if self.project_ref is None
+            else (self.identity_assertion_ref, self.project_ref)
+        )
+        if any(
+            type(value) is not str
+            or re.fullmatch(r"[^\s\x00-\x1f\x7f]{1,255}", value) is None
+            for value in refs
+        ) or not _binding_is_valid(self.selection_digest):
+            raise ExecutionProofProfileError("execution binding is invalid")
+
+
+def _binding_snapshot(value: object) -> ExecutionBinding | None:
+    if value is None:
+        return None
+    if type(value) is not ExecutionBinding:
+        raise ExecutionProofProfileError("execution binding is invalid")
+    return ExecutionBinding(
+        identity_assertion_ref=value.identity_assertion_ref,
+        project_ref=value.project_ref,
+        selection_digest=value.selection_digest,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExecutionProofInput:
     """Dynamic trusted values supplied later by the run-scoped supplier."""
 
@@ -162,11 +197,15 @@ class ExecutionProofInput:
     iat: int
     exp: int
     jti: str
+    execution_binding: ExecutionBinding | None = None
 
     def __post_init__(self) -> None:
         strings = (self.tenant_ref, self.run_id, self.execution_session_id)
         if not all(_non_empty(value) for value in strings):
             raise ExecutionProofProfileError("execution proof identity is invalid")
+        object.__setattr__(
+            self, "execution_binding", _binding_snapshot(self.execution_binding)
+        )
         actor = _identity_snapshot(self.actor)
         subject = _identity_snapshot(self.subject)
         if not _safe_integer(self.lease_generation, minimum=1):
@@ -210,6 +249,7 @@ def snapshot_execution_proof_input(issue: object) -> ExecutionProofInput:
         iat=issue.iat,
         exp=issue.exp,
         jti=issue.jti,
+        execution_binding=_binding_snapshot(issue.execution_binding),
     )
 
 
@@ -225,6 +265,13 @@ def build_claims(issue: object, issuer: str) -> dict[str, JsonValue]:
     snapshot = snapshot_execution_proof_input(issue)
     claims: dict[str, JsonValue] = {
         "contract_version": CONTRACT_VERSION,
+        "execution_binding": None
+        if snapshot.execution_binding is None
+        else {
+            "identity_assertion_ref": snapshot.execution_binding.identity_assertion_ref,
+            "project_ref": snapshot.execution_binding.project_ref,
+            "selection_digest": snapshot.execution_binding.selection_digest,
+        },
         "iss": issuer,
         "aud": AUDIENCE,
         "tenant_ref": snapshot.tenant_ref,

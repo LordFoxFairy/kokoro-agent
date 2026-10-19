@@ -15,7 +15,7 @@ from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.model.call_evidence import (
     ValidatedModelCallEvidence,
     build_terminal_closure_evidence,
-    validate_append_evidence,
+    validate_sealed_evidence,
     validate_frozen_attempt,
 )
 from kokoro_agent.model.call_models import (
@@ -24,7 +24,7 @@ from kokoro_agent.model.call_models import (
     ModelCallEvidenceReceipt,
     ModelCallIdentityConflict,
 )
-from kokoro_agent.model.usage_evidence import parse_evidence, validate_successor
+from kokoro_agent.model.usage_evidence_v2 import parse_evidence, validate_successor
 
 
 async def append_evidence_locked(
@@ -38,6 +38,8 @@ async def append_evidence_locked(
     artifact: ValidatedModelCallEvidence,
     allow_new_revision: bool,
 ) -> ModelCallEvidenceReceipt:
+    if artifact.evidence.artifact_version != "2.0.0":
+        raise ModelCallIdentityConflict("current writer rejects historical evidence")
     current_revision = _integer(attempt["latest_revision"])
     if artifact.revision <= current_revision:
         return await _replay_locked(
@@ -262,11 +264,11 @@ async def close_model_call_attempts_for_terminal(
     attempts = await fetch_all(cursor)
     changed = False
     for attempt in attempts:
-        validate_frozen_attempt(attempt)
         revision = _integer(attempt["latest_revision"])
         if revision > 0:
             await _validate_sealed_head(cursor, evidence_table, attempt, database_now)
             continue
+        validate_frozen_attempt(attempt)
         if not allow_create:
             raise ModelCallIdentityConflict(
                 "terminal Run has an open model-call attempt"
@@ -358,7 +360,7 @@ async def _validate_sealed_head(
     evidence = await fetch_one(cursor)
     if evidence is None:
         raise ModelCallIdentityConflict("terminal model-call evidence head is missing")
-    artifact = validate_append_evidence(
+    artifact = validate_sealed_evidence(
         _bytes(evidence["evidence_bytes"]),
         attempt_binding_bytes=_bytes(attempt["attempt_binding_bytes"]),
         planned_bytes=_bytes(attempt["planned_bytes"]),
@@ -366,6 +368,9 @@ async def _validate_sealed_head(
         prepared_at=_datetime(attempt["prepared_at"]),
         dispatch_started_at=_optional_datetime(attempt["dispatch_started_at"]),
         database_now=database_now,
+    )
+    validate_frozen_attempt(
+        attempt, artifact_version=artifact.evidence.artifact_version
     )
     expected_status = "observed"
     if artifact.outcome == "unknown":

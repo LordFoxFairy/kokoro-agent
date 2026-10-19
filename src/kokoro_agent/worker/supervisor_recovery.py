@@ -86,7 +86,7 @@ class SupervisorRecoveryMixin(SupervisorContext):
             try:
                 await bus.publish(
                     REQUESTS_STREAM,
-                    request.model_dump(mode="json", exclude_none=True),
+                    request.model_dump(mode="json"),
                     maxlen=REQUESTS_MAXLEN,
                 )
             except Exception:  # noqa: BLE001 — 行仍是 pending，下一拍重建通知

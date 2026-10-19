@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -36,8 +37,16 @@ def utc_to_epoch_millis(value: datetime | None) -> int | None:
 async def connect_pg(
     database_url: str,
 ) -> AsyncGenerator[psycopg.AsyncConnection[Any], None]:
+    task = asyncio.current_task()
+    cancellations = 0 if task is None else task.cancelling()
     conn = await connect_dict_row(database_url)
     try:
+        # A driver readiness wait may return a connection in the same event-loop
+        # turn as a new cancellation. Preserve that request and close the resource.
+        # An earlier handled cancellation may intentionally enter cleanup here;
+        # its historical count alone must not prevent the cleanup connection.
+        if task is not None and task.cancelling() > cancellations:
+            raise asyncio.CancelledError
         yield conn
     finally:
         await conn.close()

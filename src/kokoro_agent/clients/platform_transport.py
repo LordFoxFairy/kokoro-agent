@@ -28,7 +28,8 @@ from kokoro_agent.generated.kokoro.platform.v1.platform_runtime_connect import (
 )
 
 PlatformRequest: TypeAlias = (
-    pb.ResolveVisibleSkillRequest
+    pb.DiscoverVisibleSkillsRequest
+    | pb.ResolveVisibleSkillRequest
     | pb.GetApprovedSkillPackageReferenceRequest
     | pb.GetMcpConnectorRequest
     | pb.ListMcpServerDeclarationsRequest
@@ -39,7 +40,8 @@ PlatformRequest: TypeAlias = (
     | runtime.AcquireMcpRuntimeCredentialRequest
 )
 PlatformResponse: TypeAlias = (
-    pb.ResolveVisibleSkillResponse
+    pb.DiscoverVisibleSkillsResponse
+    | pb.ResolveVisibleSkillResponse
     | pb.GetApprovedSkillPackageReferenceResponse
     | pb.GetMcpConnectorResponse
     | pb.ListMcpServerDeclarationsResponse
@@ -50,6 +52,7 @@ PlatformResponse: TypeAlias = (
     | runtime.AcquireMcpRuntimeCredentialResponse
 )
 _ALLOWED = (
+    pb.DiscoverVisibleSkillsRequest,
     pb.ResolveVisibleSkillRequest,
     pb.GetApprovedSkillPackageReferenceRequest,
     pb.GetMcpConnectorRequest,
@@ -204,6 +207,10 @@ class PlatformTransport:
         headers = {"authorization": f"Bearer {token}"}
         try:
             match request:
+                case pb.DiscoverVisibleSkillsRequest():
+                    return await self._skills.discover_visible_skills(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
                 case pb.ResolveVisibleSkillRequest():
                     return await self._skills.resolve_visible_skill(
                         request, headers=headers, timeout_ms=timeout_ms

@@ -51,9 +51,9 @@ from kokoro_agent.model.call_models import (
 )
 from kokoro_agent.domain.run.models import StaticRecipeBinding
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
-from kokoro_agent.protocol.model_usage_generated import AuthorizationRequested
-from kokoro_agent.model.usage_evidence import parse_evidence
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import AuthorizationRequested
+from kokoro_agent.model.usage_evidence_v2 import parse_evidence
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.config import AppConfig
@@ -178,6 +178,7 @@ async def _launch_claim(
             "run_id": seed.run_id,
             "session_id": seed.session_id,
             "feature_key": seed.feature_key,
+            "project_ref": None,
             "selected_skill_source_refs": list(seed.selected_skill_source_refs),
             "message_id": seed.input.message_id,
             "content": seed.input.content,
@@ -261,11 +262,12 @@ async def _open_model_attempts(
         canonical_bytes=recipe_bytes, fingerprint=recipe_fingerprint
     )
     planned = PlannedBinding(
+        binding_version="2.0.0",
         model="model-a3b",
         provider="provider-a3b",
         revision_id="revision-a3b",
         provider_model_name="provider-model-a3b",
-        gateway_model_name="gateway-a3b",
+        request_model="gateway-a3b",
         feature_key=run.feature_key,
         revision="1",
         generation="1",
@@ -395,7 +397,7 @@ async def _seal_dispatch_started_attempt(
     identity = json.loads(row["attempt_binding_bytes"])
     identity["event_id"] = str(uuid4())
     document = {
-        "artifact_version": "1.0.0",
+        "artifact_version": "2.0.0",
         "identity": identity,
         "planned": json.loads(row["planned_bytes"]),
         "actual": {"state": "unknown", "reason": "not_observed"},
@@ -415,7 +417,7 @@ async def _seal_dispatch_started_attempt(
         "predecessor": None,
         "observed_at": _utc_millis(dispatch_started_at),
     }
-    domain = b"kokoro-agent:model-usage-evidence:v1\n"
+    domain = b"kokoro-agent:model-usage-evidence:v2\n"
     document["digest"] = hashlib.sha256(domain + rfc8785.dumps(document)).hexdigest()
     raw = rfc8785.dumps(document)
     await PostgresModelCallRepository(url, schema).append_evidence(
@@ -458,7 +460,7 @@ async def _seal_denied_attempt(
         event_id = str(uuid4())
         identity["event_id"] = event_id
         document = {
-            "artifact_version": "1.0.0",
+            "artifact_version": "2.0.0",
             "identity": identity,
             "planned": json.loads(row["planned_bytes"]),
             "actual": {"state": "unknown", "reason": "not_observed"},
@@ -478,7 +480,7 @@ async def _seal_denied_attempt(
             "predecessor": None,
             "observed_at": _utc_millis(prepared_at),
         }
-        domain = b"kokoro-agent:model-usage-evidence:v1\n"
+        domain = b"kokoro-agent:model-usage-evidence:v2\n"
         document["digest"] = hashlib.sha256(
             domain + rfc8785.dumps(document)
         ).hexdigest()
@@ -2993,6 +2995,7 @@ async def test_first_worker_dispatch_seals_usage_before_durable_initial_pause(
             "run_id": seed.run_id,
             "session_id": seed.session_id,
             "feature_key": seed.feature_key,
+            "project_ref": None,
             "selected_skill_source_refs": list(seed.selected_skill_source_refs),
             "message_id": seed.input.message_id,
             "content": seed.input.content,

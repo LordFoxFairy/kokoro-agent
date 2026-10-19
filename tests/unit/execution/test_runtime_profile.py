@@ -95,7 +95,7 @@ def _profile() -> dict[str, Any]:
             "recursion_limit": 20,
             "disable_streaming": False,
             "openai_reasoning": False,
-            "litellm_enabled": False,
+            "model_allow_loopback_http": False,
             "toolbox": {
                 "fetch_allow_private": False,
                 "search_enabled": False,

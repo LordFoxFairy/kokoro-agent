@@ -435,8 +435,8 @@ def test_signer_accepts_exact_16_kib_and_rejects_16_385_bytes(
         return compact
 
     monkeypatch.setattr(jwt, "encode", recording_encode)
-    exact = _input(actor=IdentityRef(kind="user", opaque_ref='"' * 5_776))
-    over = _input(actor=IdentityRef(kind="user", opaque_ref='"' * 5_776 + "x"))
+    exact = _input(actor=IdentityRef(kind="user", opaque_ref='"' * 5763 + "x" * 1))
+    over = _input(actor=IdentityRef(kind="user", opaque_ref='"' * 5763 + "x" * 2))
 
     compact = _signer().issue_execution_proof(exact)
     assert len(compact.encode("ascii")) == 16_384

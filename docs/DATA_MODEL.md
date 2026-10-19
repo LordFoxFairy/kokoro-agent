@@ -2,6 +2,26 @@
 
 无DDL/新表/跨owner数据访问。受信Agent代码的明确Connection引用投影进现有静态recipe/profile的mcp数组：每项仅connection_id，不保存URL、command、env、credential或invocation grant。不重写历史recipe、journal或已保存bytes；恢复仍使用原静态绑定一致性检查。当前材料仅在单次SDK session内，发现/授权不是持久缓存。原tool journal是唯一MCP调用幂等/unknown-outcome事实，新增ContextVar只把已记账call ID送到工具，不构成第二份事实。
 
+## 项目执行冻结（2026-10-17）
+
+使用原dispatch/Run request_json持久保存正式project_ref与有序selected_skill_source_refs，断言稳定ref仍ExecutionIdentity原字段；proof supplier只读冻结值计算摘要，无新项目/授权表和无跨owner SQL。迁移/正常旧Run不由trace补权限；本轮仅自有隔离fresh资源验收，不激活正常旧worker或模型/扣费。
+
+## MC-01：模型连接与调用证据边界（2026-10-15；目标，无数据写入）
+
+基线 `84502e6`。Agent 不复制 System provider/model 目录，不落密钥或上游 credential reference；部署配置解析后的密钥只在 worker 客户端生命周期使用。技术连接选择来自 System，逐调用 evidence/final request digest 仍属于 Agent。
+
+目标 planned binding 通过既有 provider/revision_id/digest 定位 System 不可变连接，仅以 request_model 替换 gateway 专属执行名称，并保留 provider_model_name 声明元数据。最终 method/endpoint/实际 body 已由 final request digest 绑定，无需再复制协议/拓扑/URL/凭据引用。secret 值、key hash 或配置文件内容不进入证据；planned 不是 actual attribution。unknown/partial 用量与授权 not_requested/pending 的原含义保持。
+
+现 call_artifacts 的 planned 编码直接来自 usage PlannedBinding，而其旧字段又由 canonical usage/v1 生成；因此这不是单一 factory 字段改名。目标 usage2 的 planned bytes 自带 binding_version=2.0.0，sealed evidence 沿既有外层 artifact_version 明确分派历史1/current2；复用现 call/attempt/evidence 表与原事务，不新增版本表/列或JSON配置中心。旧未sealed planned 没有该版本字段，只由切换前旧producer解释并完成原closure；新producer启动前必须证明旧worker/lease已停且旧attempt全sealed，不用缺字段回退来恢复旧执行。
+
+切换先停止接收旧绑定的新 Run，并使既有活动 lease/attempt 有界收束；已发送、授权未知或结算 pending 的记录按原恢复协议处理，不改成未发送或免费。历史 evidence 原字节/摘要不重写，旧绑定不能被新 producer 复用；冻结v1 decoder仅供按证据version的历史读取，只有v2可生产。HTTP envelope按实际证据version投影，final_request_binding_version保有原摘要格式含义，不拿来冒充usage版本。v2首写后不回滚旧reader；异常停止dispatch并保当前读取/前向恢复，不建立双轨执行协议。
+
+本节不授权删除历史记录、复位共享数据库/Redis、自动补齐旧连接或绕过 Billing。数据切换及恢复方案未冻结前，仅允许独立协议适配器/自有 peer 的验证，不激活新正式调用。
+
+2026-10-16 前置提交9c641d5仅增加独立 usage/v2 artifact。后继未提交候选已接入v2唯一producer、按已验证evidence版本选择历史reader、HTTP6与启动屏障；canonical SQL及冻结v1来源原字节不变。屏障只读取未sealed planned，拒旧/未知/非法版本，允许合法v2恢复，且不修改任何attempt；旧worker停止仍须部署层另行证明。新源未激活，资金消费者尚未接线，不因候选源码或隔离fixture而宣称应用数据已切换。
+
+---
+
 ## R353-A-S06：Artifact delivery intent v2（候选已实施，无Schema变化；2026-10-08）
 
 ### 唯一事实与存储位置

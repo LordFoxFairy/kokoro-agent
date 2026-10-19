@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "5.0.0"
+    "version": "7.0.0"
   },
   "servers": [
     {
@@ -331,7 +331,8 @@
           "feature_key",
           "selected_skill_source_refs",
           "message_id",
-          "content"
+          "content",
+          "project_ref"
         ],
         "properties": {
           "request_id": {
@@ -378,6 +379,18 @@
           "trace": {
             "type": "object",
             "additionalProperties": true
+          },
+          "project_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -1704,7 +1717,10 @@
         "properties": {
           "artifact_version": {
             "type": "string",
-            "const": "1.0.0"
+            "enum": [
+              "1.0.0",
+              "2.0.0"
+            ]
           },
           "attempt_id": {
             "type": "string",

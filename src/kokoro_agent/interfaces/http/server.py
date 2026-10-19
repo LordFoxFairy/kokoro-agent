@@ -354,7 +354,7 @@ async def dispatch_request(
             {
                 "attempt_id": evidence.attempt_id,
                 "event_id": evidence.event_id,
-                "artifact_version": "1.0.0",
+                "artifact_version": evidence.artifact_version,
                 "revision": str(evidence.revision),
                 "evidence_digest": evidence.evidence_digest,
                 "evidence_bytes_base64url": encoded,

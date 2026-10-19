@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
-from kokoro_agent import model_usage_contract
+from kokoro_agent import model_usage_contract, model_usage_v2_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
     generate_failure_models,
@@ -25,6 +25,7 @@ from kokoro_agent.platform_binding_contract import (
     validate_platform_binding_artifact,
 )
 from kokoro_agent.system_consumer_contract import validate_system_consumer_receipt
+from kokoro_agent.usage_history_contract import validate_usage_history
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
@@ -64,8 +65,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "5.0.0":
-        raise ValueError("Agent HTTP contract version must be 5.0.0")
+    if info.get("version") != "7.0.0":
+        raise ValueError("Agent HTTP contract version must be 7.0.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -177,7 +178,8 @@ def validate(root: Path = ROOT) -> None:
     generate_failure_models(root, check=True)
     validate_execution_proof_contract(root)
     validate_platform_binding_artifact(root)
-    model_usage_contract.validate_model_usage_contract(root)
+    validate_usage_history(root)
+    model_usage_v2_contract.validate_model_usage_contract(root)
 
 
 def main() -> int:
@@ -185,6 +187,7 @@ def main() -> int:
         {
             *OWNER_SOURCE_FILES,
             *model_usage_contract.USAGE_AUDIT_FILES,
+            *model_usage_v2_contract.USAGE_AUDIT_FILES,
             "contract/provenance.json",
             *PLATFORM_AUDIT_FILES,
         }

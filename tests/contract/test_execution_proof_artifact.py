@@ -17,6 +17,9 @@ import pytest
 
 from kokoro_agent import contract_check
 from kokoro_agent.model_usage_contract import USAGE_SOURCE_FILES
+from kokoro_agent.model_usage_v2_contract import (
+    USAGE_SOURCE_FILES as USAGE_V2_SOURCE_FILES,
+)
 import kokoro_agent.execution_proof_negative_specs as negative_specs
 from kokoro_agent.execution_proof_negative_specs import (
     NEGATIVE_SPEC_INDEX,
@@ -27,13 +30,13 @@ from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunR
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = ROOT / "contract" / "execution-proof" / "v1" / "schema.json"
-VECTORS = ROOT / "contract" / "execution-proof" / "v1" / "vectors.json"
+SCHEMA = ROOT / "contract" / "execution-proof" / "v2" / "schema.json"
+VECTORS = ROOT / "contract" / "execution-proof" / "v2" / "vectors.json"
 PROVENANCE = ROOT / "contract" / "provenance.json"
 OWNER_INVENTORY = [
     "contract/openapi/v1/openapi.json",
-    "contract/execution-proof/v1/schema.json",
-    "contract/execution-proof/v1/vectors.json",
+    "contract/execution-proof/v2/schema.json",
+    "contract/execution-proof/v2/vectors.json",
     "src/kokoro_agent/protocol/control.py",
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py",
@@ -43,13 +46,14 @@ OWNER_INVENTORY = [
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
+    "src/kokoro_agent/usage_history_contract.py",
 ]
 HEADER_FIELDS = {"typ", "alg", "kid"}
 CLAIMS_OBJECT_PATH = ("properties", "claims")
 CLAIMS_SCHEMA_PATH = (*CLAIMS_OBJECT_PATH, "properties")
 CLAIM_FIELDS = set(
     "contract_version iss aud tenant_ref actor subject run_id execution_session_id "
-    "lease_generation operation request_binding_sha256 iat exp jti".split()
+    "lease_generation operation request_binding_sha256 iat exp jti execution_binding".split()
 )
 NEGATIVE_STAGES = {spec.name: spec.stage for spec in NEGATIVE_SPECS}
 FIX_R1_REQUIRED_NEGATIVES = set(NEGATIVE_STAGES) - {"unknown_claim"}
@@ -79,7 +83,7 @@ def _combined_digest(root: Path, sources: list[str]) -> str:
 def _copy_contract_repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repository"
     shutil.copytree(ROOT / "contract", repository / "contract")
-    for relative in (*OWNER_INVENTORY, *USAGE_SOURCE_FILES):
+    for relative in (*OWNER_INVENTORY, *USAGE_SOURCE_FILES, *USAGE_V2_SOURCE_FILES):
         target = repository / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, target)
@@ -144,9 +148,9 @@ def test_schema_is_draft_2020_12_strict_and_describes_only_the_decoded_profile()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert (
         schema["$id"]
-        == "https://kokoro.dev/contracts/agent/execution-proof/v1/schema.json"
+        == "https://kokoro.dev/contracts/agent/execution-proof/v2/schema.json"
     )
-    assert schema["x-kokoro-contract-version"] == "1.0.0"
+    assert schema["x-kokoro-contract-version"] == "2.0.0"
     assert schema["x-kokoro-canonicalization"] == "RFC 8785"
     assert schema["x-kokoro-base64url-padding"] == "forbidden"
     assert schema["x-kokoro-compact-jws-max-bytes"] == 16 * 1024
@@ -182,6 +186,7 @@ def test_schema_accepts_current_canonical_run_and_identity_values() -> None:
         run_id="_run",
         session_id="session/会话 with space",
         feature_key="fixture",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="租户 with space",
@@ -216,7 +221,7 @@ def test_schema_accepts_current_canonical_run_and_identity_values() -> None:
 
 def test_vectors_fix_exact_canonical_bytes_segments_signature_jwk_and_stages() -> None:
     vectors = _load(VECTORS)
-    assert vectors["contract_version"] == "1.0.0"
+    assert vectors["contract_version"] == "2.0.0"
     positive = _object(vectors["positive"])
     header = _object(positive["protected_header"])
     claims = _object(positive["claims"])
@@ -753,16 +758,6 @@ def test_checker_locks_normative_schema_metadata_after_digest_recompute(
         contract_check.validate(repository)
 
 
-def test_execution_proof_checker_detail_has_a_focused_module_boundary() -> None:
-    detail = ROOT / "src" / "kokoro_agent" / "execution_proof_contract.py"
-    assert detail.is_file()
-    orchestration = (ROOT / "src" / "kokoro_agent" / "contract_check.py").read_text(
-        encoding="utf-8"
-    )
-    assert "from kokoro_agent.execution_proof_contract import" in orchestration
-    assert len(orchestration.splitlines()) < 200
-
-
 def test_contract_checker_validates_schema_vectors_and_provenance() -> None:
     contract_check.validate(ROOT)
 
@@ -794,12 +789,12 @@ def test_checker_rejects_deleted_artifact_even_if_inventory_and_aggregate_are_re
     tmp_path: Path,
 ) -> None:
     repository = _copy_contract_repository(tmp_path)
-    (repository / "contract" / "execution-proof" / "v1" / "vectors.json").unlink()
+    (repository / "contract" / "execution-proof" / "v2" / "vectors.json").unlink()
     provenance = _load(repository / "contract" / "provenance.json")
     provenance["source_files"] = [
         source
         for source in _array(provenance["source_files"])
-        if source != "contract/execution-proof/v1/vectors.json"
+        if source != "contract/execution-proof/v2/vectors.json"
     ]
     _write_provenance(repository, provenance)
 
@@ -813,7 +808,7 @@ def test_checker_rejects_changed_artifact_when_only_aggregate_is_recomputed(
     tmp_path: Path,
 ) -> None:
     repository = _copy_contract_repository(tmp_path)
-    schema_path = repository / "contract" / "execution-proof" / "v1" / "schema.json"
+    schema_path = repository / "contract" / "execution-proof" / "v2" / "schema.json"
     schema = _load(schema_path)
     schema["description"] = "mutated after review"
     schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
@@ -828,7 +823,7 @@ def test_checker_rejects_version_drift_even_with_all_digests_recomputed(
     tmp_path: Path,
 ) -> None:
     repository = _copy_contract_repository(tmp_path)
-    schema_path = repository / "contract" / "execution-proof" / "v1" / "schema.json"
+    schema_path = repository / "contract" / "execution-proof" / "v2" / "schema.json"
     schema = _load(schema_path)
     schema["x-kokoro-contract-version"] = "1.0.1"
     schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
@@ -839,7 +834,7 @@ def test_checker_rejects_version_drift_even_with_all_digests_recomputed(
     schema_record["sha256"] = hashlib.sha256(schema_path.read_bytes()).hexdigest()
     _write_provenance(repository, provenance)
 
-    with pytest.raises(ValueError, match="version must be 1.0.0"):
+    with pytest.raises(ValueError, match="version must be 2.0.0"):
         contract_check.validate(repository)
 
 

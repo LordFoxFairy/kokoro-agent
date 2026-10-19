@@ -99,7 +99,7 @@ from kokoro_agent.model.call_models import (
     PrepareModelCall,
     StartModelCallDispatch,
 )
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 from support.model_http_mechanism import synthetic_final_digest
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import (
@@ -120,7 +120,7 @@ _DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "")
 _REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "")
 _INTERNAL_SECRET = "acceptance-internal-secret"
 _BILLING_READER_SECRET = "acceptance-billing-model-call-reader-secret"
-_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v1\n"
+_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v2\n"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
 
@@ -200,6 +200,7 @@ def _launch_body(run_id: str, refs: tuple[str, ...] = ()) -> dict[str, JsonValue
             "run_id": run_id,
             "session_id": "session-1",
             "feature_key": "chat",
+            "project_ref": None,
             "selected_skill_source_refs": list(refs),
             "message_id": f"message-{run_id}",
             "content": "hello from acceptance",
@@ -216,6 +217,7 @@ def _request(
         run_id=run_id,
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=refs,
         execution_identity=_identity(subject),
         input=RunInput(message_id=f"message-{run_id}", content="hello from acceptance"),
@@ -416,11 +418,12 @@ async def _seed_final_model_usage_evidence(
         fingerprint=hashlib.sha256(recipe_bytes).hexdigest(),
     )
     planned = PlannedBinding(
+        binding_version="2.0.0",
         model="model-acceptance",
         provider="provider-acceptance",
         revision_id="revision-acceptance",
         provider_model_name="provider-model-acceptance",
-        gateway_model_name="gateway-acceptance",
+        request_model="gateway-acceptance",
         feature_key="chat",
         revision="1",
         generation="1",
@@ -496,7 +499,7 @@ async def _seed_final_model_usage_evidence(
     dispatch_instant = _utc_millis(dispatch.dispatch_started_at_ms)
     observed_instant = _utc_millis(dispatch.dispatch_started_at_ms + 1)
     document = {
-        "artifact_version": "1.0.0",
+        "artifact_version": "2.0.0",
         "identity": identity,
         "planned": json.loads(prepared.planned_bytes),
         "actual": {"state": "unknown", "reason": "not_observed"},

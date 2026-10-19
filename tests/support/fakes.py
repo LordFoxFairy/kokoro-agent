@@ -2000,6 +2000,7 @@ def request(
         run_id=run_id,
         session_id=session_id,
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="test-tenant",

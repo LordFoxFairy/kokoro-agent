@@ -213,6 +213,7 @@ def leased_run() -> LeasedRun:
             run_id="run",
             session_id="session",
             feature_key="chat",
+            project_ref=None,
             selected_skill_source_refs=(),
             execution_identity=ExecutionIdentity(
                 tenant_ref="tenant",

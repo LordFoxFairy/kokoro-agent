@@ -16,7 +16,7 @@ from kokoro_agent.model.call_models import (
 )
 from kokoro_agent.model.request_profile import REQUEST_PROFILE
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.protocol.model_usage_generated import (
+from kokoro_agent.protocol.model_usage_v2_generated import (
     AuthorizationGranted,
     AuthorizationNotRequested,
     AuthorizationRequested,

@@ -48,7 +48,7 @@ class RuntimeAssemblyPolicy:
     recursion_limit: int
     disable_streaming: bool
     openai_reasoning: bool
-    litellm_enabled: bool
+    model_allow_loopback_http: bool
     backend_recipes: tuple[tuple[str, bytes], ...]
 
     def __post_init__(self) -> None:
@@ -111,7 +111,7 @@ class RuntimeAssemblyPolicy:
             recursion_limit=recursion_limit,
             disable_streaming=model.disable_streaming,
             openai_reasoning=model.openai_reasoning,
-            litellm_enabled=model.litellm_enabled,
+            model_allow_loopback_http=model.model_allow_loopback_http,
             backend_recipes=tuple(
                 (name, canonical_json(values)) for name, values in backends
             ),
@@ -130,7 +130,7 @@ class RuntimeAssemblyPolicy:
             "recursion_limit": self.recursion_limit,
             "disable_streaming": self.disable_streaming,
             "openai_reasoning": self.openai_reasoning,
-            "litellm_enabled": self.litellm_enabled,
+            "model_allow_loopback_http": self.model_allow_loopback_http,
         }
 
 

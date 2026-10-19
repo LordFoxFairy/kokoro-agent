@@ -14,7 +14,6 @@ from kokoro_agent.model.call_artifacts import (
 )
 from kokoro_agent.model.call_models import ModelCallInputInvalid
 from kokoro_agent.model.usage_evidence import parse_evidence, validate_successor
-from kokoro_agent.model_usage_contract import generate_model_usage_models
 from kokoro_agent.protocol.model_usage_generated import (
     AuthorizationGranted,
     AuthorizationRequested,
@@ -90,22 +89,27 @@ def test_revision_binding_is_not_latest_wins(vector: dict[str, str | bool]) -> N
             validate_successor(previous, incoming)
 
 
+@pytest.mark.parametrize("version", ["v1", "v2"])
 def test_generated_boundary_is_reproducible_and_check_is_read_only(
     tmp_path: Path,
+    version: str,
 ) -> None:
-    schema = tmp_path / "contract/usage/v1/schema.json"
+    from kokoro_agent import model_usage_contract, model_usage_v2_contract
+
+    compiler = model_usage_contract if version == "v1" else model_usage_v2_contract
+    schema = tmp_path / compiler.SCHEMA_RELATIVE
     schema.parent.mkdir(parents=True)
-    schema.write_bytes((ROOT / "contract/usage/v1/schema.json").read_bytes())
-    generate_model_usage_models(tmp_path, check=False)
-    output = tmp_path / "src/kokoro_agent/protocol/model_usage_generated.py"
+    schema.write_bytes((ROOT / compiler.SCHEMA_RELATIVE).read_bytes())
+    compiler.generate_model_usage_models(tmp_path, check=False)
+    output = tmp_path / compiler.GENERATED_RELATIVE
     original = output.read_bytes()
-    generate_model_usage_models(tmp_path, check=False)
+    compiler.generate_model_usage_models(tmp_path, check=False)
     assert output.read_bytes() == original
-    generate_model_usage_models(tmp_path, check=True)
+    compiler.generate_model_usage_models(tmp_path, check=True)
     assert output.read_bytes() == original
     output.write_bytes(original + b"# drift\n")
     with pytest.raises(ValueError, match="stale"):
-        generate_model_usage_models(tmp_path, check=True)
+        compiler.generate_model_usage_models(tmp_path, check=True)
     assert output.read_bytes() == original + b"# drift\n"
 
 
@@ -132,31 +136,31 @@ def test_finite_compiler_rejects_semantic_schema_drift(mutation: str) -> None:
         model_usage_model_bytes(json.dumps(document).encode())
 
 
-def test_manifest_covers_exact_source_and_check_never_repairs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_manifest_covers_exact_source_and_check_never_repairs(
+    tmp_path: Path, version: str
+) -> None:
     import shutil
 
-    from kokoro_agent.model_usage_contract import (
-        MANIFEST_RELATIVE,
-        USAGE_SOURCE_FILES,
-        generate_model_usage_artifact,
-        validate_model_usage_contract,
-    )
+    from kokoro_agent import model_usage_contract, model_usage_v2_contract
 
-    for relative in USAGE_SOURCE_FILES:
+    compiler = model_usage_contract if version == "v1" else model_usage_v2_contract
+
+    for relative in compiler.USAGE_SOURCE_FILES:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
-    generate_model_usage_artifact(tmp_path, check=False)
-    manifest = tmp_path / MANIFEST_RELATIVE
+    compiler.generate_model_usage_artifact(tmp_path, check=False)
+    manifest = tmp_path / compiler.MANIFEST_RELATIVE
     original = manifest.read_bytes()
-    generate_model_usage_artifact(tmp_path, check=False)
+    compiler.generate_model_usage_artifact(tmp_path, check=False)
     assert manifest.read_bytes() == original
-    validate_model_usage_contract(tmp_path)
-    vector_path = tmp_path / "contract/usage/v1/vectors.json"
+    compiler.validate_model_usage_contract(tmp_path)
+    vector_path = tmp_path / compiler.VECTORS_RELATIVE
     vector_path.write_bytes(vector_path.read_bytes() + b"\n")
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     with pytest.raises(ValueError, match="stale"):
-        validate_model_usage_contract(tmp_path)
+        compiler.validate_model_usage_contract(tmp_path)
     assert {
         path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
     } == before
@@ -174,3 +178,200 @@ def test_evidence_size_and_depth_are_bounded_before_model_validation() -> None:
         parse_evidence(b" " * 65536 + legal)
     with pytest.raises(ValueError, match="nesting"):
         parse_evidence(b"[" * 17 + b"null" + b"]" * 17)
+
+
+@pytest.mark.parametrize("mutation", ["schema", "vectors"])
+def test_public_checker_rejects_coordinated_rewrite_of_historical_usage_v1(
+    tmp_path: Path, mutation: str
+) -> None:
+    """A self-consistent rebuilt manifest must not redefine a published decoder."""
+    import shutil
+
+    from kokoro_agent import contract_check
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_usage_contract import (
+        USAGE_AUDIT_FILES,
+        generate_model_usage_artifact,
+        validate_model_usage_contract,
+    )
+
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
+
+    shutil.copytree(ROOT / "contract", tmp_path / "contract")
+    for relative in {*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES}:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    contract_check.validate(tmp_path)
+    path = tmp_path / f"contract/usage/v1/{mutation}.json"
+    document = json.loads(path.read_bytes())
+    if mutation == "schema":
+        document["title"] += " rewritten"
+    else:
+        document["positive"][0]["id"] += "-rewritten"
+    path.write_text(json.dumps(document, indent=2) + "\n")
+    generate_model_usage_artifact(tmp_path, check=False)
+    # The old integrity check accepts the coordinated regeneration. Its new
+    # caller must additionally bind the exact immutable historical release.
+    validate_model_usage_contract(tmp_path)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError, match="historical usage v1 release"):
+        contract_check.validate(tmp_path)
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("mutation", ["binding_version", "request_model"])
+def test_public_checker_validates_current_usage2_not_only_historical_usage1(
+    tmp_path: Path, mutation: str
+) -> None:
+    import shutil
+    from kokoro_agent import contract_check
+    from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
+
+    shutil.copytree(ROOT / "contract", tmp_path / "contract")
+    for relative in {*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES}:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    contract_check.validate(tmp_path)
+    schema = tmp_path / "contract/usage/v2/schema.json"
+    document = json.loads(schema.read_bytes())
+    properties = document["$defs"]["PlannedBinding"]["properties"]
+    if mutation == "binding_version":
+        properties["binding_version"]["const"] = "1.0.0"
+    else:
+        properties["request_model"] = {"type": "string"}
+    schema.write_text(json.dumps(document, indent=2) + "\n")
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError):
+        contract_check.validate(tmp_path)
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_binding",
+        "wrong_binding",
+        "legacy_model",
+        "unbounded_model",
+        "missing_model",
+        "wrong_evidence_version",
+        "weakened_model_reference",
+        "wrong_planned_reference",
+        "weak_planned_alias",
+    ],
+)
+def test_usage2_compiler_rejects_rebuilt_unapproved_binding_shapes(
+    mutation: str,
+) -> None:
+    from kokoro_agent.model_usage_v2_contract import model_usage_model_bytes
+
+    document = json.loads((ROOT / "contract/usage/v2/schema.json").read_bytes())
+    planned = document["$defs"]["PlannedBinding"]
+    properties = planned["properties"]
+    if mutation == "missing_binding":
+        properties.pop("binding_version")
+    elif mutation == "wrong_binding":
+        properties["binding_version"]["const"] = "1.0.0"
+    elif mutation == "legacy_model":
+        properties["gateway_model_name"] = properties.pop("request_model")
+    elif mutation == "unbounded_model":
+        properties["request_model"] = {"type": "string"}
+    elif mutation == "missing_model":
+        properties.pop("request_model")
+    elif mutation == "weakened_model_reference":
+        document["$defs"]["Opaque"]["minLength"] = 0
+    elif mutation == "wrong_planned_reference":
+        document["$defs"]["ModelUsageEvidence"]["properties"]["planned"] = {
+            "$ref": "#/$defs/Opaque"
+        }
+    elif mutation == "weak_planned_alias":
+        document["$defs"]["ModelUsageEvidence"]["properties"]["planned"] = {
+            "type": "string"
+        }
+    else:
+        document["$defs"]["ModelUsageEvidence"]["properties"]["artifact_version"][
+            "const"
+        ] = "1.0.0"
+    # Keep generic required/properties consistency: a finite compiler must
+    # still reject this self-consistent but unapproved execution binding.
+    planned["required"] = list(properties)
+    with pytest.raises(ValueError, match="v2 binding"):
+        model_usage_model_bytes(json.dumps(document).encode())
+
+
+def test_usage_versions_have_distinct_strict_decoders_and_digest_domains() -> None:
+    from kokoro_agent.model.usage_evidence_v2 import parse_evidence as parse_v2
+    from kokoro_agent.model_usage_v2_contract import validate_model_usage_contract
+
+    raw_v1 = VECTORS["positive"][0]["json_utf8"].encode()
+    current = json.loads((ROOT / "contract/usage/v2/vectors.json").read_bytes())
+    raw_v2 = current["positive"][0]["json_utf8"].encode()
+    validate_model_usage_contract(ROOT)
+    old = parse_evidence(raw_v1)
+    new = parse_v2(raw_v2)
+    assert old.artifact_version == "1.0.0"
+    assert new.artifact_version == new.planned.binding_version == "2.0.0"
+    assert new.planned.request_model == old.planned.gateway_model_name
+    assert new.planned.provider_model_name == old.planned.provider_model_name
+    assert new.digest != old.digest
+    with pytest.raises(ValueError):
+        parse_evidence(raw_v2)
+    with pytest.raises(ValueError):
+        parse_v2(raw_v1)
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_new_terminal_closure_only_produces_current_usage_binding(version: str) -> None:
+    import hashlib
+    from datetime import datetime
+    import rfc8785
+    from kokoro_agent.model.call_evidence import build_terminal_closure_evidence
+    from kokoro_agent.model.call_models import ModelCallIdentityConflict
+
+    vectors = json.loads((ROOT / f"contract/usage/{version}/vectors.json").read_bytes())
+    document = json.loads(vectors["positive"][0]["json_utf8"])
+    identity = document["identity"]
+    binding = rfc8785.dumps({k: v for k, v in identity.items() if k != "event_id"})
+    planned = rfc8785.dumps(document["planned"])
+    authorization = rfc8785.dumps({"state": "not_requested"})
+    prepared = datetime.fromisoformat(
+        document["execution"]["prepared_at"].replace("Z", "+00:00")
+    )
+    attempt = {
+        "tenant_id": identity["tenant_ref"],
+        "run_id": identity["run_id"],
+        "call_id": identity["call_id"],
+        "attempt_id": identity["attempt_id"],
+        "attempt_ordinal": int(identity["attempt_ordinal"]),
+        "lease_owner": identity["lease"]["owner"],
+        "lease_generation": int(identity["lease"]["generation"]),
+        "attempt_binding_bytes": binding,
+        "attempt_binding_digest": hashlib.sha256(binding).hexdigest(),
+        "planned_bytes": planned,
+        "planned_digest": hashlib.sha256(planned).hexdigest(),
+        "authorization_bytes": authorization,
+        "authorization_digest": hashlib.sha256(authorization).hexdigest(),
+        "authorization_state": "not_requested",
+        "prepared_at": prepared,
+        "dispatch_started_at": None,
+        "status": "prepared",
+        "final_request_binding_version": 1,
+        "final_request_digest": "a" * 64,
+    }
+    if version == "v1":
+        with pytest.raises(ModelCallIdentityConflict):
+            build_terminal_closure_evidence(attempt, prepared)
+    else:
+        raw, result = build_terminal_closure_evidence(attempt, prepared)
+        assert result.evidence.artifact_version == "2.0.0"
+        assert result.evidence.planned.binding_version == "2.0.0"
+        assert json.loads(raw)["execution"]["outcome"] == "not_dispatched"

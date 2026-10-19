@@ -534,17 +534,32 @@ async def test_cancel_running_emits_cancelled() -> None:
     await sup.dispatch(bus, request("r5"))
     await asyncio.sleep(0)
 
-    await sup.dispatch(
-        bus, _inbound({"kind": "run.cancel", "command_id": "dec_wire", "run_id": "r5"})
+    cancellation = asyncio.create_task(
+        sup.dispatch(
+            bus,
+            _inbound({"kind": "run.cancel", "command_id": "dec_wire", "run_id": "r5"}),
+        )
     )
-    await _drain(sup)
+    try:
+        # Observe without cancelling the observer/operation: a timeout signal
+        # would itself release the stuck native task and mask a lost cancel.
+        settled, _ = await asyncio.wait({cancellation}, timeout=1.0)
+        assert cancellation in settled, (
+            "cancel must settle while native work stays gated"
+        )
+        await cancellation
+        await _drain(sup)
 
-    completed = find_event(bus.run_events("r5"), RunCompleted)
-    assert completed.payload.status == "cancelled"
-    terminals = [
-        e for e in bus.run_events("r5") if e.kind in {"run.completed", "run.failed"}
-    ]
-    assert len(terminals) == 1
+        completed = find_event(bus.run_events("r5"), RunCompleted)
+        assert completed.payload.status == "cancelled"
+        terminals = [
+            e for e in bus.run_events("r5") if e.kind in {"run.completed", "run.failed"}
+        ]
+        assert len(terminals) == 1
+    finally:
+        gate.set()
+        await asyncio.gather(cancellation, return_exceptions=True)
+        await asyncio.gather(*tuple(sup.tasks.values()), return_exceptions=True)
 
 
 async def test_cancel_unknown_run_dropped() -> None:
@@ -1858,7 +1873,7 @@ async def test_serve_republishes_durable_pending_dispatch() -> None:
     published = [
         event for stream, event, _maxlen in bus.published if stream == REQUESTS_STREAM
     ]
-    assert published == [pending.model_dump(mode="json", exclude_none=True)]
+    assert published == [pending.model_dump(mode="json")]
 
 
 async def test_dispatch_win_executes_and_acks_after_claim() -> None:
@@ -2702,7 +2717,7 @@ async def test_r93_all_build_entries_propagate_typed_progress_failure(
     )
     bus = FakeBus()
     run = request("r93-entries-" + entry).model_copy(
-        update={"selected_skill_source_refs": ("skill:one",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:one",)}
     )
     with pytest.raises(ProgressPersistenceError):
         if entry == "initial":
@@ -2760,7 +2775,7 @@ async def test_r93_local_drained_recovery_probe_uses_fenced_progress_callback() 
     store = FakeRunRepository()
     store.chat_repository = SecondRoundWriteFailure()
     run = request("r93-local-probe").model_copy(
-        update={"selected_skill_source_refs": ("skill:one",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:one",)}
     )
     lease = await store.try_claim(run, "old")
     assert lease is not None

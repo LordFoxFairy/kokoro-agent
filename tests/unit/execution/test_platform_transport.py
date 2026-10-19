@@ -14,10 +14,13 @@ from kokoro_agent.clients.platform_transport import PlatformTransport, RunPlatfo
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 from kokoro_agent.generated.kokoro.platform.v1.platform_runtime_connect import (
     McpConnectorServiceClient,
+    SkillSourceServiceClient,
 )
 
 
+@pytest.mark.parametrize("read", [False, True], ids=["mcp", "skill-discovery"])
 async def test_snapshot_fresh_proof_bearer_and_request_id(
+    read: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str, dict[str, str]]] = []
@@ -31,25 +34,36 @@ async def test_snapshot_fresh_proof_bearer_and_request_id(
 
     class Proof:
         async def issue(self, operation: str, request_binding_sha256: str) -> str:
-            assert operation == "mcp.get_connector"
+            assert operation == (
+                "skill.discover_visible_skills" if read else "mcp.get_connector"
+            )
             assert len(request_binding_sha256) == 64
             order.append("proof")
             return f"proof-{len(order)}"
 
     async def send(
-        self: object, request: pb.GetMcpConnectorRequest, **kwargs: Any
-    ) -> pb.GetMcpConnectorResponse:
+        self: object,
+        request: pb.GetMcpConnectorRequest | pb.DiscoverVisibleSkillsRequest,
+        **kwargs: Any,
+    ) -> pb.GetMcpConnectorResponse | pb.DiscoverVisibleSkillsResponse:
         order.append("send")
         calls.append((request.request_id, request.execution_proof, kwargs["headers"]))
-        return pb.GetMcpConnectorResponse()
+        return (
+            pb.DiscoverVisibleSkillsResponse() if read else pb.GetMcpConnectorResponse()
+        )
 
     monkeypatch.setattr(McpConnectorServiceClient, "get_mcp_connector", send)
+    monkeypatch.setattr(SkillSourceServiceClient, "discover_visible_skills", send)
     async with PlatformTransport("http://127.0.0.1:1") as transport:
         client = RunPlatformClient(
             tenant_id="tenant", tokens=Tokens(), proofs=Proof(), transport=transport
         )
-        request = pb.GetMcpConnectorRequest(
-            request_id="logical", connector_id=pb.McpConnectorId(value="id")
+        request = (
+            pb.DiscoverVisibleSkillsRequest(request_id="logical", query="", tags=[])
+            if read
+            else pb.GetMcpConnectorRequest(
+                request_id="logical", connector_id=pb.McpConnectorId(value="id")
+            )
         )
         await client.send(request)
         await client.send(request)

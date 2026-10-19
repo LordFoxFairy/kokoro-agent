@@ -1,8 +1,6 @@
-"""litellm 网关档规格：OpenAI 兼容客户端指向网关，凭据只有网关地址 + 网关 key。
+"""System-owned direct/optional LiteLLM snapshots and private worker credentials.
 
-真端点验证：测试内起一个本地 HTTP 假 OpenAI 端点，断言请求真的打到网关地址、
-Authorization 携带网关 key、body.model 为网关侧 model_name（别名），并验证流式可用。
-网关 key 全程用明显假值。
+Local HTTP peers test protocol mechanics only, never a real model authorization.
 """
 
 from __future__ import annotations
@@ -14,7 +12,9 @@ from contextlib import contextmanager
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Literal
+from pathlib import Path
+from pydantic import SecretStr
 
 import pytest
 from langchain_core.messages import HumanMessage
@@ -24,7 +24,8 @@ from support.model_http_mechanism import ModelHttpMechanismClients
 
 from kokoro_agent.config import AppConfig
 from kokoro_agent.policy import ModelConfig
-from kokoro_agent.clients.system import ResolvedModel
+from kokoro_agent.clients.system import ModelConnection, ResolvedModel
+from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.model.factory import ModelHttpClients, make_chat_model
 
 GATEWAY_KEY = "gw-test-key-not-real"
@@ -147,17 +148,22 @@ def _base_url(server: _GatewayServer) -> str:
     return f"http://{host}:{port}/v1"
 
 
-def _config(base_url: str) -> AppConfig:
-    return AppConfig.from_env(
-        {
-            "KOKORO_LITELLM_ENABLED": "1",
-            "KOKORO_LITELLM_BASE_URL": base_url,
-            "KOKORO_LITELLM_API_KEY": GATEWAY_KEY,
-        }
+def _config() -> AppConfig:
+    return AppConfig(
+        model_allow_loopback_http=True,
+        model_credentials=(
+            ModelCredential(
+                provider_id="22222222-2222-4222-8222-222222222222",
+                secret_handle_ref="gateway-key",
+                api_key=SecretStr(GATEWAY_KEY),
+            ),
+        ),
     )
 
 
-def _route() -> ResolvedModel:
+def _route(
+    base_url: str, connection_type: Literal["direct", "litellm"] = "litellm"
+) -> ResolvedModel:
     """One legal immutable owner route; never an implicit production default."""
     return ResolvedModel(
         model_id="11111111-1111-4111-8111-111111111111",
@@ -168,7 +174,13 @@ def _route() -> ResolvedModel:
         generation="1",
         tenant_generation="1",
         provider_model_name="provider-model",
-        gateway_model_name="gateway-alias",
+        request_model="gateway-alias",
+        connection=ModelConnection(
+            protocol="openai_chat_completions",
+            connection_type=connection_type,
+            base_url=base_url,
+            secret_handle_ref="gateway-key",
+        ),
         feature_key="chat",
         label_key="fast",
         context_window=8192,
@@ -178,10 +190,14 @@ def _route() -> ResolvedModel:
 
 @contextmanager
 def _owned_clients(
-    config: AppConfig, *, mechanism: bool = False
+    config: AppConfig,
+    base_url: str = "https://gateway.example.com/v1",
+    *,
+    mechanism: bool = False,
+    connection_type: Literal["direct", "litellm"] = "litellm",
 ) -> Generator[ModelHttpClients]:
     clients = (ModelHttpMechanismClients if mechanism else ModelHttpClients)(
-        config.model, _route()
+        config.model, _route(base_url, connection_type)
     )
     try:
         yield clients
@@ -192,13 +208,16 @@ def _owned_clients(
         assert clients.async_client.is_closed
 
 
-def test_litellm_construction_shape() -> None:
+@pytest.mark.parametrize("connection_type", ["direct", "litellm"])
+def test_model_protocol_construction_for_either_connection_type(
+    connection_type: Literal["direct", "litellm"],
+) -> None:
     # provider=litellm 复用现有 ModelConfig 形状；构造出指向网关的 OpenAI 兼容客户端。
-    config = _config("https://gateway.example.com/v1")
-    with _owned_clients(config) as clients:
+    config = _config()
+    with _owned_clients(config, connection_type=connection_type) as clients:
         model = make_chat_model(
             config.model,
-            ModelConfig(provider="litellm", name="gateway-alias"),
+            ModelConfig(provider="openai_chat_completions", name="gateway-alias"),
             model_clients=clients,
         )
         assert isinstance(model, ChatOpenAI)
@@ -209,14 +228,14 @@ def test_litellm_construction_shape() -> None:
 
 def test_litellm_thinking_maps_reasoning_effort() -> None:
     # OpenAI 兼容语义透传 reasoning_effort：thinking=True→high、False→minimal、None→回落 effort。
-    config = _config("https://gateway.example.com/v1")
+    config = _config()
     with _owned_clients(config) as clients:
 
         def effort_of(thinking: bool | None, effort: str | None) -> object:
             model = make_chat_model(
                 config.model,
                 ModelConfig(
-                    provider="litellm",
+                    provider="openai_chat_completions",
                     name="gateway-alias",
                     thinking=thinking,
                     effort=effort,
@@ -231,61 +250,60 @@ def test_litellm_thinking_maps_reasoning_effort() -> None:
         assert effort_of(None, "medium") == "medium"
 
 
-def test_litellm_requires_base_url_fail_loud(gateway: _GatewayServer) -> None:
-    config = AppConfig.from_env(
-        {"KOKORO_LITELLM_ENABLED": "1", "KOKORO_LITELLM_API_KEY": GATEWAY_KEY}
-    )
-    with pytest.raises(ValueError, match="invalid owned model transport"):
-        ModelHttpClients(config.model, _route())
-    with pytest.raises(ValueError, match="litellm requires owned model clients"):
-        make_chat_model(
-            config.model, ModelConfig(provider="litellm", name="gateway-alias")
-        )
+@pytest.mark.parametrize(
+    "name",
+    ["KOKORO_LITELLM_ENABLED", "KOKORO_LITELLM_BASE_URL", "KOKORO_LITELLM_API_KEY"],
+)
+def test_retired_global_gateway_configuration_is_rejected(name: str) -> None:
+    with pytest.raises(ValueError, match="retired global model gateway"):
+        AppConfig.from_env({name: ""})
 
+
+@pytest.mark.parametrize("configured_provider", [None, "different-provider"])
+def test_model_connection_requires_its_exact_provider_credential(
+    gateway: _GatewayServer, configured_provider: str | None
+) -> None:
+    config = AppConfig(
+        model_allow_loopback_http=True,
+        model_credentials=(
+            ()
+            if configured_provider is None
+            else (
+                ModelCredential(
+                    provider_id=configured_provider,
+                    secret_handle_ref="gateway-key",
+                    api_key=SecretStr(GATEWAY_KEY),
+                ),
+            )
+        ),
+        openai_api_key=SecretStr("unrelated-native-openai-key"),
+    )
+    with pytest.raises(ValueError, match="model credentials unavailable"):
+        ModelHttpClients(config.model, _route(_base_url(gateway)))
+    with pytest.raises(ValueError, match="routed protocol requires owned"):
+        make_chat_model(
+            config.model,
+            ModelConfig(provider="openai_chat_completions", name="gateway-alias"),
+        )
     assert gateway.captured == []
 
 
-def test_litellm_requires_api_key_fail_loud(gateway: _GatewayServer) -> None:
-    config = AppConfig.from_env(
-        {
-            "KOKORO_LITELLM_ENABLED": "1",
-            "KOKORO_LITELLM_BASE_URL": _base_url(gateway),
-        }
-    )
-    with pytest.raises(ValueError, match="invalid owned model transport"):
-        ModelHttpClients(config.model, _route())
-    with pytest.raises(ValueError, match="litellm requires owned model clients"):
-        make_chat_model(
-            config.model, ModelConfig(provider="litellm", name="gateway-alias")
-        )
-
-    assert gateway.captured == []
-
-
-def test_litellm_is_disabled_by_default(gateway: _GatewayServer) -> None:
-    config = AppConfig.from_env(
-        {
-            "KOKORO_LITELLM_BASE_URL": _base_url(gateway),
-            "KOKORO_LITELLM_API_KEY": GATEWAY_KEY,
-        }
-    )
-    with pytest.raises(ValueError, match="invalid owned model transport"):
-        ModelHttpClients(config.model, _route())
-    with pytest.raises(ValueError, match="litellm requires owned model clients"):
-        make_chat_model(
-            config.model, ModelConfig(provider="litellm", name="gateway-alias")
-        )
-
+def test_http_loopback_model_connection_requires_explicit_deployment_permission(
+    gateway: _GatewayServer,
+) -> None:
+    config = _config().model_copy(update={"model_allow_loopback_http": False})
+    with pytest.raises(ValueError, match="explicit deployment permission"):
+        ModelHttpClients(config.model, _route(_base_url(gateway)))
     assert gateway.captured == []
 
 
 def test_litellm_invoke_hits_gateway_with_key(gateway: _GatewayServer) -> None:
     # 真 HTTP 假网关：证明请求打到网关地址、Authorization 带网关 key、body.model 为网关别名。
-    config = _config(_base_url(gateway))
-    with _owned_clients(config, mechanism=True) as clients:
+    config = _config()
+    with _owned_clients(config, _base_url(gateway), mechanism=True) as clients:
         model = make_chat_model(
             config.model,
-            ModelConfig(provider="litellm", name="gateway-alias"),
+            ModelConfig(provider="openai_chat_completions", name="gateway-alias"),
             model_clients=clients,
         )
         reply = model.invoke([HumanMessage(content="ping")])
@@ -303,11 +321,11 @@ def test_litellm_invoke_hits_gateway_with_key(gateway: _GatewayServer) -> None:
 
 def test_litellm_streaming_over_gateway(gateway: _GatewayServer) -> None:
     # 流式可用：stream=True 走 SSE，分块拼回完整内容，请求同样落在网关且带网关 key。
-    config = _config(_base_url(gateway))
-    with _owned_clients(config, mechanism=True) as clients:
+    config = _config()
+    with _owned_clients(config, _base_url(gateway), mechanism=True) as clients:
         model = make_chat_model(
             config.model,
-            ModelConfig(provider="litellm", name="gateway-alias"),
+            ModelConfig(provider="openai_chat_completions", name="gateway-alias"),
             model_clients=clients,
         )
         chunks = list(model.stream([HumanMessage(content="ping")]))
@@ -320,3 +338,92 @@ def test_litellm_streaming_over_gateway(gateway: _GatewayServer) -> None:
 
         assert type(call.max_completion_tokens) is int
         assert call.max_completion_tokens == clients.route.max_output_tokens
+
+
+@pytest.mark.parametrize(
+    "invalid", ["missing", "malformed", "unsafe_mode", "wrong_version"]
+)
+def test_model_credentials_mount_is_validated_at_worker_configuration(
+    tmp_path: Path, invalid: str
+) -> None:
+    path = tmp_path / "model-secrets.json"
+    if invalid != "missing":
+        payload: dict[str, object] = {
+            "version": "9.0.0" if invalid == "wrong_version" else "1.0.0",
+            "credentials": [],
+        }
+        path.write_text("{" if invalid == "malformed" else json.dumps(payload))
+        path.chmod(0o644 if invalid == "unsafe_mode" else 0o600)
+    with pytest.raises(ValueError, match="model credentials unavailable"):
+        AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": str(path)})
+
+
+def test_private_model_snapshot_loads_exact_provider_handle_without_repr_leak(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "private-model.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "credentials": [
+                    {
+                        "provider_id": "provider-one",
+                        "secret_handle_ref": "private-ref",
+                        "api_key": "private-test-key-not-real",
+                    }
+                ],
+            }
+        )
+    )
+    path.chmod(0o400)
+    config = AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": str(path)})
+    assert len(config.model_credentials) == 1
+    item = config.model_credentials[0]
+    assert item.provider_id == "provider-one"
+    assert item.secret_handle_ref == "private-ref"
+    assert item.api_key.get_secret_value() == "private-test-key-not-real"
+    assert "private-test-key-not-real" not in repr(config)
+    assert "private-ref" not in repr(config)
+    assert "private-model.json" not in repr(config)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["duplicate_json", "duplicate_ref", "symlink", "hardlink", "non_ascii_key"],
+)
+def test_private_model_snapshot_rejects_ambiguous_or_unprotected_input_without_leak(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "private-model.json"
+    entry = {
+        "provider_id": "provider-one",
+        "secret_handle_ref": "private-ref",
+        "api_key": "private-test-key-not-real",
+    }
+    entries = (
+        [entry, dict(entry, provider_id="provider-two")]
+        if mutation == "duplicate_ref"
+        else [entry]
+    )
+    if mutation == "non_ascii_key":
+        entry["api_key"] = "private-test-key-秘密"
+    raw = json.dumps({"version": "1.0.0", "credentials": entries})
+    if mutation == "duplicate_json":
+        raw = raw.replace(
+            '"version": "1.0.0"', '"version": "1.0.0", "version": "1.0.0"'
+        )
+    path.write_text(raw)
+    path.chmod(0o600)
+    if mutation in {"symlink", "hardlink"}:
+        alias = tmp_path / "alias.json"
+        if mutation == "symlink":
+            alias.symlink_to(path)
+        else:
+            alias.hardlink_to(path)
+        path = alias
+    with pytest.raises(ValueError, match="model credentials unavailable") as caught:
+        AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": str(path)})
+    assert caught.value.__context__ is None
+    assert "private-test-key" not in str(caught.value)
+    assert str(path) not in str(caught.value)

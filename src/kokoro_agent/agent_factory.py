@@ -76,7 +76,7 @@ from kokoro_agent.agents.native_profile import validate_native_registry
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.models import LeasedRun, StaticRecipeBinding
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 LOGGER = logging.getLogger(__name__)
 
@@ -213,11 +213,12 @@ async def build_deep_agent(
     )
     model = model_from_route(route, agent.model)
     planned = PlannedBinding(
+        binding_version="2.0.0",
         model=route.model_id,
         provider=route.provider_id,
         revision_id=route.revision_id,
         provider_model_name=route.provider_model_name,
-        gateway_model_name=route.gateway_model_name,
+        request_model=route.request_model,
         feature_key=route.feature_key,
         revision=str(route.revision),
         generation=route.generation,

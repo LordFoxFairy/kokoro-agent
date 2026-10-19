@@ -515,12 +515,12 @@ class RunEmitter:
     async def _publish_event(self, event: Mapping[str, JsonValue]) -> None:
         # Redis is a bounded live transport. Critical recovery comes from the
         # PostgreSQL outbox; a broken connection must not hold a run lease forever.
-        await asyncio.wait_for(
-            self._bus.publish(
+        # Keep the caller's cancellation even when publishing completes in the
+        # same loop turn (wait_for can swallow that race on Python 3.11).
+        async with asyncio.timeout(PUBLISH_TIMEOUT_SECONDS):
+            await self._bus.publish(
                 run_events_stream(self._run_id), event, maxlen=RUN_EVENTS_MAXLEN
-            ),
-            timeout=PUBLISH_TIMEOUT_SECONDS,
-        )
+            )
 
 
 def outbox_wire_event(frame: OutboxFrame) -> dict[str, JsonValue]:

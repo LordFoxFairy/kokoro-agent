@@ -28,7 +28,7 @@ from kokoro_agent.model.call_models import (
 )
 from kokoro_agent.model.call_scope import register_current_model_call_task
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 _CALL_NAMESPACE = UUID("a06d00e2-defa-5fe3-8f2c-10ecb19c1161")
 _ATTEMPT_NAMESPACE = UUID("64675e75-8af6-50b4-ade3-d413e5144dc9")
@@ -89,7 +89,7 @@ def _route_matches(planned: PlannedBinding, route: ResolvedModel) -> bool:
         and planned.generation == route.generation
         and planned.tenant_generation == route.tenant_generation
         and planned.provider_model_name == route.provider_model_name
-        and planned.gateway_model_name == route.gateway_model_name
+        and planned.request_model == route.request_model
         and planned.feature_key == route.feature_key
         and planned.label == route.label_key
     )
@@ -135,7 +135,7 @@ async def freeze_final_model_request(
             endpoint=endpoint,
             expected_endpoint=expected_endpoint,
             headers=headers,
-            model_name=route.gateway_model_name,
+            model_name=route.request_model,
             max_output_tokens=route.max_output_tokens,
         )
         if scope is None:

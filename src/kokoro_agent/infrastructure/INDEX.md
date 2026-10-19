@@ -1,5 +1,6 @@
 # infrastructure — Agent 外部技术适配器
 
+- `package_archive.py`：共享只读有界 ZIP32 reader，校验目录/CRC/结构并保留执行标志；Skill/MCP各自维护内容和授权策略。
 - `postgres.py`：PostgreSQL 连接、schema qualification 与连接生命周期。
 - `schema.py`：Agent execution 的 canonical PostgreSQL schema。
 - `postgres_run_repository.py`：RunRepository 的稳定公开 façade；只负责装配和转发，不收纳整套 SQL。

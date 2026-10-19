@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "5.0.0"
+    assert _object(document["info"])["version"] == "7.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -542,13 +542,13 @@ def test_owner_checker_rejects_relaxed_hitl_required_fields(
 
 
 # R95 HTTP5 target assertions are additive: HTTP4 baseline assertions above remain.
-def test_r95_http5_version_is_explicit_without_changing_proof_version() -> None:
+def test_current_http7_and_proof2_versions_are_explicit() -> None:
     document = _document()
     proof = _object(
-        json.loads((ROOT / "contract/execution-proof/v1/schema.json").read_text())
+        json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
-    assert proof["x-kokoro-contract-version"] == "1.0.0"
-    assert _object(document["info"])["version"] == "5.0.0"
+    assert proof["x-kokoro-contract-version"] == "2.0.0"
+    assert _object(document["info"])["version"] == "7.0.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -666,6 +666,9 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
 
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
     from kokoro_agent.platform_binding_contract import EXPECTED_EXECUTION_SOURCES
 
     with (ROOT / "pyproject.toml").open("rb") as source:
@@ -680,6 +683,7 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
     required = {
         *OWNER_SOURCE_FILES,
         *USAGE_AUDIT_FILES,
+        *USAGE_V2_AUDIT_FILES,
         "contract/provenance.json",
         "contract/platform/v1/provenance.json",
         *(record[0] for record in EXPECTED_EXECUTION_SOURCES),
@@ -706,7 +710,7 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
     [
         "contract/openapi/v1/openapi.json",
         "contract/provenance.json",
-        "contract/execution-proof/v1/vectors.json",
+        "contract/execution-proof/v2/vectors.json",
         "contract/platform/v1/execution-operations/v4/command-identities.json",
         "src/kokoro_agent/protocol/run_failure_generated.py",
         "scripts/generate_failure_models.py",
@@ -720,10 +724,13 @@ def test_explicit_checker_rejects_incomplete_assets_without_repair_or_fallback(
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
 
     root = tmp_path / "explicit-source-fixture"
     shutil.copytree(ROOT / "contract", root / "contract")
-    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES):
+    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES):
         path = root / source
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((ROOT / source).read_bytes())
@@ -823,10 +830,13 @@ def test_r216_public_checker_rejects_system_dependency_receipt_tamper(
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
+    from kokoro_agent.model_usage_v2_contract import (
+        USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
+    )
 
     root = tmp_path / "r216-receipt-source"
     shutil.copytree(ROOT / "contract", root / "contract")
-    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES):
+    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES):
         target = root / source
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / source).read_bytes())
@@ -919,7 +929,7 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
     matches = [record for record in records if record["owner"] == "kokoro-system"]
     assert len(matches) == 1
     receipt = matches[0]
-    assert receipt["version"] == "3.0.0"
+    assert receipt["version"] == "4.0.0"
     assert set(receipt) == {
         "owner",
         "contract",
@@ -931,18 +941,18 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
         "operations",
     }
     assert set(_object(receipt["provenance"])) == {"path", "sha256"}
-    assert len(_object(receipt["source_sha256"])) == 19
+    assert len(_object(receipt["source_sha256"])) == 20
     assert receipt["operations"] == ["POST /v1/system/model-catalog/resolve"]
     # Root verified this immutable release against Git objects, not a checkout.
-    # The canonical hash binds every receipt field and all 19 source path/hashes.
+    # The canonical hash binds every receipt field and all 20 source path/hashes.
     import hashlib
 
-    assert receipt["source_commit"] == "955bd587f46a771e43a4330d202d90a7d2d67262"
+    assert receipt["source_commit"] == "7f479f654c535077874d9cf63d1b25437e9420b6"
     canonical = json.dumps(
         receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
     assert hashlib.sha256(canonical).hexdigest() == (
-        "aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b"
+        "4c3e8f4eeb314252f2543f8b994081aa5ffe5670e3cb39128b36bd8c34a44d01"
     )
 
 

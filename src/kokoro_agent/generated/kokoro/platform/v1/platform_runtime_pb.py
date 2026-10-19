@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING, TypeAlias
+from typing import Literal, NoReturn, TYPE_CHECKING, TypeAlias
 
 from protobuf import Enum, Message
 from protobuf._codegen import file_desc
@@ -15,7 +15,7 @@ from protobuf.wkt import timestamp_pb
 from ...common.v1 import common_pb
 
 if TYPE_CHECKING:
-    from protobuf import DescFile
+    from protobuf import DescFile, Oneof
     from protobuf.wkt import Timestamp
 
     from ...common.v1.common_pb import CommandIdentity, PageRequest, PageResult
@@ -55,6 +55,34 @@ class SkillId(Message[_SkillIdFields]):
     """
     ```proto
     message kokoro.platform.v1.SkillId
+    ```
+
+    Attributes:
+        value:
+            ```proto
+            string value = 1;
+            ```
+    """
+
+    __slots__ = ("value",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            value: str = "",
+        ) -> None:
+            pass
+
+        value: str
+
+_SkillImportIntentIdFields: TypeAlias = Literal["value"]
+
+class SkillImportIntentId(Message[_SkillImportIntentIdFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillImportIntentId
     ```
 
     Attributes:
@@ -245,6 +273,34 @@ class McpAuthorizationId(Message[_McpAuthorizationIdFields]):
 
         value: str
 
+_CustomApiProfileIdFields: TypeAlias = Literal["value"]
+
+class CustomApiProfileId(Message[_CustomApiProfileIdFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CustomApiProfileId
+    ```
+
+    Attributes:
+        value:
+            ```proto
+            string value = 1;
+            ```
+    """
+
+    __slots__ = ("value",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            value: str = "",
+        ) -> None:
+            pass
+
+        value: str
+
 _McpInvocationGrantFields: TypeAlias = Literal["value"]
 
 class McpInvocationGrant(Message[_McpInvocationGrantFields]):
@@ -341,7 +397,7 @@ class ProductCatalogContext(Message[_ProductCatalogContextFields]):
         subject_id: str
         owner_scope: OwnerScope | None
 
-_SkillMetadataFields: TypeAlias = Literal["display_name", "summary", "tags", "metadata_json"]
+_SkillMetadataFields: TypeAlias = Literal["display_name", "summary", "tags", "metadata_json", "example_prompts", "category_keys"]
 
 class SkillMetadata(Message[_SkillMetadataFields]):
     """
@@ -366,9 +422,17 @@ class SkillMetadata(Message[_SkillMetadataFields]):
             ```proto
             bytes metadata_json = 4;
             ```
+        example_prompts:
+            ```proto
+            optional kokoro.platform.v1.SkillExamplePrompts example_prompts = 5;
+            ```
+        category_keys:
+            ```proto
+            optional kokoro.platform.v1.SkillCategoryKeys category_keys = 6;
+            ```
     """
 
-    __slots__ = ("display_name", "summary", "tags", "metadata_json")
+    __slots__ = ("display_name", "summary", "tags", "metadata_json", "example_prompts", "category_keys")
 
     if TYPE_CHECKING:
 
@@ -379,6 +443,8 @@ class SkillMetadata(Message[_SkillMetadataFields]):
             summary: str = "",
             tags: list[str] | None = None,
             metadata_json: bytes = b"",
+            example_prompts: SkillExamplePrompts | None = None,
+            category_keys: SkillCategoryKeys | None = None,
         ) -> None:
             pass
 
@@ -386,8 +452,66 @@ class SkillMetadata(Message[_SkillMetadataFields]):
         summary: str
         tags: list[str]
         metadata_json: bytes
+        example_prompts: SkillExamplePrompts | None
+        category_keys: SkillCategoryKeys | None
 
-_SkillSummaryFields: TypeAlias = Literal["scope_kind", "display_name", "summary", "tags", "revision", "content_digest", "status", "source_ref", "series_id", "skill_id"]
+_SkillCategoryKeysFields: TypeAlias = Literal["keys"]
+
+class SkillCategoryKeys(Message[_SkillCategoryKeysFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillCategoryKeys
+    ```
+
+    Attributes:
+        keys:
+            ```proto
+            repeated string keys = 1;
+            ```
+    """
+
+    __slots__ = ("keys",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            keys: list[str] | None = None,
+        ) -> None:
+            pass
+
+        keys: list[str]
+
+_SkillExamplePromptsFields: TypeAlias = Literal["prompts"]
+
+class SkillExamplePrompts(Message[_SkillExamplePromptsFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillExamplePrompts
+    ```
+
+    Attributes:
+        prompts:
+            ```proto
+            repeated string prompts = 1;
+            ```
+    """
+
+    __slots__ = ("prompts",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            prompts: list[str] | None = None,
+        ) -> None:
+            pass
+
+        prompts: list[str]
+
+_SkillSummaryFields: TypeAlias = Literal["scope_kind", "display_name", "summary", "tags", "revision", "content_digest", "status", "source_ref", "series_id", "skill_id", "category_keys", "product"]
 
 class SkillSummary(Message[_SkillSummaryFields]):
     """
@@ -436,9 +560,17 @@ class SkillSummary(Message[_SkillSummaryFields]):
             ```proto
             optional kokoro.platform.v1.SkillId skill_id = 11;
             ```
+        category_keys:
+            ```proto
+            optional kokoro.platform.v1.SkillCategoryKeys category_keys = 12;
+            ```
+        product:
+            ```proto
+            optional kokoro.platform.v1.SkillProductFacts product = 13;
+            ```
     """
 
-    __slots__ = ("scope_kind", "display_name", "summary", "tags", "revision", "content_digest", "status", "source_ref", "series_id", "skill_id")
+    __slots__ = ("scope_kind", "display_name", "summary", "tags", "revision", "content_digest", "status", "source_ref", "series_id", "skill_id", "category_keys", "product")
 
     if TYPE_CHECKING:
 
@@ -455,6 +587,8 @@ class SkillSummary(Message[_SkillSummaryFields]):
             source_ref: SkillSourceRef | None = None,
             series_id: SkillSeriesId | None = None,
             skill_id: SkillId | None = None,
+            category_keys: SkillCategoryKeys | None = None,
+            product: SkillProductFacts | None = None,
         ) -> None:
             pass
 
@@ -468,6 +602,8 @@ class SkillSummary(Message[_SkillSummaryFields]):
         source_ref: SkillSourceRef | None
         series_id: SkillSeriesId | None
         skill_id: SkillId | None
+        category_keys: SkillCategoryKeys | None
+        product: SkillProductFacts | None
 
 _SkillSourceFields: TypeAlias = Literal["source_ref", "scope_kind", "revision", "package_asset_ref", "content_digest", "manifest_identity", "series_id", "skill_id"]
 
@@ -539,7 +675,7 @@ class SkillSource(Message[_SkillSourceFields]):
         series_id: SkillSeriesId | None
         skill_id: SkillId | None
 
-_CreateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "owner_scope", "metadata", "product_context"]
+_CreateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "owner_scope", "metadata", "product_context", "creation_provenance"]
 
 class CreateSkillDraftRequest(Message[_CreateSkillDraftRequestFields]):
     """
@@ -568,9 +704,13 @@ class CreateSkillDraftRequest(Message[_CreateSkillDraftRequestFields]):
             ```proto
             optional kokoro.platform.v1.ProductCatalogContext product_context = 5;
             ```
+        creation_provenance:
+            ```proto
+            optional kokoro.platform.v1.SkillCreationProvenance creation_provenance = 6;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "owner_scope", "metadata", "product_context")
+    __slots__ = ("request_id", "command", "owner_scope", "metadata", "product_context", "creation_provenance")
 
     if TYPE_CHECKING:
 
@@ -582,6 +722,7 @@ class CreateSkillDraftRequest(Message[_CreateSkillDraftRequestFields]):
             owner_scope: OwnerScope | None = None,
             metadata: SkillMetadata | None = None,
             product_context: ProductCatalogContext | None = None,
+            creation_provenance: SkillCreationProvenance | None = None,
         ) -> None:
             pass
 
@@ -590,8 +731,9 @@ class CreateSkillDraftRequest(Message[_CreateSkillDraftRequestFields]):
         owner_scope: OwnerScope | None
         metadata: SkillMetadata | None
         product_context: ProductCatalogContext | None
+        creation_provenance: SkillCreationProvenance | None
 
-_CreateSkillDraftResponseFields: TypeAlias = Literal["skill_id", "revision", "status", "replayed", "series_id"]
+_CreateSkillDraftResponseFields: TypeAlias = Literal["skill_id", "revision", "status", "replayed", "series_id", "state_version"]
 
 class CreateSkillDraftResponse(Message[_CreateSkillDraftResponseFields]):
     """
@@ -620,9 +762,13 @@ class CreateSkillDraftResponse(Message[_CreateSkillDraftResponseFields]):
             ```proto
             optional kokoro.platform.v1.SkillSeriesId series_id = 5;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 6;
+            ```
     """
 
-    __slots__ = ("skill_id", "revision", "status", "replayed", "series_id")
+    __slots__ = ("skill_id", "revision", "status", "replayed", "series_id", "state_version")
 
     if TYPE_CHECKING:
 
@@ -634,6 +780,7 @@ class CreateSkillDraftResponse(Message[_CreateSkillDraftResponseFields]):
             status: SkillStatus | None = None,
             replayed: bool = False,
             series_id: SkillSeriesId | None = None,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -642,6 +789,523 @@ class CreateSkillDraftResponse(Message[_CreateSkillDraftResponseFields]):
         status: SkillStatus
         replayed: bool
         series_id: SkillSeriesId | None
+        state_version: int
+
+_SkillImportUploadProofFields: TypeAlias = Literal["upload_id", "asset_id", "source_version_id", "content_sha256", "size_bytes"]
+
+class SkillImportUploadProof(Message[_SkillImportUploadProofFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillImportUploadProof
+    ```
+
+    Attributes:
+        upload_id:
+            ```proto
+            string upload_id = 1;
+            ```
+        asset_id:
+            ```proto
+            string asset_id = 2;
+            ```
+        source_version_id:
+            ```proto
+            string source_version_id = 3;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 4;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 5;
+            ```
+    """
+
+    __slots__ = ("upload_id", "asset_id", "source_version_id", "content_sha256", "size_bytes")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            upload_id: str = "",
+            asset_id: str = "",
+            source_version_id: str = "",
+            content_sha256: str = "",
+            size_bytes: int = 0,
+        ) -> None:
+            pass
+
+        upload_id: str
+        asset_id: str
+        source_version_id: str
+        content_sha256: str
+        size_bytes: int
+
+_BeginLocalSkillImportRequestFields: TypeAlias = Literal["request_id", "command", "product_context", "filename", "size_bytes", "content_sha256"]
+
+class BeginLocalSkillImportRequest(Message[_BeginLocalSkillImportRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginLocalSkillImportRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+        filename:
+            ```proto
+            string filename = 4;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 5;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "product_context", "filename", "size_bytes", "content_sha256")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            product_context: ProductCatalogContext | None = None,
+            filename: str = "",
+            size_bytes: int = 0,
+            content_sha256: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        product_context: ProductCatalogContext | None
+        filename: str
+        size_bytes: int
+        content_sha256: str
+
+_BeginLocalSkillImportResponseFields: TypeAlias = Literal["intent_id", "skill_id", "phase", "upload_id", "transfer_reference", "expires_at", "replayed"]
+
+class BeginLocalSkillImportResponse(Message[_BeginLocalSkillImportResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginLocalSkillImportResponse
+    ```
+
+    Attributes:
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        phase:
+            ```proto
+            kokoro.platform.v1.SkillImportPhase phase = 3;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 4;
+            ```
+        transfer_reference:
+            ```proto
+            optional kokoro.platform.v1.PackageTransferReference transfer_reference = 5;
+            ```
+        expires_at:
+            ```proto
+            optional google.protobuf.Timestamp expires_at = 6;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 7;
+            ```
+    """
+
+    __slots__ = ("intent_id", "skill_id", "phase", "upload_id", "transfer_reference", "expires_at", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            intent_id: SkillImportIntentId | None = None,
+            skill_id: SkillId | None = None,
+            phase: SkillImportPhase | None = None,
+            upload_id: str = "",
+            transfer_reference: PackageTransferReference | None = None,
+            expires_at: Timestamp | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        intent_id: SkillImportIntentId | None
+        skill_id: SkillId | None
+        phase: SkillImportPhase
+        upload_id: str
+        transfer_reference: PackageTransferReference | None
+        expires_at: Timestamp | None
+        replayed: bool
+
+_CompleteLocalSkillImportRequestFields: TypeAlias = Literal["request_id", "command", "product_context", "intent_id", "upload_id", "source_version_id", "size_bytes", "content_sha256"]
+
+class CompleteLocalSkillImportRequest(Message[_CompleteLocalSkillImportRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompleteLocalSkillImportRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 4;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 5;
+            ```
+        source_version_id:
+            ```proto
+            string source_version_id = 6;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 7;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 8;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "product_context", "intent_id", "upload_id", "source_version_id", "size_bytes", "content_sha256")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            product_context: ProductCatalogContext | None = None,
+            intent_id: SkillImportIntentId | None = None,
+            upload_id: str = "",
+            source_version_id: str = "",
+            size_bytes: int = 0,
+            content_sha256: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        product_context: ProductCatalogContext | None
+        intent_id: SkillImportIntentId | None
+        upload_id: str
+        source_version_id: str
+        size_bytes: int
+        content_sha256: str
+
+_CompleteLocalSkillImportResponseFields: TypeAlias = Literal["intent_id", "skill_id", "phase", "upload_proof", "expires_at", "replayed", "scan_state"]
+
+class CompleteLocalSkillImportResponse(Message[_CompleteLocalSkillImportResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompleteLocalSkillImportResponse
+    ```
+
+    Attributes:
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        phase:
+            ```proto
+            kokoro.platform.v1.SkillImportPhase phase = 3;
+            ```
+        upload_proof:
+            ```proto
+            optional kokoro.platform.v1.SkillImportUploadProof upload_proof = 4;
+            ```
+        expires_at:
+            ```proto
+            optional google.protobuf.Timestamp expires_at = 5;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 6;
+            ```
+        scan_state:
+            ```proto
+            kokoro.platform.v1.SkillPackageScanState scan_state = 7;
+            ```
+    """
+
+    __slots__ = ("intent_id", "skill_id", "phase", "upload_proof", "expires_at", "replayed", "scan_state")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            intent_id: SkillImportIntentId | None = None,
+            skill_id: SkillId | None = None,
+            phase: SkillImportPhase | None = None,
+            upload_proof: SkillImportUploadProof | None = None,
+            expires_at: Timestamp | None = None,
+            replayed: bool = False,
+            scan_state: SkillPackageScanState | None = None,
+        ) -> None:
+            pass
+
+        intent_id: SkillImportIntentId | None
+        skill_id: SkillId | None
+        phase: SkillImportPhase
+        upload_proof: SkillImportUploadProof | None
+        expires_at: Timestamp | None
+        replayed: bool
+        scan_state: SkillPackageScanState
+
+_FinalizeLocalSkillImportRequestFields: TypeAlias = Literal["request_id", "command", "product_context", "intent_id"]
+
+class FinalizeLocalSkillImportRequest(Message[_FinalizeLocalSkillImportRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.FinalizeLocalSkillImportRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "product_context", "intent_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            product_context: ProductCatalogContext | None = None,
+            intent_id: SkillImportIntentId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        product_context: ProductCatalogContext | None
+        intent_id: SkillImportIntentId | None
+
+_FinalizeLocalSkillImportResponseFields: TypeAlias = Literal["intent_id", "phase", "skill", "installation", "replayed"]
+
+class FinalizeLocalSkillImportResponse(Message[_FinalizeLocalSkillImportResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.FinalizeLocalSkillImportResponse
+    ```
+
+    Attributes:
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 1;
+            ```
+        phase:
+            ```proto
+            kokoro.platform.v1.SkillImportPhase phase = 2;
+            ```
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 3;
+            ```
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 4;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 5;
+            ```
+    """
+
+    __slots__ = ("intent_id", "phase", "skill", "installation", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            intent_id: SkillImportIntentId | None = None,
+            phase: SkillImportPhase | None = None,
+            skill: SkillProductRecord | None = None,
+            installation: ProductSkillInstallation | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        intent_id: SkillImportIntentId | None
+        phase: SkillImportPhase
+        skill: SkillProductRecord | None
+        installation: ProductSkillInstallation | None
+        replayed: bool
+
+_GetLocalSkillImportRequestFields: TypeAlias = Literal["request_id", "product_context", "intent_id"]
+
+class GetLocalSkillImportRequest(Message[_GetLocalSkillImportRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetLocalSkillImportRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 2;
+            ```
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "product_context", "intent_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            product_context: ProductCatalogContext | None = None,
+            intent_id: SkillImportIntentId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        product_context: ProductCatalogContext | None
+        intent_id: SkillImportIntentId | None
+
+_GetLocalSkillImportResponseFields: TypeAlias = Literal["intent_id", "skill_id", "phase", "expires_at", "upload_proof", "rejection_code", "skill", "installation"]
+
+class GetLocalSkillImportResponse(Message[_GetLocalSkillImportResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetLocalSkillImportResponse
+    ```
+
+    Attributes:
+        intent_id:
+            ```proto
+            optional kokoro.platform.v1.SkillImportIntentId intent_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        phase:
+            ```proto
+            kokoro.platform.v1.SkillImportPhase phase = 3;
+            ```
+        expires_at:
+            ```proto
+            optional google.protobuf.Timestamp expires_at = 4;
+            ```
+        upload_proof:
+            ```proto
+            optional kokoro.platform.v1.SkillImportUploadProof upload_proof = 5;
+            ```
+        rejection_code:
+            ```proto
+            optional string rejection_code = 6;
+            ```
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 7;
+            ```
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 8;
+            ```
+    """
+
+    __slots__ = ("intent_id", "skill_id", "phase", "expires_at", "upload_proof", "rejection_code", "skill", "installation")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            intent_id: SkillImportIntentId | None = None,
+            skill_id: SkillId | None = None,
+            phase: SkillImportPhase | None = None,
+            expires_at: Timestamp | None = None,
+            upload_proof: SkillImportUploadProof | None = None,
+            rejection_code: str | None = None,
+            skill: SkillProductRecord | None = None,
+            installation: ProductSkillInstallation | None = None,
+        ) -> None:
+            pass
+
+        intent_id: SkillImportIntentId | None
+        skill_id: SkillId | None
+        phase: SkillImportPhase
+        expires_at: Timestamp | None
+        upload_proof: SkillImportUploadProof | None
+        rejection_code: str
+        skill: SkillProductRecord | None
+        installation: ProductSkillInstallation | None
 
 _GetSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "skill_id", "product_context"]
 
@@ -683,7 +1347,7 @@ class GetSkillPackageUploadRequest(Message[_GetSkillPackageUploadRequestFields])
         skill_id: SkillId | None
         product_context: ProductCatalogContext | None
 
-_GetSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id"]
+_GetSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id", "source_version_id", "state_version"]
 
 class GetSkillPackageUploadResponse(Message[_GetSkillPackageUploadResponseFields]):
     """
@@ -712,9 +1376,17 @@ class GetSkillPackageUploadResponse(Message[_GetSkillPackageUploadResponseFields
             ```proto
             optional string upload_id = 5;
             ```
+        source_version_id:
+            ```proto
+            optional string source_version_id = 6;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 7;
+            ```
     """
 
-    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id")
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id", "source_version_id", "state_version")
 
     if TYPE_CHECKING:
 
@@ -726,6 +1398,8 @@ class GetSkillPackageUploadResponse(Message[_GetSkillPackageUploadResponseFields
             attempt_epoch: int = 0,
             phase: SkillPackagePhase | None = None,
             upload_id: str | None = None,
+            source_version_id: str | None = None,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -734,8 +1408,10 @@ class GetSkillPackageUploadResponse(Message[_GetSkillPackageUploadResponseFields
         attempt_epoch: int
         phase: SkillPackagePhase
         upload_id: str
+        source_version_id: str
+        state_version: int
 
-_BeginSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id"]
+_BeginSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id", "expected_state_version"]
 
 class BeginSkillPackageUploadRequest(Message[_BeginSkillPackageUploadRequestFields]):
     """
@@ -780,9 +1456,13 @@ class BeginSkillPackageUploadRequest(Message[_BeginSkillPackageUploadRequestFiel
             ```proto
             optional string replaces_attempt_id = 9;
             ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 10;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "skill_id", "product_context", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id")
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id", "expected_state_version")
 
     if TYPE_CHECKING:
 
@@ -798,6 +1478,7 @@ class BeginSkillPackageUploadRequest(Message[_BeginSkillPackageUploadRequestFiel
             size_bytes: int = 0,
             content_sha256: str = "",
             replaces_attempt_id: str | None = None,
+            expected_state_version: int | None = None,
         ) -> None:
             pass
 
@@ -810,8 +1491,9 @@ class BeginSkillPackageUploadRequest(Message[_BeginSkillPackageUploadRequestFiel
         size_bytes: int
         content_sha256: str
         replaces_attempt_id: str
+        expected_state_version: int
 
-_BeginSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed"]
+_BeginSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed", "state_version"]
 
 class BeginSkillPackageUploadResponse(Message[_BeginSkillPackageUploadResponseFields]):
     """
@@ -844,9 +1526,13 @@ class BeginSkillPackageUploadResponse(Message[_BeginSkillPackageUploadResponseFi
             ```proto
             bool replayed = 6;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 7;
+            ```
     """
 
-    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed")
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed", "state_version")
 
     if TYPE_CHECKING:
 
@@ -859,6 +1545,7 @@ class BeginSkillPackageUploadResponse(Message[_BeginSkillPackageUploadResponseFi
             upload_id: str = "",
             transfer_reference: PackageTransferReference | None = None,
             replayed: bool = False,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -868,8 +1555,9 @@ class BeginSkillPackageUploadResponse(Message[_BeginSkillPackageUploadResponseFi
         upload_id: str
         transfer_reference: PackageTransferReference | None
         replayed: bool
+        state_version: int
 
-_CompleteSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "attempt_id", "upload_id", "content_sha256", "size_bytes"]
+_CompleteSkillPackageUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "attempt_id", "upload_id", "content_sha256", "size_bytes", "source_version_id", "expected_state_version"]
 
 class CompleteSkillPackageUploadRequest(Message[_CompleteSkillPackageUploadRequestFields]):
     """
@@ -910,9 +1598,17 @@ class CompleteSkillPackageUploadRequest(Message[_CompleteSkillPackageUploadReque
             ```proto
             uint64 size_bytes = 8;
             ```
+        source_version_id:
+            ```proto
+            optional string source_version_id = 9;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 10;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "skill_id", "product_context", "attempt_id", "upload_id", "content_sha256", "size_bytes")
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "attempt_id", "upload_id", "content_sha256", "size_bytes", "source_version_id", "expected_state_version")
 
     if TYPE_CHECKING:
 
@@ -927,6 +1623,8 @@ class CompleteSkillPackageUploadRequest(Message[_CompleteSkillPackageUploadReque
             upload_id: str = "",
             content_sha256: str = "",
             size_bytes: int = 0,
+            source_version_id: str | None = None,
+            expected_state_version: int | None = None,
         ) -> None:
             pass
 
@@ -938,8 +1636,10 @@ class CompleteSkillPackageUploadRequest(Message[_CompleteSkillPackageUploadReque
         upload_id: str
         content_sha256: str
         size_bytes: int
+        source_version_id: str
+        expected_state_version: int
 
-_CompleteSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "asset_id", "phase", "replayed", "content_sha256", "scan_state"]
+_CompleteSkillPackageUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "asset_id", "phase", "replayed", "content_sha256", "scan_state", "state_version"]
 
 class CompleteSkillPackageUploadResponse(Message[_CompleteSkillPackageUploadResponseFields]):
     """
@@ -984,9 +1684,13 @@ class CompleteSkillPackageUploadResponse(Message[_CompleteSkillPackageUploadResp
             ```proto
             kokoro.platform.v1.SkillPackageScanState scan_state = 9;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 10;
+            ```
     """
 
-    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "asset_id", "phase", "replayed", "content_sha256", "scan_state")
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "asset_id", "phase", "replayed", "content_sha256", "scan_state", "state_version")
 
     if TYPE_CHECKING:
 
@@ -1002,6 +1706,7 @@ class CompleteSkillPackageUploadResponse(Message[_CompleteSkillPackageUploadResp
             replayed: bool = False,
             content_sha256: str = "",
             scan_state: SkillPackageScanState | None = None,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -1014,8 +1719,9 @@ class CompleteSkillPackageUploadResponse(Message[_CompleteSkillPackageUploadResp
         replayed: bool
         content_sha256: str
         scan_state: SkillPackageScanState
+        state_version: int
 
-_ValidateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "attempt_id"]
+_ValidateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "attempt_id", "expected_state_version"]
 
 class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
     """
@@ -1044,9 +1750,13 @@ class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
             ```proto
             string attempt_id = 7;
             ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 8;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "skill_id", "product_context", "attempt_id")
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "attempt_id", "expected_state_version")
 
     if TYPE_CHECKING:
 
@@ -1058,6 +1768,7 @@ class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
             skill_id: SkillId | None = None,
             product_context: ProductCatalogContext | None = None,
             attempt_id: str = "",
+            expected_state_version: int | None = None,
         ) -> None:
             pass
 
@@ -1066,8 +1777,9 @@ class ValidateSkillDraftRequest(Message[_ValidateSkillDraftRequestFields]):
         skill_id: SkillId | None
         product_context: ProductCatalogContext | None
         attempt_id: str
+        expected_state_version: int
 
-_ValidateSkillDraftResponseFields: TypeAlias = Literal["skill_id", "valid", "content_digest", "manifest_identity", "replayed", "series_id"]
+_ValidateSkillDraftResponseFields: TypeAlias = Literal["skill_id", "valid", "content_digest", "manifest_identity", "replayed", "series_id", "state_version", "original_name", "file_count"]
 
 class ValidateSkillDraftResponse(Message[_ValidateSkillDraftResponseFields]):
     """
@@ -1100,9 +1812,21 @@ class ValidateSkillDraftResponse(Message[_ValidateSkillDraftResponseFields]):
             ```proto
             optional kokoro.platform.v1.SkillSeriesId series_id = 6;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 7;
+            ```
+        original_name:
+            ```proto
+            optional string original_name = 8;
+            ```
+        file_count:
+            ```proto
+            optional uint32 file_count = 9;
+            ```
     """
 
-    __slots__ = ("skill_id", "valid", "content_digest", "manifest_identity", "replayed", "series_id")
+    __slots__ = ("skill_id", "valid", "content_digest", "manifest_identity", "replayed", "series_id", "state_version", "original_name", "file_count")
 
     if TYPE_CHECKING:
 
@@ -1115,6 +1839,9 @@ class ValidateSkillDraftResponse(Message[_ValidateSkillDraftResponseFields]):
             manifest_identity: str = "",
             replayed: bool = False,
             series_id: SkillSeriesId | None = None,
+            state_version: int = 0,
+            original_name: str | None = None,
+            file_count: int | None = None,
         ) -> None:
             pass
 
@@ -1124,8 +1851,11 @@ class ValidateSkillDraftResponse(Message[_ValidateSkillDraftResponseFields]):
         manifest_identity: str
         replayed: bool
         series_id: SkillSeriesId | None
+        state_version: int
+        original_name: str
+        file_count: int
 
-_PublishSkillRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "visibility", "product_context"]
+_PublishSkillRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "visibility", "product_context", "audience", "expected_state_version"]
 
 class PublishSkillRequest(Message[_PublishSkillRequestFields]):
     """
@@ -1154,9 +1884,17 @@ class PublishSkillRequest(Message[_PublishSkillRequestFields]):
             ```proto
             optional kokoro.platform.v1.ProductCatalogContext product_context = 5;
             ```
+        audience:
+            ```proto
+            optional string audience = 6;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 7;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "skill_id", "visibility", "product_context")
+    __slots__ = ("request_id", "command", "skill_id", "visibility", "product_context", "audience", "expected_state_version")
 
     if TYPE_CHECKING:
 
@@ -1168,6 +1906,8 @@ class PublishSkillRequest(Message[_PublishSkillRequestFields]):
             skill_id: SkillId | None = None,
             visibility: SkillScopeKind | None = None,
             product_context: ProductCatalogContext | None = None,
+            audience: str | None = None,
+            expected_state_version: int | None = None,
         ) -> None:
             pass
 
@@ -1176,8 +1916,10 @@ class PublishSkillRequest(Message[_PublishSkillRequestFields]):
         skill_id: SkillId | None
         visibility: SkillScopeKind
         product_context: ProductCatalogContext | None
+        audience: str
+        expected_state_version: int
 
-_PublishSkillResponseFields: TypeAlias = Literal["source_ref", "revision", "status", "event_id", "replayed"]
+_PublishSkillResponseFields: TypeAlias = Literal["source_ref", "revision", "status", "event_id", "replayed", "state_version"]
 
 class PublishSkillResponse(Message[_PublishSkillResponseFields]):
     """
@@ -1206,9 +1948,13 @@ class PublishSkillResponse(Message[_PublishSkillResponseFields]):
             ```proto
             bool replayed = 5;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 6;
+            ```
     """
 
-    __slots__ = ("source_ref", "revision", "status", "event_id", "replayed")
+    __slots__ = ("source_ref", "revision", "status", "event_id", "replayed", "state_version")
 
     if TYPE_CHECKING:
 
@@ -1220,6 +1966,7 @@ class PublishSkillResponse(Message[_PublishSkillResponseFields]):
             status: SkillStatus | None = None,
             event_id: str = "",
             replayed: bool = False,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -1228,8 +1975,9 @@ class PublishSkillResponse(Message[_PublishSkillResponseFields]):
         status: SkillStatus
         event_id: str
         replayed: bool
+        state_version: int
 
-_WithdrawSkillRequestFields: TypeAlias = Literal["request_id", "command", "source_ref", "reason", "product_context"]
+_WithdrawSkillRequestFields: TypeAlias = Literal["request_id", "command", "source_ref", "reason", "product_context", "expected_state_version"]
 
 class WithdrawSkillRequest(Message[_WithdrawSkillRequestFields]):
     """
@@ -1258,9 +2006,13 @@ class WithdrawSkillRequest(Message[_WithdrawSkillRequestFields]):
             ```proto
             optional kokoro.platform.v1.ProductCatalogContext product_context = 5;
             ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 6;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "source_ref", "reason", "product_context")
+    __slots__ = ("request_id", "command", "source_ref", "reason", "product_context", "expected_state_version")
 
     if TYPE_CHECKING:
 
@@ -1272,6 +2024,7 @@ class WithdrawSkillRequest(Message[_WithdrawSkillRequestFields]):
             source_ref: SkillSourceRef | None = None,
             reason: str = "",
             product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
         ) -> None:
             pass
 
@@ -1280,8 +2033,9 @@ class WithdrawSkillRequest(Message[_WithdrawSkillRequestFields]):
         source_ref: SkillSourceRef | None
         reason: str
         product_context: ProductCatalogContext | None
+        expected_state_version: int
 
-_WithdrawSkillResponseFields: TypeAlias = Literal["source_ref", "status", "event_id", "replayed"]
+_WithdrawSkillResponseFields: TypeAlias = Literal["source_ref", "status", "event_id", "replayed", "state_version"]
 
 class WithdrawSkillResponse(Message[_WithdrawSkillResponseFields]):
     """
@@ -1306,9 +2060,13 @@ class WithdrawSkillResponse(Message[_WithdrawSkillResponseFields]):
             ```proto
             bool replayed = 4;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 5;
+            ```
     """
 
-    __slots__ = ("source_ref", "status", "event_id", "replayed")
+    __slots__ = ("source_ref", "status", "event_id", "replayed", "state_version")
 
     if TYPE_CHECKING:
 
@@ -1319,6 +2077,7 @@ class WithdrawSkillResponse(Message[_WithdrawSkillResponseFields]):
             status: SkillStatus | None = None,
             event_id: str = "",
             replayed: bool = False,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -1326,6 +2085,7 @@ class WithdrawSkillResponse(Message[_WithdrawSkillResponseFields]):
         status: SkillStatus
         event_id: str
         replayed: bool
+        state_version: int
 
 _DiscoverVisibleSkillsRequestFields: TypeAlias = Literal["request_id", "query", "tags", "scope_kind", "page", "execution_proof"]
 
@@ -1621,7 +2381,7 @@ class PackageTransferReference(Message[_PackageTransferReferenceFields]):
         required_headers: dict[str, str]
         expires_at: Timestamp | None
 
-_CreateSkillVersionRequestFields: TypeAlias = Literal["request_id", "command", "owner_scope", "base_skill_id", "metadata", "product_context"]
+_CreateSkillVersionRequestFields: TypeAlias = Literal["request_id", "command", "owner_scope", "base_skill_id", "metadata", "product_context", "creation_provenance"]
 
 class CreateSkillVersionRequest(Message[_CreateSkillVersionRequestFields]):
     """
@@ -1654,9 +2414,13 @@ class CreateSkillVersionRequest(Message[_CreateSkillVersionRequestFields]):
             ```proto
             optional kokoro.platform.v1.ProductCatalogContext product_context = 6;
             ```
+        creation_provenance:
+            ```proto
+            optional kokoro.platform.v1.SkillCreationProvenance creation_provenance = 7;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "owner_scope", "base_skill_id", "metadata", "product_context")
+    __slots__ = ("request_id", "command", "owner_scope", "base_skill_id", "metadata", "product_context", "creation_provenance")
 
     if TYPE_CHECKING:
 
@@ -1669,6 +2433,7 @@ class CreateSkillVersionRequest(Message[_CreateSkillVersionRequestFields]):
             base_skill_id: SkillId | None = None,
             metadata: SkillMetadata | None = None,
             product_context: ProductCatalogContext | None = None,
+            creation_provenance: SkillCreationProvenance | None = None,
         ) -> None:
             pass
 
@@ -1678,8 +2443,9 @@ class CreateSkillVersionRequest(Message[_CreateSkillVersionRequestFields]):
         base_skill_id: SkillId | None
         metadata: SkillMetadata | None
         product_context: ProductCatalogContext | None
+        creation_provenance: SkillCreationProvenance | None
 
-_CreateSkillVersionResponseFields: TypeAlias = Literal["skill_id", "revision", "status", "replayed", "series_id"]
+_CreateSkillVersionResponseFields: TypeAlias = Literal["skill_id", "revision", "status", "replayed", "series_id", "state_version"]
 
 class CreateSkillVersionResponse(Message[_CreateSkillVersionResponseFields]):
     """
@@ -1708,9 +2474,13 @@ class CreateSkillVersionResponse(Message[_CreateSkillVersionResponseFields]):
             ```proto
             optional kokoro.platform.v1.SkillSeriesId series_id = 5;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 6;
+            ```
     """
 
-    __slots__ = ("skill_id", "revision", "status", "replayed", "series_id")
+    __slots__ = ("skill_id", "revision", "status", "replayed", "series_id", "state_version")
 
     if TYPE_CHECKING:
 
@@ -1722,6 +2492,7 @@ class CreateSkillVersionResponse(Message[_CreateSkillVersionResponseFields]):
             status: SkillStatus | None = None,
             replayed: bool = False,
             series_id: SkillSeriesId | None = None,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -1730,8 +2501,9 @@ class CreateSkillVersionResponse(Message[_CreateSkillVersionResponseFields]):
         status: SkillStatus
         replayed: bool
         series_id: SkillSeriesId | None
+        state_version: int
 
-_SetSkillStatusRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "status", "product_context"]
+_SetSkillStatusRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "status", "product_context", "expected_state_version"]
 
 class SetSkillStatusRequest(Message[_SetSkillStatusRequestFields]):
     """
@@ -1760,9 +2532,13 @@ class SetSkillStatusRequest(Message[_SetSkillStatusRequestFields]):
             ```proto
             optional kokoro.platform.v1.ProductCatalogContext product_context = 5;
             ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 6;
+            ```
     """
 
-    __slots__ = ("request_id", "command", "skill_id", "status", "product_context")
+    __slots__ = ("request_id", "command", "skill_id", "status", "product_context", "expected_state_version")
 
     if TYPE_CHECKING:
 
@@ -1774,6 +2550,7 @@ class SetSkillStatusRequest(Message[_SetSkillStatusRequestFields]):
             skill_id: SkillId | None = None,
             status: SkillStatus | None = None,
             product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
         ) -> None:
             pass
 
@@ -1782,8 +2559,9 @@ class SetSkillStatusRequest(Message[_SetSkillStatusRequestFields]):
         skill_id: SkillId | None
         status: SkillStatus
         product_context: ProductCatalogContext | None
+        expected_state_version: int
 
-_SetSkillStatusResponseFields: TypeAlias = Literal["skill_id", "revision", "status", "replayed"]
+_SetSkillStatusResponseFields: TypeAlias = Literal["skill_id", "revision", "status", "replayed", "state_version"]
 
 class SetSkillStatusResponse(Message[_SetSkillStatusResponseFields]):
     """
@@ -1808,9 +2586,13 @@ class SetSkillStatusResponse(Message[_SetSkillStatusResponseFields]):
             ```proto
             bool replayed = 4;
             ```
+        state_version:
+            ```proto
+            uint64 state_version = 5;
+            ```
     """
 
-    __slots__ = ("skill_id", "revision", "status", "replayed")
+    __slots__ = ("skill_id", "revision", "status", "replayed", "state_version")
 
     if TYPE_CHECKING:
 
@@ -1821,6 +2603,7 @@ class SetSkillStatusResponse(Message[_SetSkillStatusResponseFields]):
             revision: int = 0,
             status: SkillStatus | None = None,
             replayed: bool = False,
+            state_version: int = 0,
         ) -> None:
             pass
 
@@ -1828,8 +2611,9 @@ class SetSkillStatusResponse(Message[_SetSkillStatusResponseFields]):
         revision: int
         status: SkillStatus
         replayed: bool
+        state_version: int
 
-_SkillInstallationFields: TypeAlias = Literal["installation_id", "source_ref", "target_owner_scope", "revision", "package_asset_ref", "content_digest", "installed", "enabled", "installed_at", "updated_at", "removed_at", "series_id"]
+_SkillInstallationFields: TypeAlias = Literal["installation_id", "source_ref", "target_owner_scope", "revision", "package_asset_ref", "content_digest", "installed", "enabled", "installed_at", "updated_at", "removed_at", "series_id", "acquisition_kind"]
 
 class SkillInstallation(Message[_SkillInstallationFields]):
     """
@@ -1886,9 +2670,13 @@ class SkillInstallation(Message[_SkillInstallationFields]):
             ```proto
             optional kokoro.platform.v1.SkillSeriesId series_id = 12;
             ```
+        acquisition_kind:
+            ```proto
+            kokoro.platform.v1.SkillAcquisitionKind acquisition_kind = 13;
+            ```
     """
 
-    __slots__ = ("installation_id", "source_ref", "target_owner_scope", "revision", "package_asset_ref", "content_digest", "installed", "enabled", "installed_at", "updated_at", "removed_at", "series_id")
+    __slots__ = ("installation_id", "source_ref", "target_owner_scope", "revision", "package_asset_ref", "content_digest", "installed", "enabled", "installed_at", "updated_at", "removed_at", "series_id", "acquisition_kind")
 
     if TYPE_CHECKING:
 
@@ -1907,6 +2695,7 @@ class SkillInstallation(Message[_SkillInstallationFields]):
             updated_at: Timestamp | None = None,
             removed_at: Timestamp | None = None,
             series_id: SkillSeriesId | None = None,
+            acquisition_kind: SkillAcquisitionKind | None = None,
         ) -> None:
             pass
 
@@ -1922,6 +2711,7 @@ class SkillInstallation(Message[_SkillInstallationFields]):
         updated_at: Timestamp | None
         removed_at: Timestamp | None
         series_id: SkillSeriesId | None
+        acquisition_kind: SkillAcquisitionKind
 
 _InstallSkillRequestFields: TypeAlias = Literal["request_id", "command", "source_ref", "target_owner_scope", "execution_proof"]
 
@@ -2971,7 +3761,7 @@ class McpServer(Message[_McpServerFields]):
         declaration_digest: str
         status: McpServerStatus
 
-_RegisterMcpServerRequestFields: TypeAlias = Literal["request_id"]
+_RegisterMcpServerRequestFields: TypeAlias = Literal["request_id", "registration"]
 
 class RegisterMcpServerRequest(Message[_RegisterMcpServerRequestFields]):
     """
@@ -2984,9 +3774,13 @@ class RegisterMcpServerRequest(Message[_RegisterMcpServerRequestFields]):
             ```proto
             string request_id = 1;
             ```
+        registration:
+            ```proto
+            optional kokoro.platform.v1.McpServerRegistration registration = 8;
+            ```
     """
 
-    __slots__ = ("request_id",)
+    __slots__ = ("request_id", "registration")
 
     if TYPE_CHECKING:
 
@@ -2994,10 +3788,58 @@ class RegisterMcpServerRequest(Message[_RegisterMcpServerRequestFields]):
             self,
             *,
             request_id: str = "",
+            registration: McpServerRegistration | None = None,
         ) -> None:
             pass
 
         request_id: str
+        registration: McpServerRegistration | None
+
+_McpServerRegistrationFields: TypeAlias = Literal["provider_key", "server_identity", "transport", "declaration_digest"]
+
+class McpServerRegistration(Message[_McpServerRegistrationFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpServerRegistration
+    ```
+
+    Attributes:
+        provider_key:
+            ```proto
+            string provider_key = 1;
+            ```
+        server_identity:
+            ```proto
+            string server_identity = 2;
+            ```
+        transport:
+            ```proto
+            kokoro.platform.v1.McpTransport transport = 3;
+            ```
+        declaration_digest:
+            ```proto
+            string declaration_digest = 4;
+            ```
+    """
+
+    __slots__ = ("provider_key", "server_identity", "transport", "declaration_digest")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider_key: str = "",
+            server_identity: str = "",
+            transport: McpTransport | None = None,
+            declaration_digest: str = "",
+        ) -> None:
+            pass
+
+        provider_key: str
+        server_identity: str
+        transport: McpTransport
+        declaration_digest: str
 
 _RegisterMcpServerResponseFields: TypeAlias = Literal["server_id", "status", "replayed"]
 
@@ -3883,7 +4725,7 @@ class AuthorizeMcpToolRequest(Message[_AuthorizeMcpToolRequestFields]):
         idempotency_key: str
         execution_proof: str
 
-_AuthorizeMcpToolResponseFields: TypeAlias = Literal["invocation_grant", "connector_id", "tool_ref", "typed_arguments_digest", "expires_at_unix_seconds", "audit_ref"]
+_AuthorizeMcpToolResponseFields: TypeAlias = Literal["invocation_grant", "connector_id", "tool_ref", "typed_arguments_digest", "expires_at_unix_seconds", "audit_ref", "connection_id", "server_id"]
 
 class AuthorizeMcpToolResponse(Message[_AuthorizeMcpToolResponseFields]):
     """
@@ -3916,9 +4758,17 @@ class AuthorizeMcpToolResponse(Message[_AuthorizeMcpToolResponseFields]):
             ```proto
             string audit_ref = 6;
             ```
+        connection_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectionId connection_id = 7;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 8;
+            ```
     """
 
-    __slots__ = ("invocation_grant", "connector_id", "tool_ref", "typed_arguments_digest", "expires_at_unix_seconds", "audit_ref")
+    __slots__ = ("invocation_grant", "connector_id", "tool_ref", "typed_arguments_digest", "expires_at_unix_seconds", "audit_ref", "connection_id", "server_id")
 
     if TYPE_CHECKING:
 
@@ -3931,6 +4781,8 @@ class AuthorizeMcpToolResponse(Message[_AuthorizeMcpToolResponseFields]):
             typed_arguments_digest: str = "",
             expires_at_unix_seconds: int = 0,
             audit_ref: str = "",
+            connection_id: McpConnectionId | None = None,
+            server_id: McpServerId | None = None,
         ) -> None:
             pass
 
@@ -3940,6 +4792,8 @@ class AuthorizeMcpToolResponse(Message[_AuthorizeMcpToolResponseFields]):
         typed_arguments_digest: str
         expires_at_unix_seconds: int
         audit_ref: str
+        connection_id: McpConnectionId | None
+        server_id: McpServerId | None
 
 _SetSkillInstallationEnabledResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed"]
 
@@ -4159,6 +5013,8032 @@ class ListMcpConnectorProvidersResponse(Message[_ListMcpConnectorProvidersRespon
         providers: list[McpConnectorProvider]
         page: PageResult | None
 
+_ProductSkillInstallationFields: TypeAlias = Literal["installation_id", "source_ref", "series_id", "revision", "installed", "enabled", "installed_at", "updated_at", "removed_at", "display_name", "summary", "source_status", "tags", "skill_updated_at", "example_prompts", "category_keys", "product", "available_update", "skill_created_at", "source_owner_scope", "acquisition_kind"]
+
+class ProductSkillInstallation(Message[_ProductSkillInstallationFields]):
+    """
+    Candidate PERSONAL Product surface. Not registered until runtime admission is verified.
+    Subject comes only from authenticated BFF metadata; target is derived, never body-supplied.
+
+    ```proto
+    message kokoro.platform.v1.ProductSkillInstallation
+    ```
+
+    Attributes:
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 1;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 2;
+            ```
+        series_id:
+            ```proto
+            optional kokoro.platform.v1.SkillSeriesId series_id = 3;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 4;
+            ```
+        installed:
+            ```proto
+            bool installed = 5;
+            ```
+        enabled:
+            ```proto
+            bool enabled = 6;
+            ```
+        installed_at:
+            ```proto
+            optional google.protobuf.Timestamp installed_at = 7;
+            ```
+        updated_at:
+            ```proto
+            optional google.protobuf.Timestamp updated_at = 8;
+            ```
+        removed_at:
+            ```proto
+            optional google.protobuf.Timestamp removed_at = 9;
+            ```
+        display_name:
+            ```proto
+            string display_name = 10;
+            ```
+        summary:
+            ```proto
+            string summary = 11;
+            ```
+        source_status:
+            ```proto
+            kokoro.platform.v1.SkillStatus source_status = 12;
+            ```
+        tags:
+            ```proto
+            repeated string tags = 13;
+            ```
+        skill_updated_at:
+            ```proto
+            optional google.protobuf.Timestamp skill_updated_at = 14;
+            ```
+        example_prompts:
+            ```proto
+            optional kokoro.platform.v1.SkillExamplePrompts example_prompts = 15;
+            ```
+        category_keys:
+            ```proto
+            optional kokoro.platform.v1.SkillCategoryKeys category_keys = 16;
+            ```
+        product:
+            ```proto
+            optional kokoro.platform.v1.SkillProductFacts product = 17;
+            ```
+        available_update:
+            ```proto
+            optional kokoro.platform.v1.SkillAvailableUpdate available_update = 18;
+            ```
+        skill_created_at:
+            ```proto
+            optional google.protobuf.Timestamp skill_created_at = 19;
+            ```
+        source_owner_scope:
+            ```proto
+            optional kokoro.platform.v1.OwnerScope source_owner_scope = 20;
+            ```
+        acquisition_kind:
+            ```proto
+            kokoro.platform.v1.SkillAcquisitionKind acquisition_kind = 21;
+            ```
+    """
+
+    __slots__ = ("installation_id", "source_ref", "series_id", "revision", "installed", "enabled", "installed_at", "updated_at", "removed_at", "display_name", "summary", "source_status", "tags", "skill_updated_at", "example_prompts", "category_keys", "product", "available_update", "skill_created_at", "source_owner_scope", "acquisition_kind")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation_id: SkillInstallationId | None = None,
+            source_ref: SkillSourceRef | None = None,
+            series_id: SkillSeriesId | None = None,
+            revision: int = 0,
+            installed: bool = False,
+            enabled: bool = False,
+            installed_at: Timestamp | None = None,
+            updated_at: Timestamp | None = None,
+            removed_at: Timestamp | None = None,
+            display_name: str = "",
+            summary: str = "",
+            source_status: SkillStatus | None = None,
+            tags: list[str] | None = None,
+            skill_updated_at: Timestamp | None = None,
+            example_prompts: SkillExamplePrompts | None = None,
+            category_keys: SkillCategoryKeys | None = None,
+            product: SkillProductFacts | None = None,
+            available_update: SkillAvailableUpdate | None = None,
+            skill_created_at: Timestamp | None = None,
+            source_owner_scope: OwnerScope | None = None,
+            acquisition_kind: SkillAcquisitionKind | None = None,
+        ) -> None:
+            pass
+
+        installation_id: SkillInstallationId | None
+        source_ref: SkillSourceRef | None
+        series_id: SkillSeriesId | None
+        revision: int
+        installed: bool
+        enabled: bool
+        installed_at: Timestamp | None
+        updated_at: Timestamp | None
+        removed_at: Timestamp | None
+        display_name: str
+        summary: str
+        source_status: SkillStatus
+        tags: list[str]
+        skill_updated_at: Timestamp | None
+        example_prompts: SkillExamplePrompts | None
+        category_keys: SkillCategoryKeys | None
+        product: SkillProductFacts | None
+        available_update: SkillAvailableUpdate | None
+        skill_created_at: Timestamp | None
+        source_owner_scope: OwnerScope | None
+        acquisition_kind: SkillAcquisitionKind
+
+_InstallPersonalSkillRequestFields: TypeAlias = Literal["request_id", "command", "source_ref"]
+
+class InstallPersonalSkillRequest(Message[_InstallPersonalSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InstallPersonalSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "source_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            source_ref: SkillSourceRef | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        source_ref: SkillSourceRef | None
+
+_InstallPersonalSkillResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed"]
+
+class InstallPersonalSkillResponse(Message[_InstallPersonalSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InstallPersonalSkillResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+
+_UpdatePersonalSkillInstallationRequestFields: TypeAlias = Literal["request_id", "command", "installation_id", "expected_source_ref", "source_ref"]
+
+class UpdatePersonalSkillInstallationRequest(Message[_UpdatePersonalSkillInstallationRequestFields]):
+    """
+    Explicitly advances one existing personal installation to a selected revision.
+
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalSkillInstallationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 3;
+            ```
+        expected_source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef expected_source_ref = 4;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "installation_id", "expected_source_ref", "source_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            installation_id: SkillInstallationId | None = None,
+            expected_source_ref: SkillSourceRef | None = None,
+            source_ref: SkillSourceRef | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        installation_id: SkillInstallationId | None
+        expected_source_ref: SkillSourceRef | None
+        source_ref: SkillSourceRef | None
+
+_UpdatePersonalSkillInstallationResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed"]
+
+class UpdatePersonalSkillInstallationResponse(Message[_UpdatePersonalSkillInstallationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalSkillInstallationResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+
+_SetPersonalSkillInstallationEnabledRequestFields: TypeAlias = Literal["request_id", "command", "installation_id", "enabled"]
+
+class SetPersonalSkillInstallationEnabledRequest(Message[_SetPersonalSkillInstallationEnabledRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetPersonalSkillInstallationEnabledRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 3;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "installation_id", "enabled")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            installation_id: SkillInstallationId | None = None,
+            enabled: bool | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        installation_id: SkillInstallationId | None
+        enabled: bool
+
+_SetPersonalSkillInstallationEnabledResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed"]
+
+class SetPersonalSkillInstallationEnabledResponse(Message[_SetPersonalSkillInstallationEnabledResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetPersonalSkillInstallationEnabledResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+
+_RemovePersonalSkillInstallationRequestFields: TypeAlias = Literal["request_id", "command", "installation_id"]
+
+class RemovePersonalSkillInstallationRequest(Message[_RemovePersonalSkillInstallationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemovePersonalSkillInstallationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "installation_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            installation_id: SkillInstallationId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        installation_id: SkillInstallationId | None
+
+_RemovePersonalSkillInstallationResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed"]
+
+class RemovePersonalSkillInstallationResponse(Message[_RemovePersonalSkillInstallationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemovePersonalSkillInstallationResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+
+_GetPersonalSkillInstallationRequestFields: TypeAlias = Literal["request_id", "installation_id"]
+
+class GetPersonalSkillInstallationRequest(Message[_GetPersonalSkillInstallationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalSkillInstallationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "installation_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            installation_id: SkillInstallationId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        installation_id: SkillInstallationId | None
+
+_GetPersonalSkillInstallationResponseFields: TypeAlias = Literal["installation"]
+
+class GetPersonalSkillInstallationResponse(Message[_GetPersonalSkillInstallationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalSkillInstallationResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+    """
+
+    __slots__ = ("installation",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+
+_ListPersonalSkillInstallationsRequestFields: TypeAlias = Literal["request_id", "enabled", "installed", "page", "source_kind", "query"]
+
+class ListPersonalSkillInstallationsRequest(Message[_ListPersonalSkillInstallationsRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalSkillInstallationsRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 2;
+            ```
+        installed:
+            ```proto
+            optional bool installed = 3;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallationPageRequest page = 4;
+            ```
+        source_kind:
+            ```proto
+            optional string source_kind = 5;
+            ```
+        query:
+            ```proto
+            optional string query = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "enabled", "installed", "page", "source_kind", "query")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            enabled: bool | None = None,
+            installed: bool | None = None,
+            page: ProductSkillInstallationPageRequest | None = None,
+            source_kind: str | None = None,
+            query: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        enabled: bool
+        installed: bool
+        page: ProductSkillInstallationPageRequest | None
+        source_kind: str
+        query: str
+
+_ListPersonalSkillInstallationsResponseFields: TypeAlias = Literal["installations", "page"]
+
+class ListPersonalSkillInstallationsResponse(Message[_ListPersonalSkillInstallationsResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalSkillInstallationsResponse
+    ```
+
+    Attributes:
+        installations:
+            ```proto
+            repeated kokoro.platform.v1.ProductSkillInstallation installations = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("installations", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installations: list[ProductSkillInstallation] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        installations: list[ProductSkillInstallation]
+        page: PageResult | None
+
+_ProductSkillInstallationPageRequestFields: TypeAlias = Literal["limit", "cursor"]
+
+class ProductSkillInstallationPageRequest(Message[_ProductSkillInstallationPageRequestFields]):
+    """
+    Product pagination requires presence: omitted limit is 50; explicit zero is invalid.
+    Frozen Common PageRequest remains unchanged.
+
+    ```proto
+    message kokoro.platform.v1.ProductSkillInstallationPageRequest
+    ```
+
+    Attributes:
+        limit:
+            ```proto
+            optional uint32 limit = 1;
+            ```
+        cursor:
+            ```proto
+            optional string cursor = 2;
+            ```
+    """
+
+    __slots__ = ("limit", "cursor")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            limit: int | None = None,
+            cursor: str | None = None,
+        ) -> None:
+            pass
+
+        limit: int
+        cursor: str
+
+_ListPersonalMcpConnectorsRequestFields: TypeAlias = Literal["request_id", "status", "page"]
+
+class ListPersonalMcpConnectorsRequest(Message[_ListPersonalMcpConnectorsRequestFields]):
+    """
+    Product personal MCP management reads; independent of Agent execution proofs.
+
+    ```proto
+    message kokoro.platform.v1.ListPersonalMcpConnectorsRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        status:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorStatus status = 2;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpPageRequest page = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "status", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            status: McpConnectorStatus | None = None,
+            page: PersonalMcpPageRequest | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        status: McpConnectorStatus
+        page: PersonalMcpPageRequest | None
+
+_GetPersonalMcpConnectorRequestFields: TypeAlias = Literal["request_id", "connector_id"]
+
+class GetPersonalMcpConnectorRequest(Message[_GetPersonalMcpConnectorRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpConnectorRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "connector_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            connector_id: McpConnectorId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        connector_id: McpConnectorId | None
+
+_ListPersonalMcpConnectionsRequestFields: TypeAlias = Literal["request_id", "connector_id", "page"]
+
+class ListPersonalMcpConnectionsRequest(Message[_ListPersonalMcpConnectionsRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalMcpConnectionsRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 2;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpPageRequest page = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "connector_id", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            connector_id: McpConnectorId | None = None,
+            page: PersonalMcpPageRequest | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        connector_id: McpConnectorId | None
+        page: PersonalMcpPageRequest | None
+
+_GetPersonalMcpConnectionRequestFields: TypeAlias = Literal["request_id", "connection_id"]
+
+class GetPersonalMcpConnectionRequest(Message[_GetPersonalMcpConnectionRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpConnectionRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        connection_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectionId connection_id = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "connection_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            connection_id: McpConnectionId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        connection_id: McpConnectionId | None
+
+_ListPersonalMcpConnectorsResponseFields: TypeAlias = Literal["connectors", "page"]
+
+class ListPersonalMcpConnectorsResponse(Message[_ListPersonalMcpConnectorsResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalMcpConnectorsResponse
+    ```
+
+    Attributes:
+        connectors:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpConnector connectors = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("connectors", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connectors: list[PersonalMcpConnector] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        connectors: list[PersonalMcpConnector]
+        page: PageResult | None
+
+_GetPersonalMcpConnectorResponseFields: TypeAlias = Literal["connector"]
+
+class GetPersonalMcpConnectorResponse(Message[_GetPersonalMcpConnectorResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpConnectorResponse
+    ```
+
+    Attributes:
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 1;
+            ```
+    """
+
+    __slots__ = ("connector",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        connector: PersonalMcpConnector | None
+
+_ListPersonalMcpConnectionsResponseFields: TypeAlias = Literal["connections", "page"]
+
+class ListPersonalMcpConnectionsResponse(Message[_ListPersonalMcpConnectionsResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalMcpConnectionsResponse
+    ```
+
+    Attributes:
+        connections:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpConnection connections = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("connections", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connections: list[PersonalMcpConnection] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        connections: list[PersonalMcpConnection]
+        page: PageResult | None
+
+_GetPersonalMcpConnectionResponseFields: TypeAlias = Literal["connection"]
+
+class GetPersonalMcpConnectionResponse(Message[_GetPersonalMcpConnectionResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpConnectionResponse
+    ```
+
+    Attributes:
+        connection:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnection connection = 1;
+            ```
+    """
+
+    __slots__ = ("connection",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connection: PersonalMcpConnection | None = None,
+        ) -> None:
+            pass
+
+        connection: PersonalMcpConnection | None
+
+_PersonalMcpPageRequestFields: TypeAlias = Literal["limit", "cursor"]
+
+class PersonalMcpPageRequest(Message[_PersonalMcpPageRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpPageRequest
+    ```
+
+    Attributes:
+        limit:
+            ```proto
+            optional uint32 limit = 1;
+            ```
+        cursor:
+            ```proto
+            optional string cursor = 2;
+            ```
+    """
+
+    __slots__ = ("limit", "cursor")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            limit: int | None = None,
+            cursor: str | None = None,
+        ) -> None:
+            pass
+
+        limit: int
+        cursor: str
+
+_PersonalMcpConnectorFields: TypeAlias = Literal["connector_id", "connector_type", "provider_key", "status", "approved_scopes", "display_name", "description", "enabled", "state_version", "created_at", "updated_at", "server_id"]
+
+class PersonalMcpConnector(Message[_PersonalMcpConnectorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpConnector
+    ```
+
+    Attributes:
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 1;
+            ```
+        connector_type:
+            ```proto
+            kokoro.platform.v1.McpConnectorType connector_type = 2;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 3;
+            ```
+        status:
+            ```proto
+            kokoro.platform.v1.McpConnectorStatus status = 4;
+            ```
+        approved_scopes:
+            ```proto
+            repeated string approved_scopes = 5;
+            ```
+        display_name:
+            ```proto
+            optional string display_name = 6;
+            ```
+        description:
+            ```proto
+            optional string description = 7;
+            ```
+        enabled:
+            ```proto
+            bool enabled = 8;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 9;
+            ```
+        created_at:
+            ```proto
+            optional string created_at = 10;
+            ```
+        updated_at:
+            ```proto
+            optional string updated_at = 11;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 12;
+            ```
+    """
+
+    __slots__ = ("connector_id", "connector_type", "provider_key", "status", "approved_scopes", "display_name", "description", "enabled", "state_version", "created_at", "updated_at", "server_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector_id: McpConnectorId | None = None,
+            connector_type: McpConnectorType | None = None,
+            provider_key: str = "",
+            status: McpConnectorStatus | None = None,
+            approved_scopes: list[str] | None = None,
+            display_name: str | None = None,
+            description: str | None = None,
+            enabled: bool = False,
+            state_version: int = 0,
+            created_at: str | None = None,
+            updated_at: str | None = None,
+            server_id: McpServerId | None = None,
+        ) -> None:
+            pass
+
+        connector_id: McpConnectorId | None
+        connector_type: McpConnectorType
+        provider_key: str
+        status: McpConnectorStatus
+        approved_scopes: list[str]
+        display_name: str
+        description: str
+        enabled: bool
+        state_version: int
+        created_at: str
+        updated_at: str
+        server_id: McpServerId | None
+
+_PersonalMcpConnectionFields: TypeAlias = Literal["connection_id", "connector_id", "server_id", "allowed_selectors", "policy_digest", "status"]
+
+class PersonalMcpConnection(Message[_PersonalMcpConnectionFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpConnection
+    ```
+
+    Attributes:
+        connection_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectionId connection_id = 1;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 2;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 3;
+            ```
+        allowed_selectors:
+            ```proto
+            repeated string allowed_selectors = 4;
+            ```
+        policy_digest:
+            ```proto
+            string policy_digest = 5;
+            ```
+        status:
+            ```proto
+            string status = 6;
+            ```
+    """
+
+    __slots__ = ("connection_id", "connector_id", "server_id", "allowed_selectors", "policy_digest", "status")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connection_id: McpConnectionId | None = None,
+            connector_id: McpConnectorId | None = None,
+            server_id: McpServerId | None = None,
+            allowed_selectors: list[str] | None = None,
+            policy_digest: str = "",
+            status: str = "",
+        ) -> None:
+            pass
+
+        connection_id: McpConnectionId | None
+        connector_id: McpConnectorId | None
+        server_id: McpServerId | None
+        allowed_selectors: list[str]
+        policy_digest: str
+        status: str
+
+_BeginPersonalMcpConnectorAuthorizationRequestFields: TypeAlias = Literal["request_id", "connector_id", "server_id", "expected_state_version"]
+
+class BeginPersonalMcpConnectorAuthorizationRequest(Message[_BeginPersonalMcpConnectorAuthorizationRequestFields]):
+    """
+    Personal OAuth authorization is always initiated and completed by the BFF
+    with trusted tenant and subject context. The provider callback payload is
+    deliberately opaque: Platform persists only its hashed state binding.
+
+    ```proto
+    message kokoro.platform.v1.BeginPersonalMcpConnectorAuthorizationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 2;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "connector_id", "server_id", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            connector_id: McpConnectorId | None = None,
+            server_id: McpServerId | None = None,
+            expected_state_version: int | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        connector_id: McpConnectorId | None
+        server_id: McpServerId | None
+        expected_state_version: int
+
+_BeginPersonalMcpConnectorAuthorizationResponseFields: TypeAlias = Literal["authorization_id", "authorization_url", "expires_at", "connector"]
+
+class BeginPersonalMcpConnectorAuthorizationResponse(Message[_BeginPersonalMcpConnectorAuthorizationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginPersonalMcpConnectorAuthorizationResponse
+    ```
+
+    Attributes:
+        authorization_id:
+            ```proto
+            optional kokoro.platform.v1.McpAuthorizationId authorization_id = 1;
+            ```
+        authorization_url:
+            ```proto
+            string authorization_url = 2;
+            ```
+        expires_at:
+            ```proto
+            optional google.protobuf.Timestamp expires_at = 3;
+            ```
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 4;
+            ```
+    """
+
+    __slots__ = ("authorization_id", "authorization_url", "expires_at", "connector")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            authorization_id: McpAuthorizationId | None = None,
+            authorization_url: str = "",
+            expires_at: Timestamp | None = None,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        authorization_id: McpAuthorizationId | None
+        authorization_url: str
+        expires_at: Timestamp | None
+        connector: PersonalMcpConnector | None
+
+_CompletePersonalMcpConnectorAuthorizationRequestFields: TypeAlias = Literal["request_id", "state", "code", "error"]
+
+class CompletePersonalMcpConnectorAuthorizationRequest(Message[_CompletePersonalMcpConnectorAuthorizationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompletePersonalMcpConnectorAuthorizationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        state:
+            ```proto
+            string state = 2;
+            ```
+        code:
+            ```proto
+            optional string code = 3;
+            ```
+        error:
+            ```proto
+            optional string error = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "state", "code", "error")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            state: str = "",
+            code: str | None = None,
+            error: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        state: str
+        code: str
+        error: str
+
+_CompletePersonalMcpConnectorAuthorizationResponseFields: TypeAlias = Literal["connector"]
+
+class CompletePersonalMcpConnectorAuthorizationResponse(Message[_CompletePersonalMcpConnectorAuthorizationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompletePersonalMcpConnectorAuthorizationResponse
+    ```
+
+    Attributes:
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 1;
+            ```
+    """
+
+    __slots__ = ("connector",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        connector: PersonalMcpConnector | None
+
+_ReconnectPersonalMcpConnectorAuthorizationRequestFields: TypeAlias = Literal["request_id", "connector_id", "server_id", "expected_state_version"]
+
+class ReconnectPersonalMcpConnectorAuthorizationRequest(Message[_ReconnectPersonalMcpConnectorAuthorizationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ReconnectPersonalMcpConnectorAuthorizationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 2;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "connector_id", "server_id", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            connector_id: McpConnectorId | None = None,
+            server_id: McpServerId | None = None,
+            expected_state_version: int | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        connector_id: McpConnectorId | None
+        server_id: McpServerId | None
+        expected_state_version: int
+
+_ReconnectPersonalMcpConnectorAuthorizationResponseFields: TypeAlias = Literal["authorization_id", "authorization_url", "expires_at", "connector"]
+
+class ReconnectPersonalMcpConnectorAuthorizationResponse(Message[_ReconnectPersonalMcpConnectorAuthorizationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ReconnectPersonalMcpConnectorAuthorizationResponse
+    ```
+
+    Attributes:
+        authorization_id:
+            ```proto
+            optional kokoro.platform.v1.McpAuthorizationId authorization_id = 1;
+            ```
+        authorization_url:
+            ```proto
+            string authorization_url = 2;
+            ```
+        expires_at:
+            ```proto
+            optional google.protobuf.Timestamp expires_at = 3;
+            ```
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 4;
+            ```
+    """
+
+    __slots__ = ("authorization_id", "authorization_url", "expires_at", "connector")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            authorization_id: McpAuthorizationId | None = None,
+            authorization_url: str = "",
+            expires_at: Timestamp | None = None,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        authorization_id: McpAuthorizationId | None
+        authorization_url: str
+        expires_at: Timestamp | None
+        connector: PersonalMcpConnector | None
+
+_CreatePersonalMcpConnectionRequestFields: TypeAlias = Literal["request_id", "command", "connector_id", "server_id", "allowed_selectors", "expected_state_version"]
+
+class CreatePersonalMcpConnectionRequest(Message[_CreatePersonalMcpConnectionRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreatePersonalMcpConnectionRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 3;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 4;
+            ```
+        allowed_selectors:
+            ```proto
+            repeated string allowed_selectors = 5;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "connector_id", "server_id", "allowed_selectors", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            connector_id: McpConnectorId | None = None,
+            server_id: McpServerId | None = None,
+            allowed_selectors: list[str] | None = None,
+            expected_state_version: int | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        connector_id: McpConnectorId | None
+        server_id: McpServerId | None
+        allowed_selectors: list[str]
+        expected_state_version: int
+
+_CreatePersonalMcpConnectionResponseFields: TypeAlias = Literal["connection"]
+
+class CreatePersonalMcpConnectionResponse(Message[_CreatePersonalMcpConnectionResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreatePersonalMcpConnectionResponse
+    ```
+
+    Attributes:
+        connection:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnection connection = 1;
+            ```
+    """
+
+    __slots__ = ("connection",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connection: PersonalMcpConnection | None = None,
+        ) -> None:
+            pass
+
+        connection: PersonalMcpConnection | None
+
+_CustomApiEnvironmentWriteFields: TypeAlias = Literal["name", "value"]
+
+class CustomApiEnvironmentWrite(Message[_CustomApiEnvironmentWriteFields]):
+    """
+    Custom API is a distinct personal configuration aggregate. It deliberately has
+    no URL, provider, OAuth, execution, or MCP transport fields.
+
+    ```proto
+    message kokoro.platform.v1.CustomApiEnvironmentWrite
+    ```
+
+    Attributes:
+        name:
+            ```proto
+            string name = 1;
+            ```
+        value:
+            ```proto
+            string value = 2;
+            ```
+    """
+
+    __slots__ = ("name", "value")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            name: str = "",
+            value: str = "",
+        ) -> None:
+            pass
+
+        name: str
+        value: str
+
+_CustomApiEnvironmentDescriptorFields: TypeAlias = Literal["name", "configured", "state_version", "status"]
+
+class CustomApiEnvironmentDescriptor(Message[_CustomApiEnvironmentDescriptorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CustomApiEnvironmentDescriptor
+    ```
+
+    Attributes:
+        name:
+            ```proto
+            string name = 1;
+            ```
+        configured:
+            ```proto
+            bool configured = 2;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 3;
+            ```
+        status:
+            ```proto
+            string status = 4;
+            ```
+    """
+
+    __slots__ = ("name", "configured", "state_version", "status")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            name: str = "",
+            configured: bool = False,
+            state_version: int = 0,
+            status: str = "",
+        ) -> None:
+            pass
+
+        name: str
+        configured: bool
+        state_version: int
+        status: str
+
+_PersonalCustomApiFields: TypeAlias = Literal["profile_id", "name", "instructions", "state_version", "created_at", "updated_at", "environment"]
+
+class PersonalCustomApi(Message[_PersonalCustomApiFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalCustomApi
+    ```
+
+    Attributes:
+        profile_id:
+            ```proto
+            optional kokoro.platform.v1.CustomApiProfileId profile_id = 1;
+            ```
+        name:
+            ```proto
+            string name = 2;
+            ```
+        instructions:
+            ```proto
+            optional string instructions = 3;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 4;
+            ```
+        created_at:
+            ```proto
+            optional google.protobuf.Timestamp created_at = 5;
+            ```
+        updated_at:
+            ```proto
+            optional google.protobuf.Timestamp updated_at = 6;
+            ```
+        environment:
+            ```proto
+            repeated kokoro.platform.v1.CustomApiEnvironmentDescriptor environment = 7;
+            ```
+    """
+
+    __slots__ = ("profile_id", "name", "instructions", "state_version", "created_at", "updated_at", "environment")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            profile_id: CustomApiProfileId | None = None,
+            name: str = "",
+            instructions: str | None = None,
+            state_version: int = 0,
+            created_at: Timestamp | None = None,
+            updated_at: Timestamp | None = None,
+            environment: list[CustomApiEnvironmentDescriptor] | None = None,
+        ) -> None:
+            pass
+
+        profile_id: CustomApiProfileId | None
+        name: str
+        instructions: str
+        state_version: int
+        created_at: Timestamp | None
+        updated_at: Timestamp | None
+        environment: list[CustomApiEnvironmentDescriptor]
+
+_CreatePersonalCustomApiRequestFields: TypeAlias = Literal["request_id", "command", "name", "instructions", "environment"]
+
+class CreatePersonalCustomApiRequest(Message[_CreatePersonalCustomApiRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreatePersonalCustomApiRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        name:
+            ```proto
+            string name = 3;
+            ```
+        instructions:
+            ```proto
+            optional string instructions = 4;
+            ```
+        environment:
+            ```proto
+            repeated kokoro.platform.v1.CustomApiEnvironmentWrite environment = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "name", "instructions", "environment")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            name: str = "",
+            instructions: str | None = None,
+            environment: list[CustomApiEnvironmentWrite] | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        name: str
+        instructions: str
+        environment: list[CustomApiEnvironmentWrite]
+
+_CreatePersonalCustomApiResponseFields: TypeAlias = Literal["profile", "replayed"]
+
+class CreatePersonalCustomApiResponse(Message[_CreatePersonalCustomApiResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreatePersonalCustomApiResponse
+    ```
+
+    Attributes:
+        profile:
+            ```proto
+            optional kokoro.platform.v1.PersonalCustomApi profile = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("profile", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            profile: PersonalCustomApi | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        profile: PersonalCustomApi | None
+        replayed: bool
+
+_GetPersonalCustomApiRequestFields: TypeAlias = Literal["request_id", "profile_id"]
+
+class GetPersonalCustomApiRequest(Message[_GetPersonalCustomApiRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalCustomApiRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        profile_id:
+            ```proto
+            optional kokoro.platform.v1.CustomApiProfileId profile_id = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "profile_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            profile_id: CustomApiProfileId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        profile_id: CustomApiProfileId | None
+
+_GetPersonalCustomApiResponseFields: TypeAlias = Literal["profile"]
+
+class GetPersonalCustomApiResponse(Message[_GetPersonalCustomApiResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalCustomApiResponse
+    ```
+
+    Attributes:
+        profile:
+            ```proto
+            optional kokoro.platform.v1.PersonalCustomApi profile = 1;
+            ```
+    """
+
+    __slots__ = ("profile",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            profile: PersonalCustomApi | None = None,
+        ) -> None:
+            pass
+
+        profile: PersonalCustomApi | None
+
+_ListPersonalCustomApisRequestFields: TypeAlias = Literal["request_id", "page"]
+
+class ListPersonalCustomApisRequest(Message[_ListPersonalCustomApisRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalCustomApisRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageRequest page = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            page: PageRequest | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        page: PageRequest | None
+
+_ListPersonalCustomApisResponseFields: TypeAlias = Literal["profiles", "page"]
+
+class ListPersonalCustomApisResponse(Message[_ListPersonalCustomApisResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalCustomApisResponse
+    ```
+
+    Attributes:
+        profiles:
+            ```proto
+            repeated kokoro.platform.v1.PersonalCustomApi profiles = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("profiles", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            profiles: list[PersonalCustomApi] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        profiles: list[PersonalCustomApi]
+        page: PageResult | None
+
+_UpdatePersonalCustomApiRequestFields: TypeAlias = Literal["request_id", "command", "profile_id", "expected_state_version", "name", "instructions", "clear_instructions", "environment_upserts", "environment_removals"]
+
+class UpdatePersonalCustomApiRequest(Message[_UpdatePersonalCustomApiRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalCustomApiRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        profile_id:
+            ```proto
+            optional kokoro.platform.v1.CustomApiProfileId profile_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            uint64 expected_state_version = 4;
+            ```
+        name:
+            ```proto
+            optional string name = 5;
+            ```
+        instructions:
+            ```proto
+            optional string instructions = 6;
+            ```
+        clear_instructions:
+            ```proto
+            bool clear_instructions = 7;
+            ```
+        environment_upserts:
+            ```proto
+            repeated kokoro.platform.v1.CustomApiEnvironmentWrite environment_upserts = 8;
+            ```
+        environment_removals:
+            ```proto
+            repeated string environment_removals = 9;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "profile_id", "expected_state_version", "name", "instructions", "clear_instructions", "environment_upserts", "environment_removals")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            profile_id: CustomApiProfileId | None = None,
+            expected_state_version: int = 0,
+            name: str | None = None,
+            instructions: str | None = None,
+            clear_instructions: bool = False,
+            environment_upserts: list[CustomApiEnvironmentWrite] | None = None,
+            environment_removals: list[str] | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        profile_id: CustomApiProfileId | None
+        expected_state_version: int
+        name: str
+        instructions: str
+        clear_instructions: bool
+        environment_upserts: list[CustomApiEnvironmentWrite]
+        environment_removals: list[str]
+
+_UpdatePersonalCustomApiResponseFields: TypeAlias = Literal["profile", "replayed"]
+
+class UpdatePersonalCustomApiResponse(Message[_UpdatePersonalCustomApiResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalCustomApiResponse
+    ```
+
+    Attributes:
+        profile:
+            ```proto
+            optional kokoro.platform.v1.PersonalCustomApi profile = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("profile", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            profile: PersonalCustomApi | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        profile: PersonalCustomApi | None
+        replayed: bool
+
+_DeletePersonalCustomApiRequestFields: TypeAlias = Literal["request_id", "command", "profile_id", "expected_state_version"]
+
+class DeletePersonalCustomApiRequest(Message[_DeletePersonalCustomApiRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DeletePersonalCustomApiRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        profile_id:
+            ```proto
+            optional kokoro.platform.v1.CustomApiProfileId profile_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "profile_id", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            profile_id: CustomApiProfileId | None = None,
+            expected_state_version: int = 0,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        profile_id: CustomApiProfileId | None
+        expected_state_version: int
+
+_DeletePersonalCustomApiResponseFields: TypeAlias = Literal["profile_id", "deleted", "replayed"]
+
+class DeletePersonalCustomApiResponse(Message[_DeletePersonalCustomApiResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DeletePersonalCustomApiResponse
+    ```
+
+    Attributes:
+        profile_id:
+            ```proto
+            optional kokoro.platform.v1.CustomApiProfileId profile_id = 1;
+            ```
+        deleted:
+            ```proto
+            bool deleted = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("profile_id", "deleted", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            profile_id: CustomApiProfileId | None = None,
+            deleted: bool = False,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        profile_id: CustomApiProfileId | None
+        deleted: bool
+        replayed: bool
+
+_InspectPersonalSkillPackageRequestFields: TypeAlias = Literal["request_id", "skill_id", "file_path"]
+
+class InspectPersonalSkillPackageRequest(Message[_InspectPersonalSkillPackageRequestFields]):
+    """
+    Product package inspection: independently admitted personal reads.
+
+    ```proto
+    message kokoro.platform.v1.InspectPersonalSkillPackageRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        file_path:
+            ```proto
+            optional string file_path = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "skill_id", "file_path")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            skill_id: SkillId | None = None,
+            file_path: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        skill_id: SkillId | None
+        file_path: str
+
+_InspectPersonalSkillInstallationPackageRequestFields: TypeAlias = Literal["request_id", "installation_id", "file_path"]
+
+class InspectPersonalSkillInstallationPackageRequest(Message[_InspectPersonalSkillInstallationPackageRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InspectPersonalSkillInstallationPackageRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 2;
+            ```
+        file_path:
+            ```proto
+            optional string file_path = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "installation_id", "file_path")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            installation_id: SkillInstallationId | None = None,
+            file_path: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        installation_id: SkillInstallationId | None
+        file_path: str
+
+_InspectPersonalSkillPackageResponseFields: TypeAlias = Literal["source_ref", "revision", "files", "selected_file"]
+
+class InspectPersonalSkillPackageResponse(Message[_InspectPersonalSkillPackageResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InspectPersonalSkillPackageResponse
+    ```
+
+    Attributes:
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 1;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 2;
+            ```
+        files:
+            ```proto
+            repeated kokoro.platform.v1.SkillPackageTextFile files = 3;
+            ```
+        selected_file:
+            ```proto
+            optional kokoro.platform.v1.SkillPackageSelectedText selected_file = 4;
+            ```
+    """
+
+    __slots__ = ("source_ref", "revision", "files", "selected_file")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            source_ref: SkillSourceRef | None = None,
+            revision: int = 0,
+            files: list[SkillPackageTextFile] | None = None,
+            selected_file: SkillPackageSelectedText | None = None,
+        ) -> None:
+            pass
+
+        source_ref: SkillSourceRef | None
+        revision: int
+        files: list[SkillPackageTextFile]
+        selected_file: SkillPackageSelectedText | None
+
+_InspectPersonalSkillInstallationPackageResponseFields: TypeAlias = Literal["source_ref", "revision", "files", "selected_file"]
+
+class InspectPersonalSkillInstallationPackageResponse(Message[_InspectPersonalSkillInstallationPackageResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InspectPersonalSkillInstallationPackageResponse
+    ```
+
+    Attributes:
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 1;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 2;
+            ```
+        files:
+            ```proto
+            repeated kokoro.platform.v1.SkillPackageTextFile files = 3;
+            ```
+        selected_file:
+            ```proto
+            optional kokoro.platform.v1.SkillPackageSelectedText selected_file = 4;
+            ```
+    """
+
+    __slots__ = ("source_ref", "revision", "files", "selected_file")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            source_ref: SkillSourceRef | None = None,
+            revision: int = 0,
+            files: list[SkillPackageTextFile] | None = None,
+            selected_file: SkillPackageSelectedText | None = None,
+        ) -> None:
+            pass
+
+        source_ref: SkillSourceRef | None
+        revision: int
+        files: list[SkillPackageTextFile]
+        selected_file: SkillPackageSelectedText | None
+
+_SkillPackageTextFileFields: TypeAlias = Literal["path", "size_bytes"]
+
+class SkillPackageTextFile(Message[_SkillPackageTextFileFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillPackageTextFile
+    ```
+
+    Attributes:
+        path:
+            ```proto
+            string path = 1;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 2;
+            ```
+    """
+
+    __slots__ = ("path", "size_bytes")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            path: str = "",
+            size_bytes: int = 0,
+        ) -> None:
+            pass
+
+        path: str
+        size_bytes: int
+
+_SkillPackageSelectedTextFields: TypeAlias = Literal["path", "text"]
+
+class SkillPackageSelectedText(Message[_SkillPackageSelectedTextFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillPackageSelectedText
+    ```
+
+    Attributes:
+        path:
+            ```proto
+            string path = 1;
+            ```
+        text:
+            ```proto
+            string text = 2;
+            ```
+    """
+
+    __slots__ = ("path", "text")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            path: str = "",
+            text: str = "",
+        ) -> None:
+            pass
+
+        path: str
+        text: str
+
+_SkillPublisherFields: TypeAlias = Literal["iam", "github_repository"]
+
+class SkillPublisher(Message[_SkillPublisherFields]):
+    """
+    R353 product facts and independently admitted Product operations.
+
+    ```proto
+    message kokoro.platform.v1.SkillPublisher
+    ```
+
+    Attributes:
+        publisher:
+            ```proto
+            oneof publisher
+            ```
+    """
+
+    __slots__ = ("publisher",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            publisher: Oneof[Literal["iam"], SkillIamRef] | Oneof[Literal["github_repository"], SkillGithubProvenance] | None = None,
+        ) -> None:
+            pass
+
+        publisher: Oneof[Literal["iam"], SkillIamRef] | Oneof[Literal["github_repository"], SkillGithubProvenance] | None
+
+_SkillCreationProvenanceFields: TypeAlias = Literal["local", "ai", "github"]
+
+class SkillCreationProvenance(Message[_SkillCreationProvenanceFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillCreationProvenance
+    ```
+
+    Attributes:
+        provenance:
+            ```proto
+            oneof provenance
+            ```
+    """
+
+    __slots__ = ("provenance",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provenance: Oneof[Literal["local"], SkillLocalProvenance] | Oneof[Literal["ai"], SkillAiProvenance] | Oneof[Literal["github"], SkillGithubProvenance] | None = None,
+        ) -> None:
+            pass
+
+        provenance: Oneof[Literal["local"], SkillLocalProvenance] | Oneof[Literal["ai"], SkillAiProvenance] | Oneof[Literal["github"], SkillGithubProvenance] | None
+
+_SkillIamRefFields: TypeAlias = Literal["kind", "id"]
+
+class SkillIamRef(Message[_SkillIamRefFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillIamRef
+    ```
+
+    Attributes:
+        kind:
+            ```proto
+            string kind = 1;
+            ```
+        id:
+            ```proto
+            string id = 2;
+            ```
+    """
+
+    __slots__ = ("kind", "id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            kind: str = "",
+            id: str = "",
+        ) -> None:
+            pass
+
+        kind: str
+        id: str
+
+_SkillProductFactsFields: TypeAlias = Literal["creator_ref", "publisher", "source_kind", "creation_provenance", "cover", "publication_audience", "state_version", "presentation_kind"]
+
+class SkillProductFacts(Message[_SkillProductFactsFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillProductFacts
+    ```
+
+    Attributes:
+        creator_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillIamRef creator_ref = 1;
+            ```
+        publisher:
+            ```proto
+            optional kokoro.platform.v1.SkillPublisher publisher = 2;
+            ```
+        source_kind:
+            ```proto
+            optional string source_kind = 3;
+            ```
+        creation_provenance:
+            ```proto
+            optional kokoro.platform.v1.SkillCreationProvenance creation_provenance = 4;
+            ```
+        cover:
+            ```proto
+            optional kokoro.platform.v1.SkillCover cover = 5;
+            ```
+        publication_audience:
+            ```proto
+            string publication_audience = 6;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 7;
+            ```
+        presentation_kind:
+            ```proto
+            optional string presentation_kind = 8;
+            ```
+    """
+
+    __slots__ = ("creator_ref", "publisher", "source_kind", "creation_provenance", "cover", "publication_audience", "state_version", "presentation_kind")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            creator_ref: SkillIamRef | None = None,
+            publisher: SkillPublisher | None = None,
+            source_kind: str | None = None,
+            creation_provenance: SkillCreationProvenance | None = None,
+            cover: SkillCover | None = None,
+            publication_audience: str = "",
+            state_version: int = 0,
+            presentation_kind: str | None = None,
+        ) -> None:
+            pass
+
+        creator_ref: SkillIamRef | None
+        publisher: SkillPublisher | None
+        source_kind: str
+        creation_provenance: SkillCreationProvenance | None
+        cover: SkillCover | None
+        publication_audience: str
+        state_version: int
+        presentation_kind: str
+
+_SkillCoverFields: TypeAlias = Literal["asset_ref", "mime_type", "width", "height"]
+
+class SkillCover(Message[_SkillCoverFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillCover
+    ```
+
+    Attributes:
+        asset_ref:
+            ```proto
+            string asset_ref = 1;
+            ```
+        mime_type:
+            ```proto
+            string mime_type = 2;
+            ```
+        width:
+            ```proto
+            uint32 width = 3;
+            ```
+        height:
+            ```proto
+            uint32 height = 4;
+            ```
+    """
+
+    __slots__ = ("asset_ref", "mime_type", "width", "height")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            asset_ref: str = "",
+            mime_type: str = "",
+            width: int = 0,
+            height: int = 0,
+        ) -> None:
+            pass
+
+        asset_ref: str
+        mime_type: str
+        width: int
+        height: int
+
+_SkillAvailableUpdateFields: TypeAlias = Literal["source_ref", "revision"]
+
+class SkillAvailableUpdate(Message[_SkillAvailableUpdateFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillAvailableUpdate
+    ```
+
+    Attributes:
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 1;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 2;
+            ```
+    """
+
+    __slots__ = ("source_ref", "revision")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            source_ref: SkillSourceRef | None = None,
+            revision: int = 0,
+        ) -> None:
+            pass
+
+        source_ref: SkillSourceRef | None
+        revision: int
+
+_SkillProductRecordFields: TypeAlias = Literal["skill_id", "series_id", "revision", "status", "metadata", "skill_updated_at", "product", "package_phase", "source_ref", "original_name", "file_count", "archive_size", "created_at", "owner_scope"]
+
+class SkillProductRecord(Message[_SkillProductRecordFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillProductRecord
+    ```
+
+    Attributes:
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 1;
+            ```
+        series_id:
+            ```proto
+            optional kokoro.platform.v1.SkillSeriesId series_id = 2;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 3;
+            ```
+        status:
+            ```proto
+            kokoro.platform.v1.SkillStatus status = 4;
+            ```
+        metadata:
+            ```proto
+            optional kokoro.platform.v1.SkillMetadata metadata = 5;
+            ```
+        skill_updated_at:
+            ```proto
+            optional google.protobuf.Timestamp skill_updated_at = 6;
+            ```
+        product:
+            ```proto
+            optional kokoro.platform.v1.SkillProductFacts product = 7;
+            ```
+        package_phase:
+            ```proto
+            kokoro.platform.v1.SkillPackagePhase package_phase = 8;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 9;
+            ```
+        original_name:
+            ```proto
+            optional string original_name = 10;
+            ```
+        file_count:
+            ```proto
+            optional uint32 file_count = 11;
+            ```
+        archive_size:
+            ```proto
+            optional uint64 archive_size = 12;
+            ```
+        created_at:
+            ```proto
+            optional google.protobuf.Timestamp created_at = 13;
+            ```
+        owner_scope:
+            ```proto
+            optional kokoro.platform.v1.OwnerScope owner_scope = 14;
+            ```
+    """
+
+    __slots__ = ("skill_id", "series_id", "revision", "status", "metadata", "skill_updated_at", "product", "package_phase", "source_ref", "original_name", "file_count", "archive_size", "created_at", "owner_scope")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill_id: SkillId | None = None,
+            series_id: SkillSeriesId | None = None,
+            revision: int = 0,
+            status: SkillStatus | None = None,
+            metadata: SkillMetadata | None = None,
+            skill_updated_at: Timestamp | None = None,
+            product: SkillProductFacts | None = None,
+            package_phase: SkillPackagePhase | None = None,
+            source_ref: SkillSourceRef | None = None,
+            original_name: str | None = None,
+            file_count: int | None = None,
+            archive_size: int | None = None,
+            created_at: Timestamp | None = None,
+            owner_scope: OwnerScope | None = None,
+        ) -> None:
+            pass
+
+        skill_id: SkillId | None
+        series_id: SkillSeriesId | None
+        revision: int
+        status: SkillStatus
+        metadata: SkillMetadata | None
+        skill_updated_at: Timestamp | None
+        product: SkillProductFacts | None
+        package_phase: SkillPackagePhase
+        source_ref: SkillSourceRef | None
+        original_name: str
+        file_count: int
+        archive_size: int
+        created_at: Timestamp | None
+        owner_scope: OwnerScope | None
+
+_SkillLocalProvenanceFields: TypeAlias = NoReturn
+
+class SkillLocalProvenance(Message[_SkillLocalProvenanceFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillLocalProvenance
+    ```
+    """
+
+    __slots__ = ()
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+        ) -> None:
+            pass
+
+_SkillAiProvenanceFields: TypeAlias = Literal["conversation_id", "run_ref", "artifact_ref", "asset_ref", "source_event_id", "source_event_seq", "source_event_digest", "content_sha256", "size_bytes", "mime_type"]
+
+class SkillAiProvenance(Message[_SkillAiProvenanceFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillAiProvenance
+    ```
+
+    Attributes:
+        conversation_id:
+            ```proto
+            string conversation_id = 1;
+            ```
+        run_ref:
+            ```proto
+            string run_ref = 2;
+            ```
+        artifact_ref:
+            ```proto
+            string artifact_ref = 3;
+            ```
+        asset_ref:
+            ```proto
+            string asset_ref = 4;
+            ```
+        source_event_id:
+            ```proto
+            string source_event_id = 5;
+            ```
+        source_event_seq:
+            ```proto
+            uint64 source_event_seq = 6;
+            ```
+        source_event_digest:
+            ```proto
+            string source_event_digest = 7;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 8;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 9;
+            ```
+        mime_type:
+            ```proto
+            string mime_type = 10;
+            ```
+    """
+
+    __slots__ = ("conversation_id", "run_ref", "artifact_ref", "asset_ref", "source_event_id", "source_event_seq", "source_event_digest", "content_sha256", "size_bytes", "mime_type")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            conversation_id: str = "",
+            run_ref: str = "",
+            artifact_ref: str = "",
+            asset_ref: str = "",
+            source_event_id: str = "",
+            source_event_seq: int = 0,
+            source_event_digest: str = "",
+            content_sha256: str = "",
+            size_bytes: int = 0,
+            mime_type: str = "",
+        ) -> None:
+            pass
+
+        conversation_id: str
+        run_ref: str
+        artifact_ref: str
+        asset_ref: str
+        source_event_id: str
+        source_event_seq: int
+        source_event_digest: str
+        content_sha256: str
+        size_bytes: int
+        mime_type: str
+
+_SkillGithubProvenanceFields: TypeAlias = Literal["repository_id", "repository_url", "owner_login", "owner_url", "commit", "path", "repo_stats", "asset_ref", "content_sha256", "size_bytes", "mime_type"]
+
+class SkillGithubProvenance(Message[_SkillGithubProvenanceFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillGithubProvenance
+    ```
+
+    Attributes:
+        repository_id:
+            ```proto
+            string repository_id = 1;
+            ```
+        repository_url:
+            ```proto
+            string repository_url = 2;
+            ```
+        owner_login:
+            ```proto
+            string owner_login = 3;
+            ```
+        owner_url:
+            ```proto
+            string owner_url = 4;
+            ```
+        commit:
+            ```proto
+            string commit = 5;
+            ```
+        path:
+            ```proto
+            string path = 6;
+            ```
+        repo_stats:
+            ```proto
+            optional kokoro.platform.v1.SkillRepositoryStats repo_stats = 7;
+            ```
+        asset_ref:
+            ```proto
+            optional string asset_ref = 8;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 9;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 10;
+            ```
+        mime_type:
+            ```proto
+            string mime_type = 11;
+            ```
+    """
+
+    __slots__ = ("repository_id", "repository_url", "owner_login", "owner_url", "commit", "path", "repo_stats", "asset_ref", "content_sha256", "size_bytes", "mime_type")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            repository_id: str = "",
+            repository_url: str = "",
+            owner_login: str = "",
+            owner_url: str = "",
+            commit: str = "",
+            path: str = "",
+            repo_stats: SkillRepositoryStats | None = None,
+            asset_ref: str | None = None,
+            content_sha256: str = "",
+            size_bytes: int = 0,
+            mime_type: str = "",
+        ) -> None:
+            pass
+
+        repository_id: str
+        repository_url: str
+        owner_login: str
+        owner_url: str
+        commit: str
+        path: str
+        repo_stats: SkillRepositoryStats | None
+        asset_ref: str
+        content_sha256: str
+        size_bytes: int
+        mime_type: str
+
+_SkillRepositoryStatsFields: TypeAlias = Literal["stars", "forks", "observed_at", "metadata_source_url"]
+
+class SkillRepositoryStats(Message[_SkillRepositoryStatsFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillRepositoryStats
+    ```
+
+    Attributes:
+        stars:
+            ```proto
+            uint64 stars = 1;
+            ```
+        forks:
+            ```proto
+            uint64 forks = 2;
+            ```
+        observed_at:
+            ```proto
+            optional google.protobuf.Timestamp observed_at = 3;
+            ```
+        metadata_source_url:
+            ```proto
+            string metadata_source_url = 4;
+            ```
+    """
+
+    __slots__ = ("stars", "forks", "observed_at", "metadata_source_url")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            stars: int = 0,
+            forks: int = 0,
+            observed_at: Timestamp | None = None,
+            metadata_source_url: str = "",
+        ) -> None:
+            pass
+
+        stars: int
+        forks: int
+        observed_at: Timestamp | None
+        metadata_source_url: str
+
+_UpdateSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "metadata", "clear_cover"]
+
+class UpdateSkillDraftRequest(Message[_UpdateSkillDraftRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdateSkillDraftRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        metadata:
+            ```proto
+            optional kokoro.platform.v1.SkillMetadata metadata = 6;
+            ```
+        clear_cover:
+            ```proto
+            optional bool clear_cover = 7;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "metadata", "clear_cover")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            metadata: SkillMetadata | None = None,
+            clear_cover: bool | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        metadata: SkillMetadata | None
+        clear_cover: bool
+
+_UpdateSkillDraftResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class UpdateSkillDraftResponse(Message[_UpdateSkillDraftResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdateSkillDraftResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_DiscardSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "reason"]
+
+class DiscardSkillDraftRequest(Message[_DiscardSkillDraftRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DiscardSkillDraftRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        reason:
+            ```proto
+            string reason = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "reason")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            reason: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        reason: str
+
+_DiscardSkillDraftResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class DiscardSkillDraftResponse(Message[_DiscardSkillDraftResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DiscardSkillDraftResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_SetSkillPublicationAudienceRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "audience"]
+
+class SetSkillPublicationAudienceRequest(Message[_SetSkillPublicationAudienceRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetSkillPublicationAudienceRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        audience:
+            ```proto
+            string audience = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "audience")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            audience: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        audience: str
+
+_SetSkillPublicationAudienceResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class SetSkillPublicationAudienceResponse(Message[_SetSkillPublicationAudienceResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetSkillPublicationAudienceResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_CreateAdminSkillVersionRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "metadata", "creation_provenance"]
+
+class CreateAdminSkillVersionRequest(Message[_CreateAdminSkillVersionRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreateAdminSkillVersionRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        metadata:
+            ```proto
+            optional kokoro.platform.v1.SkillMetadata metadata = 6;
+            ```
+        creation_provenance:
+            ```proto
+            optional kokoro.platform.v1.SkillCreationProvenance creation_provenance = 7;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "metadata", "creation_provenance")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            metadata: SkillMetadata | None = None,
+            creation_provenance: SkillCreationProvenance | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        metadata: SkillMetadata | None
+        creation_provenance: SkillCreationProvenance | None
+
+_CreateAdminSkillVersionResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class CreateAdminSkillVersionResponse(Message[_CreateAdminSkillVersionResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreateAdminSkillVersionResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_CreateAdminSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "product_context", "metadata"]
+
+class CreateAdminSkillDraftRequest(Message[_CreateAdminSkillDraftRequestFields]):
+    """
+    Creates the first draft revision of an administrator-owned official series.
+
+    ```proto
+    message kokoro.platform.v1.CreateAdminSkillDraftRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+        metadata:
+            ```proto
+            optional kokoro.platform.v1.SkillMetadata metadata = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "product_context", "metadata")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            product_context: ProductCatalogContext | None = None,
+            metadata: SkillMetadata | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        product_context: ProductCatalogContext | None
+        metadata: SkillMetadata | None
+
+_CreateAdminSkillDraftResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class CreateAdminSkillDraftResponse(Message[_CreateAdminSkillDraftResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreateAdminSkillDraftResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_PublishOfficialSkillRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "audience", "publisher"]
+
+class PublishOfficialSkillRequest(Message[_PublishOfficialSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PublishOfficialSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        audience:
+            ```proto
+            string audience = 6;
+            ```
+        publisher:
+            ```proto
+            optional kokoro.platform.v1.SkillIamRef publisher = 7;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "audience", "publisher")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            audience: str = "",
+            publisher: SkillIamRef | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        audience: str
+        publisher: SkillIamRef | None
+
+_PublishOfficialSkillResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class PublishOfficialSkillResponse(Message[_PublishOfficialSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PublishOfficialSkillResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_WithdrawAdminSkillRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "reason"]
+
+class WithdrawAdminSkillRequest(Message[_WithdrawAdminSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.WithdrawAdminSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        reason:
+            ```proto
+            string reason = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "reason")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            reason: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        reason: str
+
+_WithdrawAdminSkillResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class WithdrawAdminSkillResponse(Message[_WithdrawAdminSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.WithdrawAdminSkillResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_QuarantineSkillRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "reason"]
+
+class QuarantineSkillRequest(Message[_QuarantineSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.QuarantineSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        reason:
+            ```proto
+            string reason = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "reason")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            reason: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        reason: str
+
+_QuarantineSkillResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class QuarantineSkillResponse(Message[_QuarantineSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.QuarantineSkillResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_RestoreSkillRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "reason"]
+
+class RestoreSkillRequest(Message[_RestoreSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RestoreSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        reason:
+            ```proto
+            string reason = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "reason")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            reason: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        reason: str
+
+_RestoreSkillResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class RestoreSkillResponse(Message[_RestoreSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RestoreSkillResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_SetAdminSkillPublicationAudienceRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "audience"]
+
+class SetAdminSkillPublicationAudienceRequest(Message[_SetAdminSkillPublicationAudienceRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetAdminSkillPublicationAudienceRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        audience:
+            ```proto
+            string audience = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "audience")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            audience: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        audience: str
+
+_SetAdminSkillPublicationAudienceResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class SetAdminSkillPublicationAudienceResponse(Message[_SetAdminSkillPublicationAudienceResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetAdminSkillPublicationAudienceResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_DiscardAdminSkillDraftRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "reason"]
+
+class DiscardAdminSkillDraftRequest(Message[_DiscardAdminSkillDraftRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DiscardAdminSkillDraftRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        reason:
+            ```proto
+            string reason = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "reason")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            reason: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        reason: str
+
+_DiscardAdminSkillDraftResponseFields: TypeAlias = Literal["skill", "event_id", "replayed"]
+
+class DiscardAdminSkillDraftResponse(Message[_DiscardAdminSkillDraftResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DiscardAdminSkillDraftResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        event_id:
+            ```proto
+            string event_id = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("skill", "event_id", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            event_id: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        event_id: str
+        replayed: bool
+
+_BeginSkillCoverUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id"]
+
+class BeginSkillCoverUploadRequest(Message[_BeginSkillCoverUploadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginSkillCoverUploadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        filename:
+            ```proto
+            string filename = 6;
+            ```
+        mime_type:
+            ```proto
+            string mime_type = 7;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 8;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 9;
+            ```
+        replaces_attempt_id:
+            ```proto
+            optional string replaces_attempt_id = 10;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "filename", "mime_type", "size_bytes", "content_sha256", "replaces_attempt_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            filename: str = "",
+            mime_type: str = "",
+            size_bytes: int = 0,
+            content_sha256: str = "",
+            replaces_attempt_id: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        filename: str
+        mime_type: str
+        size_bytes: int
+        content_sha256: str
+        replaces_attempt_id: str
+
+_BeginSkillCoverUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed", "state_version"]
+
+class BeginSkillCoverUploadResponse(Message[_BeginSkillCoverUploadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.BeginSkillCoverUploadResponse
+    ```
+
+    Attributes:
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 1;
+            ```
+        attempt_id:
+            ```proto
+            string attempt_id = 2;
+            ```
+        attempt_epoch:
+            ```proto
+            uint64 attempt_epoch = 3;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 4;
+            ```
+        transfer_reference:
+            ```proto
+            optional kokoro.platform.v1.PackageTransferReference transfer_reference = 5;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 6;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 7;
+            ```
+    """
+
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "upload_id", "transfer_reference", "replayed", "state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill_id: SkillId | None = None,
+            attempt_id: str = "",
+            attempt_epoch: int = 0,
+            upload_id: str = "",
+            transfer_reference: PackageTransferReference | None = None,
+            replayed: bool = False,
+            state_version: int = 0,
+        ) -> None:
+            pass
+
+        skill_id: SkillId | None
+        attempt_id: str
+        attempt_epoch: int
+        upload_id: str
+        transfer_reference: PackageTransferReference | None
+        replayed: bool
+        state_version: int
+
+_CompleteSkillCoverUploadRequestFields: TypeAlias = Literal["request_id", "command", "skill_id", "product_context", "expected_state_version", "attempt_id", "upload_id", "source_version_id", "content_sha256", "size_bytes"]
+
+class CompleteSkillCoverUploadRequest(Message[_CompleteSkillCoverUploadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompleteSkillCoverUploadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 3;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 4;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 5;
+            ```
+        attempt_id:
+            ```proto
+            string attempt_id = 6;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 7;
+            ```
+        source_version_id:
+            ```proto
+            string source_version_id = 8;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 9;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 10;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "skill_id", "product_context", "expected_state_version", "attempt_id", "upload_id", "source_version_id", "content_sha256", "size_bytes")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+            expected_state_version: int | None = None,
+            attempt_id: str = "",
+            upload_id: str = "",
+            source_version_id: str = "",
+            content_sha256: str = "",
+            size_bytes: int = 0,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+        expected_state_version: int
+        attempt_id: str
+        upload_id: str
+        source_version_id: str
+        content_sha256: str
+        size_bytes: int
+
+_CompleteSkillCoverUploadResponseFields: TypeAlias = Literal["skill", "attempt_id", "attempt_epoch", "upload_id", "scan_state", "replayed"]
+
+class CompleteSkillCoverUploadResponse(Message[_CompleteSkillCoverUploadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CompleteSkillCoverUploadResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+        attempt_id:
+            ```proto
+            string attempt_id = 2;
+            ```
+        attempt_epoch:
+            ```proto
+            uint64 attempt_epoch = 3;
+            ```
+        upload_id:
+            ```proto
+            string upload_id = 4;
+            ```
+        scan_state:
+            ```proto
+            kokoro.platform.v1.SkillPackageScanState scan_state = 5;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 6;
+            ```
+    """
+
+    __slots__ = ("skill", "attempt_id", "attempt_epoch", "upload_id", "scan_state", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+            attempt_id: str = "",
+            attempt_epoch: int = 0,
+            upload_id: str = "",
+            scan_state: SkillPackageScanState | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+        attempt_id: str
+        attempt_epoch: int
+        upload_id: str
+        scan_state: SkillPackageScanState
+        replayed: bool
+
+_GetSkillCoverUploadRequestFields: TypeAlias = Literal["request_id", "skill_id", "product_context"]
+
+class GetSkillCoverUploadRequest(Message[_GetSkillCoverUploadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillCoverUploadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "skill_id", "product_context")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+
+_GetSkillCoverUploadResponseFields: TypeAlias = Literal["skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id", "source_version_id", "state_version", "cover"]
+
+class GetSkillCoverUploadResponse(Message[_GetSkillCoverUploadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillCoverUploadResponse
+    ```
+
+    Attributes:
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 1;
+            ```
+        attempt_id:
+            ```proto
+            optional string attempt_id = 2;
+            ```
+        attempt_epoch:
+            ```proto
+            uint64 attempt_epoch = 3;
+            ```
+        phase:
+            ```proto
+            string phase = 4;
+            ```
+        upload_id:
+            ```proto
+            optional string upload_id = 5;
+            ```
+        source_version_id:
+            ```proto
+            optional string source_version_id = 6;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 7;
+            ```
+        cover:
+            ```proto
+            optional kokoro.platform.v1.SkillCover cover = 8;
+            ```
+    """
+
+    __slots__ = ("skill_id", "attempt_id", "attempt_epoch", "phase", "upload_id", "source_version_id", "state_version", "cover")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill_id: SkillId | None = None,
+            attempt_id: str | None = None,
+            attempt_epoch: int = 0,
+            phase: str = "",
+            upload_id: str | None = None,
+            source_version_id: str | None = None,
+            state_version: int = 0,
+            cover: SkillCover | None = None,
+        ) -> None:
+            pass
+
+        skill_id: SkillId | None
+        attempt_id: str
+        attempt_epoch: int
+        phase: str
+        upload_id: str
+        source_version_id: str
+        state_version: int
+        cover: SkillCover | None
+
+_ListAdminSkillsRequestFields: TypeAlias = Literal["request_id", "product_context", "page", "status", "source_kind", "query", "category_key"]
+
+class ListAdminSkillsRequest(Message[_ListAdminSkillsRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListAdminSkillsRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 2;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallationPageRequest page = 3;
+            ```
+        status:
+            ```proto
+            optional kokoro.platform.v1.SkillStatus status = 4;
+            ```
+        source_kind:
+            ```proto
+            optional string source_kind = 5;
+            ```
+        query:
+            ```proto
+            optional string query = 6;
+            ```
+        category_key:
+            ```proto
+            optional string category_key = 7;
+            ```
+    """
+
+    __slots__ = ("request_id", "product_context", "page", "status", "source_kind", "query", "category_key")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            product_context: ProductCatalogContext | None = None,
+            page: ProductSkillInstallationPageRequest | None = None,
+            status: SkillStatus | None = None,
+            source_kind: str | None = None,
+            query: str | None = None,
+            category_key: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        product_context: ProductCatalogContext | None
+        page: ProductSkillInstallationPageRequest | None
+        status: SkillStatus
+        source_kind: str
+        query: str
+        category_key: str
+
+_ListAdminSkillsResponseFields: TypeAlias = Literal["skills", "page"]
+
+class ListAdminSkillsResponse(Message[_ListAdminSkillsResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListAdminSkillsResponse
+    ```
+
+    Attributes:
+        skills:
+            ```proto
+            repeated kokoro.platform.v1.SkillProductRecord skills = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("skills", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skills: list[SkillProductRecord] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        skills: list[SkillProductRecord]
+        page: PageResult | None
+
+_GetAdminSkillRequestFields: TypeAlias = Literal["request_id", "skill_id", "product_context"]
+
+class GetAdminSkillRequest(Message[_GetAdminSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetAdminSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        skill_id:
+            ```proto
+            optional kokoro.platform.v1.SkillId skill_id = 2;
+            ```
+        product_context:
+            ```proto
+            optional kokoro.platform.v1.ProductCatalogContext product_context = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "skill_id", "product_context")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            skill_id: SkillId | None = None,
+            product_context: ProductCatalogContext | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        skill_id: SkillId | None
+        product_context: ProductCatalogContext | None
+
+_GetAdminSkillResponseFields: TypeAlias = Literal["skill"]
+
+class GetAdminSkillResponse(Message[_GetAdminSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetAdminSkillResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+    """
+
+    __slots__ = ("skill",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+
+_InspectSkillPackageRequestFields: TypeAlias = Literal["request_id", "source_ref", "purpose", "file_path"]
+
+class InspectSkillPackageRequest(Message[_InspectSkillPackageRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InspectSkillPackageRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 2;
+            ```
+        purpose:
+            ```proto
+            string purpose = 3;
+            ```
+        file_path:
+            ```proto
+            optional string file_path = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "source_ref", "purpose", "file_path")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            source_ref: SkillSourceRef | None = None,
+            purpose: str = "",
+            file_path: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        source_ref: SkillSourceRef | None
+        purpose: str
+        file_path: str
+
+_InspectSkillPackageResponseFields: TypeAlias = Literal["source_ref", "revision", "files", "selected_file"]
+
+class InspectSkillPackageResponse(Message[_InspectSkillPackageResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InspectSkillPackageResponse
+    ```
+
+    Attributes:
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 1;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 2;
+            ```
+        files:
+            ```proto
+            repeated kokoro.platform.v1.SkillPackageTextFile files = 3;
+            ```
+        selected_file:
+            ```proto
+            optional kokoro.platform.v1.SkillPackageSelectedText selected_file = 4;
+            ```
+    """
+
+    __slots__ = ("source_ref", "revision", "files", "selected_file")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            source_ref: SkillSourceRef | None = None,
+            revision: int = 0,
+            files: list[SkillPackageTextFile] | None = None,
+            selected_file: SkillPackageSelectedText | None = None,
+        ) -> None:
+            pass
+
+        source_ref: SkillSourceRef | None
+        revision: int
+        files: list[SkillPackageTextFile]
+        selected_file: SkillPackageSelectedText | None
+
+_GetSkillPackageDownloadRequestFields: TypeAlias = Literal["request_id", "source_ref", "purpose"]
+
+class GetSkillPackageDownloadRequest(Message[_GetSkillPackageDownloadRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillPackageDownloadRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 2;
+            ```
+        purpose:
+            ```proto
+            string purpose = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "source_ref", "purpose")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            source_ref: SkillSourceRef | None = None,
+            purpose: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        source_ref: SkillSourceRef | None
+        purpose: str
+
+_GetSkillPackageDownloadResponseFields: TypeAlias = Literal["source_ref", "revision", "filename", "content_sha256", "size_bytes", "transfer_reference"]
+
+class GetSkillPackageDownloadResponse(Message[_GetSkillPackageDownloadResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillPackageDownloadResponse
+    ```
+
+    Attributes:
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 1;
+            ```
+        revision:
+            ```proto
+            uint64 revision = 2;
+            ```
+        filename:
+            ```proto
+            string filename = 3;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 4;
+            ```
+        size_bytes:
+            ```proto
+            uint64 size_bytes = 5;
+            ```
+        transfer_reference:
+            ```proto
+            optional kokoro.platform.v1.PackageTransferReference transfer_reference = 6;
+            ```
+    """
+
+    __slots__ = ("source_ref", "revision", "filename", "content_sha256", "size_bytes", "transfer_reference")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            source_ref: SkillSourceRef | None = None,
+            revision: int = 0,
+            filename: str = "",
+            content_sha256: str = "",
+            size_bytes: int = 0,
+            transfer_reference: PackageTransferReference | None = None,
+        ) -> None:
+            pass
+
+        source_ref: SkillSourceRef | None
+        revision: int
+        filename: str
+        content_sha256: str
+        size_bytes: int
+        transfer_reference: PackageTransferReference | None
+
+_GetSkillCoverReferenceRequestFields: TypeAlias = Literal["request_id", "source_ref", "purpose"]
+
+class GetSkillCoverReferenceRequest(Message[_GetSkillCoverReferenceRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillCoverReferenceRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 2;
+            ```
+        purpose:
+            ```proto
+            string purpose = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "source_ref", "purpose")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            source_ref: SkillSourceRef | None = None,
+            purpose: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        source_ref: SkillSourceRef | None
+        purpose: str
+
+_GetSkillCoverReferenceResponseFields: TypeAlias = Literal["source_ref", "cover", "transfer_reference"]
+
+class GetSkillCoverReferenceResponse(Message[_GetSkillCoverReferenceResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillCoverReferenceResponse
+    ```
+
+    Attributes:
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 1;
+            ```
+        cover:
+            ```proto
+            optional kokoro.platform.v1.SkillCover cover = 2;
+            ```
+        transfer_reference:
+            ```proto
+            optional kokoro.platform.v1.PackageTransferReference transfer_reference = 3;
+            ```
+    """
+
+    __slots__ = ("source_ref", "cover", "transfer_reference")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            source_ref: SkillSourceRef | None = None,
+            cover: SkillCover | None = None,
+            transfer_reference: PackageTransferReference | None = None,
+        ) -> None:
+            pass
+
+        source_ref: SkillSourceRef | None
+        cover: SkillCover | None
+        transfer_reference: PackageTransferReference | None
+
+_GetCurrentSkillRequestFields: TypeAlias = Literal["request_id", "series_id", "purpose"]
+
+class GetCurrentSkillRequest(Message[_GetCurrentSkillRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetCurrentSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        series_id:
+            ```proto
+            optional kokoro.platform.v1.SkillSeriesId series_id = 2;
+            ```
+        purpose:
+            ```proto
+            string purpose = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "series_id", "purpose")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            series_id: SkillSeriesId | None = None,
+            purpose: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        series_id: SkillSeriesId | None
+        purpose: str
+
+_SkillCurrentPublicationFields: TypeAlias = Literal["series_id", "current_version", "current", "audience", "state_version", "published_at"]
+
+class SkillCurrentPublication(Message[_SkillCurrentPublicationFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SkillCurrentPublication
+    ```
+
+    Attributes:
+        series_id:
+            ```proto
+            optional kokoro.platform.v1.SkillSeriesId series_id = 1;
+            ```
+        current_version:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord current_version = 2;
+            ```
+        current:
+            ```proto
+            bool current = 3;
+            ```
+        audience:
+            ```proto
+            string audience = 4;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 5;
+            ```
+        published_at:
+            ```proto
+            optional google.protobuf.Timestamp published_at = 6;
+            ```
+    """
+
+    __slots__ = ("series_id", "current_version", "current", "audience", "state_version", "published_at")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            series_id: SkillSeriesId | None = None,
+            current_version: SkillProductRecord | None = None,
+            current: bool = False,
+            audience: str = "",
+            state_version: int = 0,
+            published_at: Timestamp | None = None,
+        ) -> None:
+            pass
+
+        series_id: SkillSeriesId | None
+        current_version: SkillProductRecord | None
+        current: bool
+        audience: str
+        state_version: int
+        published_at: Timestamp | None
+
+_GetCurrentSkillResponseFields: TypeAlias = Literal["publication"]
+
+class GetCurrentSkillResponse(Message[_GetCurrentSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetCurrentSkillResponse
+    ```
+
+    Attributes:
+        publication:
+            ```proto
+            optional kokoro.platform.v1.SkillCurrentPublication publication = 1;
+            ```
+    """
+
+    __slots__ = ("publication",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            publication: SkillCurrentPublication | None = None,
+        ) -> None:
+            pass
+
+        publication: SkillCurrentPublication | None
+
+_GetSkillRevisionRequestFields: TypeAlias = Literal["request_id", "source_ref", "purpose"]
+
+class GetSkillRevisionRequest(Message[_GetSkillRevisionRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillRevisionRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 2;
+            ```
+        purpose:
+            ```proto
+            string purpose = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "source_ref", "purpose")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            source_ref: SkillSourceRef | None = None,
+            purpose: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        source_ref: SkillSourceRef | None
+        purpose: str
+
+_GetSkillRevisionResponseFields: TypeAlias = Literal["skill"]
+
+class GetSkillRevisionResponse(Message[_GetSkillRevisionResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetSkillRevisionResponse
+    ```
+
+    Attributes:
+        skill:
+            ```proto
+            optional kokoro.platform.v1.SkillProductRecord skill = 1;
+            ```
+    """
+
+    __slots__ = ("skill",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            skill: SkillProductRecord | None = None,
+        ) -> None:
+            pass
+
+        skill: SkillProductRecord | None
+
+_CreatePersonalMcpConnectorRequestFields: TypeAlias = Literal["request_id", "command", "provider_key", "connector_type", "display_name", "description"]
+
+class CreatePersonalMcpConnectorRequest(Message[_CreatePersonalMcpConnectorRequestFields]):
+    """
+    Human control plane: BFF workload + current human qualification, not execution proof.
+
+    ```proto
+    message kokoro.platform.v1.CreatePersonalMcpConnectorRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 3;
+            ```
+        connector_type:
+            ```proto
+            kokoro.platform.v1.McpConnectorType connector_type = 4;
+            ```
+        display_name:
+            ```proto
+            string display_name = 5;
+            ```
+        description:
+            ```proto
+            string description = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "provider_key", "connector_type", "display_name", "description")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            provider_key: str = "",
+            connector_type: McpConnectorType | None = None,
+            display_name: str = "",
+            description: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        provider_key: str
+        connector_type: McpConnectorType
+        display_name: str
+        description: str
+
+_UpdatePersonalMcpConnectorRequestFields: TypeAlias = Literal["request_id", "command", "connector_id", "expected_state_version", "display_name", "description"]
+
+class UpdatePersonalMcpConnectorRequest(Message[_UpdatePersonalMcpConnectorRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalMcpConnectorRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+        display_name:
+            ```proto
+            string display_name = 5;
+            ```
+        description:
+            ```proto
+            string description = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "connector_id", "expected_state_version", "display_name", "description")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            connector_id: McpConnectorId | None = None,
+            expected_state_version: int | None = None,
+            display_name: str = "",
+            description: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        connector_id: McpConnectorId | None
+        expected_state_version: int
+        display_name: str
+        description: str
+
+_SetPersonalMcpConnectorEnabledRequestFields: TypeAlias = Literal["request_id", "command", "connector_id", "expected_state_version", "enabled"]
+
+class SetPersonalMcpConnectorEnabledRequest(Message[_SetPersonalMcpConnectorEnabledRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetPersonalMcpConnectorEnabledRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "connector_id", "expected_state_version", "enabled")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            connector_id: McpConnectorId | None = None,
+            expected_state_version: int | None = None,
+            enabled: bool | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        connector_id: McpConnectorId | None
+        expected_state_version: int
+        enabled: bool
+
+_RemovePersonalMcpConnectorRequestFields: TypeAlias = Literal["request_id", "command", "connector_id", "expected_state_version"]
+
+class RemovePersonalMcpConnectorRequest(Message[_RemovePersonalMcpConnectorRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemovePersonalMcpConnectorRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        connector_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectorId connector_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "connector_id", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            connector_id: McpConnectorId | None = None,
+            expected_state_version: int | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        connector_id: McpConnectorId | None
+        expected_state_version: int
+
+_CreatePersonalMcpConnectorResponseFields: TypeAlias = Literal["connector"]
+
+class CreatePersonalMcpConnectorResponse(Message[_CreatePersonalMcpConnectorResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreatePersonalMcpConnectorResponse
+    ```
+
+    Attributes:
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 1;
+            ```
+    """
+
+    __slots__ = ("connector",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        connector: PersonalMcpConnector | None
+
+_ListPersonalMcpProvidersRequestFields: TypeAlias = Literal["request_id", "query", "directory_type", "category_key", "page"]
+
+class ListPersonalMcpProvidersRequest(Message[_ListPersonalMcpProvidersRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalMcpProvidersRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        query:
+            ```proto
+            optional string query = 2;
+            ```
+        directory_type:
+            ```proto
+            optional string directory_type = 3;
+            ```
+        category_key:
+            ```proto
+            optional string category_key = 4;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpPageRequest page = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "query", "directory_type", "category_key", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            query: str | None = None,
+            directory_type: str | None = None,
+            category_key: str | None = None,
+            page: PersonalMcpPageRequest | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        query: str
+        directory_type: str
+        category_key: str
+        page: PersonalMcpPageRequest | None
+
+_GetPersonalMcpProviderRequestFields: TypeAlias = Literal["request_id", "provider_key"]
+
+class GetPersonalMcpProviderRequest(Message[_GetPersonalMcpProviderRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpProviderRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "provider_key")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            provider_key: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        provider_key: str
+
+_PersonalMcpProviderFields: TypeAlias = Literal["provider_key", "display_name", "description", "directory_type", "category_keys", "example_prompts", "author", "website", "privacy_url", "enabled", "state_version", "cover_image_url", "updated_at", "connection_server_id"]
+
+class PersonalMcpProvider(Message[_PersonalMcpProviderFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpProvider
+    ```
+
+    Attributes:
+        provider_key:
+            ```proto
+            string provider_key = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+        description:
+            ```proto
+            optional string description = 3;
+            ```
+        directory_type:
+            ```proto
+            string directory_type = 4;
+            ```
+        category_keys:
+            ```proto
+            repeated string category_keys = 5;
+            ```
+        example_prompts:
+            ```proto
+            repeated string example_prompts = 6;
+            ```
+        author:
+            ```proto
+            optional string author = 7;
+            ```
+        website:
+            ```proto
+            optional string website = 8;
+            ```
+        privacy_url:
+            ```proto
+            optional string privacy_url = 9;
+            ```
+        enabled:
+            ```proto
+            bool enabled = 10;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 11;
+            ```
+        cover_image_url:
+            ```proto
+            optional string cover_image_url = 12;
+            ```
+        updated_at:
+            ```proto
+            optional string updated_at = 13;
+            ```
+        connection_server_id:
+            Omitted unless this provider has exactly one managed streamable HTTP server.
+
+            ```proto
+            optional kokoro.platform.v1.McpServerId connection_server_id = 14;
+            ```
+    """
+
+    __slots__ = ("provider_key", "display_name", "description", "directory_type", "category_keys", "example_prompts", "author", "website", "privacy_url", "enabled", "state_version", "cover_image_url", "updated_at", "connection_server_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider_key: str = "",
+            display_name: str = "",
+            description: str | None = None,
+            directory_type: str = "",
+            category_keys: list[str] | None = None,
+            example_prompts: list[str] | None = None,
+            author: str | None = None,
+            website: str | None = None,
+            privacy_url: str | None = None,
+            enabled: bool = False,
+            state_version: int = 0,
+            cover_image_url: str | None = None,
+            updated_at: str | None = None,
+            connection_server_id: McpServerId | None = None,
+        ) -> None:
+            pass
+
+        provider_key: str
+        display_name: str
+        description: str
+        directory_type: str
+        category_keys: list[str]
+        example_prompts: list[str]
+        author: str
+        website: str
+        privacy_url: str
+        enabled: bool
+        state_version: int
+        cover_image_url: str
+        updated_at: str
+        connection_server_id: McpServerId | None
+
+_ListPersonalMcpProvidersResponseFields: TypeAlias = Literal["providers", "page"]
+
+class ListPersonalMcpProvidersResponse(Message[_ListPersonalMcpProvidersResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListPersonalMcpProvidersResponse
+    ```
+
+    Attributes:
+        providers:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpProvider providers = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("providers", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            providers: list[PersonalMcpProvider] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        providers: list[PersonalMcpProvider]
+        page: PageResult | None
+
+_GetPersonalMcpProviderResponseFields: TypeAlias = Literal["provider"]
+
+class GetPersonalMcpProviderResponse(Message[_GetPersonalMcpProviderResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpProviderResponse
+    ```
+
+    Attributes:
+        provider:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpProvider provider = 1;
+            ```
+    """
+
+    __slots__ = ("provider",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider: PersonalMcpProvider | None = None,
+        ) -> None:
+            pass
+
+        provider: PersonalMcpProvider | None
+
+_UpdatePersonalMcpConnectorResponseFields: TypeAlias = Literal["connector"]
+
+class UpdatePersonalMcpConnectorResponse(Message[_UpdatePersonalMcpConnectorResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalMcpConnectorResponse
+    ```
+
+    Attributes:
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 1;
+            ```
+    """
+
+    __slots__ = ("connector",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        connector: PersonalMcpConnector | None
+
+_SetPersonalMcpConnectorEnabledResponseFields: TypeAlias = Literal["connector"]
+
+class SetPersonalMcpConnectorEnabledResponse(Message[_SetPersonalMcpConnectorEnabledResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetPersonalMcpConnectorEnabledResponse
+    ```
+
+    Attributes:
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 1;
+            ```
+    """
+
+    __slots__ = ("connector",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        connector: PersonalMcpConnector | None
+
+_RemovePersonalMcpConnectorResponseFields: TypeAlias = Literal["connector"]
+
+class RemovePersonalMcpConnectorResponse(Message[_RemovePersonalMcpConnectorResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemovePersonalMcpConnectorResponse
+    ```
+
+    Attributes:
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 1;
+            ```
+    """
+
+    __slots__ = ("connector",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        connector: PersonalMcpConnector | None
+
+_McpProviderOriginFields: TypeAlias = Literal["scheme", "host", "port", "path_prefix"]
+
+class McpProviderOrigin(Message[_McpProviderOriginFields]):
+    """
+    Platform-only provider control plane. Browser traffic reaches this service only
+    through the BFF after fresh human administrator admission.
+
+    ```proto
+    message kokoro.platform.v1.McpProviderOrigin
+    ```
+
+    Attributes:
+        scheme:
+            ```proto
+            string scheme = 1;
+            ```
+        host:
+            ```proto
+            string host = 2;
+            ```
+        port:
+            ```proto
+            uint32 port = 3;
+            ```
+        path_prefix:
+            ```proto
+            string path_prefix = 4;
+            ```
+    """
+
+    __slots__ = ("scheme", "host", "port", "path_prefix")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            scheme: str = "",
+            host: str = "",
+            port: int = 0,
+            path_prefix: str = "",
+        ) -> None:
+            pass
+
+        scheme: str
+        host: str
+        port: int
+        path_prefix: str
+
+_McpProviderToolAuthorizationRuleFields: TypeAlias = Literal["server_identity", "selector", "required_scopes"]
+
+class McpProviderToolAuthorizationRule(Message[_McpProviderToolAuthorizationRuleFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpProviderToolAuthorizationRule
+    ```
+
+    Attributes:
+        server_identity:
+            ```proto
+            string server_identity = 1;
+            ```
+        selector:
+            ```proto
+            string selector = 2;
+            ```
+        required_scopes:
+            ```proto
+            repeated string required_scopes = 3;
+            ```
+    """
+
+    __slots__ = ("server_identity", "selector", "required_scopes")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server_identity: str = "",
+            selector: str = "",
+            required_scopes: list[str] | None = None,
+        ) -> None:
+            pass
+
+        server_identity: str
+        selector: str
+        required_scopes: list[str]
+
+_McpProviderToolAuthorizationPolicyFields: TypeAlias = Literal["version", "rules"]
+
+class McpProviderToolAuthorizationPolicy(Message[_McpProviderToolAuthorizationPolicyFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpProviderToolAuthorizationPolicy
+    ```
+
+    Attributes:
+        version:
+            ```proto
+            uint32 version = 1;
+            ```
+        rules:
+            ```proto
+            repeated kokoro.platform.v1.McpProviderToolAuthorizationRule rules = 2;
+            ```
+    """
+
+    __slots__ = ("version", "rules")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            version: int = 0,
+            rules: list[McpProviderToolAuthorizationRule] | None = None,
+        ) -> None:
+            pass
+
+        version: int
+        rules: list[McpProviderToolAuthorizationRule]
+
+_McpProviderAdminRecordFields: TypeAlias = Literal["provider_key", "display_name", "description", "directory_type", "category_keys", "example_prompts", "author", "website", "privacy_url", "connector_types", "default_scopes", "authorization_required", "allowed_mcp_origins", "tool_authorization_policy", "enabled", "state_version", "created_at", "updated_at", "cover_image_url"]
+
+class McpProviderAdminRecord(Message[_McpProviderAdminRecordFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpProviderAdminRecord
+    ```
+
+    Attributes:
+        provider_key:
+            ```proto
+            string provider_key = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+        description:
+            ```proto
+            optional string description = 3;
+            ```
+        directory_type:
+            ```proto
+            string directory_type = 4;
+            ```
+        category_keys:
+            ```proto
+            repeated string category_keys = 5;
+            ```
+        example_prompts:
+            ```proto
+            repeated string example_prompts = 6;
+            ```
+        author:
+            ```proto
+            optional string author = 7;
+            ```
+        website:
+            ```proto
+            optional string website = 8;
+            ```
+        privacy_url:
+            ```proto
+            optional string privacy_url = 9;
+            ```
+        connector_types:
+            ```proto
+            repeated kokoro.platform.v1.McpConnectorType connector_types = 10 [packed = true];
+            ```
+        default_scopes:
+            ```proto
+            repeated string default_scopes = 11;
+            ```
+        authorization_required:
+            ```proto
+            bool authorization_required = 12;
+            ```
+        allowed_mcp_origins:
+            ```proto
+            repeated kokoro.platform.v1.McpProviderOrigin allowed_mcp_origins = 13;
+            ```
+        tool_authorization_policy:
+            ```proto
+            optional kokoro.platform.v1.McpProviderToolAuthorizationPolicy tool_authorization_policy = 14;
+            ```
+        enabled:
+            ```proto
+            bool enabled = 15;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 16;
+            ```
+        created_at:
+            ```proto
+            optional google.protobuf.Timestamp created_at = 17;
+            ```
+        updated_at:
+            ```proto
+            optional google.protobuf.Timestamp updated_at = 18;
+            ```
+        cover_image_url:
+            ```proto
+            optional string cover_image_url = 19;
+            ```
+    """
+
+    __slots__ = ("provider_key", "display_name", "description", "directory_type", "category_keys", "example_prompts", "author", "website", "privacy_url", "connector_types", "default_scopes", "authorization_required", "allowed_mcp_origins", "tool_authorization_policy", "enabled", "state_version", "created_at", "updated_at", "cover_image_url")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider_key: str = "",
+            display_name: str = "",
+            description: str | None = None,
+            directory_type: str = "",
+            category_keys: list[str] | None = None,
+            example_prompts: list[str] | None = None,
+            author: str | None = None,
+            website: str | None = None,
+            privacy_url: str | None = None,
+            connector_types: list[McpConnectorType] | None = None,
+            default_scopes: list[str] | None = None,
+            authorization_required: bool = False,
+            allowed_mcp_origins: list[McpProviderOrigin] | None = None,
+            tool_authorization_policy: McpProviderToolAuthorizationPolicy | None = None,
+            enabled: bool = False,
+            state_version: int = 0,
+            created_at: Timestamp | None = None,
+            updated_at: Timestamp | None = None,
+            cover_image_url: str | None = None,
+        ) -> None:
+            pass
+
+        provider_key: str
+        display_name: str
+        description: str
+        directory_type: str
+        category_keys: list[str]
+        example_prompts: list[str]
+        author: str
+        website: str
+        privacy_url: str
+        connector_types: list[McpConnectorType]
+        default_scopes: list[str]
+        authorization_required: bool
+        allowed_mcp_origins: list[McpProviderOrigin]
+        tool_authorization_policy: McpProviderToolAuthorizationPolicy | None
+        enabled: bool
+        state_version: int
+        created_at: Timestamp | None
+        updated_at: Timestamp | None
+        cover_image_url: str
+
+_McpProviderAdminInputFields: TypeAlias = Literal["provider_key", "display_name", "description", "directory_type", "category_keys", "example_prompts", "author", "website", "privacy_url", "connector_types", "default_scopes", "authorization_required", "allowed_mcp_origins", "tool_authorization_policy", "cover_image_url"]
+
+class McpProviderAdminInput(Message[_McpProviderAdminInputFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpProviderAdminInput
+    ```
+
+    Attributes:
+        provider_key:
+            ```proto
+            string provider_key = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+        description:
+            ```proto
+            optional string description = 3;
+            ```
+        directory_type:
+            ```proto
+            string directory_type = 4;
+            ```
+        category_keys:
+            ```proto
+            repeated string category_keys = 5;
+            ```
+        example_prompts:
+            ```proto
+            repeated string example_prompts = 6;
+            ```
+        author:
+            ```proto
+            optional string author = 7;
+            ```
+        website:
+            ```proto
+            optional string website = 8;
+            ```
+        privacy_url:
+            ```proto
+            optional string privacy_url = 9;
+            ```
+        connector_types:
+            ```proto
+            repeated kokoro.platform.v1.McpConnectorType connector_types = 10 [packed = true];
+            ```
+        default_scopes:
+            ```proto
+            repeated string default_scopes = 11;
+            ```
+        authorization_required:
+            ```proto
+            bool authorization_required = 12;
+            ```
+        allowed_mcp_origins:
+            ```proto
+            repeated kokoro.platform.v1.McpProviderOrigin allowed_mcp_origins = 13;
+            ```
+        tool_authorization_policy:
+            ```proto
+            optional kokoro.platform.v1.McpProviderToolAuthorizationPolicy tool_authorization_policy = 14;
+            ```
+        cover_image_url:
+            ```proto
+            optional string cover_image_url = 15;
+            ```
+    """
+
+    __slots__ = ("provider_key", "display_name", "description", "directory_type", "category_keys", "example_prompts", "author", "website", "privacy_url", "connector_types", "default_scopes", "authorization_required", "allowed_mcp_origins", "tool_authorization_policy", "cover_image_url")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider_key: str = "",
+            display_name: str = "",
+            description: str | None = None,
+            directory_type: str = "",
+            category_keys: list[str] | None = None,
+            example_prompts: list[str] | None = None,
+            author: str | None = None,
+            website: str | None = None,
+            privacy_url: str | None = None,
+            connector_types: list[McpConnectorType] | None = None,
+            default_scopes: list[str] | None = None,
+            authorization_required: bool = False,
+            allowed_mcp_origins: list[McpProviderOrigin] | None = None,
+            tool_authorization_policy: McpProviderToolAuthorizationPolicy | None = None,
+            cover_image_url: str | None = None,
+        ) -> None:
+            pass
+
+        provider_key: str
+        display_name: str
+        description: str
+        directory_type: str
+        category_keys: list[str]
+        example_prompts: list[str]
+        author: str
+        website: str
+        privacy_url: str
+        connector_types: list[McpConnectorType]
+        default_scopes: list[str]
+        authorization_required: bool
+        allowed_mcp_origins: list[McpProviderOrigin]
+        tool_authorization_policy: McpProviderToolAuthorizationPolicy | None
+        cover_image_url: str
+
+_ListMcpProviderAdminRecordsRequestFields: TypeAlias = Literal["request_id", "query", "enabled", "page"]
+
+class ListMcpProviderAdminRecordsRequest(Message[_ListMcpProviderAdminRecordsRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListMcpProviderAdminRecordsRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        query:
+            ```proto
+            optional string query = 2;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 3;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpPageRequest page = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "query", "enabled", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            query: str | None = None,
+            enabled: bool | None = None,
+            page: PersonalMcpPageRequest | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        query: str
+        enabled: bool
+        page: PersonalMcpPageRequest | None
+
+_ListMcpProviderAdminRecordsResponseFields: TypeAlias = Literal["providers", "page"]
+
+class ListMcpProviderAdminRecordsResponse(Message[_ListMcpProviderAdminRecordsResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListMcpProviderAdminRecordsResponse
+    ```
+
+    Attributes:
+        providers:
+            ```proto
+            repeated kokoro.platform.v1.McpProviderAdminRecord providers = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+    """
+
+    __slots__ = ("providers", "page")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            providers: list[McpProviderAdminRecord] | None = None,
+            page: PageResult | None = None,
+        ) -> None:
+            pass
+
+        providers: list[McpProviderAdminRecord]
+        page: PageResult | None
+
+_GetMcpProviderAdminRecordRequestFields: TypeAlias = Literal["request_id", "provider_key"]
+
+class GetMcpProviderAdminRecordRequest(Message[_GetMcpProviderAdminRecordRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetMcpProviderAdminRecordRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "provider_key")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            provider_key: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        provider_key: str
+
+_GetMcpProviderAdminRecordResponseFields: TypeAlias = Literal["provider"]
+
+class GetMcpProviderAdminRecordResponse(Message[_GetMcpProviderAdminRecordResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetMcpProviderAdminRecordResponse
+    ```
+
+    Attributes:
+        provider:
+            ```proto
+            optional kokoro.platform.v1.McpProviderAdminRecord provider = 1;
+            ```
+    """
+
+    __slots__ = ("provider",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider: McpProviderAdminRecord | None = None,
+        ) -> None:
+            pass
+
+        provider: McpProviderAdminRecord | None
+
+_CreateMcpProviderAdminRecordRequestFields: TypeAlias = Literal["request_id", "command", "provider", "enabled"]
+
+class CreateMcpProviderAdminRecordRequest(Message[_CreateMcpProviderAdminRecordRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreateMcpProviderAdminRecordRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        provider:
+            ```proto
+            optional kokoro.platform.v1.McpProviderAdminInput provider = 3;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "provider", "enabled")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            provider: McpProviderAdminInput | None = None,
+            enabled: bool | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        provider: McpProviderAdminInput | None
+        enabled: bool
+
+_CreateMcpProviderAdminRecordResponseFields: TypeAlias = Literal["provider", "replayed"]
+
+class CreateMcpProviderAdminRecordResponse(Message[_CreateMcpProviderAdminRecordResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.CreateMcpProviderAdminRecordResponse
+    ```
+
+    Attributes:
+        provider:
+            ```proto
+            optional kokoro.platform.v1.McpProviderAdminRecord provider = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("provider", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider: McpProviderAdminRecord | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        provider: McpProviderAdminRecord | None
+        replayed: bool
+
+_UpdateMcpProviderAdminRecordRequestFields: TypeAlias = Literal["request_id", "command", "provider_key", "expected_state_version", "provider"]
+
+class UpdateMcpProviderAdminRecordRequest(Message[_UpdateMcpProviderAdminRecordRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdateMcpProviderAdminRecordRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+        provider:
+            ```proto
+            optional kokoro.platform.v1.McpProviderAdminInput provider = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "provider_key", "expected_state_version", "provider")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            provider_key: str = "",
+            expected_state_version: int | None = None,
+            provider: McpProviderAdminInput | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        provider_key: str
+        expected_state_version: int
+        provider: McpProviderAdminInput | None
+
+_UpdateMcpProviderAdminRecordResponseFields: TypeAlias = Literal["provider", "replayed"]
+
+class UpdateMcpProviderAdminRecordResponse(Message[_UpdateMcpProviderAdminRecordResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdateMcpProviderAdminRecordResponse
+    ```
+
+    Attributes:
+        provider:
+            ```proto
+            optional kokoro.platform.v1.McpProviderAdminRecord provider = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("provider", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider: McpProviderAdminRecord | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        provider: McpProviderAdminRecord | None
+        replayed: bool
+
+_SetMcpProviderAdminRecordEnabledRequestFields: TypeAlias = Literal["request_id", "command", "provider_key", "expected_state_version", "enabled"]
+
+class SetMcpProviderAdminRecordEnabledRequest(Message[_SetMcpProviderAdminRecordEnabledRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetMcpProviderAdminRecordEnabledRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+        enabled:
+            ```proto
+            bool enabled = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "provider_key", "expected_state_version", "enabled")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            provider_key: str = "",
+            expected_state_version: int | None = None,
+            enabled: bool = False,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        provider_key: str
+        expected_state_version: int
+        enabled: bool
+
+_SetMcpProviderAdminRecordEnabledResponseFields: TypeAlias = Literal["provider", "replayed"]
+
+class SetMcpProviderAdminRecordEnabledResponse(Message[_SetMcpProviderAdminRecordEnabledResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetMcpProviderAdminRecordEnabledResponse
+    ```
+
+    Attributes:
+        provider:
+            ```proto
+            optional kokoro.platform.v1.McpProviderAdminRecord provider = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("provider", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider: McpProviderAdminRecord | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        provider: McpProviderAdminRecord | None
+        replayed: bool
+
+_RemoveMcpProviderAdminRecordRequestFields: TypeAlias = Literal["request_id", "command", "provider_key", "expected_state_version"]
+
+class RemoveMcpProviderAdminRecordRequest(Message[_RemoveMcpProviderAdminRecordRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemoveMcpProviderAdminRecordRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        provider_key:
+            ```proto
+            string provider_key = 3;
+            ```
+        expected_state_version:
+            ```proto
+            optional uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "provider_key", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            provider_key: str = "",
+            expected_state_version: int | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        provider_key: str
+        expected_state_version: int
+
+_RemoveMcpProviderAdminRecordResponseFields: TypeAlias = Literal["provider_key", "replayed"]
+
+class RemoveMcpProviderAdminRecordResponse(Message[_RemoveMcpProviderAdminRecordResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemoveMcpProviderAdminRecordResponse
+    ```
+
+    Attributes:
+        provider_key:
+            ```proto
+            string provider_key = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("provider_key", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            provider_key: str = "",
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        provider_key: str
+        replayed: bool
+
+_PersonalMcpErrorDetailFields: TypeAlias = Literal["reason"]
+
+class PersonalMcpErrorDetail(Message[_PersonalMcpErrorDetailFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpErrorDetail
+    ```
+
+    Attributes:
+        reason:
+            ```proto
+            kokoro.platform.v1.PersonalMcpErrorReason reason = 1;
+            ```
+    """
+
+    __slots__ = ("reason",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            reason: PersonalMcpErrorReason | None = None,
+        ) -> None:
+            pass
+
+        reason: PersonalMcpErrorReason
+
+_PersonalMcpHeaderWriteFields: TypeAlias = Literal["name", "value"]
+
+class PersonalMcpHeaderWrite(Message[_PersonalMcpHeaderWriteFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpHeaderWrite
+    ```
+
+    Attributes:
+        name:
+            ```proto
+            string name = 1;
+            ```
+        value:
+            ```proto
+            string value = 2;
+            ```
+    """
+
+    __slots__ = ("name", "value")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            name: str = "",
+            value: str = "",
+        ) -> None:
+            pass
+
+        name: str
+        value: str
+
+_PersonalMcpOAuthClientWriteFields: TypeAlias = Literal["client_id", "client_secret"]
+
+class PersonalMcpOAuthClientWrite(Message[_PersonalMcpOAuthClientWriteFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpOAuthClientWrite
+    ```
+
+    Attributes:
+        client_id:
+            ```proto
+            string client_id = 1;
+            ```
+        client_secret:
+            ```proto
+            string client_secret = 2;
+            ```
+    """
+
+    __slots__ = ("client_id", "client_secret")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            client_id: str = "",
+            client_secret: str = "",
+        ) -> None:
+            pass
+
+        client_id: str
+        client_secret: str
+
+_PersonalMcpHeaderDescriptorFields: TypeAlias = Literal["name", "configured", "state_version", "status"]
+
+class PersonalMcpHeaderDescriptor(Message[_PersonalMcpHeaderDescriptorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpHeaderDescriptor
+    ```
+
+    Attributes:
+        name:
+            ```proto
+            string name = 1;
+            ```
+        configured:
+            ```proto
+            bool configured = 2;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 3;
+            ```
+        status:
+            ```proto
+            string status = 4;
+            ```
+    """
+
+    __slots__ = ("name", "configured", "state_version", "status")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            name: str = "",
+            configured: bool = False,
+            state_version: int = 0,
+            status: str = "",
+        ) -> None:
+            pass
+
+        name: str
+        configured: bool
+        state_version: int
+        status: str
+
+_PersonalMcpOAuthClientDescriptorFields: TypeAlias = Literal["client_id", "configured", "origin", "status", "state_version"]
+
+class PersonalMcpOAuthClientDescriptor(Message[_PersonalMcpOAuthClientDescriptorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpOAuthClientDescriptor
+    ```
+
+    Attributes:
+        client_id:
+            ```proto
+            string client_id = 1;
+            ```
+        configured:
+            ```proto
+            bool configured = 2;
+            ```
+        origin:
+            ```proto
+            string origin = 3;
+            ```
+        status:
+            ```proto
+            string status = 4;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 5;
+            ```
+    """
+
+    __slots__ = ("client_id", "configured", "origin", "status", "state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            client_id: str = "",
+            configured: bool = False,
+            origin: str = "",
+            status: str = "",
+            state_version: int = 0,
+        ) -> None:
+            pass
+
+        client_id: str
+        configured: bool
+        origin: str
+        status: str
+        state_version: int
+
+_PersonalMcpToolSelectorFields: TypeAlias = Literal["selector", "display_name", "input_schema_digest", "output_schema_digest", "required_scopes"]
+
+class PersonalMcpToolSelector(Message[_PersonalMcpToolSelectorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpToolSelector
+    ```
+
+    Attributes:
+        selector:
+            ```proto
+            string selector = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+        input_schema_digest:
+            ```proto
+            string input_schema_digest = 3;
+            ```
+        output_schema_digest:
+            ```proto
+            optional string output_schema_digest = 4;
+            ```
+        required_scopes:
+            ```proto
+            repeated string required_scopes = 5;
+            ```
+    """
+
+    __slots__ = ("selector", "display_name", "input_schema_digest", "output_schema_digest", "required_scopes")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            selector: str = "",
+            display_name: str = "",
+            input_schema_digest: str = "",
+            output_schema_digest: str | None = None,
+            required_scopes: list[str] | None = None,
+        ) -> None:
+            pass
+
+        selector: str
+        display_name: str
+        input_schema_digest: str
+        output_schema_digest: str
+        required_scopes: list[str]
+
+_PersonalMcpResourceSelectorFields: TypeAlias = Literal["selector", "display_name"]
+
+class PersonalMcpResourceSelector(Message[_PersonalMcpResourceSelectorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpResourceSelector
+    ```
+
+    Attributes:
+        selector:
+            ```proto
+            string selector = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+    """
+
+    __slots__ = ("selector", "display_name")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            selector: str = "",
+            display_name: str = "",
+        ) -> None:
+            pass
+
+        selector: str
+        display_name: str
+
+_PersonalMcpPromptSelectorFields: TypeAlias = Literal["selector", "display_name"]
+
+class PersonalMcpPromptSelector(Message[_PersonalMcpPromptSelectorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpPromptSelector
+    ```
+
+    Attributes:
+        selector:
+            ```proto
+            string selector = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+    """
+
+    __slots__ = ("selector", "display_name")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            selector: str = "",
+            display_name: str = "",
+        ) -> None:
+            pass
+
+        selector: str
+        display_name: str
+
+_PersonalMcpDeclaredSelectorFields: TypeAlias = Literal["tool", "resource", "prompt"]
+
+class PersonalMcpDeclaredSelector(Message[_PersonalMcpDeclaredSelectorFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpDeclaredSelector
+    ```
+
+    Attributes:
+        kind:
+            ```proto
+            oneof kind
+            ```
+    """
+
+    __slots__ = ("kind",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            kind: Oneof[Literal["tool"], PersonalMcpToolSelector] | Oneof[Literal["resource"], PersonalMcpResourceSelector] | Oneof[Literal["prompt"], PersonalMcpPromptSelector] | None = None,
+        ) -> None:
+            pass
+
+        kind: Oneof[Literal["tool"], PersonalMcpToolSelector] | Oneof[Literal["resource"], PersonalMcpResourceSelector] | Oneof[Literal["prompt"], PersonalMcpPromptSelector] | None
+
+_RegisterPersonalMcpServerRequestFields: TypeAlias = Literal["request_id", "command", "display_name", "server_url", "notes", "headers", "oauth_client"]
+
+class RegisterPersonalMcpServerRequest(Message[_RegisterPersonalMcpServerRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RegisterPersonalMcpServerRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        display_name:
+            ```proto
+            string display_name = 3;
+            ```
+        server_url:
+            ```proto
+            string server_url = 4;
+            ```
+        notes:
+            ```proto
+            optional string notes = 5;
+            ```
+        headers:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpHeaderWrite headers = 6;
+            ```
+        oauth_client:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpOAuthClientWrite oauth_client = 7;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "display_name", "server_url", "notes", "headers", "oauth_client")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            display_name: str = "",
+            server_url: str = "",
+            notes: str | None = None,
+            headers: list[PersonalMcpHeaderWrite] | None = None,
+            oauth_client: PersonalMcpOAuthClientWrite | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        display_name: str
+        server_url: str
+        notes: str
+        headers: list[PersonalMcpHeaderWrite]
+        oauth_client: PersonalMcpOAuthClientWrite | None
+
+_GetPersonalMcpServerRequestFields: TypeAlias = Literal["request_id", "server_id"]
+
+class GetPersonalMcpServerRequest(Message[_GetPersonalMcpServerRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpServerRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "server_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            server_id: McpServerId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        server_id: McpServerId | None
+
+_PersonalMcpServerFields: TypeAlias = Literal["server_id", "display_name", "server_url", "status", "state_version", "notes", "headers", "oauth_client", "prepare_status", "authorization_status", "declarations", "declaration_digest", "connection_id", "declarations_available"]
+
+class PersonalMcpServer(Message[_PersonalMcpServerFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpServer
+    ```
+
+    Attributes:
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 1;
+            ```
+        display_name:
+            ```proto
+            string display_name = 2;
+            ```
+        server_url:
+            ```proto
+            string server_url = 3;
+            ```
+        status:
+            ```proto
+            string status = 4;
+            ```
+        state_version:
+            ```proto
+            uint64 state_version = 5;
+            ```
+        notes:
+            ```proto
+            optional string notes = 6;
+            ```
+        headers:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpHeaderDescriptor headers = 7;
+            ```
+        oauth_client:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpOAuthClientDescriptor oauth_client = 8;
+            ```
+        prepare_status:
+            ```proto
+            kokoro.platform.v1.PersonalMcpPrepareStatus prepare_status = 9;
+            ```
+        authorization_status:
+            ```proto
+            optional string authorization_status = 10;
+            ```
+        declarations:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpDeclaredSelector declarations = 11;
+            ```
+        declaration_digest:
+            ```proto
+            optional string declaration_digest = 12;
+            ```
+        connection_id:
+            ```proto
+            optional kokoro.platform.v1.McpConnectionId connection_id = 13;
+            ```
+        declarations_available:
+            ```proto
+            optional bool declarations_available = 14;
+            ```
+    """
+
+    __slots__ = ("server_id", "display_name", "server_url", "status", "state_version", "notes", "headers", "oauth_client", "prepare_status", "authorization_status", "declarations", "declaration_digest", "connection_id", "declarations_available")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server_id: McpServerId | None = None,
+            display_name: str = "",
+            server_url: str = "",
+            status: str = "",
+            state_version: int = 0,
+            notes: str | None = None,
+            headers: list[PersonalMcpHeaderDescriptor] | None = None,
+            oauth_client: PersonalMcpOAuthClientDescriptor | None = None,
+            prepare_status: PersonalMcpPrepareStatus | None = None,
+            authorization_status: str | None = None,
+            declarations: list[PersonalMcpDeclaredSelector] | None = None,
+            declaration_digest: str | None = None,
+            connection_id: McpConnectionId | None = None,
+            declarations_available: bool | None = None,
+        ) -> None:
+            pass
+
+        server_id: McpServerId | None
+        display_name: str
+        server_url: str
+        status: str
+        state_version: int
+        notes: str
+        headers: list[PersonalMcpHeaderDescriptor]
+        oauth_client: PersonalMcpOAuthClientDescriptor | None
+        prepare_status: PersonalMcpPrepareStatus
+        authorization_status: str
+        declarations: list[PersonalMcpDeclaredSelector]
+        declaration_digest: str
+        connection_id: McpConnectionId | None
+        declarations_available: bool
+
+_RegisterPersonalMcpServerResponseFields: TypeAlias = Literal["server", "connector", "replayed"]
+
+class RegisterPersonalMcpServerResponse(Message[_RegisterPersonalMcpServerResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RegisterPersonalMcpServerResponse
+    ```
+
+    Attributes:
+        server:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpServer server = 1;
+            ```
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("server", "connector", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server: PersonalMcpServer | None = None,
+            connector: PersonalMcpConnector | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        server: PersonalMcpServer | None
+        connector: PersonalMcpConnector | None
+        replayed: bool
+
+_ImportPersonalMcpJsonRequestFields: TypeAlias = Literal["request_id", "command", "config_json"]
+
+class ImportPersonalMcpJsonRequest(Message[_ImportPersonalMcpJsonRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ImportPersonalMcpJsonRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        config_json:
+            ```proto
+            string config_json = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "config_json")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            config_json: str = "",
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        config_json: str
+
+_PersonalMcpJsonImportResultFields: TypeAlias = Literal["server", "connector"]
+
+class PersonalMcpJsonImportResult(Message[_PersonalMcpJsonImportResultFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PersonalMcpJsonImportResult
+    ```
+
+    Attributes:
+        server:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpServer server = 1;
+            ```
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 2;
+            ```
+    """
+
+    __slots__ = ("server", "connector")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server: PersonalMcpServer | None = None,
+            connector: PersonalMcpConnector | None = None,
+        ) -> None:
+            pass
+
+        server: PersonalMcpServer | None
+        connector: PersonalMcpConnector | None
+
+_ImportPersonalMcpJsonResponseFields: TypeAlias = Literal["imports", "replayed"]
+
+class ImportPersonalMcpJsonResponse(Message[_ImportPersonalMcpJsonResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ImportPersonalMcpJsonResponse
+    ```
+
+    Attributes:
+        imports:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpJsonImportResult imports = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+    """
+
+    __slots__ = ("imports", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            imports: list[PersonalMcpJsonImportResult] | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        imports: list[PersonalMcpJsonImportResult]
+        replayed: bool
+
+_GetPersonalMcpServerResponseFields: TypeAlias = Literal["server"]
+
+class GetPersonalMcpServerResponse(Message[_GetPersonalMcpServerResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetPersonalMcpServerResponse
+    ```
+
+    Attributes:
+        server:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpServer server = 1;
+            ```
+    """
+
+    __slots__ = ("server",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server: PersonalMcpServer | None = None,
+        ) -> None:
+            pass
+
+        server: PersonalMcpServer | None
+
+_PreparePersonalMcpServerRequestFields: TypeAlias = Literal["request_id", "command", "server_id", "expected_state_version"]
+
+class PreparePersonalMcpServerRequest(Message[_PreparePersonalMcpServerRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PreparePersonalMcpServerRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "server_id", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            server_id: McpServerId | None = None,
+            expected_state_version: int = 0,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        server_id: McpServerId | None
+        expected_state_version: int
+
+_PreparePersonalMcpServerResponseFields: TypeAlias = Literal["server", "connector", "declarations", "replayed"]
+
+class PreparePersonalMcpServerResponse(Message[_PreparePersonalMcpServerResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.PreparePersonalMcpServerResponse
+    ```
+
+    Attributes:
+        server:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpServer server = 1;
+            ```
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 2;
+            ```
+        declarations:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpDeclaredSelector declarations = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+    """
+
+    __slots__ = ("server", "connector", "declarations", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server: PersonalMcpServer | None = None,
+            connector: PersonalMcpConnector | None = None,
+            declarations: list[PersonalMcpDeclaredSelector] | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        server: PersonalMcpServer | None
+        connector: PersonalMcpConnector | None
+        declarations: list[PersonalMcpDeclaredSelector]
+        replayed: bool
+
+_UpdatePersonalMcpServerRequestFields: TypeAlias = Literal["request_id", "command", "server_id", "expected_state_version", "display_name", "notes", "clear_notes", "server_url", "header_upserts", "header_removals", "oauth_client", "revoke_oauth_client"]
+
+class UpdatePersonalMcpServerRequest(Message[_UpdatePersonalMcpServerRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalMcpServerRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            uint64 expected_state_version = 4;
+            ```
+        display_name:
+            ```proto
+            optional string display_name = 5;
+            ```
+        notes:
+            ```proto
+            optional string notes = 6;
+            ```
+        clear_notes:
+            ```proto
+            bool clear_notes = 7;
+            ```
+        server_url:
+            ```proto
+            optional string server_url = 8;
+            ```
+        header_upserts:
+            ```proto
+            repeated kokoro.platform.v1.PersonalMcpHeaderWrite header_upserts = 9;
+            ```
+        header_removals:
+            ```proto
+            repeated string header_removals = 10;
+            ```
+        oauth_client:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpOAuthClientWrite oauth_client = 11;
+            ```
+        revoke_oauth_client:
+            ```proto
+            bool revoke_oauth_client = 12;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "server_id", "expected_state_version", "display_name", "notes", "clear_notes", "server_url", "header_upserts", "header_removals", "oauth_client", "revoke_oauth_client")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            server_id: McpServerId | None = None,
+            expected_state_version: int = 0,
+            display_name: str | None = None,
+            notes: str | None = None,
+            clear_notes: bool = False,
+            server_url: str | None = None,
+            header_upserts: list[PersonalMcpHeaderWrite] | None = None,
+            header_removals: list[str] | None = None,
+            oauth_client: PersonalMcpOAuthClientWrite | None = None,
+            revoke_oauth_client: bool = False,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        server_id: McpServerId | None
+        expected_state_version: int
+        display_name: str
+        notes: str
+        clear_notes: bool
+        server_url: str
+        header_upserts: list[PersonalMcpHeaderWrite]
+        header_removals: list[str]
+        oauth_client: PersonalMcpOAuthClientWrite | None
+        revoke_oauth_client: bool
+
+_UpdatePersonalMcpServerResponseFields: TypeAlias = Literal["server", "connector", "replayed"]
+
+class UpdatePersonalMcpServerResponse(Message[_UpdatePersonalMcpServerResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdatePersonalMcpServerResponse
+    ```
+
+    Attributes:
+        server:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpServer server = 1;
+            ```
+        connector:
+            ```proto
+            optional kokoro.platform.v1.PersonalMcpConnector connector = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("server", "connector", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server: PersonalMcpServer | None = None,
+            connector: PersonalMcpConnector | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        server: PersonalMcpServer | None
+        connector: PersonalMcpConnector | None
+        replayed: bool
+
+_DeletePersonalMcpServerRequestFields: TypeAlias = Literal["request_id", "command", "server_id", "expected_state_version"]
+
+class DeletePersonalMcpServerRequest(Message[_DeletePersonalMcpServerRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DeletePersonalMcpServerRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 3;
+            ```
+        expected_state_version:
+            ```proto
+            uint64 expected_state_version = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "server_id", "expected_state_version")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            server_id: McpServerId | None = None,
+            expected_state_version: int = 0,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        server_id: McpServerId | None
+        expected_state_version: int
+
+_DeletePersonalMcpServerResponseFields: TypeAlias = Literal["server_id", "deleted", "replayed"]
+
+class DeletePersonalMcpServerResponse(Message[_DeletePersonalMcpServerResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.DeletePersonalMcpServerResponse
+    ```
+
+    Attributes:
+        server_id:
+            ```proto
+            optional kokoro.platform.v1.McpServerId server_id = 1;
+            ```
+        deleted:
+            ```proto
+            bool deleted = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("server_id", "deleted", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            server_id: McpServerId | None = None,
+            deleted: bool = False,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        server_id: McpServerId | None
+        deleted: bool
+        replayed: bool
+
+_InstallProjectSkillRequestFields: TypeAlias = Literal["request_id", "command", "source_ref"]
+
+class InstallProjectSkillRequest(Message[_InstallProjectSkillRequestFields]):
+    """
+    Project Product installation: target identity is trusted metadata, never request body.
+
+    ```proto
+    message kokoro.platform.v1.InstallProjectSkillRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "source_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            source_ref: SkillSourceRef | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        source_ref: SkillSourceRef | None
+
+_InstallProjectSkillResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed", "project_ref"]
+
+class InstallProjectSkillResponse(Message[_InstallProjectSkillResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.InstallProjectSkillResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+        project_ref:
+            ```proto
+            string project_ref = 5;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed", "project_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+            project_ref: str = "",
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+        project_ref: str
+
+_UpdateProjectSkillInstallationRequestFields: TypeAlias = Literal["request_id", "command", "installation_id", "expected_source_ref", "source_ref"]
+
+class UpdateProjectSkillInstallationRequest(Message[_UpdateProjectSkillInstallationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdateProjectSkillInstallationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 3;
+            ```
+        expected_source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef expected_source_ref = 4;
+            ```
+        source_ref:
+            ```proto
+            optional kokoro.platform.v1.SkillSourceRef source_ref = 5;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "installation_id", "expected_source_ref", "source_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            installation_id: SkillInstallationId | None = None,
+            expected_source_ref: SkillSourceRef | None = None,
+            source_ref: SkillSourceRef | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        installation_id: SkillInstallationId | None
+        expected_source_ref: SkillSourceRef | None
+        source_ref: SkillSourceRef | None
+
+_UpdateProjectSkillInstallationResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed", "project_ref"]
+
+class UpdateProjectSkillInstallationResponse(Message[_UpdateProjectSkillInstallationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.UpdateProjectSkillInstallationResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+        project_ref:
+            ```proto
+            string project_ref = 5;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed", "project_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+            project_ref: str = "",
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+        project_ref: str
+
+_SetProjectSkillInstallationEnabledRequestFields: TypeAlias = Literal["request_id", "command", "installation_id", "enabled"]
+
+class SetProjectSkillInstallationEnabledRequest(Message[_SetProjectSkillInstallationEnabledRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetProjectSkillInstallationEnabledRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 3;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 4;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "installation_id", "enabled")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            installation_id: SkillInstallationId | None = None,
+            enabled: bool | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        installation_id: SkillInstallationId | None
+        enabled: bool
+
+_SetProjectSkillInstallationEnabledResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed", "project_ref"]
+
+class SetProjectSkillInstallationEnabledResponse(Message[_SetProjectSkillInstallationEnabledResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.SetProjectSkillInstallationEnabledResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+        project_ref:
+            ```proto
+            string project_ref = 5;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed", "project_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+            project_ref: str = "",
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+        project_ref: str
+
+_RemoveProjectSkillInstallationRequestFields: TypeAlias = Literal["request_id", "command", "installation_id"]
+
+class RemoveProjectSkillInstallationRequest(Message[_RemoveProjectSkillInstallationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemoveProjectSkillInstallationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 2;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 3;
+            ```
+    """
+
+    __slots__ = ("request_id", "command", "installation_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            command: CommandIdentity | None = None,
+            installation_id: SkillInstallationId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        command: CommandIdentity | None
+        installation_id: SkillInstallationId | None
+
+_RemoveProjectSkillInstallationResponseFields: TypeAlias = Literal["installation", "change", "event_id", "replayed", "project_ref"]
+
+class RemoveProjectSkillInstallationResponse(Message[_RemoveProjectSkillInstallationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.RemoveProjectSkillInstallationResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        change:
+            ```proto
+            kokoro.platform.v1.SkillInstallationChange change = 2;
+            ```
+        event_id:
+            ```proto
+            optional string event_id = 3;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 4;
+            ```
+        project_ref:
+            ```proto
+            string project_ref = 5;
+            ```
+    """
+
+    __slots__ = ("installation", "change", "event_id", "replayed", "project_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            change: SkillInstallationChange | None = None,
+            event_id: str | None = None,
+            replayed: bool = False,
+            project_ref: str = "",
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        change: SkillInstallationChange
+        event_id: str
+        replayed: bool
+        project_ref: str
+
+_GetProjectSkillInstallationRequestFields: TypeAlias = Literal["request_id", "installation_id"]
+
+class GetProjectSkillInstallationRequest(Message[_GetProjectSkillInstallationRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetProjectSkillInstallationRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        installation_id:
+            ```proto
+            optional kokoro.platform.v1.SkillInstallationId installation_id = 2;
+            ```
+    """
+
+    __slots__ = ("request_id", "installation_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            installation_id: SkillInstallationId | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        installation_id: SkillInstallationId | None
+
+_GetProjectSkillInstallationResponseFields: TypeAlias = Literal["installation", "project_ref"]
+
+class GetProjectSkillInstallationResponse(Message[_GetProjectSkillInstallationResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.GetProjectSkillInstallationResponse
+    ```
+
+    Attributes:
+        installation:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallation installation = 1;
+            ```
+        project_ref:
+            ```proto
+            string project_ref = 2;
+            ```
+    """
+
+    __slots__ = ("installation", "project_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installation: ProductSkillInstallation | None = None,
+            project_ref: str = "",
+        ) -> None:
+            pass
+
+        installation: ProductSkillInstallation | None
+        project_ref: str
+
+_ListProjectSkillInstallationsRequestFields: TypeAlias = Literal["request_id", "enabled", "installed", "page", "source_kind", "query"]
+
+class ListProjectSkillInstallationsRequest(Message[_ListProjectSkillInstallationsRequestFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListProjectSkillInstallationsRequest
+    ```
+
+    Attributes:
+        request_id:
+            ```proto
+            string request_id = 1;
+            ```
+        enabled:
+            ```proto
+            optional bool enabled = 2;
+            ```
+        installed:
+            ```proto
+            optional bool installed = 3;
+            ```
+        page:
+            ```proto
+            optional kokoro.platform.v1.ProductSkillInstallationPageRequest page = 4;
+            ```
+        source_kind:
+            ```proto
+            optional string source_kind = 5;
+            ```
+        query:
+            ```proto
+            optional string query = 6;
+            ```
+    """
+
+    __slots__ = ("request_id", "enabled", "installed", "page", "source_kind", "query")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            request_id: str = "",
+            enabled: bool | None = None,
+            installed: bool | None = None,
+            page: ProductSkillInstallationPageRequest | None = None,
+            source_kind: str | None = None,
+            query: str | None = None,
+        ) -> None:
+            pass
+
+        request_id: str
+        enabled: bool
+        installed: bool
+        page: ProductSkillInstallationPageRequest | None
+        source_kind: str
+        query: str
+
+_ListProjectSkillInstallationsResponseFields: TypeAlias = Literal["installations", "page", "project_ref"]
+
+class ListProjectSkillInstallationsResponse(Message[_ListProjectSkillInstallationsResponseFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.ListProjectSkillInstallationsResponse
+    ```
+
+    Attributes:
+        installations:
+            ```proto
+            repeated kokoro.platform.v1.ProductSkillInstallation installations = 1;
+            ```
+        page:
+            ```proto
+            optional kokoro.common.v1.PageResult page = 2;
+            ```
+        project_ref:
+            ```proto
+            string project_ref = 3;
+            ```
+    """
+
+    __slots__ = ("installations", "page", "project_ref")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            installations: list[ProductSkillInstallation] | None = None,
+            page: PageResult | None = None,
+            project_ref: str = "",
+        ) -> None:
+            pass
+
+        installations: list[ProductSkillInstallation]
+        page: PageResult | None
+        project_ref: str
+
 class SkillScopeKind(Enum):
     """
     ```proto
@@ -4225,6 +13105,10 @@ class SkillStatus(Enum):
             ```proto
             SKILL_STATUS_DISABLED = 5
             ```
+        DISCARDED:
+            ```proto
+            SKILL_STATUS_DISCARDED = 6
+            ```
     """
 
     UNSPECIFIED = 0
@@ -4233,6 +13117,7 @@ class SkillStatus(Enum):
     WITHDRAWN = 3
     QUARANTINED = 4
     DISABLED = 5
+    DISCARDED = 6
 
 class McpConnectorType(Enum):
     """
@@ -4384,6 +13269,51 @@ class McpPrimitiveKind(Enum):
     RESOURCE = 2
     PROMPT = 3
 
+class SkillImportPhase(Enum):
+    """
+    ```proto
+    enum kokoro.platform.v1.SkillImportPhase
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            SKILL_IMPORT_PHASE_UNSPECIFIED = 0
+            ```
+        INTENT:
+            ```proto
+            SKILL_IMPORT_PHASE_INTENT = 1
+            ```
+        UPLOAD_PENDING:
+            ```proto
+            SKILL_IMPORT_PHASE_UPLOAD_PENDING = 2
+            ```
+        UPLOADED:
+            ```proto
+            SKILL_IMPORT_PHASE_UPLOADED = 3
+            ```
+        COMPLETED:
+            ```proto
+            SKILL_IMPORT_PHASE_COMPLETED = 4
+            ```
+        REJECTED:
+            ```proto
+            SKILL_IMPORT_PHASE_REJECTED = 5
+            ```
+        EXPIRED:
+            ```proto
+            SKILL_IMPORT_PHASE_EXPIRED = 6
+            ```
+    """
+
+    UNSPECIFIED = 0
+    INTENT = 1
+    UPLOAD_PENDING = 2
+    UPLOADED = 3
+    COMPLETED = 4
+    REJECTED = 5
+    EXPIRED = 6
+
 class SkillPackagePhase(Enum):
     """
     ```proto
@@ -4464,6 +13394,36 @@ class SkillPackageScanState(Enum):
     INFECTED = 3
     UNKNOWN = 4
 
+class SkillAcquisitionKind(Enum):
+    """
+    ```proto
+    enum kokoro.platform.v1.SkillAcquisitionKind
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            SKILL_ACQUISITION_KIND_UNSPECIFIED = 0
+            ```
+        UNKNOWN:
+            ```proto
+            SKILL_ACQUISITION_KIND_UNKNOWN = 1
+            ```
+        DIRECT:
+            ```proto
+            SKILL_ACQUISITION_KIND_DIRECT = 2
+            ```
+        HUB:
+            ```proto
+            SKILL_ACQUISITION_KIND_HUB = 3
+            ```
+    """
+
+    UNSPECIFIED = 0
+    UNKNOWN = 1
+    DIRECT = 2
+    HUB = 3
+
 class SkillInstallationChange(Enum):
     """
     ```proto
@@ -4514,9 +13474,76 @@ class SkillInstallationChange(Enum):
     REMOVED = 6
     UNCHANGED = 7
 
+class PersonalMcpErrorReason(Enum):
+    """
+    URL registration is owner-scoped; declaration and visibility are not client input.
+
+    ```proto
+    enum kokoro.platform.v1.PersonalMcpErrorReason
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            PERSONAL_MCP_ERROR_REASON_UNSPECIFIED = 0
+            ```
+        NOT_PREPARED:
+            ```proto
+            PERSONAL_MCP_ERROR_REASON_NOT_PREPARED = 1
+            ```
+        NEEDS_CLIENT:
+            ```proto
+            PERSONAL_MCP_ERROR_REASON_NEEDS_CLIENT = 2
+            ```
+        AUTH_METHOD_UNSUPPORTED:
+            ```proto
+            PERSONAL_MCP_ERROR_REASON_AUTH_METHOD_UNSUPPORTED = 3
+            ```
+    """
+
+    UNSPECIFIED = 0
+    NOT_PREPARED = 1
+    NEEDS_CLIENT = 2
+    AUTH_METHOD_UNSUPPORTED = 3
+
+class PersonalMcpPrepareStatus(Enum):
+    """
+    ```proto
+    enum kokoro.platform.v1.PersonalMcpPrepareStatus
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            PERSONAL_MCP_PREPARE_STATUS_UNSPECIFIED = 0
+            ```
+        PENDING_PREPARE:
+            ```proto
+            PERSONAL_MCP_PREPARE_STATUS_PENDING_PREPARE = 1
+            ```
+        PREPARE_FAILED:
+            ```proto
+            PERSONAL_MCP_PREPARE_STATUS_PREPARE_FAILED = 2
+            ```
+        NEEDS_OAUTH:
+            ```proto
+            PERSONAL_MCP_PREPARE_STATUS_NEEDS_OAUTH = 3
+            ```
+        READY:
+            ```proto
+            PERSONAL_MCP_PREPARE_STATUS_READY = 4
+            ```
+    """
+
+    UNSPECIFIED = 0
+    PENDING_PREPARE = 1
+    PREPARE_FAILED = 2
+    NEEDS_OAUTH = 3
+    READY = 4
+
 
 _DESC = file_desc(
-    b'\n)kokoro/platform/v1/platform_runtime.proto\x12\x12kokoro.platform.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dkokoro/common/v1/common.proto"%\n\rSkillSeriesId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\x1f\n\x07SkillId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"+\n\x13SkillInstallationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eSkillSourceRef\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eMcpConnectorId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"#\n\x0bMcpServerId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\'\n\x0fMcpConnectionId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpAuthorizationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpInvocationGrant\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"0\n\nOwnerScope\x12\x12\n\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id"w\n\x15ProductCatalogContext\x12\x1d\n\nsubject_id\x18\x01 \x01(\tR\tsubjectId\x12?\n\x0bowner_scope\x18\x02 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope"\x85\x01\n\rSkillMetadata\x12!\n\x0cdisplay_name\x18\x01 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x02 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x03 \x03(\tR\x04tags\x12#\n\rmetadata_json\x18\x04 \x01(\x0cR\x0cmetadataJson"\xf0\x03\n\x0cSkillSummary\x12A\n\nscope_kind\x18\x02 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x04 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x05 \x03(\tR\x04tags\x12\x1a\n\x08revision\x18\x06 \x01(\x04R\x08revision\x12%\n\x0econtent_digest\x18\x07 \x01(\tR\rcontentDigest\x127\n\x06status\x18\x08 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12A\n\nsource_ref\x18\t \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12>\n\tseries_id\x18\n \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\x0b \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x01\x10\x02R\x0fsource_selector"\xbe\x03\n\x0bSkillSource\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12A\n\nscope_kind\x18\x03 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x07 \x01(\tR\x10manifestIdentity\x12>\n\tseries_id\x18\x08 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\t \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x02\x10\x03R\x0fsource_selector"\xc9\x02\n\x17CreateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12=\n\x08metadata\x18\x04 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x83\x02\n\x18CreateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xc9\x01\n\x1cGetSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x9c\x02\n\x1dGetSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12"\n\nattempt_id\x18\x02 \x01(\tH\x00R\tattemptId\x88\x01\x01\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12;\n\x05phase\x18\x04 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x05phase\x12 \n\tupload_id\x18\x05 \x01(\tH\x01R\x08uploadId\x88\x01\x01B\r\n\x0b_attempt_idB\x0c\n\n_upload_id"\xd4\x03\n\x1eBeginSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1a\n\x08filename\x18\x05 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x123\n\x13replaces_attempt_id\x18\t \x01(\tH\x00R\x11replacesAttemptId\x88\x01\x01B\x16\n\x14_replaces_attempt_id"\xb3\x02\n\x1fBeginSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference\x12\x1a\n\x08replayed\x18\x06 \x01(\x08R\x08replayed"\x8d\x03\n!CompleteSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1d\n\nattempt_id\x18\x05 \x01(\tR\tattemptId\x12\x1b\n\tupload_id\x18\x06 \x01(\tR\x08uploadId\x12%\n\x0econtent_sha256\x18\x07 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x08 \x01(\x04R\tsizeBytes"\xa2\x03\n"CompleteSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12\x19\n\x08asset_id\x18\x05 \x01(\tR\x07assetId\x12;\n\x05phase\x18\x06 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x05phase\x12\x1a\n\x08replayed\x18\x07 \x01(\x08R\x08replayed\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x12H\n\nscan_state\x18\t \x01(\x0e2).kokoro.platform.v1.SkillPackageScanStateR\tscanState"\xd1\x02\n\x19ValidateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1d\n\nattempt_id\x18\x07 \x01(\tR\tattemptIdJ\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06R\x11package_asset_refR\x0econtent_digest"\x9a\x02\n\x1aValidateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x14\n\x05valid\x18\x02 \x01(\x08R\x05valid\x12%\n\x0econtent_digest\x18\x03 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x04 \x01(\tR\x10manifestIdentity\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x06 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xc1\x02\n\x13PublishSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12B\n\nvisibility\x18\x04 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\nvisibility\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xe5\x01\n\x14PublishSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x04 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xa1\x02\n\x14WithdrawSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xca\x01\n\x15WithdrawSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x127\n\x06status\x18\x02 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x99\x02\n\x1cDiscoverVisibleSkillsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x14\n\x05query\x18\x03 \x01(\tR\x05query\x12\x12\n\x04tags\x18\x04 \x03(\tR\x04tags\x12A\n\nscope_kind\x18\x05 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8b\x01\n\x1dDiscoverVisibleSkillsResponse\x128\n\x06skills\x18\x01 \x03(\x0b2 .kokoro.platform.v1.SkillSummaryR\x06skills\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xd1\x01\n\x1aResolveVisibleSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProof\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x0battestationR\x0fsource_selector"V\n\x1bResolveVisibleSkillResponse\x127\n\x06source\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.SkillSourceR\x06source"\xc7\x01\n\'GetApprovedSkillPackageReferenceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8e\x02\n(GetApprovedSkillPackageReferenceResponse\x12\x1b\n\tasset_ref\x18\x01 \x01(\tR\x08assetRef\x12%\n\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x03 \x01(\tR\x10manifestIdentity\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReferenceJ\x04\x08\x04\x10\x05R\x0eread_reference"\xb1\x02\n\x18PackageTransferReference\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n\x06method\x18\x02 \x01(\tR\x06method\x12l\n\x10required_headers\x18\x03 \x03(\x0b2A.kokoro.platform.v1.PackageTransferReference.RequiredHeadersEntryR\x0frequiredHeaders\x129\n\nexpires_at\x18\x04 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x1aB\n\x14RequiredHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x028\x01"\x8c\x03\n\x19CreateSkillVersionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12?\n\rbase_skill_id\x18\x04 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x0bbaseSkillId\x12=\n\x08metadata\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x85\x02\n\x1aCreateSkillVersionResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xb8\x02\n\x15SetSkillStatusRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x127\n\x06status\x18\x04 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\xc1\x01\n\x16SetSkillStatusResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x92\x05\n\x11SkillInstallation\x12P\n\x0finstallation_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12\x1c\n\tinstalled\x18\x07 \x01(\x08R\tinstalled\x12\x18\n\x07enabled\x18\x08 \x01(\x08R\x07enabled\x12=\n\x0cinstalled_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\x0binstalledAt\x129\n\nupdated_at\x18\n \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n\nremoved_at\x18\x0b \x01(\x0b2\x1a.google.protobuf.TimestampR\tremovedAt\x12>\n\tseries_id\x18\x0c \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId"\xbe\x02\n\x13InstallSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x05 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xa8\x02\n"SetSkillInstallationEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\x18\n\x07enabled\x18\x05 \x01(\x08R\x07enabled\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\x8a\x02\n\x1eRemoveSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xca\x01\n\x1bGetSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"i\n\x1cGetSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation"\xd7\x02\n\x1dListSkillInstallationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01\x12!\n\tinstalled\x18\x05 \x01(\x08H\x01R\tinstalled\x88\x01\x01\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\n\n\x08_enabledB\x0c\n\n_installedJ\x04\x08\x02\x10\x03R\x0battestation"\x9f\x01\n\x1eListSkillInstallationsResponse\x12K\n\rinstallations\x18\x01 \x03(\x0b2%.kokoro.platform.v1.SkillInstallationR\rinstallations\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xef\x01\n\x14InstallSkillResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xa1\x03\n\x0cMcpConnector\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12K\n\x0econnector_type\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x12?\n\x0bowner_scope\x18\x04 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12>\n\x06status\x18\x05 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x06 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x07 \x01(\tR\x12externalAccountRef"\x8f\x03\n\x19CreateMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\x0econnector_type\x18\x04 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x05 \x01(\tR\x0bproviderKey\x12)\n\x10requested_scopes\x18\x06 \x03(\tR\x0frequestedScopes\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x07\x10\x08R\x0battestation"\x92\x02\n\x1aCreateMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12Q\n\x10authorization_id\x18\x03 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x86\x02\n%BeginMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x04\x10\x05R\x0battestation"\xb1\x02\n&BeginMcpConnectorAuthorizationResponse\x12Q\n\x10authorization_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12)\n\x10provider_display\x18\x02 \x01(\tR\x0fproviderDisplay\x12%\n\x0econsent_scopes\x18\x03 \x03(\tR\rconsentScopes\x125\n\x17expires_at_unix_seconds\x18\x04 \x01(\x03R\x14expiresAtUnixSeconds\x12+\n\x11authorization_url\x18\x05 \x01(\tR\x10authorizationUrl"\x96\x03\n(CompleteMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12Q\n\x10authorization_id\x18\x04 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x128\n\x18authorization_handle_ref\x18\x05 \x01(\tR\x16authorizationHandleRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xa9\x02\n)CompleteMcpConnectorAuthorizationResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x03 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x04 \x01(\tR\x12externalAccountRef\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xb6\x02\n\x18ListMcpConnectorsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\rstatus_filter\x18\x04 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x0cstatusFilter\x121\n\x04page\x18\x05 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x96\x01\n\x19ListMcpConnectorsResponse\x12G\n\x0emcp_connectors\x18\x01 \x03(\x0b2 .kokoro.platform.v1.McpConnectorR\rmcpConnectors\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xba\x01\n\x16GetMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"`\n\x17GetMcpConnectorResponse\x12E\n\rmcp_connector\x18\x01 \x01(\x0b2 .kokoro.platform.v1.McpConnectorR\x0cmcpConnector"\x92\x02\n\x19RevokeMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xda\x01\n\x1aRevokeMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc1\x02\n\tMcpServer\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12!\n\x0cprovider_key\x18\x02 \x01(\tR\x0bproviderKey\x12\'\n\x0fserver_identity\x18\x03 \x01(\tR\x0eserverIdentity\x12>\n\ttransport\x18\x04 \x01(\x0e2 .kokoro.platform.v1.McpTransportR\ttransport\x12-\n\x12declaration_digest\x18\x05 \x01(\tR\x11declarationDigest\x12;\n\x06status\x18\x06 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status"\xb1\x01\n\x18RegisterMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestIdJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06J\x04\x08\x06\x10\x07J\x04\x08\x07\x10\x08R\x07commandR\x0cprovider_keyR\x0fserver_identityR\ttransportR\x12declaration_digestR\x0battestation"\xb2\x01\n\x19RegisterMcpServerResponse\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12;\n\x06status\x18\x02 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xae\x01\n\x13GetMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"M\n\x14GetMcpServerResponse\x125\n\x06server\x18\x01 \x01(\x0b2\x1d.kokoro.platform.v1.McpServerR\x06server"\xde\x01\n\x15ListMcpServersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12&\n\x0cprovider_key\x18\x03 \x01(\tH\x00R\x0bproviderKey\x88\x01\x01\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\x0f\n\r_provider_keyJ\x04\x08\x02\x10\x03R\x0battestation"\x83\x01\n\x16ListMcpServersResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xe6\x02\n\x1aCreateMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x05 \x03(\tR\x10allowedSelectors\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xc0\x01\n\x1bCreateMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12#\n\rpolicy_digest\x18\x02 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x03 \x01(\tR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc8\x02\n\rMcpConnection\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x04 \x03(\tR\x10allowedSelectors\x12#\n\rpolicy_digest\x18\x05 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x06 \x01(\tR\x06status"\xbe\x01\n\x17GetMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"]\n\x18GetMcpConnectionResponse\x12A\n\nconnection\x18\x01 \x01(\x0b2!.kokoro.platform.v1.McpConnectionR\nconnection"\xf0\x01\n\x19ListMcpConnectionsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x93\x01\n\x1aListMcpConnectionsResponse\x12C\n\x0bconnections\x18\x01 \x03(\x0b2!.kokoro.platform.v1.McpConnectionR\x0bconnections\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\x96\x02\n\x1aRevokeMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xb6\x01\n\x1bRevokeMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06status\x18\x02 \x01(\tR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x9a\x02\n\x14McpCapabilitySummary\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x128\n\x04kind\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpPrimitiveKindR\x04kind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12.\n\x13input_schema_digest\x18\x04 \x01(\tR\x11inputSchemaDigest\x120\n\x14output_schema_digest\x18\x05 \x01(\tR\x12outputSchemaDigest\x12\'\n\x0frequired_scopes\x18\x06 \x03(\tR\x0erequiredScopes"\xf7\x01\n ListMcpServerDeclarationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xdc\x01\n!ListMcpServerDeclarationsResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x120\n\x04page\x18\x03 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xc7\x01\n#ListMcpConnectorCapabilitiesRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xf2\x01\n$ListMcpConnectorCapabilitiesResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x125\n\x17expires_at_unix_seconds\x18\x03 \x01(\x03R\x14expiresAtUnixSeconds"\xde\x02\n\x17AuthorizeMcpToolRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12#\n\rtool_selector\x18\x04 \x01(\tR\x0ctoolSelector\x120\n\x14typed_arguments_json\x18\x05 \x01(\x0cR\x12typedArgumentsJson\x12!\n\x0capproval_ref\x18\x06 \x01(\tR\x0bapprovalRef\x12\'\n\x0fidempotency_key\x18\x07 \x01(\tR\x0eidempotencyKey\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xd9\x02\n\x18AuthorizeMcpToolResponse\x12Q\n\x10invocation_grant\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpInvocationGrantR\x0finvocationGrant\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x19\n\x08tool_ref\x18\x03 \x01(\tR\x07toolRef\x124\n\x16typed_arguments_digest\x18\x04 \x01(\tR\x14typedArgumentsDigest\x125\n\x17expires_at_unix_seconds\x18\x05 \x01(\x03R\x14expiresAtUnixSeconds\x12\x1b\n\taudit_ref\x18\x06 \x01(\tR\x08auditRef"\xfe\x01\n#SetSkillInstallationEnabledResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xfa\x01\n\x1fRemoveSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\x89\x02\n\x14McpConnectorProvider\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12M\n\x0fconnector_types\x18\x03 \x03(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\x0econnectorTypes\x12%\n\x0edefault_scopes\x18\x04 \x03(\tR\rdefaultScopes\x125\n\x16authorization_required\x18\x05 \x01(\x08R\x15authorizationRequired"\xb0\x01\n ListMcpConnectorProvidersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x121\n\x04page\x18\x03 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x9d\x01\n!ListMcpConnectorProvidersResponse\x12F\n\tproviders\x18\x01 \x03(\x0b2(.kokoro.platform.v1.McpConnectorProviderR\tproviders\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page*\xb0\x01\n\x0eSkillScopeKind\x12 \n\x1cSKILL_SCOPE_KIND_UNSPECIFIED\x10\x00\x12\x1d\n\x19SKILL_SCOPE_KIND_PERSONAL\x10\x01\x12\x1c\n\x18SKILL_SCOPE_KIND_PROJECT\x10\x02\x12!\n\x1dSKILL_SCOPE_KIND_ORGANIZATION\x10\x03\x12\x1c\n\x18SKILL_SCOPE_KIND_SESSION\x10\x04*\xb1\x01\n\x0bSkillStatus\x12\x1c\n\x18SKILL_STATUS_UNSPECIFIED\x10\x00\x12\x16\n\x12SKILL_STATUS_DRAFT\x10\x01\x12\x17\n\x13SKILL_STATUS_ACTIVE\x10\x02\x12\x1a\n\x16SKILL_STATUS_WITHDRAWN\x10\x03\x12\x1c\n\x18SKILL_STATUS_QUARANTINED\x10\x04\x12\x19\n\x15SKILL_STATUS_DISABLED\x10\x05*\x8f\x01\n\x10McpConnectorType\x12"\n\x1eMCP_CONNECTOR_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n\x1aMCP_CONNECTOR_TYPE_BUILTIN\x10\x01\x12\x1b\n\x17MCP_CONNECTOR_TYPE_BYOK\x10\x02\x12\x1a\n\x16MCP_CONNECTOR_TYPE_MCP\x10\x03*\xbf\x01\n\x12McpConnectorStatus\x12$\n MCP_CONNECTOR_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_CONNECTOR_STATUS_PENDING\x10\x01\x12\x1f\n\x1bMCP_CONNECTOR_STATUS_ACTIVE\x10\x02\x12\x1e\n\x1aMCP_CONNECTOR_STATUS_ERROR\x10\x03\x12 \n\x1cMCP_CONNECTOR_STATUS_REVOKED\x10\x04*\x87\x01\n\x0cMcpTransport\x12\x1d\n\x19MCP_TRANSPORT_UNSPECIFIED\x10\x00\x12\x17\n\x13MCP_TRANSPORT_STDIO\x10\x01\x12!\n\x1dMCP_TRANSPORT_STREAMABLE_HTTP\x10\x02\x12\x1c\n\x18MCP_TRANSPORT_SSE_COMPAT\x10\x03*v\n\x0fMcpServerStatus\x12!\n\x1dMCP_SERVER_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_SERVER_STATUS_REGISTERED\x10\x01\x12\x1e\n\x1aMCP_SERVER_STATUS_DISABLED\x10\x02*\x93\x01\n\x10McpPrimitiveKind\x12"\n\x1eMCP_PRIMITIVE_KIND_UNSPECIFIED\x10\x00\x12\x1b\n\x17MCP_PRIMITIVE_KIND_TOOL\x10\x01\x12\x1f\n\x1bMCP_PRIMITIVE_KIND_RESOURCE\x10\x02\x12\x1d\n\x19MCP_PRIMITIVE_KIND_PROMPT\x10\x03*\x84\x02\n\x11SkillPackagePhase\x12#\n\x1fSKILL_PACKAGE_PHASE_UNSPECIFIED\x10\x00\x12\x1c\n\x18SKILL_PACKAGE_PHASE_NONE\x10\x01\x12\x1e\n\x1aSKILL_PACKAGE_PHASE_INTENT\x10\x02\x12&\n"SKILL_PACKAGE_PHASE_UPLOAD_PENDING\x10\x03\x12 \n\x1cSKILL_PACKAGE_PHASE_UPLOADED\x10\x04\x12!\n\x1dSKILL_PACKAGE_PHASE_VALIDATED\x10\x05\x12\x1f\n\x1bSKILL_PACKAGE_PHASE_ABORTED\x10\x06*\xd8\x01\n\x15SkillPackageScanState\x12(\n$SKILL_PACKAGE_SCAN_STATE_UNSPECIFIED\x10\x00\x12$\n SKILL_PACKAGE_SCAN_STATE_PENDING\x10\x01\x12"\n\x1eSKILL_PACKAGE_SCAN_STATE_CLEAN\x10\x02\x12%\n!SKILL_PACKAGE_SCAN_STATE_INFECTED\x10\x03\x12$\n SKILL_PACKAGE_SCAN_STATE_UNKNOWN\x10\x04*\xdf\x02\n\x17SkillInstallationChange\x12)\n%SKILL_INSTALLATION_CHANGE_UNSPECIFIED\x10\x00\x12\'\n#SKILL_INSTALLATION_CHANGE_INSTALLED\x10\x01\x12&\n"SKILL_INSTALLATION_CHANGE_UPGRADED\x10\x02\x12)\n%SKILL_INSTALLATION_CHANGE_REINSTALLED\x10\x03\x12%\n!SKILL_INSTALLATION_CHANGE_ENABLED\x10\x04\x12&\n"SKILL_INSTALLATION_CHANGE_DISABLED\x10\x05\x12%\n!SKILL_INSTALLATION_CHANGE_REMOVED\x10\x06\x12\'\n#SKILL_INSTALLATION_CHANGE_UNCHANGED\x10\x072\xb1\x08\n\x13SkillCatalogService\x12|\n\x15GetSkillPackageUpload\x120.kokoro.platform.v1.GetSkillPackageUploadRequest\x1a1.kokoro.platform.v1.GetSkillPackageUploadResponse\x12\x8b\x01\n\x1aCompleteSkillPackageUpload\x125.kokoro.platform.v1.CompleteSkillPackageUploadRequest\x1a6.kokoro.platform.v1.CompleteSkillPackageUploadResponse\x12\x82\x01\n\x17BeginSkillPackageUpload\x122.kokoro.platform.v1.BeginSkillPackageUploadRequest\x1a3.kokoro.platform.v1.BeginSkillPackageUploadResponse\x12m\n\x10CreateSkillDraft\x12+.kokoro.platform.v1.CreateSkillDraftRequest\x1a,.kokoro.platform.v1.CreateSkillDraftResponse\x12s\n\x12CreateSkillVersion\x12-.kokoro.platform.v1.CreateSkillVersionRequest\x1a..kokoro.platform.v1.CreateSkillVersionResponse\x12s\n\x12ValidateSkillDraft\x12-.kokoro.platform.v1.ValidateSkillDraftRequest\x1a..kokoro.platform.v1.ValidateSkillDraftResponse\x12a\n\x0cPublishSkill\x12\'.kokoro.platform.v1.PublishSkillRequest\x1a(.kokoro.platform.v1.PublishSkillResponse\x12d\n\rWithdrawSkill\x12(.kokoro.platform.v1.WithdrawSkillRequest\x1a).kokoro.platform.v1.WithdrawSkillResponse\x12g\n\x0eSetSkillStatus\x12).kokoro.platform.v1.SetSkillStatusRequest\x1a*.kokoro.platform.v1.SetSkillStatusResponse2\xaa\x03\n\x12SkillSourceService\x12|\n\x15DiscoverVisibleSkills\x120.kokoro.platform.v1.DiscoverVisibleSkillsRequest\x1a1.kokoro.platform.v1.DiscoverVisibleSkillsResponse\x12v\n\x13ResolveVisibleSkill\x12..kokoro.platform.v1.ResolveVisibleSkillRequest\x1a/.kokoro.platform.v1.ResolveVisibleSkillResponse\x12\x9d\x01\n GetApprovedSkillPackageReference\x12;.kokoro.platform.v1.GetApprovedSkillPackageReferenceRequest\x1a<.kokoro.platform.v1.GetApprovedSkillPackageReferenceResponse2\x8f\x05\n\x18SkillInstallationService\x12a\n\x0cInstallSkill\x12\'.kokoro.platform.v1.InstallSkillRequest\x1a(.kokoro.platform.v1.InstallSkillResponse\x12\x8e\x01\n\x1bSetSkillInstallationEnabled\x126.kokoro.platform.v1.SetSkillInstallationEnabledRequest\x1a7.kokoro.platform.v1.SetSkillInstallationEnabledResponse\x12\x82\x01\n\x17RemoveSkillInstallation\x122.kokoro.platform.v1.RemoveSkillInstallationRequest\x1a3.kokoro.platform.v1.RemoveSkillInstallationResponse\x12y\n\x14GetSkillInstallation\x12/.kokoro.platform.v1.GetSkillInstallationRequest\x1a0.kokoro.platform.v1.GetSkillInstallationResponse\x12\x7f\n\x16ListSkillInstallations\x121.kokoro.platform.v1.ListSkillInstallationsRequest\x1a2.kokoro.platform.v1.ListSkillInstallationsResponse2\x9a\x06\n\x13McpConnectorService\x12s\n\x12CreateMcpConnector\x12-.kokoro.platform.v1.CreateMcpConnectorRequest\x1a..kokoro.platform.v1.CreateMcpConnectorResponse\x12\x97\x01\n\x1eBeginMcpConnectorAuthorization\x129.kokoro.platform.v1.BeginMcpConnectorAuthorizationRequest\x1a:.kokoro.platform.v1.BeginMcpConnectorAuthorizationResponse\x12\xa0\x01\n!CompleteMcpConnectorAuthorization\x12<.kokoro.platform.v1.CompleteMcpConnectorAuthorizationRequest\x1a=.kokoro.platform.v1.CompleteMcpConnectorAuthorizationResponse\x12p\n\x11ListMcpConnectors\x12,.kokoro.platform.v1.ListMcpConnectorsRequest\x1a-.kokoro.platform.v1.ListMcpConnectorsResponse\x12j\n\x0fGetMcpConnector\x12*.kokoro.platform.v1.GetMcpConnectorRequest\x1a+.kokoro.platform.v1.GetMcpConnectorResponse\x12s\n\x12RevokeMcpConnector\x12-.kokoro.platform.v1.RevokeMcpConnectorRequest\x1a..kokoro.platform.v1.RevokeMcpConnectorResponse2\xd0\x02\n\x10McpServerService\x12p\n\x11RegisterMcpServer\x12,.kokoro.platform.v1.RegisterMcpServerRequest\x1a-.kokoro.platform.v1.RegisterMcpServerResponse\x12a\n\x0cGetMcpServer\x12\'.kokoro.platform.v1.GetMcpServerRequest\x1a(.kokoro.platform.v1.GetMcpServerResponse\x12g\n\x0eListMcpServers\x12).kokoro.platform.v1.ListMcpServersRequest\x1a*.kokoro.platform.v1.ListMcpServersResponse2\xf5\x04\n\x14McpConnectionService\x12v\n\x13CreateMcpConnection\x12..kokoro.platform.v1.CreateMcpConnectionRequest\x1a/.kokoro.platform.v1.CreateMcpConnectionResponse\x12\x88\x01\n\x19ListMcpServerDeclarations\x124.kokoro.platform.v1.ListMcpServerDeclarationsRequest\x1a5.kokoro.platform.v1.ListMcpServerDeclarationsResponse\x12m\n\x10GetMcpConnection\x12+.kokoro.platform.v1.GetMcpConnectionRequest\x1a,.kokoro.platform.v1.GetMcpConnectionResponse\x12s\n\x12ListMcpConnections\x12-.kokoro.platform.v1.ListMcpConnectionsRequest\x1a..kokoro.platform.v1.ListMcpConnectionsResponse\x12v\n\x13RevokeMcpConnection\x12..kokoro.platform.v1.RevokeMcpConnectionRequest\x1a/.kokoro.platform.v1.RevokeMcpConnectionResponse2\x9c\x02\n\x17McpAuthorizationService\x12\x91\x01\n\x1cListMcpConnectorCapabilities\x127.kokoro.platform.v1.ListMcpConnectorCapabilitiesRequest\x1a8.kokoro.platform.v1.ListMcpConnectorCapabilitiesResponse\x12m\n\x10AuthorizeMcpTool\x12+.kokoro.platform.v1.AuthorizeMcpToolRequest\x1a,.kokoro.platform.v1.AuthorizeMcpToolResponse2\xa8\x01\n\x1bMcpConnectorProviderService\x12\x88\x01\n\x19ListMcpConnectorProviders\x124.kokoro.platform.v1.ListMcpConnectorProvidersRequest\x1a5.kokoro.platform.v1.ListMcpConnectorProvidersResponseb\x06proto3',
+    b'\n)kokoro/platform/v1/platform_runtime.proto\x12\x12kokoro.platform.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dkokoro/common/v1/common.proto"%\n\rSkillSeriesId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\x1f\n\x07SkillId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"+\n\x13SkillImportIntentId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"+\n\x13SkillInstallationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eSkillSourceRef\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"&\n\x0eMcpConnectorId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"#\n\x0bMcpServerId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"\'\n\x0fMcpConnectionId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpAuthorizationId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12CustomApiProfileId\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"*\n\x12McpInvocationGrant\x12\x14\n\x05value\x18\x01 \x01(\tR\x05value"0\n\nOwnerScope\x12\x12\n\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id"w\n\x15ProductCatalogContext\x12\x1d\n\nsubject_id\x18\x01 \x01(\tR\tsubjectId\x12?\n\x0bowner_scope\x18\x02 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope"\xa3\x02\n\rSkillMetadata\x12!\n\x0cdisplay_name\x18\x01 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x02 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x03 \x03(\tR\x04tags\x12#\n\rmetadata_json\x18\x04 \x01(\x0cR\x0cmetadataJson\x12P\n\x0fexample_prompts\x18\x05 \x01(\x0b2\'.kokoro.platform.v1.SkillExamplePromptsR\x0eexamplePrompts\x12J\n\rcategory_keys\x18\x06 \x01(\x0b2%.kokoro.platform.v1.SkillCategoryKeysR\x0ccategoryKeys"\'\n\x11SkillCategoryKeys\x12\x12\n\x04keys\x18\x01 \x03(\tR\x04keys"/\n\x13SkillExamplePrompts\x12\x18\n\x07prompts\x18\x01 \x03(\tR\x07prompts"\xfd\x04\n\x0cSkillSummary\x12A\n\nscope_kind\x18\x02 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x04 \x01(\tR\x07summary\x12\x12\n\x04tags\x18\x05 \x03(\tR\x04tags\x12\x1a\n\x08revision\x18\x06 \x01(\x04R\x08revision\x12%\n\x0econtent_digest\x18\x07 \x01(\tR\rcontentDigest\x127\n\x06status\x18\x08 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12A\n\nsource_ref\x18\t \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12>\n\tseries_id\x18\n \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\x0b \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12J\n\rcategory_keys\x18\x0c \x01(\x0b2%.kokoro.platform.v1.SkillCategoryKeysR\x0ccategoryKeys\x12?\n\x07product\x18\r \x01(\x0b2%.kokoro.platform.v1.SkillProductFactsR\x07productJ\x04\x08\x01\x10\x02R\x0fsource_selector"\xbe\x03\n\x0bSkillSource\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12A\n\nscope_kind\x18\x03 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x07 \x01(\tR\x10manifestIdentity\x12>\n\tseries_id\x18\x08 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x126\n\x08skill_id\x18\t \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillIdJ\x04\x08\x02\x10\x03R\x0fsource_selector"\xa7\x03\n\x17CreateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12=\n\x08metadata\x18\x04 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\\\n\x13creation_provenance\x18\x06 \x01(\x0b2+.kokoro.platform.v1.SkillCreationProvenanceR\x12creationProvenance"\xa8\x02\n\x18CreateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12#\n\rstate_version\x18\x06 \x01(\x04R\x0cstateVersion"\xd4\x01\n\x16SkillImportUploadProof\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12*\n\x11source_version_id\x18\x03 \x01(\tR\x0fsourceVersionId\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytesJ\x04\x08\x06\x10\x07R\nscan_state"\xb0\x02\n\x1cBeginLocalSkillImportRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1a\n\x08filename\x18\x04 \x01(\tR\x08filename\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x06 \x01(\tR\rcontentSha256"\xaa\x03\n\x1dBeginLocalSkillImportResponse\x12D\n\tintent_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12:\n\x05phase\x18\x03 \x01(\x0e2$.kokoro.platform.v1.SkillImportPhaseR\x05phase\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference\x129\n\nexpires_at\x18\x06 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x1a\n\x08replayed\x18\x07 \x01(\x08R\x08replayed"\xa6\x03\n\x1fCompleteLocalSkillImportRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12D\n\tintent_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId\x12\x1b\n\tupload_id\x18\x05 \x01(\tR\x08uploadId\x12*\n\x11source_version_id\x18\x06 \x01(\tR\x0fsourceVersionId\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256"\xcc\x03\n CompleteLocalSkillImportResponse\x12D\n\tintent_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12:\n\x05phase\x18\x03 \x01(\x0e2$.kokoro.platform.v1.SkillImportPhaseR\x05phase\x12M\n\x0cupload_proof\x18\x04 \x01(\x0b2*.kokoro.platform.v1.SkillImportUploadProofR\x0buploadProof\x129\n\nexpires_at\x18\x05 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x1a\n\x08replayed\x18\x06 \x01(\x08R\x08replayed\x12H\n\nscan_state\x18\x07 \x01(\x0e2).kokoro.platform.v1.SkillPackageScanStateR\tscanState"\x97\x02\n\x1fFinalizeLocalSkillImportRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12D\n\tintent_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId"\xd0\x02\n FinalizeLocalSkillImportResponse\x12D\n\tintent_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId\x12:\n\x05phase\x18\x02 \x01(\x0e2$.kokoro.platform.v1.SkillImportPhaseR\x05phase\x12<\n\x05skill\x18\x03 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12P\n\x0cinstallation\x18\x04 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xd5\x01\n\x1aGetLocalSkillImportRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12R\n\x0fproduct_context\x18\x02 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12D\n\tintent_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId"\xeb\x04\n\x1bGetLocalSkillImportResponse\x12D\n\tintent_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillImportIntentIdR\x08intentId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12:\n\x05phase\x18\x03 \x01(\x0e2$.kokoro.platform.v1.SkillImportPhaseR\x05phase\x129\n\nexpires_at\x18\x04 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x12R\n\x0cupload_proof\x18\x05 \x01(\x0b2*.kokoro.platform.v1.SkillImportUploadProofH\x00R\x0buploadProof\x88\x01\x01\x12*\n\x0erejection_code\x18\x06 \x01(\tH\x01R\rrejectionCode\x88\x01\x01\x12A\n\x05skill\x18\x07 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordH\x02R\x05skill\x88\x01\x01\x12U\n\x0cinstallation\x18\x08 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationH\x03R\x0cinstallation\x88\x01\x01B\x0f\n\r_upload_proofB\x11\n\x0f_rejection_codeB\x08\n\x06_skillB\x0f\n\r_installation"\xc9\x01\n\x1cGetSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x88\x03\n\x1dGetSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12"\n\nattempt_id\x18\x02 \x01(\tH\x00R\tattemptId\x88\x01\x01\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12;\n\x05phase\x18\x04 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x05phase\x12 \n\tupload_id\x18\x05 \x01(\tH\x01R\x08uploadId\x88\x01\x01\x12/\n\x11source_version_id\x18\x06 \x01(\tH\x02R\x0fsourceVersionId\x88\x01\x01\x12#\n\rstate_version\x18\x07 \x01(\x04R\x0cstateVersionB\r\n\x0b_attempt_idB\x0c\n\n_upload_idB\x14\n\x12_source_version_id"\xaa\x04\n\x1eBeginSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1a\n\x08filename\x18\x05 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x123\n\x13replaces_attempt_id\x18\t \x01(\tH\x00R\x11replacesAttemptId\x88\x01\x01\x129\n\x16expected_state_version\x18\n \x01(\x04H\x01R\x14expectedStateVersion\x88\x01\x01B\x16\n\x14_replaces_attempt_idB\x19\n\x17_expected_state_version"\xd8\x02\n\x1fBeginSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference\x12\x1a\n\x08replayed\x18\x06 \x01(\x08R\x08replayed\x12#\n\rstate_version\x18\x07 \x01(\x04R\x0cstateVersion"\xaa\x04\n!CompleteSkillPackageUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1d\n\nattempt_id\x18\x05 \x01(\tR\tattemptId\x12\x1b\n\tupload_id\x18\x06 \x01(\tR\x08uploadId\x12%\n\x0econtent_sha256\x18\x07 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x08 \x01(\x04R\tsizeBytes\x12/\n\x11source_version_id\x18\t \x01(\tH\x00R\x0fsourceVersionId\x88\x01\x01\x129\n\x16expected_state_version\x18\n \x01(\x04H\x01R\x14expectedStateVersion\x88\x01\x01B\x14\n\x12_source_version_idB\x19\n\x17_expected_state_version"\xc7\x03\n"CompleteSkillPackageUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12\x19\n\x08asset_id\x18\x05 \x01(\tR\x07assetId\x12;\n\x05phase\x18\x06 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x05phase\x12\x1a\n\x08replayed\x18\x07 \x01(\x08R\x08replayed\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x12H\n\nscan_state\x18\t \x01(\x0e2).kokoro.platform.v1.SkillPackageScanStateR\tscanState\x12#\n\rstate_version\x18\n \x01(\x04R\x0cstateVersion"\xa7\x03\n\x19ValidateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1d\n\nattempt_id\x18\x07 \x01(\tR\tattemptId\x129\n\x16expected_state_version\x18\x08 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_versionJ\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06R\x11package_asset_refR\x0econtent_digest"\xae\x03\n\x1aValidateSkillDraftResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x14\n\x05valid\x18\x02 \x01(\x08R\x05valid\x12%\n\x0econtent_digest\x18\x03 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x04 \x01(\tR\x10manifestIdentity\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x06 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12#\n\rstate_version\x18\x07 \x01(\x04R\x0cstateVersion\x12(\n\roriginal_name\x18\x08 \x01(\tH\x00R\x0coriginalName\x88\x01\x01\x12"\n\nfile_count\x18\t \x01(\rH\x01R\tfileCount\x88\x01\x01B\x10\n\x0e_original_nameB\r\n\x0b_file_count"\xc5\x03\n\x13PublishSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12B\n\nvisibility\x18\x04 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\nvisibility\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\x1f\n\x08audience\x18\x06 \x01(\tH\x00R\x08audience\x88\x01\x01\x129\n\x16expected_state_version\x18\x07 \x01(\x04H\x01R\x14expectedStateVersion\x88\x01\x01B\x0b\n\t_audienceB\x19\n\x17_expected_state_version"\x8a\x02\n\x14PublishSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x04 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x12#\n\rstate_version\x18\x06 \x01(\x04R\x0cstateVersion"\xf7\x02\n\x14WithdrawSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x06 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_version"\xef\x01\n\x15WithdrawSkillResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x127\n\x06status\x18\x02 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12#\n\rstate_version\x18\x05 \x01(\x04R\x0cstateVersion"\x99\x02\n\x1cDiscoverVisibleSkillsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x14\n\x05query\x18\x03 \x01(\tR\x05query\x12\x12\n\x04tags\x18\x04 \x03(\tR\x04tags\x12A\n\nscope_kind\x18\x05 \x01(\x0e2".kokoro.platform.v1.SkillScopeKindR\tscopeKind\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8b\x01\n\x1dDiscoverVisibleSkillsResponse\x128\n\x06skills\x18\x01 \x03(\x0b2 .kokoro.platform.v1.SkillSummaryR\x06skills\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xd1\x01\n\x1aResolveVisibleSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProof\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x0battestationR\x0fsource_selector"V\n\x1bResolveVisibleSkillResponse\x127\n\x06source\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.SkillSourceR\x06source"\xc7\x01\n\'GetApprovedSkillPackageReferenceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x8e\x02\n(GetApprovedSkillPackageReferenceResponse\x12\x1b\n\tasset_ref\x18\x01 \x01(\tR\x08assetRef\x12%\n\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12+\n\x11manifest_identity\x18\x03 \x01(\tR\x10manifestIdentity\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReferenceJ\x04\x08\x04\x10\x05R\x0eread_reference"\xb1\x02\n\x18PackageTransferReference\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n\x06method\x18\x02 \x01(\tR\x06method\x12l\n\x10required_headers\x18\x03 \x03(\x0b2A.kokoro.platform.v1.PackageTransferReference.RequiredHeadersEntryR\x0frequiredHeaders\x129\n\nexpires_at\x18\x04 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x1aB\n\x14RequiredHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x028\x01"\xea\x03\n\x19CreateSkillVersionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12?\n\rbase_skill_id\x18\x04 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x0bbaseSkillId\x12=\n\x08metadata\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12R\n\x0fproduct_context\x18\x06 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12\\\n\x13creation_provenance\x18\x07 \x01(\x0b2+.kokoro.platform.v1.SkillCreationProvenanceR\x12creationProvenance"\xaa\x02\n\x1aCreateSkillVersionResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12>\n\tseries_id\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12#\n\rstate_version\x18\x06 \x01(\x04R\x0cstateVersion"\x8e\x03\n\x15SetSkillStatusRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x127\n\x06status\x18\x04 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12R\n\x0fproduct_context\x18\x05 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x06 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_version"\xe6\x01\n\x16SetSkillStatusResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x127\n\x06status\x18\x03 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12#\n\rstate_version\x18\x05 \x01(\x04R\x0cstateVersion"\xe7\x05\n\x11SkillInstallation\x12P\n\x0finstallation_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12*\n\x11package_asset_ref\x18\x05 \x01(\tR\x0fpackageAssetRef\x12%\n\x0econtent_digest\x18\x06 \x01(\tR\rcontentDigest\x12\x1c\n\tinstalled\x18\x07 \x01(\x08R\tinstalled\x12\x18\n\x07enabled\x18\x08 \x01(\x08R\x07enabled\x12=\n\x0cinstalled_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\x0binstalledAt\x129\n\nupdated_at\x18\n \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n\nremoved_at\x18\x0b \x01(\x0b2\x1a.google.protobuf.TimestampR\tremovedAt\x12>\n\tseries_id\x18\x0c \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12S\n\x10acquisition_kind\x18\r \x01(\x0e2(.kokoro.platform.v1.SkillAcquisitionKindR\x0facquisitionKind"\xbe\x02\n\x13InstallSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12L\n\x12target_owner_scope\x18\x05 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xa8\x02\n"SetSkillInstallationEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\x18\n\x07enabled\x18\x05 \x01(\x08R\x07enabled\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\x8a\x02\n\x1eRemoveSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x04 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x03\x10\x04R\x0battestation"\xca\x01\n\x1bGetSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"i\n\x1cGetSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation"\xd7\x02\n\x1dListSkillInstallationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12L\n\x12target_owner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10targetOwnerScope\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01\x12!\n\tinstalled\x18\x05 \x01(\x08H\x01R\tinstalled\x88\x01\x01\x121\n\x04page\x18\x06 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\n\n\x08_enabledB\x0c\n\n_installedJ\x04\x08\x02\x10\x03R\x0battestation"\x9f\x01\n\x1eListSkillInstallationsResponse\x12K\n\rinstallations\x18\x01 \x03(\x0b2%.kokoro.platform.v1.SkillInstallationR\rinstallations\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xef\x01\n\x14InstallSkillResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xa1\x03\n\x0cMcpConnector\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12K\n\x0econnector_type\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x12?\n\x0bowner_scope\x18\x04 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12>\n\x06status\x18\x05 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x06 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x07 \x01(\tR\x12externalAccountRef"\x8f\x03\n\x19CreateMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\x0econnector_type\x18\x04 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x05 \x01(\tR\x0bproviderKey\x12)\n\x10requested_scopes\x18\x06 \x03(\tR\x0frequestedScopes\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x07\x10\x08R\x0battestation"\x92\x02\n\x1aCreateMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12Q\n\x10authorization_id\x18\x03 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x86\x02\n%BeginMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x04\x10\x05R\x0battestation"\xb1\x02\n&BeginMcpConnectorAuthorizationResponse\x12Q\n\x10authorization_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12)\n\x10provider_display\x18\x02 \x01(\tR\x0fproviderDisplay\x12%\n\x0econsent_scopes\x18\x03 \x03(\tR\rconsentScopes\x125\n\x17expires_at_unix_seconds\x18\x04 \x01(\x03R\x14expiresAtUnixSeconds\x12+\n\x11authorization_url\x18\x05 \x01(\tR\x10authorizationUrl"\x96\x03\n(CompleteMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12Q\n\x10authorization_id\x18\x04 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x128\n\x18authorization_handle_ref\x18\x05 \x01(\tR\x16authorizationHandleRef\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xa9\x02\n)CompleteMcpConnectorAuthorizationResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x03 \x03(\tR\x0eapprovedScopes\x120\n\x14external_account_ref\x18\x04 \x01(\tR\x12externalAccountRef\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed"\xb6\x02\n\x18ListMcpConnectorsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12?\n\x0bowner_scope\x18\x03 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScope\x12K\n\rstatus_filter\x18\x04 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x0cstatusFilter\x121\n\x04page\x18\x05 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x96\x01\n\x19ListMcpConnectorsResponse\x12G\n\x0emcp_connectors\x18\x01 \x03(\x0b2 .kokoro.platform.v1.McpConnectorR\rmcpConnectors\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xba\x01\n\x16GetMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"`\n\x17GetMcpConnectorResponse\x12E\n\rmcp_connector\x18\x01 \x01(\x0b2 .kokoro.platform.v1.McpConnectorR\x0cmcpConnector"\x92\x02\n\x19RevokeMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xda\x01\n\x1aRevokeMcpConnectorResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc1\x02\n\tMcpServer\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12!\n\x0cprovider_key\x18\x02 \x01(\tR\x0bproviderKey\x12\'\n\x0fserver_identity\x18\x03 \x01(\tR\x0eserverIdentity\x12>\n\ttransport\x18\x04 \x01(\x0e2 .kokoro.platform.v1.McpTransportR\ttransport\x12-\n\x12declaration_digest\x18\x05 \x01(\tR\x11declarationDigest\x12;\n\x06status\x18\x06 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status"\x80\x02\n\x18RegisterMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12M\n\x0cregistration\x18\x08 \x01(\x0b2).kokoro.platform.v1.McpServerRegistrationR\x0cregistrationJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05J\x04\x08\x05\x10\x06J\x04\x08\x06\x10\x07J\x04\x08\x07\x10\x08R\x07commandR\x0cprovider_keyR\x0fserver_identityR\ttransportR\x12declaration_digestR\x0battestation"\xd2\x01\n\x15McpServerRegistration\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12\'\n\x0fserver_identity\x18\x02 \x01(\tR\x0eserverIdentity\x12>\n\ttransport\x18\x03 \x01(\x0e2 .kokoro.platform.v1.McpTransportR\ttransport\x12-\n\x12declaration_digest\x18\x04 \x01(\tR\x11declarationDigest"\xb2\x01\n\x19RegisterMcpServerResponse\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12;\n\x06status\x18\x02 \x01(\x0e2#.kokoro.platform.v1.McpServerStatusR\x06status\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xae\x01\n\x13GetMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"M\n\x14GetMcpServerResponse\x125\n\x06server\x18\x01 \x01(\x0b2\x1d.kokoro.platform.v1.McpServerR\x06server"\xde\x01\n\x15ListMcpServersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12&\n\x0cprovider_key\x18\x03 \x01(\tH\x00R\x0bproviderKey\x88\x01\x01\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\x0f\n\r_provider_keyJ\x04\x08\x02\x10\x03R\x0battestation"\x83\x01\n\x16ListMcpServersResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xe6\x02\n\x1aCreateMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x05 \x03(\tR\x10allowedSelectors\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x06\x10\x07R\x0battestation"\xc0\x01\n\x1bCreateMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12#\n\rpolicy_digest\x18\x02 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x03 \x01(\tR\x06status\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xc8\x02\n\rMcpConnection\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x04 \x03(\tR\x10allowedSelectors\x12#\n\rpolicy_digest\x18\x05 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x06 \x01(\tR\x06status"\xbe\x01\n\x17GetMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"]\n\x18GetMcpConnectionResponse\x12A\n\nconnection\x18\x01 \x01(\x0b2!.kokoro.platform.v1.McpConnectionR\nconnection"\xf0\x01\n\x19ListMcpConnectionsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x93\x01\n\x1aListMcpConnectionsResponse\x12C\n\x0bconnections\x18\x01 \x03(\x0b2!.kokoro.platform.v1.McpConnectionR\x0bconnections\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\x96\x02\n\x1aRevokeMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06reason\x18\x04 \x01(\tR\x06reason\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x05\x10\x06R\x0battestation"\xb6\x01\n\x1bRevokeMcpConnectionResponse\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12\x16\n\x06status\x18\x02 \x01(\tR\x06status\x12\x19\n\x08event_id\x18\x03 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\x9a\x02\n\x14McpCapabilitySummary\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x128\n\x04kind\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpPrimitiveKindR\x04kind\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12.\n\x13input_schema_digest\x18\x04 \x01(\tR\x11inputSchemaDigest\x120\n\x14output_schema_digest\x18\x05 \x01(\tR\x12outputSchemaDigest\x12\'\n\x0frequired_scopes\x18\x06 \x03(\tR\x0erequiredScopes"\xf7\x01\n ListMcpServerDeclarationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x121\n\x04page\x18\x04 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xdc\x01\n!ListMcpServerDeclarationsResponse\x127\n\x07servers\x18\x01 \x03(\x0b2\x1d.kokoro.platform.v1.McpServerR\x07servers\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x120\n\x04page\x18\x03 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xc7\x01\n#ListMcpConnectorCapabilitiesRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xf2\x01\n$ListMcpConnectorCapabilitiesResponse\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12L\n\x0ccapabilities\x18\x02 \x03(\x0b2(.kokoro.platform.v1.McpCapabilitySummaryR\x0ccapabilities\x125\n\x17expires_at_unix_seconds\x18\x03 \x01(\x03R\x14expiresAtUnixSeconds"\xde\x02\n\x17AuthorizeMcpToolRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12#\n\rtool_selector\x18\x04 \x01(\tR\x0ctoolSelector\x120\n\x14typed_arguments_json\x18\x05 \x01(\x0cR\x12typedArgumentsJson\x12!\n\x0capproval_ref\x18\x06 \x01(\tR\x0bapprovalRef\x12\'\n\x0fidempotency_key\x18\x07 \x01(\tR\x0eidempotencyKey\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\xe1\x03\n\x18AuthorizeMcpToolResponse\x12Q\n\x10invocation_grant\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpInvocationGrantR\x0finvocationGrant\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12\x19\n\x08tool_ref\x18\x03 \x01(\tR\x07toolRef\x124\n\x16typed_arguments_digest\x18\x04 \x01(\tR\x14typedArgumentsDigest\x125\n\x17expires_at_unix_seconds\x18\x05 \x01(\x03R\x14expiresAtUnixSeconds\x12\x1b\n\taudit_ref\x18\x06 \x01(\tR\x08auditRef\x12H\n\rconnection_id\x18\x07 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x08 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId"\xfe\x01\n#SetSkillInstallationEnabledResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xfa\x01\n\x1fRemoveSkillInstallationResponse\x12I\n\x0cinstallation\x18\x01 \x01(\x0b2%.kokoro.platform.v1.SkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\x89\x02\n\x14McpConnectorProvider\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12M\n\x0fconnector_types\x18\x03 \x03(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\x0econnectorTypes\x12%\n\x0edefault_scopes\x18\x04 \x03(\tR\rdefaultScopes\x125\n\x16authorization_required\x18\x05 \x01(\x08R\x15authorizationRequired"\xb0\x01\n ListMcpConnectorProvidersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x121\n\x04page\x18\x03 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04page\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofJ\x04\x08\x02\x10\x03R\x0battestation"\x9d\x01\n!ListMcpConnectorProvidersResponse\x12F\n\tproviders\x18\x01 \x03(\x0b2(.kokoro.platform.v1.McpConnectorProviderR\tproviders\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xf2\t\n\x18ProductSkillInstallation\x12P\n\x0finstallation_id\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12>\n\tseries_id\x18\x03 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12\x1a\n\x08revision\x18\x04 \x01(\x04R\x08revision\x12\x1c\n\tinstalled\x18\x05 \x01(\x08R\tinstalled\x12\x18\n\x07enabled\x18\x06 \x01(\x08R\x07enabled\x12=\n\x0cinstalled_at\x18\x07 \x01(\x0b2\x1a.google.protobuf.TimestampR\x0binstalledAt\x129\n\nupdated_at\x18\x08 \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n\nremoved_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\tremovedAt\x12!\n\x0cdisplay_name\x18\n \x01(\tR\x0bdisplayName\x12\x18\n\x07summary\x18\x0b \x01(\tR\x07summary\x12D\n\rsource_status\x18\x0c \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x0csourceStatus\x12\x12\n\x04tags\x18\r \x03(\tR\x04tags\x12D\n\x10skill_updated_at\x18\x0e \x01(\x0b2\x1a.google.protobuf.TimestampR\x0eskillUpdatedAt\x12P\n\x0fexample_prompts\x18\x0f \x01(\x0b2\'.kokoro.platform.v1.SkillExamplePromptsR\x0eexamplePrompts\x12J\n\rcategory_keys\x18\x10 \x01(\x0b2%.kokoro.platform.v1.SkillCategoryKeysR\x0ccategoryKeys\x12?\n\x07product\x18\x11 \x01(\x0b2%.kokoro.platform.v1.SkillProductFactsR\x07product\x12S\n\x10available_update\x18\x12 \x01(\x0b2(.kokoro.platform.v1.SkillAvailableUpdateR\x0favailableUpdate\x12D\n\x10skill_created_at\x18\x13 \x01(\x0b2\x1a.google.protobuf.TimestampR\x0eskillCreatedAt\x12L\n\x12source_owner_scope\x18\x14 \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\x10sourceOwnerScope\x12S\n\x10acquisition_kind\x18\x15 \x01(\x0e2(.kokoro.platform.v1.SkillAcquisitionKindR\x0facquisitionKind"\xa6\x02\n\x1bInstallPersonalSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_context"\xfe\x01\n\x1cInstallPersonalSkillResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xd7\x03\n&UpdatePersonalSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12R\n\x13expected_source_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\x11expectedSourceRef\x12A\n\nsource_ref\x18\x05 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_context"\x89\x02\n\'UpdatePersonalSkillInstallationResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xef\x02\n*SetPersonalSkillInstallationEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01B\n\n\x08_enabledJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_context"\x8d\x02\n+SetPersonalSkillInstallationEnabledResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\xc0\x02\n&RemovePersonalSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationIdJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_context"\x89\x02\n\'RemovePersonalSkillInstallationResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayedB\x0b\n\t_event_id"\x80\x02\n#GetPersonalSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x02 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationIdJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_context"x\n$GetPersonalSkillInstallationResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation"\xb4\x03\n%ListPersonalSkillInstallationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n\x07enabled\x18\x02 \x01(\x08H\x00R\x07enabled\x88\x01\x01\x12!\n\tinstalled\x18\x03 \x01(\x08H\x01R\tinstalled\x88\x01\x01\x12K\n\x04page\x18\x04 \x01(\x0b27.kokoro.platform.v1.ProductSkillInstallationPageRequestR\x04page\x12$\n\x0bsource_kind\x18\x05 \x01(\tH\x02R\nsourceKind\x88\x01\x01\x12\x19\n\x05query\x18\x06 \x01(\tH\x03R\x05query\x88\x01\x01B\n\n\x08_enabledB\x0c\n\n_installedB\x0e\n\x0c_source_kindB\x08\n\x06_queryJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_context"\xae\x01\n&ListPersonalSkillInstallationsResponse\x12R\n\rinstallations\x18\x01 \x03(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\rinstallations\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"r\n#ProductSkillInstallationPageRequest\x12\x19\n\x05limit\x18\x01 \x01(\rH\x00R\x05limit\x88\x01\x01\x12\x1b\n\x06cursor\x18\x02 \x01(\tH\x01R\x06cursor\x88\x01\x01B\x08\n\x06_limitB\t\n\x07_cursor"\xc4\x02\n ListPersonalMcpConnectorsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12C\n\x06status\x18\x02 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusH\x00R\x06status\x88\x01\x01\x12>\n\x04page\x18\x03 \x01(\x0b2*.kokoro.platform.v1.PersonalMcpPageRequestR\x04pageB\t\n\x07_statusJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07command"\xf9\x01\n\x1eGetPersonalMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorIdJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07command"\xbc\x02\n!ListPersonalMcpConnectionsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12>\n\x04page\x18\x03 \x01(\x0b2*.kokoro.platform.v1.PersonalMcpPageRequestR\x04pageJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07command"\xfd\x01\n\x1fGetPersonalMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12H\n\rconnection_id\x18\x02 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionIdJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07command"\x9f\x01\n!ListPersonalMcpConnectorsResponse\x12H\n\nconnectors\x18\x01 \x03(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\nconnectors\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"i\n\x1fGetPersonalMcpConnectorResponse\x12F\n\tconnector\x18\x01 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"\xa3\x01\n"ListPersonalMcpConnectionsResponse\x12K\n\x0bconnections\x18\x01 \x03(\x0b2).kokoro.platform.v1.PersonalMcpConnectionR\x0bconnections\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"m\n GetPersonalMcpConnectionResponse\x12I\n\nconnection\x18\x01 \x01(\x0b2).kokoro.platform.v1.PersonalMcpConnectionR\nconnection"e\n\x16PersonalMcpPageRequest\x12\x19\n\x05limit\x18\x01 \x01(\rH\x00R\x05limit\x88\x01\x01\x12\x1b\n\x06cursor\x18\x02 \x01(\tH\x01R\x06cursor\x88\x01\x01B\x08\n\x06_limitB\t\n\x07_cursor"\x9c\x05\n\x14PersonalMcpConnector\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12K\n\x0econnector_type\x18\x02 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x12>\n\x06status\x18\x04 \x01(\x0e2&.kokoro.platform.v1.McpConnectorStatusR\x06status\x12\'\n\x0fapproved_scopes\x18\x05 \x03(\tR\x0eapprovedScopes\x12&\n\x0cdisplay_name\x18\x06 \x01(\tH\x00R\x0bdisplayName\x88\x01\x01\x12%\n\x0bdescription\x18\x07 \x01(\tH\x01R\x0bdescription\x88\x01\x01\x12\x18\n\x07enabled\x18\x08 \x01(\x08R\x07enabled\x12#\n\rstate_version\x18\t \x01(\x04R\x0cstateVersion\x12"\n\ncreated_at\x18\n \x01(\tH\x02R\tcreatedAt\x88\x01\x01\x12"\n\nupdated_at\x18\x0b \x01(\tH\x03R\tupdatedAt\x88\x01\x01\x12A\n\tserver_id\x18\x0c \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdH\x04R\x08serverId\x88\x01\x01B\x0f\n\r_display_nameB\x0e\n\x0c_descriptionB\r\n\x0b_created_atB\r\n\x0b_updated_atB\x0c\n\n_server_id"\xd0\x02\n\x15PersonalMcpConnection\x12H\n\rconnection_id\x18\x01 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x04 \x03(\tR\x10allowedSelectors\x12#\n\rpolicy_digest\x18\x05 \x01(\tR\x0cpolicyDigest\x12\x16\n\x06status\x18\x06 \x01(\tR\x06status"\xa9\x03\n-BeginPersonalMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_versionJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07commandR\x0fexecution_proofR\x0battestation"\xb3\x02\n.BeginPersonalMcpConnectorAuthorizationResponse\x12Q\n\x10authorization_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12+\n\x11authorization_url\x18\x02 \x01(\tR\x10authorizationUrl\x129\n\nexpires_at\x18\x03 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x12F\n\tconnector\x18\x04 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"\xae\x02\n0CompletePersonalMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x14\n\x05state\x18\x02 \x01(\tR\x05state\x12\x17\n\x04code\x18\x03 \x01(\tH\x00R\x04code\x88\x01\x01\x12\x19\n\x05error\x18\x04 \x01(\tH\x01R\x05error\x88\x01\x01B\x07\n\x05_codeB\x08\n\x06_errorJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07commandR\x0fexecution_proofR\x0battestation"{\n1CompletePersonalMcpConnectorAuthorizationResponse\x12F\n\tconnector\x18\x01 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"\xad\x03\n1ReconnectPersonalMcpConnectorAuthorizationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_versionJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07commandR\x0fexecution_proofR\x0battestation"\xb7\x02\n2ReconnectPersonalMcpConnectorAuthorizationResponse\x12Q\n\x10authorization_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpAuthorizationIdR\x0fauthorizationId\x12+\n\x11authorization_url\x18\x02 \x01(\tR\x10authorizationUrl\x129\n\nexpires_at\x18\x03 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x12F\n\tconnector\x18\x04 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"\xff\x03\n"CreatePersonalMcpConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12+\n\x11allowed_selectors\x18\x05 \x03(\tR\x10allowedSelectors\x129\n\x16expected_state_version\x18\x06 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_versionJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"p\n#CreatePersonalMcpConnectionResponse\x12I\n\nconnection\x18\x01 \x01(\x0b2).kokoro.platform.v1.PersonalMcpConnectionR\nconnection"E\n\x19CustomApiEnvironmentWrite\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value"\x91\x01\n\x1eCustomApiEnvironmentDescriptor\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x1e\n\nconfigured\x18\x02 \x01(\x08R\nconfigured\x12#\n\rstate_version\x18\x03 \x01(\x04R\x0cstateVersion\x12\x16\n\x06status\x18\x04 \x01(\tR\x06status"\x99\x03\n\x11PersonalCustomApi\x12E\n\nprofile_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.CustomApiProfileIdR\tprofileId\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\x12\'\n\x0cinstructions\x18\x03 \x01(\tH\x00R\x0cinstructions\x88\x01\x01\x12#\n\rstate_version\x18\x04 \x01(\x04R\x0cstateVersion\x129\n\ncreated_at\x18\x05 \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n\nupdated_at\x18\x06 \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x12T\n\x0benvironment\x18\x07 \x03(\x0b22.kokoro.platform.v1.CustomApiEnvironmentDescriptorR\x0benvironmentB\x0f\n\r_instructions"\x92\x03\n\x1eCreatePersonalCustomApiRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x12\n\x04name\x18\x03 \x01(\tR\x04name\x12\'\n\x0cinstructions\x18\x04 \x01(\tH\x00R\x0cinstructions\x88\x01\x01\x12O\n\x0benvironment\x18\x05 \x03(\x0b2-.kokoro.platform.v1.CustomApiEnvironmentWriteR\x0benvironmentB\x0f\n\r_instructionsJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"~\n\x1fCreatePersonalCustomApiResponse\x12?\n\x07profile\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalCustomApiR\x07profile\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"\x83\x02\n\x1bGetPersonalCustomApiRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\nprofile_id\x18\x02 \x01(\x0b2&.kokoro.platform.v1.CustomApiProfileIdR\tprofileIdJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestationR\x07command"_\n\x1cGetPersonalCustomApiResponse\x12?\n\x07profile\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalCustomApiR\x07profile"\xf1\x01\n\x1dListPersonalCustomApisRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x121\n\x04page\x18\x02 \x01(\x0b2\x1d.kokoro.common.v1.PageRequestR\x04pageJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestationR\x07command"\x95\x01\n\x1eListPersonalCustomApisResponse\x12A\n\x08profiles\x18\x01 \x03(\x0b2%.kokoro.platform.v1.PersonalCustomApiR\x08profiles\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\x8e\x05\n\x1eUpdatePersonalCustomApiRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\nprofile_id\x18\x03 \x01(\x0b2&.kokoro.platform.v1.CustomApiProfileIdR\tprofileId\x124\n\x16expected_state_version\x18\x04 \x01(\x04R\x14expectedStateVersion\x12\x17\n\x04name\x18\x05 \x01(\tH\x00R\x04name\x88\x01\x01\x12\'\n\x0cinstructions\x18\x06 \x01(\tH\x01R\x0cinstructions\x88\x01\x01\x12-\n\x12clear_instructions\x18\x07 \x01(\x08R\x11clearInstructions\x12^\n\x13environment_upserts\x18\x08 \x03(\x0b2-.kokoro.platform.v1.CustomApiEnvironmentWriteR\x12environmentUpserts\x121\n\x14environment_removals\x18\t \x03(\tR\x13environmentRemovalsB\x07\n\x05_nameB\x0f\n\r_instructionsJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"~\n\x1fUpdatePersonalCustomApiResponse\x12?\n\x07profile\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalCustomApiR\x07profile\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"\xf0\x02\n\x1eDeletePersonalCustomApiRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\nprofile_id\x18\x03 \x01(\x0b2&.kokoro.platform.v1.CustomApiProfileIdR\tprofileId\x124\n\x16expected_state_version\x18\x04 \x01(\x04R\x14expectedStateVersionJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"\x9e\x01\n\x1fDeletePersonalCustomApiResponse\x12E\n\nprofile_id\x18\x01 \x01(\x0b2&.kokoro.platform.v1.CustomApiProfileIdR\tprofileId\x12\x18\n\x07deleted\x18\x02 \x01(\x08R\x07deleted\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xab\x02\n"InspectPersonalSkillPackageRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12 \n\tfile_path\x18\x03 \x01(\tH\x00R\x08filePath\x88\x01\x01B\x0c\n\n_file_pathJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07commandR\x0fexecution_proofR\x0battestation"\xd1\x02\n.InspectPersonalSkillInstallationPackageRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x02 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12 \n\tfile_path\x18\x03 \x01(\tH\x00R\x08filePath\x88\x01\x01B\x0c\n\n_file_pathJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x07commandR\x0fexecution_proofR\x0battestation"\x97\x02\n#InspectPersonalSkillPackageResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x12>\n\x05files\x18\x03 \x03(\x0b2(.kokoro.platform.v1.SkillPackageTextFileR\x05files\x12Q\n\rselected_file\x18\x04 \x01(\x0b2,.kokoro.platform.v1.SkillPackageSelectedTextR\x0cselectedFile"\xa3\x02\n/InspectPersonalSkillInstallationPackageResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x12>\n\x05files\x18\x03 \x03(\x0b2(.kokoro.platform.v1.SkillPackageTextFileR\x05files\x12Q\n\rselected_file\x18\x04 \x01(\x0b2,.kokoro.platform.v1.SkillPackageSelectedTextR\x0cselectedFile"I\n\x14SkillPackageTextFile\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n\nsize_bytes\x18\x02 \x01(\x04R\tsizeBytes"B\n\x18SkillPackageSelectedText\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n\x04text\x18\x02 \x01(\tR\x04text"\xac\x01\n\x0eSkillPublisher\x123\n\x03iam\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.SkillIamRefH\x00R\x03iam\x12X\n\x11github_repository\x18\x02 \x01(\x0b2).kokoro.platform.v1.SkillGithubProvenanceH\x00R\x10githubRepositoryB\x0b\n\tpublisher"\xe7\x01\n\x17SkillCreationProvenance\x12@\n\x05local\x18\x01 \x01(\x0b2(.kokoro.platform.v1.SkillLocalProvenanceH\x00R\x05local\x127\n\x02ai\x18\x02 \x01(\x0b2%.kokoro.platform.v1.SkillAiProvenanceH\x00R\x02ai\x12C\n\x06github\x18\x03 \x01(\x0b2).kokoro.platform.v1.SkillGithubProvenanceH\x00R\x06githubB\x0c\n\nprovenance"1\n\x0bSkillIamRef\x12\x12\n\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id"\x81\x04\n\x11SkillProductFacts\x12@\n\x0bcreator_ref\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.SkillIamRefR\ncreatorRef\x12@\n\tpublisher\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillPublisherR\tpublisher\x12$\n\x0bsource_kind\x18\x03 \x01(\tH\x00R\nsourceKind\x88\x01\x01\x12\\\n\x13creation_provenance\x18\x04 \x01(\x0b2+.kokoro.platform.v1.SkillCreationProvenanceR\x12creationProvenance\x124\n\x05cover\x18\x05 \x01(\x0b2\x1e.kokoro.platform.v1.SkillCoverR\x05cover\x121\n\x14publication_audience\x18\x06 \x01(\tR\x13publicationAudience\x12#\n\rstate_version\x18\x07 \x01(\x04R\x0cstateVersion\x120\n\x11presentation_kind\x18\x08 \x01(\tH\x01R\x10presentationKind\x88\x01\x01B\x0e\n\x0c_source_kindB\x14\n\x12_presentation_kind"t\n\nSkillCover\x12\x1b\n\tasset_ref\x18\x01 \x01(\tR\x08assetRef\x12\x1b\n\tmime_type\x18\x02 \x01(\tR\x08mimeType\x12\x14\n\x05width\x18\x03 \x01(\rR\x05width\x12\x16\n\x06height\x18\x04 \x01(\rR\x06height"u\n\x14SkillAvailableUpdate\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision"\xda\x06\n\x12SkillProductRecord\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12>\n\tseries_id\x18\x02 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12\x1a\n\x08revision\x18\x03 \x01(\x04R\x08revision\x127\n\x06status\x18\x04 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusR\x06status\x12=\n\x08metadata\x18\x05 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12D\n\x10skill_updated_at\x18\x06 \x01(\x0b2\x1a.google.protobuf.TimestampR\x0eskillUpdatedAt\x12?\n\x07product\x18\x07 \x01(\x0b2%.kokoro.platform.v1.SkillProductFactsR\x07product\x12J\n\rpackage_phase\x18\x08 \x01(\x0e2%.kokoro.platform.v1.SkillPackagePhaseR\x0cpackagePhase\x12A\n\nsource_ref\x18\t \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12(\n\roriginal_name\x18\n \x01(\tH\x00R\x0coriginalName\x88\x01\x01\x12"\n\nfile_count\x18\x0b \x01(\rH\x01R\tfileCount\x88\x01\x01\x12&\n\x0carchive_size\x18\x0c \x01(\x04H\x02R\x0barchiveSize\x88\x01\x01\x129\n\ncreated_at\x18\r \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt\x12?\n\x0bowner_scope\x18\x0e \x01(\x0b2\x1e.kokoro.platform.v1.OwnerScopeR\nownerScopeB\x10\n\x0e_original_nameB\r\n\x0b_file_countB\x0f\n\r_archive_size"\x16\n\x14SkillLocalProvenance"\xfa\x02\n\x11SkillAiProvenance\x12\'\n\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x17\n\x07run_ref\x18\x02 \x01(\tR\x06runRef\x12!\n\x0cartifact_ref\x18\x03 \x01(\tR\x0bartifactRef\x12\x1b\n\tasset_ref\x18\x04 \x01(\tR\x08assetRef\x12&\n\x0fsource_event_id\x18\x05 \x01(\tR\rsourceEventId\x12(\n\x10source_event_seq\x18\x06 \x01(\x04R\x0esourceEventSeq\x12.\n\x13source_event_digest\x18\x07 \x01(\tR\x11sourceEventDigest\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\t \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\n \x01(\tR\x08mimeType"\xa9\x03\n\x15SkillGithubProvenance\x12#\n\rrepository_id\x18\x01 \x01(\tR\x0crepositoryId\x12%\n\x0erepository_url\x18\x02 \x01(\tR\rrepositoryUrl\x12\x1f\n\x0bowner_login\x18\x03 \x01(\tR\nownerLogin\x12\x1b\n\towner_url\x18\x04 \x01(\tR\x08ownerUrl\x12\x16\n\x06commit\x18\x05 \x01(\tR\x06commit\x12\x12\n\x04path\x18\x06 \x01(\tR\x04path\x12G\n\nrepo_stats\x18\x07 \x01(\x0b2(.kokoro.platform.v1.SkillRepositoryStatsR\trepoStats\x12 \n\tasset_ref\x18\x08 \x01(\tH\x00R\x08assetRef\x88\x01\x01\x12%\n\x0econtent_sha256\x18\t \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\n \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x0b \x01(\tR\x08mimeTypeB\x0c\n\n_asset_ref"\xaf\x01\n\x14SkillRepositoryStats\x12\x14\n\x05stars\x18\x01 \x01(\x04R\x05stars\x12\x14\n\x05forks\x18\x02 \x01(\x04R\x05forks\x12;\n\x0bobserved_at\x18\x03 \x01(\x0b2\x1a.google.protobuf.TimestampR\nobservedAt\x12.\n\x13metadata_source_url\x18\x04 \x01(\tR\x11metadataSourceUrl"\xcc\x03\n\x17UpdateSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12=\n\x08metadata\x18\x06 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12$\n\x0bclear_cover\x18\x07 \x01(\x08H\x01R\nclearCover\x88\x01\x01B\x19\n\x17_expected_state_versionB\x0e\n\x0c_clear_cover"\x8f\x01\n\x18UpdateSkillDraftResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xf0\x02\n\x18DiscardSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x16\n\x06reason\x18\x06 \x01(\tR\x06reasonB\x19\n\x17_expected_state_version"\x90\x01\n\x19DiscardSkillDraftResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xfe\x02\n"SetSkillPublicationAudienceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x1a\n\x08audience\x18\x06 \x01(\tR\x08audienceB\x19\n\x17_expected_state_version"\x9a\x01\n#SetSkillPublicationAudienceResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xfb\x03\n\x1eCreateAdminSkillVersionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12=\n\x08metadata\x18\x06 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata\x12\\\n\x13creation_provenance\x18\x07 \x01(\x0b2+.kokoro.platform.v1.SkillCreationProvenanceR\x12creationProvenanceB\x19\n\x17_expected_state_version"\x96\x01\n\x1fCreateAdminSkillVersionResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\x8d\x02\n\x1cCreateAdminSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12=\n\x08metadata\x18\x04 \x01(\x0b2!.kokoro.platform.v1.SkillMetadataR\x08metadata"\x94\x01\n\x1dCreateAdminSkillDraftResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xb6\x03\n\x1bPublishOfficialSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x1a\n\x08audience\x18\x06 \x01(\tR\x08audience\x12=\n\tpublisher\x18\x07 \x01(\x0b2\x1f.kokoro.platform.v1.SkillIamRefR\tpublisherB\x19\n\x17_expected_state_version"\x93\x01\n\x1cPublishOfficialSkillResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xf1\x02\n\x19WithdrawAdminSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x16\n\x06reason\x18\x06 \x01(\tR\x06reasonB\x19\n\x17_expected_state_version"\x91\x01\n\x1aWithdrawAdminSkillResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xee\x02\n\x16QuarantineSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x16\n\x06reason\x18\x06 \x01(\tR\x06reasonB\x19\n\x17_expected_state_version"\x8e\x01\n\x17QuarantineSkillResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xeb\x02\n\x13RestoreSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x16\n\x06reason\x18\x06 \x01(\tR\x06reasonB\x19\n\x17_expected_state_version"\x8b\x01\n\x14RestoreSkillResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\x83\x03\n\'SetAdminSkillPublicationAudienceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x1a\n\x08audience\x18\x06 \x01(\tR\x08audienceB\x19\n\x17_expected_state_version"\x9f\x01\n(SetAdminSkillPublicationAudienceResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xf5\x02\n\x1dDiscardAdminSkillDraftRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x16\n\x06reason\x18\x06 \x01(\tR\x06reasonB\x19\n\x17_expected_state_version"\x95\x01\n\x1eDiscardAdminSkillDraftResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x19\n\x08event_id\x18\x02 \x01(\tR\x07eventId\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xa8\x04\n\x1cBeginSkillCoverUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x1a\n\x08filename\x18\x06 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x07 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\x08 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\t \x01(\tR\rcontentSha256\x123\n\x13replaces_attempt_id\x18\n \x01(\tH\x01R\x11replacesAttemptId\x88\x01\x01B\x19\n\x17_expected_state_versionB\x16\n\x14_replaces_attempt_id"\xd6\x02\n\x1dBeginSkillCoverUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12[\n\x12transfer_reference\x18\x05 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference\x12\x1a\n\x08replayed\x18\x06 \x01(\x08R\x08replayed\x12#\n\rstate_version\x18\x07 \x01(\x04R\x0cstateVersion"\x8d\x04\n\x1fCompleteSkillCoverUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x126\n\x08skill_id\x18\x03 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x04 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x129\n\x16expected_state_version\x18\x05 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x1d\n\nattempt_id\x18\x06 \x01(\tR\tattemptId\x12\x1b\n\tupload_id\x18\x07 \x01(\tR\x08uploadId\x12*\n\x11source_version_id\x18\x08 \x01(\tR\x0fsourceVersionId\x12%\n\x0econtent_sha256\x18\t \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\n \x01(\x04R\tsizeBytesB\x19\n\x17_expected_state_version"\xa7\x02\n CompleteSkillCoverUploadResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill\x12\x1d\n\nattempt_id\x18\x02 \x01(\tR\tattemptId\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12H\n\nscan_state\x18\x05 \x01(\x0e2).kokoro.platform.v1.SkillPackageScanStateR\tscanState\x12\x1a\n\x08replayed\x18\x06 \x01(\x08R\x08replayed"\xc7\x01\n\x1aGetSkillCoverUploadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"\x95\x03\n\x1bGetSkillCoverUploadResponse\x126\n\x08skill_id\x18\x01 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12"\n\nattempt_id\x18\x02 \x01(\tH\x00R\tattemptId\x88\x01\x01\x12#\n\rattempt_epoch\x18\x03 \x01(\x04R\x0cattemptEpoch\x12\x14\n\x05phase\x18\x04 \x01(\tR\x05phase\x12 \n\tupload_id\x18\x05 \x01(\tH\x01R\x08uploadId\x88\x01\x01\x12/\n\x11source_version_id\x18\x06 \x01(\tH\x02R\x0fsourceVersionId\x88\x01\x01\x12#\n\rstate_version\x18\x07 \x01(\x04R\x0cstateVersion\x124\n\x05cover\x18\x08 \x01(\x0b2\x1e.kokoro.platform.v1.SkillCoverR\x05coverB\r\n\x0b_attempt_idB\x0c\n\n_upload_idB\x14\n\x12_source_version_id"\xb5\x03\n\x16ListAdminSkillsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12R\n\x0fproduct_context\x18\x02 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext\x12K\n\x04page\x18\x03 \x01(\x0b27.kokoro.platform.v1.ProductSkillInstallationPageRequestR\x04page\x12<\n\x06status\x18\x04 \x01(\x0e2\x1f.kokoro.platform.v1.SkillStatusH\x00R\x06status\x88\x01\x01\x12$\n\x0bsource_kind\x18\x05 \x01(\tH\x01R\nsourceKind\x88\x01\x01\x12\x19\n\x05query\x18\x06 \x01(\tH\x02R\x05query\x88\x01\x01\x12&\n\x0ccategory_key\x18\x07 \x01(\tH\x03R\x0bcategoryKey\x88\x01\x01B\t\n\x07_statusB\x0e\n\x0c_source_kindB\x08\n\x06_queryB\x0f\n\r_category_key"\x8b\x01\n\x17ListAdminSkillsResponse\x12>\n\x06skills\x18\x01 \x03(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x06skills\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"\xc1\x01\n\x14GetAdminSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x126\n\x08skill_id\x18\x02 \x01(\x0b2\x1b.kokoro.platform.v1.SkillIdR\x07skillId\x12R\n\x0fproduct_context\x18\x03 \x01(\x0b2).kokoro.platform.v1.ProductCatalogContextR\x0eproductContext"U\n\x15GetAdminSkillResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill"\xc8\x01\n\x1aInspectSkillPackageRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x18\n\x07purpose\x18\x03 \x01(\tR\x07purpose\x12 \n\tfile_path\x18\x04 \x01(\tH\x00R\x08filePath\x88\x01\x01B\x0c\n\n_file_path"\x8f\x02\n\x1bInspectSkillPackageResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x12>\n\x05files\x18\x03 \x03(\x0b2(.kokoro.platform.v1.SkillPackageTextFileR\x05files\x12Q\n\rselected_file\x18\x04 \x01(\x0b2,.kokoro.platform.v1.SkillPackageSelectedTextR\x0cselectedFile"\x9c\x01\n\x1eGetSkillPackageDownloadRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x18\n\x07purpose\x18\x03 \x01(\tR\x07purpose"\xbf\x02\n\x1fGetSkillPackageDownloadResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x1a\n\x08revision\x18\x02 \x01(\x04R\x08revision\x12\x1a\n\x08filename\x18\x03 \x01(\tR\x08filename\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12[\n\x12transfer_reference\x18\x06 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference"\x9b\x01\n\x1dGetSkillCoverReferenceRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x18\n\x07purpose\x18\x03 \x01(\tR\x07purpose"\xf6\x01\n\x1eGetSkillCoverReferenceResponse\x12A\n\nsource_ref\x18\x01 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x124\n\x05cover\x18\x02 \x01(\x0b2\x1e.kokoro.platform.v1.SkillCoverR\x05cover\x12[\n\x12transfer_reference\x18\x03 \x01(\x0b2,.kokoro.platform.v1.PackageTransferReferenceR\x11transferReference"\xcc\x01\n\x16GetCurrentSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12>\n\tseries_id\x18\x02 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12\x18\n\x07purpose\x18\x03 \x01(\tR\x07purposeJ\x04\x08d\x10eR\ttenant_idR\nsubject_idR\x0bowner_scopeR\x0fexecution_proof"\xc4\x02\n\x17SkillCurrentPublication\x12>\n\tseries_id\x18\x01 \x01(\x0b2!.kokoro.platform.v1.SkillSeriesIdR\x08seriesId\x12O\n\x0fcurrent_version\x18\x02 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x0ecurrentVersion\x12\x18\n\x07current\x18\x03 \x01(\x08R\x07current\x12\x1a\n\x08audience\x18\x04 \x01(\tR\x08audience\x12#\n\rstate_version\x18\x05 \x01(\x04R\x0cstateVersion\x12=\n\x0cpublished_at\x18\x06 \x01(\x0b2\x1a.google.protobuf.TimestampR\x0bpublishedAt"h\n\x17GetCurrentSkillResponse\x12M\n\x0bpublication\x18\x01 \x01(\x0b2+.kokoro.platform.v1.SkillCurrentPublicationR\x0bpublication"\xd0\x01\n\x17GetSkillRevisionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12A\n\nsource_ref\x18\x02 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRef\x12\x18\n\x07purpose\x18\x03 \x01(\tR\x07purposeJ\x04\x08d\x10eR\ttenant_idR\nsubject_idR\x0bowner_scopeR\x0fexecution_proof"X\n\x18GetSkillRevisionResponse\x12<\n\x05skill\x18\x01 \x01(\x0b2&.kokoro.platform.v1.SkillProductRecordR\x05skill"\xb4\x02\n!CreatePersonalMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x12K\n\x0econnector_type\x18\x04 \x01(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\rconnectorType\x12!\n\x0cdisplay_name\x18\x05 \x01(\tR\x0bdisplayName\x12 \n\x0bdescription\x18\x06 \x01(\tR\x0bdescription"\xe1\x02\n!UpdatePersonalMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12!\n\x0cdisplay_name\x18\x05 \x01(\tR\x0bdisplayName\x12 \n\x0bdescription\x18\x06 \x01(\tR\x0bdescriptionB\x19\n\x17_expected_state_version"\xcb\x02\n%SetPersonalMcpConnectorEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x1d\n\x07enabled\x18\x05 \x01(\x08H\x01R\x07enabled\x88\x01\x01B\x19\n\x17_expected_state_versionB\n\n\x08_enabled"\x9c\x02\n!RemovePersonalMcpConnectorRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x0cconnector_id\x18\x03 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_version"l\n"CreatePersonalMcpConnectorResponse\x12F\n\tconnector\x18\x01 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"\x9d\x02\n\x1fListPersonalMcpProvidersRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x19\n\x05query\x18\x02 \x01(\tH\x00R\x05query\x88\x01\x01\x12*\n\x0edirectory_type\x18\x03 \x01(\tH\x01R\rdirectoryType\x88\x01\x01\x12&\n\x0ccategory_key\x18\x04 \x01(\tH\x02R\x0bcategoryKey\x88\x01\x01\x12>\n\x04page\x18\x05 \x01(\x0b2*.kokoro.platform.v1.PersonalMcpPageRequestR\x04pageB\x08\n\x06_queryB\x11\n\x0f_directory_typeB\x0f\n\r_category_key"a\n\x1dGetPersonalMcpProviderRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12!\n\x0cprovider_key\x18\x02 \x01(\tR\x0bproviderKey"\xb4\x05\n\x13PersonalMcpProvider\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12%\n\x0bdescription\x18\x03 \x01(\tH\x00R\x0bdescription\x88\x01\x01\x12%\n\x0edirectory_type\x18\x04 \x01(\tR\rdirectoryType\x12#\n\rcategory_keys\x18\x05 \x03(\tR\x0ccategoryKeys\x12\'\n\x0fexample_prompts\x18\x06 \x03(\tR\x0eexamplePrompts\x12\x1b\n\x06author\x18\x07 \x01(\tH\x01R\x06author\x88\x01\x01\x12\x1d\n\x07website\x18\x08 \x01(\tH\x02R\x07website\x88\x01\x01\x12$\n\x0bprivacy_url\x18\t \x01(\tH\x03R\nprivacyUrl\x88\x01\x01\x12\x18\n\x07enabled\x18\n \x01(\x08R\x07enabled\x12#\n\rstate_version\x18\x0b \x01(\x04R\x0cstateVersion\x12+\n\x0fcover_image_url\x18\x0c \x01(\tH\x04R\rcoverImageUrl\x88\x01\x01\x12"\n\nupdated_at\x18\r \x01(\tH\x05R\tupdatedAt\x88\x01\x01\x12V\n\x14connection_server_id\x18\x0e \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdH\x06R\x12connectionServerId\x88\x01\x01B\x0e\n\x0c_descriptionB\t\n\x07_authorB\n\n\x08_websiteB\x0e\n\x0c_privacy_urlB\x12\n\x10_cover_image_urlB\r\n\x0b_updated_atB\x17\n\x15_connection_server_id"\x9b\x01\n ListPersonalMcpProvidersResponse\x12E\n\tproviders\x18\x01 \x03(\x0b2\'.kokoro.platform.v1.PersonalMcpProviderR\tproviders\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"e\n\x1eGetPersonalMcpProviderResponse\x12C\n\x08provider\x18\x01 \x01(\x0b2\'.kokoro.platform.v1.PersonalMcpProviderR\x08provider"l\n"UpdatePersonalMcpConnectorResponse\x12F\n\tconnector\x18\x01 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"p\n&SetPersonalMcpConnectorEnabledResponse\x12F\n\tconnector\x18\x01 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"l\n"RemovePersonalMcpConnectorResponse\x12F\n\tconnector\x18\x01 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"t\n\x11McpProviderOrigin\x12\x16\n\x06scheme\x18\x01 \x01(\tR\x06scheme\x12\x12\n\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n\x04port\x18\x03 \x01(\rR\x04port\x12\x1f\n\x0bpath_prefix\x18\x04 \x01(\tR\npathPrefix"\x90\x01\n McpProviderToolAuthorizationRule\x12\'\n\x0fserver_identity\x18\x01 \x01(\tR\x0eserverIdentity\x12\x1a\n\x08selector\x18\x02 \x01(\tR\x08selector\x12\'\n\x0frequired_scopes\x18\x03 \x03(\tR\x0erequiredScopes"\x8a\x01\n"McpProviderToolAuthorizationPolicy\x12\x18\n\x07version\x18\x01 \x01(\rR\x07version\x12J\n\x05rules\x18\x02 \x03(\x0b24.kokoro.platform.v1.McpProviderToolAuthorizationRuleR\x05rules"\xa4\x08\n\x16McpProviderAdminRecord\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12%\n\x0bdescription\x18\x03 \x01(\tH\x00R\x0bdescription\x88\x01\x01\x12%\n\x0edirectory_type\x18\x04 \x01(\tR\rdirectoryType\x12#\n\rcategory_keys\x18\x05 \x03(\tR\x0ccategoryKeys\x12\'\n\x0fexample_prompts\x18\x06 \x03(\tR\x0eexamplePrompts\x12\x1b\n\x06author\x18\x07 \x01(\tH\x01R\x06author\x88\x01\x01\x12\x1d\n\x07website\x18\x08 \x01(\tH\x02R\x07website\x88\x01\x01\x12$\n\x0bprivacy_url\x18\t \x01(\tH\x03R\nprivacyUrl\x88\x01\x01\x12M\n\x0fconnector_types\x18\n \x03(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\x0econnectorTypes\x12%\n\x0edefault_scopes\x18\x0b \x03(\tR\rdefaultScopes\x125\n\x16authorization_required\x18\x0c \x01(\x08R\x15authorizationRequired\x12U\n\x13allowed_mcp_origins\x18\r \x03(\x0b2%.kokoro.platform.v1.McpProviderOriginR\x11allowedMcpOrigins\x12w\n\x19tool_authorization_policy\x18\x0e \x01(\x0b26.kokoro.platform.v1.McpProviderToolAuthorizationPolicyH\x04R\x17toolAuthorizationPolicy\x88\x01\x01\x12\x18\n\x07enabled\x18\x0f \x01(\x08R\x07enabled\x12#\n\rstate_version\x18\x10 \x01(\x04R\x0cstateVersion\x129\n\ncreated_at\x18\x11 \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n\nupdated_at\x18\x12 \x01(\x0b2\x1a.google.protobuf.TimestampR\tupdatedAt\x12+\n\x0fcover_image_url\x18\x13 \x01(\tH\x05R\rcoverImageUrl\x88\x01\x01B\x0e\n\x0c_descriptionB\t\n\x07_authorB\n\n\x08_websiteB\x0e\n\x0c_privacy_urlB\x1c\n\x1a_tool_authorization_policyB\x12\n\x10_cover_image_url"\xee\x06\n\x15McpProviderAdminInput\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12%\n\x0bdescription\x18\x03 \x01(\tH\x00R\x0bdescription\x88\x01\x01\x12%\n\x0edirectory_type\x18\x04 \x01(\tR\rdirectoryType\x12#\n\rcategory_keys\x18\x05 \x03(\tR\x0ccategoryKeys\x12\'\n\x0fexample_prompts\x18\x06 \x03(\tR\x0eexamplePrompts\x12\x1b\n\x06author\x18\x07 \x01(\tH\x01R\x06author\x88\x01\x01\x12\x1d\n\x07website\x18\x08 \x01(\tH\x02R\x07website\x88\x01\x01\x12$\n\x0bprivacy_url\x18\t \x01(\tH\x03R\nprivacyUrl\x88\x01\x01\x12M\n\x0fconnector_types\x18\n \x03(\x0e2$.kokoro.platform.v1.McpConnectorTypeR\x0econnectorTypes\x12%\n\x0edefault_scopes\x18\x0b \x03(\tR\rdefaultScopes\x125\n\x16authorization_required\x18\x0c \x01(\x08R\x15authorizationRequired\x12U\n\x13allowed_mcp_origins\x18\r \x03(\x0b2%.kokoro.platform.v1.McpProviderOriginR\x11allowedMcpOrigins\x12w\n\x19tool_authorization_policy\x18\x0e \x01(\x0b26.kokoro.platform.v1.McpProviderToolAuthorizationPolicyH\x04R\x17toolAuthorizationPolicy\x88\x01\x01\x12+\n\x0fcover_image_url\x18\x0f \x01(\tH\x05R\rcoverImageUrl\x88\x01\x01B\x0e\n\x0c_descriptionB\t\n\x07_authorB\n\n\x08_websiteB\x0e\n\x0c_privacy_urlB\x1c\n\x1a_tool_authorization_policyB\x12\n\x10_cover_image_url"\xd3\x01\n"ListMcpProviderAdminRecordsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x19\n\x05query\x18\x02 \x01(\tH\x00R\x05query\x88\x01\x01\x12\x1d\n\x07enabled\x18\x03 \x01(\x08H\x01R\x07enabled\x88\x01\x01\x12>\n\x04page\x18\x04 \x01(\x0b2*.kokoro.platform.v1.PersonalMcpPageRequestR\x04pageB\x08\n\x06_queryB\n\n\x08_enabled"\xa1\x01\n#ListMcpProviderAdminRecordsResponse\x12H\n\tproviders\x18\x01 \x03(\x0b2*.kokoro.platform.v1.McpProviderAdminRecordR\tproviders\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page"d\n GetMcpProviderAdminRecordRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12!\n\x0cprovider_key\x18\x02 \x01(\tR\x0bproviderKey"k\n!GetMcpProviderAdminRecordResponse\x12F\n\x08provider\x18\x01 \x01(\x0b2*.kokoro.platform.v1.McpProviderAdminRecordR\x08provider"\xf3\x01\n#CreateMcpProviderAdminRecordRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12E\n\x08provider\x18\x03 \x01(\x0b2).kokoro.platform.v1.McpProviderAdminInputR\x08provider\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01B\n\n\x08_enabled"\x8a\x01\n$CreateMcpProviderAdminRecordResponse\x12F\n\x08provider\x18\x01 \x01(\x0b2*.kokoro.platform.v1.McpProviderAdminRecordR\x08provider\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"\xc1\x02\n#UpdateMcpProviderAdminRecordRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12E\n\x08provider\x18\x05 \x01(\x0b2).kokoro.platform.v1.McpProviderAdminInputR\x08providerB\x19\n\x17_expected_state_version"\x8a\x01\n$UpdateMcpProviderAdminRecordResponse\x12F\n\x08provider\x18\x01 \x01(\x0b2*.kokoro.platform.v1.McpProviderAdminRecordR\x08provider\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"\x98\x02\n\'SetMcpProviderAdminRecordEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01\x12\x18\n\x07enabled\x18\x05 \x01(\x08R\x07enabledB\x19\n\x17_expected_state_version"\x8e\x01\n(SetMcpProviderAdminRecordEnabledResponse\x12F\n\x08provider\x18\x01 \x01(\x0b2*.kokoro.platform.v1.McpProviderAdminRecordR\x08provider\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"\xfa\x01\n#RemoveMcpProviderAdminRecordRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12!\n\x0cprovider_key\x18\x03 \x01(\tR\x0bproviderKey\x129\n\x16expected_state_version\x18\x04 \x01(\x04H\x00R\x14expectedStateVersion\x88\x01\x01B\x19\n\x17_expected_state_version"e\n$RemoveMcpProviderAdminRecordResponse\x12!\n\x0cprovider_key\x18\x01 \x01(\tR\x0bproviderKey\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"\\\n\x16PersonalMcpErrorDetail\x12B\n\x06reason\x18\x01 \x01(\x0e2*.kokoro.platform.v1.PersonalMcpErrorReasonR\x06reason"B\n\x16PersonalMcpHeaderWrite\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value"_\n\x1bPersonalMcpOAuthClientWrite\x12\x1b\n\tclient_id\x18\x01 \x01(\tR\x08clientId\x12#\n\rclient_secret\x18\x02 \x01(\tR\x0cclientSecret"\x8e\x01\n\x1bPersonalMcpHeaderDescriptor\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x1e\n\nconfigured\x18\x02 \x01(\x08R\nconfigured\x12#\n\rstate_version\x18\x03 \x01(\x04R\x0cstateVersion\x12\x16\n\x06status\x18\x04 \x01(\tR\x06status"\xb4\x01\n PersonalMcpOAuthClientDescriptor\x12\x1b\n\tclient_id\x18\x01 \x01(\tR\x08clientId\x12\x1e\n\nconfigured\x18\x02 \x01(\x08R\nconfigured\x12\x16\n\x06origin\x18\x03 \x01(\tR\x06origin\x12\x16\n\x06status\x18\x04 \x01(\tR\x06status\x12#\n\rstate_version\x18\x05 \x01(\x04R\x0cstateVersion"\x81\x02\n\x17PersonalMcpToolSelector\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12.\n\x13input_schema_digest\x18\x03 \x01(\tR\x11inputSchemaDigest\x125\n\x14output_schema_digest\x18\x04 \x01(\tH\x00R\x12outputSchemaDigest\x88\x01\x01\x12\'\n\x0frequired_scopes\x18\x05 \x03(\tR\x0erequiredScopesB\x17\n\x15_output_schema_digest"\\\n\x1bPersonalMcpResourceSelector\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName"Z\n\x19PersonalMcpPromptSelector\x12\x1a\n\x08selector\x18\x01 \x01(\tR\x08selector\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName"\x80\x02\n\x1bPersonalMcpDeclaredSelector\x12A\n\x04tool\x18\x01 \x01(\x0b2+.kokoro.platform.v1.PersonalMcpToolSelectorH\x00R\x04tool\x12M\n\x08resource\x18\x02 \x01(\x0b2/.kokoro.platform.v1.PersonalMcpResourceSelectorH\x00R\x08resource\x12G\n\x06prompt\x18\x03 \x01(\x0b2-.kokoro.platform.v1.PersonalMcpPromptSelectorH\x00R\x06promptB\x06\n\x04kind"\x8c\x04\n RegisterPersonalMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12!\n\x0cdisplay_name\x18\x03 \x01(\tR\x0bdisplayName\x12\x1d\n\nserver_url\x18\x04 \x01(\tR\tserverUrl\x12\x19\n\x05notes\x18\x05 \x01(\tH\x00R\x05notes\x88\x01\x01\x12D\n\x07headers\x18\x06 \x03(\x0b2*.kokoro.platform.v1.PersonalMcpHeaderWriteR\x07headers\x12W\n\x0coauth_client\x18\x07 \x01(\x0b2/.kokoro.platform.v1.PersonalMcpOAuthClientWriteH\x01R\x0boauthClient\x88\x01\x01B\x08\n\x06_notesB\x0f\n\r_oauth_clientJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"\xfa\x01\n\x1bGetPersonalMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12<\n\tserver_id\x18\x02 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverIdJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestationR\x07command"\xad\x07\n\x11PersonalMcpServer\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12!\n\x0cdisplay_name\x18\x02 \x01(\tR\x0bdisplayName\x12\x1d\n\nserver_url\x18\x03 \x01(\tR\tserverUrl\x12\x16\n\x06status\x18\x04 \x01(\tR\x06status\x12#\n\rstate_version\x18\x05 \x01(\x04R\x0cstateVersion\x12\x19\n\x05notes\x18\x06 \x01(\tH\x00R\x05notes\x88\x01\x01\x12I\n\x07headers\x18\x07 \x03(\x0b2/.kokoro.platform.v1.PersonalMcpHeaderDescriptorR\x07headers\x12\\\n\x0coauth_client\x18\x08 \x01(\x0b24.kokoro.platform.v1.PersonalMcpOAuthClientDescriptorH\x01R\x0boauthClient\x88\x01\x01\x12S\n\x0eprepare_status\x18\t \x01(\x0e2,.kokoro.platform.v1.PersonalMcpPrepareStatusR\rprepareStatus\x126\n\x14authorization_status\x18\n \x01(\tH\x02R\x13authorizationStatus\x88\x01\x01\x12S\n\x0cdeclarations\x18\x0b \x03(\x0b2/.kokoro.platform.v1.PersonalMcpDeclaredSelectorR\x0cdeclarations\x122\n\x12declaration_digest\x18\x0c \x01(\tH\x03R\x11declarationDigest\x88\x01\x01\x12M\n\rconnection_id\x18\r \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdH\x04R\x0cconnectionId\x88\x01\x01\x12:\n\x16declarations_available\x18\x0e \x01(\x08H\x05R\x15declarationsAvailable\x88\x01\x01B\x08\n\x06_notesB\x0f\n\r_oauth_clientB\x17\n\x15_authorization_statusB\x15\n\x13_declaration_digestB\x10\n\x0e_connection_idB\x19\n\x17_declarations_available"\xc6\x01\n!RegisterPersonalMcpServerResponse\x12=\n\x06server\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalMcpServerR\x06server\x12F\n\tconnector\x18\x02 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\x92\x02\n\x1cImportPersonalMcpJsonRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1f\n\x0bconfig_json\x18\x03 \x01(\tR\nconfigJsonJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"\xa4\x01\n\x1bPersonalMcpJsonImportResult\x12=\n\x06server\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalMcpServerR\x06server\x12F\n\tconnector\x18\x02 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector"\x86\x01\n\x1dImportPersonalMcpJsonResponse\x12I\n\x07imports\x18\x01 \x03(\x0b2/.kokoro.platform.v1.PersonalMcpJsonImportResultR\x07imports\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed"]\n\x1cGetPersonalMcpServerResponse\x12=\n\x06server\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalMcpServerR\x06server"\xe8\x02\n\x1fPreparePersonalMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x124\n\x16expected_state_version\x18\x04 \x01(\x04R\x14expectedStateVersionJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"\x9a\x02\n PreparePersonalMcpServerResponse\x12=\n\x06server\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalMcpServerR\x06server\x12F\n\tconnector\x18\x02 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector\x12S\n\x0cdeclarations\x18\x03 \x03(\x0b2/.kokoro.platform.v1.PersonalMcpDeclaredSelectorR\x0cdeclarations\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xaf\x06\n\x1eUpdatePersonalMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x124\n\x16expected_state_version\x18\x04 \x01(\x04R\x14expectedStateVersion\x12&\n\x0cdisplay_name\x18\x05 \x01(\tH\x00R\x0bdisplayName\x88\x01\x01\x12\x19\n\x05notes\x18\x06 \x01(\tH\x01R\x05notes\x88\x01\x01\x12\x1f\n\x0bclear_notes\x18\x07 \x01(\x08R\nclearNotes\x12"\n\nserver_url\x18\x08 \x01(\tH\x02R\tserverUrl\x88\x01\x01\x12Q\n\x0eheader_upserts\x18\t \x03(\x0b2*.kokoro.platform.v1.PersonalMcpHeaderWriteR\rheaderUpserts\x12\'\n\x0fheader_removals\x18\n \x03(\tR\x0eheaderRemovals\x12W\n\x0coauth_client\x18\x0b \x01(\x0b2/.kokoro.platform.v1.PersonalMcpOAuthClientWriteH\x03R\x0boauthClient\x88\x01\x01\x12.\n\x13revoke_oauth_client\x18\x0c \x01(\x08R\x11revokeOauthClientB\x0f\n\r_display_nameB\x08\n\x06_notesB\r\n\x0b_server_urlB\x0f\n\r_oauth_clientJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"\xc4\x01\n\x1fUpdatePersonalMcpServerResponse\x12=\n\x06server\x18\x01 \x01(\x0b2%.kokoro.platform.v1.PersonalMcpServerR\x06server\x12F\n\tconnector\x18\x02 \x01(\x0b2(.kokoro.platform.v1.PersonalMcpConnectorR\tconnector\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xe7\x02\n\x1eDeletePersonalMcpServerRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x124\n\x16expected_state_version\x18\x04 \x01(\x04R\x14expectedStateVersionJ\x04\x08d\x10eR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0fexecution_proofR\x0battestation"\x95\x01\n\x1fDeletePersonalMcpServerResponse\x12<\n\tserver_id\x18\x01 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12\x18\n\x07deleted\x18\x02 \x01(\x08R\x07deleted\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\xb2\x02\n\x1aInstallProjectSkillRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12A\n\nsource_ref\x18\x03 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0bproject_ref"\x9e\x02\n\x1bInstallProjectSkillResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12\x1f\n\x0bproject_ref\x18\x05 \x01(\tR\nprojectRefB\x0b\n\t_event_id"\xe3\x03\n%UpdateProjectSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12R\n\x13expected_source_ref\x18\x04 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\x11expectedSourceRef\x12A\n\nsource_ref\x18\x05 \x01(\x0b2".kokoro.platform.v1.SkillSourceRefR\tsourceRefJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0bproject_ref"\xa9\x02\n&UpdateProjectSkillInstallationResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12\x1f\n\x0bproject_ref\x18\x05 \x01(\tR\nprojectRefB\x0b\n\t_event_id"\xfb\x02\n)SetProjectSkillInstallationEnabledRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationId\x12\x1d\n\x07enabled\x18\x04 \x01(\x08H\x00R\x07enabled\x88\x01\x01B\n\n\x08_enabledJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0bproject_ref"\xad\x02\n*SetProjectSkillInstallationEnabledResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12\x1f\n\x0bproject_ref\x18\x05 \x01(\tR\nprojectRefB\x0b\n\t_event_id"\xcc\x02\n%RemoveProjectSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12P\n\x0finstallation_id\x18\x03 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationIdJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0bproject_ref"\xa9\x02\n&RemoveProjectSkillInstallationResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12C\n\x06change\x18\x02 \x01(\x0e2+.kokoro.platform.v1.SkillInstallationChangeR\x06change\x12\x1e\n\x08event_id\x18\x03 \x01(\tH\x00R\x07eventId\x88\x01\x01\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed\x12\x1f\n\x0bproject_ref\x18\x05 \x01(\tR\nprojectRefB\x0b\n\t_event_id"\x8c\x02\n"GetProjectSkillInstallationRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12P\n\x0finstallation_id\x18\x02 \x01(\x0b2\'.kokoro.platform.v1.SkillInstallationIdR\x0einstallationIdJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0bproject_ref"\x98\x01\n#GetProjectSkillInstallationResponse\x12P\n\x0cinstallation\x18\x01 \x01(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\x0cinstallation\x12\x1f\n\x0bproject_ref\x18\x02 \x01(\tR\nprojectRef"\xc0\x03\n$ListProjectSkillInstallationsRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n\x07enabled\x18\x02 \x01(\x08H\x00R\x07enabled\x88\x01\x01\x12!\n\tinstalled\x18\x03 \x01(\x08H\x01R\tinstalled\x88\x01\x01\x12K\n\x04page\x18\x04 \x01(\x0b27.kokoro.platform.v1.ProductSkillInstallationPageRequestR\x04page\x12$\n\x0bsource_kind\x18\x05 \x01(\tH\x02R\nsourceKind\x88\x01\x01\x12\x19\n\x05query\x18\x06 \x01(\tH\x03R\x05query\x88\x01\x01B\n\n\x08_enabledB\x0c\n\n_installedB\x0e\n\x0c_source_kindB\x08\n\x06_queryJ\x04\x08d\x10eR\x0fexecution_proofR\ttenant_idR\x08actor_idR\nsubject_idR\x0bowner_scopeR\x12target_owner_scopeR\x0fproduct_contextR\x0bproject_ref"\xce\x01\n%ListProjectSkillInstallationsResponse\x12R\n\rinstallations\x18\x01 \x03(\x0b2,.kokoro.platform.v1.ProductSkillInstallationR\rinstallations\x120\n\x04page\x18\x02 \x01(\x0b2\x1c.kokoro.common.v1.PageResultR\x04page\x12\x1f\n\x0bproject_ref\x18\x03 \x01(\tR\nprojectRef*\xb0\x01\n\x0eSkillScopeKind\x12 \n\x1cSKILL_SCOPE_KIND_UNSPECIFIED\x10\x00\x12\x1d\n\x19SKILL_SCOPE_KIND_PERSONAL\x10\x01\x12\x1c\n\x18SKILL_SCOPE_KIND_PROJECT\x10\x02\x12!\n\x1dSKILL_SCOPE_KIND_ORGANIZATION\x10\x03\x12\x1c\n\x18SKILL_SCOPE_KIND_SESSION\x10\x04*\xcd\x01\n\x0bSkillStatus\x12\x1c\n\x18SKILL_STATUS_UNSPECIFIED\x10\x00\x12\x16\n\x12SKILL_STATUS_DRAFT\x10\x01\x12\x17\n\x13SKILL_STATUS_ACTIVE\x10\x02\x12\x1a\n\x16SKILL_STATUS_WITHDRAWN\x10\x03\x12\x1c\n\x18SKILL_STATUS_QUARANTINED\x10\x04\x12\x19\n\x15SKILL_STATUS_DISABLED\x10\x05\x12\x1a\n\x16SKILL_STATUS_DISCARDED\x10\x06*\x8f\x01\n\x10McpConnectorType\x12"\n\x1eMCP_CONNECTOR_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n\x1aMCP_CONNECTOR_TYPE_BUILTIN\x10\x01\x12\x1b\n\x17MCP_CONNECTOR_TYPE_BYOK\x10\x02\x12\x1a\n\x16MCP_CONNECTOR_TYPE_MCP\x10\x03*\xbf\x01\n\x12McpConnectorStatus\x12$\n MCP_CONNECTOR_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_CONNECTOR_STATUS_PENDING\x10\x01\x12\x1f\n\x1bMCP_CONNECTOR_STATUS_ACTIVE\x10\x02\x12\x1e\n\x1aMCP_CONNECTOR_STATUS_ERROR\x10\x03\x12 \n\x1cMCP_CONNECTOR_STATUS_REVOKED\x10\x04*\x87\x01\n\x0cMcpTransport\x12\x1d\n\x19MCP_TRANSPORT_UNSPECIFIED\x10\x00\x12\x17\n\x13MCP_TRANSPORT_STDIO\x10\x01\x12!\n\x1dMCP_TRANSPORT_STREAMABLE_HTTP\x10\x02\x12\x1c\n\x18MCP_TRANSPORT_SSE_COMPAT\x10\x03*v\n\x0fMcpServerStatus\x12!\n\x1dMCP_SERVER_STATUS_UNSPECIFIED\x10\x00\x12 \n\x1cMCP_SERVER_STATUS_REGISTERED\x10\x01\x12\x1e\n\x1aMCP_SERVER_STATUS_DISABLED\x10\x02*\x93\x01\n\x10McpPrimitiveKind\x12"\n\x1eMCP_PRIMITIVE_KIND_UNSPECIFIED\x10\x00\x12\x1b\n\x17MCP_PRIMITIVE_KIND_TOOL\x10\x01\x12\x1f\n\x1bMCP_PRIMITIVE_KIND_RESOURCE\x10\x02\x12\x1d\n\x19MCP_PRIMITIVE_KIND_PROMPT\x10\x03*\x80\x02\n\x10SkillImportPhase\x12"\n\x1eSKILL_IMPORT_PHASE_UNSPECIFIED\x10\x00\x12\x1d\n\x19SKILL_IMPORT_PHASE_INTENT\x10\x01\x12%\n!SKILL_IMPORT_PHASE_UPLOAD_PENDING\x10\x02\x12\x1f\n\x1bSKILL_IMPORT_PHASE_UPLOADED\x10\x03\x12 \n\x1cSKILL_IMPORT_PHASE_COMPLETED\x10\x04\x12\x1f\n\x1bSKILL_IMPORT_PHASE_REJECTED\x10\x05\x12\x1e\n\x1aSKILL_IMPORT_PHASE_EXPIRED\x10\x06*\x84\x02\n\x11SkillPackagePhase\x12#\n\x1fSKILL_PACKAGE_PHASE_UNSPECIFIED\x10\x00\x12\x1c\n\x18SKILL_PACKAGE_PHASE_NONE\x10\x01\x12\x1e\n\x1aSKILL_PACKAGE_PHASE_INTENT\x10\x02\x12&\n"SKILL_PACKAGE_PHASE_UPLOAD_PENDING\x10\x03\x12 \n\x1cSKILL_PACKAGE_PHASE_UPLOADED\x10\x04\x12!\n\x1dSKILL_PACKAGE_PHASE_VALIDATED\x10\x05\x12\x1f\n\x1bSKILL_PACKAGE_PHASE_ABORTED\x10\x06*\xd8\x01\n\x15SkillPackageScanState\x12(\n$SKILL_PACKAGE_SCAN_STATE_UNSPECIFIED\x10\x00\x12$\n SKILL_PACKAGE_SCAN_STATE_PENDING\x10\x01\x12"\n\x1eSKILL_PACKAGE_SCAN_STATE_CLEAN\x10\x02\x12%\n!SKILL_PACKAGE_SCAN_STATE_INFECTED\x10\x03\x12$\n SKILL_PACKAGE_SCAN_STATE_UNKNOWN\x10\x04*\xa5\x01\n\x14SkillAcquisitionKind\x12&\n"SKILL_ACQUISITION_KIND_UNSPECIFIED\x10\x00\x12"\n\x1eSKILL_ACQUISITION_KIND_UNKNOWN\x10\x01\x12!\n\x1dSKILL_ACQUISITION_KIND_DIRECT\x10\x02\x12\x1e\n\x1aSKILL_ACQUISITION_KIND_HUB\x10\x03*\xdf\x02\n\x17SkillInstallationChange\x12)\n%SKILL_INSTALLATION_CHANGE_UNSPECIFIED\x10\x00\x12\'\n#SKILL_INSTALLATION_CHANGE_INSTALLED\x10\x01\x12&\n"SKILL_INSTALLATION_CHANGE_UPGRADED\x10\x02\x12)\n%SKILL_INSTALLATION_CHANGE_REINSTALLED\x10\x03\x12%\n!SKILL_INSTALLATION_CHANGE_ENABLED\x10\x04\x12&\n"SKILL_INSTALLATION_CHANGE_DISABLED\x10\x05\x12%\n!SKILL_INSTALLATION_CHANGE_REMOVED\x10\x06\x12\'\n#SKILL_INSTALLATION_CHANGE_UNCHANGED\x10\x07*\xd2\x01\n\x16PersonalMcpErrorReason\x12)\n%PERSONAL_MCP_ERROR_REASON_UNSPECIFIED\x10\x00\x12*\n&PERSONAL_MCP_ERROR_REASON_NOT_PREPARED\x10\x01\x12*\n&PERSONAL_MCP_ERROR_REASON_NEEDS_CLIENT\x10\x02\x125\n1PERSONAL_MCP_ERROR_REASON_AUTH_METHOD_UNSUPPORTED\x10\x03*\xfc\x01\n\x18PersonalMcpPrepareStatus\x12+\n\'PERSONAL_MCP_PREPARE_STATUS_UNSPECIFIED\x10\x00\x12/\n+PERSONAL_MCP_PREPARE_STATUS_PENDING_PREPARE\x10\x01\x12.\n*PERSONAL_MCP_PREPARE_STATUS_PREPARE_FAILED\x10\x02\x12+\n\'PERSONAL_MCP_PREPARE_STATUS_NEEDS_OAUTH\x10\x03\x12%\n!PERSONAL_MCP_PREPARE_STATUS_READY\x10\x042\xa7\x12\n\x13SkillCatalogService\x12|\n\x15BeginLocalSkillImport\x120.kokoro.platform.v1.BeginLocalSkillImportRequest\x1a1.kokoro.platform.v1.BeginLocalSkillImportResponse\x12\x85\x01\n\x18CompleteLocalSkillImport\x123.kokoro.platform.v1.CompleteLocalSkillImportRequest\x1a4.kokoro.platform.v1.CompleteLocalSkillImportResponse\x12\x85\x01\n\x18FinalizeLocalSkillImport\x123.kokoro.platform.v1.FinalizeLocalSkillImportRequest\x1a4.kokoro.platform.v1.FinalizeLocalSkillImportResponse\x12v\n\x13GetLocalSkillImport\x12..kokoro.platform.v1.GetLocalSkillImportRequest\x1a/.kokoro.platform.v1.GetLocalSkillImportResponse\x12m\n\x10UpdateSkillDraft\x12+.kokoro.platform.v1.UpdateSkillDraftRequest\x1a,.kokoro.platform.v1.UpdateSkillDraftResponse\x12p\n\x11DiscardSkillDraft\x12,.kokoro.platform.v1.DiscardSkillDraftRequest\x1a-.kokoro.platform.v1.DiscardSkillDraftResponse\x12\x8e\x01\n\x1bSetSkillPublicationAudience\x126.kokoro.platform.v1.SetSkillPublicationAudienceRequest\x1a7.kokoro.platform.v1.SetSkillPublicationAudienceResponse\x12|\n\x15BeginSkillCoverUpload\x120.kokoro.platform.v1.BeginSkillCoverUploadRequest\x1a1.kokoro.platform.v1.BeginSkillCoverUploadResponse\x12\x85\x01\n\x18CompleteSkillCoverUpload\x123.kokoro.platform.v1.CompleteSkillCoverUploadRequest\x1a4.kokoro.platform.v1.CompleteSkillCoverUploadResponse\x12v\n\x13GetSkillCoverUpload\x12..kokoro.platform.v1.GetSkillCoverUploadRequest\x1a/.kokoro.platform.v1.GetSkillCoverUploadResponse\x12|\n\x15GetSkillPackageUpload\x120.kokoro.platform.v1.GetSkillPackageUploadRequest\x1a1.kokoro.platform.v1.GetSkillPackageUploadResponse\x12\x8b\x01\n\x1aCompleteSkillPackageUpload\x125.kokoro.platform.v1.CompleteSkillPackageUploadRequest\x1a6.kokoro.platform.v1.CompleteSkillPackageUploadResponse\x12\x82\x01\n\x17BeginSkillPackageUpload\x122.kokoro.platform.v1.BeginSkillPackageUploadRequest\x1a3.kokoro.platform.v1.BeginSkillPackageUploadResponse\x12m\n\x10CreateSkillDraft\x12+.kokoro.platform.v1.CreateSkillDraftRequest\x1a,.kokoro.platform.v1.CreateSkillDraftResponse\x12s\n\x12CreateSkillVersion\x12-.kokoro.platform.v1.CreateSkillVersionRequest\x1a..kokoro.platform.v1.CreateSkillVersionResponse\x12s\n\x12ValidateSkillDraft\x12-.kokoro.platform.v1.ValidateSkillDraftRequest\x1a..kokoro.platform.v1.ValidateSkillDraftResponse\x12a\n\x0cPublishSkill\x12\'.kokoro.platform.v1.PublishSkillRequest\x1a(.kokoro.platform.v1.PublishSkillResponse\x12d\n\rWithdrawSkill\x12(.kokoro.platform.v1.WithdrawSkillRequest\x1a).kokoro.platform.v1.WithdrawSkillResponse\x12g\n\x0eSetSkillStatus\x12).kokoro.platform.v1.SetSkillStatusRequest\x1a*.kokoro.platform.v1.SetSkillStatusResponse2\xaa\x03\n\x12SkillSourceService\x12|\n\x15DiscoverVisibleSkills\x120.kokoro.platform.v1.DiscoverVisibleSkillsRequest\x1a1.kokoro.platform.v1.DiscoverVisibleSkillsResponse\x12v\n\x13ResolveVisibleSkill\x12..kokoro.platform.v1.ResolveVisibleSkillRequest\x1a/.kokoro.platform.v1.ResolveVisibleSkillResponse\x12\x9d\x01\n GetApprovedSkillPackageReference\x12;.kokoro.platform.v1.GetApprovedSkillPackageReferenceRequest\x1a<.kokoro.platform.v1.GetApprovedSkillPackageReferenceResponse2\x8f\x05\n\x18SkillInstallationService\x12a\n\x0cInstallSkill\x12\'.kokoro.platform.v1.InstallSkillRequest\x1a(.kokoro.platform.v1.InstallSkillResponse\x12\x8e\x01\n\x1bSetSkillInstallationEnabled\x126.kokoro.platform.v1.SetSkillInstallationEnabledRequest\x1a7.kokoro.platform.v1.SetSkillInstallationEnabledResponse\x12\x82\x01\n\x17RemoveSkillInstallation\x122.kokoro.platform.v1.RemoveSkillInstallationRequest\x1a3.kokoro.platform.v1.RemoveSkillInstallationResponse\x12y\n\x14GetSkillInstallation\x12/.kokoro.platform.v1.GetSkillInstallationRequest\x1a0.kokoro.platform.v1.GetSkillInstallationResponse\x12\x7f\n\x16ListSkillInstallations\x121.kokoro.platform.v1.ListSkillInstallationsRequest\x1a2.kokoro.platform.v1.ListSkillInstallationsResponse2\x9a\x06\n\x13McpConnectorService\x12s\n\x12CreateMcpConnector\x12-.kokoro.platform.v1.CreateMcpConnectorRequest\x1a..kokoro.platform.v1.CreateMcpConnectorResponse\x12\x97\x01\n\x1eBeginMcpConnectorAuthorization\x129.kokoro.platform.v1.BeginMcpConnectorAuthorizationRequest\x1a:.kokoro.platform.v1.BeginMcpConnectorAuthorizationResponse\x12\xa0\x01\n!CompleteMcpConnectorAuthorization\x12<.kokoro.platform.v1.CompleteMcpConnectorAuthorizationRequest\x1a=.kokoro.platform.v1.CompleteMcpConnectorAuthorizationResponse\x12p\n\x11ListMcpConnectors\x12,.kokoro.platform.v1.ListMcpConnectorsRequest\x1a-.kokoro.platform.v1.ListMcpConnectorsResponse\x12j\n\x0fGetMcpConnector\x12*.kokoro.platform.v1.GetMcpConnectorRequest\x1a+.kokoro.platform.v1.GetMcpConnectorResponse\x12s\n\x12RevokeMcpConnector\x12-.kokoro.platform.v1.RevokeMcpConnectorRequest\x1a..kokoro.platform.v1.RevokeMcpConnectorResponse2\xd0\x02\n\x10McpServerService\x12p\n\x11RegisterMcpServer\x12,.kokoro.platform.v1.RegisterMcpServerRequest\x1a-.kokoro.platform.v1.RegisterMcpServerResponse\x12a\n\x0cGetMcpServer\x12\'.kokoro.platform.v1.GetMcpServerRequest\x1a(.kokoro.platform.v1.GetMcpServerResponse\x12g\n\x0eListMcpServers\x12).kokoro.platform.v1.ListMcpServersRequest\x1a*.kokoro.platform.v1.ListMcpServersResponse2\xf5\x04\n\x14McpConnectionService\x12v\n\x13CreateMcpConnection\x12..kokoro.platform.v1.CreateMcpConnectionRequest\x1a/.kokoro.platform.v1.CreateMcpConnectionResponse\x12\x88\x01\n\x19ListMcpServerDeclarations\x124.kokoro.platform.v1.ListMcpServerDeclarationsRequest\x1a5.kokoro.platform.v1.ListMcpServerDeclarationsResponse\x12m\n\x10GetMcpConnection\x12+.kokoro.platform.v1.GetMcpConnectionRequest\x1a,.kokoro.platform.v1.GetMcpConnectionResponse\x12s\n\x12ListMcpConnections\x12-.kokoro.platform.v1.ListMcpConnectionsRequest\x1a..kokoro.platform.v1.ListMcpConnectionsResponse\x12v\n\x13RevokeMcpConnection\x12..kokoro.platform.v1.RevokeMcpConnectionRequest\x1a/.kokoro.platform.v1.RevokeMcpConnectionResponse2\x9c\x02\n\x17McpAuthorizationService\x12\x91\x01\n\x1cListMcpConnectorCapabilities\x127.kokoro.platform.v1.ListMcpConnectorCapabilitiesRequest\x1a8.kokoro.platform.v1.ListMcpConnectorCapabilitiesResponse\x12m\n\x10AuthorizeMcpTool\x12+.kokoro.platform.v1.AuthorizeMcpToolRequest\x1a,.kokoro.platform.v1.AuthorizeMcpToolResponse2\xa8\x01\n\x1bMcpConnectorProviderService\x12\x88\x01\n\x19ListMcpConnectorProviders\x124.kokoro.platform.v1.ListMcpConnectorProvidersRequest\x1a5.kokoro.platform.v1.ListMcpConnectorProvidersResponse2\xad\x07\n\x1fProductSkillInstallationService\x12\x9a\x01\n\x1fUpdatePersonalSkillInstallation\x12:.kokoro.platform.v1.UpdatePersonalSkillInstallationRequest\x1a;.kokoro.platform.v1.UpdatePersonalSkillInstallationResponse\x12y\n\x14InstallPersonalSkill\x12/.kokoro.platform.v1.InstallPersonalSkillRequest\x1a0.kokoro.platform.v1.InstallPersonalSkillResponse\x12\xa6\x01\n#SetPersonalSkillInstallationEnabled\x12>.kokoro.platform.v1.SetPersonalSkillInstallationEnabledRequest\x1a?.kokoro.platform.v1.SetPersonalSkillInstallationEnabledResponse\x12\x9a\x01\n\x1fRemovePersonalSkillInstallation\x12:.kokoro.platform.v1.RemovePersonalSkillInstallationRequest\x1a;.kokoro.platform.v1.RemovePersonalSkillInstallationResponse\x12\x91\x01\n\x1cGetPersonalSkillInstallation\x127.kokoro.platform.v1.GetPersonalSkillInstallationRequest\x1a8.kokoro.platform.v1.GetPersonalSkillInstallationResponse\x12\x97\x01\n\x1eListPersonalSkillInstallations\x129.kokoro.platform.v1.ListPersonalSkillInstallationsRequest\x1a:.kokoro.platform.v1.ListPersonalSkillInstallationsResponse2\xe0\x16\n\x19ProductMcpPersonalService\x12\x88\x01\n\x19RegisterPersonalMcpServer\x124.kokoro.platform.v1.RegisterPersonalMcpServerRequest\x1a5.kokoro.platform.v1.RegisterPersonalMcpServerResponse\x12|\n\x15ImportPersonalMcpJson\x120.kokoro.platform.v1.ImportPersonalMcpJsonRequest\x1a1.kokoro.platform.v1.ImportPersonalMcpJsonResponse\x12y\n\x14GetPersonalMcpServer\x12/.kokoro.platform.v1.GetPersonalMcpServerRequest\x1a0.kokoro.platform.v1.GetPersonalMcpServerResponse\x12\x85\x01\n\x18PreparePersonalMcpServer\x123.kokoro.platform.v1.PreparePersonalMcpServerRequest\x1a4.kokoro.platform.v1.PreparePersonalMcpServerResponse\x12\x82\x01\n\x17UpdatePersonalMcpServer\x122.kokoro.platform.v1.UpdatePersonalMcpServerRequest\x1a3.kokoro.platform.v1.UpdatePersonalMcpServerResponse\x12\x82\x01\n\x17DeletePersonalMcpServer\x122.kokoro.platform.v1.DeletePersonalMcpServerRequest\x1a3.kokoro.platform.v1.DeletePersonalMcpServerResponse\x12\x88\x01\n\x19ListPersonalMcpConnectors\x124.kokoro.platform.v1.ListPersonalMcpConnectorsRequest\x1a5.kokoro.platform.v1.ListPersonalMcpConnectorsResponse\x12\x82\x01\n\x17GetPersonalMcpConnector\x122.kokoro.platform.v1.GetPersonalMcpConnectorRequest\x1a3.kokoro.platform.v1.GetPersonalMcpConnectorResponse\x12\x8b\x01\n\x1aListPersonalMcpConnections\x125.kokoro.platform.v1.ListPersonalMcpConnectionsRequest\x1a6.kokoro.platform.v1.ListPersonalMcpConnectionsResponse\x12\x85\x01\n\x18GetPersonalMcpConnection\x123.kokoro.platform.v1.GetPersonalMcpConnectionRequest\x1a4.kokoro.platform.v1.GetPersonalMcpConnectionResponse\x12\x8b\x01\n\x1aCreatePersonalMcpConnector\x125.kokoro.platform.v1.CreatePersonalMcpConnectorRequest\x1a6.kokoro.platform.v1.CreatePersonalMcpConnectorResponse\x12\x8b\x01\n\x1aUpdatePersonalMcpConnector\x125.kokoro.platform.v1.UpdatePersonalMcpConnectorRequest\x1a6.kokoro.platform.v1.UpdatePersonalMcpConnectorResponse\x12\x97\x01\n\x1eSetPersonalMcpConnectorEnabled\x129.kokoro.platform.v1.SetPersonalMcpConnectorEnabledRequest\x1a:.kokoro.platform.v1.SetPersonalMcpConnectorEnabledResponse\x12\x8b\x01\n\x1aRemovePersonalMcpConnector\x125.kokoro.platform.v1.RemovePersonalMcpConnectorRequest\x1a6.kokoro.platform.v1.RemovePersonalMcpConnectorResponse\x12\x85\x01\n\x18ListPersonalMcpProviders\x123.kokoro.platform.v1.ListPersonalMcpProvidersRequest\x1a4.kokoro.platform.v1.ListPersonalMcpProvidersResponse\x12\x7f\n\x16GetPersonalMcpProvider\x121.kokoro.platform.v1.GetPersonalMcpProviderRequest\x1a2.kokoro.platform.v1.GetPersonalMcpProviderResponse\x12\xaf\x01\n&BeginPersonalMcpConnectorAuthorization\x12A.kokoro.platform.v1.BeginPersonalMcpConnectorAuthorizationRequest\x1aB.kokoro.platform.v1.BeginPersonalMcpConnectorAuthorizationResponse\x12\xb8\x01\n)CompletePersonalMcpConnectorAuthorization\x12D.kokoro.platform.v1.CompletePersonalMcpConnectorAuthorizationRequest\x1aE.kokoro.platform.v1.CompletePersonalMcpConnectorAuthorizationResponse\x12\xbb\x01\n*ReconnectPersonalMcpConnectorAuthorization\x12E.kokoro.platform.v1.ReconnectPersonalMcpConnectorAuthorizationRequest\x1aF.kokoro.platform.v1.ReconnectPersonalMcpConnectorAuthorizationResponse\x12\x8e\x01\n\x1bCreatePersonalMcpConnection\x126.kokoro.platform.v1.CreatePersonalMcpConnectionRequest\x1a7.kokoro.platform.v1.CreatePersonalMcpConnectionResponse2\xa4\x05\n\x17ProductCustomApiService\x12\x82\x01\n\x17CreatePersonalCustomApi\x122.kokoro.platform.v1.CreatePersonalCustomApiRequest\x1a3.kokoro.platform.v1.CreatePersonalCustomApiResponse\x12y\n\x14GetPersonalCustomApi\x12/.kokoro.platform.v1.GetPersonalCustomApiRequest\x1a0.kokoro.platform.v1.GetPersonalCustomApiResponse\x12\x7f\n\x16ListPersonalCustomApis\x121.kokoro.platform.v1.ListPersonalCustomApisRequest\x1a2.kokoro.platform.v1.ListPersonalCustomApisResponse\x12\x82\x01\n\x17UpdatePersonalCustomApi\x122.kokoro.platform.v1.UpdatePersonalCustomApiRequest\x1a3.kokoro.platform.v1.UpdatePersonalCustomApiResponse\x12\x82\x01\n\x17DeletePersonalCustomApi\x122.kokoro.platform.v1.DeletePersonalCustomApiRequest\x1a3.kokoro.platform.v1.DeletePersonalCustomApiResponse2\xb7\x01\n$ProductSkillPackageInspectionService\x12\x8e\x01\n\x1bInspectPersonalSkillPackage\x126.kokoro.platform.v1.InspectPersonalSkillPackageRequest\x1a7.kokoro.platform.v1.InspectPersonalSkillPackageResponse2\xe7\x01\n0ProductSkillInstallationPackageInspectionService\x12\xb2\x01\n\'InspectPersonalSkillInstallationPackage\x12B.kokoro.platform.v1.InspectPersonalSkillInstallationPackageRequest\x1aC.kokoro.platform.v1.InspectPersonalSkillInstallationPackageResponse2\xc8\t\n\x11SkillAdminService\x12j\n\x0fListAdminSkills\x12*.kokoro.platform.v1.ListAdminSkillsRequest\x1a+.kokoro.platform.v1.ListAdminSkillsResponse\x12d\n\rGetAdminSkill\x12(.kokoro.platform.v1.GetAdminSkillRequest\x1a).kokoro.platform.v1.GetAdminSkillResponse\x12|\n\x15CreateAdminSkillDraft\x120.kokoro.platform.v1.CreateAdminSkillDraftRequest\x1a1.kokoro.platform.v1.CreateAdminSkillDraftResponse\x12\x82\x01\n\x17CreateAdminSkillVersion\x122.kokoro.platform.v1.CreateAdminSkillVersionRequest\x1a3.kokoro.platform.v1.CreateAdminSkillVersionResponse\x12y\n\x14PublishOfficialSkill\x12/.kokoro.platform.v1.PublishOfficialSkillRequest\x1a0.kokoro.platform.v1.PublishOfficialSkillResponse\x12s\n\x12WithdrawAdminSkill\x12-.kokoro.platform.v1.WithdrawAdminSkillRequest\x1a..kokoro.platform.v1.WithdrawAdminSkillResponse\x12j\n\x0fQuarantineSkill\x12*.kokoro.platform.v1.QuarantineSkillRequest\x1a+.kokoro.platform.v1.QuarantineSkillResponse\x12a\n\x0cRestoreSkill\x12\'.kokoro.platform.v1.RestoreSkillRequest\x1a(.kokoro.platform.v1.RestoreSkillResponse\x12\x9d\x01\n SetAdminSkillPublicationAudience\x12;.kokoro.platform.v1.SetAdminSkillPublicationAudienceRequest\x1a<.kokoro.platform.v1.SetAdminSkillPublicationAudienceResponse\x12\x7f\n\x16DiscardAdminSkillDraft\x121.kokoro.platform.v1.DiscardAdminSkillDraftRequest\x1a2.kokoro.platform.v1.DiscardAdminSkillDraftResponse2\xf2\x04\n\x17ProductSkillReadService\x12m\n\x10GetSkillRevision\x12+.kokoro.platform.v1.GetSkillRevisionRequest\x1a,.kokoro.platform.v1.GetSkillRevisionResponse\x12j\n\x0fGetCurrentSkill\x12*.kokoro.platform.v1.GetCurrentSkillRequest\x1a+.kokoro.platform.v1.GetCurrentSkillResponse\x12v\n\x13InspectSkillPackage\x12..kokoro.platform.v1.InspectSkillPackageRequest\x1a/.kokoro.platform.v1.InspectSkillPackageResponse\x12\x82\x01\n\x17GetSkillPackageDownload\x122.kokoro.platform.v1.GetSkillPackageDownloadRequest\x1a3.kokoro.platform.v1.GetSkillPackageDownloadResponse\x12\x7f\n\x16GetSkillCoverReference\x121.kokoro.platform.v1.GetSkillCoverReferenceRequest\x1a2.kokoro.platform.v1.GetSkillCoverReferenceResponse2\x91\x07\n\x17McpProviderAdminService\x12\x8e\x01\n\x1bListMcpProviderAdminRecords\x126.kokoro.platform.v1.ListMcpProviderAdminRecordsRequest\x1a7.kokoro.platform.v1.ListMcpProviderAdminRecordsResponse\x12\x88\x01\n\x19GetMcpProviderAdminRecord\x124.kokoro.platform.v1.GetMcpProviderAdminRecordRequest\x1a5.kokoro.platform.v1.GetMcpProviderAdminRecordResponse\x12\x91\x01\n\x1cCreateMcpProviderAdminRecord\x127.kokoro.platform.v1.CreateMcpProviderAdminRecordRequest\x1a8.kokoro.platform.v1.CreateMcpProviderAdminRecordResponse\x12\x91\x01\n\x1cUpdateMcpProviderAdminRecord\x127.kokoro.platform.v1.UpdateMcpProviderAdminRecordRequest\x1a8.kokoro.platform.v1.UpdateMcpProviderAdminRecordResponse\x12\x9d\x01\n SetMcpProviderAdminRecordEnabled\x12;.kokoro.platform.v1.SetMcpProviderAdminRecordEnabledRequest\x1a<.kokoro.platform.v1.SetMcpProviderAdminRecordEnabledResponse\x12\x91\x01\n\x1cRemoveMcpProviderAdminRecord\x127.kokoro.platform.v1.RemoveMcpProviderAdminRecordRequest\x1a8.kokoro.platform.v1.RemoveMcpProviderAdminRecordResponse2\xa2\x07\n&ProductProjectSkillInstallationService\x12v\n\x13InstallProjectSkill\x12..kokoro.platform.v1.InstallProjectSkillRequest\x1a/.kokoro.platform.v1.InstallProjectSkillResponse\x12\x97\x01\n\x1eUpdateProjectSkillInstallation\x129.kokoro.platform.v1.UpdateProjectSkillInstallationRequest\x1a:.kokoro.platform.v1.UpdateProjectSkillInstallationResponse\x12\xa3\x01\n"SetProjectSkillInstallationEnabled\x12=.kokoro.platform.v1.SetProjectSkillInstallationEnabledRequest\x1a>.kokoro.platform.v1.SetProjectSkillInstallationEnabledResponse\x12\x97\x01\n\x1eRemoveProjectSkillInstallation\x129.kokoro.platform.v1.RemoveProjectSkillInstallationRequest\x1a:.kokoro.platform.v1.RemoveProjectSkillInstallationResponse\x12\x8e\x01\n\x1bGetProjectSkillInstallation\x126.kokoro.platform.v1.GetProjectSkillInstallationRequest\x1a7.kokoro.platform.v1.GetProjectSkillInstallationResponse\x12\x94\x01\n\x1dListProjectSkillInstallations\x128.kokoro.platform.v1.ListProjectSkillInstallationsRequest\x1a9.kokoro.platform.v1.ListProjectSkillInstallationsResponseb\x06proto3',
     [
         timestamp_pb.desc(),
         common_pb.desc(),
@@ -4524,20 +13551,33 @@ _DESC = file_desc(
     {
         "SkillSeriesId": SkillSeriesId,
         "SkillId": SkillId,
+        "SkillImportIntentId": SkillImportIntentId,
         "SkillInstallationId": SkillInstallationId,
         "SkillSourceRef": SkillSourceRef,
         "McpConnectorId": McpConnectorId,
         "McpServerId": McpServerId,
         "McpConnectionId": McpConnectionId,
         "McpAuthorizationId": McpAuthorizationId,
+        "CustomApiProfileId": CustomApiProfileId,
         "McpInvocationGrant": McpInvocationGrant,
         "OwnerScope": OwnerScope,
         "ProductCatalogContext": ProductCatalogContext,
         "SkillMetadata": SkillMetadata,
+        "SkillCategoryKeys": SkillCategoryKeys,
+        "SkillExamplePrompts": SkillExamplePrompts,
         "SkillSummary": SkillSummary,
         "SkillSource": SkillSource,
         "CreateSkillDraftRequest": CreateSkillDraftRequest,
         "CreateSkillDraftResponse": CreateSkillDraftResponse,
+        "SkillImportUploadProof": SkillImportUploadProof,
+        "BeginLocalSkillImportRequest": BeginLocalSkillImportRequest,
+        "BeginLocalSkillImportResponse": BeginLocalSkillImportResponse,
+        "CompleteLocalSkillImportRequest": CompleteLocalSkillImportRequest,
+        "CompleteLocalSkillImportResponse": CompleteLocalSkillImportResponse,
+        "FinalizeLocalSkillImportRequest": FinalizeLocalSkillImportRequest,
+        "FinalizeLocalSkillImportResponse": FinalizeLocalSkillImportResponse,
+        "GetLocalSkillImportRequest": GetLocalSkillImportRequest,
+        "GetLocalSkillImportResponse": GetLocalSkillImportResponse,
         "GetSkillPackageUploadRequest": GetSkillPackageUploadRequest,
         "GetSkillPackageUploadResponse": GetSkillPackageUploadResponse,
         "BeginSkillPackageUploadRequest": BeginSkillPackageUploadRequest,
@@ -4585,6 +13625,7 @@ _DESC = file_desc(
         "RevokeMcpConnectorResponse": RevokeMcpConnectorResponse,
         "McpServer": McpServer,
         "RegisterMcpServerRequest": RegisterMcpServerRequest,
+        "McpServerRegistration": McpServerRegistration,
         "RegisterMcpServerResponse": RegisterMcpServerResponse,
         "GetMcpServerRequest": GetMcpServerRequest,
         "GetMcpServerResponse": GetMcpServerResponse,
@@ -4611,6 +13652,177 @@ _DESC = file_desc(
         "McpConnectorProvider": McpConnectorProvider,
         "ListMcpConnectorProvidersRequest": ListMcpConnectorProvidersRequest,
         "ListMcpConnectorProvidersResponse": ListMcpConnectorProvidersResponse,
+        "ProductSkillInstallation": ProductSkillInstallation,
+        "InstallPersonalSkillRequest": InstallPersonalSkillRequest,
+        "InstallPersonalSkillResponse": InstallPersonalSkillResponse,
+        "UpdatePersonalSkillInstallationRequest": UpdatePersonalSkillInstallationRequest,
+        "UpdatePersonalSkillInstallationResponse": UpdatePersonalSkillInstallationResponse,
+        "SetPersonalSkillInstallationEnabledRequest": SetPersonalSkillInstallationEnabledRequest,
+        "SetPersonalSkillInstallationEnabledResponse": SetPersonalSkillInstallationEnabledResponse,
+        "RemovePersonalSkillInstallationRequest": RemovePersonalSkillInstallationRequest,
+        "RemovePersonalSkillInstallationResponse": RemovePersonalSkillInstallationResponse,
+        "GetPersonalSkillInstallationRequest": GetPersonalSkillInstallationRequest,
+        "GetPersonalSkillInstallationResponse": GetPersonalSkillInstallationResponse,
+        "ListPersonalSkillInstallationsRequest": ListPersonalSkillInstallationsRequest,
+        "ListPersonalSkillInstallationsResponse": ListPersonalSkillInstallationsResponse,
+        "ProductSkillInstallationPageRequest": ProductSkillInstallationPageRequest,
+        "ListPersonalMcpConnectorsRequest": ListPersonalMcpConnectorsRequest,
+        "GetPersonalMcpConnectorRequest": GetPersonalMcpConnectorRequest,
+        "ListPersonalMcpConnectionsRequest": ListPersonalMcpConnectionsRequest,
+        "GetPersonalMcpConnectionRequest": GetPersonalMcpConnectionRequest,
+        "ListPersonalMcpConnectorsResponse": ListPersonalMcpConnectorsResponse,
+        "GetPersonalMcpConnectorResponse": GetPersonalMcpConnectorResponse,
+        "ListPersonalMcpConnectionsResponse": ListPersonalMcpConnectionsResponse,
+        "GetPersonalMcpConnectionResponse": GetPersonalMcpConnectionResponse,
+        "PersonalMcpPageRequest": PersonalMcpPageRequest,
+        "PersonalMcpConnector": PersonalMcpConnector,
+        "PersonalMcpConnection": PersonalMcpConnection,
+        "BeginPersonalMcpConnectorAuthorizationRequest": BeginPersonalMcpConnectorAuthorizationRequest,
+        "BeginPersonalMcpConnectorAuthorizationResponse": BeginPersonalMcpConnectorAuthorizationResponse,
+        "CompletePersonalMcpConnectorAuthorizationRequest": CompletePersonalMcpConnectorAuthorizationRequest,
+        "CompletePersonalMcpConnectorAuthorizationResponse": CompletePersonalMcpConnectorAuthorizationResponse,
+        "ReconnectPersonalMcpConnectorAuthorizationRequest": ReconnectPersonalMcpConnectorAuthorizationRequest,
+        "ReconnectPersonalMcpConnectorAuthorizationResponse": ReconnectPersonalMcpConnectorAuthorizationResponse,
+        "CreatePersonalMcpConnectionRequest": CreatePersonalMcpConnectionRequest,
+        "CreatePersonalMcpConnectionResponse": CreatePersonalMcpConnectionResponse,
+        "CustomApiEnvironmentWrite": CustomApiEnvironmentWrite,
+        "CustomApiEnvironmentDescriptor": CustomApiEnvironmentDescriptor,
+        "PersonalCustomApi": PersonalCustomApi,
+        "CreatePersonalCustomApiRequest": CreatePersonalCustomApiRequest,
+        "CreatePersonalCustomApiResponse": CreatePersonalCustomApiResponse,
+        "GetPersonalCustomApiRequest": GetPersonalCustomApiRequest,
+        "GetPersonalCustomApiResponse": GetPersonalCustomApiResponse,
+        "ListPersonalCustomApisRequest": ListPersonalCustomApisRequest,
+        "ListPersonalCustomApisResponse": ListPersonalCustomApisResponse,
+        "UpdatePersonalCustomApiRequest": UpdatePersonalCustomApiRequest,
+        "UpdatePersonalCustomApiResponse": UpdatePersonalCustomApiResponse,
+        "DeletePersonalCustomApiRequest": DeletePersonalCustomApiRequest,
+        "DeletePersonalCustomApiResponse": DeletePersonalCustomApiResponse,
+        "InspectPersonalSkillPackageRequest": InspectPersonalSkillPackageRequest,
+        "InspectPersonalSkillInstallationPackageRequest": InspectPersonalSkillInstallationPackageRequest,
+        "InspectPersonalSkillPackageResponse": InspectPersonalSkillPackageResponse,
+        "InspectPersonalSkillInstallationPackageResponse": InspectPersonalSkillInstallationPackageResponse,
+        "SkillPackageTextFile": SkillPackageTextFile,
+        "SkillPackageSelectedText": SkillPackageSelectedText,
+        "SkillPublisher": SkillPublisher,
+        "SkillCreationProvenance": SkillCreationProvenance,
+        "SkillIamRef": SkillIamRef,
+        "SkillProductFacts": SkillProductFacts,
+        "SkillCover": SkillCover,
+        "SkillAvailableUpdate": SkillAvailableUpdate,
+        "SkillProductRecord": SkillProductRecord,
+        "SkillLocalProvenance": SkillLocalProvenance,
+        "SkillAiProvenance": SkillAiProvenance,
+        "SkillGithubProvenance": SkillGithubProvenance,
+        "SkillRepositoryStats": SkillRepositoryStats,
+        "UpdateSkillDraftRequest": UpdateSkillDraftRequest,
+        "UpdateSkillDraftResponse": UpdateSkillDraftResponse,
+        "DiscardSkillDraftRequest": DiscardSkillDraftRequest,
+        "DiscardSkillDraftResponse": DiscardSkillDraftResponse,
+        "SetSkillPublicationAudienceRequest": SetSkillPublicationAudienceRequest,
+        "SetSkillPublicationAudienceResponse": SetSkillPublicationAudienceResponse,
+        "CreateAdminSkillVersionRequest": CreateAdminSkillVersionRequest,
+        "CreateAdminSkillVersionResponse": CreateAdminSkillVersionResponse,
+        "CreateAdminSkillDraftRequest": CreateAdminSkillDraftRequest,
+        "CreateAdminSkillDraftResponse": CreateAdminSkillDraftResponse,
+        "PublishOfficialSkillRequest": PublishOfficialSkillRequest,
+        "PublishOfficialSkillResponse": PublishOfficialSkillResponse,
+        "WithdrawAdminSkillRequest": WithdrawAdminSkillRequest,
+        "WithdrawAdminSkillResponse": WithdrawAdminSkillResponse,
+        "QuarantineSkillRequest": QuarantineSkillRequest,
+        "QuarantineSkillResponse": QuarantineSkillResponse,
+        "RestoreSkillRequest": RestoreSkillRequest,
+        "RestoreSkillResponse": RestoreSkillResponse,
+        "SetAdminSkillPublicationAudienceRequest": SetAdminSkillPublicationAudienceRequest,
+        "SetAdminSkillPublicationAudienceResponse": SetAdminSkillPublicationAudienceResponse,
+        "DiscardAdminSkillDraftRequest": DiscardAdminSkillDraftRequest,
+        "DiscardAdminSkillDraftResponse": DiscardAdminSkillDraftResponse,
+        "BeginSkillCoverUploadRequest": BeginSkillCoverUploadRequest,
+        "BeginSkillCoverUploadResponse": BeginSkillCoverUploadResponse,
+        "CompleteSkillCoverUploadRequest": CompleteSkillCoverUploadRequest,
+        "CompleteSkillCoverUploadResponse": CompleteSkillCoverUploadResponse,
+        "GetSkillCoverUploadRequest": GetSkillCoverUploadRequest,
+        "GetSkillCoverUploadResponse": GetSkillCoverUploadResponse,
+        "ListAdminSkillsRequest": ListAdminSkillsRequest,
+        "ListAdminSkillsResponse": ListAdminSkillsResponse,
+        "GetAdminSkillRequest": GetAdminSkillRequest,
+        "GetAdminSkillResponse": GetAdminSkillResponse,
+        "InspectSkillPackageRequest": InspectSkillPackageRequest,
+        "InspectSkillPackageResponse": InspectSkillPackageResponse,
+        "GetSkillPackageDownloadRequest": GetSkillPackageDownloadRequest,
+        "GetSkillPackageDownloadResponse": GetSkillPackageDownloadResponse,
+        "GetSkillCoverReferenceRequest": GetSkillCoverReferenceRequest,
+        "GetSkillCoverReferenceResponse": GetSkillCoverReferenceResponse,
+        "GetCurrentSkillRequest": GetCurrentSkillRequest,
+        "SkillCurrentPublication": SkillCurrentPublication,
+        "GetCurrentSkillResponse": GetCurrentSkillResponse,
+        "GetSkillRevisionRequest": GetSkillRevisionRequest,
+        "GetSkillRevisionResponse": GetSkillRevisionResponse,
+        "CreatePersonalMcpConnectorRequest": CreatePersonalMcpConnectorRequest,
+        "UpdatePersonalMcpConnectorRequest": UpdatePersonalMcpConnectorRequest,
+        "SetPersonalMcpConnectorEnabledRequest": SetPersonalMcpConnectorEnabledRequest,
+        "RemovePersonalMcpConnectorRequest": RemovePersonalMcpConnectorRequest,
+        "CreatePersonalMcpConnectorResponse": CreatePersonalMcpConnectorResponse,
+        "ListPersonalMcpProvidersRequest": ListPersonalMcpProvidersRequest,
+        "GetPersonalMcpProviderRequest": GetPersonalMcpProviderRequest,
+        "PersonalMcpProvider": PersonalMcpProvider,
+        "ListPersonalMcpProvidersResponse": ListPersonalMcpProvidersResponse,
+        "GetPersonalMcpProviderResponse": GetPersonalMcpProviderResponse,
+        "UpdatePersonalMcpConnectorResponse": UpdatePersonalMcpConnectorResponse,
+        "SetPersonalMcpConnectorEnabledResponse": SetPersonalMcpConnectorEnabledResponse,
+        "RemovePersonalMcpConnectorResponse": RemovePersonalMcpConnectorResponse,
+        "McpProviderOrigin": McpProviderOrigin,
+        "McpProviderToolAuthorizationRule": McpProviderToolAuthorizationRule,
+        "McpProviderToolAuthorizationPolicy": McpProviderToolAuthorizationPolicy,
+        "McpProviderAdminRecord": McpProviderAdminRecord,
+        "McpProviderAdminInput": McpProviderAdminInput,
+        "ListMcpProviderAdminRecordsRequest": ListMcpProviderAdminRecordsRequest,
+        "ListMcpProviderAdminRecordsResponse": ListMcpProviderAdminRecordsResponse,
+        "GetMcpProviderAdminRecordRequest": GetMcpProviderAdminRecordRequest,
+        "GetMcpProviderAdminRecordResponse": GetMcpProviderAdminRecordResponse,
+        "CreateMcpProviderAdminRecordRequest": CreateMcpProviderAdminRecordRequest,
+        "CreateMcpProviderAdminRecordResponse": CreateMcpProviderAdminRecordResponse,
+        "UpdateMcpProviderAdminRecordRequest": UpdateMcpProviderAdminRecordRequest,
+        "UpdateMcpProviderAdminRecordResponse": UpdateMcpProviderAdminRecordResponse,
+        "SetMcpProviderAdminRecordEnabledRequest": SetMcpProviderAdminRecordEnabledRequest,
+        "SetMcpProviderAdminRecordEnabledResponse": SetMcpProviderAdminRecordEnabledResponse,
+        "RemoveMcpProviderAdminRecordRequest": RemoveMcpProviderAdminRecordRequest,
+        "RemoveMcpProviderAdminRecordResponse": RemoveMcpProviderAdminRecordResponse,
+        "PersonalMcpErrorDetail": PersonalMcpErrorDetail,
+        "PersonalMcpHeaderWrite": PersonalMcpHeaderWrite,
+        "PersonalMcpOAuthClientWrite": PersonalMcpOAuthClientWrite,
+        "PersonalMcpHeaderDescriptor": PersonalMcpHeaderDescriptor,
+        "PersonalMcpOAuthClientDescriptor": PersonalMcpOAuthClientDescriptor,
+        "PersonalMcpToolSelector": PersonalMcpToolSelector,
+        "PersonalMcpResourceSelector": PersonalMcpResourceSelector,
+        "PersonalMcpPromptSelector": PersonalMcpPromptSelector,
+        "PersonalMcpDeclaredSelector": PersonalMcpDeclaredSelector,
+        "RegisterPersonalMcpServerRequest": RegisterPersonalMcpServerRequest,
+        "GetPersonalMcpServerRequest": GetPersonalMcpServerRequest,
+        "PersonalMcpServer": PersonalMcpServer,
+        "RegisterPersonalMcpServerResponse": RegisterPersonalMcpServerResponse,
+        "ImportPersonalMcpJsonRequest": ImportPersonalMcpJsonRequest,
+        "PersonalMcpJsonImportResult": PersonalMcpJsonImportResult,
+        "ImportPersonalMcpJsonResponse": ImportPersonalMcpJsonResponse,
+        "GetPersonalMcpServerResponse": GetPersonalMcpServerResponse,
+        "PreparePersonalMcpServerRequest": PreparePersonalMcpServerRequest,
+        "PreparePersonalMcpServerResponse": PreparePersonalMcpServerResponse,
+        "UpdatePersonalMcpServerRequest": UpdatePersonalMcpServerRequest,
+        "UpdatePersonalMcpServerResponse": UpdatePersonalMcpServerResponse,
+        "DeletePersonalMcpServerRequest": DeletePersonalMcpServerRequest,
+        "DeletePersonalMcpServerResponse": DeletePersonalMcpServerResponse,
+        "InstallProjectSkillRequest": InstallProjectSkillRequest,
+        "InstallProjectSkillResponse": InstallProjectSkillResponse,
+        "UpdateProjectSkillInstallationRequest": UpdateProjectSkillInstallationRequest,
+        "UpdateProjectSkillInstallationResponse": UpdateProjectSkillInstallationResponse,
+        "SetProjectSkillInstallationEnabledRequest": SetProjectSkillInstallationEnabledRequest,
+        "SetProjectSkillInstallationEnabledResponse": SetProjectSkillInstallationEnabledResponse,
+        "RemoveProjectSkillInstallationRequest": RemoveProjectSkillInstallationRequest,
+        "RemoveProjectSkillInstallationResponse": RemoveProjectSkillInstallationResponse,
+        "GetProjectSkillInstallationRequest": GetProjectSkillInstallationRequest,
+        "GetProjectSkillInstallationResponse": GetProjectSkillInstallationResponse,
+        "ListProjectSkillInstallationsRequest": ListProjectSkillInstallationsRequest,
+        "ListProjectSkillInstallationsResponse": ListProjectSkillInstallationsResponse,
         "SkillScopeKind": SkillScopeKind,
         "SkillStatus": SkillStatus,
         "McpConnectorType": McpConnectorType,
@@ -4618,9 +13830,13 @@ _DESC = file_desc(
         "McpTransport": McpTransport,
         "McpServerStatus": McpServerStatus,
         "McpPrimitiveKind": McpPrimitiveKind,
+        "SkillImportPhase": SkillImportPhase,
         "SkillPackagePhase": SkillPackagePhase,
         "SkillPackageScanState": SkillPackageScanState,
+        "SkillAcquisitionKind": SkillAcquisitionKind,
         "SkillInstallationChange": SkillInstallationChange,
+        "PersonalMcpErrorReason": PersonalMcpErrorReason,
+        "PersonalMcpPrepareStatus": PersonalMcpPrepareStatus,
     },
 )
 

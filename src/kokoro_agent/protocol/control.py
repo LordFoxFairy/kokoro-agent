@@ -70,11 +70,22 @@ class RunRequest(StrictModel):
     run_id: NonEmptyStr
     session_id: NonEmptyStr
     feature_key: NonEmptyStr
+    project_ref: NonEmptyStr | None
     selected_skill_source_refs: tuple[str, ...]
     execution_identity: ExecutionIdentity
     input: RunInput
     requested_model_label: NonEmptyStr | None = None
     trace: dict[str, JsonValue] | None = None
+
+    @field_validator("project_ref")
+    @classmethod
+    def _validate_project_ref(cls, value: str | None) -> str | None:
+        if (
+            value is not None
+            and re.fullmatch(r"[^\s\x00-\x1f\x7f]{1,255}", value) is None
+        ):
+            raise ValueError("invalid project_ref")
+        return value
 
     @field_validator("selected_skill_source_refs", mode="before")
     @classmethod

@@ -99,7 +99,7 @@ from kokoro_agent.model.call_models import (
     PrepareModelCall,
     StartModelCallDispatch,
 )
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 from support.model_http_mechanism import synthetic_final_digest
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import (
@@ -120,7 +120,7 @@ _DATABASE_URL = os.environ.get("KOKORO_AGENT_DATABASE_URL", "")
 _REDIS_URL = os.environ.get("KOKORO_REDIS_URL", "")
 _INTERNAL_SECRET = "acceptance-internal-secret"
 _BILLING_READER_SECRET = "acceptance-billing-model-call-reader-secret"
-_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v1\n"
+_EVIDENCE_DOMAIN = b"kokoro-agent:model-usage-evidence:v2\n"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
 
@@ -200,6 +200,7 @@ def _launch_body(run_id: str, refs: tuple[str, ...] = ()) -> dict[str, JsonValue
             "run_id": run_id,
             "session_id": "session-1",
             "feature_key": "chat",
+            "project_ref": None,
             "selected_skill_source_refs": list(refs),
             "message_id": f"message-{run_id}",
             "content": "hello from acceptance",
@@ -216,6 +217,7 @@ def _request(
         run_id=run_id,
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=refs,
         execution_identity=_identity(subject),
         input=RunInput(message_id=f"message-{run_id}", content="hello from acceptance"),
@@ -416,11 +418,12 @@ async def _seed_final_model_usage_evidence(
         fingerprint=hashlib.sha256(recipe_bytes).hexdigest(),
     )
     planned = PlannedBinding(
+        binding_version="2.0.0",
         model="model-acceptance",
         provider="provider-acceptance",
         revision_id="revision-acceptance",
         provider_model_name="provider-model-acceptance",
-        gateway_model_name="gateway-acceptance",
+        request_model="gateway-acceptance",
         feature_key="chat",
         revision="1",
         generation="1",
@@ -496,7 +499,7 @@ async def _seed_final_model_usage_evidence(
     dispatch_instant = _utc_millis(dispatch.dispatch_started_at_ms)
     observed_instant = _utc_millis(dispatch.dispatch_started_at_ms + 1)
     document = {
-        "artifact_version": "1.0.0",
+        "artifact_version": "2.0.0",
         "identity": identity,
         "planned": json.loads(prepared.planned_bytes),
         "actual": {"state": "unknown", "reason": "not_observed"},
@@ -1475,11 +1478,10 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
             await cursor.execute(
                 sql.SQL(
                     """
-                INSERT INTO {} (
-                    run_id, persisted_seq, projected_seq, consumed_seq,
-                    producer_close_requested, producer_closed, updated_at
-                ) VALUES (%s, %s, %s, 0, FALSE, FALSE,
-                          to_timestamp(%s / 1000.0))
+                UPDATE {} SET persisted_seq=%s, projected_seq=%s, consumed_seq=0,
+                    producer_close_requested=FALSE, producer_closed=FALSE,
+                    updated_at=to_timestamp(%s / 1000.0)
+                WHERE run_id=%s
                 """
                 ).format(
                     sql.Identifier(
@@ -1488,12 +1490,13 @@ async def test_emitter_recovers_index_reserved_by_queued_critical_frame(
                     )
                 ),
                 (
-                    current_request.run_id,
                     staged.durable_seq,
                     staged.durable_seq,
                     clock_ms[0],
+                    current_request.run_id,
                 ),
             )
+            assert cursor.rowcount == 1
     reconciled = await repository.reconcile_receipts(current_request.run_id)
     assert reconciled.consumed_through == staged.durable_seq
 
@@ -2817,4 +2820,151 @@ async def test_todo_complete_replacement_replays_over_http_with_scoped_cursor(
         async with make_run_repository(acceptance_state.config.run_repository) as runs:
             assert await runs.next_event_index(run_id) == source_watermark
     finally:
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_expired_notifications_do_not_republish_and_http_chat_survives_run_retention(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Redis notifications are lossy; scoped PostgreSQL Chat is durable replay."""
+    config = acceptance_state.config
+    run_id = f"notification-retention-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
+    launched = await http_client.post(
+        "/v1/runs", headers=_headers(), json=_launch_body(run_id)
+    )
+    assert launched.status_code == 202
+    stream = RedisStream(acceptance_state.redis_url)
+    runs = PostgresRunRepository(
+        config.database_url, ttl_ms=10_000, schema=config.database_schema
+    )
+    chat = PostgresChatRepository(config.database_url, schema=config.database_schema)
+    agent = FakeAgent(run=text_run("durable without notification ACK"))
+
+    async def build(
+        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+    ) -> AgentHandle:
+        return AgentHandle(runnable=agent, tool_descriptions={})
+
+    supervisor = RunSupervisor(
+        interaction_reader=read_unpaused_interaction,
+        agent_builder=build,
+        run_repository=runs,
+        approval_tool_names=lambda _request: frozenset(),
+        trace_factory=lambda _request: None,
+        source_for=lambda _name: "runtime-custom",
+        consumer="notification-retention-worker",
+        run_ttl_s=60,
+        chat_repository=chat,
+    )
+    try:
+        request = await runs.get_pending_dispatch(run_id)
+        assert request is not None
+        await supervisor.dispatch(stream, request)
+        outcomes = await asyncio.gather(*tuple(supervisor.tasks.values()))
+        assert all(outcome is None for outcome in outcomes)
+        assert await runs.is_terminal(run_id)
+        assert await stream.read_all(run_events_stream(run_id))
+        replay_path = "/v1/sessions/session-1/events?after_seq=0&limit=100"
+        replay = await http_client.get(replay_path, headers=_headers())
+        assert replay.status_code == 200
+        before_chat = _nested(_json_object(replay.json()), "data")
+        events = before_chat["events"]
+        assert isinstance(events, list) and len(events) > 1
+        assert _json_object(events[-1])["event_type"] == "run.completed"
+        cursor = _json_object(events[0])["seq"]
+        assert isinstance(cursor, int)
+        tail_path = f"/v1/sessions/session-1/events?after_seq={cursor}&limit=100"
+        tail = await http_client.get(tail_path, headers=_headers())
+        assert tail.status_code == 200
+        before_tail = _nested(_json_object(tail.json()), "data")
+        assert before_tail["events"] == events[1:]
+        async with connect_pg(config.database_url) as connection:
+            await connection.execute(
+                sql.SQL(
+                    "UPDATE {} SET published_at=clock_timestamp()-INTERVAL '61 seconds' WHERE run_id=%s"
+                ).format(sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)),
+                (run_id,),
+            )
+            await connection.commit()
+            before_outbox = await connection.execute(
+                sql.SQL("SELECT * FROM {} WHERE run_id=%s ORDER BY durable_seq").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)
+                ),
+                (run_id,),
+            )
+            published = await before_outbox.fetchall()
+            assert published and all(row["status"] == "published" for row in published)
+            result = await connection.execute(
+                sql.SQL("SELECT count(*) AS count FROM {} WHERE run_id=%s").format(
+                    sql.Identifier(config.database_schema, RUN_RECEIPTS_TABLE)
+                ),
+                (run_id,),
+            )
+            count = await result.fetchone()
+            assert count is not None and count["count"] == 0
+            result = await connection.execute(
+                sql.SQL(
+                    "SELECT persisted_seq,projected_seq,consumed_seq,"
+                    "producer_close_requested,producer_closed FROM {} WHERE run_id=%s"
+                ).format(
+                    sql.Identifier(config.database_schema, RUN_RECEIPT_MANIFESTS_TABLE)
+                ),
+                (run_id,),
+            )
+            # The owner creates an empty ledger atomically, not an external ACK.
+            assert await result.fetchone() == {
+                "persisted_seq": 0,
+                "projected_seq": 0,
+                "consumed_seq": 0,
+                "producer_close_requested": False,
+                "producer_closed": False,
+            }
+        # Expire only this registered notification key; never reset a Redis DB.
+        await stream.expire(run_events_stream(run_id), 0)
+        assert await stream.read_all(run_events_stream(run_id)) == []
+        for _ in range(2):
+            await supervisor.heartbeat_once(stream)
+            assert await stream.read_all(run_events_stream(run_id)) == []
+        assert "receipt_state_lost" not in caplog.text
+        async with connect_pg(config.database_url) as connection:
+            result = await connection.execute(
+                sql.SQL("SELECT * FROM {} WHERE run_id=%s ORDER BY durable_seq").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)
+                ),
+                (run_id,),
+            )
+            assert await result.fetchall() == published
+            await connection.execute(
+                sql.SQL(
+                    "UPDATE {} SET terminal_at=clock_timestamp()-INTERVAL '61 seconds' WHERE run_id=%s"
+                ).format(sql.Identifier(config.database_schema, RUN_CLAIMS_TABLE)),
+                (run_id,),
+            )
+            await connection.commit()
+        await supervisor.heartbeat_once(stream)
+        assert await runs.get_request(run_id) is None
+        async with connect_pg(config.database_url) as connection:
+            result = await connection.execute(
+                sql.SQL("SELECT count(*) AS count FROM {} WHERE run_id=%s").format(
+                    sql.Identifier(config.database_schema, RUN_OUTBOX_TABLE)
+                ),
+                (run_id,),
+            )
+            count = await result.fetchone()
+            assert count is not None and count["count"] == 0
+        for route, expected in ((replay_path, before_chat), (tail_path, before_tail)):
+            response = await http_client.get(route, headers=_headers())
+            assert response.status_code == 200
+            assert _nested(_json_object(response.json()), "data") == expected
+        other_subject = await http_client.get(
+            replay_path, headers=_headers("other-subject")
+        )
+        assert other_subject.status_code == 200
+        assert _nested(_json_object(other_subject.json()), "data")["events"] == []
+    finally:
+        assert await supervisor.drain(timeout_s=2)
         await stream.aclose()

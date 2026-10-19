@@ -35,6 +35,7 @@ def _leased_run(
     owner: str = "owner-1",
     generation: int = 7,
     assertion: str = "ASSERTION_SENTINEL",
+    project_ref: str | None = None,
 ) -> LeasedRun:
     return LeasedRun(
         request=RunRequest(
@@ -42,6 +43,7 @@ def _leased_run(
             run_id=run_id,
             session_id=session_id,
             feature_key="music",
+            project_ref=project_ref,
             selected_skill_source_refs=(),
             execution_identity=ExecutionIdentity(
                 tenant_ref=tenant_ref,
@@ -162,9 +164,12 @@ def test_current_lease_observation_rejects_invalid_time_shape(
 
 
 @pytest.mark.asyncio
-async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot() -> None:
+@pytest.mark.parametrize("project_ref", [None, "project-1"])
+async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot(
+    project_ref: str | None,
+) -> None:
     events: list[str] = []
-    leased = _leased_run()
+    leased = _leased_run(project_ref=project_ref)
 
     class Reader(_LeaseReader):
         async def observe_current_lease(
@@ -202,10 +207,17 @@ async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot() -
     object.__setattr__(leased.request, "session_id", "MUTATED")
     object.__setattr__(leased.lease, "owner", "MUTATED")
 
-    assert await supplier.issue("skills.resolve", BINDING) == "PROOF"
+    assert await supplier.issue("skill.resolve_visible_skill", BINDING) == "PROOF"
     assert events == ["read", "clock", "nonce", "sign"]
     assert reader.calls == [("run-1", LeaseFence(owner="owner-1", generation=7))]
     issued = signer.calls[0]
+    assert issued.execution_binding is not None
+    assert issued.execution_binding.identity_assertion_ref == "ASSERTION_SENTINEL"
+    assert issued.execution_binding.project_ref == project_ref
+    assert (
+        issued.execution_binding.selection_digest
+        == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    )
     assert issued.tenant_ref == "tenant-1"
     assert issued.run_id == "run-1"
     assert issued.execution_session_id == "session-1"
@@ -690,3 +702,29 @@ async def test_failures_have_no_sensitive_chain_traceback_repr_or_log(
         binding,
     ):
         assert secret not in rendered
+
+
+@pytest.mark.parametrize(
+    "refs",
+    [("skill:a", "skill:a"), tuple(f"skill:{i}" for i in range(17)), ("invalid",)],
+)
+def test_supplier_revalidates_forged_frozen_selection_before_any_dependency(
+    refs: tuple[str, ...],
+) -> None:
+    leased = _leased_run()
+    object.__setattr__(leased.request, "selected_skill_source_refs", refs)
+    reader = _LeaseReader([_observation()])
+    signer = _Signer()
+    with pytest.raises(ExecutionProofUnavailableError):
+        create_execution_proof_supplier(
+            leased_run=leased, lease_reader=reader, signer=signer
+        )
+    assert reader.calls == []
+    assert signer.calls == []
+
+
+@pytest.mark.asyncio
+async def test_non_skill_proof_keeps_existing_long_assertion_domain() -> None:
+    supplier, _, signer, _ = _supplier(leased_run=_leased_run(assertion="x" * 256))
+    assert await supplier.issue("mcp.list_connectors", BINDING) == "PROOF"
+    assert signer.calls[0].execution_binding is None

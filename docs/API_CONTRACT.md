@@ -1,3 +1,41 @@
+## Raw通知不要求外部ACK（2026-10-19，实施门）
+
+当前HTTP7/Redis机器artifact与所有外部字段不变；BFF仍只读Agent durable Chat并写自身ledger，没有raw ACK endpoint。内部published通知不等待并不存在的外部receipt producer，移除宽限重发参数/配置及内部republish候选；Run/control admission receipt不是该通知回执。queued失败重试与精确Chat恢复不变。既有真实rejected和损坏历史保护继续，不把可丢通知称BFF已消费；不新增公开协议、自动模型/工具调用或扣费。
+
+## HTTP7 ControlReceipt 输出收敛（2026-10-19）
+
+`POST /v1/runs/{run_id}/control` 继续按原正式 `ControlReceipt` 输出 command_id、request_digest、status、replayed 和可选 error_code；内部入账模型的 run_id 不属于该 HTTP 数据体。首次、命令重放和 Redis 入队失败均通过同一个字段白名单映射，禁止直接序列化内部模型。命令摘要与可信身份/session/Run 核验不变；HTTP7 artifact、版本与 BFF 固定消费者均不变，无旧/新响应回退。
+
+## D6-B MCP 当前运行消费者（2026-10-18，本地候选）
+
+不新增外部HTTP/OpenAPI、Run请求或owner RPC。现RunPlatformClient exact allowlist由8扩至9，仅增加固定v4已有的ListMcpServerDeclarations；唯一Proto/Runtime1.1 pin及原proof算法不变。Agent代码声明为McpConnectionRef(connection_id)，不是名称、URL或执行命令。稳定三工具的公开name/description/schema保持，server参数只匹配本Run已声明Connection ID。
+
+同一调用固定原typed_arguments_json与SHA、Run/call派生idempotency，Authorize回包须匹配connector/connection/server/selector/原SHA及当前grant/audit/expiry，再用同一原bytes取得invocation材料。approval缺省与空字符串不互换，不接受模型注入的grant/approval/tenant/run或runtime调用ID。Discovery只用于list/describe。跨owner失败和SDK错误不返回URL/header/env/原异常；标准MCP isError映射原journal failed，GraphInterrupt或取消的不确定副作用不重发。
+
+schema采用owner当前JSON Number语义；typed arguments只需是严格JSON对象（至多1MiB），大整数不误套proof安全整数域。静态profile的mcp是闭集[{connection_id}]，旧名称数组不作兼容恢复；旧历史绑定原样保存，新构建仍经原fingerprint一致性检查。生产当前准入/实际IAM组合尚未据此宣称验收。
+
+## HTTP7与execution-proof2目标（2026-10-17）
+
+HTTP7仍/v1，仅LaunchRequest新增required nullable project_ref，所有producer显式提供，Redis发布/恢复保留null。proof唯一current2.0.0增required execution_binding:null或closed {identity_assertion_ref,project_ref(nullable),selection_digest(64hex)}；refs不重复塞JWT，由IAM读BFF并核摘要。旧v1仅冻结历史artifact，无runtime fallback。JWKS/签名算法和现Platform请求digest不变。
+
+## MC-01：模型连接消费者契约（2026-10-15；目标，未发布）
+
+System 当前固定 artifact 3.0.0 不变。用户已确定默认 direct、可选 LiteLLM；后继只从 System 正规发布的 breaking artifact 接收明确协议、连接与唯一请求模型绑定，version/commit/artifact/provenance 一起 pin。旧 payload 缺少新连接字段时拒绝，不从本机环境补成成功 route。
+
+Agent 不给普通 Web/BFF 返回上游地址、secret reference 或密钥。请求中任意自报 endpoint/provider/account 不覆盖 System 路由与 worker secret 配置。资金授权、tenant/subject/Run/lease fencing 和现有 AG-UI 网络边界不因拓扑变化而改变。
+
+现 usage `PlannedBinding` 的两份旧模型名称属于已发布机器契约。最小 usage 2.0.0 保留 provider_model_name 的声明元数据与其余语义，仅以 request_model 替换 gateway 专属执行名称，增加显式 planned binding_version=2.0.0；不重复嵌入 System 的整个连接快照。独立 v2 schema/generator/strict decoder/manifest 已在候选源码实现，公共发布检查和安装资产闭包同时验证冻结 v1 与 v2；v1 六份来源和 manifest 原字节不变。v2 evidence 使用独立 v2 digest domain，跨版本输入不回退，3 正向、29 反向及10 successor pair 由公共检查执行。不在 System 或 Root 复制一份可编辑 usage schema。
+
+本前置切片不改变 HTTP5、System3 pin、RunRequest、AG-UI、SQL 或实际 producer。HTTP6、durable 历史读取分派及 Billing 消费固定仍待后继原子切换；现调用不会因为安装了 v2 模型而自动写 v2。
+
+同一 evidence GET 在 HTTP6 中按已验证 evidence 的 artifact_version 返回 envelope 与原 bytes：明确接受冻结历史1.0.0和当前2.0.0，未知版本拒绝；不按当前部署常量返回1.0.0。新 planned 仅接受显式2.0.0，旧未sealed attempt须由旧producer收束后才切换。历史 v1 decoder 不生产新请求，解析失败不重试另一版本；不得把旧记录重新执行。Billing 当前只有目标artifact/pin，实际 reader/资金consumer尚未接通，需后继正式pin并验证，不能称已可消费。
+
+worker 私有凭据文件与loopback开关的精确表示见技术方案MC01；不新增HTTP字段或浏览器凭据入口。System4的connection/protocol/type/base_url/secret_handle_ref仅在内部严格消费，不投影到usage planned。
+
+验证包括直连/实际网关的协议 wire、同 path 多连接、alias/request model 绑定、缺/错凭据、错误 artifact 与取消零发送、最终限额、usage 绑定和历史读取不变。自有 peer 不称真实 provider/gateway；远端收费与归属仍需来源及正式资金准入证据。
+
+---
+
 ## R353-A-S06：Storage v3 Artifact consumer contract（候选已实施；2026-10-08）
 
 ### Wire authority 与可见性

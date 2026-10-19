@@ -1,287 +1,146 @@
-"""MCP 稳定工具面规格：恒定三工具 / 惰性连接 / 白名单 / 不可达降级 / 前缀恒定。"""
-
-# BaseTool.ainvoke 上游注解含未解泛型（langchain-core 边界，e2e/test_mcp_live 同款豁免）。
-# pyright: reportUnknownMemberType=false
+"""Stable tools use current owner ports; retired deployment/YAML behavior is not a product API."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+# BaseTool.ainvoke is the upstream unparameterized test boundary.
+# pyright: reportUnknownMemberType=false
 
 import pytest
-from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, ConfigDict
-from pydantic import ValidationError
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import StructuredTool
+from mcp.types import CallToolResult, TextContent
+from pydantic import JsonValue
+from langchain_mcp_adapters.callbacks import Callbacks
 
-import kokoro_agent.mcp.tools as tools_mod
-from kokoro_agent.mcp.config import (
-    McpConfigError,
-    McpHttpServerConfig,
-    McpServerConfig,
-    McpStdioServerConfig,
-    load_mcp_servers,
-    parse_mcp_server_config,
-    select_servers,
-)
-from kokoro_agent.mcp.servers import build_connections
+from kokoro_agent.clients.mcp import McpClientError, McpConnectionRef, McpTool
 from kokoro_agent.mcp.tools import make_mcp_tools
+from support.fakes import FakeRunRepository
+from support.tool_journal import journal_request as _request, journal_middleware as _mw
 
 
-class _EchoArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class CurrentClient:
+    def __init__(self) -> None:
+        self.reads = 0
+        self.calls = 0
+        self.unavailable = False
+        self.remote_error = False
 
-    text: str
+    async def check(self, references: object) -> None:
+        return None
 
+    async def list_tools(self, reference: McpConnectionRef) -> tuple[McpTool, ...]:
+        self.reads += 1
+        if self.unavailable:
+            raise McpClientError("upstream URL and secret must not escape")
+        return (
+            McpTool(
+                name="ok",
+                description="第一行说明\n第二行细节",
+                input_schema={"type": "object"},
+            ),
+        )
 
-def _echo_tool(name: str, description: str = "echo tool") -> BaseTool:
-    def run(text: str) -> str:
-        return f"{name}:{text}"
-
-    return StructuredTool(
-        name=name, description=description, args_schema=_EchoArgs, func=run
-    )
-
-
-class _FakeClient:
-    """替身 client：记录连接次数，返回预置工具。"""
-
-    instances: int = 0
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        type(self).instances += 1
-
-    async def get_tools(self, *, server_name: str | None = None) -> list[BaseTool]:
-        return [_echo_tool("ok", "第一行说明\n第二行细节"), _echo_tool("blocked")]
-
-
-class _BoomClient:
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        pass
-
-    async def get_tools(self, *, server_name: str | None = None) -> list[BaseTool]:
-        raise RuntimeError("connection refused")
-
-
-def _config(**overrides: object) -> McpServerConfig:
-    base: dict[str, object] = {
-        "transport": "streamable_http",
-        "url": "http://localhost:9/mcp",
-        "allowed_tools": ["ok", "also_ok"],
-    }
-    base.update(overrides)
-    return parse_mcp_server_config(base)
-
-
-REGISTRY = {"srv": _config()}
-
-
-def _patched(monkeypatch: pytest.MonkeyPatch, client: type) -> None:
-    monkeypatch.setattr(tools_mod, "MultiServerMCPClient", client)
-
-
-async def test_list_filters_whitelist_and_shows_summary(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patched(monkeypatch, _FakeClient)
-    list_tool, _, _ = make_mcp_tools(["srv"], REGISTRY)
-    out = await list_tool.ainvoke({})
-    assert "srv/ok — 第一行说明" in out
-    assert "blocked" not in out  # 白名单外不可见。
-
-
-async def test_empty_names_says_so() -> None:
-    list_tool, _, _ = make_mcp_tools([], REGISTRY)
-    assert "没有可用的 MCP server" in await list_tool.ainvoke({})
-
-
-def test_unknown_server_name_fails_loud_at_assembly() -> None:
-    # 配置即授权边界：装配期即炸，绝不静默跳过。
-    with pytest.raises(McpConfigError, match="ghost"):
-        make_mcp_tools(["ghost"], REGISTRY)
-
-
-async def test_lazy_connection_and_per_run_cache(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _FakeClient.instances = 0
-    _patched(monkeypatch, _FakeClient)
-    list_tool, describe_tool, _ = make_mcp_tools(["srv"], REGISTRY)
-    assert _FakeClient.instances == 0  # 装配期零连接（run 启动不被远端拖死）。
-    await list_tool.ainvoke({})
-    await describe_tool.ainvoke({"server": "srv", "tool": "ok"})
-    assert _FakeClient.instances == 1  # run 内缓存：list/describe 共享一次连接。
-
-
-async def test_describe_returns_schema(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patched(monkeypatch, _FakeClient)
-    _, describe_tool, _ = make_mcp_tools(["srv"], REGISTRY)
-    out = await describe_tool.ainvoke({"server": "srv", "tool": "ok"})
-    assert "text" in out and "schema" in out
-
-
-async def test_call_roundtrip_and_unknown_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patched(monkeypatch, _FakeClient)
-    _, _, call_tool = make_mcp_tools(["srv"], REGISTRY)
-    result = await call_tool.ainvoke(
-        {"server": "srv", "tool": "ok", "arguments": {"text": "你好"}}
-    )
-    assert result == "ok:你好"
-    assert "error" in await call_tool.ainvoke(
-        {"server": "srv", "tool": "blocked", "arguments": {}}
-    )
-    assert "error" in await call_tool.ainvoke(
-        {"server": "other", "tool": "ok", "arguments": {}}
-    )
-
-
-async def test_unreachable_server_degrades_not_crashes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patched(monkeypatch, _BoomClient)
-    list_tool, _, call_tool = make_mcp_tools(["srv"], REGISTRY)
-    listed = await list_tool.ainvoke({})
-    assert "不可达" in listed  # 运行时不可达=外部常态：降级告知，不炸 run。
-    assert "error" in await call_tool.ainvoke(
-        {"server": "srv", "tool": "ok", "arguments": {}}
-    )
-
-
-def test_server_set_change_keeps_tool_surface_identical() -> None:
-    # D9 前缀不变量：server 集 A/B/空 切换，三工具面（name/description/schema）逐字节相同。
-    registry = {"a": _config(), "b": _config()}
-
-    def surface(names: list[str]) -> list[tuple[str, str, str]]:
-        out: list[tuple[str, str, str]] = []
-        for tool in make_mcp_tools(names, registry):
-            schema: Any = tool.args_schema
-            assert isinstance(schema, type) and issubclass(schema, BaseModel)
-            out.append((tool.name, tool.description, str(schema.model_json_schema())))
-        return out
-
-    assert surface(["a"]) == surface(["b", "a"]) == surface([])
-
-
-def test_select_servers_dedupes_and_keeps_order() -> None:
-    registry = {"a": _config(), "b": _config()}
-    assert list(select_servers(registry, ["b", "a", "b"])) == ["b", "a"]
-
-
-def test_connection_carries_headers_and_timeout() -> None:
-    servers = {
-        "gh": _config(
-            url="https://mcp.example/x",
-            timeout_s=5,
-            headers={"authorization": "Bearer tok"},
-        ),
-        "pub": _config(url="https://mcp.example/y"),
-    }
-    conns = build_connections(servers)
-    assert conns["gh"].get("headers") == {"authorization": "Bearer tok"}
-    assert conns["gh"].get("timeout") == 5.0
-    assert "headers" not in conns["pub"]
-
-
-def test_mcp_timeout_must_be_positive() -> None:
-    with pytest.raises(ValidationError):
-        _config(timeout_s=0)
-    with pytest.raises(ValidationError):
-        _config(timeout_s=-1)
-
-
-def test_stdio_connection_uses_standard_adapter_shape_without_http_egress() -> None:
-    server = McpStdioServerConfig(
-        command="node",
-        args=["server.mjs"],
-        cwd="/srv/mcp",
-        env={"MCP_TOKEN": "token"},
-        allowed_tools=["search"],
-    )
-    connection = build_connections({"local": server}, egress_mode="strict")["local"]
-    assert connection == {
-        "transport": "stdio",
-        "command": "node",
-        "args": ["server.mjs"],
-        "cwd": "/srv/mcp",
-        "env": {"MCP_TOKEN": "token"},
-    }
-
-
-def test_stdio_config_rejects_http_only_fields() -> None:
-    with pytest.raises(ValidationError):
-        parse_mcp_server_config(
-            {
-                "transport": "stdio",
-                "command": "node",
-                "args": [],
-                "url": "https://not-allowed.example/mcp",
-                "allowed_tools": ["search"],
-            }
+    async def call_tool(
+        self,
+        reference: McpConnectionRef,
+        tool: str,
+        arguments: dict[str, JsonValue],
+        *,
+        tool_call_id: str,
+        callbacks: Callbacks | None = None,
+    ) -> CallToolResult:
+        if self.unavailable:
+            raise McpClientError("upstream URL and secret must not escape")
+        self.calls += 1
+        assert tool_call_id == "c1"
+        return CallToolResult(
+            isError=self.remote_error,
+            content=[
+                TextContent(type="text", text="ok:" + str(arguments.get("text", "")))
+            ],
         )
 
 
-# --- 部署注册表加载（KOKORO_MCP_CONFIG yaml） ---
-
-
-def test_load_mcp_servers_resolves_env_placeholder(tmp_path: Path) -> None:
-    # 凭据只走 env：yaml 里只有 ${NAME} 引用名，加载时展开（env 显式注入，架构规则）。
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n"
-        "  gh:\n"
-        "    transport: streamable_http\n"
-        "    url: https://mcp.example/x\n"
-        "    allowed_tools: [t]\n"
-        "    headers:\n"
-        "      authorization: ${GH_MCP_TOKEN}\n",
-        encoding="utf-8",
+async def test_list_and_describe_are_lazy_current_and_schema_is_data() -> None:
+    client = CurrentClient()
+    tools = make_mcp_tools(
+        (McpConnectionRef(connection_id="srv"),), client, run_id="rn"
     )
-    registry = load_mcp_servers(str(config), {"GH_MCP_TOKEN": "Bearer real-token"})
-    assert isinstance(registry["gh"], McpHttpServerConfig)
-    assert registry["gh"].headers == {"authorization": "Bearer real-token"}
+    assert client.reads == 0
+    assert "srv/ok — 第一行说明" in await tools[0].ainvoke({})
+    described = await tools[1].ainvoke({"server": "srv", "tool": "ok"})
+    assert '"type": "object"' in described and "第二行细节" in described
+    assert (
+        client.reads == 2
+    )  # No previous tools/list result becomes an authorization cache.
+    assert "NOT_ALLOWED" in await tools[1].ainvoke({"server": "srv", "tool": "blocked"})
+    assert "NOT_DECLARED" in await tools[1].ainvoke({"server": "other", "tool": "ok"})
 
 
-def test_load_mcp_servers_missing_env_ref_fails_loud(tmp_path: Path) -> None:
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n"
-        "  gh:\n"
-        "    transport: streamable_http\n"
-        "    url: https://mcp.example/x\n"
-        "    allowed_tools: [t]\n"
-        "    headers: {authorization: '${NO_SUCH_TOKEN}'}\n",
-        encoding="utf-8",
+async def test_journal_bound_call_roundtrip_replay_and_current_errors() -> None:
+    client = CurrentClient()
+    tools = make_mcp_tools(
+        (McpConnectionRef(connection_id="srv"),), client, run_id="rn"
     )
-    with pytest.raises(McpConfigError, match="NO_SUCH_TOKEN"):
-        load_mcp_servers(str(config), {})
-
-
-def test_load_mcp_servers_unknown_key_fails_loud(tmp_path: Path) -> None:
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n  gh:\n    transport: streamable_http\n    url: https://x\n    allowed_tools: [t]\n    tokens: {a: b}\n",
-        encoding="utf-8",
+    assert "JOURNAL_CALL_REQUIRED" in await tools[2].ainvoke(
+        {"server": "srv", "tool": "ok"}
     )
-    with pytest.raises(Exception):
-        load_mcp_servers(str(config), {})
+    assert client.calls == 0
+    store = FakeRunRepository()
+    middleware = await _mw(store)
 
+    async def handler(request: object) -> ToolMessage:
+        output = await tools[2].ainvoke(
+            {"server": "srv", "tool": "ok", "arguments": {"text": "hello"}}
+        )
+        return ToolMessage(content=output, name="mcp_call", tool_call_id="c1")
 
-def test_load_mcp_servers_resolves_stdio_environment_reference(tmp_path: Path) -> None:
-    config = tmp_path / "mcp.yaml"
-    config.write_text(
-        "servers:\n"
-        "  local:\n"
-        "    transport: stdio\n"
-        "    command: node\n"
-        "    args: [server.mjs]\n"
-        "    env: {MCP_TOKEN: '${MCP_TOKEN}'}\n"
-        "    allowed_tools: [search]\n",
-        encoding="utf-8",
+    first = await middleware.awrap_tool_call(_request("mcp_call"), handler)
+    assert isinstance(first, ToolMessage) and "ok:hello" in first.text
+    await middleware.awrap_tool_call(_request("mcp_call"), handler)
+    assert client.calls == 1
+    client.unavailable = True
+    assert "secret" not in await tools[0].ainvoke({})
+    assert "CURRENT_READ_FAILED" in await tools[1].ainvoke(
+        {"server": "srv", "tool": "ok"}
     )
-    registry = load_mcp_servers(str(config), {"MCP_TOKEN": "resolved"})
-    assert isinstance(registry["local"], McpStdioServerConfig)
-    assert registry["local"].env == {"MCP_TOKEN": "resolved"}
 
 
-def test_load_mcp_servers_absent_path_is_empty_registry() -> None:
-    assert load_mcp_servers(None, {}) == {}
-    assert load_mcp_servers("", {}) == {}
+def test_server_set_changes_do_not_change_stable_tool_schema() -> None:
+    a = make_mcp_tools((), None, run_id="rn")
+    b = make_mcp_tools(
+        (McpConnectionRef(connection_id="srv"),), CurrentClient(), run_id="rn"
+    )
+
+    def exposed_schema(tool: StructuredTool) -> object:
+        schema = tool.tool_call_schema
+        return schema if isinstance(schema, dict) else schema.model_json_schema()
+
+    assert [(t.name, t.description, exposed_schema(t)) for t in a] == [
+        (t.name, t.description, exposed_schema(t)) for t in b
+    ]
+    with pytest.raises(McpClientError):
+        make_mcp_tools((McpConnectionRef(connection_id="srv"),), None, run_id="rn")
+
+
+async def test_empty_selection_does_not_read_or_connect() -> None:
+    tools = make_mcp_tools((), None, run_id="rn")
+    assert "没有可用" in await tools[0].ainvoke({})
+
+
+async def test_remote_mcp_error_finishes_journal_as_failed() -> None:
+    client = CurrentClient()
+    client.remote_error = True
+    tools = make_mcp_tools(
+        (McpConnectionRef(connection_id="srv"),), client, run_id="rn"
+    )
+    store = FakeRunRepository()
+    middleware = await _mw(store)
+
+    async def handler(request: object) -> ToolMessage:
+        output = await tools[2].ainvoke({"server": "srv", "tool": "ok"})
+        return ToolMessage(content=output, name="mcp_call", tool_call_id="c1")
+
+    result = await middleware.awrap_tool_call(_request("mcp_call"), handler)
+    assert isinstance(result, ToolMessage) and result.status == "error"
+    assert store.tool_journal[("rn", "c1")]["status"] == "failed"

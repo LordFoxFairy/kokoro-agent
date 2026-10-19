@@ -182,3 +182,55 @@ def test_r93_subagent_requires_real_call_identity(phase: str) -> None:
     )
     with pytest.raises(ValueError, match="identity"):
         producer(FakeSubagentRun(trigger_call_id=None), source="runtime-custom")
+
+
+@pytest.mark.parametrize("reason", ["deadline", "caller_cancel"])
+async def test_stopped_live_publish_preserves_critical_outbox_recovery(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    import asyncio
+    from kokoro_agent.execution import events
+    from kokoro_agent.protocol import RunStartedPayload
+    from support.fakes import FakeRunRepository, request
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class StalledBus(FakeBus):
+        async def publish(
+            self, stream: str, event: Mapping[str, JsonValue], *, maxlen: int
+        ) -> StreamItem:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            raise AssertionError("stalled publish unexpectedly resumed")
+
+    if reason == "deadline":
+        monkeypatch.setattr(events, "PUBLISH_TIMEOUT_SECONDS", 0.03)
+    bus = StalledBus()
+    store = FakeRunRepository()
+    req = request("stalled-live-publish")
+    lease = await store.try_claim(req)
+    assert lease is not None
+    emitter = await RunEmitter.attach(bus, req.run_id, outbox=store, lease=lease)
+    publishing = asyncio.create_task(emitter.emit(RunStartedPayload()))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        if reason == "caller_cancel":
+            publishing.cancel()
+        # The observation deadline does not itself interrupt the publisher.
+        settled, _ = await asyncio.wait({publishing}, timeout=1.0)
+        assert publishing in settled, "live publish must settle within its own budget"
+        expected = TimeoutError if reason == "deadline" else asyncio.CancelledError
+        with pytest.raises(expected):
+            await publishing
+        assert cancelled.is_set()
+        assert bus.published == []
+        queued = await store.list_unpublished_outbox()
+        assert len(queued) == 1
+        assert queued[0].kind == "run.started"
+    finally:
+        publishing.cancel()
+        await asyncio.gather(publishing, return_exceptions=True)

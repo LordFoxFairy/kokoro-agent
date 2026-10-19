@@ -10,16 +10,15 @@ from langchain_core.tools import BaseTool, StructuredTool
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.domain.run.scope import RunScope
-from kokoro_agent.mcp.config import McpServerEntry, McpServerUnavailable
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.clients.mcp import McpClientError
-from kokoro_agent.clients.mcp import McpClient
+from kokoro_agent.clients.mcp import McpClient, RunMcpFactory
+from kokoro_agent.domain.run.models import LeasedRun
 from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.toolbox import ProcessToolbox, plan_toolbox
-from kokoro_agent.mcp.config import McpServerConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +109,10 @@ async def build_toolset(
     agent: Agent,
     plan: ToolSelectionPlan,
     toolbox: ProcessToolbox,
-    mcp_servers: Mapping[str, McpServerConfig],
-    mcp_client: McpClient | None,
     backend: BackendProtocol,
     delivery: DeliveryClient | None,
     lease: LeaseFence | None = None,
-    resolved_mcp: Mapping[str, McpServerEntry] | None = None,
+    resolved_mcp: McpClient | None = None,
 ) -> Toolset:
     """五路工具来源合流（顺序即挂载序）：
     ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user）
@@ -129,13 +126,7 @@ async def build_toolset(
         "core": agent.tools,
         "toolbox": toolbox.tools_for(scope.namespace),
     }
-    mcp_names = list(agent.mcp)
-    mcp_definitions = (
-        resolved_mcp
-        if resolved_mcp is not None
-        else await resolve_declared_mcp(request, agent, mcp_client, mcp_servers)
-    )
-    bound["mcp"] = make_mcp_tools(mcp_names, mcp_definitions)
+    bound["mcp"] = make_mcp_tools(agent.mcp, resolved_mcp, run_id=request.run_id)
     tools: list[BaseTool] = []
     for source in plan.sources:
         if source.kind == "delivery":
@@ -153,25 +144,17 @@ async def build_toolset(
 async def resolve_declared_mcp(
     request: RunRequest,
     agent: Agent,
-    client: McpClient | None,
-    deployment: Mapping[str, McpServerConfig],
-) -> Mapping[str, McpServerEntry]:
-    """No declaration means no discovery; declarations never fall back to YAML."""
+    platform: RunMcpFactory | None,
+    lease: LeaseFence,
+) -> McpClient | None:
+    """Only run-bound current owner reads, never deployment or name resolution."""
     if not agent.mcp:
-        return {}
-    if client is None:
-        raise McpClientError("declared MCP client unavailable")
-    resolved = await client.resolve(
-        agent.mcp,
-        request.execution_identity,
-        RunScope.of(request).namespace,
-        deployment,
-    )
-    if set(resolved) != set(agent.mcp) or any(
-        isinstance(entry, McpServerUnavailable) for entry in resolved.values()
-    ):
-        raise McpClientError("declared MCP resolution incomplete")
-    return resolved
+        return None
+    if platform is None:
+        raise McpClientError("MCP_PLATFORM_REQUIRED")
+    client = platform.mcp_for_run(LeasedRun(request=request, lease=lease))
+    await client.check(agent.mcp)
+    return client
 
 
 def _deliver_tool(

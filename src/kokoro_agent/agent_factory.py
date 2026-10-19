@@ -30,16 +30,18 @@ from deepagents.backends.state import StateBackend
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
-from kokoro_agent.mcp.config import McpServerEntry
+from kokoro_agent.clients.mcp import McpClient
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import (
     RunRequest,
     SkillPhase,
     SkillProgressSink,
-    SkillProgressCommitted,
 )
-from kokoro_agent.execution.events import ProgressPersistenceError
+from kokoro_agent.execution.events import (
+    ProgressPersistenceError,
+    confirm_skill_progress,
+)
 from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
@@ -54,7 +56,11 @@ from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
 from kokoro_agent.sandbox.backend import backend_resource
-from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
+from kokoro_agent.skills.backend import (
+    TypedSkillBackend,
+    SkillDiscoveryBackend,
+    SKILLS_ROOT,
+)
 from kokoro_agent.skills.middleware import RunSkillsMiddleware
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
@@ -70,7 +76,7 @@ from kokoro_agent.agents.native_profile import validate_native_registry
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.models import LeasedRun, StaticRecipeBinding
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 LOGGER = logging.getLogger(__name__)
 
@@ -136,7 +142,7 @@ async def _settle_resource_cleanup(
 @dataclass(frozen=True, slots=True)
 class _ResolvedCapabilities:
     skills: tuple[ResolvedSkill, ...]
-    mcp: Mapping[str, McpServerEntry]
+    mcp: McpClient | None
     skill_reader: SkillClient | None
 
 
@@ -161,7 +167,7 @@ async def _preflight(
         except ProgressPersistenceError:
             raise
         except Exception:
-            await _confirm_progress(
+            await confirm_skill_progress(
                 progress, SkillPhase(phase="failed", error_code="skill_resolve_failed")
             )
             raise
@@ -172,21 +178,11 @@ async def _preflight(
             except ProgressPersistenceError:
                 raise
             except Exception:
-                await _confirm_progress(
+                await confirm_skill_progress(
                     progress, SkillPhase(phase="failed", error_code="skill_load_failed")
                 )
                 raise
-    return _ResolvedCapabilities(skills=skills, mcp={}, skill_reader=reader)
-
-
-async def _confirm_progress(progress: SkillProgressSink, phase: SkillPhase) -> None:
-    confirmation = await progress(phase)
-    try:
-        SkillProgressCommitted.model_validate(confirmation)
-    except ValueError as error:
-        raise ProgressPersistenceError(
-            "Skill progress has no durable confirmation"
-        ) from error
+    return _ResolvedCapabilities(skills=skills, mcp=None, skill_reader=reader)
 
 
 async def build_deep_agent(
@@ -198,6 +194,7 @@ async def build_deep_agent(
     plan: PreparedPeerPlan,
     recipe: StaticRecipeBinding,
     capabilities: _ResolvedCapabilities,
+    progress: SkillProgressSink,
     name: str | None = None,
 ) -> AgentHandle:
     if plan.agent is not agent:
@@ -216,11 +213,12 @@ async def build_deep_agent(
     )
     model = model_from_route(route, agent.model)
     planned = PlannedBinding(
+        binding_version="2.0.0",
         model=route.model_id,
         provider=route.provider_id,
         revision_id=route.revision_id,
         provider_model_name=route.provider_model_name,
-        gateway_model_name=route.gateway_model_name,
+        request_model=route.request_model,
         feature_key=route.feature_key,
         revision=str(route.revision),
         generation=route.generation,
@@ -270,8 +268,6 @@ async def build_deep_agent(
             agent=agent,
             plan=plan.tools,
             toolbox=dependencies.toolbox,
-            mcp_servers=dependencies.mcp_servers,
-            mcp_client=dependencies.mcp_client,
             backend=native_backend,
             delivery=dependencies.delivery,
             lease=lease,
@@ -345,7 +341,23 @@ async def build_deep_agent(
             ),
             middleware=(
                 *main_chain,
-                RunSkillsMiddleware(backend=native_backend, sources=[SKILLS_ROOT]),
+                RunSkillsMiddleware.for_selected(
+                    backend=native_backend,
+                    sources=[SKILLS_ROOT],
+                    progress=progress,
+                    discovery_backends=tuple(
+                        (
+                            f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md",
+                            _with_native_skills(
+                                None,
+                                SkillDiscoveryBackend(
+                                    (skill,), capabilities.skill_reader
+                                ),
+                            ),
+                        )
+                        for skill in resolved_skills
+                    ),
+                ),
             ),
             backend=native_backend,
             # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
@@ -443,11 +455,11 @@ class AgentFactory:
         async def before_load() -> None:
             nonlocal loading
             if not loading:
-                await _confirm_progress(progress, SkillPhase(phase="loading"))
+                await confirm_skill_progress(progress, SkillPhase(phase="loading"))
                 loading = True
 
         if request.selected_skill_source_refs:
-            await _confirm_progress(progress, SkillPhase(phase="resolving"))
+            await confirm_skill_progress(progress, SkillPhase(phase="resolving"))
         skills = {
             peer.agent.key: await _preflight(
                 peer.agent, self._dependencies, request, lease, progress, before_load
@@ -455,7 +467,7 @@ class AgentFactory:
             for peer in prepared.peers
         }
         if request.selected_skill_source_refs:
-            await _confirm_progress(progress, SkillPhase(phase="ready"))
+            await confirm_skill_progress(progress, SkillPhase(phase="ready"))
         # MCP is not a Skill phase. All peer Skill preflights precede MCP assembly.
         capabilities: dict[str, _ResolvedCapabilities] = {}
         for peer in prepared.peers:
@@ -463,8 +475,8 @@ class AgentFactory:
             mcp = await resolve_declared_mcp(
                 request,
                 peer.agent,
-                self._dependencies.mcp_client,
-                self._dependencies.mcp_servers,
+                self._dependencies.platform,
+                lease,
             )
             capabilities[peer.agent.key] = _ResolvedCapabilities(
                 skills=resolved.skills, mcp=mcp, skill_reader=resolved.skill_reader
@@ -479,6 +491,7 @@ class AgentFactory:
                 plan=peer,
                 recipe=recipe,
                 capabilities=capabilities[peer.agent.key],
+                progress=progress,
             )
         built_agents: list[AgentHandle] = []
         try:
@@ -493,6 +506,7 @@ class AgentFactory:
                         recipe=recipe,
                         name=peer.agent.key,
                         capabilities=capabilities[peer.agent.key],
+                        progress=progress,
                     )
                 )
             native = create_swarm(

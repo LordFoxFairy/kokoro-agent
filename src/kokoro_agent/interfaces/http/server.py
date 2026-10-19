@@ -20,7 +20,7 @@ from uuid import uuid4
 from uuid import UUID
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Protocol, cast
+from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from pydantic import SecretStr, TypeAdapter
@@ -112,8 +112,6 @@ class AgentConfig(Protocol):
     @property
     def internal_secret_agent(self) -> SecretStr | None: ...
 
-
-class _BillingReaderConfig(Protocol):
     @property
     def billing_model_call_reader_secret(self) -> SecretStr | None: ...
 
@@ -169,9 +167,9 @@ def _service_auth_failure(
 
 
 def _billing_reader_auth_failure(
-    config: object, headers: Mapping[str, str], request_id: str
+    config: AgentConfig, headers: Mapping[str, str], request_id: str
 ) -> tuple[int, dict[str, object]] | None:
-    secret = cast(_BillingReaderConfig, config).billing_model_call_reader_secret
+    secret = config.billing_model_call_reader_secret
     expected = "" if secret is None else secret.get_secret_value().strip()
     if not expected:
         return 503, _error(
@@ -356,7 +354,7 @@ async def dispatch_request(
             {
                 "attempt_id": evidence.attempt_id,
                 "event_id": evidence.event_id,
-                "artifact_version": "1.0.0",
+                "artifact_version": evidence.artifact_version,
                 "revision": str(evidence.revision),
                 "evidence_digest": evidence.evidence_digest,
                 "evidence_bytes_base64url": encoded,

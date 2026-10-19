@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpServerRequest, GetMcpServerResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, InstallSkillRequest, InstallSkillResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PublishSkillRequest, PublishSkillResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillStatusRequest, SetSkillStatusResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawSkillRequest, WithdrawSkillResponse
+from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -26,6 +26,36 @@ if TYPE_CHECKING:
 
 
 class SkillCatalogService(Protocol):
+    async def begin_local_skill_import(self, request: BeginLocalSkillImportRequest, ctx: RequestContext[BeginLocalSkillImportRequest, BeginLocalSkillImportResponse]) -> BeginLocalSkillImportResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def complete_local_skill_import(self, request: CompleteLocalSkillImportRequest, ctx: RequestContext[CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse]) -> CompleteLocalSkillImportResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def finalize_local_skill_import(self, request: FinalizeLocalSkillImportRequest, ctx: RequestContext[FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse]) -> FinalizeLocalSkillImportResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_local_skill_import(self, request: GetLocalSkillImportRequest, ctx: RequestContext[GetLocalSkillImportRequest, GetLocalSkillImportResponse]) -> GetLocalSkillImportResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_skill_draft(self, request: UpdateSkillDraftRequest, ctx: RequestContext[UpdateSkillDraftRequest, UpdateSkillDraftResponse]) -> UpdateSkillDraftResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def discard_skill_draft(self, request: DiscardSkillDraftRequest, ctx: RequestContext[DiscardSkillDraftRequest, DiscardSkillDraftResponse]) -> DiscardSkillDraftResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_skill_publication_audience(self, request: SetSkillPublicationAudienceRequest, ctx: RequestContext[SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse]) -> SetSkillPublicationAudienceResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def begin_skill_cover_upload(self, request: BeginSkillCoverUploadRequest, ctx: RequestContext[BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse]) -> BeginSkillCoverUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def complete_skill_cover_upload(self, request: CompleteSkillCoverUploadRequest, ctx: RequestContext[CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse]) -> CompleteSkillCoverUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_skill_cover_upload(self, request: GetSkillCoverUploadRequest, ctx: RequestContext[GetSkillCoverUploadRequest, GetSkillCoverUploadResponse]) -> GetSkillCoverUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def get_skill_package_upload(self, request: GetSkillPackageUploadRequest, ctx: RequestContext[GetSkillPackageUploadRequest, GetSkillPackageUploadResponse]) -> GetSkillPackageUploadResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -67,6 +97,106 @@ class SkillCatalogServiceASGIApplication(ConnectASGIApplication[SkillCatalogServ
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/kokoro.platform.v1.SkillCatalogService/BeginLocalSkillImport": Endpoint.unary(
+                    method=MethodInfo(
+                        name="BeginLocalSkillImport",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=BeginLocalSkillImportRequest,
+                        output=BeginLocalSkillImportResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.begin_local_skill_import,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/CompleteLocalSkillImport": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CompleteLocalSkillImport",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=CompleteLocalSkillImportRequest,
+                        output=CompleteLocalSkillImportResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.complete_local_skill_import,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/FinalizeLocalSkillImport": Endpoint.unary(
+                    method=MethodInfo(
+                        name="FinalizeLocalSkillImport",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=FinalizeLocalSkillImportRequest,
+                        output=FinalizeLocalSkillImportResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.finalize_local_skill_import,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/GetLocalSkillImport": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetLocalSkillImport",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=GetLocalSkillImportRequest,
+                        output=GetLocalSkillImportResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_local_skill_import,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/UpdateSkillDraft": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdateSkillDraft",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=UpdateSkillDraftRequest,
+                        output=UpdateSkillDraftResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_skill_draft,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/DiscardSkillDraft": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DiscardSkillDraft",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=DiscardSkillDraftRequest,
+                        output=DiscardSkillDraftResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.discard_skill_draft,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/SetSkillPublicationAudience": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetSkillPublicationAudience",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=SetSkillPublicationAudienceRequest,
+                        output=SetSkillPublicationAudienceResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_skill_publication_audience,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/BeginSkillCoverUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="BeginSkillCoverUpload",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=BeginSkillCoverUploadRequest,
+                        output=BeginSkillCoverUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.begin_skill_cover_upload,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/CompleteSkillCoverUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CompleteSkillCoverUpload",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=CompleteSkillCoverUploadRequest,
+                        output=CompleteSkillCoverUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.complete_skill_cover_upload,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/GetSkillCoverUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetSkillCoverUpload",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=GetSkillCoverUploadRequest,
+                        output=GetSkillCoverUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_skill_cover_upload,
+                ),
                 "/kokoro.platform.v1.SkillCatalogService/GetSkillPackageUpload": Endpoint.unary(
                     method=MethodInfo(
                         name="GetSkillPackageUpload",
@@ -171,6 +301,206 @@ class SkillCatalogServiceASGIApplication(ConnectASGIApplication[SkillCatalogServ
 
 
 class SkillCatalogServiceClient(ConnectClient):
+    async def begin_local_skill_import(
+        self,
+        request: BeginLocalSkillImportRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BeginLocalSkillImportResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="BeginLocalSkillImport",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=BeginLocalSkillImportRequest,
+                output=BeginLocalSkillImportResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def complete_local_skill_import(
+        self,
+        request: CompleteLocalSkillImportRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CompleteLocalSkillImportResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CompleteLocalSkillImport",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=CompleteLocalSkillImportRequest,
+                output=CompleteLocalSkillImportResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def finalize_local_skill_import(
+        self,
+        request: FinalizeLocalSkillImportRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> FinalizeLocalSkillImportResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="FinalizeLocalSkillImport",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=FinalizeLocalSkillImportRequest,
+                output=FinalizeLocalSkillImportResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_local_skill_import(
+        self,
+        request: GetLocalSkillImportRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetLocalSkillImportResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetLocalSkillImport",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=GetLocalSkillImportRequest,
+                output=GetLocalSkillImportResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_skill_draft(
+        self,
+        request: UpdateSkillDraftRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdateSkillDraftResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdateSkillDraft",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=UpdateSkillDraftRequest,
+                output=UpdateSkillDraftResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def discard_skill_draft(
+        self,
+        request: DiscardSkillDraftRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DiscardSkillDraftResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DiscardSkillDraft",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=DiscardSkillDraftRequest,
+                output=DiscardSkillDraftResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_skill_publication_audience(
+        self,
+        request: SetSkillPublicationAudienceRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetSkillPublicationAudienceResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetSkillPublicationAudience",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=SetSkillPublicationAudienceRequest,
+                output=SetSkillPublicationAudienceResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def begin_skill_cover_upload(
+        self,
+        request: BeginSkillCoverUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BeginSkillCoverUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="BeginSkillCoverUpload",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=BeginSkillCoverUploadRequest,
+                output=BeginSkillCoverUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def complete_skill_cover_upload(
+        self,
+        request: CompleteSkillCoverUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CompleteSkillCoverUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CompleteSkillCoverUpload",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=CompleteSkillCoverUploadRequest,
+                output=CompleteSkillCoverUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_skill_cover_upload(
+        self,
+        request: GetSkillCoverUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetSkillCoverUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetSkillCoverUpload",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=GetSkillCoverUploadRequest,
+                output=GetSkillCoverUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def get_skill_package_upload(
         self,
         request: GetSkillPackageUploadRequest,
@@ -1373,6 +1703,2247 @@ class McpConnectorProviderServiceClient(ConnectClient):
                 service_name="kokoro.platform.v1.McpConnectorProviderService",
                 input=ListMcpConnectorProvidersRequest,
                 output=ListMcpConnectorProvidersResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductSkillInstallationService(Protocol):
+    async def update_personal_skill_installation(self, request: UpdatePersonalSkillInstallationRequest, ctx: RequestContext[UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse]) -> UpdatePersonalSkillInstallationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def install_personal_skill(self, request: InstallPersonalSkillRequest, ctx: RequestContext[InstallPersonalSkillRequest, InstallPersonalSkillResponse]) -> InstallPersonalSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_personal_skill_installation_enabled(self, request: SetPersonalSkillInstallationEnabledRequest, ctx: RequestContext[SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse]) -> SetPersonalSkillInstallationEnabledResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def remove_personal_skill_installation(self, request: RemovePersonalSkillInstallationRequest, ctx: RequestContext[RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse]) -> RemovePersonalSkillInstallationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_skill_installation(self, request: GetPersonalSkillInstallationRequest, ctx: RequestContext[GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse]) -> GetPersonalSkillInstallationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_personal_skill_installations(self, request: ListPersonalSkillInstallationsRequest, ctx: RequestContext[ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse]) -> ListPersonalSkillInstallationsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductSkillInstallationServiceASGIApplication(ConnectASGIApplication[ProductSkillInstallationService]):
+    def __init__(
+        self,
+        service: ProductSkillInstallationService | AsyncGenerator[ProductSkillInstallationService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductSkillInstallationService/UpdatePersonalSkillInstallation": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdatePersonalSkillInstallation",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                        input=UpdatePersonalSkillInstallationRequest,
+                        output=UpdatePersonalSkillInstallationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_personal_skill_installation,
+                ),
+                "/kokoro.platform.v1.ProductSkillInstallationService/InstallPersonalSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InstallPersonalSkill",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                        input=InstallPersonalSkillRequest,
+                        output=InstallPersonalSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.install_personal_skill,
+                ),
+                "/kokoro.platform.v1.ProductSkillInstallationService/SetPersonalSkillInstallationEnabled": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetPersonalSkillInstallationEnabled",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                        input=SetPersonalSkillInstallationEnabledRequest,
+                        output=SetPersonalSkillInstallationEnabledResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_personal_skill_installation_enabled,
+                ),
+                "/kokoro.platform.v1.ProductSkillInstallationService/RemovePersonalSkillInstallation": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RemovePersonalSkillInstallation",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                        input=RemovePersonalSkillInstallationRequest,
+                        output=RemovePersonalSkillInstallationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.remove_personal_skill_installation,
+                ),
+                "/kokoro.platform.v1.ProductSkillInstallationService/GetPersonalSkillInstallation": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalSkillInstallation",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                        input=GetPersonalSkillInstallationRequest,
+                        output=GetPersonalSkillInstallationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_skill_installation,
+                ),
+                "/kokoro.platform.v1.ProductSkillInstallationService/ListPersonalSkillInstallations": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListPersonalSkillInstallations",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                        input=ListPersonalSkillInstallationsRequest,
+                        output=ListPersonalSkillInstallationsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_personal_skill_installations,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductSkillInstallationService"
+
+
+class ProductSkillInstallationServiceClient(ConnectClient):
+    async def update_personal_skill_installation(
+        self,
+        request: UpdatePersonalSkillInstallationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdatePersonalSkillInstallationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdatePersonalSkillInstallation",
+                service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                input=UpdatePersonalSkillInstallationRequest,
+                output=UpdatePersonalSkillInstallationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def install_personal_skill(
+        self,
+        request: InstallPersonalSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InstallPersonalSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InstallPersonalSkill",
+                service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                input=InstallPersonalSkillRequest,
+                output=InstallPersonalSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_personal_skill_installation_enabled(
+        self,
+        request: SetPersonalSkillInstallationEnabledRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetPersonalSkillInstallationEnabledResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetPersonalSkillInstallationEnabled",
+                service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                input=SetPersonalSkillInstallationEnabledRequest,
+                output=SetPersonalSkillInstallationEnabledResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_personal_skill_installation(
+        self,
+        request: RemovePersonalSkillInstallationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RemovePersonalSkillInstallationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RemovePersonalSkillInstallation",
+                service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                input=RemovePersonalSkillInstallationRequest,
+                output=RemovePersonalSkillInstallationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_skill_installation(
+        self,
+        request: GetPersonalSkillInstallationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalSkillInstallationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalSkillInstallation",
+                service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                input=GetPersonalSkillInstallationRequest,
+                output=GetPersonalSkillInstallationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_personal_skill_installations(
+        self,
+        request: ListPersonalSkillInstallationsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListPersonalSkillInstallationsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListPersonalSkillInstallations",
+                service_name="kokoro.platform.v1.ProductSkillInstallationService",
+                input=ListPersonalSkillInstallationsRequest,
+                output=ListPersonalSkillInstallationsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductMcpPersonalService(Protocol):
+    async def register_personal_mcp_server(self, request: RegisterPersonalMcpServerRequest, ctx: RequestContext[RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse]) -> RegisterPersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def import_personal_mcp_json(self, request: ImportPersonalMcpJsonRequest, ctx: RequestContext[ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse]) -> ImportPersonalMcpJsonResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_server(self, request: GetPersonalMcpServerRequest, ctx: RequestContext[GetPersonalMcpServerRequest, GetPersonalMcpServerResponse]) -> GetPersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def prepare_personal_mcp_server(self, request: PreparePersonalMcpServerRequest, ctx: RequestContext[PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse]) -> PreparePersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_personal_mcp_server(self, request: UpdatePersonalMcpServerRequest, ctx: RequestContext[UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse]) -> UpdatePersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def delete_personal_mcp_server(self, request: DeletePersonalMcpServerRequest, ctx: RequestContext[DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse]) -> DeletePersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_personal_mcp_connectors(self, request: ListPersonalMcpConnectorsRequest, ctx: RequestContext[ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse]) -> ListPersonalMcpConnectorsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_connector(self, request: GetPersonalMcpConnectorRequest, ctx: RequestContext[GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse]) -> GetPersonalMcpConnectorResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_personal_mcp_connections(self, request: ListPersonalMcpConnectionsRequest, ctx: RequestContext[ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse]) -> ListPersonalMcpConnectionsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_connection(self, request: GetPersonalMcpConnectionRequest, ctx: RequestContext[GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse]) -> GetPersonalMcpConnectionResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def create_personal_mcp_connector(self, request: CreatePersonalMcpConnectorRequest, ctx: RequestContext[CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse]) -> CreatePersonalMcpConnectorResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_personal_mcp_connector(self, request: UpdatePersonalMcpConnectorRequest, ctx: RequestContext[UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse]) -> UpdatePersonalMcpConnectorResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_personal_mcp_connector_enabled(self, request: SetPersonalMcpConnectorEnabledRequest, ctx: RequestContext[SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse]) -> SetPersonalMcpConnectorEnabledResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def remove_personal_mcp_connector(self, request: RemovePersonalMcpConnectorRequest, ctx: RequestContext[RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse]) -> RemovePersonalMcpConnectorResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_personal_mcp_providers(self, request: ListPersonalMcpProvidersRequest, ctx: RequestContext[ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse]) -> ListPersonalMcpProvidersResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_provider(self, request: GetPersonalMcpProviderRequest, ctx: RequestContext[GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse]) -> GetPersonalMcpProviderResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def begin_personal_mcp_connector_authorization(self, request: BeginPersonalMcpConnectorAuthorizationRequest, ctx: RequestContext[BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse]) -> BeginPersonalMcpConnectorAuthorizationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def complete_personal_mcp_connector_authorization(self, request: CompletePersonalMcpConnectorAuthorizationRequest, ctx: RequestContext[CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse]) -> CompletePersonalMcpConnectorAuthorizationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def reconnect_personal_mcp_connector_authorization(self, request: ReconnectPersonalMcpConnectorAuthorizationRequest, ctx: RequestContext[ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse]) -> ReconnectPersonalMcpConnectorAuthorizationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def create_personal_mcp_connection(self, request: CreatePersonalMcpConnectionRequest, ctx: RequestContext[CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse]) -> CreatePersonalMcpConnectionResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcpPersonalService]):
+    def __init__(
+        self,
+        service: ProductMcpPersonalService | AsyncGenerator[ProductMcpPersonalService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductMcpPersonalService/RegisterPersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RegisterPersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=RegisterPersonalMcpServerRequest,
+                        output=RegisterPersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.register_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/ImportPersonalMcpJson": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ImportPersonalMcpJson",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ImportPersonalMcpJsonRequest,
+                        output=ImportPersonalMcpJsonResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.import_personal_mcp_json,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpServerRequest,
+                        output=GetPersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/PreparePersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="PreparePersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=PreparePersonalMcpServerRequest,
+                        output=PreparePersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.prepare_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/UpdatePersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdatePersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=UpdatePersonalMcpServerRequest,
+                        output=UpdatePersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/DeletePersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DeletePersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=DeletePersonalMcpServerRequest,
+                        output=DeletePersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.delete_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/ListPersonalMcpConnectors": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListPersonalMcpConnectors",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ListPersonalMcpConnectorsRequest,
+                        output=ListPersonalMcpConnectorsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_personal_mcp_connectors,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpConnector": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpConnector",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpConnectorRequest,
+                        output=GetPersonalMcpConnectorResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_connector,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/ListPersonalMcpConnections": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListPersonalMcpConnections",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ListPersonalMcpConnectionsRequest,
+                        output=ListPersonalMcpConnectionsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_personal_mcp_connections,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpConnection": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpConnection",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpConnectionRequest,
+                        output=GetPersonalMcpConnectionResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_connection,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/CreatePersonalMcpConnector": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CreatePersonalMcpConnector",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=CreatePersonalMcpConnectorRequest,
+                        output=CreatePersonalMcpConnectorResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.create_personal_mcp_connector,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/UpdatePersonalMcpConnector": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdatePersonalMcpConnector",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=UpdatePersonalMcpConnectorRequest,
+                        output=UpdatePersonalMcpConnectorResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_personal_mcp_connector,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/SetPersonalMcpConnectorEnabled": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetPersonalMcpConnectorEnabled",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=SetPersonalMcpConnectorEnabledRequest,
+                        output=SetPersonalMcpConnectorEnabledResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_personal_mcp_connector_enabled,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/RemovePersonalMcpConnector": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RemovePersonalMcpConnector",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=RemovePersonalMcpConnectorRequest,
+                        output=RemovePersonalMcpConnectorResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.remove_personal_mcp_connector,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/ListPersonalMcpProviders": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListPersonalMcpProviders",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ListPersonalMcpProvidersRequest,
+                        output=ListPersonalMcpProvidersResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_personal_mcp_providers,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpProvider": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpProvider",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpProviderRequest,
+                        output=GetPersonalMcpProviderResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_provider,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/BeginPersonalMcpConnectorAuthorization": Endpoint.unary(
+                    method=MethodInfo(
+                        name="BeginPersonalMcpConnectorAuthorization",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=BeginPersonalMcpConnectorAuthorizationRequest,
+                        output=BeginPersonalMcpConnectorAuthorizationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.begin_personal_mcp_connector_authorization,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/CompletePersonalMcpConnectorAuthorization": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CompletePersonalMcpConnectorAuthorization",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=CompletePersonalMcpConnectorAuthorizationRequest,
+                        output=CompletePersonalMcpConnectorAuthorizationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.complete_personal_mcp_connector_authorization,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/ReconnectPersonalMcpConnectorAuthorization": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ReconnectPersonalMcpConnectorAuthorization",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ReconnectPersonalMcpConnectorAuthorizationRequest,
+                        output=ReconnectPersonalMcpConnectorAuthorizationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.reconnect_personal_mcp_connector_authorization,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/CreatePersonalMcpConnection": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CreatePersonalMcpConnection",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=CreatePersonalMcpConnectionRequest,
+                        output=CreatePersonalMcpConnectionResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.create_personal_mcp_connection,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductMcpPersonalService"
+
+
+class ProductMcpPersonalServiceClient(ConnectClient):
+    async def register_personal_mcp_server(
+        self,
+        request: RegisterPersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RegisterPersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RegisterPersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=RegisterPersonalMcpServerRequest,
+                output=RegisterPersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def import_personal_mcp_json(
+        self,
+        request: ImportPersonalMcpJsonRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ImportPersonalMcpJsonResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ImportPersonalMcpJson",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ImportPersonalMcpJsonRequest,
+                output=ImportPersonalMcpJsonResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_server(
+        self,
+        request: GetPersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpServerRequest,
+                output=GetPersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def prepare_personal_mcp_server(
+        self,
+        request: PreparePersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> PreparePersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="PreparePersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=PreparePersonalMcpServerRequest,
+                output=PreparePersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_personal_mcp_server(
+        self,
+        request: UpdatePersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdatePersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdatePersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=UpdatePersonalMcpServerRequest,
+                output=UpdatePersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def delete_personal_mcp_server(
+        self,
+        request: DeletePersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DeletePersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DeletePersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=DeletePersonalMcpServerRequest,
+                output=DeletePersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_personal_mcp_connectors(
+        self,
+        request: ListPersonalMcpConnectorsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListPersonalMcpConnectorsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListPersonalMcpConnectors",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ListPersonalMcpConnectorsRequest,
+                output=ListPersonalMcpConnectorsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_connector(
+        self,
+        request: GetPersonalMcpConnectorRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpConnectorResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpConnector",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpConnectorRequest,
+                output=GetPersonalMcpConnectorResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_personal_mcp_connections(
+        self,
+        request: ListPersonalMcpConnectionsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListPersonalMcpConnectionsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListPersonalMcpConnections",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ListPersonalMcpConnectionsRequest,
+                output=ListPersonalMcpConnectionsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_connection(
+        self,
+        request: GetPersonalMcpConnectionRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpConnectionResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpConnection",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpConnectionRequest,
+                output=GetPersonalMcpConnectionResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def create_personal_mcp_connector(
+        self,
+        request: CreatePersonalMcpConnectorRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CreatePersonalMcpConnectorResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CreatePersonalMcpConnector",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=CreatePersonalMcpConnectorRequest,
+                output=CreatePersonalMcpConnectorResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_personal_mcp_connector(
+        self,
+        request: UpdatePersonalMcpConnectorRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdatePersonalMcpConnectorResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdatePersonalMcpConnector",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=UpdatePersonalMcpConnectorRequest,
+                output=UpdatePersonalMcpConnectorResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_personal_mcp_connector_enabled(
+        self,
+        request: SetPersonalMcpConnectorEnabledRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetPersonalMcpConnectorEnabledResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetPersonalMcpConnectorEnabled",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=SetPersonalMcpConnectorEnabledRequest,
+                output=SetPersonalMcpConnectorEnabledResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_personal_mcp_connector(
+        self,
+        request: RemovePersonalMcpConnectorRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RemovePersonalMcpConnectorResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RemovePersonalMcpConnector",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=RemovePersonalMcpConnectorRequest,
+                output=RemovePersonalMcpConnectorResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_personal_mcp_providers(
+        self,
+        request: ListPersonalMcpProvidersRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListPersonalMcpProvidersResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListPersonalMcpProviders",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ListPersonalMcpProvidersRequest,
+                output=ListPersonalMcpProvidersResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_provider(
+        self,
+        request: GetPersonalMcpProviderRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpProviderResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpProvider",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpProviderRequest,
+                output=GetPersonalMcpProviderResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def begin_personal_mcp_connector_authorization(
+        self,
+        request: BeginPersonalMcpConnectorAuthorizationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BeginPersonalMcpConnectorAuthorizationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="BeginPersonalMcpConnectorAuthorization",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=BeginPersonalMcpConnectorAuthorizationRequest,
+                output=BeginPersonalMcpConnectorAuthorizationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def complete_personal_mcp_connector_authorization(
+        self,
+        request: CompletePersonalMcpConnectorAuthorizationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CompletePersonalMcpConnectorAuthorizationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CompletePersonalMcpConnectorAuthorization",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=CompletePersonalMcpConnectorAuthorizationRequest,
+                output=CompletePersonalMcpConnectorAuthorizationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def reconnect_personal_mcp_connector_authorization(
+        self,
+        request: ReconnectPersonalMcpConnectorAuthorizationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReconnectPersonalMcpConnectorAuthorizationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReconnectPersonalMcpConnectorAuthorization",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ReconnectPersonalMcpConnectorAuthorizationRequest,
+                output=ReconnectPersonalMcpConnectorAuthorizationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def create_personal_mcp_connection(
+        self,
+        request: CreatePersonalMcpConnectionRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CreatePersonalMcpConnectionResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CreatePersonalMcpConnection",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=CreatePersonalMcpConnectionRequest,
+                output=CreatePersonalMcpConnectionResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductCustomApiService(Protocol):
+    async def create_personal_custom_api(self, request: CreatePersonalCustomApiRequest, ctx: RequestContext[CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse]) -> CreatePersonalCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_custom_api(self, request: GetPersonalCustomApiRequest, ctx: RequestContext[GetPersonalCustomApiRequest, GetPersonalCustomApiResponse]) -> GetPersonalCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_personal_custom_apis(self, request: ListPersonalCustomApisRequest, ctx: RequestContext[ListPersonalCustomApisRequest, ListPersonalCustomApisResponse]) -> ListPersonalCustomApisResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_personal_custom_api(self, request: UpdatePersonalCustomApiRequest, ctx: RequestContext[UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse]) -> UpdatePersonalCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def delete_personal_custom_api(self, request: DeletePersonalCustomApiRequest, ctx: RequestContext[DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse]) -> DeletePersonalCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductCustomApiServiceASGIApplication(ConnectASGIApplication[ProductCustomApiService]):
+    def __init__(
+        self,
+        service: ProductCustomApiService | AsyncGenerator[ProductCustomApiService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductCustomApiService/CreatePersonalCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CreatePersonalCustomApi",
+                        service_name="kokoro.platform.v1.ProductCustomApiService",
+                        input=CreatePersonalCustomApiRequest,
+                        output=CreatePersonalCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.create_personal_custom_api,
+                ),
+                "/kokoro.platform.v1.ProductCustomApiService/GetPersonalCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalCustomApi",
+                        service_name="kokoro.platform.v1.ProductCustomApiService",
+                        input=GetPersonalCustomApiRequest,
+                        output=GetPersonalCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_custom_api,
+                ),
+                "/kokoro.platform.v1.ProductCustomApiService/ListPersonalCustomApis": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListPersonalCustomApis",
+                        service_name="kokoro.platform.v1.ProductCustomApiService",
+                        input=ListPersonalCustomApisRequest,
+                        output=ListPersonalCustomApisResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_personal_custom_apis,
+                ),
+                "/kokoro.platform.v1.ProductCustomApiService/UpdatePersonalCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdatePersonalCustomApi",
+                        service_name="kokoro.platform.v1.ProductCustomApiService",
+                        input=UpdatePersonalCustomApiRequest,
+                        output=UpdatePersonalCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_personal_custom_api,
+                ),
+                "/kokoro.platform.v1.ProductCustomApiService/DeletePersonalCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DeletePersonalCustomApi",
+                        service_name="kokoro.platform.v1.ProductCustomApiService",
+                        input=DeletePersonalCustomApiRequest,
+                        output=DeletePersonalCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.delete_personal_custom_api,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductCustomApiService"
+
+
+class ProductCustomApiServiceClient(ConnectClient):
+    async def create_personal_custom_api(
+        self,
+        request: CreatePersonalCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CreatePersonalCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CreatePersonalCustomApi",
+                service_name="kokoro.platform.v1.ProductCustomApiService",
+                input=CreatePersonalCustomApiRequest,
+                output=CreatePersonalCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_custom_api(
+        self,
+        request: GetPersonalCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalCustomApi",
+                service_name="kokoro.platform.v1.ProductCustomApiService",
+                input=GetPersonalCustomApiRequest,
+                output=GetPersonalCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_personal_custom_apis(
+        self,
+        request: ListPersonalCustomApisRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListPersonalCustomApisResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListPersonalCustomApis",
+                service_name="kokoro.platform.v1.ProductCustomApiService",
+                input=ListPersonalCustomApisRequest,
+                output=ListPersonalCustomApisResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_personal_custom_api(
+        self,
+        request: UpdatePersonalCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdatePersonalCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdatePersonalCustomApi",
+                service_name="kokoro.platform.v1.ProductCustomApiService",
+                input=UpdatePersonalCustomApiRequest,
+                output=UpdatePersonalCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def delete_personal_custom_api(
+        self,
+        request: DeletePersonalCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DeletePersonalCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DeletePersonalCustomApi",
+                service_name="kokoro.platform.v1.ProductCustomApiService",
+                input=DeletePersonalCustomApiRequest,
+                output=DeletePersonalCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductSkillPackageInspectionService(Protocol):
+    async def inspect_personal_skill_package(self, request: InspectPersonalSkillPackageRequest, ctx: RequestContext[InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse]) -> InspectPersonalSkillPackageResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductSkillPackageInspectionServiceASGIApplication(ConnectASGIApplication[ProductSkillPackageInspectionService]):
+    def __init__(
+        self,
+        service: ProductSkillPackageInspectionService | AsyncGenerator[ProductSkillPackageInspectionService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductSkillPackageInspectionService/InspectPersonalSkillPackage": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InspectPersonalSkillPackage",
+                        service_name="kokoro.platform.v1.ProductSkillPackageInspectionService",
+                        input=InspectPersonalSkillPackageRequest,
+                        output=InspectPersonalSkillPackageResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.inspect_personal_skill_package,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductSkillPackageInspectionService"
+
+
+class ProductSkillPackageInspectionServiceClient(ConnectClient):
+    async def inspect_personal_skill_package(
+        self,
+        request: InspectPersonalSkillPackageRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InspectPersonalSkillPackageResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InspectPersonalSkillPackage",
+                service_name="kokoro.platform.v1.ProductSkillPackageInspectionService",
+                input=InspectPersonalSkillPackageRequest,
+                output=InspectPersonalSkillPackageResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductSkillInstallationPackageInspectionService(Protocol):
+    async def inspect_personal_skill_installation_package(self, request: InspectPersonalSkillInstallationPackageRequest, ctx: RequestContext[InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse]) -> InspectPersonalSkillInstallationPackageResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductSkillInstallationPackageInspectionServiceASGIApplication(ConnectASGIApplication[ProductSkillInstallationPackageInspectionService]):
+    def __init__(
+        self,
+        service: ProductSkillInstallationPackageInspectionService | AsyncGenerator[ProductSkillInstallationPackageInspectionService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductSkillInstallationPackageInspectionService/InspectPersonalSkillInstallationPackage": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InspectPersonalSkillInstallationPackage",
+                        service_name="kokoro.platform.v1.ProductSkillInstallationPackageInspectionService",
+                        input=InspectPersonalSkillInstallationPackageRequest,
+                        output=InspectPersonalSkillInstallationPackageResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.inspect_personal_skill_installation_package,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductSkillInstallationPackageInspectionService"
+
+
+class ProductSkillInstallationPackageInspectionServiceClient(ConnectClient):
+    async def inspect_personal_skill_installation_package(
+        self,
+        request: InspectPersonalSkillInstallationPackageRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InspectPersonalSkillInstallationPackageResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InspectPersonalSkillInstallationPackage",
+                service_name="kokoro.platform.v1.ProductSkillInstallationPackageInspectionService",
+                input=InspectPersonalSkillInstallationPackageRequest,
+                output=InspectPersonalSkillInstallationPackageResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class SkillAdminService(Protocol):
+    async def list_admin_skills(self, request: ListAdminSkillsRequest, ctx: RequestContext[ListAdminSkillsRequest, ListAdminSkillsResponse]) -> ListAdminSkillsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_admin_skill(self, request: GetAdminSkillRequest, ctx: RequestContext[GetAdminSkillRequest, GetAdminSkillResponse]) -> GetAdminSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def create_admin_skill_draft(self, request: CreateAdminSkillDraftRequest, ctx: RequestContext[CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse]) -> CreateAdminSkillDraftResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def create_admin_skill_version(self, request: CreateAdminSkillVersionRequest, ctx: RequestContext[CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse]) -> CreateAdminSkillVersionResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def publish_official_skill(self, request: PublishOfficialSkillRequest, ctx: RequestContext[PublishOfficialSkillRequest, PublishOfficialSkillResponse]) -> PublishOfficialSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def withdraw_admin_skill(self, request: WithdrawAdminSkillRequest, ctx: RequestContext[WithdrawAdminSkillRequest, WithdrawAdminSkillResponse]) -> WithdrawAdminSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def quarantine_skill(self, request: QuarantineSkillRequest, ctx: RequestContext[QuarantineSkillRequest, QuarantineSkillResponse]) -> QuarantineSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def restore_skill(self, request: RestoreSkillRequest, ctx: RequestContext[RestoreSkillRequest, RestoreSkillResponse]) -> RestoreSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_admin_skill_publication_audience(self, request: SetAdminSkillPublicationAudienceRequest, ctx: RequestContext[SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse]) -> SetAdminSkillPublicationAudienceResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def discard_admin_skill_draft(self, request: DiscardAdminSkillDraftRequest, ctx: RequestContext[DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse]) -> DiscardAdminSkillDraftResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class SkillAdminServiceASGIApplication(ConnectASGIApplication[SkillAdminService]):
+    def __init__(
+        self,
+        service: SkillAdminService | AsyncGenerator[SkillAdminService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.SkillAdminService/ListAdminSkills": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListAdminSkills",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=ListAdminSkillsRequest,
+                        output=ListAdminSkillsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_admin_skills,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/GetAdminSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetAdminSkill",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=GetAdminSkillRequest,
+                        output=GetAdminSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_admin_skill,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/CreateAdminSkillDraft": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CreateAdminSkillDraft",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=CreateAdminSkillDraftRequest,
+                        output=CreateAdminSkillDraftResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.create_admin_skill_draft,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/CreateAdminSkillVersion": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CreateAdminSkillVersion",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=CreateAdminSkillVersionRequest,
+                        output=CreateAdminSkillVersionResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.create_admin_skill_version,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/PublishOfficialSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="PublishOfficialSkill",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=PublishOfficialSkillRequest,
+                        output=PublishOfficialSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.publish_official_skill,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/WithdrawAdminSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="WithdrawAdminSkill",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=WithdrawAdminSkillRequest,
+                        output=WithdrawAdminSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.withdraw_admin_skill,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/QuarantineSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="QuarantineSkill",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=QuarantineSkillRequest,
+                        output=QuarantineSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.quarantine_skill,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/RestoreSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RestoreSkill",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=RestoreSkillRequest,
+                        output=RestoreSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.restore_skill,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/SetAdminSkillPublicationAudience": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetAdminSkillPublicationAudience",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=SetAdminSkillPublicationAudienceRequest,
+                        output=SetAdminSkillPublicationAudienceResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_admin_skill_publication_audience,
+                ),
+                "/kokoro.platform.v1.SkillAdminService/DiscardAdminSkillDraft": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DiscardAdminSkillDraft",
+                        service_name="kokoro.platform.v1.SkillAdminService",
+                        input=DiscardAdminSkillDraftRequest,
+                        output=DiscardAdminSkillDraftResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.discard_admin_skill_draft,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.SkillAdminService"
+
+
+class SkillAdminServiceClient(ConnectClient):
+    async def list_admin_skills(
+        self,
+        request: ListAdminSkillsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListAdminSkillsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListAdminSkills",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=ListAdminSkillsRequest,
+                output=ListAdminSkillsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_admin_skill(
+        self,
+        request: GetAdminSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetAdminSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetAdminSkill",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=GetAdminSkillRequest,
+                output=GetAdminSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def create_admin_skill_draft(
+        self,
+        request: CreateAdminSkillDraftRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CreateAdminSkillDraftResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CreateAdminSkillDraft",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=CreateAdminSkillDraftRequest,
+                output=CreateAdminSkillDraftResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def create_admin_skill_version(
+        self,
+        request: CreateAdminSkillVersionRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CreateAdminSkillVersionResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CreateAdminSkillVersion",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=CreateAdminSkillVersionRequest,
+                output=CreateAdminSkillVersionResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def publish_official_skill(
+        self,
+        request: PublishOfficialSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> PublishOfficialSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="PublishOfficialSkill",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=PublishOfficialSkillRequest,
+                output=PublishOfficialSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def withdraw_admin_skill(
+        self,
+        request: WithdrawAdminSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WithdrawAdminSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="WithdrawAdminSkill",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=WithdrawAdminSkillRequest,
+                output=WithdrawAdminSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def quarantine_skill(
+        self,
+        request: QuarantineSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> QuarantineSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="QuarantineSkill",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=QuarantineSkillRequest,
+                output=QuarantineSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def restore_skill(
+        self,
+        request: RestoreSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RestoreSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RestoreSkill",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=RestoreSkillRequest,
+                output=RestoreSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_admin_skill_publication_audience(
+        self,
+        request: SetAdminSkillPublicationAudienceRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetAdminSkillPublicationAudienceResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetAdminSkillPublicationAudience",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=SetAdminSkillPublicationAudienceRequest,
+                output=SetAdminSkillPublicationAudienceResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def discard_admin_skill_draft(
+        self,
+        request: DiscardAdminSkillDraftRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DiscardAdminSkillDraftResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DiscardAdminSkillDraft",
+                service_name="kokoro.platform.v1.SkillAdminService",
+                input=DiscardAdminSkillDraftRequest,
+                output=DiscardAdminSkillDraftResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductSkillReadService(Protocol):
+    async def get_skill_revision(self, request: GetSkillRevisionRequest, ctx: RequestContext[GetSkillRevisionRequest, GetSkillRevisionResponse]) -> GetSkillRevisionResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_current_skill(self, request: GetCurrentSkillRequest, ctx: RequestContext[GetCurrentSkillRequest, GetCurrentSkillResponse]) -> GetCurrentSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def inspect_skill_package(self, request: InspectSkillPackageRequest, ctx: RequestContext[InspectSkillPackageRequest, InspectSkillPackageResponse]) -> InspectSkillPackageResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_skill_package_download(self, request: GetSkillPackageDownloadRequest, ctx: RequestContext[GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse]) -> GetSkillPackageDownloadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_skill_cover_reference(self, request: GetSkillCoverReferenceRequest, ctx: RequestContext[GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse]) -> GetSkillCoverReferenceResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductSkillReadServiceASGIApplication(ConnectASGIApplication[ProductSkillReadService]):
+    def __init__(
+        self,
+        service: ProductSkillReadService | AsyncGenerator[ProductSkillReadService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductSkillReadService/GetSkillRevision": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetSkillRevision",
+                        service_name="kokoro.platform.v1.ProductSkillReadService",
+                        input=GetSkillRevisionRequest,
+                        output=GetSkillRevisionResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_skill_revision,
+                ),
+                "/kokoro.platform.v1.ProductSkillReadService/GetCurrentSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetCurrentSkill",
+                        service_name="kokoro.platform.v1.ProductSkillReadService",
+                        input=GetCurrentSkillRequest,
+                        output=GetCurrentSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_current_skill,
+                ),
+                "/kokoro.platform.v1.ProductSkillReadService/InspectSkillPackage": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InspectSkillPackage",
+                        service_name="kokoro.platform.v1.ProductSkillReadService",
+                        input=InspectSkillPackageRequest,
+                        output=InspectSkillPackageResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.inspect_skill_package,
+                ),
+                "/kokoro.platform.v1.ProductSkillReadService/GetSkillPackageDownload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetSkillPackageDownload",
+                        service_name="kokoro.platform.v1.ProductSkillReadService",
+                        input=GetSkillPackageDownloadRequest,
+                        output=GetSkillPackageDownloadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_skill_package_download,
+                ),
+                "/kokoro.platform.v1.ProductSkillReadService/GetSkillCoverReference": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetSkillCoverReference",
+                        service_name="kokoro.platform.v1.ProductSkillReadService",
+                        input=GetSkillCoverReferenceRequest,
+                        output=GetSkillCoverReferenceResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_skill_cover_reference,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductSkillReadService"
+
+
+class ProductSkillReadServiceClient(ConnectClient):
+    async def get_skill_revision(
+        self,
+        request: GetSkillRevisionRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetSkillRevisionResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetSkillRevision",
+                service_name="kokoro.platform.v1.ProductSkillReadService",
+                input=GetSkillRevisionRequest,
+                output=GetSkillRevisionResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_current_skill(
+        self,
+        request: GetCurrentSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetCurrentSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetCurrentSkill",
+                service_name="kokoro.platform.v1.ProductSkillReadService",
+                input=GetCurrentSkillRequest,
+                output=GetCurrentSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def inspect_skill_package(
+        self,
+        request: InspectSkillPackageRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InspectSkillPackageResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InspectSkillPackage",
+                service_name="kokoro.platform.v1.ProductSkillReadService",
+                input=InspectSkillPackageRequest,
+                output=InspectSkillPackageResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_skill_package_download(
+        self,
+        request: GetSkillPackageDownloadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetSkillPackageDownloadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetSkillPackageDownload",
+                service_name="kokoro.platform.v1.ProductSkillReadService",
+                input=GetSkillPackageDownloadRequest,
+                output=GetSkillPackageDownloadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_skill_cover_reference(
+        self,
+        request: GetSkillCoverReferenceRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetSkillCoverReferenceResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetSkillCoverReference",
+                service_name="kokoro.platform.v1.ProductSkillReadService",
+                input=GetSkillCoverReferenceRequest,
+                output=GetSkillCoverReferenceResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class McpProviderAdminService(Protocol):
+    async def list_mcp_provider_admin_records(self, request: ListMcpProviderAdminRecordsRequest, ctx: RequestContext[ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse]) -> ListMcpProviderAdminRecordsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_mcp_provider_admin_record(self, request: GetMcpProviderAdminRecordRequest, ctx: RequestContext[GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse]) -> GetMcpProviderAdminRecordResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def create_mcp_provider_admin_record(self, request: CreateMcpProviderAdminRecordRequest, ctx: RequestContext[CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse]) -> CreateMcpProviderAdminRecordResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_mcp_provider_admin_record(self, request: UpdateMcpProviderAdminRecordRequest, ctx: RequestContext[UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse]) -> UpdateMcpProviderAdminRecordResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_mcp_provider_admin_record_enabled(self, request: SetMcpProviderAdminRecordEnabledRequest, ctx: RequestContext[SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse]) -> SetMcpProviderAdminRecordEnabledResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def remove_mcp_provider_admin_record(self, request: RemoveMcpProviderAdminRecordRequest, ctx: RequestContext[RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse]) -> RemoveMcpProviderAdminRecordResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class McpProviderAdminServiceASGIApplication(ConnectASGIApplication[McpProviderAdminService]):
+    def __init__(
+        self,
+        service: McpProviderAdminService | AsyncGenerator[McpProviderAdminService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.McpProviderAdminService/ListMcpProviderAdminRecords": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListMcpProviderAdminRecords",
+                        service_name="kokoro.platform.v1.McpProviderAdminService",
+                        input=ListMcpProviderAdminRecordsRequest,
+                        output=ListMcpProviderAdminRecordsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_mcp_provider_admin_records,
+                ),
+                "/kokoro.platform.v1.McpProviderAdminService/GetMcpProviderAdminRecord": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetMcpProviderAdminRecord",
+                        service_name="kokoro.platform.v1.McpProviderAdminService",
+                        input=GetMcpProviderAdminRecordRequest,
+                        output=GetMcpProviderAdminRecordResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_mcp_provider_admin_record,
+                ),
+                "/kokoro.platform.v1.McpProviderAdminService/CreateMcpProviderAdminRecord": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CreateMcpProviderAdminRecord",
+                        service_name="kokoro.platform.v1.McpProviderAdminService",
+                        input=CreateMcpProviderAdminRecordRequest,
+                        output=CreateMcpProviderAdminRecordResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.create_mcp_provider_admin_record,
+                ),
+                "/kokoro.platform.v1.McpProviderAdminService/UpdateMcpProviderAdminRecord": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdateMcpProviderAdminRecord",
+                        service_name="kokoro.platform.v1.McpProviderAdminService",
+                        input=UpdateMcpProviderAdminRecordRequest,
+                        output=UpdateMcpProviderAdminRecordResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_mcp_provider_admin_record,
+                ),
+                "/kokoro.platform.v1.McpProviderAdminService/SetMcpProviderAdminRecordEnabled": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetMcpProviderAdminRecordEnabled",
+                        service_name="kokoro.platform.v1.McpProviderAdminService",
+                        input=SetMcpProviderAdminRecordEnabledRequest,
+                        output=SetMcpProviderAdminRecordEnabledResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_mcp_provider_admin_record_enabled,
+                ),
+                "/kokoro.platform.v1.McpProviderAdminService/RemoveMcpProviderAdminRecord": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RemoveMcpProviderAdminRecord",
+                        service_name="kokoro.platform.v1.McpProviderAdminService",
+                        input=RemoveMcpProviderAdminRecordRequest,
+                        output=RemoveMcpProviderAdminRecordResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.remove_mcp_provider_admin_record,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.McpProviderAdminService"
+
+
+class McpProviderAdminServiceClient(ConnectClient):
+    async def list_mcp_provider_admin_records(
+        self,
+        request: ListMcpProviderAdminRecordsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListMcpProviderAdminRecordsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListMcpProviderAdminRecords",
+                service_name="kokoro.platform.v1.McpProviderAdminService",
+                input=ListMcpProviderAdminRecordsRequest,
+                output=ListMcpProviderAdminRecordsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_mcp_provider_admin_record(
+        self,
+        request: GetMcpProviderAdminRecordRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetMcpProviderAdminRecordResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetMcpProviderAdminRecord",
+                service_name="kokoro.platform.v1.McpProviderAdminService",
+                input=GetMcpProviderAdminRecordRequest,
+                output=GetMcpProviderAdminRecordResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def create_mcp_provider_admin_record(
+        self,
+        request: CreateMcpProviderAdminRecordRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CreateMcpProviderAdminRecordResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CreateMcpProviderAdminRecord",
+                service_name="kokoro.platform.v1.McpProviderAdminService",
+                input=CreateMcpProviderAdminRecordRequest,
+                output=CreateMcpProviderAdminRecordResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_mcp_provider_admin_record(
+        self,
+        request: UpdateMcpProviderAdminRecordRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdateMcpProviderAdminRecordResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdateMcpProviderAdminRecord",
+                service_name="kokoro.platform.v1.McpProviderAdminService",
+                input=UpdateMcpProviderAdminRecordRequest,
+                output=UpdateMcpProviderAdminRecordResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_mcp_provider_admin_record_enabled(
+        self,
+        request: SetMcpProviderAdminRecordEnabledRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetMcpProviderAdminRecordEnabledResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetMcpProviderAdminRecordEnabled",
+                service_name="kokoro.platform.v1.McpProviderAdminService",
+                input=SetMcpProviderAdminRecordEnabledRequest,
+                output=SetMcpProviderAdminRecordEnabledResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_mcp_provider_admin_record(
+        self,
+        request: RemoveMcpProviderAdminRecordRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RemoveMcpProviderAdminRecordResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RemoveMcpProviderAdminRecord",
+                service_name="kokoro.platform.v1.McpProviderAdminService",
+                input=RemoveMcpProviderAdminRecordRequest,
+                output=RemoveMcpProviderAdminRecordResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductProjectSkillInstallationService(Protocol):
+    async def install_project_skill(self, request: InstallProjectSkillRequest, ctx: RequestContext[InstallProjectSkillRequest, InstallProjectSkillResponse]) -> InstallProjectSkillResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_project_skill_installation(self, request: UpdateProjectSkillInstallationRequest, ctx: RequestContext[UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse]) -> UpdateProjectSkillInstallationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_project_skill_installation_enabled(self, request: SetProjectSkillInstallationEnabledRequest, ctx: RequestContext[SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse]) -> SetProjectSkillInstallationEnabledResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def remove_project_skill_installation(self, request: RemoveProjectSkillInstallationRequest, ctx: RequestContext[RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse]) -> RemoveProjectSkillInstallationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_project_skill_installation(self, request: GetProjectSkillInstallationRequest, ctx: RequestContext[GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse]) -> GetProjectSkillInstallationResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_project_skill_installations(self, request: ListProjectSkillInstallationsRequest, ctx: RequestContext[ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse]) -> ListProjectSkillInstallationsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductProjectSkillInstallationServiceASGIApplication(ConnectASGIApplication[ProductProjectSkillInstallationService]):
+    def __init__(
+        self,
+        service: ProductProjectSkillInstallationService | AsyncGenerator[ProductProjectSkillInstallationService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductProjectSkillInstallationService/InstallProjectSkill": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InstallProjectSkill",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                        input=InstallProjectSkillRequest,
+                        output=InstallProjectSkillResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.install_project_skill,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationService/UpdateProjectSkillInstallation": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdateProjectSkillInstallation",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                        input=UpdateProjectSkillInstallationRequest,
+                        output=UpdateProjectSkillInstallationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_project_skill_installation,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationService/SetProjectSkillInstallationEnabled": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetProjectSkillInstallationEnabled",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                        input=SetProjectSkillInstallationEnabledRequest,
+                        output=SetProjectSkillInstallationEnabledResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_project_skill_installation_enabled,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationService/RemoveProjectSkillInstallation": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RemoveProjectSkillInstallation",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                        input=RemoveProjectSkillInstallationRequest,
+                        output=RemoveProjectSkillInstallationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.remove_project_skill_installation,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationService/GetProjectSkillInstallation": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetProjectSkillInstallation",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                        input=GetProjectSkillInstallationRequest,
+                        output=GetProjectSkillInstallationResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_project_skill_installation,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationService/ListProjectSkillInstallations": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListProjectSkillInstallations",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                        input=ListProjectSkillInstallationsRequest,
+                        output=ListProjectSkillInstallationsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_project_skill_installations,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductProjectSkillInstallationService"
+
+
+class ProductProjectSkillInstallationServiceClient(ConnectClient):
+    async def install_project_skill(
+        self,
+        request: InstallProjectSkillRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InstallProjectSkillResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InstallProjectSkill",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                input=InstallProjectSkillRequest,
+                output=InstallProjectSkillResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_project_skill_installation(
+        self,
+        request: UpdateProjectSkillInstallationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdateProjectSkillInstallationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdateProjectSkillInstallation",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                input=UpdateProjectSkillInstallationRequest,
+                output=UpdateProjectSkillInstallationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_project_skill_installation_enabled(
+        self,
+        request: SetProjectSkillInstallationEnabledRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetProjectSkillInstallationEnabledResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetProjectSkillInstallationEnabled",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                input=SetProjectSkillInstallationEnabledRequest,
+                output=SetProjectSkillInstallationEnabledResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_project_skill_installation(
+        self,
+        request: RemoveProjectSkillInstallationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RemoveProjectSkillInstallationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RemoveProjectSkillInstallation",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                input=RemoveProjectSkillInstallationRequest,
+                output=RemoveProjectSkillInstallationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_project_skill_installation(
+        self,
+        request: GetProjectSkillInstallationRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetProjectSkillInstallationResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetProjectSkillInstallation",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                input=GetProjectSkillInstallationRequest,
+                output=GetProjectSkillInstallationResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_project_skill_installations(
+        self,
+        request: ListProjectSkillInstallationsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListProjectSkillInstallationsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListProjectSkillInstallations",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
+                input=ListProjectSkillInstallationsRequest,
+                output=ListProjectSkillInstallationsResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

@@ -1,0 +1,98 @@
+{
+  "profile": "skill-package-profile-v1",
+  "version": "1.1.0",
+  "mime_type": "application/zip",
+  "identity": {
+    "prefix": "skill-md-v1:sha256:",
+    "input": "raw decompressed root SKILL.md bytes",
+    "digest": "SHA-256 lowercase hex",
+    "archive_digest": "separate SHA-256 of complete original ZIP",
+    "server_identity": "skill_id and revision are trusted source facts, not archive metadata",
+    "legacy": "zip-v2 persisted identity is separate; never reinterpret, auto-detect or fall back to zip-v1"
+  },
+  "required_root_files": ["SKILL.md"],
+  "optional_manifest": "manifest.json is ordinary content, never identity authority",
+  "limits": {
+    "compressed_bytes": 33554432,
+    "entry_count": 128,
+    "entry_bytes": 16777216,
+    "total_expanded_bytes": 134217728,
+    "filename_utf8_bytes": 256,
+    "skill_markdown_bytes": 1048576
+  },
+  "zip": {
+    "methods": [0, 8],
+    "zip64": false,
+    "multidisk": false,
+    "encrypted": false,
+    "crc32": "all entries; IEEE CRC-32",
+    "paths": "fatal UTF-8 NFC relative POSIX; bit11 absent ASCII only; reject BOM prefix/empty/dot/dotdot/backslash/NUL/drive/duplicates/file prefixes",
+    "structure": "EOCD closes at EOF; contiguous local records from offset0 to central; no gaps/overlaps; matching local/central headers; exact unambiguous ZIP32 descriptor; strict extra TLV without ZIP64 or Unicode path override",
+    "entry_types": ["regular", "directory-zero-data"],
+    "file_count": "all non-directory entries including binary; no transcoding"
+  },
+  "frontmatter": {
+    "encoding": "fatal UTF-8 without stripping BOM",
+    "delimiters": "^---\\r?\\n([\\s\\S]*?)\\r?\\n---(?:\\r?\\n|$)",
+    "yaml": "FAILSAFE mapping; duplicate keys rejected; unknown top-level fields ignored",
+    "strings": "nonempty exact scalar; reject trim changes and C0/DEL; lengths count UTF-16 code units",
+    "required": {
+      "name": {
+        "max": 64,
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      },
+      "description": {
+        "max": 1024
+      }
+    },
+    "optional": {
+      "license": {
+        "max": 255
+      },
+      "compatibility": {
+        "max": 500
+      },
+      "allowed-tools": {
+        "max": 1024
+      },
+      "metadata": "string-to-string mapping"
+    }
+  },
+  "errors": [
+    "package_zip_invalid",
+    "package_zip_unsafe",
+    "package_limit_exceeded",
+    "package_manifest_invalid"
+  ],
+  "consumer_checks": [
+    "download authorization and source binding",
+    "complete ZIP digest before validation",
+    "exact manifest identity after byte validation",
+    "cancellation and no partial package release"
+  ],
+  "sources": [
+    {
+      "path": "src/modules/skills/package/skill-package-zip.ts",
+      "sha256": "8643a73aeb2171ef86e8f48db7ab4eee53305f84edc404d994a6088908edf6d7"
+    },
+    {
+      "path": "src/modules/skills/package/skill-package-zip-structure.ts",
+      "sha256": "71f9556e931ddceddbe3df001d38437f992ab188a9e938a6bccf8221f48b4cb6"
+    },
+    {
+      "path": "src/modules/skills/package/skill-package-metadata.ts",
+      "sha256": "1ef26d95c29fecd8431357799ad21230841b05ef94a1c70654a1d57a39611fdd"
+    },
+    {
+      "path": "src/modules/skills/package/skill-package-metadata.schema.ts",
+      "sha256": "c0823741ded260226c310ac45a8e52bacfe56117d32c5f6e5a09183fa2b47352"
+    }
+  ],
+  "vector_file": "skill-package-profile-v1.vectors.json",
+  "vectors_sha256": "c94d3461b8b08908474b6725098b771d6608dbd2777446ff09fd680c5cfd6a63",
+  "validation_responsibilities": {
+    "owner": "Platform alone validates FAILSAFE frontmatter and publication eligibility before returning an approved exact package binding",
+    "consumer": "Agent validates an authenticated approved binding, complete ZIP SHA, archive safety and budgets, root SKILL.md UTF-8 and byte budget, raw SKILL.md identity; it does not repeat owner YAML business validation",
+    "vectors": "All vectors assert owner acceptance. owner-and-consumer vectors additionally assert consumer archive safety; owner-only negative metadata vectors are not consumer semantic oracles. They never authorize a download."
+  }
+}

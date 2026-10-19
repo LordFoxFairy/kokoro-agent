@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import re
+import json
+import hashlib
 import secrets
 from typing import Protocol
 
@@ -13,6 +15,7 @@ from kokoro_agent.domain.run.models import LeaseFence, LeasedRun
 from kokoro_agent.execution.execution_proof_profile import (
     MAX_SAFE_INTEGER,
     ExecutionProofInput,
+    ExecutionBinding,
     encode_base64url,
 )
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunRequest
@@ -25,6 +28,13 @@ _MAX_TTL_SECONDS = 60
 _OPERATION = re.compile(r"^[a-z][a-z0-9_.]{0,127}$")
 _BINDING = re.compile(r"^[0-9a-f]{64}$")
 _ERROR_MESSAGE = "execution proof is unavailable"
+_SKILL_READS = frozenset(
+    {
+        "skill.discover_visible_skills",
+        "skill.resolve_visible_skill",
+        "skill.get_approved_package_reference",
+    }
+)
 
 
 class ExecutionProofUnavailableError(RuntimeError):
@@ -73,6 +83,9 @@ class _RunSnapshot:
     run_id: str
     execution_session_id: str
     fence: LeaseFence
+    identity_assertion_ref: str
+    project_ref: str | None
+    selection_digest: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -125,6 +138,13 @@ class ExecutionProofSupplier:
             if type(nonce) is not bytes or len(nonce) != 16:
                 raise ValueError
             proof_input = ExecutionProofInput(
+                execution_binding=ExecutionBinding(
+                    identity_assertion_ref=snapshot.identity_assertion_ref,
+                    project_ref=snapshot.project_ref,
+                    selection_digest=snapshot.selection_digest,
+                )
+                if operation in _SKILL_READS
+                else None,
                 tenant_ref=snapshot.tenant_ref,
                 actor=snapshot.actor,
                 subject=snapshot.subject,
@@ -193,6 +213,8 @@ def _snapshot_leased_run(value: object) -> _RunSnapshot:
         raise ValueError
     actor = _identity_snapshot(identity.actor)
     subject = _identity_snapshot(identity.subject)
+    request = RunRequest.model_validate(request.model_dump(mode="python"))
+    identity = request.execution_identity
     if not all(
         _non_empty_exact_string(item)
         for item in (
@@ -208,6 +230,15 @@ def _snapshot_leased_run(value: object) -> _RunSnapshot:
     if type(generation) is not int or not 1 <= generation <= MAX_SAFE_INTEGER:
         raise ValueError
     return _RunSnapshot(
+        identity_assertion_ref=identity.identity_assertion_ref,
+        project_ref=request.project_ref,
+        selection_digest=hashlib.sha256(
+            json.dumps(
+                request.selected_skill_source_refs,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
         tenant_ref=identity.tenant_ref,
         actor=actor,
         subject=subject,

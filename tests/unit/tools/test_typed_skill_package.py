@@ -5,50 +5,64 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
-VECTORS = json.loads(
+OWNER_VECTORS = json.loads(
     (
         Path(__file__).parents[3]
-        / "contract/platform/v1/execution-operations/v4/vectors/zip-v1.json"
+        / "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json"
     ).read_bytes()
 )["vectors"]
+VECTORS = [
+    row for row in OWNER_VECTORS if row["validation_stage"] == "owner-and-consumer"
+]
+_OUTCOME = TypeAdapter(dict[str, object])
+_FILES = TypeAdapter(dict[str, str])
 
 
 @pytest.mark.parametrize("vector", VECTORS, ids=[v["name"] for v in VECTORS])
-def test_owner_zip_profile_vectors(vector: dict[str, object]) -> None:
+def test_pinned_consumer_archive_vectors(vector: dict[str, object]) -> None:
     from kokoro_agent.skills.package import SkillPackageError, validate_package
 
-    payload = base64.b64decode(str(vector["zipBase64"]))
-    skill_id = str(vector["skillId"])
-    revision = int(str(vector["revision"]))
-    identity = vector.get("manifestIdentity")
-    assert identity is None or isinstance(identity, str)
-    if vector["expectedReason"] == "none":
+    payload = base64.b64decode(str(vector["archive_base64"]))
+    expected = _OUTCOME.validate_python(vector["expected"], strict=True)
+    if "reason" not in expected:
         result = validate_package(
-            payload, skill_id=skill_id, revision=revision, manifest_identity=identity
+            payload,
+            manifest_identity=str(expected["manifestIdentity"]),
         )
-        assert isinstance(result["SKILL.md"], bytes)
+        encoded_files = _FILES.validate_python(vector["files_base64"], strict=True)
+        assert dict(result) == {
+            name: base64.b64decode(encoded) for name, encoded in encoded_files.items()
+        }
     else:
         with pytest.raises(SkillPackageError) as error:
-            validate_package(
-                payload,
-                skill_id=skill_id,
-                revision=revision,
-                manifest_identity=identity,
-            )
-        assert str(error.value) == vector["expectedReason"]
+            validate_package(payload, manifest_identity=None)
+        assert str(error.value) == expected["reason"]
 
 
-def test_deeply_nested_manifest_is_stable_invalid_not_recursion_escape() -> None:
+def test_deeply_nested_optional_manifest_is_not_parsed() -> None:
     import io
     import zipfile
-    from kokoro_agent.skills.package import SkillPackageError, validate_package
+    from kokoro_agent.skills.package import validate_package
 
+    markdown = base64.b64decode(VECTORS[0]["files_base64"]["SKILL.md"])
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("manifest.json", b"[" * 6000 + b"0" + b"]" * 6000)
-        archive.writestr("SKILL.md", b"# Skill")
-    with pytest.raises(SkillPackageError, match="package_manifest_invalid"):
-        validate_package(
-            buffer.getvalue(), skill_id="skill-1", revision=1, manifest_identity=None
-        )
+        archive.writestr("SKILL.md", markdown)
+    assert (
+        validate_package(buffer.getvalue(), manifest_identity=None)["SKILL.md"]
+        == markdown
+    )
+
+
+@pytest.mark.parametrize(
+    "identity", ["skill-md-v1:sha256:", "zip-v1:sha256:", "zip-v2:sha256:"]
+)
+def test_current_package_refuses_wrong_or_retired_identity(identity: str) -> None:
+    from kokoro_agent.skills.package import SkillPackageError, validate_package
+
+    payload = base64.b64decode(VECTORS[0]["archive_base64"])
+    with pytest.raises(SkillPackageError, match="package_identity_mismatch"):
+        validate_package(payload, manifest_identity=identity + "0" * 64)

@@ -285,10 +285,8 @@ class PostgresRunRepository:
     async def list_open_outbox_runs(self) -> list[str]:
         return await self._events.list_open_outbox_runs()
 
-    async def reconcile_receipts(
-        self, run_id: str, republish_grace_ms: int = 30000
-    ) -> ReceiptReconcile:
-        return await self._events.reconcile_receipts(run_id, republish_grace_ms)
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile:
+        return await self._events.reconcile_receipts(run_id)
 
     async def renew(self, run_id: str, lease: LeaseFence) -> bool:
         return await self._leases.renew(run_id, lease)

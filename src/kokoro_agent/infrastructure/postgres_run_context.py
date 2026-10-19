@@ -64,6 +64,21 @@ class PostgresRunRepositoryContext:
         self.ttl_ms = ttl_ms
         self.clock = clock or _now_ms
 
+    async def ensure_receipt_manifest(
+        self, cur: Any, run_id: str, timestamp: int
+    ) -> None:
+        """Establish an empty ledger inside the caller's existing Run transaction."""
+        await execute_sql(
+            cur,
+            """
+            INSERT INTO {} (run_id, persisted_seq, projected_seq, consumed_seq,
+                            producer_close_requested, producer_closed, updated_at)
+            VALUES (%s, 0, 0, 0, FALSE, FALSE, to_timestamp(%s / 1000.0))
+            ON CONFLICT (run_id) DO NOTHING
+            """.format(qualified(self.schema, RUN_RECEIPT_MANIFESTS_TABLE)),
+            (run_id, timestamp),
+        )
+
     async def setup(self) -> None:
         async with connect_pg(self.database_url) as conn:
             await verify_agent_schema(conn, self.schema)

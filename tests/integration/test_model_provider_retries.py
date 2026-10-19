@@ -26,6 +26,7 @@ from kokoro_agent.model.usage_observation import (
     capture_model_usage,
 )
 from kokoro_agent.clients.system import SystemModelClient
+from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.policy import ModelConfig
 from kokoro_agent.model.factory import (
     ChatModelSettings,
@@ -380,9 +381,14 @@ async def _model(
             else None
         ),
         anthropic_base_url=base_url,
-        litellm_enabled=case.kind == "litellm",
-        litellm_base_url=base_url,
-        litellm_api_key=SecretStr("sandbox-litellm-key"),
+        model_allow_loopback_http=True,
+        model_credentials=(
+            ModelCredential(
+                provider_id="22222222-2222-4222-8222-222222222222",
+                secret_handle_ref="sandbox-litellm-key",
+                api_key=SecretStr("sandbox-litellm-key"),
+            ),
+        ),
     )
     provider: Literal["openai", "anthropic", "litellm"]
     if case.protocol == "anthropic":
@@ -392,7 +398,7 @@ async def _model(
     else:
         provider = "openai"
     if provider == "litellm":
-        data = _system_route_data()
+        data = _system_route_data(base_url)
         if output_cap is not None:
             data["max_output_tokens"] = output_cap
         async with _LoopbackPeer("openai", "system-route", route_data=data) as owner:
@@ -510,7 +516,9 @@ async def test_r196_native_sdk_caller_timeout_cleans_up_one_request(
 
 
 # R216 RED-A/B are independent: the decoder failure must not mask SDK wire loss.
-def _system_route_data() -> dict[str, object]:
+def _system_route_data(
+    base_url: str = "https://model.example.invalid/v1",
+) -> dict[str, object]:
     return {
         "model_id": "11111111-1111-4111-8111-111111111111",
         "provider_id": "22222222-2222-4222-8222-222222222222",
@@ -520,10 +528,15 @@ def _system_route_data() -> dict[str, object]:
         "generation": "9007199254740993",
         "tenant_generation": "3",
         "provider_model_name": "provider-model",
-        "gateway_model_name": "gateway-model",
+        "request_model": "gateway-model",
         "feature_key": "chat",
         "label_key": "fast",
-        "transport": "litellm",
+        "connection": {
+            "protocol": "openai_chat_completions",
+            "connection_type": "litellm",
+            "base_url": base_url,
+            "secret_handle_ref": "sandbox-litellm-key",
+        },
         "context_window": 4096,
         "max_output_tokens": 128,
     }
@@ -555,7 +568,10 @@ async def test_r216_system_client_accepts_and_binds_execution_limits() -> None:
                     "label_key": "fast",
                 }
         # Full decoded identity and limits must remain from one owner response.
-        assert asdict(route) == _system_route_data()
+        assert {
+            **asdict(route),
+            "connection": route.connection.model_dump(mode="json"),
+        } == _system_route_data()
 
 
 @pytest.mark.asyncio
@@ -617,7 +633,7 @@ async def test_r216_real_sdk_default_and_narrow_cap_sync_async_stream(
         request = peer.requests[0]
         assert request.request_line == b"POST /v1/chat/completions HTTP/1.1"
         payload = TypeAdapter(dict[str, object]).validate_json(request.body)
-        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["model"] == clients.route.request_model
         assert payload["max_completion_tokens"] == expected
         assert "max_tokens" not in payload
         assert "max_output_tokens" not in payload
@@ -678,7 +694,7 @@ async def test_r216_public_client_final_wire_gate_rejects_invalid_bytes(
         clients = peer.model_clients[0]
         payload: dict[str, object] = {
             "n": 1,
-            "model": clients.route.gateway_model_name,
+            "model": clients.route.request_model,
             "max_completion_tokens": clients.route.max_output_tokens,
         }
         endpoint = str(clients.endpoint)
@@ -737,9 +753,7 @@ async def test_r216_factory_rejects_absent_or_mismatched_owned_clients(
         elif fault == "provider":
             config = config.model_copy(update={"provider": "openai"})
         elif fault == "settings":
-            settings = settings.model_copy(
-                update={"litellm_base_url": peer.base_url + "/other"}
-            )
+            settings = settings.model_copy(update={"model_allow_loopback_http": False})
         elif fault == "closed":
             await clients.aclose()
         with pytest.raises(ValueError):
@@ -805,7 +819,7 @@ async def test_r216_override_seam_has_real_sdk_positive_control(
         assert request.request_line == b"POST /v1/chat/completions HTTP/1.1"
         payload = TypeAdapter(dict[str, object]).validate_json(request.body)
         assert payload["max_completion_tokens"] == cap
-        assert payload["model"] == route.gateway_model_name
+        assert payload["model"] == route.request_model
 
 
 @pytest.mark.asyncio
@@ -858,7 +872,7 @@ async def test_r225_single_completion_wire_positive(
         observed = peer.requests[0]
         assert observed.request_line == b"POST /v1/chat/completions HTTP/1.1"
         payload = TypeAdapter(dict[str, object]).validate_json(observed.body)
-        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["model"] == clients.route.request_model
         assert payload["max_completion_tokens"] == clients.route.max_output_tokens
         assert "max_tokens" not in payload
         assert "max_output_tokens" not in payload
@@ -903,7 +917,7 @@ async def test_r225_multiple_completions_rejected_before_peer(
     for observed in captured:
         assert observed.request_line == b"POST /v1/chat/completions HTTP/1.1"
         payload = TypeAdapter(dict[str, object]).validate_json(observed.body)
-        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["model"] == clients.route.request_model
         assert payload["max_completion_tokens"] == clients.route.max_output_tokens
         assert type(payload["n"]) is int and payload["n"] == 2
         assert payload.get("stream") is not True
@@ -953,7 +967,7 @@ async def test_r225_single_completion_sync_async_stream_wire_positive(
         observed = peer.requests[0]
         assert observed.request_line == b"POST /v1/chat/completions HTTP/1.1"
         payload = TypeAdapter(dict[str, object]).validate_json(observed.body)
-        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["model"] == clients.route.request_model
         assert payload["max_completion_tokens"] == clients.route.max_output_tokens
         assert type(payload["n"]) is int and payload["n"] == 1
         assert (payload.get("stream") is True) is streaming
@@ -1052,7 +1066,7 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
         await _model(_PROVIDER_CASES[2], peer, monkeypatch)
         clients = peer.model_clients[0]
         payload: dict[str, object] = {
-            "model": clients.route.gateway_model_name,
+            "model": clients.route.request_model,
             "max_completion_tokens": clients.route.max_output_tokens,
             "messages": [{"role": "user", "content": "hello"}],
         }
@@ -1246,7 +1260,7 @@ async def test_r230_real_sdk_usage_presence_characterization(
         request = peer.requests[0]
         assert request.request_line == b"POST /v1/chat/completions HTTP/1.1"
         payload = TypeAdapter(dict[str, object]).validate_json(request.body)
-        assert payload["model"] == clients.route.gateway_model_name
+        assert payload["model"] == clients.route.request_model
         assert payload["max_completion_tokens"] == clients.route.max_output_tokens
         assert type(payload["n"]) is int and payload["n"] == 1
         assert (payload.get("stream") is True) is streaming
@@ -2076,7 +2090,7 @@ async def test_r246_sdk_structured_helpers_keep_exact_header_profile(
         try:
             if streaming:
                 async with sdk.chat.completions.stream(
-                    model=clients.route.gateway_model_name,
+                    model=clients.route.request_model,
                     n=1,
                     max_completion_tokens=clients.route.max_output_tokens,
                     messages=[{"role": "user", "content": "structured"}],
@@ -2087,7 +2101,7 @@ async def test_r246_sdk_structured_helpers_keep_exact_header_profile(
                     result = await stream.get_final_completion()
             else:
                 result = await sdk.chat.completions.parse(
-                    model=clients.route.gateway_model_name,
+                    model=clients.route.request_model,
                     n=1,
                     max_completion_tokens=clients.route.max_output_tokens,
                     messages=[{"role": "user", "content": "structured"}],
@@ -2098,7 +2112,7 @@ async def test_r246_sdk_structured_helpers_keep_exact_header_profile(
             assert peer.request_count == 1
             body = TypeAdapter(dict[str, object]).validate_json(peer.requests[0].body)
             assert body["n"] == 1
-            assert body["model"] == clients.route.gateway_model_name
+            assert body["model"] == clients.route.request_model
             assert "response_format" in body
             headers = dict(peer.requests[0].sdk_profile_headers)
             assert headers[b"x-stainless-helper-method"] == (

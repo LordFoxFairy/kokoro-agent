@@ -1,3 +1,164 @@
+## 2026-10-19 现有执行能力集成交付
+
+本轮集成本地fffd38e与最新main815b4c1既有事实：保HTTP7/proof2、精确Skills与MCP生命周期、已批准model-connections/usage2源码及published通知不重发；同时保main首帧/终态原子receipt manifest。重复初始化SQL收敛在原PostgresRunRepositoryContext，通过原cursor/Run锁/事务调用，ON CONFLICT不覆盖任何水位/关闭标志；没有新模块、连接、事务框架或Schema。原800行边界保持，不通过抬高阈值或压空行隐藏问题。
+
+旧资源fixture已按正式manifest事实配对：自有Run显式制造manifest缺失并保损坏检测；已有行UPDATE并断言一行；通知retention核receipt=0与完整零水位/false标志，不假设manifest不存在。原GC、取消、重启恢复、outbox不变、HTTP Chat持久replay及主体隔离断言保留。
+
+430输入停写后frozen/offline依赖、lock、Ruff格式/lint、锁定Pyright1.1.409、contract checker、默认2399 PASS/773按marker未选、wheel/sdist均通过；完整outbox/delivery/HTTP ingress及terminal交互真实PostgreSQL＋Redis62 PASS/0 SKIP，专属Redis14在既有排他锁内前后0key、自有测试库回收且catalog核等。初次测试失败与无效未锁定工具尝试保留为诊断，不计最终通过；独立审查发现的fixture/残留import均已收敛，正常源430输入原样保留。此为源码/组件交付，不自动启正常Agent、模型、外部工具或扣费，不代表其余owner/Root/页面已完成。以下阶段段落为历史。
+
+## HTTP 控制回执字段纠正（2026-10-19）
+
+BFF→正式 Agent HTTP 实链发现内部入账 run_id 泄入 ControlReceipt，被固定消费者严格拒绝。现 ingress 正常/重放和入队失败统一显式投影原 canonical 字段；内部持久回执与作用域不变，不新增 API/Schema 或放宽 BFF。原 receipt 单元测试直接校验机器 schema，并以内部双 command key/不同 digest 承接跨 Run 幂等保护。正常服务未重载，完整产品与合并验收不因本局部提前完成。
+
+## MCP 与已批准 proof2 分支整合（2026-10-18，本地候选，正常未激活）
+
+真实跨仓验收首次到IAM即401，确认不是MCP连接配置：当前MCP分支签proof1，IAM已精确固定另一已完成分支e8fbd8f的proof2。整合codex/model-connections@952febad到原Skills/MCP分支，四文档冲突保留双方历史；源码自动合并，保HTTP7/proof2/System4/usage2与当前MCP单轨实现，不重写既定模型、不复活proof1、名称/YAML或模型网关回退。正常服务/配置/数据库均不切换；已有模型代码只作本地源码组合，不发送模型或扣费请求。
+
+最终本地源门：完整默认2399 PASS/771资源类deselected/927上游提醒，Ruff全格式/lint、Pyright、contract、四generator/lock/frozen sync均0；既有实际SDK生命周期8 PASS。独占wheel/sdist430输入无漂移，Python及Platform audit逐字相同；Python3.11安装原Platform smoke及当前proof2/新模块安装来源、完整contract checker均过。独立静态复核当前组合无确定P0–P2，未更改任何检查门。
+
+真实Agent signer/current client→IAM Nest HTTP/fresh PG/Redis→Platform Native/fresh PG→实际GET包/标准SDK stdio完成发现、授权、调用；15个独立签名请求，2次精确下载，原grant audit唯一，撤销Connection后拒调用且无额外下载。此链还暴露Platform proto3缺省approval被误投影为present-empty，owner最小适配修复后运行通过；Native JSON/Proto两个回归也RED→GREEN。Storage为受控对象/资格port，Agent租约与journal数据库未在此链跑，不冒实际Storage或完整产品执行链。测试自有库目录94→94 exact、Redis私有prefix0→0 exact，子进程关闭；原IAM fixture cwd/permit实例配对失败原样留ignored var/dev/mcp-cross-owner-20261018，不冒产品回归。
+
+仍OPEN：正式Storage/Agent租约和journal组合、approval证据、正常页面/服务配对与Manus对照、首次匿名SSR设置深链及需求整体收尾。模型调用、扣费、CI、远端Git/PR、Root index/gitlink继续暂停，正常账号/权限/积分/任务未动；本轮只本地分支整合，不代表main/远端合并或整个goal完成。
+
+## D6-B 明确 Connection 的正式 MCP 接线（2026-10-18，本地源码交付）
+
+沿59dca62及用户确认，Agent静态声明改为McpConnectionRef闭集记录；删除名称/YAML/command registry和旧shared-secret resolver，不做兼容。Worker按原LeasedRun装配同token/proof/Connect的PlatformMcpClient，strict dispatch仅承接现有第九项ListServerDeclarations；每次发现/调用鲜读当前Connection/Connector/声明及scope交集，调用先取原per-invoke grant再取用途绑定材料，随后标准SDK单session。原三工具保持schema数据而非动态注册，call ID只来自原journal，远端isError记failed、已发调用暂停仍unknown且不重发。没有新API、表、权限、依赖或网关。
+
+主方最终停写门：Ruff全格式/lint、Pyright、contract、正规Platform生成、lock/frozen sync通过；默认2353 PASS/765资源类deselected/927上游提醒。独占wheel/sdist构建对419工程输入无漂移，所有runtime Python和Platform audit原字节相等；Python3.11安装wheel原contract smoke及当前六模块实际安装来源/旧模块消失均通过。真实自有标准SDK生命周期8 PASS（原session4＋当前client/三工具/journal的HTTP与受管stdio4），新增factory实际native构造1 PASS，无模型请求。删除旧入口对应测试，承接当前引用/撤权/SDK风险，不以数量扩测试。
+
+独审三项确定风险均以实际RED/GREEN收敛：首次owner await前深快照参数，禁止授权后嵌套对象变更；仅过滤未批准scope的单工具；参数raw JSON保留合法大整数，不误用proof JCS安全整数域。另独立schema摘要按owner JS数值域配对、Node交叉验证，不放宽原proof。原始失败、设置失败和收据仅Root ignored var/dev/mcp-production-link-20261018；最终静态复核无新的确定P0–P2。
+
+限定证据：HTTP/stdio标准SDK、真实子进程/ZIP/下载与journal已跑；该组当前owner为受控port，HTTP仅fixture显式loopback egress=off，不冒真实IAM/Platform/Storage/PG或生产strict egress整链。正式approval证据消费、实际多owner组合及正常产品加载、Manus全页面对照仍OPEN；不伪造approval_ref、不重启正常服务。正常库/配置/登录/权限/积分/任务、模型/扣费/CI/远端和Root index/gitlink未动。整个goal与merge门未完成。
+
+## D6-B 包与标准 MCP session 生命周期（2026-10-18，本地组件）
+
+沿02083ecc实现共享有界ZIP/GET基元及独立MCP manifest、外层SHA/逐文件/入口/执行位校验；Skill原策略和向量保持。标准SDK HTTP/stdio session具名组件已实现，取消/暂停关闭session、回收子进程和临时目录、释放材料引用；不承诺Python不可变bytes物理归零。MCP已发call后的GraphInterrupt保留journal started，恢复返回unknown outcome、不自动重发；普通本地前置暂停保持原语义。
+
+主方停写工程验证：Ruff全格式/lint、Pyright、contract、正规Platform生成漂移、lock/frozen sync均通过；默认2364 PASS/764资源类deselected。独占wheel/sdist构建及Python源码逐字审计通过；实际受控标准SDK生命周期4 PASS（stdio往返/取消/HITL退场和HTTP往返），无模型或外部提供方。HTTP fixture显式loopback egress=off，不冒生产strict egress。独审两P2（内部下载头、辅助执行位）均有RED/GREEN并关闭，最终未发现确定P0–P2。
+
+生产接线仍OPEN：用户已批准受信Agent代码使用明确Connection引用，删除名称/YAML回退；下一片沿既有当前Connection/Connector/ListServerDeclarations读取、per-invoke grant和原三工具/worker接线，不新增API/表。现组件尚未被生产worker调用，不把测试往返称整链。正常服务/库/配置/权限/积分/任务、模型/扣费/CI/远端未动。原始失败和本地收据只在Root ignored var/dev/mcp-lifecycle-20261018；完整需求和合并门未完成。
+
+## D6-B Runtime 1.1 固定消费者交付（2026-10-18）
+
+本片沿 887aabc 基线完成已审设计的第一步：唯一主 Proto 与 Runtime 完整原始闭包固定 Platform c3decfd，正规生成同一 Python package；原 v4 execution 与 Skill profile 保持各自原 pin。唯一 JCS 入口承接两项 exact Runtime 请求，按原 bytes、approval presence、用途及闭集验证；同 RunPlatformClient 的 strict dispatch 从六项扩到八项，继续使用快照、fresh proof、同 token 池、deadline/取消与错误脱敏。无管理 stub 放行、第二套 wire 或 Schema/配置变更。
+
+主方完整默认 2359 PASS、760 资源类 deselected；lock/frozen sync、全 Ruff format/check、Pyright、contract、生成漂移均通过。原 owner 五向量及回归、未知字段/边界、发行物篡改覆盖已执行；新增三个风险例及原篡改例的四种 Runtime 参数，无 UI 套件。完整默认首次 2358 PASS/1 FAIL 暴露显式 runtime resource 清单漏新三文件，仅补生产清单、原断言保留后完整复跑通过。独审含最终清单修复未发现确定 P0–P2。
+
+实际 Python 客户端到 c3decfd Nest Native binary 的 HTTP/stdio 两分支共 2 PASS，owner 独立核请求摘要和原材料解码；IAM 与 store/Storage 是受控 fixture，不冒真实 IAM/PG 或工具执行。独占源码 wheel/sdist 构建、全部 Platform audit 原字节及 wheel 安装后 contract smoke 通过，候选已回收、正常 dist 未覆盖。收据仅 Root ignored var/dev/agent-mcp-runtime-consumer-20261018。
+
+仍 OPEN：run-bound MCP reader、精确下载/包与入口校验、标准三工具生命周期及撤权/取消/恢复整链；正常产品配对与 Manus 对照、手册及 PR 聚合。正常服务、库、账号/权限/积分/任务开关未动；模型、实际外部工具、扣费、CI 与远端保持暂停。本片不代表整个功能或合并门完成。
+
+## 三项SkillSource运行闭环（2026-10-17，隔离验收）
+
+真实组合发现现RunPlatformClient只允许resolve/package、遗漏已批准discover：实际调用在网络前报PLATFORM_REQUEST_INVALID。原transport快照测试增加discovery等价项，实际1 RED/3 PASS；现只在原typed request/response/allowlist和生成stub分支补DiscoverVisibleSkills，不加协议、client或宽泛透传。token→逐次新proof→原binding→bounded Connect保持，MCP原case仍通过。HTTP7/proof2机器artifact字节不改。
+
+最终原unit/contract2398 PASS/24原标记deselected/2原LangChain提醒（134.64秒），transport/supplier56 PASS；Ruff格式/lint、显式venv Pyright和contract checker均0。此前真实Agent HTTP/Run/lease三文件159 PASS/0 SKIP。Root隔离组合1 PASS/0 SKIP：真实BFF durable Chat及正式派发→Agent HTTP/PG lease/签名proof2/JWKS→IAM当前PG+在线BFF读→Platform Prisma→原生Skills发现/原Markdown；另核required-null direct Run、空冻结选择、未选拒绝、项目不继承个人安装、安装停用含已缓存backend、当前成员撤销、专用凭据轮换/缺失、同proof在Move和ABA后拒绝。Storage为自有冻结ZIP peer，非正常Storage/模型/Tool/Billing验收。
+
+所有临时库回收、数据库名清单保持、Redis14起终0且未flush、HTTP/子进程退出；正常服务和配置未激活，远端与Root index/gitlink暂停。下列旧“项目上下文仍缺失/资源未跑”仅是阶段历史，不覆盖本段；ADR035严格即时撤权barrier不由在线多次检查冒充。
+
+## 项目可信上下文：HTTP7/proof2（2026-10-17，本地候选）
+
+Launch/RunRequest新增required nullable project_ref，原request_json保存，首次/恢复Redis发布保留null；ensure_session不再由trace取项目。per-lease supplier重验原exact类后从Python dump重建request，冻结canonical项目、原stable assertion和ordered refs摘要；只有三项SkillSource读签execution_binding，MCP等原operation明确null，不收窄原assertion域。signer重建不可变binding并核签；旧v1 artifact原字节保留但无旧runtime fallback，新current2.0.0与HTTP7.0.0由原checker/provenance/failure generator/wheel闭包验证。无新Agent表/服务/依赖。
+
+原suite实际RED→GREEN；独审两P2（forged refs未重验、受限assertion误伤非Skills）已修并保subclass负控。主方完整unit/contract2397 PASS、24原筛选deselected（136.86s），最后98项定向PASS；Ruff格式/lint、显式自有venv Pyright、contract checker、uv lock --check、uv build均0。初次Pyright误用全局解释器导致2679导入误报，改显式解释器为0，不关闭类型检查；首次向量padding/摘要与原16KiB夹具未迁移及旧版本断言失败据实保留，现重签/刷新正规digest并保持16384/16385硬边界。原资源suite尚未重跑，本片不是全产品或真实跨仓验收。
+
+正常Agent/配置/库/角色/积分不改；模型/Tool/Billing不启用，远端CI/push/PR/merge及Root index/gitlink暂停。后继IAM固定proof2与BFF internal1，Platform独立project-only安装与exact allowlist，最后真实HTTP/PG整链；ADR035即时撤权barrier仍不冒完成。
+
+## 当前 Skills 与 MC-01 组合（2026-10-17，本地候选已验证，正常未激活）
+
+组合父版本2d5ce12与887aabc：保留System4/provider-bound连接、usage2/HTTP6及显式历史reader，同时消费Platform当前SKILL.md profile1.1与精确原生发现；旧manifest校验器不恢复，无新owner/协议版本/Schema/依赖。factory保model/planned/recipe绑定、exact包/SDK发现及durable failed/取消/HITL边界。
+
+资源初跑497 PASS/27 FAIL，原因是测试helper直接SDK lazy bootstrap先初始化未获正式准入的registry，污染同进程后继生产recipe检查。tests/support/deepagents.py现经既有prepare_native_recipe再创建SDK图，不改生产guard、不reset registry、不删负控或skip。同六资源文件复跑524 PASS；原追踪与失败日志保留，不将fixture初始化误称正式模型服务失败。
+
+最终407份源/测试/契约/文档停写冻结（唯一承接变化为该helper），主方自有venv Python3.11重跑uv lock --check、uv sync --frozen、Ruff format/check、显式解释器Pyright、failure/usage2/Platform三generator --check、contract checker、完整默认pytest及wheel/sdist构建共11门均0。默认2392 PASS/766资源deselected/2原提醒；另六精确HTTP/模型证据/运行链/事务/重试/Skills文件在自有随机PG数据库及锁定空Redis14上524 PASS，最后own DB删除、其他DB名称集合保持、Redis前后0，不等于全部资源套件。正常env/服务未改，无真实模型或Tool调用。
+
+wheel和sdist的186份runtime Python文件逐字匹配冻结源；从仓外空目录非editable安装wheel，完整contract checker、真实项目D版ZIP的当前identity校验、System4/usage2导入均0，临时安装环境删除。只读review无确定P0–P2。上述门后仅本段文档更新，runtime/test/contract字节保持，git diff检查通过。
+
+这完成可提交的本地组合，不代表正常System/Agent已激活或全产品已验收。当前正常BFF仍固定Agent HTTP5而候选HTTP6只有usage-evidence路径及两响应schema变化；后继消费者、Billing正式reader/许可/结算、正常Skills执行/回放及来源旅程仍待闭环。未改正常账号/权限/积分/配置，不用受控SDK/本地安装替代真实模型与资金准入。远端CI/push/PR/merge及Root index/gitlink继续暂停。
+
+## 2026-10-17 exact Skill 原生发现（本地组件验收）
+
+在8f574ef上修复两个明确正向缺口：合法frontmatter闭合于EOF、多个exact来源具有相同name。factory只接线；skills backend提供发现专用行终止文本视图，middleware逐exact调用SDK公开发现再按选择顺序合并并核路径覆盖；原生parser/prompt/state未复制，工具仍读取原包bytes。无新文件、依赖、owner契约、Schema、授权或正常服务变更，未让同名覆盖变为隐式选择规则。
+
+原两个正向用例实际RED均SKILL_NATIVE_LOAD_INCOMPLETE，修后8项定向通过；原负控改用真实invalid metadata，failed持久化/失败存储负控仍保留。完整factory＋显式SDK读取＋架构106 PASS/1既存FAIL；完整默认2351 PASS/760资源deselected/1既存FAIL。唯一失败仍为原server.py的cast架构检查，文件与8f574ef同SHA，未放宽或删除门禁。第一次Pyright发现本片optional TypedDict键直接索引，已正规setdefault明确构造；末轮相关五文件145 PASS、完整Ruff格式/lint与显式解释器Pyright通过。contract checker与Platform generator drift、lock/frozen sync通过，独审未发现确定P0–P2；原SDK beta/deprecation提醒保留。
+
+随后独立清除该既存cast技术债：HTTP AgentConfig Protocol明确声明正式配置已有的reader secret，直接typed读取；删除object/cast和重复私有protocol，不改任何鉴权分支/比较/返回码。原测试改用AgentHttpConfig及显式None替身，零新case；原架构RED后378项HTTP/架构回归通过，独审无确定P0–P2。停写最终九门lock/frozen sync/Ruff格式/lint/Pyright/contract/generator/default/build全0，完整默认2352 PASS/760资源deselected；此前FAIL据实保留但已被此最终结果取代。发布物另核runtime源码字节，正常共享env与服务未动。
+
+这只证明受控reader/模型替身下真实SDK与Run装配行为，不是正式模型、Tool、Billing或正常登录执行验收；未运行PG/Redis等资源套件。正常Agent/配置/身份/积分未动，远端及Root index/gitlink仍暂停。正常组合与剩余格式/授权、Admin current配对和真实执行仍待后继；工程源门已通过，全产品/资源验收仍未完成，不冒整个Skills/MCP闭环。
+
+## 2026-10-17 当前 Skill 包消费切换（源码候选，正常Agent未激活）
+
+基线84502e6，分支codex/skills-current-package。Platform e1b5484f162a42652bbc576cebb0f48f52809272 的独立profile1.1.0/两份artifact已精确固定；client/纯ZIP校验器/checker/generator/audit资源同片切当前SKILL.md身份，删除旧manifest解析和无用server-ID入参。无Proto/Schema/新依赖或lock变更，既有24proof/原v4请求图保持；6个Skill source/download message与当前owner逐字节相同。
+
+既有测试先对当前包/client实际RED 11 FAIL/39 PASS；旧shared .venv的editable指向另一个checkout，pytest因明确pythonpath=src确实测当前源码，但纯Python探针需另行修正import证据。本片新建ignored自有env并frozen sync，当前Python模块来源已核对为本仓。尝试PyYAML metadata重复校验70差分发现2个合法NEL误拒，ruamel候选也不等价；两者均删除，未加runtime依赖或修改共享env。按owner1.1.0分层，全部30原反例仍由owner验收，24个consumer向量及历史ZIP结构类反例由Agent验证。
+
+新发现原生loader会静默跳EOF合法包/覆盖同名选择；新增同一factory内两项实际RED（均DID NOT RAISE且曾触达本地Fake模型），现exact路径/数量守门使其在模型前显式失败，未替换SDK parser。首次测试误对frozen fixture赋值的TypeError已纠正，不计产品RED。独审另发现native失败后durable phase仍ready；同一用例扩断言再RED，现async v3经原可信progress sink/ACK确认failed，存储失败保留ProgressPersistenceError、不伪造业务失败。取消/HITL/Run刷新边界保持；sync hook仅SDK调用，不冒产品进度入口。7项相关守门/1.69s、原factory 72项/29.97s和受控HTTP＋真实SDK 4项/0.98s通过，停写复审无新增确定P0–P2。
+
+最终自有env源门：uv lock --check、uv sync --frozen、Ruff format/check、显式解释器全Pyright、kokoro-agent-contract-check、固定generator --check、uv build均exit0。默认pytest完整结束：2350 PASS、1 FAIL、759默认资源deselected、819 warnings、136.88s。唯一失败为既有test_no_type_escape_hatches：interfaces/http/server.py导入cast；该文件与84502e6逐字节相同，本片未改，未删除/放宽断言，完整合并门仍未满足。较早494 PASS/1 FAIL的主动中断结果不算完整门。未运行PG/Redis等资源套件，本片无数据/事务变更。
+
+原正常446字节ZIP修后纯校验及真实SDK metadata/原文读取GREEN，完整归档SHA和Markdown identity精确匹配原收据；reader/source为受控port，不冒真实Run资格/执行成功。wheel和sdist中11份受影响runtime/contract文件逐字节匹配冻结源；仅在自有env非editable安装wheel后，仓外空cwd验证模块来自site-packages、完整contract checker及同一446字节包均通过。共享原env未改，自有env随后恢复本仓editable。初次发布物探针误要求sdist包含既有未发行的开发generator，已改为明确runtime/contract发行清单；未因此改包规则或源码。
+
+正常Agent、平台/登录/资金/角色/密钥/数据库均未改动或重启，无真实模型、Tool或Billing请求。正常服务尚未加载该候选；SDK对EOF/同名的正向产品支持、项目默认安装/来源模型、正式执行授权和完整用户链仍OPEN，远端/Root index/gitlink暂停。原普通App/BFF/Platform保持现入口，不把本片pure/owned-loopback证据当正常全产品验收。
+
+## MC-01 Agent 原子消费者本地验收（2026-10-16；未正常激活）
+
+同一分支已接System4精确20源receipt、provider/ref双绑定私有凭据、direct默认/LiteLLM可选、usage2唯一新写、sealed usage1按显式版本读取、HTTP6实际证据版本与旧未sealed启动屏障。SQL、冻结v1原字节、最终请求摘要格式不变；旧全局网关配置/别名退出。启动屏障允许合法v2恢复，旧worker停止仍须部署侧另证。
+
+实际SDK+PG two_claimants失败已定位：连接调用前取消计数0、driver返回时1，旧代码继续SET/等待锁直到第二次取消。原边界补“连接期间新增取消”检查并finally close，未改driver/依赖/超时/资金许可；原分支2.22秒PASS。独审指出初版绝对计数会误伤已捕获取消的sandbox cleanup，真实1RED/3PASS后改比较进入/返回计数，四状态回归与原SQL边界共7PASS，P2已复核关闭。此独立修复本地提交321df90。
+
+最终Python3.11.14默认 `uv run --frozen pytest -q`：2386PASS/765原资源排除/2SDKwarnings，140.69秒、exit0。无traceback本地HTTP线程诊断仍保留，不冒日志全净。五个直接受影响文件真PG/独占受管Redis/自有HTTP peer：520PASS/10warnings，59.32秒、exit0，无排除two_claimants；包括HTTP ingress、model evidence、runtime chain、Run交互事务和SDK重试边界。首次缺显式Redis分配导致37fixture前提错误的运行已保留，不算通过；正式补配自有临时PG库与既有Redis14锁后重跑，临时库删除且库清单不变、Redis自有keys归零，不清共享数据。
+
+Ruff/格式/Pyright、三生成器check、完整contract-check、lock-check、wheel/sdist build均通过；最终wheel23个变更运行时文件与源逐字相等，独立临时venv按原lock/hash安装8步通过，包含缺v2 audit明确拒绝→恢复通过，环境已清理。只读独审无剩余确定P0–P2；未增加UI suite/源字符串quota，未改依赖/SQL/正常进程，零真实模型发送。
+
+本片是候选源码验收，不是全产品完成：Billing资金consumer/新证据pin、正常System+Agent切换与正式许可调用、Admin运营CRUD及正常服务身份仍待后继；不以离线peer冒真实模型或收费验收。远端CI/push/PR/merge及Rootgitlink保持不动。
+
+---
+
+## MC-01 原子消费者候选（2026-10-16；未提交、未激活）
+
+在9c641d5后继续原批准方案：System4精确20源receipt、provider/ref双绑定私有凭据快照、direct默认/LiteLLM可选owned客户端、usage2唯一producer、sealed usage1显式历史reader、HTTP6实际版本和启动屏障。凭据文件受当前uid/0400或0600/单硬链接/regular/限长/重复键/读中变更约束；旧全局网关配置退出。屏障在消费命令前只读扫描未sealed planned，拒旧/坏/未知版本，不阻合法v2恢复；旧worker停止另属部署前置。未改SQL、历史v1来源或normal Agent/System。
+
+本轮真实TDD：worker装配2行为RED→2GREEN；非合法端口URL泄漏httpx.InvalidURL的1RED→严格脱敏ValidationError GREEN。配置/模型/factory聚焦248PASS；新增私有快照正向、重复键/引用、symlink/hardlink/非法key及隐私边界。完整默认初轮2380PASS/2FAIL/763原资源排除，失败为两处HTTP5/System3旧pin断言，按已批准HTTP6/System4更新精确值且保留全receipt/hash/原JWKS断言；JWKS聚焦38PASS，第二次完整默认结果另行记录。
+
+真实PostgreSQL自有临时库：第一轮107PASS/1FAIL；新增sealed v1/v2原字节读取和terminal只读重放、启动旧/未知/坏planned拒绝及合法v2恢复均通过。排除独立失败项后的补充执行109PASS/1明确deselected/2SDKwarnings，23.03秒；不是完整资源门通过。未解失败为既有真实SDK+PG two_claimants分支：预期ModelCallInputInvalid却收到TimeoutError，单独重跑稳定复现，任务第一次cancel后仍pending，外层超时才以第二次cancel收束。仅保留诊断，不放宽5秒预算、不删用例/断言、不改依赖或冒称历史失败；根因仍待继续定位。全部自有临时库清理且库清单不变，normal数据不动，零模型发送。
+
+Ruff/格式/Pyright/contract/lock/build通过；最终wheel独立venv按原lock/hash安装8步通过，含v1/v2严格读取、缺v2 audit确实拒绝→恢复通过，自有环境已清理。只读独审未见确定P0–P2，不替代失败资源门。完整交付仍OPEN，不提交/推送/改PR/合并，不激活本候选，也不宣称Billing资金消费者、聊天或后台产品已闭环。
+
+---
+
+## MC-01 usage2 离线契约前置（2026-10-16；本地候选，未切生产读写）
+
+既有批准设计下新增独立 usage/v2 schema/vectors/manifest、有限 compiler/generator、严格 semantic decoder 与 generated model。planned 以显式 binding_version=2.0.0 与 request_model 表示唯一请求模型，provider_model_name 保留声明含义；不纳入 endpoint、连接快照、凭据引用或密钥。公共 checker 显式校验冻结 v1 与 v2，自有 inventory 合并进原 wheel/RECORD 闭包，不新增协议选择 fallback。原 v1 六来源及 manifest 与 HEAD 原字节一致。
+
+v2 向量为3正向、29反向和10 successor pair，覆盖跨版本、digest domain、旧字段与 model 漂移。既有 suite 内扩展编译器自洽schema变异与公共检查负控，不新增 UI suite、不锁定CSS/源码字符串。独审发现 root planned 引用漏pin及函数内import违反原架构门；前者2个真实RED后补同一shape guard，后者改回顶层import，未改架构断言。修复后 usage+architecture 90 PASS；首轮完整默认2360 PASS/1 FAIL的原失败证据保留。最终 Python3.11.14 完整默认2363 PASS/759原资源排除/2 SDK warnings，138.50秒、exit0；保留一条无traceback的后台HTTP线程诊断，不冒称日志全无异常或资源用例已通过。
+
+Ruff/Pyright/8文件格式、原/新生成器check、完整contract checker、lock、wheel/sdist build通过；独立临时venv按原lock/hash安装最终wheel，8步含v1/v2正反例、跨版本拒绝、缺v2审计资产确实拒绝→恢复checker通过，环境已清理。首次离线安装因缓存没有固定版本boto3-stubs-lite而失败，随后按同一lock/hash正常下载完成，无依赖或lock变化。只读独审两项P2关闭，无剩余确定P0–P2。
+
+当前 producer/持久化/HTTP5/System3 pin仍原样；System4连接消费、provider-bound凭据、direct/LiteLLM wire、usage2 producer及完整历史reader、旧未sealed屏障、HTTP6与Billing消费仍待后继原子实施。未操作正常进程、应用库、凭据或模型发送；这只是离线契约交付，不是聊天/费用/后台产品验收。
+
+---
+
+## MC-01 历史契约、取消与输入边界（2026-10-16；本地源码，非正常激活）
+
+本片在既有 `codex/model-connections` 实施已批准设计的历史证据保护：公共 contract checker 固定 usage/v1 manifest 原字节 SHA，再执行原 source/生成物/语义 vectors 检查，拒绝历史 schema/vectors 与 manifest 被一起重写。原六个来源与 manifest 不变；不新造历史源码副本、执行开关、版本表或 decoder fallback。新增 checker 走现有 provenance inventory、wheel audit 和 RECORD 边界。
+
+基线 `b762c96` 的聚焦门实际 189 PASS/1 FAIL，唯一失败是旧源码行数门 `200 < 200`；现删除该无业务 oracle 的 quota，原 schema/provenance 正负例全部保留。新增两例在公共检查自然 RED（未拒绝自洽重生）后 GREEN。主方 Python3.11.14 定向三文件 191 PASS；Ruff/Pyright/contract-check、lock/frozen sync、原生成器 check、wheel/sdist build 均通过。隔离 installed 环境按原 lock/hash 安装，checker通过；去掉新 audit 资产确实拒绝，原字节恢复后通过，自有环境已清理。独审无确定 P0–P2。
+
+历史冻结已本地提交 `81e37c4`。完整默认检查初次在原 cancel-running 行为处停住，独立有界复现确认 native driver 仍等 gate，而 cancel handler 正等待原执行 task；12秒诊断终止信号后的“1 passed”不计通过。主方确认进程身份后终止原完整检查（143），没有把观察超时当进程已结束。
+
+后继局部修复已保留原5秒 live publish 预算，换为 `asyncio.timeout` 内直接 await。Python3.11 的 wait_for 在内部 future 已完成与外部 cancel 同拍时直接返回结果，旧代码由此丢失取消；不再创建该竞争 child future，不新增 catch/shield、不改 outbox/终态/模型许可。原 cancel 测试仅增加不取消目标的有界观察，真实 RED 为任务未退出，GREEN 后仍核 cancelled 与唯一终态；新两参数覆盖预算耗尽和 caller cancel 的异常分类、publisher 退出与 critical outbox queued 保留。
+
+主方最终四既有文件 212 PASS/4原资源排除/2 SDK warnings；Ruff、Pyright、contract-check、wheel/sdist build 均通过，wheel 中 runtime bytes 与冻结源一致，独审无确定 P0–P2。上一轮完整默认检查收束为 2345 PASS/2 FAIL/759 原资源排除/2 SDK warnings，135.23秒、exit1。两 FAIL 是当时未修改的原 `interfaces/http/server.py` cast 架构门，以及原 `skills/package.py` 深嵌套 JSON 在 Python3.11 泄漏 RecursionError；该轮未删断言、skip 或冒全仓通过。
+
+**本轮边界修复。** HTTP `AgentConfig` 显式声明正式 HTTP 配置已有的 Billing reader 属性，删除 helper 的 `object/cast`；HTTP 测试改用真实 HTTP 配置，替身补齐相同属性，不扩大 worker 配置、不加 `getattr`、默认兼容或第二认证路径。manifest 在原16KiB预算内合并解码/strict根类型验证，捕获递归错误后退出异常作用域才抛固定 `package_manifest_invalid`；旧 owner ZIP vectors 与字段/类型/范围/身份规则保持，坏包不保留含私有输入的 decoder context/cause。
+
+原两例在修复前真实 RED；原深嵌套回归扩成深层数组/错误根类型/坏JSON三类，全部核固定错误和无异常context/cause，真实3 RED→GREEN。主方冻结7源码/测试路径：重点7文件420 PASS，HTTP root29 PASS；Python3.11.14完整默认2349 PASS/759原资源排除/2 SDK warnings、134.82秒、exit0。保留一条无 traceback 的后台HTTP线程诊断，证据未定位到本片，不宣称运行日志全无异常。格式、Ruff、Pyright、contract、lock、wheel/sdist build均0；独立临时venv按原lock/hash安装最终wheel，8步通过，含installed合法包/三类坏包隐私、独立HTTP reader准入，以及缺audit资产拒绝→恢复通过，自有环境已删除。只读独审无确定P0–P2；测试数量不是产品完成量，759资源用例未运行，不冒PG/Redis、正常产品或正式模型发送验收。
+
+
+后继仍待：System4 strict route/pin、provider-bound 私有凭据、owned direct/LiteLLM wire、usage2 producer/完整历史 reader 分派、旧未 sealed attempt 屏障、HTTP6 及 Billing 正式消费。当前 producer 仍 v1，HTTP5/System3 consumer 仍在；新 System4 正常启用和真实模型发送均未发生。用户登录/角色/积分/正常进程不变，远端 CI/PR/merge 暂停。
+
+---
+
 ## R353-A-S06 当前：Storage v3 Artifact delivery 候选已实施（2026-10-08）
 
 Agent既有作品交付消费者已从Storage v2单轨切到正式owner
@@ -1490,3 +1651,5 @@ The working implementation now contains the isolated private Ed25519 loader, anc
 A2a remains the accepted pure signer, and A2c provides the standalone statement-time reader and run-scoped supplier. IAM verifier and the inactive Platform owner contract have since been released in their owner repositories; worker private-loader composition, Agent Platform call sites, and real Agent→Platform→IAM transport remain incomplete.
 
 production signer call site 仅 standalone supplier 一个；runtime/client transport consumer/composition 为零。
+
+最终默认复跑：`uv run --frozen pytest -q` 2382 PASS/765原资源排除/2 SDK warnings，143.47秒、exit0；保留无traceback的本地HTTP线程诊断，不冒日志全净。`ruff check/format --check`、Pyright、contract-check、lock-check、wheel/sdist build均0，installed8steps0。PG具名two_claimants失败继续OPEN，109PASS/1deselected不替代完整资源门；本候选仍未提交、未激活。

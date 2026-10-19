@@ -1,3 +1,11 @@
+## 2026-10-19 现有执行能力集成交付
+
+本轮集成本地fffd38e与最新main815b4c1既有事实：保HTTP7/proof2、精确Skills与MCP生命周期、已批准model-connections/usage2源码及published通知不重发；同时保main首帧/终态原子receipt manifest。重复初始化SQL收敛在原PostgresRunRepositoryContext，通过原cursor/Run锁/事务调用，ON CONFLICT不覆盖任何水位/关闭标志；没有新模块、连接、事务框架或Schema。原800行边界保持，不通过抬高阈值或压空行隐藏问题。
+
+旧资源fixture已按正式manifest事实配对：自有Run显式制造manifest缺失并保损坏检测；已有行UPDATE并断言一行；通知retention核receipt=0与完整零水位/false标志，不假设manifest不存在。原GC、取消、重启恢复、outbox不变、HTTP Chat持久replay及主体隔离断言保留。
+
+430输入停写后frozen/offline依赖、lock、Ruff格式/lint、锁定Pyright1.1.409、contract checker、默认2399 PASS/773按marker未选、wheel/sdist均通过；完整outbox/delivery/HTTP ingress及terminal交互真实PostgreSQL＋Redis62 PASS/0 SKIP，专属Redis14在既有排他锁内前后0key、自有测试库回收且catalog核等。初次测试失败与无效未锁定工具尝试保留为诊断，不计最终通过；独立审查发现的fixture/残留import均已收敛，正常源430输入原样保留。此为源码/组件交付，不自动启正常Agent、模型、外部工具或扣费，不代表其余owner/Root/页面已完成。以下阶段段落为历史。
+
 # kokoro-agent
 
 Kokoro 的 GA 执行底座：直接使用 DeepAgents 的 agent loop、state、checkpoint 和 interrupt；需要多个
@@ -76,8 +84,8 @@ KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   KOKORO_SYSTEM_BASE_URL=http://127.0.0.1:4240 \
   KOKORO_INTERNAL_SECRET_AGENT=... \
-  KOKORO_LITELLM_ENABLED=1 KOKORO_LITELLM_BASE_URL=http://127.0.0.1:4000/v1 \
-  KOKORO_LITELLM_API_KEY=... uv run kokoro-agent-worker
+  KOKORO_MODEL_CREDENTIALS_FILE=/absolute/private/model-credentials.json \
+  uv run kokoro-agent-worker
 ```
 
 BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己的 PostgreSQL/Redis：
@@ -100,12 +108,19 @@ Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本
 durable ingress）和 `kokoro-agent-worker`（实际执行 loop）；只运行 HTTP 进程只能完成 admission，
 不会执行任务。
 
-启用 worker 时，必须配置 System 模型解析及 LiteLLM 网关：`KOKORO_SYSTEM_BASE_URL`、
-`KOKORO_INTERNAL_SECRET_AGENT`、`KOKORO_LITELLM_ENABLED=1`、`KOKORO_LITELLM_BASE_URL`、
-`KOKORO_LITELLM_API_KEY`。System 当前 executable transport 仅 litellm；缺配置启动失败，
-每次构造模型先解析可信 tenant/feature/label，拒绝本地名称或默认 provider 兜底。
-Agent 不包含 LiteLLM Python 包、不启动网关、不接收底层 provider 凭据。单独的 Agent HTTP ingress
-仍可接收 durable admission；模型解析失败只终止对应 Run，不让假路由进入执行。
+启用 worker 时，配置 `KOKORO_SYSTEM_BASE_URL`、`KOKORO_INTERNAL_SECRET_AGENT` 和
+`KOKORO_MODEL_CREDENTIALS_FILE`。System4 为每次调用冻结协议、连接类型、完整 base URL、
+请求模型与不透明凭据引用；默认直连，外置 LiteLLM 可选，Agent 不安装或启动网关。
+完整 base URL 的路径前缀原样保留，只拼接 `/chat/completions`，不猜测 `/v1`。
+凭据快照是当前用户拥有、0400/0600、单硬链接的绝对路径普通 JSON 文件，格式见 `.env.example`；
+仅精确匹配 provider_id + secret_handle_ref，不以其他账号、全局 OPENAI_* 或 ANTHROPIC_* 兜底。
+旧 KOKORO_LITELLM_* 配置即使为空也明确拒绝。模型解析或凭据失败只终止对应 Run，
+不让假路由进入执行；每次实际调用仍先取得正式 Billing 许可。
+
+本候选新写 usage2，HTTP6 按实际证据版本返回原始字节；冻结 usage1 仅支持已封存历史读取。
+升级前先停旧 producer 并由旧版本收尾其未封存调用，再启动新 worker；新启动屏障拒绝旧/未知
+未封存 planned，不阻止合法 usage2 的租约恢复。屏障不是“旧进程已停止”的部署证明。
+单独 HTTP ingress 仍可接受 durable admission，不加载 worker 的模型密钥。
 
 HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 业务入口是：
 

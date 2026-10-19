@@ -66,6 +66,7 @@ def _request() -> RunRequest:
         run_id="delivery-outbox-run",
         session_id="conversation-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant-1",
@@ -1189,12 +1190,13 @@ async def test_delivery_ack_gc_preserves_mapping_until_terminal_then_rescans(
                     ).format(sql.Identifier(run_chat_schema, RUN_RECEIPTS_TABLE)),
                     (run.run_id, event.durable_seq, event.event_id),
                 )
-            await conn.execute(
+            updated = await conn.execute(
                 sql.SQL(
-                    "INSERT INTO {} (run_id,persisted_seq,projected_seq,consumed_seq) VALUES (%s,2,2,0)"
+                    "UPDATE {} SET persisted_seq=2,projected_seq=2,consumed_seq=0 WHERE run_id=%s"
                 ).format(sql.Identifier(run_chat_schema, RUN_RECEIPT_MANIFESTS_TABLE)),
                 (run.run_id,),
             )
+            assert updated.rowcount == 1
     assert (await run_repository.reconcile_receipts(run.run_id)).consumed_through == 2
     async with connect_pg(run_chat_database_url) as conn:
         cursor = await conn.execute(

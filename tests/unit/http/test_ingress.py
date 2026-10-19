@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import pytest
 from pydantic import JsonValue, SecretStr, TypeAdapter
 
-from kokoro_agent.config import AppConfig
+from kokoro_agent.interfaces.http.main import AgentHttpConfig
 import kokoro_agent.interfaces.http.server as http_server
 
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
@@ -42,6 +42,7 @@ def launch_body(run_id: str = "run-1") -> dict[str, object]:
         "run_id": run_id,
         "session_id": "session-1",
         "feature_key": "chat",
+        "project_ref": None,
         "selected_skill_source_refs": [],
         "message_id": f"message-{run_id}",
         "content": "hello",
@@ -163,6 +164,7 @@ async def test_control_requires_the_run_session_and_publishes_to_isolated_stream
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
@@ -217,6 +219,7 @@ async def test_evidence_filters_by_index_and_chat_query_remains_identity_scoped(
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
@@ -283,6 +286,7 @@ async def test_evidence_hides_run_from_a_different_identity_scope() -> None:
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
@@ -312,6 +316,7 @@ async def test_evidence_hides_run_from_a_different_tenant_with_the_same_subject(
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
@@ -341,6 +346,7 @@ def _run_evidence_fixture() -> tuple[AgentIngress, FakeBus, FakeRunRepository]:
         run_id="run-1",
         session_id="session-1",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=identity(),
         input=RunInput(message_id="message-run-1", content="hello"),
@@ -419,7 +425,7 @@ async def _dispatch_evidence_query(
     monkeypatch.setattr(http_server, "make_run_repository", run_resource)
     monkeypatch.setattr(http_server, "make_chat_repository", chat_resource)
     return await http_server.dispatch_request(
-        AppConfig(internal_secret_agent=SecretStr("test-only-secret")),
+        AgentHttpConfig(internal_secret_agent=SecretStr("test-only-secret")),
         "GET",
         "/v1/runs/run-1/events",
         query,

@@ -245,6 +245,7 @@ def _request(**extra: JsonValue) -> dict[str, JsonValue]:
         "run_id": "r1",
         "session_id": "s1",
         "feature_key": "chat",
+        "project_ref": None,
         "selected_skill_source_refs": [],
         "execution_identity": _IDENTITY,
         "input": {"message_id": "m1", "content": "hi"},

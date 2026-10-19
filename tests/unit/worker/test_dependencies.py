@@ -29,7 +29,7 @@ async def test_default_worker_clients_leave_agent_core_available() -> None:
     clients = WorkerClients()
     assert not hasattr(clients, "skill_client")
     assert not hasattr(clients, "skill_reader")
-    assert clients.mcp is None
+    assert not hasattr(clients, "mcp")
     assert clients.delivery is None
     assert clients.model_resolver is None
 
@@ -50,7 +50,7 @@ async def test_standard_worker_constructs_storage_adapter_when_configured() -> N
         assert client is None
 
 
-async def test_worker_requires_explicit_system_and_gateway_configuration() -> None:
+async def test_worker_requires_explicit_system_configuration() -> None:
     with pytest.raises(ValueError, match="System"):
         async with worker_model_resolver(AppConfig.from_env({}), None):
             raise AssertionError("unconfigured worker must not become ready")
@@ -61,9 +61,6 @@ async def test_worker_constructs_real_system_resolver() -> None:
         {
             "KOKORO_SYSTEM_BASE_URL": "http://system.test",
             "KOKORO_INTERNAL_SECRET_AGENT": "internal-secret",
-            "KOKORO_LITELLM_ENABLED": "1",
-            "KOKORO_LITELLM_BASE_URL": "http://gateway.test",
-            "KOKORO_LITELLM_API_KEY": "gateway-secret",
             "KOKORO_SYSTEM_TIMEOUT_S": "2",
         }
     )
@@ -92,8 +89,10 @@ def test_worker_dependencies_has_one_required_runtime_policy() -> None:
     assert names["manifest"].default is MISSING
 
 
+@pytest.mark.parametrize("compatible", [True, False])
 async def test_real_worker_composition_sends_same_policy_to_factory_and_supervisor(
     monkeypatch: pytest.MonkeyPatch,
+    compatible: bool,
 ) -> None:
     from contextlib import asynccontextmanager
     from collections.abc import AsyncGenerator
@@ -133,12 +132,28 @@ async def test_real_worker_composition_sends_same_policy_to_factory_and_supervis
         return Mock()
 
     monkeypatch.setattr(module, "AgentFactory", factory)
+    model_repository = Mock()
+    model_repository.assert_current_producer_ready = AsyncMock(
+        side_effect=None
+        if compatible
+        else RuntimeError("legacy model attempts block startup")
+    )
+    monkeypatch.setattr(
+        module, "PostgresModelCallRepository", Mock(return_value=model_repository)
+    )
     supervisor = Mock()
     supervisor.serve = AsyncMock(return_value=None)
     supervisor_constructor = Mock(return_value=supervisor)
     monkeypatch.setattr(module, "RunSupervisor", supervisor_constructor)
     monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", Mock())
+    if not compatible:
+        with pytest.raises(RuntimeError, match="legacy model attempts"):
+            await module.serve(config)
+        assert captures == []
+        supervisor_constructor.assert_not_called()
+        return
     await module.serve(config)
+    model_repository.assert_current_producer_ready.assert_awaited_once_with()
     assert len(captures) == 1
     policy = captures[0].runtime_policy
     assert policy.run_token_budget == 71

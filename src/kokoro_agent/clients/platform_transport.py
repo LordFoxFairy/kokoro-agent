@@ -16,6 +16,10 @@ from pyqwest import Client, HTTPTransport, Request, Response, Transport
 from kokoro_agent.clients.platform_tokens import validate_owner_url
 from kokoro_agent.execution.platform_request_binding import project_request_binding
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
+from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as runtime
+from kokoro_agent.generated.kokoro.platform.v1.mcp_runtime_connect import (
+    McpRuntimeServiceClient,
+)
 from kokoro_agent.generated.kokoro.platform.v1.platform_runtime_connect import (
     McpAuthorizationServiceClient,
     McpConnectionServiceClient,
@@ -24,28 +28,40 @@ from kokoro_agent.generated.kokoro.platform.v1.platform_runtime_connect import (
 )
 
 PlatformRequest: TypeAlias = (
-    pb.ResolveVisibleSkillRequest
+    pb.DiscoverVisibleSkillsRequest
+    | pb.ResolveVisibleSkillRequest
     | pb.GetApprovedSkillPackageReferenceRequest
     | pb.GetMcpConnectorRequest
+    | pb.ListMcpServerDeclarationsRequest
     | pb.GetMcpConnectionRequest
     | pb.ListMcpConnectorCapabilitiesRequest
     | pb.AuthorizeMcpToolRequest
+    | runtime.ResolveMcpRuntimeConnectionRequest
+    | runtime.AcquireMcpRuntimeCredentialRequest
 )
 PlatformResponse: TypeAlias = (
-    pb.ResolveVisibleSkillResponse
+    pb.DiscoverVisibleSkillsResponse
+    | pb.ResolveVisibleSkillResponse
     | pb.GetApprovedSkillPackageReferenceResponse
     | pb.GetMcpConnectorResponse
+    | pb.ListMcpServerDeclarationsResponse
     | pb.GetMcpConnectionResponse
     | pb.ListMcpConnectorCapabilitiesResponse
     | pb.AuthorizeMcpToolResponse
+    | runtime.ResolveMcpRuntimeConnectionResponse
+    | runtime.AcquireMcpRuntimeCredentialResponse
 )
 _ALLOWED = (
+    pb.DiscoverVisibleSkillsRequest,
     pb.ResolveVisibleSkillRequest,
     pb.GetApprovedSkillPackageReferenceRequest,
     pb.GetMcpConnectorRequest,
     pb.GetMcpConnectionRequest,
+    pb.ListMcpServerDeclarationsRequest,
     pb.ListMcpConnectorCapabilitiesRequest,
     pb.AuthorizeMcpToolRequest,
+    runtime.ResolveMcpRuntimeConnectionRequest,
+    runtime.AcquireMcpRuntimeCredentialRequest,
 )
 
 
@@ -157,6 +173,7 @@ class PlatformTransport:
         self._connectors = McpConnectorServiceClient(self._url, **options)
         self._connections = McpConnectionServiceClient(self._url, **options)
         self._authorization = McpAuthorizationServiceClient(self._url, **options)
+        self._runtime = McpRuntimeServiceClient(self._url, **options)
         self._closed = False
 
     async def __aenter__(self) -> Self:
@@ -177,6 +194,7 @@ class PlatformTransport:
             self._connectors,
             self._connections,
             self._authorization,
+            self._runtime,
         ):
             await client.close()
         await self._pool.aclose()
@@ -189,6 +207,10 @@ class PlatformTransport:
         headers = {"authorization": f"Bearer {token}"}
         try:
             match request:
+                case pb.DiscoverVisibleSkillsRequest():
+                    return await self._skills.discover_visible_skills(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
                 case pb.ResolveVisibleSkillRequest():
                     return await self._skills.resolve_visible_skill(
                         request, headers=headers, timeout_ms=timeout_ms
@@ -209,8 +231,20 @@ class PlatformTransport:
                     return await self._authorization.list_mcp_connector_capabilities(
                         request, headers=headers, timeout_ms=timeout_ms
                     )
+                case pb.ListMcpServerDeclarationsRequest():
+                    return await self._connections.list_mcp_server_declarations(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
                 case pb.AuthorizeMcpToolRequest():
                     return await self._authorization.authorize_mcp_tool(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case runtime.ResolveMcpRuntimeConnectionRequest():
+                    return await self._runtime.resolve_mcp_runtime_connection(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case runtime.AcquireMcpRuntimeCredentialRequest():
+                    return await self._runtime.acquire_mcp_runtime_credential(
                         request, headers=headers, timeout_ms=timeout_ms
                     )
         except ConnectError as error:

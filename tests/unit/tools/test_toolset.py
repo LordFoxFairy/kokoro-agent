@@ -50,7 +50,8 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
     from kokoro_agent.tools.toolset import resolve_declared_mcp
     from kokoro_agent.clients.mcp import McpClientError
     from kokoro_agent.agents.definition import Agent
-    from kokoro_agent.mcp.config import McpHttpServerConfig
+    from kokoro_agent.clients.mcp import McpConnectionRef
+    from kokoro_agent.domain.run.models import LeaseFence
     from kokoro_agent.protocol import (
         RunRequest,
         RunInput,
@@ -63,6 +64,7 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
         run_id="run",
         session_id="session",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",
@@ -73,21 +75,22 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
         input=RunInput(message_id="message", content="hello"),
     )
     assert (
-        await resolve_declared_mcp(request, Agent(key="base", prompt="base"), None, {})
-        == {}
+        await resolve_declared_mcp(
+            request,
+            Agent(key="base", prompt="base"),
+            None,
+            LeaseFence(owner="w", generation=1),
+        )
+        is None
     )
     with pytest.raises(McpClientError):
         await resolve_declared_mcp(
             request,
-            Agent(key="mcp", prompt="mcp", mcp=("local",)),
+            Agent(
+                key="mcp", prompt="mcp", mcp=(McpConnectionRef(connection_id="local"),)
+            ),
             None,
-            {
-                "local": McpHttpServerConfig(
-                    transport="streamable_http",
-                    url="https://mcp.test",
-                    allowed_tools=["search"],
-                )
-            },
+            LeaseFence(owner="w", generation=1),
         )
 
 
@@ -155,6 +158,7 @@ async def test_toolset_materialization_consumes_the_shared_plan(
         run_id="run",
         session_id="session",
         feature_key="chat",
+        project_ref=None,
         selected_skill_source_refs=(),
         execution_identity=ExecutionIdentity(
             tenant_ref="tenant",
@@ -171,8 +175,6 @@ async def test_toolset_materialization_consumes_the_shared_plan(
             agent=agent, toolbox=box, delivery_available=available
         ),
         toolbox=box,
-        mcp_servers={},
-        mcp_client=None,
         backend=Mock(spec=BackendProtocol),
         delivery=Mock(spec=DeliveryClient) if available else None,
     )

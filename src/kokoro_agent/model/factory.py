@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 from kokoro_agent.policy import ModelConfig
 
 from kokoro_agent.clients.system import ResolvedModel
+from kokoro_agent.model.credentials import ModelCredential, credential_for_provider
 from kokoro_agent.model.usage_observation import (
     observe_usage_response,
     observe_usage_response_async,
@@ -45,10 +46,8 @@ class ChatModelSettings(BaseModel):
     openai_reasoning: bool
     anthropic_api_key: SecretStr | None
     anthropic_base_url: str | None
-    # litellm 网关档：agent 只持网关地址与网关 key（单点凭据），绝不存任何底层 provider 凭据。
-    litellm_enabled: bool
-    litellm_base_url: str | None
-    litellm_api_key: SecretStr | None
+    model_credentials: tuple[ModelCredential, ...] = ()
+    model_allow_loopback_http: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,24 +58,23 @@ class ModelHttpClients:
     route: ResolvedModel
     sync: httpx.Client = field(init=False, repr=False)
     async_client: httpx.AsyncClient = field(init=False, repr=False)
-    endpoint: httpx.URL = field(init=False)
+    endpoint: httpx.URL = field(init=False, repr=False)
+    credential: SecretStr = field(init=False, repr=False)
     _close_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.route.__post_init__()
-        base = httpx.URL(self.settings.litellm_base_url or "")
-        if (
-            self.route.transport != "litellm"
-            or not self.settings.litellm_enabled
-            or self.settings.litellm_api_key is None
-            or not self.settings.litellm_api_key.get_secret_value().strip()
-            or base.scheme not in {"http", "https"}
-            or not base.host
-            or base.userinfo
-            or base.query
-            or base.fragment
-        ):
-            raise ValueError("invalid owned model transport")
+        base = httpx.URL(self.route.connection.base_url)
+        if base.scheme == "http" and not self.settings.model_allow_loopback_http:
+            raise ValueError(
+                "HTTP model loopback requires explicit deployment permission"
+            )
+        credential = credential_for_provider(
+            self.settings.model_credentials,
+            self.route.provider_id,
+            self.route.connection.secret_handle_ref,
+        )
+        object.__setattr__(self, "credential", credential)
         endpoint = httpx.URL(str(base).rstrip("/") + "/chat/completions")
         object.__setattr__(self, "endpoint", endpoint)
         sync = httpx.Client(
@@ -109,7 +107,7 @@ class ModelHttpClients:
             endpoint=str(request.url),
             expected_endpoint=str(self.endpoint),
             headers=request.headers.multi_items(),
-            model_name=self.route.gateway_model_name,
+            model_name=self.route.request_model,
             max_output_tokens=self.route.max_output_tokens,
         )
 
@@ -182,36 +180,35 @@ def make_chat_model(
     *,
     model_clients: ModelHttpClients | None = None,
 ) -> BaseChatModel:
-    if model_clients is not None and (
-        model.provider != "litellm"
-        or model_clients.settings != settings
-        or model_clients.route.transport != model.provider
-        or model_clients.route.gateway_model_name != model.name
-        or model_clients.sync.is_closed
-        or model_clients.async_client.is_closed
-    ):
-        raise ValueError("model clients conflict with authenticated route")
+    if model_clients is not None:
+        if (
+            model.provider != model_clients.route.connection.protocol
+            or model_clients.settings != settings
+            or model_clients.route.request_model != model.name
+            or model_clients.sync.is_closed
+            or model_clients.async_client.is_closed
+        ):
+            raise ValueError("model clients conflict with authenticated route")
+        return _build_openai_compatible_model(settings, model, model_clients)
+    if model.provider == "openai_chat_completions":
+        raise ValueError("routed protocol requires owned model clients")
     if model.provider == "openai":
         return _build_openai_model(settings, model)
     if model.provider == "anthropic":
         return _build_anthropic_model(settings, model)
-    if model.provider == "litellm":
-        if model_clients is None:
-            raise ValueError("litellm requires owned model clients")
-        return _build_litellm_model(settings, model, model_clients)
     raise ValueError(f"unsupported model provider: {model.provider!r}")
 
 
 def model_from_route(route: ResolvedModel, declared: ModelConfig | None) -> ModelConfig:
     """Map an authenticated owner result; a static declaration may only narrow it."""
     if declared is not None and (
-        declared.provider != route.transport
-        or declared.name != route.gateway_model_name
+        declared.provider != route.connection.protocol
+        or declared.name != route.request_model
     ):
         raise ValueError("declared model conflicts with System route")
     return ModelConfig(
-        provider=route.transport,
-        name=route.gateway_model_name,
+        provider=route.connection.protocol,
+        name=route.request_model,
         effort=declared.effort if declared is not None else None,
         thinking=declared.thinking if declared is not None else None,
     )
@@ -286,25 +283,14 @@ def _build_anthropic_model(
     )
 
 
-def _build_litellm_model(
+def _build_openai_compatible_model(
     settings: ChatModelSettings, model: ModelConfig, clients: ModelHttpClients
 ) -> BaseChatModel:
-    if not settings.litellm_enabled:
-        raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_ENABLED=1")
-    # litellm 网关档 = OpenAI 兼容客户端指向网关。model.name 是网关侧 model_name（路由别名），
-    # 非底层真实 model id；凭据只有网关地址 + 网关 key，底层 provider key 由网关自己持有。
-    # 缺网关地址或网关 key 即"未配网关"，fail-loud——绝不让 ChatOpenAI 回落 OPENAI_API_KEY 环境变量
-    # （否则会把无关的 openai 直连 key 当网关 key 发出，既错也泄）。
-    if settings.litellm_base_url is None:
-        raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_BASE_URL")
-    if settings.litellm_api_key is None:
-        raise ValueError("model.provider=='litellm' requires KOKORO_LITELLM_API_KEY")
-    # thinking/effort 按 OpenAI 兼容语义尽力透传 reasoning_effort（网关转发底层 provider）；
-    # 底层不支持则网关侧忽略，此处不臆造语义。
+    """One protocol implementation for direct and optional LiteLLM connections."""
     return ChatOpenAI(
         model=model.name,
-        api_key=settings.litellm_api_key,
-        base_url=settings.litellm_base_url,
+        api_key=clients.credential,
+        base_url=clients.route.connection.base_url,
         disable_streaming=settings.disable_streaming,
         max_retries=0,
         max_completion_tokens=clients.route.max_output_tokens,

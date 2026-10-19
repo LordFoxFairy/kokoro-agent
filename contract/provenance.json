@@ -3,8 +3,8 @@
   "contract": "openapi/v1/openapi.json",
   "source_files": [
     "contract/openapi/v1/openapi.json",
-    "contract/execution-proof/v1/schema.json",
-    "contract/execution-proof/v1/vectors.json",
+    "contract/execution-proof/v2/schema.json",
+    "contract/execution-proof/v2/vectors.json",
     "src/kokoro_agent/protocol/control.py",
     "src/kokoro_agent/protocol/events.py",
     "src/kokoro_agent/protocol/streams.py",
@@ -13,15 +13,16 @@
     "src/kokoro_agent/chat_contract_check.py",
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
-    "src/kokoro_agent/system_consumer_contract.py"
+    "src/kokoro_agent/system_consumer_contract.py",
+    "src/kokoro_agent/usage_history_contract.py"
   ],
-  "combined_sha256": "36780452c1f1e851674d8880d0367d11aabd7ea33a81cb2484424a20ab1aabd8",
+  "combined_sha256": "18e688d450ca351acc2f6706f87a70d668aad0ca9c0b2ffdc022bb106bab17a6",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
-      "sha256": "f973afcc2d3aa42ad0dc31f413db0f07ed3e9972cf9df9814f08fb1c6d25f82d",
+      "sha256": "48a638be93289b58f082335d2a455fc84301792cc76635c7ae201c507b369b35",
       "source": "contract/openapi/v1/openapi.json",
-      "source_sha256": "475e5489a5d4b2895d10db286a28aa7ccbabb63c2afcb4faf6dc253d96b3902d",
+      "source_sha256": "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3",
       "generator": "scripts/generate_failure_models.py"
     }
   ],
@@ -30,22 +31,23 @@
     {
       "owner": "kokoro-system",
       "contract": "contract/openapi/system.openapi.json",
-      "version": "3.0.0",
-      "source_commit": "955bd587f46a771e43a4330d202d90a7d2d67262",
-      "sha256": "94ed91655741cbba66ce80a4c41717b9179cc509cb6858534e0b78aa3e6dc059",
+      "version": "4.0.0",
+      "source_commit": "7f479f654c535077874d9cf63d1b25437e9420b6",
+      "sha256": "c7cda9d09db266cd26dc1b80dfe9bb95c3c9f6a91bdbd6c5d7de4f85295d1dc6",
       "provenance": {
         "path": "contract/provenance.json",
-        "sha256": "5fda620ca1526f57d8759b2c6282ed6d674455a78e8ff9ee7fc0522e8f5a3832"
+        "sha256": "37e338939ebecc4a61cf7aff4d14c2e28b5bc34381e66324a2009988e793d2d0"
       },
       "source_sha256": {
-        "scripts/generate-system-openapi.ts": "4830a6c594255984261efe2907c17cd4e63df4b28d10c2ef1cf65c8e61287890",
+        "scripts/generate-system-openapi.ts": "6cbbbfa18ac42511048dc8543605da6dd2087d40fc094212ee51d1cbf43d1dae",
         "scripts/system-openapi-operations.ts": "fb46bea2ec53a09c0f397d2f38aafc77a1c6e7eaef904b11667d56fda919d9f3",
         "src/http/protocol.schema.ts": "72dbe6ee57d842b855b337d1f1603a7ddbb8c3a4bb6c4f7bf3fe62821c8160c0",
+        "src/modules/model-catalog/schemas/connection.schema.ts": "7d9efcaeb0d4d8725b50e2e2da95d37f9c64094ecbe99143aba3076df615ab03",
         "src/modules/model-catalog/schemas/definition.schema.ts": "e2063b9ae62b8e5c4ca7cccce09dd4874f818831fc8966de2cf6d015a99bef64",
         "src/modules/model-catalog/schemas/label.schema.ts": "96116b4d390e203be056f73e32a30ea93e40dc0c60966ce60579cdb949f31a6a",
-        "src/modules/model-catalog/schemas/provider.schema.ts": "f33d4aaa5bd34ff7008712ecda8f27c0c8769830652ada7df60f184e3961c57c",
-        "src/modules/model-catalog/schemas/resolve.schema.ts": "31b6d275c9187b3592ff402b3b3bef3da3b83629ffe53896050a8129310b1b74",
-        "src/modules/model-catalog/schemas/revision.schema.ts": "5d8559c0d4bac7e88a3e54d753c30e87c0f070be05dae813a401afe2b1a5274b",
+        "src/modules/model-catalog/schemas/provider.schema.ts": "ad07f69888f9cac1a263af81b70648381e19bbbd6f771c107eaa09b429099373",
+        "src/modules/model-catalog/schemas/resolve.schema.ts": "9d0786377b08c1f1e55c62f5821b85f4a6dc76a52a9ef70fea05e0243231e8b8",
+        "src/modules/model-catalog/schemas/revision.schema.ts": "ad96204bc69d4310a0a44d67539921edc57076e9724a160170cb9abdf7ccae5a",
         "src/modules/products/products.public.ts": "ccea3298f5ca5549d7882ce056e8bbb3445d23a9e1703958bd4b0a220882983e",
         "src/modules/products/schemas/application.schema.ts": "087d997360add9b9bbb2e244c1b1f9864fc6cf4ba93a7c9e8c14767288ca6a57",
         "src/modules/products/schemas/config.schema.ts": "92324f19fd4e39fdf2cef0a4a28f9e43f8b70c09fd5290e8153035a5a2aa2060",
@@ -64,19 +66,19 @@
     }
   ],
   "execution_proof": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "schema": {
-      "path": "contract/execution-proof/v1/schema.json",
-      "sha256": "264f2a86230ccdc20c46ff8664407c2a6f382c664970539274cca569f178ab5f"
+      "path": "contract/execution-proof/v2/schema.json",
+      "sha256": "d10b547d1a2be7db837e36b2399b05296b30861bc0ef23b3b7547d269a4d95c4"
     },
     "vectors": {
-      "path": "contract/execution-proof/v1/vectors.json",
-      "sha256": "a65b9b4a1c6da8c25bf012ec0aa9c04de037f5e166c1cd7cbee7df340dc17c41"
+      "path": "contract/execution-proof/v2/vectors.json",
+      "sha256": "73e548b49538d0a3d0493207583b7c2822daeb1bea5b35c739e945fe795aa624"
     }
   },
   "http_contract": {
-    "version": "5.0.0",
+    "version": "7.0.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "475e5489a5d4b2895d10db286a28aa7ccbabb63c2afcb4faf6dc253d96b3902d"
+    "sha256": "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3"
   }
 }

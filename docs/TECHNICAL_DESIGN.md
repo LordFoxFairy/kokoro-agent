@@ -1,3 +1,133 @@
+## 内部通知重试收敛（2026-10-19，本地验证，未激活）
+
+沿已接受ADR-003：PG Run/outbox/Chat是事实，Redis只作可丢失通知，BFF通过HTTP Chat补读。只退休published等待外部ACK的周期重发及其宽限配置/返回字段；queued仍按原identity先恢复Chat再发布、成功才标published。started/delivery保原两事务补偿，terminal保原原子提交；control私有回执不冒公开Chat。
+
+无receipt也无manifest是未参与旧回执账本的正常状态，不报丢失；已有receipt却缺manifest、或缺Run仍报真实损坏，rejected仍原子隔离。原watermark GC、active delivery映射、Run TTL、sandbox cleanup/resume intent围栏均不改变，不提前删published、Chat或历史回执，不补造manifest/ACK或新增网关/API/表。删除闲置outbox_republish_ms配置和republish内部结果，不保alias。只在原Agent模块/测试内改，BFF无需配对新协议。以真实PG/Redis无人工seed主路径、历史损坏负控、queued恢复和原终态/清理回归验证；正常worker仍停用。
+
+真实HTTP验收从正式launch读取持久派发，真实PG/Redis＋仅产出本地文本的FakeAgent自然终态；自有通知key expire后两次heartbeat不复活、不更改published行、不误报receipt_state_lost。按原Run TTL回收Run/outbox后，HTTP Chat全页、游标和身份隔离仍保持。此例旧HEAD首次heartbeat真实失败，当前与历史损坏/GC/control负控16PASS；未运行模型、外部工具或正常worker。Root旧Storage smoke另有旧API与Storage v2缺口，不作为本片入口、不恢复alias。
+
+## D6-B 明确 Connection 的正式 Agent 装配（2026-10-18，本地候选）
+
+承接用户确认：Agent.mcp只接受受信代码中的McpConnectionRef(connection_id)，静态recipe/profile保存闭集Connection记录，字符串名称不再解析；inspect仅展示ID。删除部署YAML/command registry、shared-secret secret-resolver和可注入的旧MCP client/deployment字段，保留原HTTP egress策略。没有新owner、RPC、Run字段、数据表或网关。
+
+WorkerPlatformRuntime按LeasedRun构建同一token/proof/Connect的PlatformMcpClient，strict dispatch只新增既有ListMcpServerDeclarations第九项。每次发现/调用先核当前Connection/Connector；该read使用limit=1、最多32页，Server/capabilities对应同一entry并取owner完整digest，不用global-only GetServer或重组聚合digest。候选为当前allowed工具与已批scope交集，单工具缺scope不使其它工具失效；无跨调用授权/metadata/credential缓存。
+
+调用ID只来自既有tool journal ContextVar；idempotency含Run＋call ID。首次owner I/O前冻结完整参数JSON bytes和深快照，原bytes分别用于Authorize、Acquire与digest，SDK只接同一快照。参数使用标准有限JSON序列化，保留合法大整数，不套用proof安全整数或schema的IEEE754域。无正式approval证据时不构造approval_ref；owner仍最终拒绝未获准调用。原grant/当前target/digest/TTL核验后Resolve→Acquire invocation→标准SDK session→实时工具schema核验→一次tools/call。发现只取discovery材料，绝不用于invoke。MCP isError记录为journal failed；取消、过期或已发调用HITL保留unknown outcome，不自动重发。
+
+schema摘要单独复现owner finite ECMAScript Number域/UTF-16排序后JCS；Node bigint边界交叉核验，不修改proof encoder。包/HTTP/stdio由上一片具名session持资源，关闭/取消释放；HTTP默认strict且不读取环境代理，loopback off仅隔离fixture。生产配置/服务尚未重载；真实IAM/Platform/Storage组合、正式approval准入和页面完整操作仍为后继，不把受控owner端口测试冒全链完成。
+
+## D6-B 当前材料到标准 SDK session（2026-10-18，生产声明接线后继）
+
+复用上一门的 Runtime1.1 pin。本片仅实现有界内容/传输及 session 生命周期：原 Skill ZIP/GET 基元提取到具名 archive/transport，保留原 Skill 策略和向量；MCP独立严格 mcp.json、完整文件 SHA/portable path/执行位与外层 SHA/入口核验。每份当前材料只存在一次 SDK session：下载期限/大小/签名 origin 和受控 header，标准 stdio 临时目录/入口，或 HTTP strict egress；结束、取消和 GraphInterrupt 先关闭 SDK/子进程再删目录，丢弃解码的 credential 引用，不声称 Python immutable bytes 物理归零。无重试、长期工具 cache、部署命令拼装或新 owner/Schema。
+
+MCP tools/call 已发送后的 elicitation 不是零副作用证明：保留 journal started 为 unknown outcome，恢复不自动重发原调用；一般本地前置暂停保持原语义。GraphInterrupt 在 SDK task group 退场后原样传播，不变成通用异常组或成功结果。
+
+用户本轮已确认下一片将受信 Agent 声明改为明确 Connection 引用、删除旧名称/YAML回退。选择由 Agent代码持有，不新增Run/body字段；现GetConnection/GetConnector与原v4 ListMcpServerDeclarations精确读取当前目标和完整Server digest（GetServer只支持global，不能拿来读private）。仅新增第九个正式既有读dispatch，不造列表RPC或自行拼declaration digest。该声明/worker/per-invoke grant接线尚未实施，不把本片session组件称为完整managed工具链或正常激活。
+
+## D6-B Agent Runtime 固定消费实施门（2026-10-18）
+
+依赖为Platform c3decfd runtime-material-v1 1.1及IAM c05c646（两exact操作已固定）。Agent只消费现Runtime两读与原Connector/Connection/Authorize，沿当前LeasedRun token/proof supplier，不新增owner/RPC/身份/Schema/模型或计费调用。现正式MCP读取仅Protocol、worker尚未提供实现，不把部署YAML或过去本地live测试当受管执行链已通。
+
+### 唯一Proto与发行物
+
+当前Agent主Proto固定6a09913，新增Runtime导入当前Platform主Proto。对比确认主Proto截至c3decfd仅增加定义/字段，没有删改旧行。采用单一canonical主Proto升级至c3decfd，正规生成同一package全部Python类型与stubs；不并排旧模块、不手改生成物、不另造HTTP客户端。common Proto保原SHA；原v4 execution binding树和Skill package profile保持独立原commit/SHA，顶层Proto owner pin与execution artifact pin分别命名其职责，不用单个旧commit冒两个事实。新增Runtime原始profile/完整descriptor/request vectors和profile输入的原始源字节固定到同一c3decfd，实际使用的wrapper/已消费消息与父图做字节/语义对照。build-only checker/generator/package audit覆盖完整闭包，不在运行路径读仓外文件。
+
+### 请求、传输与当前能力边界
+
+在现唯一project_request_binding入口承接两个exact generated请求，与原24操作共用binding_version=3/JCS和受信tenant；新Runtime投影按owner固定源/向量核原bytes SHA、显式approval presence、用途oneof和闭集/界限，proof不入摘要。生成/边界分工按当前模块，不使用prefix放行、JSON修补或手写第二套wire。RunPlatformClient/PlatformTransport同一租户token池及fresh proof/deadline/取消/错误脱敏扩展新两方法，严格dispatch闭集从6到8，不把生成stub中其他新增管理RPC开放。旧6操作正向/负控与原请求摘要保持。
+
+后续run-bound MCP reader从owner当前Connector/Connection/capability候选建立精确target，Resolve/Acquire不得由模型自报tenant/run/URL/command/env；每次发现或invoke重验当前引用，invoke必须原grant/arguments/approval/idempotency，不把discovery材料用于call。HTTP仅按当前owner规范endpoint/header；stdio按原runtime_artifact_ref、source版本、ZIP SHA、size与entrypoint核下载。共享既有受控ObjectStore origin/无cookie或bearer/禁止redirect/有界GET原语，MCP有独立manifest与安全解包/逐文件hash/入口验证，不借Skills授权。无任意命令fallback；临时目录和环境仅属同Run，退出/取消/超时/HITL及时关session/回收子进程/清材料。
+
+### 本片顺序与验收
+
+1. 先固定唯一Proto/Runtime发行物与正规生成、原消费者保持；新增Runtime请求proof向量及Native client往返，用现私有env和受控owner验证后提交。
+2. 再接精确读取/下载/包校验与现稳定三MCP工具，清除对应旧部署旁路/长期材料cache，保持允许工具集和Run/HITL/取消/幂等保障；未知结果不自动重发call。
+3. 受控本地标准MCP fixture验initialize/list/call与声明摘要、准入/撤权/过期/重放/取消/超时/回收，随后跨owner真实组合与产品页面对照。完整Python门和相关真实I/O证据绑定最终commit，生成/单测不冒整链成功。
+
+写区为现contract/platform/v1、唯一Platform generator/build-only checker/包audit，execution请求投影、clients现传输/独立runtime读取、mcp现工具与package校验、worker当前装配及具名原测试/必要文档；数据Schema/模型/计费/聊天/项目及其他owner不动。正常Agent/配置/服务、模型/实际外部工具/扣费/CI/远端仍暂停；已有D6授权只在本地受控fixture开展生命周期验证，正式执行启用另按产品配对确认。未完成项明确保留，不将设计或生成类型称产品完成。
+
+## 项目可信执行接线（2026-10-17，按已确认方案）
+
+RunRequest/Launch以required nullable project_ref保存canonical项目，trace不授权限。现request_json原子冻结与幂等保持，无新表。per-lease supplier从durable request/identity计算原有序refs的UTF8紧凑JSON SHA256，签入proof2 execution_binding（稳定identity_assertion_ref、nullable project_ref、selection_digest）。非Run可显式null；三项SkillSource读由IAM要求完整绑定并在线BFF核当前事实，Platform只核该项目安装与原exact allowlist。原DIRECT_USER_CURRENT、lease、取消、unknown/FIFO不删，不新增网关、不激活模型/Tool/Billing或冒ADR035 barrier完成。
+
+## 当前 Skills 与 MC-01 组合（2026-10-17，本地验证中）
+
+保留System4/provider-bound连接与usage2/HTTP6及显式历史reader，同时消费Platform当前SKILL.md包profile1.1与精确原生发现。无新owner、协议版本、Schema或依赖；旧manifest.json校验器及异常测试随已批准profile退休，不恢复兼容解析。两条源分支已独立验证，但组合尚未验收，不激活正常worker或模型发送。下列是各分支历史记录。
+
+## 2026-10-17 exact Skill 原生发现（既定模型内修复）
+
+当前锁定DeepAgents0.6.6按name去重且要求frontmatter闭合行后有换行；这不是Platform的包身份或选择规则。修复只落skills backend/middleware与factory接线：每个已解析exact选择使用独立的原生SkillsMiddleware发现，再按原选择顺序合并metadata并核完整路径覆盖；仍使用SDK公开parser、prompt和state，不导入私有函数或另写YAML parser。发现专用只读backend在已重新授权、原包/Markdown身份验证后向SDK提供追加一个行终止符的文本视图；工具backend和所有下载/正文仍返回原始bytes，不重写包、不创建别名或覆盖同名选择。
+
+发现view不对模型/工具开放，不缓存授权或bytes；每项仅有一个已解析exact来源，避免整目录重复扫描造成平方级下载。错误/撤权/取消仍中止于模型前，原durable failed边界保留。无新owner/API/Schema/依赖或正常服务变更。复用原factory/skills测试，先验证EOF与同名两个正向失败，再核原文、撤权、Run刷新及HITL。正常Run/Billing授权和产品整链仍独立验收。
+
+## 2026-10-17 当前 Skill 包消费切换（profile 1.1.0 候选已实现）
+
+### Owner 与固定发行
+
+基线84502e6。独立固定 Platform `e1b5484f162a42652bbc576cebb0f48f52809272` 的 skill-package-profile-v1/1.1.0 与vectors；原v4 Proto/request projector/24 execution proofs继续精确固定其原发行，六个Skill source/download message定义与当前owner逐字节相等。本片不虚构v11、不激活新RPC/任意active图，也不导入sibling源码。generator/hash checker和wheel audit inventory同片承接两份新artifact，generated RPC输出无需改变。
+
+### 单一 metadata 事实与本进程安全
+
+Platform唯一裁决FAILSAFE frontmatter业务合法性及当前资格；Agent每次read重新取Approved并核asset/contentSHA/manifest三绑定，既有传输先验完整ZIP SHA。随后纯validator保ZIP32、CRC、路径/NFC、结构/目录、展开与根1MiB/UTF8预算，最后比较原始SKILL.md身份并原字节只读返回。删除旧manifest.json/schema1解析和无用skill_id/revision参数，不合成文件、不做zip-v1/v2 fallback，不缓存bytes或授权。
+
+最初PyYAML重复业务校验候选在70个合成差分中误拒两个owner合法NEL边界；另试ruamel也非即插等价，均已删除，无新依赖或lock变化。owner随后1.1.0正式区分全部30向量的owner验收与24个consumer安全向量，原archive/expected逐项不变；6个owner-only YAML反例继续由真实owner验证，不把重复业务解析误当下载授权。历史v4 ZIP归档仍精确审计，原ZIP结构类反例继续对当前validator执行，旧合法manifest不复活。ZIP与caller/tenant/lease撤权边界不因这个分层省略。
+
+### 原生加载覆盖与实际边界
+
+RunSkillsMiddleware保留DeepAgents官方parser/prompt；for_selected工厂固定本Run exact虚拟文件路径，graph entry清旧metadata后核结果路径集合及数量。遗漏、同名覆盖、未绑定选择显式停止于模型前；不把已声明选择静默降为空集。同步/异步、不同Run刷新和同RunHITL沿原边界，无新框架、协议、进程、Schema或权限；进度沿既有持久化边界。SDK合法owner包的EOF marker及同名选择仍可能被其parser跳过/覆盖，本片将这两种情况从静默继续改为确定失败，不声称已让所有owner合法格式都被SDK正向消费；该正向支持仍为后继。
+
+产品执行只用async v3：native异常经原Run绑定的可信progress sink写failed/skill_load_failed并验证durable ACK，复用execution.events中的原确认逻辑；禁止另造未持久的失败状态。ProgressPersistenceError原样传播，取消不转成业务失败。sync SDK hook只做覆盖守门、不声明durable phase。原preflight ready后发生native失败，BFF既有同anchor最新activity投影可接受failed，不加第二条网络协议或绕过lease/fence。
+
+原正常产品446字节根SKILL.md包在新纯validator与真实SDK GREEN，整体SHA与原Markdown身份精确不变；受控reader不代表正常Run准入/模型执行或产品全验收。最终完整pytest为2350 PASS/1既存FAIL/759资源deselected，失败文件与基线相同，完整合并门未满足；其余工程门、codegen drift及仓外installed-wheel合同/同包检查通过，详见CURRENT。所有验证使用自有隔离env，原共享.venv的旧editable指向及正常Agent服务保持原样，不以错误checkout的import冒当前runtime成功。无真实模型/Tool/Billing请求，远端与Root gitlink暂停。
+
+## MC-01：默认直连与可选 LiteLLM 的 Agent 设计门（2026-10-16；已批准，历史契约前置已实现）
+
+用户已批准 Agent 默认直接请求配置的模型地址，LiteLLM 是受支持的可选连接。当前 `84502e6` 的 System client、worker 启动门和 factory 仍仅支持 System `transport=litellm`；临时启动器曾把外部 URL/key 注入 KOKORO_LITELLM_*。本节不宣称该限制已解除。
+
+System 拥有模型/技术连接与发布 revision；Agent 消费固定 owner artifact，拥有实际模型请求、取消、attempt 与 usage；Billing 继续独占资金准入/结算。Browser/BFF 不取得模型密钥，不增加中间代理进程。目标选择已批准的协议适配器加显式连接，而非让 ModelConfig.provider 同时表示协议和 LiteLLM 部署。
+
+首片以既有 OpenAI-compatible Chat Completions 为执行协议，同时支持 direct 和 litellm 连接；共享 owned HTTPX/SDK wire 校验与生命周期。无 LiteLLM 配置不阻止 direct。既有非正式原生模型构造保留，但不自动获得 System 路由/其他 API 的正式能力声明。
+
+System 返回与 revision/digest 绑定的连接快照。Agent 从其完整 base URL 与协议资源规则得到唯一 endpoint，不再依赖全局 gateway URL；不再把 provider 名称、请求模型名和网关别名互相猜测。相同 path、不同地址/账户必须保持独立连接。secret reference 仅由 worker 部署侧解析，不进入 HTTP root 配置、普通 API、日志、持久证据或 BFF；凭据与 provider 绑定不符、缺失、配置损坏均在发送前失败。
+
+保留 trust_env=False、禁止重定向、SDK 自动重试为零、最终 endpoint/model/body/output cap 验证、每次新发送独立 attempt、取消有限 join 与 fatal 处理。网关失败不自动切 direct、账户或模型。直连连接同样需要正式 Billing 授权；现 prepare 后缺资金 consumer 的拒绝路径继续生效。
+
+### 已批准 worker 凭据绑定的落地表示
+
+worker 启动配置只接 `KOKORO_MODEL_CREDENTIALS_FILE` 的规范绝对路径，读取一次进程私有快照；配置文件内不写密钥。文件为 strict `{version:"1.0.0", credentials:[{provider_id,secret_handle_ref,api_key}]}`，ref 是 System 的 opaque handle，不解释为 URL/文件/环境变量。每条 ref 唯一且必须同时匹配 route provider_id，缺失/错配发送前拒绝；没有默认账号、旧网关key或OPENAI_API_KEY回退。只读当前用户拥有的0400/0600普通文件，拒symlink、过大、重复JSON键和读中变更；错误不携文件/密钥原文。快照只传 worker 模型构造，不进入 HTTP 配置、runtime profile、usage 或日志；部署轮换需显式重启，不在调用中重绑定历史连接。
+
+System4连接值遵循 owner canonical URL；仅显式 `KOKORO_MODEL_ALLOW_LOOPBACK_HTTP` 才接受 HTTP loopback，默认HTTPS。完整base URL前缀后只追加协议资源`/chat/completions`，不猜测或去重`/v1`。direct/LiteLLM只区分连接拓扑，ModelConfig.provider 表示`openai_chat_completions`执行协议。旧全局KOKORO_LITELLM_*配置及yaml对应键随切换退役并明确拒绝；非正式native OpenAI/Anthropic声明保留原能力，不自动授予正式发送许可。
+
+### 必须先解决的契约影响
+
+PlannedBinding 并非只存在于 factory：现 canonical `contract/usage/v1/schema.json`、其 generated reader、call_artifacts/call_evidence、agent_factory 与 Billing pin 均含 provider_model_name/gateway_model_name。新生产路径以 request_model 替换 gateway 专属执行名称，保留 provider_model_name 的既有声明元数据与其余 planned/数量编码/actual/authorization/successor 语义。System provider/revision_id/digest 已定位不可变连接，final request digest 已包含 endpoint、planned digest 与真实 body hash，因此不把协议/拓扑/URL/secret reference 再复制到 usage planned。正式直连仍需最小 breaking usage 2.0.0 和 HTTP 6.0.0：新 planned 增加显式 binding_version=2.0.0，并以 request_model 替换 gateway_model_name；独立 v2 生成器更新 v2 reader/manifest，公共 provenance 沿既有入口更新，不手改生成物或改变冻结的 v1 生成链。
+
+历史 evidence 字节/hash 保持原事实；旧记录读取与新请求生产分开，严禁把解析失败当新旧 fallback。现证据外层已有 artifact_version，旧 planned_bytes 无独立版本标识，因此采用下表的明确分派和切换屏障，不新增版本表或仅为此新增版本列。
+
+| 记录 | Producer 与读取选择 | HTTP/下游与恢复 |
+| --- | --- | --- |
+| 已 sealed usage 1.0.0 | 原 producer 不再写入；按 evidence 自带 artifact_version=1.0.0 选择冻结 v1 schema/decoder，校验原字节/原 digest domain | 同一 evidence GET 返回原 bytes，envelope version 取已验证证据，不硬编码；新 HTTP6 reader 明确支持历史1与当前2 |
+| 旧未 sealed attempt | 切换前由旧 worker 在原 lease/fence 下完成取消/closure；旧 planned 只由旧 producer 解释 | 未全部 sealed 或仍有旧 worker/lease 时禁止启用新 producer；unknown/财务 pending 可保留于 sealed 证据，不被变成成功/免费 |
+| 新 usage 2.0.0 | 只由新 producer 写入；planned 的显式 binding_version=2.0.0 选严格 v2 decoder，缺失/非法不回退 v1 | 外层 artifact_version=2.0.0；v2 digest domain 与 canonical schema/manifest 固定；资金消费者 pin 后才有资格读新格式 |
+
+v1 schema/decoder 仅作为不可编辑的历史 artifact 保留；只有 v2 是新的可编辑事实源和执行生产格式，不维持两个可切换执行协议。HTTP envelope version 必须与解码出的 evidence version 一致；未知版本失败闭合。final_request_binding_version 仍专指未变的最终请求摘要格式，不借用为 usage/planned 版本。
+
+v2 首次写入前，仅在旧 schema/配置仍匹配且旧组合可恢复时允许回到旧部署；首次 v2 写入后禁止直接回滚到不识别 v2 的旧 worker/reader。失败时停止新 dispatch，保留当前版本的历史读取和未知记录，修复后前向恢复。具体资源/数据切换须独立授权，不以此表自动执行 DDL。
+
+实施顺序：两 owner 先冻结本节最小表示/历史读取及切换屏障 → System owner artifact → Agent 严格 route client/secret 配置/适配器 → Agent 正式 planned/evidence contract 及 durable producer/reader → 下游 pin → 本地启动器装配两种连接 → 隔离真实调用。后三者的运行启用依赖资金 consumer 正式接线；SDK→自有 HTTP peer 可独立验证 wire，但不是付费链验收。
+
+后继写区复用现 clients/system.py、config.py、worker/main.py、model/factory.py、agent_factory.py、model/call_*、request_profile 及既有 contract generator/tests，不建立新的 runtime/服务/共享 DTO 中心。原 KOKORO_LITELLM_* 全局配置一次退出（即使空值也拒绝），可选LiteLLM仅使用System连接快照和同一provider-bound凭据机制，不保留双读。
+
+用户已批准本设计。System4 owner 已在独立候选发布固定连接快照；Agent 技术接线继续按上述顺序实施，不重复申请设计确认。
+
+第一前置切片已把 v1 历史闭包固定到原 manifest 的完整字节 SHA-256。原 schema、vectors、generator、compiler、semantic decoder 与 generated model 都保持原路径和原字节；不复制一套旧源码，也不随新生成器重生历史 manifest。`usage_history_contract.py` 仅作为现有公共 contract checker 的只读发布校验：先核原 manifest 固定摘要，再调用原完整 source/生成物/语义向量检查。即使 schema 或向量被协调修改并重生一个自洽 manifest，公共检查仍拒绝，且失败不修复输入。新版生产格式后续必须使用独立 v2 路径，只有 v2 可编辑；本切片当前仍保留原 v1 producer，不冒称已切到 v2 或完成历史版本分派。
+
+后继前置切片已实现独立 `contract/usage/v2` schema/vectors/manifest、`generate_model_usage_v2_models.py`、`model_usage_v2_contract.py`、严格 v2 semantic decoder 和只读 generated model。v2 compiler 固定批准的 planned 精确形状、Opaque 非空/控制字符/UTF-8 上界及 evidence 版本，拒绝协调重生后的放宽。v2 不导入、转译或重生 v1；原公共 checker 显式校验历史 v1 与 v2，两份自有 audit inventory 合并进入已有 wheel/RECORD 闭包。3 正向、29 反向、10 successor pair 覆盖独立 digest domain、版本错配、旧字段、连接/凭据字段越界与 request_model 漂移。
+
+该 v2 artifact 仍是离线候选；producer、durable planned/evidence reader 与 HTTP 没有切换，公共检查支持两版不等于正式历史读取已完成。数据库、资金和正常运行不变。旧 checker 的 import 字符串/200 行数断言已退役；实际 schema/provenance 正负向验证承接其独有风险，不新增 UI suite。
+
+---
+
 ## R353-A-S06：Agent Artifact Delivery 固定 Storage v3（候选已实施；2026-10-08）
 
 ### 当前事实、必要性与边界

@@ -12,7 +12,7 @@ from kokoro_agent.model.call_artifacts import (
 )
 from kokoro_agent.model.factory import ModelHttpClients
 from kokoro_agent.model.usage_observation import claim_usage_request
-from kokoro_agent.protocol.model_usage_generated import PlannedBinding
+from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 
 class ModelHttpMechanismClients(ModelHttpClients):
@@ -35,7 +35,7 @@ def synthetic_final_digest(planned: PlannedBinding, content: str) -> str:
     """A named synthetic final-body capsule for persistence-only fixtures."""
     raw = json.dumps(
         {
-            "model": planned.gateway_model_name,
+            "model": planned.request_model,
             "n": 1,
             "max_completion_tokens": 1,
             "messages": [{"role": "user", "content": content}],

@@ -7,11 +7,15 @@ from typing import Any
 
 from deepagents import create_deep_agent
 
+from kokoro_agent.agents.native_profile import prepare_native_recipe
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
 
 
 def create_test_deep_agent(**kwargs: Any) -> AgentRunnable:
     """Build the real upstream graph and validate the call surface used by GA tests."""
 
+    # Test graphs must use the same approval boundary as worker-built graphs.
+    # An upstream lazy bootstrap first would poison later production recipe checks.
+    prepare_native_recipe()
     candidate: object = create_deep_agent(**kwargs)
     return require_agent_runnable(candidate)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Literal, Protocol, Self
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -18,6 +18,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     model_validator,
+    field_validator,
 )
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
@@ -52,6 +53,52 @@ class ModelResolutionError(Exception):
         super().__init__(code)
 
 
+class ModelConnection(BaseModel):
+    """Exact private System4 snapshot; protocol and topology are distinct."""
+
+    model_config = ConfigDict(
+        strict=True, extra="forbid", frozen=True, hide_input_in_errors=True
+    )
+    protocol: Literal["openai_chat_completions"]
+    connection_type: Literal["direct", "litellm"]
+    base_url: Annotated[str, StringConstraints(min_length=1, max_length=2048)] = Field(
+        repr=False
+    )
+    secret_handle_ref: Annotated[
+        str,
+        StringConstraints(
+            min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        ),
+    ] = Field(repr=False)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        if re.search(r"[\s\\?#]|%(?:2e|2f|5c)", value, re.IGNORECASE):
+            raise ValueError("invalid model connection")
+        try:
+            parsed = httpx.URL(value)
+        except httpx.InvalidURL:
+            raise ValueError("invalid model connection") from None
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.host
+            or parsed.host.endswith(".")
+            or parsed.userinfo
+            or "//" in parsed.path
+            or (
+                str(parsed) != value
+                and not (parsed.path == "/" and str(parsed) == value + "/")
+            )
+            or (
+                parsed.scheme == "http"
+                and parsed.host not in {"localhost", "127.0.0.1", "::1"}
+            )
+        ):
+            raise ValueError("invalid model connection")
+        return value
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ResolvedModel:
     model_id: str
@@ -62,12 +109,12 @@ class ResolvedModel:
     generation: str
     tenant_generation: str
     provider_model_name: str
-    gateway_model_name: str
+    request_model: str
     feature_key: str
     label_key: str
     context_window: int
     max_output_tokens: int
-    transport: Literal["litellm"] = "litellm"
+    connection: ModelConnection = field(repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -99,11 +146,11 @@ class _Route(BaseModel):
     digest: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
     generation: _Generation
     tenant_generation: _Generation
-    provider_model_name: _Text
-    gateway_model_name: _Text
+    provider_model_name: str
+    request_model: _Text
     feature_key: _Text
     label_key: _Text
-    transport: Literal["litellm"]
+    connection: ModelConnection
     context_window: int = Field(gt=0, le=2147483647)
     max_output_tokens: int = Field(gt=0, le=2147483647)
 
@@ -237,10 +284,10 @@ class SystemModelClient:
             generation=route.generation,
             tenant_generation=route.tenant_generation,
             provider_model_name=route.provider_model_name,
-            gateway_model_name=route.gateway_model_name,
+            request_model=route.request_model,
             feature_key=route.feature_key,
             label_key=route.label_key,
-            transport=route.transport,
+            connection=route.connection,
             context_window=route.context_window,
             max_output_tokens=route.max_output_tokens,
         )

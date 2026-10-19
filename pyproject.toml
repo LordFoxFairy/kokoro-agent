@@ -67,15 +67,20 @@ kokoro_agent = ["prompts/*.md"]
 "share/kokoro-agent/audit/contract" = [
   "contract/provenance.json",
 ]
-"share/kokoro-agent/audit/contract/execution-proof/v1" = [
-  "contract/execution-proof/v1/schema.json",
-  "contract/execution-proof/v1/vectors.json",
+"share/kokoro-agent/audit/contract/execution-proof/v2" = [
+  "contract/execution-proof/v2/schema.json",
+  "contract/execution-proof/v2/vectors.json",
 ]
 "share/kokoro-agent/audit/contract/openapi/v1" = [
   "contract/openapi/v1/openapi.json",
 ]
 "share/kokoro-agent/audit/contract/platform/v1" = [
   "contract/platform/v1/provenance.json",
+  "contract/platform/v1/codegen.json",
+]
+"share/kokoro-agent/audit/contract/platform/v1/skill-package" = [
+  "contract/platform/v1/skill-package/skill-package-profile-v1.json",
+  "contract/platform/v1/skill-package/skill-package-profile-v1.vectors.json",
 ]
 "share/kokoro-agent/audit/contract/platform/v1/execution-operations/v4" = [
   "contract/platform/v1/execution-operations/v4/command-identities.json",
@@ -109,26 +114,47 @@ kokoro_agent = ["prompts/*.md"]
   "contract/usage/v1/vectors.json",
   "contract/usage/v1/manifest.json",
 ]
+"share/kokoro-agent/audit/contract/usage/v2" = [
+  "contract/usage/v2/schema.json",
+  "contract/usage/v2/vectors.json",
+  "contract/usage/v2/manifest.json",
+]
 "share/kokoro-agent/audit/src/kokoro_agent/model" = [
   "src/kokoro_agent/model/usage_evidence.py",
+  "src/kokoro_agent/model/usage_evidence_v2.py",
 ]
 "share/kokoro-agent/audit/scripts" = [
   "scripts/generate_model_usage_models.py",
+  "scripts/generate_model_usage_v2_models.py",
   "scripts/generate_failure_models.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent" = [
   "src/kokoro_agent/system_consumer_contract.py",
+  "src/kokoro_agent/usage_history_contract.py",
   "src/kokoro_agent/model_usage_contract.py",
+  "src/kokoro_agent/model_usage_v2_contract.py",
   "src/kokoro_agent/chat_contract_check.py",
   "src/kokoro_agent/contract_check.py",
   "src/kokoro_agent/distribution_assets.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent/protocol" = [
   "src/kokoro_agent/protocol/model_usage_generated.py",
+  "src/kokoro_agent/protocol/model_usage_v2_generated.py",
   "src/kokoro_agent/protocol/control.py",
   "src/kokoro_agent/protocol/events.py",
   "src/kokoro_agent/protocol/run_failure_generated.py",
   "src/kokoro_agent/protocol/streams.py",
+]
+
+"share/kokoro-agent/audit/contract/platform/v1/proto/kokoro/common/v1" = ["contract/platform/v1/proto/kokoro/common/v1/common.proto"]
+"share/kokoro-agent/audit/contract/platform/v1/proto/kokoro/platform/v1" = ["contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto", "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto"]
+"share/kokoro-agent/audit/contract/platform/v1/mcp-runtime" = [
+  "contract/platform/v1/mcp-runtime/mcp-runtime-v1.json",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-v1.binpb",
+  "contract/platform/v1/mcp-runtime/mcp_runtime_pb.ts",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-request-binding.ts",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-rpc-input.ts",
+  "contract/platform/v1/mcp-runtime/mcp-runtime-request-vectors-v1.json",
 ]
 
 [tool.pytest.ini_options]

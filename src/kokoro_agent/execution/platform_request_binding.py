@@ -1,4 +1,4 @@
-"""Canonical binding for the 24 pinned tenant-execution Platform requests."""
+"""Canonical binding for pinned tenant-execution Platform requests."""
 
 from __future__ import annotations
 
@@ -12,8 +12,11 @@ from kokoro_agent.execution.platform_request_binding_values import (
     PlatformRequestBindingError,
     canonical_binding_bytes,
     project_nonempty_string,
+    project_bounded_text,
 )
 from kokoro_agent.generated.platform_request_projector import project_request
+from kokoro_agent.execution.mcp_runtime_request_binding import project_runtime_request
+from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as runtime_pb
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -30,7 +33,17 @@ def project_request_binding(
     """Project one exact generated request; workload/global/unknown types fail closed."""
 
     tenant = project_nonempty_string(tenant_ref, label="tenant_ref")
-    projected = project_request(request)
+    if isinstance(
+        request,
+        (
+            runtime_pb.ResolveMcpRuntimeConnectionRequest,
+            runtime_pb.AcquireMcpRuntimeCredentialRequest,
+        ),
+    ):
+        tenant = project_bounded_text(tenant_ref, label="tenant_ref", maximum=255)
+        projected = project_runtime_request(request)
+    else:
+        projected = project_request(request)
     root: dict[str, JsonValue] = {
         "binding_version": BINDING_VERSION,
         "fq_method": projected.fq_method,

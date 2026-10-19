@@ -98,8 +98,6 @@ class RunSupervisor(
         model_call_settle_timeout_s: float = DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
         events_ttl_s: int = 0,
         run_ttl_s: int = 0,
-        # R4：published 但回执一直不来（events 流被修剪/丢失）→超此宽限期重发（复用固定身份）。
-        outbox_republish_ms: int = 30_000,
         # 终态沙箱回收（审计缺口③）：按 backend 类型主动销毁；None=仅靠 TTL 自清。
         sandbox_teardown: SandboxTeardown | None = None,
         chat_repository: ChatRepository | None = None,
@@ -128,7 +126,6 @@ class RunSupervisor(
         # retention（0=关）：终态后事件流存活期 / 终态 run 行清扫龄。
         self._events_ttl_s = events_ttl_s
         self._run_ttl_s = run_ttl_s
-        self._outbox_republish_ms = outbox_republish_ms
         self._sandbox_teardown = sandbox_teardown
         self._chat_repository = chat_repository
         self._serve_task = None

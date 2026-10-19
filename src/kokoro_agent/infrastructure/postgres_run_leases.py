@@ -43,7 +43,6 @@ from kokoro_agent.infrastructure.schema import (
     RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
-    RUN_RECEIPT_MANIFESTS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     close_model_call_attempts_for_terminal,
@@ -754,21 +753,8 @@ class PostgresRunLeases:
                             ),
                             (run_id, fence_seq),
                         )
-                    # Terminal commits can be the first durable outbox write
-                    # (for example, an early execution failure). Keep the
-                    # receipt ledger atomic with those frames as well.
-                    await execute_sql(
-                        cur,
-                        """
-                        INSERT INTO {} (run_id, persisted_seq, projected_seq, consumed_seq,
-                                        producer_close_requested, producer_closed, updated_at)
-                        VALUES (%s, 0, 0, 0, FALSE, FALSE, to_timestamp(%s / 1000.0))
-                        ON CONFLICT (run_id) DO NOTHING
-                        """.format(
-                            qualified(self._context.schema, RUN_RECEIPT_MANIFESTS_TABLE)
-                        ),
-                        (run_id, now),
-                    )
+                    # Terminal-first frames share the original ledger transaction.
+                    await self._context.ensure_receipt_manifest(cur, run_id, now)
                     for frame in frames:
                         await events.insert_frame_on_cursor(
                             cur, frame, superseded=quarantine

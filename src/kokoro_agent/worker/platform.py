@@ -8,6 +8,9 @@ from dataclasses import dataclass
 
 import httpx
 
+from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
+from kokoro_agent.mcp.egress import current_egress_mode
 from kokoro_agent.clients.skills import PlatformSkillClient, SkillClientError
 from kokoro_agent.clients.skill_package_transport import SkillPackageTransport
 from kokoro_agent.clients.platform_credentials import CredentialFile
@@ -38,6 +41,15 @@ class WorkerPlatformRuntime:
     lease_reader: ExecutionProofLeaseReadPort
 
     packages: SkillPackageTransport | None = None
+    mcp_packages: McpPackageTransport | None = None
+
+    def mcp_for_run(self, leased_run: LeasedRun) -> PlatformMcpClient:
+        return PlatformMcpClient(
+            self.for_run(leased_run),
+            packages=self.mcp_packages,
+            run_id=leased_run.request.run_id,
+            egress_mode=current_egress_mode(),
+        )
 
     def skills_for_run(self, leased_run: LeasedRun) -> PlatformSkillClient:
         if self.packages is None:
@@ -99,9 +111,13 @@ async def worker_platform_runtime(
         PlatformTransport(config.platform_base_url) as transport,
     ):
         packages = None
+        mcp_packages = None
         if config.storage_object_origin is not None:
             packages = await stack.enter_async_context(
                 SkillPackageTransport(config.storage_object_origin)
+            )
+            mcp_packages = await stack.enter_async_context(
+                McpPackageTransport(config.storage_object_origin)
             )
         tokens = PlatformTokenProvider(config.iam_base_url, credentials, http=http)
         try:
@@ -111,6 +127,7 @@ async def worker_platform_runtime(
                 signer=signer,
                 lease_reader=reader,
                 packages=packages,
+                mcp_packages=mcp_packages,
             )
         finally:
             await tokens.aclose()

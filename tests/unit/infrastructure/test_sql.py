@@ -2,9 +2,70 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+
+
+@pytest.mark.parametrize("cancel_during_connect", [False, True])
+@pytest.mark.parametrize("previous_cancel_handled", [False, True])
+async def test_connection_readiness_never_grants_work_after_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_during_connect: bool,
+    previous_cancel_handled: bool,
+) -> None:
+    from kokoro_agent.infrastructure import postgres
+
+    connection = Mock()
+    connection.close = AsyncMock()
+    entered = asyncio.Event()
+    ready = asyncio.Event()
+    body_entered = False
+
+    async def connect(_: str) -> object:
+        entered.set()
+        try:
+            await ready.wait()
+        except asyncio.CancelledError:
+            # Model the observed driver readiness race: a connection is returned
+            # even though the caller's task still has a pending cancellation.
+            return connection
+        return connection
+
+    monkeypatch.setattr(postgres, "connect_dict_row", connect)
+
+    async def consume() -> None:
+        nonlocal body_entered
+        if previous_cancel_handled:
+            current = asyncio.current_task()
+            assert current is not None
+            current.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                pass
+            # Explicit finally/cleanup work may acquire a resource after the
+            # earlier cancellation was handled without calling uncancel().
+            assert current.cancelling() == 1
+        async with postgres.connect_pg("postgresql://fixture"):
+            body_entered = True
+
+    task = asyncio.create_task(consume())
+    await entered.wait()
+    if cancel_during_connect:
+        task.cancel()
+    else:
+        ready.set()
+    result = (await asyncio.gather(task, return_exceptions=True))[0]
+    assert body_entered is (not cancel_during_connect)
+    if cancel_during_connect:
+        assert isinstance(result, asyncio.CancelledError)
+    else:
+        assert result is None
+    connection.close.assert_awaited_once_with()
 
 
 class _Cursor:

@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from langchain_core.tools import StructuredTool
 
 from kokoro_agent.policy import Backend, ModelConfig, Permissions
+from kokoro_agent.clients.mcp import McpConnectionRef
 
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -24,7 +25,7 @@ class Agent:
     key: str
     prompt: str
     tools: tuple[StructuredTool, ...] = ()
-    mcp: tuple[str, ...] = ()
+    mcp: tuple[McpConnectionRef, ...] = ()
     subagents: tuple[str, ...] = ()
     delivery: bool = False
     model: ModelConfig | None = None
@@ -36,7 +37,7 @@ class Agent:
     def configured(
         self,
         *,
-        mcp: Iterable[str] | None = None,
+        mcp: Iterable[McpConnectionRef] | None = None,
         prompt: str | None = None,
     ) -> Agent:
         """Return a feature-local copy without introducing a role/member type.
@@ -55,6 +56,8 @@ class Agent:
     def __post_init__(self) -> None:
         if _KEY.fullmatch(self.key) is None:
             raise ValueError(f"invalid agent key: {self.key!r}")
+        if any(type(ref) is not McpConnectionRef for ref in self.mcp):
+            raise ValueError("Agent MCP requires explicit Connection references")
         if not self.prompt.strip():
             raise ValueError(f"agent {self.key!r} needs a prompt")
         for label, values in (

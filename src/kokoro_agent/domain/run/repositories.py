@@ -104,9 +104,7 @@ class RunEventPort(Protocol):
 
     async def list_open_outbox_runs(self) -> list[str]: ...
 
-    async def reconcile_receipts(
-        self, run_id: str, republish_grace_ms: int = 30_000
-    ) -> ReceiptReconcile: ...
+    async def reconcile_receipts(self, run_id: str) -> ReceiptReconcile: ...
 
 
 class RunControlPort(Protocol):

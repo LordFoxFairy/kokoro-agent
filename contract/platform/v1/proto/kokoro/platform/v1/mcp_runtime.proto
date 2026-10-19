@@ -1,0 +1,123 @@
+// Canonical MCP runtime material contract. Candidate only; no production route.
+syntax = "proto3";
+
+package kokoro.platform.v1;
+
+import "kokoro/platform/v1/platform_runtime.proto";
+
+// Owner-issued for the exact caller/run and current resource binding; never a grant.
+message McpRuntimeResolution {
+  McpConnectorId connector_id = 1;
+  McpConnectionId connection_id = 2;
+  McpServerId server_id = 3;
+  string tool_selector = 4;
+  string declaration_digest = 5;
+  string resolution_ref = 6;
+  int64 expires_at_unix_seconds = 7;
+  oneof transport {
+    McpRuntimeHttpConnection streamable_http = 8;
+    McpRuntimeStdioConnection stdio = 9;
+  }
+}
+
+message McpRuntimeHttpConnection {
+  string canonical_endpoint = 1;
+  // Names only. Values are available solely through Acquire.
+  repeated string header_slots = 2;
+}
+
+message McpRuntimeEnvironmentSlot {
+  string name = 1;
+  string credential_slot_ref = 2;
+}
+
+message McpRuntimeStdioConnection {
+  string runtime_artifact_ref = 1;
+  string source_version_id = 2;
+  string artifact_sha256 = 3;
+  // Relative entrypoint inside the qualified immutable package, never a shell command.
+  string entrypoint = 4;
+  repeated McpRuntimeEnvironmentSlot environment_slots = 5;
+}
+
+message ResolveMcpRuntimeConnectionRequest {
+  reserved "tenant_id", "subject_id", "actor_id", "run_id", "session_id", "command", "url", "env";
+  string request_id = 1;
+  McpConnectorId connector_id = 2;
+  McpConnectionId connection_id = 3;
+  McpServerId server_id = 4;
+  string tool_selector = 5;
+  string expected_declaration_digest = 6;
+  string execution_proof = 100;
+}
+
+message ResolveMcpRuntimeConnectionResponse {
+  McpRuntimeResolution resolution = 1;
+}
+
+// Presence marks the discovery-only credential purpose. It never authorizes tools/call.
+message McpRuntimeDiscoveryCredentialUse {}
+
+message McpRuntimeInvocationCredentialUse {
+  McpInvocationGrant invocation_grant = 1;
+  string audit_ref = 2;
+  bytes typed_arguments_json = 3;
+  optional string approval_ref = 4;
+  string idempotency_key = 5;
+}
+
+message AcquireMcpRuntimeCredentialRequest {
+  reserved "tenant_id", "subject_id", "actor_id", "run_id", "session_id", "command", "url", "env";
+  string request_id = 1;
+  McpConnectorId connector_id = 2;
+  McpConnectionId connection_id = 3;
+  McpServerId server_id = 4;
+  string tool_selector = 5;
+  string expected_declaration_digest = 6;
+  string resolution_ref = 7;
+  oneof credential_use {
+    McpRuntimeDiscoveryCredentialUse discovery = 8;
+    McpRuntimeInvocationCredentialUse invocation = 9;
+  }
+  string execution_proof = 100;
+}
+
+// Sensitive memory bytes: no receipt, outbox, log, cache, journal or Web projection.
+message McpRuntimeSecretValue {
+  string name = 1;
+  bytes value = 2;
+}
+
+message McpRuntimeHttpCredential {
+  repeated McpRuntimeSecretValue headers = 1;
+}
+
+// Sensitive GET material bound to the enclosing resolution_ref_sha256.
+// URL and header values are UTF-8 bytes so the owner can erase them after serialization.
+message McpRuntimePackageDownload {
+  bytes url_utf8 = 1;
+  repeated McpRuntimeSecretValue required_headers = 2;
+  uint64 size_bytes = 3;
+  int64 expires_at_unix_seconds = 4;
+}
+
+message McpRuntimeStdioCredential {
+  repeated McpRuntimeSecretValue environment = 1;
+  // Required for a qualified managed package; GET only, never a launch command.
+  McpRuntimePackageDownload package_download = 2;
+}
+
+message AcquireMcpRuntimeCredentialResponse {
+  // Bind the returned material to the exact resolution, not an arbitrary server.
+  string resolution_ref_sha256 = 1;
+  int64 expires_at_unix_seconds = 2;
+  oneof transport {
+    McpRuntimeHttpCredential streamable_http = 3;
+    McpRuntimeStdioCredential stdio = 4;
+  }
+}
+
+service McpRuntimeService {
+  rpc ResolveMcpRuntimeConnection(ResolveMcpRuntimeConnectionRequest) returns (ResolveMcpRuntimeConnectionResponse);
+  rpc AcquireMcpRuntimeCredential(AcquireMcpRuntimeCredentialRequest) returns (AcquireMcpRuntimeCredentialResponse);
+}

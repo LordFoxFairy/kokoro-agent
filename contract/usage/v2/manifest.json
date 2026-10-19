@@ -1,0 +1,31 @@
+{
+  "artifact_version": "2.0.0",
+  "owner": "kokoro-agent",
+  "files": [
+    {
+      "path": "contract/usage/v2/schema.json",
+      "sha256": "552f0d22251837aaf4d83766c7bd91311984f707f9a42950ed53ac7127bb5504"
+    },
+    {
+      "path": "contract/usage/v2/vectors.json",
+      "sha256": "4fbec9f41732032ad28fee132e703c93dc50d09fecd82cb8a7578d90bb826483"
+    },
+    {
+      "path": "scripts/generate_model_usage_v2_models.py",
+      "sha256": "418746329e0683ccef48eac5a4e644bad179e04341c0afd2800ba49a6860ecc0"
+    },
+    {
+      "path": "src/kokoro_agent/model/usage_evidence_v2.py",
+      "sha256": "83b93ae86ec9cf8173895f67aeb0c80f8231efa10e4bd58570d4fd7492edbec2"
+    },
+    {
+      "path": "src/kokoro_agent/model_usage_v2_contract.py",
+      "sha256": "4cea831ceb7f80129dd16192ea495378d94c03f2155ae06dbad605073c1d637e"
+    },
+    {
+      "path": "src/kokoro_agent/protocol/model_usage_v2_generated.py",
+      "sha256": "453149b8e75a7c3fcf3c2b92bc33388e3cab9ec13b4cd1e9c01093c935cfcf7c"
+    }
+  ],
+  "aggregate_sha256": "7c5fd0b24d0a691cfcf769a981d8b4a8a689534d9b4ae1b5968342bde591094c"
+}

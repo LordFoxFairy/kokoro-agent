@@ -113,12 +113,19 @@ def test_agent_core_does_not_import_worker() -> None:
 def test_runtime_does_not_import_platform_artifact_checker() -> None:
     """Vendored artifact parsing is a build gate, never a runtime dependency."""
 
-    allowed = {"contract_check.py", "platform_binding_contract.py"}
-    forbidden = "kokoro_agent.platform_binding_contract"
+    allowed = {
+        "contract_check.py",
+        "platform_binding_contract.py",
+        "mcp_runtime_contract.py",
+    }
+    forbidden = {
+        "kokoro_agent.platform_binding_contract",
+        "kokoro_agent.mcp_runtime_contract",
+    }
     for path in _py_files():
         if _rel(path) in allowed:
             continue
-        assert forbidden not in _imports(path), (
+        assert not forbidden.intersection(_imports(path)), (
             f"{_rel(path)} imports the build-time Platform artifact checker"
         )
 
@@ -133,7 +140,7 @@ def test_platform_artifact_literal_scanner_has_a_negative_fixture() -> None:
 def test_runtime_does_not_read_vendored_platform_artifacts_by_literal_path() -> None:
     """Only the build-time checker/generator may read the vendored artifact tree."""
 
-    allowed = {"platform_binding_contract.py"}
+    allowed = {"platform_binding_contract.py", "mcp_runtime_contract.py"}
     for path in _py_files():
         if _rel(path) in allowed:
             continue

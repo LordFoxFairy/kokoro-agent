@@ -143,7 +143,6 @@ class ReceiptReconcile(BaseModel):
     receipt_state_lost: bool = False
     consumed_through: int | None = None
     close_requested: bool = False
-    republish: list[OutboxFrame] = Field(default_factory=lambda: list[OutboxFrame]())
 
 
 __all__ = [

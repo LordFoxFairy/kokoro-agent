@@ -278,3 +278,21 @@ def test_native_task_baseline_uses_selected_gp_and_catalog_metadata() -> None:
     assert recipe["feature"]["agents"][0][
         "native_task_description"
     ] == TASK_TOOL_DESCRIPTION.format(available_agents=available)
+
+
+def test_recipe_freezes_explicit_connection_ref_not_a_deployment_name() -> None:
+    from kokoro_agent.clients.mcp import McpConnectionRef
+
+    agent = Agent(
+        key="one", prompt="one", mcp=(McpConnectionRef(connection_id="connection-1"),)
+    )
+    feature = Feature(key="sample", agents=(agent,), entry_agent="one")
+    plan = prepare(feature)
+    assert json.loads(plan.recipe_bytes)["feature"]["agents"][0]["mcp"] == [
+        {"connection_id": "connection-1"}
+    ]
+    changed = replace(
+        feature,
+        agents=(replace(agent, mcp=(McpConnectionRef(connection_id="connection-2"),)),),
+    )
+    assert prepare(changed).fingerprint != plan.fingerprint

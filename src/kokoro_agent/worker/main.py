@@ -47,7 +47,6 @@ from kokoro_agent.infrastructure.postgres_model_call_repository import (
 )
 from kokoro_agent.streams.factory import make_stream
 from kokoro_agent.streams.protocol import StreamProtocol
-from kokoro_agent.mcp.config import load_mcp_servers
 from kokoro_agent.mcp.egress import configure_egress_mode, egress_mode_from_env
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.worker.supervisor import RunSupervisor
@@ -173,12 +172,6 @@ async def worker_model_resolver(
         raise ValueError(
             "System model resolver URL and service credential are required"
         )
-    if (
-        not config.litellm_enabled
-        or config.litellm_base_url is None
-        or config.litellm_api_key is None
-    ):
-        raise ValueError("System model routing requires a configured LiteLLM gateway")
     async with SystemModelClient(
         config.system_base_url,
         config.internal_secret_agent,
@@ -258,6 +251,11 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             )
         ) as chat_repository,
     ):
+        model_call_repository = PostgresModelCallRepository(
+            config.run_repository.database_url,
+            config.run_repository.schema_name,
+        )
+        await model_call_repository.assert_current_producer_ready()
         interaction_checkpointer = make_interaction_checkpointer(
             saver=saver, reader=interaction_reader, repository=run_repository
         )
@@ -271,15 +269,8 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             toolbox=toolbox_from_config(config),
             checkpointer=interaction_checkpointer,
             run_repository=run_repository,
-            model_call_repository=PostgresModelCallRepository(
-                config.run_repository.database_url,
-                config.run_repository.schema_name,
-            ),
+            model_call_repository=model_call_repository,
             memory_store=memory_store,
-            # 旧部署定义仍只作为显式 client 的输入；声明存在时 client 缺席/失败
-            # 直接拒绝，不以 YAML 替代 Platform 授权。typed MCP cutover 后删除旧路径。
-            mcp_servers=load_mcp_servers(config.mcp_config, os.environ),
-            mcp_client=owner_clients.mcp,
             delivery=delivery,
             model_resolver=model_resolver,
         )
@@ -299,7 +290,6 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             model_call_settle_timeout_s=config.model_call_settle_timeout_s,
             events_ttl_s=config.retention_events_ttl_s,
             run_ttl_s=config.retention_run_ttl_s,
-            outbox_republish_ms=config.outbox_republish_ms,
             sandbox_teardown=_sandbox_teardown(config),
             chat_repository=chat_repository,
             process_fatal=_exit_after_model_call_settlement_timeout,

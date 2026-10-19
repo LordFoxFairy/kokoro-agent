@@ -127,6 +127,7 @@ async def test_actual_http_dispatch_serializes_typed_launch_and_replay(
         database_url = "postgres://unused"
         database_schema = "unused"
         internal_secret_agent = SecretStr("secret")
+        billing_model_call_reader_secret: SecretStr | None = None
 
     headers = {
         "authorization": "Bearer secret",
@@ -147,6 +148,7 @@ async def test_actual_http_dispatch_serializes_typed_launch_and_replay(
             "run_id": "run-1",
             "session_id": "session-1",
             "feature_key": "chat",
+            "project_ref": None,
             "selected_skill_source_refs": [],
             "message_id": "message-1",
             "content": "hello",
@@ -515,6 +517,7 @@ async def test_r95_actual_replay_response_obeys_http5_progress_machine(
         database_url = "postgres://unused"
         database_schema = "unused"
         internal_secret_agent = SecretStr("secret")
+        billing_model_call_reader_secret: SecretStr | None = None
 
     headers = {
         "authorization": "Bearer secret",

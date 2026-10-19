@@ -17,7 +17,7 @@ from typing import Never
 import pytest
 from pydantic import SecretStr
 
-from kokoro_agent.config import AppConfig
+from kokoro_agent.interfaces.http.main import AgentHttpConfig
 from kokoro_agent.infrastructure.postgres_run_repository import RunRepositorySettings
 from kokoro_agent.interfaces.http.execution_proof_jwks import ExecutionProofJwksState
 import kokoro_agent.interfaces.http.server as http_server
@@ -154,7 +154,7 @@ async def test_non_health_requests_reject_missing_service_auth_configuration(
     method: str, path: str
 ) -> None:
     status, payload = await dispatch_request(
-        AppConfig(), method, path, {}, {"x-request-id": "request-1"}, {}
+        AgentHttpConfig(), method, path, {}, {"x-request-id": "request-1"}, {}
     )
 
     assert status == 503
@@ -170,7 +170,7 @@ async def test_non_health_requests_reject_missing_service_auth_configuration(
 @pytest.mark.asyncio
 async def test_healthz_remains_available_without_service_auth_configuration() -> None:
     status, payload = await dispatch_request(
-        AppConfig(), "GET", "/healthz", {}, {}, None
+        AgentHttpConfig(), "GET", "/healthz", {}, {}, None
     )
 
     assert status == 200
@@ -181,7 +181,7 @@ async def test_healthz_remains_available_without_service_auth_configuration() ->
 async def test_standard_authorization_is_case_insensitive_and_request_id_is_preserved() -> (
     None
 ):
-    config = AppConfig(internal_secret_agent=SecretStr("secret"))
+    config = AgentHttpConfig(internal_secret_agent=SecretStr("secret"))
 
     status, payload = await dispatch_request(
         config,
@@ -198,7 +198,7 @@ async def test_standard_authorization_is_case_insensitive_and_request_id_is_pres
 
 @pytest.mark.asyncio
 async def test_control_requires_idempotency_key_after_standard_auth() -> None:
-    config = AppConfig(internal_secret_agent=SecretStr("secret"))
+    config = AgentHttpConfig(internal_secret_agent=SecretStr("secret"))
 
     status, payload = await dispatch_request(
         config,
@@ -218,7 +218,7 @@ async def test_control_requires_idempotency_key_after_standard_auth() -> None:
 
 @pytest.mark.asyncio
 async def test_launch_requires_trusted_identity_before_opening_dependencies() -> None:
-    config = AppConfig(internal_secret_agent=SecretStr("secret"))
+    config = AgentHttpConfig(internal_secret_agent=SecretStr("secret"))
 
     status, payload = await dispatch_request(
         config,
@@ -231,6 +231,7 @@ async def test_launch_requires_trusted_identity_before_opening_dependencies() ->
             "run_id": "run-1",
             "session_id": "session-1",
             "feature_key": "chat",
+            "project_ref": None,
             "selected_skill_source_refs": [],
             "message_id": "message-1",
             "content": "hello",
@@ -257,7 +258,7 @@ async def test_readyz_fails_for_unavailable_ring_before_dependency_factory(
         raise AssertionError("dependency factory must not run")
 
     monkeypatch.setattr(server_module, "make_stream", forbidden_factory)
-    config = AppConfig(internal_secret_agent=SecretStr("secret"))
+    config = AgentHttpConfig(internal_secret_agent=SecretStr("secret"))
     status, payload = await dispatch_request(
         config,
         "GET",

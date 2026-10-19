@@ -25,7 +25,7 @@ from kokoro_agent.protocol import IdentityRef
 
 
 ROOT = Path(__file__).resolve().parents[2]
-VECTORS = ROOT / "contract" / "execution-proof" / "v1" / "vectors.json"
+VECTORS = ROOT / "contract" / "execution-proof" / "v2" / "vectors.json"
 RFC8032_SEED = bytes.fromhex(
     "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
 )
@@ -95,13 +95,14 @@ def test_runtime_signer_reproduces_a1_positive_compact_proof_exactly() -> None:
 
 
 def test_runtime_profile_owns_exact_v1_constants_and_fields() -> None:
-    assert CONTRACT_VERSION == "1.0.0"
+    assert CONTRACT_VERSION == "2.0.0"
     assert TYPE == "kokoro-agent-execution+jwt"
     assert ALGORITHM == "EdDSA"
     assert AUDIENCE == "https://kokoro.dev/resources/iam-execution-authorization"
     assert HEADER_FIELDS == frozenset({"typ", "alg", "kid"})
     assert CLAIM_FIELDS == frozenset(
         {
+            "execution_binding",
             "contract_version",
             "iss",
             "aud",

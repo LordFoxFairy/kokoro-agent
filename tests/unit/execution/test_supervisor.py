@@ -534,17 +534,32 @@ async def test_cancel_running_emits_cancelled() -> None:
     await sup.dispatch(bus, request("r5"))
     await asyncio.sleep(0)
 
-    await sup.dispatch(
-        bus, _inbound({"kind": "run.cancel", "command_id": "dec_wire", "run_id": "r5"})
+    cancellation = asyncio.create_task(
+        sup.dispatch(
+            bus,
+            _inbound({"kind": "run.cancel", "command_id": "dec_wire", "run_id": "r5"}),
+        )
     )
-    await _drain(sup)
+    try:
+        # Observe without cancelling the observer/operation: a timeout signal
+        # would itself release the stuck native task and mask a lost cancel.
+        settled, _ = await asyncio.wait({cancellation}, timeout=1.0)
+        assert cancellation in settled, (
+            "cancel must settle while native work stays gated"
+        )
+        await cancellation
+        await _drain(sup)
 
-    completed = find_event(bus.run_events("r5"), RunCompleted)
-    assert completed.payload.status == "cancelled"
-    terminals = [
-        e for e in bus.run_events("r5") if e.kind in {"run.completed", "run.failed"}
-    ]
-    assert len(terminals) == 1
+        completed = find_event(bus.run_events("r5"), RunCompleted)
+        assert completed.payload.status == "cancelled"
+        terminals = [
+            e for e in bus.run_events("r5") if e.kind in {"run.completed", "run.failed"}
+        ]
+        assert len(terminals) == 1
+    finally:
+        gate.set()
+        await asyncio.gather(cancellation, return_exceptions=True)
+        await asyncio.gather(*tuple(sup.tasks.values()), return_exceptions=True)
 
 
 async def test_cancel_unknown_run_dropped() -> None:
@@ -1858,7 +1873,7 @@ async def test_serve_republishes_durable_pending_dispatch() -> None:
     published = [
         event for stream, event, _maxlen in bus.published if stream == REQUESTS_STREAM
     ]
-    assert published == [pending.model_dump(mode="json", exclude_none=True)]
+    assert published == [pending.model_dump(mode="json")]
 
 
 async def test_dispatch_win_executes_and_acks_after_claim() -> None:
@@ -2083,8 +2098,10 @@ async def test_heartbeat_nack_terminates_orphaned_paused_run() -> None:
     assert run.run_id not in await store.list_paused()
 
 
-async def test_heartbeat_republishes_stale_published_outbox() -> None:
-    # published 后回执一直不来、超宽限期（events 流被修剪/丢失）→ 心跳重发（复用固定身份）。
+async def test_heartbeat_preserves_published_notifications_without_external_ack(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Redis notifications may expire; HTTP Chat replay is the compensation source.
     store = FakeRunRepository()
     await store.try_claim(request("r-stale"))
     store.outbox["r-stale"] = [
@@ -2099,16 +2116,15 @@ async def test_heartbeat_republishes_stale_published_outbox() -> None:
             "published_at": 0,
         }
     ]
-    store.clock_ms = 60_000  # 远超默认宽限期 30s；无回执、无 manifest。
+    original = [dict(row) for row in store.outbox["r-stale"]]
+    store.clock_ms = 60_000
     bus = FakeBus()
     sup, _ = _supervisor(FakeAgent(), store=store)
     await sup.heartbeat_once(bus)
-    started = [e for e in bus.run_events("r-stale") if e.kind == "run.started"]
-    assert (
-        len(started) == 1
-        and started[0].durable_seq == 1
-        and started[0].event_id == "e1"
-    )
+    await sup.heartbeat_once(bus)
+    assert bus.run_events("r-stale") == []
+    assert store.outbox["r-stale"] == original
+    assert "receipt_state_lost" not in caplog.text
 
 
 @pytest.mark.parametrize("resuming", [False, True], ids=["initial", "resume"])
@@ -2702,7 +2718,7 @@ async def test_r93_all_build_entries_propagate_typed_progress_failure(
     )
     bus = FakeBus()
     run = request("r93-entries-" + entry).model_copy(
-        update={"selected_skill_source_refs": ("skill:one",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:one",)}
     )
     with pytest.raises(ProgressPersistenceError):
         if entry == "initial":
@@ -2760,7 +2776,7 @@ async def test_r93_local_drained_recovery_probe_uses_fenced_progress_callback() 
     store = FakeRunRepository()
     store.chat_repository = SecondRoundWriteFailure()
     run = request("r93-local-probe").model_copy(
-        update={"selected_skill_source_refs": ("skill:one",)}
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:one",)}
     )
     lease = await store.try_claim(run, "old")
     assert lease is not None

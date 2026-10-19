@@ -1,0 +1,176 @@
+{
+  "profile": "mcp-runtime-request-vectors",
+  "version": "1.0.0",
+  "synthetic_fixture_only": true,
+  "vectors": [
+    {
+      "name": "resolve",
+      "canonical": {
+        "binding_version": "3.0.0",
+        "fq_method": "kokoro.platform.v1.McpRuntimeService/ResolveMcpRuntimeConnection",
+        "tenant_ref": "tenant-runtime",
+        "request_id": "request-runtime",
+        "request": {
+          "connector_id": {
+            "present": true,
+            "value": "connector-runtime"
+          },
+          "connection_id": {
+            "present": true,
+            "value": "connection-runtime"
+          },
+          "server_id": {
+            "present": true,
+            "value": "server-runtime"
+          },
+          "tool_selector": "issues.search",
+          "expected_declaration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "sha256": "31cbc5fc26ecc842f1a014e17a262950d886ac64eb1465f387ed0561596c25a5"
+    },
+    {
+      "name": "discovery",
+      "canonical": {
+        "binding_version": "3.0.0",
+        "fq_method": "kokoro.platform.v1.McpRuntimeService/AcquireMcpRuntimeCredential",
+        "tenant_ref": "tenant-runtime",
+        "request_id": "request-runtime",
+        "request": {
+          "connector_id": {
+            "present": true,
+            "value": "connector-runtime"
+          },
+          "connection_id": {
+            "present": true,
+            "value": "connection-runtime"
+          },
+          "server_id": {
+            "present": true,
+            "value": "server-runtime"
+          },
+          "tool_selector": "issues.search",
+          "expected_declaration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resolution_ref_sha256": "2ceac13d3e140ada8b563f434da27c95a92eaf6e5e341d81f5cc3939ce99bb14",
+          "credential_use": {
+            "kind": "discovery"
+          }
+        }
+      },
+      "sha256": "9e682ef845388d9c576917c5598dc46161e5fc6dcbdcce931ae9b52c7136a229"
+    },
+    {
+      "name": "invocation",
+      "canonical": {
+        "binding_version": "3.0.0",
+        "fq_method": "kokoro.platform.v1.McpRuntimeService/AcquireMcpRuntimeCredential",
+        "tenant_ref": "tenant-runtime",
+        "request_id": "request-runtime",
+        "request": {
+          "connector_id": {
+            "present": true,
+            "value": "connector-runtime"
+          },
+          "connection_id": {
+            "present": true,
+            "value": "connection-runtime"
+          },
+          "server_id": {
+            "present": true,
+            "value": "server-runtime"
+          },
+          "tool_selector": "issues.search",
+          "expected_declaration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resolution_ref_sha256": "2ceac13d3e140ada8b563f434da27c95a92eaf6e5e341d81f5cc3939ce99bb14",
+          "credential_use": {
+            "kind": "invocation",
+            "invocation_grant_sha256": "6151a114656f800394d17948bed2aabf8dbbecb68028a25338d412657682b40d",
+            "audit_ref": "audit-fixture",
+            "typed_arguments_sha256": "b53f02d81652bba3050167ca57ffe14a85b54142baa60fa8b97fd49ca2e7e9f7",
+            "approval_ref": {
+              "present": false
+            },
+            "idempotency_key": "tool-call-fixture"
+          }
+        }
+      },
+      "sha256": "683905fda7b3076f3d39f085f4d3164e56b3d4f9d8d6d4b14973bfc8c867f17a"
+    },
+    {
+      "name": "invocation-approved-a",
+      "canonical": {
+        "binding_version": "3.0.0",
+        "fq_method": "kokoro.platform.v1.McpRuntimeService/AcquireMcpRuntimeCredential",
+        "tenant_ref": "tenant-runtime",
+        "request_id": "request-runtime",
+        "request": {
+          "connector_id": {
+            "present": true,
+            "value": "connector-runtime"
+          },
+          "connection_id": {
+            "present": true,
+            "value": "connection-runtime"
+          },
+          "server_id": {
+            "present": true,
+            "value": "server-runtime"
+          },
+          "tool_selector": "issues.search",
+          "expected_declaration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resolution_ref_sha256": "2ceac13d3e140ada8b563f434da27c95a92eaf6e5e341d81f5cc3939ce99bb14",
+          "credential_use": {
+            "kind": "invocation",
+            "invocation_grant_sha256": "6151a114656f800394d17948bed2aabf8dbbecb68028a25338d412657682b40d",
+            "audit_ref": "audit-fixture",
+            "typed_arguments_sha256": "b53f02d81652bba3050167ca57ffe14a85b54142baa60fa8b97fd49ca2e7e9f7",
+            "approval_ref": {
+              "present": true,
+              "value": "approval-one"
+            },
+            "idempotency_key": "tool-call-fixture"
+          }
+        }
+      },
+      "sha256": "39dab2a7647d06aa98cae17e4649bcb4e6ff0577cc78acdbe6599dc1612478af"
+    },
+    {
+      "name": "invocation-approved-b",
+      "canonical": {
+        "binding_version": "3.0.0",
+        "fq_method": "kokoro.platform.v1.McpRuntimeService/AcquireMcpRuntimeCredential",
+        "tenant_ref": "tenant-runtime",
+        "request_id": "request-runtime",
+        "request": {
+          "connector_id": {
+            "present": true,
+            "value": "connector-runtime"
+          },
+          "connection_id": {
+            "present": true,
+            "value": "connection-runtime"
+          },
+          "server_id": {
+            "present": true,
+            "value": "server-runtime"
+          },
+          "tool_selector": "issues.search",
+          "expected_declaration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resolution_ref_sha256": "2ceac13d3e140ada8b563f434da27c95a92eaf6e5e341d81f5cc3939ce99bb14",
+          "credential_use": {
+            "kind": "invocation",
+            "invocation_grant_sha256": "6151a114656f800394d17948bed2aabf8dbbecb68028a25338d412657682b40d",
+            "audit_ref": "audit-fixture",
+            "typed_arguments_sha256": "b53f02d81652bba3050167ca57ffe14a85b54142baa60fa8b97fd49ca2e7e9f7",
+            "approval_ref": {
+              "present": true,
+              "value": "approval-two"
+            },
+            "idempotency_key": "tool-call-fixture"
+          }
+        }
+      },
+      "sha256": "b20cebc77bbf2919c11a59c309849925ca1d2eca24fac3d548b71c4c933c09aa"
+    }
+  ]
+}

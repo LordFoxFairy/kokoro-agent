@@ -24,7 +24,6 @@ from kokoro_agent.agent_factory import AgentFactory, AgentHandle
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.clients.system import SystemModelClient
 from kokoro_agent.config import AppConfig
-from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.domain.run.models import (
     ExecutionTerminalAuthority,
     RunTerminalOutcome,
@@ -163,6 +162,7 @@ def _emit_prepare_trace(
 @dataclass(slots=True)
 class _OwnerAndProviderPeer:
     owner_requests: int = 0
+    credential_requests: int = 0
     provider_requests: int = 0
     unknown_requests: list[str] = field(default_factory=list[str])
     _server: asyncio.Server | None = None
@@ -212,6 +212,34 @@ class _OwnerAndProviderPeer:
                 body = _system_route_body(self.origin + "/v1")
                 content_type = "application/json"
                 status = "200 OK"
+            elif (
+                request_line
+                == "POST /v1/system/model-catalog/credentials/read HTTP/1.1"
+            ):
+                self.credential_requests += 1
+                route = json.loads(_system_route_body(self.origin + "/v1"))["data"]
+                body = json.dumps(
+                    {
+                        "data": {
+                            **{
+                                key: route[key]
+                                for key in (
+                                    "feature_key",
+                                    "label_key",
+                                    "provider_id",
+                                    "revision_id",
+                                    "digest",
+                                )
+                            },
+                            "secret_handle_ref": route["connection"][
+                                "secret_handle_ref"
+                            ],
+                            "api_key": "runtime-chain-fixture-key",
+                        }
+                    }
+                ).encode()
+                content_type = "application/json"
+                status = "200 OK"
             elif request_line == "POST /v1/chat/completions HTTP/1.1":
                 self.provider_requests += 1
                 body = _provider_stream_body()
@@ -227,7 +255,7 @@ class _OwnerAndProviderPeer:
                     f"HTTP/1.1 {status}\r\n"
                     f"Content-Type: {content_type}\r\n"
                     f"Content-Length: {len(body)}\r\n"
-                    "Connection: close\r\n\r\n"
+                    "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
                 ).encode("ascii")
                 + body
             )
@@ -782,13 +810,6 @@ async def test_r198_unpublished_billing_fails_closed_and_seals_not_dispatched(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r197-gateway-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -943,13 +964,6 @@ async def test_r199_prepare_lock_cancellation_propagates_and_rolls_back(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r199-gateway-key"),
-                ),
-            ),
         )
         prepare_trace = _PrepareTaskTrace()
         dependencies = WorkerDependencies(
@@ -1168,13 +1182,6 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r199-gateway-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -1374,13 +1381,6 @@ async def test_r245_native_final_request_precedes_prepare_without_billing(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r197-gateway-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -1632,13 +1632,6 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         )
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r246-synthetic-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
             model=config.model,
@@ -1701,7 +1694,13 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         feature = _JSON_OBJECT.validate_python(frozen_recipe["feature"], strict=True)
         entry_agent = feature["entry_agent"]
         assert isinstance(entry_agent, str) and entry_agent
-        clients = ModelHttpClients(config.model, route)
+        credential = await resolver.read_credential(
+            tenant_id=request.execution_identity.tenant_ref,
+            route=route,
+            label=request.requested_model_label,
+            request_id=request.request_id,
+        )
+        clients = ModelHttpClients(config.model, route, credential)
         stack.push_async_callback(clients.aclose)
         model = make_chat_model(
             config.model, model_from_route(route, None), model_clients=clients

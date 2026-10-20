@@ -1,3 +1,9 @@
+## MC-02：受控领取契约（2026-10-20，实施门）
+
+唯一 System 消费在既有 resolve 外加入 `POST /v1/system/model-catalog/credentials/read`，固定 System6 正式 source/artifact/provenance，拒旧/新混用。领取是无幂等写入的只读 POST，服务身份仍 kokoro-agent，可信 tenant 与原始选择保持；精确版本只作一致性比较，不授予历史路由读取权。仅接受200、no-store及严格字段/Key字符域，错误/超大/错误版本/错绑定/跳转均脱敏失败，不重试或返回给 Web/BFF。无 Agent public/Redis/usage 契约修改。
+
+固定消费为 System `550d65498822d8d2e629199482de4f6990b62708` /6.0.0；artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`，provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`，22来源与两操作receipt经Git原件及安装发行物检查。组件验证与正常未激活边界见CURRENT。
+
 ## MC-02A：System5 固定依赖（2026-10-20）
 
 唯一消费操作仍为 `POST /v1/system/model-catalog/resolve`，固定 owner 提交 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07`、版本 5.0.0 与原始 artifact/provenance/20 来源摘要；不混用旧新 pin。System4→5 的该操作及递归 schema 已逐值核等，Agent HTTP7、proof2、usage2 和其它 owner 固定依赖保持原样。

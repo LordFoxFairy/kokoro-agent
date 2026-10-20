@@ -27,7 +27,6 @@ from pydantic import (
 from kokoro_agent.config_file import load_config_file
 from kokoro_agent.model.call_scope import DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S
 from kokoro_agent.model.factory import ChatModelSettings
-from kokoro_agent.model.credentials import ModelCredential, read_model_credentials
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
@@ -83,12 +82,6 @@ class AppConfig(BaseModel):
     )
     anthropic_base_url: OptStr = Field(
         default=None, validation_alias="ANTHROPIC_BASE_URL"
-    )
-    model_credentials_file: OptStr = Field(
-        default=None, validation_alias="KOKORO_MODEL_CREDENTIALS_FILE", repr=False
-    )
-    model_credentials: tuple[ModelCredential, ...] = Field(
-        default=(), exclude=True, repr=False
     )
     model_allow_loopback_http: bool = Field(
         default=False, validation_alias="KOKORO_MODEL_ALLOW_LOOPBACK_HTTP"
@@ -306,18 +299,11 @@ class AppConfig(BaseModel):
             )
         ):
             raise ValueError("retired global model gateway configuration")
+        if "KOKORO_MODEL_CREDENTIALS_FILE" in source:
+            raise ValueError("retired local model credential file configuration")
         file_layer = load_config_file(source.get("KOKORO_AGENT_CONFIG"))
         merged: dict[str, object] = {**file_layer, **dict(source)}
-        config = cls.model_validate(merged)
-        if config.model_credentials_file is not None:
-            config = config.model_copy(
-                update={
-                    "model_credentials": read_model_credentials(
-                        config.model_credentials_file
-                    )
-                }
-            )
-        return config
+        return cls.model_validate(merged)
 
     # --- 域视图（消费方 API 不变）：由扁平叶子装配既有子 Settings 类型 ---
 
@@ -330,7 +316,6 @@ class AppConfig(BaseModel):
             openai_reasoning=self.openai_reasoning,
             anthropic_api_key=self.anthropic_api_key,
             anthropic_base_url=self.anthropic_base_url,
-            model_credentials=self.model_credentials,
             model_allow_loopback_http=self.model_allow_loopback_http,
         )
 
@@ -415,7 +400,6 @@ def log_config_summary(config: AppConfig, logger: logging.Logger) -> None:
             "drain_timeout_s": config.drain_timeout_s,
             "service_auth_configured": config.internal_secret_agent is not None,
             "system_endpoint_configured": config.system_base_url is not None,
-            "model_connections_configured": bool(config.model_credentials),
             "search_provider_configured": config.search_provider is not None,
         },
     )

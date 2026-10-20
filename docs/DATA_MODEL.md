@@ -1,3 +1,7 @@
+## MC-02：密钥只存 System（2026-10-20，实施门）
+
+无 Agent DDL 或数据迁移。System 独占密文、创建标记、路由与领取授权；Agent 领取值只活在当前内存客户端，不写 Run、checkpoint、journal、证据、profile、日志或 Redis。删除本机模型密钥文件消费；旧 usage1/usage2 artifact 及历史字节/摘要固定，不用新密钥重放旧记录。正常环境不切换，本片只做隔离验证。
+
 ## MC-02A：共享配置的 Agent 数据边界（2026-10-20）
 
 本片无 DDL、Run/调用证据字段或历史数据变化。共享 revision 与业务组合仍由 System 拥有；Agent 不复制目录、别名、租户路由或密钥存储。仅更新构建期唯一 System consumer receipt 和其来源聚合摘要，历史请求与 usage 证据原字节不重写。正常数据库、配置及进程不切换。

@@ -1,3 +1,13 @@
+## 2026-10-20 MC-02：System6 受控领取与旧文件退役（隔离交付）
+
+用户已明确批准 System 现模型模块方案。Agent 唯一固定消费更新为 System `550d65498822d8d2e629199482de4f6990b62708` / 6.0.0，artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`、provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`、22来源均从Git原件核验，receipt `9cf1529afa751490b389aee19689ceabcf46edb289de494381759ebadf69f7e8`。消费仍在原SystemModelClient，同池 resolve→受控领取；保原始缺省/显式label，逐项绑定feature/label/provider/revision/digest/handle，strict SecretStr、no-store、有界读取/deadline、取消/无重试/无跳转。领取成功前不构造模型客户端/沙箱。旧凭据文件loader/registry、AppConfig字段和YAML入口删除，旧env即使空值也明确拒绝，无双读；非路由原生SDK分支不扩大改动。
+
+主方完整锁检查/frozen sync、Ruff全格式/lint、锁定Pyright（显式隔离venv解释器）0错误、contract与默认2405 PASS/773按marker未选、wheel/sdist及仓外安装发行物合同均通过；194运行Python逐字与wheel安装一致，旧reader不存在。旧私有文件安全测试随已删除parser退役，由当前owner文件安全/AAD/密文测试及Agent旧入口拒绝、精确响应绑定承接；未删资金/取消/历史风险以凑数量。首个直接pyright错误解析全局解释器、测试编辑缩进失误和安装探针漏参数已修正，错误日志保留，不计最终通过、不改工具版本/门禁。
+
+原真实PG+本地协议两个受影响文件331 PASS/0SKIP，含既有资金未发布前零provider请求、取消与最终授权门；自有库回收，catalog前后核等，无Redis访问。另真实System6 HTTP/PG→本Agent客户端隔离链通过默认/显式领取、撤权和跨tenant拒绝、provider/receipt无明文；模型地址为实际监听tripwire且请求0，自有DB/Redis namespace清理后核等、子进程关闭。此链不是浏览器/BFF表单或真实模型调用验收。
+
+usage1/usage2、封存历史reader/bytes、HTTP7/proof2、SQL及资金runtime均无diff。独立最终静审Approved并独立复核22来源/receipt与旧门保护。正常worker停用、原正常System5/Public21/Web/Admin源码及PID不变；模型/工具/扣费暂停。后台完整创建/发布/业务组合表单及正常页面旅程仍后续，本批未push/新增或合并PR，不据此宣告整个模型模块或总目标完成。
+
 ## 2026-10-20 MC-02A：System5 固定消费者已验（本地，未激活）
 
 唯一 System receipt 固定 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07` / 5.0.0；原始 artifact/provenance 和全部20来源经 Git 对象核验，System4→5 resolve 操作及3递归引用逐值相等。保持现严格运行 decoder、feature/label 一致性及所有其他 owner pin；HTTP7/proof2/usage2、SQL、调用行为不改，无旧新回退。

@@ -929,7 +929,7 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
     matches = [record for record in records if record["owner"] == "kokoro-system"]
     assert len(matches) == 1
     receipt = matches[0]
-    assert receipt["version"] == "5.0.0"
+    assert receipt["version"] == "6.0.0"
     assert set(receipt) == {
         "owner",
         "contract",
@@ -941,18 +941,21 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
         "operations",
     }
     assert set(_object(receipt["provenance"])) == {"path", "sha256"}
-    assert len(_object(receipt["source_sha256"])) == 20
-    assert receipt["operations"] == ["POST /v1/system/model-catalog/resolve"]
+    assert len(_object(receipt["source_sha256"])) == 22
+    assert receipt["operations"] == [
+        "POST /v1/system/model-catalog/resolve",
+        "POST /v1/system/model-catalog/credentials/read",
+    ]
     # Root verified this immutable release against Git objects, not a checkout.
-    # The canonical hash binds every receipt field and all 20 source path/hashes.
+    # The canonical hash binds every receipt field and all 22 source path/hashes.
     import hashlib
 
-    assert receipt["source_commit"] == "b7fe78e25e3c569ae0e1cb9b42cddab02074ca07"
+    assert receipt["source_commit"] == "550d65498822d8d2e629199482de4f6990b62708"
     canonical = json.dumps(
         receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
     assert hashlib.sha256(canonical).hexdigest() == (
-        "f7610568b2052a96eca4865306d240c836ce9e7263edcf46c655116e69f516eb"
+        "9cf1529afa751490b389aee19689ceabcf46edb289de494381759ebadf69f7e8"
     )
 
 

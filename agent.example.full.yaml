@@ -10,7 +10,6 @@ model:
   openai_reasoning: false
   anthropic_base_url: https://api.example.invalid/anthropic
   allow_loopback_http: false
-  # credentials_file: /run/secrets/kokoro-model-credentials.json
 stream:
   redis_url: redis://redis.example.invalid:6380/5
 database:

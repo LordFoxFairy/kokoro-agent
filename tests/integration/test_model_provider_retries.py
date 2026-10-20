@@ -382,13 +382,6 @@ async def _model(
         ),
         anthropic_base_url=base_url,
         model_allow_loopback_http=True,
-        model_credentials=(
-            ModelCredential(
-                provider_id="22222222-2222-4222-8222-222222222222",
-                secret_handle_ref="sandbox-litellm-key",
-                api_key=SecretStr("sandbox-litellm-key"),
-            ),
-        ),
     )
     provider: Literal["openai", "anthropic", "litellm"]
     if case.protocol == "anthropic":
@@ -412,7 +405,15 @@ async def _model(
                     request_id="r216-sdk-route",
                 )
             assert owner.request_count == 1
-        clients = ModelHttpMechanismClients(settings, route)
+        clients = ModelHttpMechanismClients(
+            settings,
+            route,
+            ModelCredential(
+                provider_id=route.provider_id,
+                secret_handle_ref=route.connection.secret_handle_ref,
+                api_key=SecretStr("sandbox-litellm-key"),
+            ),
+        )
         peer.model_clients.append(clients)
         return make_chat_model(
             settings,
@@ -2018,7 +2019,9 @@ async def test_r246_production_owned_clients_without_scope_never_send(
     async with _peer("openai", "stream" if streaming else "ok") as peer:
         await _model(_PROVIDER_CASES[2], peer, monkeypatch)
         mechanism = peer.model_clients[0]
-        production = ModelHttpClients(mechanism.settings, mechanism.route)
+        production = ModelHttpClients(
+            mechanism.settings, mechanism.route, mechanism.model_credential
+        )
         peer.model_clients.append(production)
         model = make_chat_model(
             production.settings,
@@ -2139,7 +2142,9 @@ async def test_r246_production_rejects_unmaterialized_stream_without_consuming(
     async with _peer("openai", "ok") as peer:
         await _model(_PROVIDER_CASES[2], peer, monkeypatch)
         mechanism = peer.model_clients[0]
-        clients = ModelHttpClients(mechanism.settings, mechanism.route)
+        clients = ModelHttpClients(
+            mechanism.settings, mechanism.route, mechanism.model_credential
+        )
         peer.model_clients.append(clients)
         with pytest.raises(ModelCallInputInvalid, match="must be materialized"):
             await clients.async_client.post(clients.endpoint, content=body())

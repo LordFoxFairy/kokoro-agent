@@ -1,3 +1,11 @@
+## MC-02：System 受控密钥领取（2026-10-20，已批准实施）
+
+沿用户已批准的 System 现模块方案，不新增服务或密钥缓存。Agent 复用 SystemModelClient 原连接池，在 resolve 后、构造任何模型客户端/沙箱前，携带可信 tenant、原始 feature/可选 label 选择及精确 provider/revision/digest 读取。默认选择保持缺省，不改造成显式 label 以绕过当前默认策略。响应逐项比较 feature/label/provider/revision/digest/handle，Key 只以 SecretStr 在该模型客户端生命周期持有；错误脱敏、有界读取/总 deadline、禁跳转/重试和取消沿既有边界。
+
+固定消费为 System `550d65498822d8d2e629199482de4f6990b62708` /6.0.0；artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`，provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`，22来源与两操作receipt经Git原件及安装发行物检查。组件验证与正常未激活边界见CURRENT。
+
+删除旧凭据文件 parser、配置字段及 YAML 入口；旧环境配置明确报退役，不双读或回退原生环境 Key。model/credentials.py 只保留严格的内存凭据值；ModelHttpClients 必须显式接收绑定凭据，原 provider/handle 校验保留。非路由原生 SDK 分支本片不扩改。先固定 System6 已验证 source/artifact/provenance 再消费；新构建 profile 自然变化，冻结 usage1/usage2、历史 Run/证据与 SQL 不重写。正常 worker 停用，真实模型/工具/扣费不启动。
+
 ## MC-02A：共享业务模型的固定消费（2026-10-20）
 
 按用户已确认的“共享模型配置、业务分别组合”，System5 由现有 label/routing 保存业务归属、默认项及可选别名；物理 revision 不再绑定 feature。Agent 继续只调用既有 resolve，发送受信 tenant、feature_key 与可选稳定 label_key；返回 feature/label 仍是业务解析上下文，不由 revision 推断。

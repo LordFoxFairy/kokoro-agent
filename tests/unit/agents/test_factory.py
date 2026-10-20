@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
+from pydantic import SecretStr
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -108,6 +109,22 @@ class RouteResolver:
             max_output_tokens=128,
         )
 
+    async def read_credential(
+        self,
+        *,
+        tenant_id: str,
+        route: ResolvedModel,
+        label: str | None,
+        request_id: str | None,
+    ) -> ModelCredential:
+        assert tenant_id == "tenant"
+        assert label is None or label == route.label_key
+        return ModelCredential(
+            provider_id=route.provider_id,
+            secret_handle_ref=route.connection.secret_handle_ref,
+            api_key=SecretStr("unit-model-key"),
+        )
+
 
 def _request(feature_key: str) -> RunRequest:
     return RunRequest(
@@ -173,20 +190,7 @@ def _factory(
             "ModelCallRuntimeMiddleware",
             _UnrelatedUnitScopeModelCallMiddleware,
         )
-    from pydantic import SecretStr
-
     active_config = config or AppConfig.from_env({})
-    active_config = active_config.model_copy(
-        update={
-            "model_credentials": (
-                ModelCredential(
-                    provider_id="provider",
-                    secret_handle_ref="model-unit-key",
-                    api_key=SecretStr("unit-model-key"),
-                ),
-            ),
-        }
-    )
     clients = WorkerClients()
     repository = FakeRunRepository()
     return AgentFactory(
@@ -2289,9 +2293,9 @@ async def r216_owned_clients(
     owned: list[tuple[ModelHttpClients, list[str]]] = []
 
     def construct(
-        settings: ChatModelSettings, route: ResolvedModel
+        settings: ChatModelSettings, route: ResolvedModel, credential: ModelCredential
     ) -> ModelHttpClients:
-        clients = ModelHttpClients(settings, route)
+        clients = ModelHttpClients(settings, route, credential)
         calls: list[str] = []
         sync_close, async_close = clients.sync.close, clients.async_client.aclose
 

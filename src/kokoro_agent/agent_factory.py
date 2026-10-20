@@ -247,7 +247,13 @@ async def build_deep_agent(
     policy = agent.permissions
     # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
     # docker/e2b 档带 run 级生命周期：resume 经 run_repository 重连既往箱/容器。
-    clients = ModelHttpClients(dependencies.model, route)
+    credential = await resolver.read_credential(
+        tenant_id=request.execution_identity.tenant_ref,
+        route=route,
+        label=request.requested_model_label,
+        request_id=correlation_id,
+    )
+    clients = ModelHttpClients(dependencies.model, route, credential)
     resources: tuple[ArchivingWritesMixin, ...] = ()
     try:
         backend = await make_backend_for_run(

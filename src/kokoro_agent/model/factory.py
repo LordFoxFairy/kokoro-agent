@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 from kokoro_agent.policy import ModelConfig
 
 from kokoro_agent.clients.system import ResolvedModel
-from kokoro_agent.model.credentials import ModelCredential, credential_for_provider
+from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.model.usage_observation import (
     observe_usage_response,
     observe_usage_response_async,
@@ -46,7 +46,6 @@ class ChatModelSettings(BaseModel):
     openai_reasoning: bool
     anthropic_api_key: SecretStr | None
     anthropic_base_url: str | None
-    model_credentials: tuple[ModelCredential, ...] = ()
     model_allow_loopback_http: bool = False
 
 
@@ -56,6 +55,7 @@ class ModelHttpClients:
 
     settings: ChatModelSettings
     route: ResolvedModel
+    model_credential: ModelCredential = field(repr=False)
     sync: httpx.Client = field(init=False, repr=False)
     async_client: httpx.AsyncClient = field(init=False, repr=False)
     endpoint: httpx.URL = field(init=False, repr=False)
@@ -69,12 +69,13 @@ class ModelHttpClients:
             raise ValueError(
                 "HTTP model loopback requires explicit deployment permission"
             )
-        credential = credential_for_provider(
-            self.settings.model_credentials,
-            self.route.provider_id,
-            self.route.connection.secret_handle_ref,
-        )
-        object.__setattr__(self, "credential", credential)
+        if (
+            self.model_credential.provider_id != self.route.provider_id
+            or self.model_credential.secret_handle_ref
+            != self.route.connection.secret_handle_ref
+        ):
+            raise ValueError("model credentials unavailable")
+        object.__setattr__(self, "credential", self.model_credential.api_key)
         endpoint = httpx.URL(str(base).rstrip("/") + "/chat/completions")
         object.__setattr__(self, "endpoint", endpoint)
         sync = httpx.Client(

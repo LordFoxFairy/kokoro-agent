@@ -1,3 +1,9 @@
+## MC-02A：共享业务模型的固定消费（2026-10-20）
+
+按用户已确认的“共享模型配置、业务分别组合”，System5 由现有 label/routing 保存业务归属、默认项及可选别名；物理 revision 不再绑定 feature。Agent 继续只调用既有 resolve，发送受信 tenant、feature_key 与可选稳定 label_key；返回 feature/label 仍是业务解析上下文，不由 revision 推断。
+
+本片只将唯一 System 依赖收据固定到 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07` / 5.0.0；已从 Git 原件核对 System4→5 resolve 操作及全部递归引用语义相等、20 项来源摘要精确。保留当前严格 decoder、tenant/feature/label 一致性、deadline 和错误处理，不新增 HTTP client、协议、运行模块或兼容回退。原凭据读取方式本片不变；Key 存储/读取候选不视为已批准。正常 Agent 仍停用，不发送模型、工具或扣费请求。
+
 ## 内部通知重试收敛（2026-10-19，本地验证，未激活）
 
 沿已接受ADR-003：PG Run/outbox/Chat是事实，Redis只作可丢失通知，BFF通过HTTP Chat补读。只退休published等待外部ACK的周期重发及其宽限配置/返回字段；queued仍按原identity先恢复Chat再发布、成功才标published。started/delivery保原两事务补偿，terminal保原原子提交；control私有回执不冒公开Chat。

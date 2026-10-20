@@ -1,3 +1,11 @@
+## 2026-10-20 MC-02A：System5 固定消费者已验（本地，未激活）
+
+唯一 System receipt 固定 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07` / 5.0.0；原始 artifact/provenance 和全部20来源经 Git 对象核验，System4→5 resolve 操作及3递归引用逐值相等。保持现严格运行 decoder、feature/label 一致性及所有其他 owner pin；HTTP7/proof2/usage2、SQL、调用行为不改，无旧新回退。
+
+现身份测试先真实 RED（旧4.0.0与目标5.0.0不符），原合同篡改及 System client 两文件176 PASS；最终 frozen/offline lock/sync、Ruff格式/lint、锁定Pyright、contract checker、完整默认2399 PASS/773按marker未选、wheel/sdist及安装发行物contract checker均通过。完整默认首轮2398 PASS/1退出时限FAIL，随后原四分支定向2 PASS/2启动时限FAIL；原信号代码/测试与基线逐字不变，未加超时/跳过/重试策略，完整原命令复验2399 PASS。初次失败日志保留，不据此宣称信号时限脆弱性已修复；无新测试套件或运行时变更。
+
+仅固定依赖元数据与必要文档，正常Agent仍停用，未运行模型/工具/扣费，不冒正常全链或整个模型管理完成。Key保存/领取候选仍独立待决，真实数据库测试本片未新增：无SQL/I/O实现变化，System owner及BFF当前隔离HTTP链分别验其职责。
+
 ## 2026-10-19 现有执行能力集成交付
 
 本轮集成本地fffd38e与最新main815b4c1既有事实：保HTTP7/proof2、精确Skills与MCP生命周期、已批准model-connections/usage2源码及published通知不重发；同时保main首帧/终态原子receipt manifest。重复初始化SQL收敛在原PostgresRunRepositoryContext，通过原cursor/Run锁/事务调用，ON CONFLICT不覆盖任何水位/关闭标志；没有新模块、连接、事务框架或Schema。原800行边界保持，不通过抬高阈值或压空行隐藏问题。

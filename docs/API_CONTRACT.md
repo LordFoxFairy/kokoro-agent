@@ -1,3 +1,9 @@
+## MC-02A：System5 固定依赖（2026-10-20）
+
+唯一消费操作仍为 `POST /v1/system/model-catalog/resolve`，固定 owner 提交 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07`、版本 5.0.0 与原始 artifact/provenance/20 来源摘要；不混用旧新 pin。System4→5 的该操作及递归 schema 已逐值核等，Agent HTTP7、proof2、usage2 和其它 owner 固定依赖保持原样。
+
+业务 feature_key 与稳定 label_key 仍经现 resolve 校验；展示别名不替换原 request_model，不充当 provider/凭据身份。receipt checker 只核本地精确收据，Git 原始来源核验属于组合交付证据，不将前者称后者。
+
 ## Raw通知不要求外部ACK（2026-10-19，实施门）
 
 当前HTTP7/Redis机器artifact与所有外部字段不变；BFF仍只读Agent durable Chat并写自身ledger，没有raw ACK endpoint。内部published通知不等待并不存在的外部receipt producer，移除宽限重发参数/配置及内部republish候选；Run/control admission receipt不是该通知回执。queued失败重试与精确Chat恢复不变。既有真实rejected和损坏历史保护继续，不把可丢通知称BFF已消费；不新增公开协议、自动模型/工具调用或扣费。

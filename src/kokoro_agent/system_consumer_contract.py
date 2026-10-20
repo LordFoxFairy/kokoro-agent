@@ -8,7 +8,7 @@ from pathlib import Path
 
 from typing import TypeGuard
 
-_RECEIPT_SHA256 = "4c3e8f4eeb314252f2543f8b994081aa5ffe5670e3cb39128b36bd8c34a44d01"
+_RECEIPT_SHA256 = "f7610568b2052a96eca4865306d240c836ce9e7263edcf46c655116e69f516eb"
 _RECEIPT_KEYS = {
     "owner",
     "contract",

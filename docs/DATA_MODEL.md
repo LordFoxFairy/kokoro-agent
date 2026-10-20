@@ -1,3 +1,7 @@
+## MC-02A：共享配置的 Agent 数据边界（2026-10-20）
+
+本片无 DDL、Run/调用证据字段或历史数据变化。共享 revision 与业务组合仍由 System 拥有；Agent 不复制目录、别名、租户路由或密钥存储。仅更新构建期唯一 System consumer receipt 和其来源聚合摘要，历史请求与 usage 证据原字节不重写。正常数据库、配置及进程不切换。
+
 ## 通知重试收敛的数据边界（2026-10-19，实施门）
 
 canonical database/schema.sql不改，不增删表/列/索引、不迁移或重写历史。正常无外部receipt/manifest时保留published outbox至既有Run TTL；已有watermark的原GC和active delivery保护仍按原Run行锁核验，不引入提前删除资格。receipt已存在却manifest缺失仍为损坏，rejected原终态隔离保持。Chat历史不随此变更释放；无新manifest writer或跨ownerSQL，正常库不操作。

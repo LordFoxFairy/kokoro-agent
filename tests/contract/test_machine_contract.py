@@ -929,7 +929,7 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
     matches = [record for record in records if record["owner"] == "kokoro-system"]
     assert len(matches) == 1
     receipt = matches[0]
-    assert receipt["version"] == "4.0.0"
+    assert receipt["version"] == "5.0.0"
     assert set(receipt) == {
         "owner",
         "contract",
@@ -947,12 +947,12 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
     # The canonical hash binds every receipt field and all 20 source path/hashes.
     import hashlib
 
-    assert receipt["source_commit"] == "7f479f654c535077874d9cf63d1b25437e9420b6"
+    assert receipt["source_commit"] == "b7fe78e25e3c569ae0e1cb9b42cddab02074ca07"
     canonical = json.dumps(
         receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
     assert hashlib.sha256(canonical).hexdigest() == (
-        "4c3e8f4eeb314252f2543f8b994081aa5ffe5670e3cb39128b36bd8c34a44d01"
+        "f7610568b2052a96eca4865306d240c836ce9e7263edcf46c655116e69f516eb"
     )
 
 

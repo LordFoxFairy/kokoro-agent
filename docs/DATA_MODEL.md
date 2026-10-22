@@ -1,3 +1,7 @@
+## AGENT-1：预算方案不复制财务数据（2026-10-22）
+
+用户确认退役额外供应商成本保证前置；本片纯设计裁决，无Agent DDL或数据写入。预算、冻结价格和hold/capture/release由Billing唯一拥有；Agent复用现attempt、planned/final摘要、authorization与dispatch状态和严格usage2，不预建旧capacity-bound表或双轨证据。历史证据、SQL、正常数据不改写，不把未知/超预算改成not_dispatched或免费终态；后继恢复沿原attempt/receipt，源码/持久状态调整须随正式consumer具体收敛。
+
 ## MC-02：密钥只存 System（2026-10-20，实施门）
 
 无 Agent DDL 或数据迁移。System 独占密文、创建标记、路由与领取授权；Agent 领取值只活在当前内存客户端，不写 Run、checkpoint、journal、证据、profile、日志或 Redis。删除本机模型密钥文件消费；旧 usage1/usage2 artifact 及历史字节/摘要固定，不用新密钥重放旧记录。正常环境不切换，本片只做隔离验证。

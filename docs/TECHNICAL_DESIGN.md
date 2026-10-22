@@ -1,3 +1,11 @@
+## AGENT-1：预算预占替代供应商成本保证前置（2026-10-22，用户已确认）
+
+本节替代R252-AGENT-BOUND-D0中“缺供应商capacity-and-usage guarantee就必须永远阻断资金正路”的前置，以及为此预建capacity-derived bound artifact/reader的强制计划。后台按业务模型配置正式价格及单次整数积分预算，Billing以预算预占；预算不是输入token计数或成本绝对上界，不从4096/256、字符数或/models推导费用。沿现System受控取钥／精确revision、现最终请求绑定和request profile、现prepare→begin/grant authorization→single dispatch CAS／严格usage2／原租约与取消屏障，补正式Billing consumer；不删除这些保护来发模型请求，不新增预算服务。
+
+结算规则已确认：同attempt已验证实际用量按冻结价格统一一次整数ceil；actual<=预算capture实际并release余量；执行或用量未知／超预算保留预占和证据进入pending_reconciliation，并停止该Run后续派发，不猜价、补0、夹到预算、自动补扣、因TTL/取消自动释放或重发供应商请求。仅确认未派发可无actual释放；failed/cancelled有已验证actual仍按同规则结算，恢复复用原attempt/receipt。Billing拥有预算、金额与资金状态，Agent不计算价格/余量/收费，不复制计价配置或建立钱包。
+
+当前仅Billing包内决策正在独立实施，Agent运行源码尚未改、正式consumer和派发正路未接；配置token上限继续约束请求，不称财务保证。后继正式契约设计按上述现owner装配，复用已有证据读取/鉴权，不再以新增供应商保证合同阻塞主线；用户确认并不替代真实runtime/资金验收。
+
 ## MC-02：System 受控密钥领取（2026-10-20，已批准实施）
 
 沿用户已批准的 System 现模块方案，不新增服务或密钥缓存。Agent 复用 SystemModelClient 原连接池，在 resolve 后、构造任何模型客户端/沙箱前，携带可信 tenant、原始 feature/可选 label 选择及精确 provider/revision/digest 读取。默认选择保持缺省，不改造成显式 label 以绕过当前默认策略。响应逐项比较 feature/label/provider/revision/digest/handle，Key 只以 SecretStr 在该模型客户端生命周期持有；错误脱敏、有界读取/总 deadline、禁跳转/重试和取消沿既有边界。

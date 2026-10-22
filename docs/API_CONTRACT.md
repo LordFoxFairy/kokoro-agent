@@ -1,3 +1,7 @@
+## AGENT-1：预算授权与结算的最新裁决（2026-10-22）
+
+用户已确认预算预占→真实用量一次整数结算，取代旧额外供应商成本上界保证前置。本片不修改Agent HTTP7/proof2/usage2、schema、client或鉴权；R252旧capacity-bound新artifact/reader不再是资金链前置。后继在现可信attempt／final digest／exact model route上接正式Billing授权及严格回执；预算和price由Billing管理，不允许前端/Agent自报actual金额。unknown或超预算保留原资金与证据、停止同Run新派发；只有明确未派发可释放，取消/超时不是零用量证明。运行仍缺正式Billing consumer，未由本文放行。
+
 ## MC-02：受控领取契约（2026-10-20，实施门）
 
 唯一 System 消费在既有 resolve 外加入 `POST /v1/system/model-catalog/credentials/read`，固定 System6 正式 source/artifact/provenance，拒旧/新混用。领取是无幂等写入的只读 POST，服务身份仍 kokoro-agent，可信 tenant 与原始选择保持；精确版本只作一致性比较，不授予历史路由读取权。仅接受200、no-store及严格字段/Key字符域，错误/超大/错误版本/错绑定/跳转均脱敏失败，不重试或返回给 Web/BFF。无 Agent public/Redis/usage 契约修改。

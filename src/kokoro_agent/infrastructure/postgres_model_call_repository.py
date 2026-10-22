@@ -22,6 +22,7 @@ from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
+from kokoro_agent.infrastructure.postgres_model_call_prepared import read_prepared
 from kokoro_agent.infrastructure.postgres_run_profiles import validate_static_recipe
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     append_evidence_locked,
@@ -43,6 +44,7 @@ from kokoro_agent.model.call_models import (
     ModelCallOrdinalExhausted,
     PrepareModelCall,
     PreparedModelCall,
+    PreparedModelCallSnapshot,
     StartModelCallDispatch,
 )
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
@@ -151,6 +153,19 @@ class PostgresModelCallRepository:
             raise RuntimeError(
                 "unsealed legacy model attempts prevent current producer startup"
             )
+
+    async def read_prepared(
+        self, tenant_id: str, attempt_id: str
+    ) -> PreparedModelCallSnapshot | None:
+        return await read_prepared(
+            self._database_url,
+            self._schema,
+            tenant_id,
+            attempt_id,
+            total_timeout_seconds=self._total_timeout_seconds,
+            lock_timeout_ms=self._lock_timeout_ms,
+            statement_timeout_ms=self._statement_timeout_ms,
+        )
 
     async def read_final_evidence(
         self, tenant_id: str, attempt_id: str, event_id: str

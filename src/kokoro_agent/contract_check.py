@@ -35,6 +35,7 @@ REQUIRED_PATHS = {
     "/v1/execution-proof/jwks",
     "/v1/runs",
     "/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+    "/v1/model-call-attempts/{attempt_id}/prepared",
     "/v1/runs/{run_id}/control",
     "/v1/runs/{run_id}/events",
     "/v1/sessions",
@@ -65,8 +66,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "7.0.0":
-        raise ValueError("Agent HTTP contract version must be 7.0.0")
+    if info.get("version") != "7.1.0":
+        raise ValueError("Agent HTTP contract version must be 7.1.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")

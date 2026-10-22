@@ -42,7 +42,11 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
 from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
 )
-from kokoro_agent.model.call_models import ModelCallEvidenceInvariantFailed
+from kokoro_agent.model.call_models import (
+    ModelCallEvidenceInvariantFailed,
+    ModelCallAuthorityLost,
+)
+from kokoro_agent.interfaces.http.model_call_prepared import prepared_snapshot_payload
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 
 LOGGER = logging.getLogger(__name__)
@@ -66,6 +70,7 @@ _JWKS_IDENTITY_HEADERS = (
 _MODEL_EVIDENCE = re.compile(
     r"^/v1/model-call-attempts/([^/]+)/usage-evidence/([^/]+)$"
 )
+_MODEL_PREPARED = re.compile(r"^/v1/model-call-attempts/([^/]+)/prepared$")
 _BILLING_FORBIDDEN_HEADERS = tuple(
     name for name in _JWKS_IDENTITY_HEADERS if name != "x-kokoro-tenant-ref"
 ) + ("x-kokoro-service",)
@@ -76,6 +81,7 @@ def _known_business_route(method: str, path: str) -> bool:
     if method == "GET":
         return (
             _MODEL_EVIDENCE.fullmatch(path) is not None
+            or _MODEL_PREPARED.fullmatch(path) is not None
             or path in {"/healthz", "/readyz", "/v1/sessions"}
             or any(
                 pattern.fullmatch(path) is not None
@@ -291,13 +297,62 @@ async def dispatch_request(
     if method == "GET" and path == "/healthz":
         return 200, {"status": "ok", "service": "kokoro-agent"}
     evidence_match = _MODEL_EVIDENCE.fullmatch(path) if method == "GET" else None
+    prepared_match = _MODEL_PREPARED.fullmatch(path) if method == "GET" else None
     auth_failure = (
         _billing_reader_auth_failure(config, headers, request_id)
-        if evidence_match is not None
+        if evidence_match is not None or prepared_match is not None
         else _service_auth_failure(config, headers, request_id)
     )
     if auth_failure is not None:
         return auth_failure
+    if prepared_match is not None:
+        tenant = headers.get("x-kokoro-tenant-ref", "").strip()
+        if (
+            _TENANT_REF.fullmatch(tenant) is None
+            or any(headers.get(name, "").strip() for name in _BILLING_FORBIDDEN_HEADERS)
+            or body is not None
+            or headers.get("content-length", "").strip() not in {"", "0"}
+            or bool(headers.get("transfer-encoding", "").strip())
+        ):
+            return 403, _error(
+                "billing_model_call_reader_identity_forbidden",
+                "Billing model-call reader identity context is invalid",
+                request_id,
+            )
+        try:
+            attempt_id = str(UUID(prepared_match.group(1)))
+            if attempt_id != prepared_match.group(1) or query:
+                raise ValueError
+        except ValueError:
+            return 400, _error(
+                "invalid_model_call_prepared_request",
+                "Model-call prepared request is invalid",
+                request_id,
+            )
+        repository = PostgresModelCallRepository(
+            config.database_url, config.database_schema, total_timeout_seconds=10.0
+        )
+        try:
+            snapshot = await repository.read_prepared(tenant, attempt_id)
+        except ModelCallAuthorityLost:
+            return 409, _error(
+                "model_call_prepared_unavailable",
+                "Model-call preparation is not available for admission",
+                request_id,
+            )
+        except ModelCallEvidenceInvariantFailed:
+            return 500, _error(
+                "model_call_prepared_invariant_failed",
+                "Persisted model-call preparation is invalid",
+                request_id,
+            )
+        if snapshot is None:
+            return 404, _error(
+                "model_call_prepared_not_found",
+                "Model-call preparation was not found",
+                request_id,
+            )
+        return 200, _envelope(prepared_snapshot_payload(snapshot), request_id)
     if evidence_match is not None:
         tenant = headers.get("x-kokoro-tenant-ref", "").strip()
         content_length = headers.get("content-length", "").strip()
@@ -671,9 +726,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             is_health_request = self.command == "GET" and split.path == "/healthz"
             config = None if is_health_request else self._config()
             if config is not None:
-                evidence_target = (
-                    self.command == "GET"
-                    and _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                evidence_target = self.command == "GET" and (
+                    _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                    or _MODEL_PREPARED.fullmatch(split.path) is not None
                 )
                 auth_failure = (
                     _billing_reader_auth_failure(config, headers, request_id)

@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "7.0.0"
+    "version": "7.1.0"
   },
   "servers": [
     {
@@ -1771,6 +1771,117 @@
           }
         },
         "additionalProperties": false
+      },
+      "PreparedModelCallSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "binding_version",
+          "attempt_id",
+          "status",
+          "attempt_binding_bytes_base64url",
+          "attempt_binding_digest",
+          "planned_bytes_base64url",
+          "planned_digest",
+          "authorization_bytes_base64url",
+          "authorization_digest",
+          "final_request_binding_version",
+          "final_request_digest",
+          "prepared_at",
+          "observed_at",
+          "lease_expires_at"
+        ],
+        "properties": {
+          "binding_version": {
+            "type": "string",
+            "const": "2.0.0"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "prepared",
+              "authorization_pending",
+              "authorized"
+            ]
+          },
+          "attempt_binding_bytes_base64url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 87382,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Original canonical RFC8785 UTF-8 JSON bytes, 1..65536, unpadded canonical base64url. Decoded shape is usage/v2 EvidenceIdentity with event_id removed; no other fields added. Its digest is ordinary SHA256 of these exact bytes."
+          },
+          "attempt_binding_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "planned_bytes_base64url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 87382,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Original canonical usage/v2 PlannedBinding bytes; binding_version must be 2.0.0. Ordinary SHA256, not the final evidence digest domain. Never actual commercial attribution."
+          },
+          "planned_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "authorization_bytes_base64url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 87382,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Current canonical usage/v2 AuthorizationObservation bytes: prepared/not_requested, authorization_pending/requested_unknown with original request_ref, or authorized/granted with original request_ref and admission_ref. This observation changes with state; it is not the creation receipt."
+          },
+          "authorization_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "final_request_binding_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "final_request_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "prepared_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+            "description": "Database time for the single joined read; lease expiry is observation, never a renewable dispatch permit."
+          },
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+          }
+        }
+      },
+      "PreparedModelCallSnapshotEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PreparedModelCallSnapshot"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "responses": {
@@ -2763,6 +2874,141 @@
             }
           }
         }
+      }
+    },
+    "/v1/model-call-attempts/{attempt_id}/prepared": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Read current frozen model-call preparation for Billing admission",
+        "operationId": "getPreparedModelCall",
+        "security": [
+          {
+            "BillingModelCallReaderBearer": []
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "candidate",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "model-call-prepared.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current read-only preparation observation, not an immutable historical receipt.",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparedModelCallSnapshotEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Path or query is invalid.",
+            "x-kokoro-error-code": "invalid_model_call_prepared_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Reader credential is invalid.",
+            "x-kokoro-error-code": "billing_model_call_reader_auth_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Tenant assertion or identity context is forbidden.",
+            "x-kokoro-error-code": "billing_model_call_reader_identity_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Preparation is absent or not visible.",
+            "x-kokoro-error-code": "model_call_prepared_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Persisted preparation violates owner invariants.",
+            "x-kokoro-error-code": "model_call_prepared_invariant_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Reader authentication or dependency is unavailable.",
+            "x-kokoro-error-code": "billing_model_call_reader_not_configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Current state or lease is unsuitable for admission; this is not proof of non-dispatch.",
+            "x-kokoro-error-code": "model_call_prepared_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "description": "Dedicated Billing observation, not a dispatch permit or supplier cost bound. No query or request body. Only current usage2 prepared/pending/authorized attempts with live matching Run fence are visible as successful snapshots. Existing Billing receipt recovery does not require this read to remain available."
       }
     }
   }

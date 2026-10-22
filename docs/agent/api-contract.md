@@ -44,6 +44,12 @@ BFF 只调用版本化入口，不读 Agent PostgreSQL、Redis、checkpoint 或 
 | `GET`      | `/v1/sessions/{session_id}/messages` | 安全 Chat history                     | `200` |
 | `GET`      | `/v1/sessions/{session_id}/events`   | 安全 Chat replay                      | `200` |
 
+专用 Billing reader：`GET /v1/model-call-attempts/{attempt_id}/prepared` 返回当前活租约下
+未派发的严格准备快照；`GET /v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}`
+读取精确已封存历史。两者用独立 Billing bearer，仅接受 tenant，不需要／不接受人类身份覆盖。
+prepared GET 的409不是未派发或可释放积分证明；历史资金恢复不依赖其活租约。
+完整字段和状态以 [canonical 说明](../API_CONTRACT.md) 及机器 OpenAPI 为准。
+
 Session detail、title、share、delete 和 public snapshot 属于 BFF，不通过直接访问 Agent 数据库补齐。
 
 `GET /v1/sessions` 支持 `project_ref`、`limit`（1..100）和不透明 `cursor`。返回 `data.sessions[]`，包含
@@ -71,7 +77,7 @@ HTTP receipt 状态为 `pending`、`succeeded`、`failed`，是同一条控制�
 
 ## 3. 认证、上下文与响应
 
-The anonymous exceptions are exact `GET /healthz` and exact `GET|HEAD` JWKS; all other ingress requires `KOKORO_INTERNAL_SECRET_AGENT` and standard `Authorization: Bearer <secret>`.
+The anonymous exceptions are exact `GET /healthz` and exact `GET|HEAD` JWKS. The two model-call readers require the dedicated Billing reader bearer; other ingress requires `KOKORO_INTERNAL_SECRET_AGENT` and standard `Authorization: Bearer <secret>`.
 未配置 secret 返回 `503 service_auth_not_configured`；认证缺失或错误返回 `401 service_auth_failed`。
 
 Session query/replay 通过 `x-kokoro-tenant-ref`、`x-kokoro-subject-ref`、`x-kokoro-actor-ref`、

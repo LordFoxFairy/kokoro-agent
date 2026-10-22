@@ -66,7 +66,7 @@ Redis LaunchRunRequest
 - `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的
   browser-live stream，因为两者的 generated envelope 和 seq owner 不同。不创建
   `conversation_messages`、持久 `run_events` 或独立 `event_outbox`。
-- 模型按 provider accepted invocation 次数计费；Billing 通过 `invocation_id` 幂等结算，非 token 计费。
+- 模型按同 attempt 的真实用量由 Billing 统一计价、冻结倍率后一次整数积分结算；先预算预占，unknown／超预算保留待核对，不按流式分片或重复回执各扣一次。当前正式资金 consumer 仍待接通。
 
 ## 子仓文档
 
@@ -116,7 +116,7 @@ System6 独占后台写入的加密模型 Key；Agent 每次按当前业务与�
 旧 `KOKORO_MODEL_CREDENTIALS_FILE`（包括空值）与 YAML `model.credentials_file` 明确拒绝；
 旧 `KOKORO_LITELLM_*` 仍拒绝。正常 worker 本批不启用；每次实际调用仍需正式 Billing 许可。
 
-本候选新写 usage2，HTTP6 按实际证据版本返回原始字节；冻结 usage1 仅支持已封存历史读取。
+本候选新写 usage2，HTTP7.1 按实际证据版本返回原始字节；冻结 usage1 仅支持已封存历史读取。
 升级前先停旧 producer 并由旧版本收尾其未封存调用，再启动新 worker；新启动屏障拒绝旧/未知
 未封存 planned，不阻止合法 usage2 的租约恢复。屏障不是“旧进程已停止”的部署证明。
 单独 HTTP ingress 仍可接受 durable admission，不加载 worker 的模型密钥。

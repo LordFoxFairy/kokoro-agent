@@ -1,3 +1,36 @@
+## 2026-10-22 AGENT-1：正式 prepared reader（本地源码验收，资金 consumer 待接）
+
+沿用户确认的预算预占方案新增 HTTP7.1 `GET /v1/model-call-attempts/{attempt_id}/prepared`，
+只读当前 usage2 的准备事实，复用专用 Billing bearer；无新 secret／服务／表／列／成本保证。
+同语句 JOIN Agent 自有 attempt/Run 与 DB 时钟，核原 canonical bytes/digest、durable 身份、
+原 recipe/peer/feature、当前 fence、未过期 lease、未派发／未封存及三种合法准入状态。
+返回原字节的 base64url、final request 摘要、prepared/observed/expiry；不是消费或 dispatch 许可。
+不存在／跨租户404、当前不可准入409、损坏500分开；原 sealed usage 历史读取实现原样保持。
+首次资金准入仍须 Billing 核原 pending request_ref，既有 admission 回执恢复不依赖活 lease。
+
+正式 canonical SHA256 `6c0f532d983367ce3a22e05ffab00f83b7a4481de04f7121e72dd2a5098365a5`；只新增一个 path／两个 schema，整份 HTTP7 父图
+逆删后 SHA256 精确等于 ed0f5fc4…；原 Run/proof2/usage1/usage2、取消、资金拒绝与单次 dispatch
+runtime 无 diff。新 PG 读取组件纳入既有 composition 显式闭包，不放宽源闭包或架构门。
+
+主方停写389非文档输入：lock/frozen offline sync、Ruff全格式/lint、锁定 Pyright1.1.409
+（显式自有 Python3.14.3 解释器）、contract checker、默认 **2416 PASS／789按marker未选**、
+受影响真实 PG／本地协议三个文件 **129 PASS／0SKIP**、wheel/sdist全部exit0，输入无漂移。
+其中新 prepared 专项16项涵盖真实HTTP／精确OpenAPI响应、专用鉴权、原bytes、跨tenant、
+损坏、接管／过期／终态、迟到取消、单次dispatch、超时／取消及零行版本变更。
+自有数据库目录94→94精确恢复；没有访问 Redis。927／135条原上游提醒保留。
+
+仓外独立venv按同锁导出requirements＋hash安装依赖及wheel，installed contract checker／
+新reader与严格DTO导入通过，196份runtime Python在wheel及sdist逐字等于冻结源码；临时venv清理。
+首次outside offline安装因继承Root镜像顺序／缓存缺失失败，后以本锁同一明确registry和hash安装，
+没有修改依赖／锁／上限；原日志保留。首次完整门的本次局部import及显式闭包遗漏、
+一次移顶未删尽的lint失败，均修实现后新冻结完整重验，未改原断言／skip／时限。
+PG首次新增fixture终态缺phase、LOCK缺事务的失败亦保留并按原Schema／事务修正。
+只读独审无剩余确定P0–P2；最终两处导入／闭包修复单独复核。
+
+正常配置／服务／Schema／资金未激活，未发送真实模型／工具或结算积分，未push/PR/merge。
+下一步在 Billing 固定此正式reader并接合法逐attempt消费许可、原幂等预算预占与真实usage结算；
+不删除 Agent 当前 prepare 后拒绝、唯一派发／取消保护，不用本片读取通过冒 AGENT-1/CREDIT-1 完成。
+
 ## 2026-10-20 MC-02：System6 受控领取与旧文件退役（隔离交付）
 
 用户已明确批准 System 现模型模块方案。Agent 唯一固定消费更新为 System `550d65498822d8d2e629199482de4f6990b62708` / 6.0.0，artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`、provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`、22来源均从Git原件核验，receipt `9cf1529afa751490b389aee19689ceabcf46edb289de494381759ebadf69f7e8`。消费仍在原SystemModelClient，同池 resolve→受控领取；保原始缺省/显式label，逐项绑定feature/label/provider/revision/digest/handle，strict SecretStr、no-store、有界读取/deadline、取消/无重试/无跳转。领取成功前不构造模型客户端/沙箱。旧凭据文件loader/registry、AppConfig字段和YAML入口删除，旧env即使空值也明确拒绝，无双读；非路由原生SDK分支不扩大改动。

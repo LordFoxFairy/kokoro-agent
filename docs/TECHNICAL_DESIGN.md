@@ -1,3 +1,19 @@
+## AGENT-1：当前 prepared 快照（2026-10-22，实施设计）
+
+沿已批准的预算预占方案，在现 Agent HTTP 增加专用 Billing GET，复用现有
+`billing_model_call_reader_secret`，不新增服务、配置、表、状态机或供应商成本保证。
+读取 Agent 自有 attempt 与 Run 的同语句快照，原 canonical identity/planned/current authorization
+字节与摘要、final request 摘要、prepared_at、当前 status、DB observed_at 与 lease_expires_at。
+只有当前 usage2、未派发／未封存的 prepared、authorization_pending、authorized 可读；
+须同 tenant、Run 非终态、当前 owner/generation 等于冻结 fence 且租约在 DB 观察时未过期。
+不存在／跨租户404，合法但已失去准入时机409，持久化不变量损坏500；只读事务无行锁或写入。
+
+快照不是许可或可缓存 TTL。首次 Billing admission 还须验证 pending/requested_unknown 的原
+request_ref 和本次授权、精确模型与价格；authorized 仅核原 ACK，不产生第二笔预占。
+既有资金回执重放／对账不再依赖当前活租约读取，继续以 Billing 原永久快照和 sealed usage
+读取恢复。prepare 后固定拒绝仍保持，后继合法 Billing consumer 接入前不发送 provider 请求。
+start_dispatch 的当前 fence／取消／single-dispatch 检查不替换。本片没有资金 I/O。
+
 ## AGENT-1：预算预占替代供应商成本保证前置（2026-10-22，用户已确认）
 
 本节替代R252-AGENT-BOUND-D0中“缺供应商capacity-and-usage guarantee就必须永远阻断资金正路”的前置，以及为此预建capacity-derived bound artifact/reader的强制计划。后台按业务模型配置正式价格及单次整数积分预算，Billing以预算预占；预算不是输入token计数或成本绝对上界，不从4096/256、字符数或/models推导费用。沿现System受控取钥／精确revision、现最终请求绑定和request profile、现prepare→begin/grant authorization→single dispatch CAS／严格usage2／原租约与取消屏障，补正式Billing consumer；不删除这些保护来发模型请求，不新增预算服务。

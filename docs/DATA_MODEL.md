@@ -1,3 +1,10 @@
+## AGENT-1：prepared 只读快照（2026-10-22）
+
+无 canonical SQL／索引／表／列变化。现 `kokoro_agent_model_call_attempt` 和同 tenant/run 的
+`kokoro_agent_run` 是唯一事实源；同一只读查询取当前 fence、lease 和 DB 时钟，不更新
+attempt、Run completeness、水位或授权状态。当前 authorization 是可变状态的当次观察，
+不塞回 PreparedModelCall 的 immutable creation receipt；历史 usage1 原字节读取不变。
+
 ## AGENT-1：预算方案不复制财务数据（2026-10-22）
 
 用户确认退役额外供应商成本保证前置；本片纯设计裁决，无Agent DDL或数据写入。预算、冻结价格和hold/capture/release由Billing唯一拥有；Agent复用现attempt、planned/final摘要、authorization与dispatch状态和严格usage2，不预建旧capacity-bound表或双轨证据。历史证据、SQL、正常数据不改写，不把未知/超预算改成not_dispatched或免费终态；后继恢复沿原attempt/receipt，源码/持久状态调整须随正式consumer具体收敛。

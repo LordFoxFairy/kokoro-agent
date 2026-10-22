@@ -1,3 +1,20 @@
+## AGENT-1：当前调用准备事实读取（HTTP7.1，2026-10-22）
+
+`GET /v1/model-call-attempts/{attempt_id}/prepared`，专用 Billing bearer，tenant header；
+无查询、正文、Transfer-Encoding 或人类 identity/service 覆盖头，canonical 小写 UUID。
+成功沿现 owner envelope、no-store 和 request-id header，返回 original canonical RFC8785 UTF-8
+bytes 的无 padding base64url 与普通 SHA256：attempt binding、planned、当前 authorization。
+attempt binding 是 usage2 EvidenceIdentity 去掉 event_id 的精确字段集；planned 为 usage2
+PlannedBinding；authorization 随当前 status 为 not_requested/requested_unknown/granted。
+所有字节分别1..65536，数字序号／fence generation 沿 usage2 十进制字符串；无 Key、endpoint、
+完整消息或供应商商业归属。另返 binding_version=2.0.0、attempt_id、status、final request
+binding version/digest、prepared_at、observed_at、lease_expires_at，时间 UTC 毫秒。
+
+404 不存在／不可见；409 model_call_prepared_unavailable 表示当前 lease／状态不适合新准入，
+不是未派发证明；500 model_call_prepared_invariant_failed 不降为缺失；依赖503保持。
+只新增此 operation 和两个 schema，旧 HTTP7 完整表示不改；当前版本7.1由正式生成器刷新摘要。
+用途、首笔资金准入与历史恢复边界见 TECHNICAL_DESIGN 首节；不沿旧 R252 创建 bound artifact。
+
 ## AGENT-1：预算授权与结算的最新裁决（2026-10-22）
 
 用户已确认预算预占→真实用量一次整数结算，取代旧额外供应商成本上界保证前置。本片不修改Agent HTTP7/proof2/usage2、schema、client或鉴权；R252旧capacity-bound新artifact/reader不再是资金链前置。后继在现可信attempt／final digest／exact model route上接正式Billing授权及严格回执；预算和price由Billing管理，不允许前端/Agent自报actual金额。unknown或超预算保留原资金与证据、停止同Run新派发；只有明确未派发可释放，取消/超时不是零用量证明。运行仍缺正式Billing consumer，未由本文放行。

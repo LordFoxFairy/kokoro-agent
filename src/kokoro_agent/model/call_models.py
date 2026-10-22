@@ -85,6 +85,27 @@ class PreparedModelCall(BaseModel):
     replayed: bool
 
 
+class PreparedModelCallSnapshot(BaseModel):
+    """Current read-only admission facts, never a dispatch permit or history receipt."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    binding_version: Literal["2.0.0"] = "2.0.0"
+    attempt_id: Uuid
+    status: Literal["prepared", "authorization_pending", "authorized"]
+    attempt_binding_bytes: bytes = Field(min_length=1, max_length=65_536)
+    attempt_binding_digest: Digest
+    planned_bytes: bytes = Field(min_length=1, max_length=65_536)
+    planned_digest: Digest
+    authorization_bytes: bytes = Field(min_length=1, max_length=65_536)
+    authorization_digest: Digest
+    final_request_binding_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    final_request_digest: Digest
+    prepared_at: datetime
+    observed_at: datetime
+    lease_expires_at: datetime
+
+
 class BeginModelCallAuthorization(BaseModel):
     """Freeze the opaque Billing operation reference for one prepared attempt."""
 

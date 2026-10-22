@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "7.0.0"
+    assert _object(document["info"])["version"] == "7.1.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -76,7 +76,10 @@ def test_every_operation_declares_governance_metadata() -> None:
     for operation in operations:
         assert operation["x-kokoro-owner"] == "kokoro-agent"
         assert operation["x-kokoro-visibility"] == "internal-owner"
-        if operation["operationId"] == "getFinalModelCallUsageEvidence":
+        if operation["operationId"] in {
+            "getFinalModelCallUsageEvidence",
+            "getPreparedModelCall",
+        }:
             assert operation["x-kokoro-stability"] == "candidate"
         else:
             assert operation["x-kokoro-stability"] == "stable"
@@ -91,6 +94,7 @@ def test_http_route_set_is_explicit() -> None:
         "/readyz",
         "/v1/execution-proof/jwks",
         "/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+        "/v1/model-call-attempts/{attempt_id}/prepared",
         "/v1/runs",
         "/v1/runs/{run_id}/control",
         "/v1/runs/{run_id}/events",
@@ -548,7 +552,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "7.0.0"
+    assert _object(document["info"])["version"] == "7.1.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:

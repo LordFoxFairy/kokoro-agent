@@ -1,3 +1,16 @@
+## AGENT-1：消费 proof 复用原 Run 绑定（2026-10-22）
+
+沿用户确认的内部身份方案，原 ExecutionProofSupplier 的具名 context-bound 集合增加
+`billing.credit.consume`。与三个原 Skill 读相同，从不可变 LeasedRun 快照写入 proof2 的
+identity_assertion_ref、nullable project_ref、原有序 Skills selection digest；tenant、actor、subject、
+Run、execution_session、lease generation 和具体请求摘要仍用原字段。MCP 等其他 operation 保持原样。
+
+仍逐次读取当前 DB lease、核时钟偏差／剩余有效期、生成 fresh jti 并由原私钥签名；失租和取消不签，
+不缓存、不重试、不新增 token／服务／表／协议或另一个 signer。该 supplier 可独立于 Platform token
+调用，但正常 worker 的预算客户端／装配尚未接入，不以此宣称新的生产入口已经启用。
+机器凭据证明调用服务，Run proof 证明绑定；direct-user、当前成员资格、BFF live 来源和预算权限
+仍分别由 IAM／Billing 正式校验，不把“签名成功”等同消费许可。App 不增加取用户 token 的回程。
+
 ## AGENT-1：当前 prepared 快照（2026-10-22，实施设计）
 
 沿已批准的预算预占方案，在现 Agent HTTP 增加专用 Billing GET，复用现有

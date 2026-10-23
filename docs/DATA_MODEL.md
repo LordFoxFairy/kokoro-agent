@@ -1,3 +1,11 @@
+## AGENT-1：消费 proof 不保存登录凭据（2026-10-22）
+
+本片无 DDL、RunRequest 或 journal 状态变化。billing.credit.consume 的 execution_binding
+复用原 durable RunRequest 的 assertion／project／selected_skill_source_refs 快照；proof 的时效
+仍由当前 Run lease 限制。用户 access／refresh token 不写入 Run、attempt、evidence 或 journal，
+浏览器会话不作为本 supplier 的输入。机器身份不覆盖持久提交来源或 IAM 当前授权，授权／预占／
+唯一派发／用量与资金事实仍分属原 owner；既有 receipt 恢复不因 proof 过期被解释为可重新执行。
+
 ## AGENT-1：prepared 只读快照（2026-10-22）
 
 无 canonical SQL／索引／表／列变化。现 `kokoro_agent_model_call_attempt` 和同 tenant/run 的

@@ -28,11 +28,12 @@ _MAX_TTL_SECONDS = 60
 _OPERATION = re.compile(r"^[a-z][a-z0-9_.]{0,127}$")
 _BINDING = re.compile(r"^[0-9a-f]{64}$")
 _ERROR_MESSAGE = "execution proof is unavailable"
-_SKILL_READS = frozenset(
+_CONTEXT_BOUND_OPERATIONS = frozenset(
     {
         "skill.discover_visible_skills",
         "skill.resolve_visible_skill",
         "skill.get_approved_package_reference",
+        "billing.credit.consume",
     }
 )
 
@@ -143,7 +144,7 @@ class ExecutionProofSupplier:
                     project_ref=snapshot.project_ref,
                     selection_digest=snapshot.selection_digest,
                 )
-                if operation in _SKILL_READS
+                if operation in _CONTEXT_BOUND_OPERATIONS
                 else None,
                 tenant_ref=snapshot.tenant_ref,
                 actor=snapshot.actor,

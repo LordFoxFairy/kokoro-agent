@@ -1,3 +1,11 @@
+## AGENT-1：billing.credit.consume 的现 proof2 绑定（2026-10-22）
+
+不新增 HTTP、Redis wire 或 proof schema 版本。原 supplier 对具名 `billing.credit.consume`
+明确填入既有 execution_binding；三个原 Skill operation 和其余 operation 的现行为保持。
+输入仍是 operation＋request_binding_sha256，身份来自已绑定的 Run／lease，不接浏览器 token、
+payer 或模型自报身份。后继预算消费者须按 BFF 内部正式 Admission 契约计算摘要并调用本 supplier；
+本片不发布或假造 Agent 预算客户端、模型外发许可、capture ACK 或结算结果。
+
 ## AGENT-1：当前调用准备事实读取（HTTP7.1，2026-10-22）
 
 `GET /v1/model-call-attempts/{attempt_id}/prepared`，专用 Billing bearer，tenant header；

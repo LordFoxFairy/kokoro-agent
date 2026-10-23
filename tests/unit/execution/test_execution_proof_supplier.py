@@ -165,8 +165,12 @@ def test_current_lease_observation_rejects_invalid_time_shape(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("project_ref", [None, "project-1"])
+@pytest.mark.parametrize(
+    "operation", ["skill.resolve_visible_skill", "billing.credit.consume"]
+)
 async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot(
     project_ref: str | None,
+    operation: str,
 ) -> None:
     events: list[str] = []
     leased = _leased_run(project_ref=project_ref)
@@ -207,7 +211,7 @@ async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot(
     object.__setattr__(leased.request, "session_id", "MUTATED")
     object.__setattr__(leased.lease, "owner", "MUTATED")
 
-    assert await supplier.issue("skill.resolve_visible_skill", BINDING) == "PROOF"
+    assert await supplier.issue(operation, BINDING) == "PROOF"
     assert events == ["read", "clock", "nonce", "sign"]
     assert reader.calls == [("run-1", LeaseFence(owner="owner-1", generation=7))]
     issued = signer.calls[0]

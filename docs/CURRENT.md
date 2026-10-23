@@ -1,3 +1,34 @@
+## 2026-10-22 AGENT-1：Run 消费 proof 接线（本地源码验收）
+
+原 ExecutionProofSupplier 已将具名 billing.credit.consume 纳入现 proof2 的 execution_binding，
+从冻结 Run 带原 assertion／project／有序 Skills 摘要；原 tenant／actor／subject／Run／session／
+fence／请求摘要、每次读当前 DB lease、fresh jti、60秒上限、取消和签名规则均保持。
+不新增用户 token、协议、服务、表或兼容路径；三个 Skill 操作不变，原 MCP 仍不加该绑定。
+只增加原 supplier 能力，不冒称正常 worker 预算客户端、派发与收费已经接通。
+
+主方先复现缺绑定的两项 RED，再验证 supplier 及独立真实 Ed25519 预算证明测试 **55 PASS**。
+测试独立构造 chat Run，不依赖浏览器／Platform token，核原事实快照、真实签名、两次 fresh jti
+与失租拒签；原取消／错误脱敏／MCP 测试不删。为保持功能粒度，新增测试独立126行，
+原 supplier 测试734行；首次完整门在拆分测试后由主方主动停止自己的 pytest（exit143），
+不计为测试通过或产品故障。最终停写390非文档输入无漂移，lock／frozen offline sync、
+Ruff全格式／lint、锁定Pyright1.1.409（本venv Python3.14.3）、contract、默认pytest及
+wheel／sdist八阶段exit0；默认 **2419 PASS／789按marker未选**，不是全部真实资源套件。
+原927上游提醒保留，本片未顺手升级依赖或处理任务外告警。
+
+隔离四方 **27 checks PASS**：actual Agent prepared／当前 PostgreSQL lease／正式私钥加载与
+supplier／原生 HTTP JWKS → compiled BFF → compiled Billing → actual IAM → actual BFF live
+绑定，只有一次 QA100 发放／预算10预占；退休来源无原回执拒首次，失租拒签，原 receipt 在
+lease 过期及成员撤销后仍可恢复且不多冻结。Agent／BFF 原行版本保持，资金 usage／capture 均0。
+IAM JWKS 传输明确为转发真实 Agent 原生端点的具名 relay，BFF Chat 提交事实仍为隔离 seed，
+不冒真实浏览器首发或正常 worker。库94→94精确恢复，自有 IAM Redis prefix 清理完成。
+首次私有夹具 public-key 临时目录含 /var symlink 导致 JWKS503，仅将自有路径 resolve 后通过，
+原失败及清理收据保留，不放宽正式 key loader 或 JWKS 校验。
+
+只读独审 Approved，无确定 P0–P2；未代跑测试／资源。Root＋12子仓非递归 fetch 全部成功，
+main 无新增；没有盲 pull、改他人源码或提前 pin。本轮正常模型／工具／资金／配置未改。
+下一步继续 Agent 正式预算响应消费、pending 恢复、原 single-dispatch 和真实 usage 结算，
+然后正常用户／后台整链及集中 PR merge；本片不勾 AGENT-1／CREDIT-1 整项完成。
+
 ## 2026-10-22 AGENT-1：正式 prepared reader（本地源码验收，资金 consumer 待接）
 
 沿用户确认的预算预占方案新增 HTTP7.1 `GET /v1/model-call-attempts/{attempt_id}/prepared`，

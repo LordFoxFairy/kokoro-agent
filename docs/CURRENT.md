@@ -1,3 +1,13 @@
+## AGENT-1：响应编号与解析修复已配对正常服务（2026-10-23）
+
+正常 Agent HTTP/worker 已加载 `b71e972` 的源码；按 RUNBOOK 完成本地显式配对，canonical 新增 nullable 响应编号与 CHECK，未回填原记录。先备份本 owner 并恢复到临时库：23表185行的原列及xmin摘要一致，事务回滚和目标schema verifier通过，测试库回收、库存94保持；旧 `d20f608` 源码和hash锁定离线依赖回退副本已验contract。
+
+正常无非终态Run/有效lease，原派发开关为false；仅优雅替换Agent两个进程，原配置和其他八个监听保持。认证readiness200/未认证401，worker初始化及正常schema校验通过；23表原数据/xmin未变，原usage API的data与既有证据相同。首次脚本比较整个HTTP body因每请求随机meta.request_id而失败，进程仍存活、未重复启动；核实唯一差异后按原immutable data和全表摘要验证，失败收据保留。
+
+浏览器原会话和积分页刷新后无登录提示；观察到session、模型、会话、项目、积分summary/ledger等接口200，显示990可用/10冻结与原到账记录。网络窗口标记truncated，不称捕获完整网络；初次侧栏暂时不可用随后恢复，不以该观察冒称冷读问题根因已修。没有新模型/工具请求、积分命令或真钱操作，原无编号pending尚待供应商补证。网关公开首页无认证GET返回403，未取得补查文档，不向其他origin发送密钥。
+
+证据与进程/回退记录仅留 Root ignored/private `var/dev/agent-response-normal-20261023`；下一次运行使用其中最新processes-after记录，不使用历史worker PID。正常配对完成，不等于真实整数结算、工具/产物或16项整体完成；继续核同次调用的补证来源及既有金融恢复，未集中PR/merge。
+
 ## AGENT-1：响应完成与用量可结算分开判断（2026-10-23，本地已验）
 
 修复两处阻断：已文档化的 OpenRouter cost/cost_details 说明不再被误判成 token 类别；完整 SSE 缺最终 usage 帧仍保留一致响应编号/model，usage 继续 unresolved/missing_usage 且无虚构摘要或计数。非法费用说明、未知计量、冲突编号/model、无 DONE、压缩截断等仍受原保护。原 seal 同事务保存编号、pending 阻断后续派发及金融幂等保持；无新服务、认证、Schema、公开契约或价格变更。

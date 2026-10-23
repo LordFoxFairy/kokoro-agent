@@ -41,6 +41,17 @@ HTTP entrypoint 显式处理 SIGINT/SIGTERM：signal handler 立即把 server �
   释放资源并记录 cleanup id。
 - schema drift：停止服务、备份并在空的受管 database 安装 canonical schema；V1 不运行历史迁移 runner。
 
+### 本地响应编号版本配对（2026-10-23）
+
+仅针对已验 `d20f608` schema 到 `b71e972` 的本地开发配对：前者缺 canonical 中的 nullable `provider_response_id` 和 `ck_model_attempt_response`，其他业务数据/契约不变。此次显式运维操作保留既有 Run、usage evidence 与金融 ACK；不增加应用启动修表、历史迁移 runner、ledger 或兼容查询。永久 DDL 仍只维护 `database/schema.sql`。这不是未验证 schema 的通用升级入口，也不改变 V1 clean-slate 安装命令。
+
+1. 核对受管 Agent schema、源码提交、当前 HTTP/worker 及其原配置；停止新派发且确认无非终态 Run/有效 lease。备份仅本 owner schema，使用私有文件保管，并将实际备份恢复到独立临时库演练。
+2. 从目标 canonical 提取唯一新增列与命名 CHECK，先用固定旧版本 verifier 核实源形状。事务内设置有限 lock/statement timeout，添加列和约束后由新 verifier 核实全部目标 schema；失败回滚。演练同时验证事务回滚及所有原列数据摘要不变，新列全部 NULL，不回填旧响应编号。
+3. 正常切换前重新核当前进程/无任务状态，优雅停止本方 Agent HTTP 和 worker；在同一事务执行已演练变更及新 schema 验证。启动当前精确源码与原配置，核 authenticated readiness、worker 初始化、原历史 usage API 和全部原数据摘要。其他服务不重启，不改用户会话、费率、积分或派发开关。
+4. DDL 提交前失败自动回滚；提交后启动失败须先核没有新增响应编号/执行事实，再恢复旧 schema 形状及已备份的旧源码进程。已有新事实时只向前恢复，不删新事实以回滚。超时且进程仍存活时继续检查该 PID，不重复启动。
+
+演练与运行收据只保存于 Root ignored/private 目录。此配对不构成旧 pending 用量的补证，不重发模型请求、不释放或扣除待核对积分；完整产品结算仍须真实供应商证据。
+
 ## 回滚
 
 回滚到上一不可变镜像 digest，并保留当前 PostgreSQL/Redis durable facts；先验证 contract/schema 版本一致，再

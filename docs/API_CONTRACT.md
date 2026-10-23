@@ -1,3 +1,17 @@
+## AGENT-1：本轮预算结算的实际归属 profile（2026-10-22）
+
+通用usage2继续接受原合法Opaque归属，不改变schema／vectors／artifact版本。本轮预算业务只允许
+原精确System模型，不开放actual fallback集合：用于该业务结算的verified.provider_ref／model_ref
+分别表示经具名认证上游证据确认映射的System provider／model目录ID，不是上游raw model名、
+显示别名或Billing商业引用。映射证据必须绑定同attempt、最终请求及冻结revision的执行目标；
+不以目录存在、复制planned或单独response.model自证。不能确认映射时保持actual unknown。
+
+Billing的局部收费profile只在这两个实际目录ID逐项等于原frozen planned.provider／model时继续，
+再沿原revision ID/digest→已冻结商业五元组／费率计算实际用量；其他命名空间、缺依据或超出
+此集合的真实归属保原证据和hold，进入pending，不套planned价、不另选现价。这一相等是必要
+条件，不替代原身份、授权、seal、usage/profile或预算校验。后继真正producer装配必须实现
+上述认证映射及错归属负控；当前尚未装配／启用，不能以本说明声称真实费用链已完成。
+
 ## AGENT-1：唯一 BFF internal1.1 预算消费（2026-10-22）
 
 固定 consumer：BFF 0082b5cee4437367a608b5bd37732674a1622664，原 internal1.1 YAML SHA256

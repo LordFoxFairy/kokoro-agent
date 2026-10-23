@@ -1,3 +1,11 @@
+## 2026-10-22 实际归属 profile 明确化（文档）
+
+为接Billing实际结算，明确本轮预算仅接受映射确认的原System provider/model目录ID；
+不能复制planned自证，其他／未知归属pending，不按计划价追认actual fallback。
+具名认证映射须绑定原attempt／最终请求／冻结revision，真正producer与运行验收仍待后继。
+仅更新既有API／技术设计与本记录，usage2 canonical/schema/vectors及源码不变；
+通用Opaque合法表示不收窄，没有新增wire、服务或成本上界前置。
+
 ## 2026-10-22 AGENT-1：正式预算消费者与持久化授权（本地源码验收）
 
 固定 BFF `0082b5c`／internal1.1 原始 YAML，build-only 窄生成六字段请求和严格ACK／错误；

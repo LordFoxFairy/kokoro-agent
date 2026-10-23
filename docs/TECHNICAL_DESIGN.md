@@ -1,3 +1,10 @@
+## AGENT-1：本轮预算结算的实际归属 profile（2026-10-22）
+
+规则唯一说明见[API归属profile](API_CONTRACT.md)：本轮只接受具名认证证据映射到原System
+provider/model目录ID的verified归属；证据须绑定attempt／最终请求／冻结revision，
+缺依据／其他命名空间／actual fallback保留pending，不另选价或复制planned自证。
+通用usage2未改，真正producer和错归属运行验收尚待；未因本次文档启用执行。
+
 ## AGENT-1：BFF 预算消费者与持久授权恢复（2026-10-22）
 
 固定 BFF 0082b5c／internal1.1 原件，只生成 createAgentModelAdmission 的请求／回包／错误模型，

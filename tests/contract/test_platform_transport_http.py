@@ -1,4 +1,4 @@
-"""Owned loopback OAuth/Connect fixture, not a real IAM or Platform owner service."""
+"""Owned loopback direct-service/Connect fixture, not a real IAM or Platform owner service."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
-from urllib.parse import parse_qs
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -69,34 +68,14 @@ class Loopback:
                     body = self.rfile.read(int(self.headers["content-length"]))
                     if self.path == "/iam/oauth2/token":
                         fixture.tokens += 1
-                        assert (
-                            self.headers["authorization"]
-                            == "Basic " + base64.b64encode(b"agent:secret").decode()
+                        raise AssertionError(
+                            "Agent must not exchange machine OAuth tokens"
                         )
-                        assert parse_qs(body.decode()) == {
-                            "grant_type": ["client_credentials"],
-                            "resource": [
-                                "https://kokoro.dev/resources/platform-internal"
-                            ],
-                            "scope": ["platform:execution.invoke"],
-                        }
-                        self.respond(
-                            200,
-                            "application/json",
-                            json.dumps(
-                                {
-                                    "access_token": "TOKEN",
-                                    "token_type": "Bearer",
-                                    "expires_in": 300,
-                                }
-                            ).encode(),
-                        )
-                        return
                     assert (
                         self.path
                         == "/kokoro.platform.v1.McpConnectorService/GetMcpConnector"
                     )
-                    assert self.headers["authorization"] == "Bearer TOKEN"
+                    assert self.headers["authorization"] == "Bearer " + "s" * 32
                     assert self.headers["content-type"] == "application/proto"
                     request = pb.GetMcpConnectorRequest.from_binary(body)
                     fixture.requests.append(request)
@@ -182,25 +161,25 @@ class Loopback:
         credentials = tmp_path / "credentials.json"
         credentials.write_text(
             json.dumps(
-                [
-                    dict(
-                        tenant_id="tenant",
-                        generation=1,
-                        credential_ref_version="v1",
-                        client_id="agent",
-                        client_secret="secret",
-                        resource="https://kokoro.dev/resources/platform-internal",
-                        scope="platform:execution.invoke",
-                    )
-                ]
+                {
+                    "version": 1,
+                    "entries": [
+                        dict(
+                            credential_id="agent-tenant",
+                            caller="kokoro-agent",
+                            surfaces=["tenant_execution"],
+                            tenant_id="tenant",
+                            secret="s" * 32,
+                        )
+                    ],
+                }
             )
         )
         credentials.chmod(0o600)
         return AppConfig.from_env(
             {
                 "KOKORO_PLATFORM_BASE_URL": self.url,
-                "KOKORO_AGENT_IAM_BASE_URL": self.url,
-                "KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE": str(credentials),
+                "KOKORO_AGENT_PLATFORM_SERVICE_CREDENTIALS_FILE": str(credentials),
                 "KOKORO_AGENT_EXECUTION_PROOF_ISSUER": "urn:test:agent",
                 "KOKORO_AGENT_EXECUTION_PROOF_PRIVATE_KEY_FILE": str(key),
                 "KOKORO_AGENT_EXECUTION_PROOF_WORKER_ACTIVE_KID": "test",
@@ -271,7 +250,7 @@ async def test_worker_composition_real_http_proof_retry_and_close(
         )
         await sender.send(request)
         await sender.send(request)
-        assert loopback.tokens == 1
+        assert loopback.tokens == 0
         assert len(loopback.requests) == 2
         assert loopback.claims[0]["jti"] != loopback.claims[1]["jti"]
         assert request.execution_proof == ""
@@ -279,7 +258,8 @@ async def test_worker_composition_real_http_proof_retry_and_close(
         with pytest.raises(ExecutionProofUnavailableError):
             await sender.send(request)
         assert len(loopback.requests) == 2
-    with pytest.raises(Exception, match="CLOSED"):
+    reader.active = True
+    with pytest.raises(PlatformCallError, match="PLATFORM_TRANSPORT_CLOSED"):
         await sender.send(request)
 
 
@@ -373,7 +353,7 @@ async def test_real_postgres_lease_with_worker_owned_http(
                 )
                 await sender.send(operation)
                 await sender.send(operation)
-                assert loopback.tokens == 1 and len(loopback.requests) == 2
+                assert loopback.tokens == 0 and len(loopback.requests) == 2
                 assert loopback.claims[0]["jti"] != loopback.claims[1]["jti"]
                 assert await repository.pause(request.run_id, fence)
                 with pytest.raises(ExecutionProofUnavailableError):
@@ -392,7 +372,7 @@ async def test_real_postgres_lease_with_worker_owned_http(
 async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
     loopback: Loopback, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Real signer/worker/OAuth; Platform and object responses are named fixtures."""
+    """Real signer/worker/direct credential; Platform and object responses are named fixtures."""
     import httpx
     from protobuf.wkt import Timestamp
     from kokoro_agent.clients.platform_transport import (
@@ -413,7 +393,7 @@ async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
     async def signed_send(
         request: PlatformRequest, token: str, timeout_ms: int
     ) -> PlatformResponse:
-        assert token == "TOKEN" and timeout_ms > 0
+        assert token == "s" * 32 and timeout_ms > 0
         proof: dict[str, Any] = jwt.decode(
             request.execution_proof,
             loopback.private.public_key(),

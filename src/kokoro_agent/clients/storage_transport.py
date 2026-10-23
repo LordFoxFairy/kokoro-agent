@@ -9,8 +9,10 @@ from urllib.parse import urlsplit
 import httpx
 from pyqwest import Client, HTTPTransport
 
-from kokoro_agent.clients.platform_tokens import validate_owner_url
-from kokoro_agent.clients.platform_transport import BoundedConnectTransport
+from kokoro_agent.clients.platform_transport import (
+    BoundedConnectTransport,
+    validate_owner_url,
+)
 from kokoro_agent.clients.storage import StorageClientError
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.generated.kokoro.storage.v3.storage_connect import (

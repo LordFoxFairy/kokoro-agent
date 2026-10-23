@@ -182,16 +182,13 @@ class AppConfig(BaseModel):
         default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE"
     )
 
-    iam_base_url: OptStr = Field(
-        default=None, repr=False, validation_alias="KOKORO_AGENT_IAM_BASE_URL"
-    )
     platform_base_url: OptStr = Field(
         default=None, repr=False, validation_alias="KOKORO_PLATFORM_BASE_URL"
     )
-    platform_credentials_file: OptStr = Field(
+    platform_service_credentials_file: OptStr = Field(
         default=None,
         repr=False,
-        validation_alias="KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE",
+        validation_alias="KOKORO_AGENT_PLATFORM_SERVICE_CREDENTIALS_FILE",
     )
     execution_proof_issuer: OptStr = Field(
         default=None, repr=False, validation_alias="KOKORO_AGENT_EXECUTION_PROOF_ISSUER"
@@ -281,9 +278,8 @@ class AppConfig(BaseModel):
                 "BFF model billing configuration requires origin and workload secrets"
             )
         transport = (
-            self.iam_base_url,
             self.platform_base_url,
-            self.platform_credentials_file,
+            self.platform_service_credentials_file,
         )
         signing = (
             self.execution_proof_issuer,
@@ -322,6 +318,14 @@ class AppConfig(BaseModel):
             raise ValueError("retired local model credential file configuration")
         file_layer = load_config_file(source.get("KOKORO_AGENT_CONFIG"))
         merged: dict[str, object] = {**file_layer, **dict(source)}
+        if any(
+            name in merged
+            for name in (
+                "KOKORO_AGENT_IAM_BASE_URL",
+                "KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE",
+            )
+        ):
+            raise ValueError("retired Platform OAuth configuration")
         return cls.model_validate(merged)
 
     # --- 域视图（消费方 API 不变）：由扁平叶子装配既有子 Settings 类型 ---

@@ -1,3 +1,20 @@
+## 2026-10-23 AUTH-1：Agent → Platform 直接服务凭据（实施中）
+
+依据 Root ADR-035 与 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的正式 agent-execution-service-auth-v1。
+在现 `clients/platform_credentials.py` 保留 owner-only、完整读取、重复字段/替换检测，改读 version/entries，
+仅消费 caller=kokoro-agent、单用途 tenant_execution、固定 tenant 的唯一记录；每请求重新读取，删除 OAuth generation/cache/single-flight。
+Worker 只配置 Platform origin、独立服务凭据文件及原 proof signer，不再配置 IAM token endpoint 或创建 OAuth HTTP pool。
+RunPlatformClient 先生成原 fresh proof，再在派发前读取当前凭据；同一总 deadline、取消和不可变 Run tenant 保持。
+原 URL 安全校验移入既有 platform_transport，与 Storage 已复用的 BoundedConnectTransport 同属传输职责，不新增通用工具层。
+
+新环境变量仅 `KOKORO_AGENT_PLATFORM_SERVICE_CREDENTIALS_FILE`，旧 client_credentials 环境和 JSON 不做兼容。
+接收端可接受多 caller 的部署总文件，Agent 私有文件只含本 caller 且每 tenant 恰一项；拒绝重复 ID/secret/tenant、其他用途和空文件。
+credential_id 是机器记录身份，不冒充 OAuth client_id；调用只发送 Bearer secret，租户和用户授权继续由原 proof/owner 判断。
+固定 auth profile 原件及 commit/digest 到现 Platform provenance/checker/安装资产；Proto、执行 operation、SQL、Run 请求与资金协议不变。
+删除 platform_tokens.py 和 OAuth 专属测试；其文件安全、轮换失效、取消/超时、tenant 隔离风险由直接读取及原传输回归承接。
+验证包括真实文件轮换/删除/不合法权限、旧配置拒绝、实际 loopback worker→Connect 零 OAuth、原 proof/租约/取消负控、contract 和完整 owner 门。
+本片未启用正常服务；须消费者与接收方配对验收后再集成，不将 peer fixture 视作真实 Platform/IAM 或产品整链。
+
 ## AGENT-1：正式模型执行与同流用量（2026-10-23，本地已验；正常整链待验）
 
 沿现预算／整数结算裁决和原主线，在现final request hook按prepare→原BudgetAuthorizer→唯一start_dispatch串接，不新建服务／表／wire或用户token回程。只有newly_started=true才交还HTTPX发送；相同attempt重放不重发provider。Worker只装配一份现私钥signer／当前PG lease reader，Platform与预算按Run复用同一原proof supplier；签名描述符不再要求配置Platform token client，恢复仍无proof。原Run行锁内阻止已有未ACK／pending财务证据后的新派发，当前lease／终态／冻结身份保障保持。

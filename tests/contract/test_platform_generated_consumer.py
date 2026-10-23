@@ -300,3 +300,45 @@ def test_package_reference_reserves_legacy_tag_and_has_complete_transfer_tag5() 
         ).transfer_reference
         is None
     )
+
+
+def test_execution_service_auth_is_a_fixed_owner_artifact() -> None:
+    pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+    source = pin["service_auth"]
+    assert source["owner_commit"] == "4c3853b1062a9e22c9be6c059720a092805cb63f"
+    assert source["owner_path"] == "contract/auth/agent-execution-service-auth-v1.json"
+    raw = (ROOT / source["path"]).read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == source["sha256"]
+    profile = json.loads(raw)
+    assert profile["caller"] == "kokoro-agent"
+    assert profile["authentication"]["fallback"] == "forbidden"
+    assert profile["mcp_principal"]["digest_version"] == 2
+
+
+@pytest.mark.parametrize(
+    "mutation", ["source_bytes", "source_commit", "missing_source"]
+)
+def test_service_auth_pin_rejects_tampering_before_business_contracts(
+    tmp_path: Path, mutation: str
+) -> None:
+    from kokoro_agent.platform_binding_contract import (
+        validate_platform_binding_artifact,
+    )
+    from kokoro_agent.execution.platform_request_binding_values import (
+        PlatformRequestBindingError,
+    )
+
+    pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+    source = pin["service_auth"]
+    dest = tmp_path / source["path"]
+    dest.parent.mkdir(parents=True)
+    if mutation != "missing_source":
+        dest.write_bytes(
+            (ROOT / source["path"]).read_bytes()
+            + (b" " if mutation == "source_bytes" else b"")
+        )
+    if mutation == "source_commit":
+        source["owner_commit"] = "0" * 40
+    (tmp_path / "contract/platform/v1/provenance.json").write_text(json.dumps(pin))
+    with pytest.raises((PlatformRequestBindingError, FileNotFoundError)):
+        validate_platform_binding_artifact(tmp_path)

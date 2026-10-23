@@ -203,5 +203,11 @@
         "sha256": "1217049c5a0833349765ab6d364771264f2dcfda410cb1c63b24abc7dcf2a397"
       }
     ]
+  },
+  "service_auth": {
+    "owner_commit": "4c3853b1062a9e22c9be6c059720a092805cb63f",
+    "owner_path": "contract/auth/agent-execution-service-auth-v1.json",
+    "path": "contract/platform/v1/agent-execution-service-auth-v1.json",
+    "sha256": "85965e3b3641dac3fac52fe8aeaa71cf55d24a4322eb254761ad09398014c7fc"
   }
 }

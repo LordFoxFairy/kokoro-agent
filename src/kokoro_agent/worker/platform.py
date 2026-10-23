@@ -6,15 +6,12 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
-import httpx
-
 from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
 from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
 from kokoro_agent.mcp.egress import current_egress_mode
 from kokoro_agent.clients.skills import PlatformSkillClient, SkillClientError
 from kokoro_agent.clients.skill_package_transport import SkillPackageTransport
 from kokoro_agent.clients.platform_credentials import CredentialFile
-from kokoro_agent.clients.platform_tokens import PlatformTokenProvider
 from kokoro_agent.clients.platform_transport import PlatformTransport, RunPlatformClient
 from kokoro_agent.config import AppConfig
 from kokoro_agent.domain.run.models import LeasedRun
@@ -27,7 +24,7 @@ from kokoro_agent.execution.execution_proof_supplier import (
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class WorkerPlatformRuntime:
-    tokens: PlatformTokenProvider
+    credentials: CredentialFile
     transport: PlatformTransport
     signer: ExecutionProofSigner
     lease_reader: ExecutionProofLeaseReadPort
@@ -54,7 +51,7 @@ class WorkerPlatformRuntime:
         )
         return RunPlatformClient(
             tenant_id=leased_run.request.execution_identity.tenant_ref,
-            tokens=self.tokens,
+            credentials=self.credentials,
             proofs=supplier,
             transport=self.transport,
         )
@@ -71,18 +68,12 @@ async def worker_platform_runtime(
         yield None
         return
     # AppConfig enforces all-or-none; these checks also narrow the private descriptor types.
-    if config.iam_base_url is None or config.platform_credentials_file is None:
+    if config.platform_service_credentials_file is None:
         raise ValueError("incomplete worker Platform configuration")
-    credentials = CredentialFile(config.platform_credentials_file)
+    credentials = CredentialFile(config.platform_service_credentials_file)
     credentials.validate()
     async with (
         AsyncExitStack() as stack,
-        httpx.AsyncClient(
-            follow_redirects=False,
-            trust_env=False,
-            timeout=5,
-            limits=httpx.Limits(max_connections=32, max_keepalive_connections=8),
-        ) as http,
         PlatformTransport(config.platform_base_url) as transport,
     ):
         packages = None
@@ -94,15 +85,11 @@ async def worker_platform_runtime(
             mcp_packages = await stack.enter_async_context(
                 McpPackageTransport(config.storage_object_origin)
             )
-        tokens = PlatformTokenProvider(config.iam_base_url, credentials, http=http)
-        try:
-            yield WorkerPlatformRuntime(
-                tokens=tokens,
-                transport=transport,
-                signer=signer,
-                lease_reader=lease_reader,
-                packages=packages,
-                mcp_packages=mcp_packages,
-            )
-        finally:
-            await tokens.aclose()
+        yield WorkerPlatformRuntime(
+            credentials=credentials,
+            transport=transport,
+            signer=signer,
+            lease_reader=lease_reader,
+            packages=packages,
+            mcp_packages=mcp_packages,
+        )

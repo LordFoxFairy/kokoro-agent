@@ -29,7 +29,7 @@ async def test_unconfigured_worker_has_no_platform_resources() -> None:
         assert runtime is None
 
 
-def test_billing_signing_does_not_require_platform_oauth_credentials() -> None:
+def test_billing_signing_does_not_require_platform_service_credentials() -> None:
     config = AppConfig.from_env(
         {
             "KOKORO_AGENT_EXECUTION_PROOF_ISSUER": "urn:unit:agent",
@@ -39,9 +39,15 @@ def test_billing_signing_does_not_require_platform_oauth_credentials() -> None:
             * 43,
         }
     )
-    assert (
-        config.platform_base_url
-        is config.iam_base_url
-        is config.platform_credentials_file
-        is None
-    )
+    assert config.platform_base_url is config.platform_service_credentials_file is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["KOKORO_AGENT_IAM_BASE_URL", "KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE"],
+)
+def test_retired_platform_oauth_configuration_is_not_silently_ignored(
+    name: str,
+) -> None:
+    with pytest.raises(ValueError, match="retired Platform OAuth"):
+        AppConfig.from_env({name: "retired-value"})

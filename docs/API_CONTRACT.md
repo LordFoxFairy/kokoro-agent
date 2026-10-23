@@ -1,3 +1,12 @@
+## 2026-10-23 Platform 执行认证 consumer 配对（实施中）
+
+固定 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的 `contract/auth/agent-execution-service-auth-v1.json` 原件，
+仅替换机器认证为固定 caller/tenant/surface 服务凭据。既有业务 Proto、request digest、fresh execution proof 和 IAM 当前用户权限判断保持。
+私有文件 version=1，entries 每项严格 credential_id/caller/surfaces/tenant_id/secret，Agent 独占单用途且每 tenant 唯一；
+不接受旧 OAuth 格式、generation、client_id 或隐式默认 tenant。秘密只经受信连接的 Bearer 头，不进 Run、日志或文档。
+现 Platform provenance 追加独立 service_auth pin，不重写未变化的 Proto/operation 来源；owner 原件只读，checksum 由固定 Git blob 产生。
+没有新增公开 API、数据模型、服务或用户登录流程。此次只是 consumer 实施门，不是正常激活或完整验收收据。
+
 ## AGENT-1：Worker恢复接线（2026-10-23，本地已验）
 
 原HTTP7.2／BFF1.3／proof2／usage2均不变；仅在现Worker装配原BFF pool和逐事件恢复。内部机器secret按可信tenant选择，部署snapshot不进入Run，不复用用户／System／模型密钥。恢复只调用recover／settle，原六事实及event/key保持，无首次reserve或proof；未配置时启动拒绝，无免费／旧协议fallback。可观察产品功能和新派发尚未因此开放。

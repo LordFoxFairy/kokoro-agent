@@ -13,7 +13,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from pyqwest import Client, HTTPTransport, Request, Response, Transport
 
-from kokoro_agent.clients.platform_tokens import validate_owner_url
+from urllib.parse import urlsplit
 from kokoro_agent.execution.platform_request_binding import project_request_binding
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as runtime
@@ -65,8 +65,29 @@ _ALLOWED = (
 )
 
 
-class TenantTokenProvider(Protocol):
-    async def token(self, tenant_id: str) -> str: ...
+def validate_owner_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError("owner base URL must be an absolute origin")
+    if parsed.scheme == "http" and parsed.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError("owner base URL requires TLS outside loopback")
+    return value.rstrip("/")
+
+
+class TenantCredentialProvider(Protocol):
+    async def credential(self, tenant_id: str) -> str: ...
 
 
 class CallProofSupplier(Protocol):
@@ -84,7 +105,7 @@ class RunPlatformClient:
     """Immutable tenant and supplier; no shared mutable bearer or proof fields."""
 
     tenant_id: str = field(repr=False)
-    tokens: TenantTokenProvider = field(repr=False)
+    credentials: TenantCredentialProvider = field(repr=False)
     proofs: CallProofSupplier = field(repr=False)
     transport: PlatformTransport = field(repr=False)
 
@@ -99,17 +120,17 @@ class RunPlatformClient:
         deadline = monotonic() + timeout_s
         try:
             async with asyncio.timeout(timeout_s):
-                token = await self.tokens.token(self.tenant_id)
                 binding = project_request_binding(
                     tenant_ref=self.tenant_id, request=snapshot
                 )
                 snapshot.execution_proof = await self.proofs.issue(
                     binding.operation, binding.sha256
                 )
+                credential = await self.credentials.credential(self.tenant_id)
                 remaining_ms = int((deadline - monotonic()) * 1000)
                 if remaining_ms <= 0:
                     raise TimeoutError
-                return await self.transport.send(snapshot, token, remaining_ms)
+                return await self.transport.send(snapshot, credential, remaining_ms)
         except TimeoutError:
             raise PlatformCallError("PLATFORM_DEADLINE_EXCEEDED") from None
 

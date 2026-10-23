@@ -1,3 +1,23 @@
+## 2026-10-23 AUTH-1：Agent → Platform 直接凭据消费者（本地已验，正常配对待验）
+
+固定 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的 agent-execution-service-auth-v1 原件及摘要，
+复用既有 CredentialFile/RunPlatformClient/worker，删除机器 OAuth provider、generation/cache/single-flight 和专用 HTTP pool。
+新私有文件按 version/entries 严格读取，Agent/tenant_execution/tenant 唯一绑定；proof 之后、派发之前重读当前完整文件，
+不接受旧环境变量/JSON，不把 user token 放入 Run。原 proof、请求摘要、lease、取消和 Billing 授权不变。
+Storage 仅跟随原 URL 校验移至已共享的 Connect transport；无 SQL/业务 Proto/依赖锁变更。
+
+RED：新文件/轮换及旧格式拒绝6项失败、旧配置静默忽略2项失败、缺固定认证pin1项失败。
+52项定向测试通过（真实loopback HTTP而非真实Platform/IAM），另3项pin篡改/缺失负控通过；
+最终完整默认2579 PASS、853资源marker未选、927上游warning保留；frozen sync/lock、Ruff格式/lint、锁定Pyright1.1.409、
+contract checker、wheel/sdist通过。418非文档输入冻结无漂移，独立只读审查无确证P0–P2。
+真实 owner 组合、正常环境激活及模型/工具/扣分整链尚未验收，不以loopback替代。
+
+仓外锁文件导出并以hash/offline安装：contract checker、worker/Storage导入及旧OAuth模块不存在断言通过；
+208份runtime Python与wheel/sdist逐字相同，认证原件入包。首轮发现ignored build/lib残留把已删platform_tokens.py带入wheel，
+安装与ZIP负控确实失败；旧build隔离保留后clean rebuild/reinstall通过，没有恢复旧实现或放宽断言。
+首阶段harness误用zsh只读变量status导致构建未执行，已改result并完整重跑；loopback一处旧TOKEN断言已精确改成服务secret。
+Agent origin/main已非递归fetch、无未整合main提交。本片尚未PR/merge，不更新Root gitlink；后继固定实际Agent→Platform→IAM配对与正常切换。
+
 ## 2026-10-23 AGENT-1：最终请求执行与同流用量（本地已验，正常整链待验）
 
 沿同一产品整链目标，在现final request hook串接prepare→原预算授权→唯一start_dispatch；只有新许可才发送。

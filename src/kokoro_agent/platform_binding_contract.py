@@ -158,8 +158,15 @@ EXPECTED_PACKAGE_SOURCES = (
         "c94d3461b8b08908474b6725098b771d6608dbd2777446ff09fd680c5cfd6a63",
     ),
 )
+EXPECTED_SERVICE_AUTH = {
+    "owner_commit": "4c3853b1062a9e22c9be6c059720a092805cb63f",
+    "owner_path": "contract/auth/agent-execution-service-auth-v1.json",
+    "path": "contract/platform/v1/agent-execution-service-auth-v1.json",
+    "sha256": "85965e3b3641dac3fac52fe8aeaa71cf55d24a4322eb254761ad09398014c7fc",
+}
 PLATFORM_AUDIT_FILES = (
     PLATFORM_PROVENANCE_RELATIVE,
+    EXPECTED_SERVICE_AUTH["path"],
     "contract/platform/v1/codegen.json",
     "contract/platform/v1/proto/kokoro/common/v1/common.proto",
     "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
@@ -477,6 +484,16 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
 
     pin_path = root / PLATFORM_PROVENANCE_RELATIVE
     pin = _object(strict_parse_raw_json(pin_path.read_bytes()), label="Platform pin")
+    if (
+        pin.get("service_auth") != EXPECTED_SERVICE_AUTH
+        or hashlib.sha256(
+            (root / EXPECTED_SERVICE_AUTH["path"]).read_bytes()
+        ).hexdigest()
+        != EXPECTED_SERVICE_AUTH["sha256"]
+    ):
+        raise PlatformRequestBindingError(
+            "Platform service auth artifact pin is invalid"
+        )
     execution = _object(pin.get("execution_operations"), label="execution pin")
     if (
         pin.get("owner") != "kokoro-platform"

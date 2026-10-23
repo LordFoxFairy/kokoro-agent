@@ -64,7 +64,7 @@ protocol/__init__.py protocol/control.py protocol/events.py protocol/streams.py 
         "skills",
         """
 skills/backend.py skills/middleware.py skills/package.py clients/skills.py
-clients/skill_package_transport.py clients/package_transport.py clients/platform_credentials.py clients/platform_tokens.py
+clients/skill_package_transport.py clients/package_transport.py clients/platform_credentials.py
 clients/platform_transport.py execution/execution_proof_keys.py execution/execution_proof_profile.py
 execution/execution_proof_signer.py execution/execution_proof_supplier.py
 execution/platform_request_binding.py execution/platform_request_binding_values.py

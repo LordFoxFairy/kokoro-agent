@@ -8,7 +8,7 @@
 ## 推荐阅读顺序
 
 1. [`../README.md`](../README.md)：五分钟启动和入口。
-2. [`CURRENT.md`](CURRENT.md)：当前实现、证据和已知缺口。
+2. [`CURRENT.md`](CURRENT.md)：当前实现、证据和已知缺口；HTTP7.2精确历史sealed读取及待装配资金链。
 3. [`TECHNICAL_DESIGN.md`](TECHNICAL_DESIGN.md)：分层、状态机、事务和恢复。
 4. [`API_CONTRACT.md`](API_CONTRACT.md)：HTTP、Redis command/event 和 BFF 接入边界。
 5. [`DATA_MODEL.md`](DATA_MODEL.md)：表 owner、不变量、索引和 retention。

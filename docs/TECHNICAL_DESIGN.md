@@ -1,3 +1,11 @@
+## AGENT-1：结算恢复读取精确历史sealed（2026-10-22，本地已验）
+
+沿Root有效计划及已验BFF恢复，不重开Skills/MCP任务。Agent唯一拥有immutable evidence；在现read_final_evidence按tenant／attempt／event读任一已sealed修订，仍用同一受限Billing身份与端点。HTTP发行7.2仅明确历史语义，envelope／usage1历史及usage2／proof2不改；完整7.1原件精确逆证、旧7.0父门保持，消费者后继固定新artifact，不新增fallback／服务／数据。
+
+从现大repository提取具名postgres_model_call_final查询，原方法薄委派；一个MVCC语句至多取请求事件与实际head两个row，历史返回与head独立检查，不锁行／写入，不查Run活租约或授新执行权。每个row都保原canonical bytes、artifact版本／digest／seal、row事件／修订／观察时间及冻结identity/planned/authorization/prepared/dispatch绑定；实际head再核latest event/revision/digest及observed_at等于原sealed_at。历史时间不与当前head sealed_at混比；缺head／坏head明确拒绝，不静默修复。相邻successor生产规则与封口不变。
+
+本片写区：具名只读query／原委派与模型说明、HTTP canonical／provenance／正规failure生成及版本检查与完整父门、真实PG历史／损坏／终态／零写回归、现文档。先原源码PG与wire RED，再完整八门／包闭包、独立只读审查及隔离真实HTTP／PG。没有金融ACK journal／执行装配，不以本片冒真实扣分闭环；它解除中间revision被head遮住，不以金融ACK屏障阻塞业务seal。
+
 ## AGENT-1：本轮预算结算的实际归属 profile（2026-10-22）
 
 规则唯一说明见[API归属profile](API_CONTRACT.md)：本轮只接受具名认证证据映射到原System

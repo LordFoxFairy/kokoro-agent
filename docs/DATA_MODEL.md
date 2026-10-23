@@ -1,3 +1,7 @@
+## AGENT-1：历史sealed读取无新事实（2026-10-22）
+
+复用原attempt和全修订model_usage_evidence，无SQL schema／新列／表／缓存／状态或数据修复。一个只读MVCC快照读取请求row与实际head，返回原immutable版本；精确核原事件、摘要、观察时间和冻结绑定，并独立保head完整性。终态／失租后可读原财务证据，不改authorization bytes，不补grant／派发权。后继金融关联／逐事件ACK仍待单独按原owner事实装配，不借Chat outbox或用户token。
+
 ## AGENT-1：预算消费者复用原授权 journal（2026-10-22）
 
 无 Schema／列／新状态。首次 begin 先冻结唯一 agent-model-admit:attempt_id 及原 requested bytes/digest，

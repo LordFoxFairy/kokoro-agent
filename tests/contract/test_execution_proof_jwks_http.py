@@ -52,7 +52,7 @@ def _documents() -> tuple[dict[str, Any], dict[str, Any]]:
 
 def test_jwks_contract_is_exact_anonymous_owner_wire() -> None:
     document, provenance = _documents()
-    assert document["info"]["version"] == "7.1.0"
+    assert document["info"]["version"] == "7.2.0"
     path = document["paths"][PATH]
     assert set(path) == {"get", "head"}
     for method in ("get", "head"):
@@ -80,7 +80,7 @@ def test_jwks_contract_is_exact_anonymous_owner_wire() -> None:
             assert expected in text
     direct = provenance["http_contract"]
     assert direct == {
-        "version": "7.1.0",
+        "version": "7.2.0",
         "path": "contract/openapi/v1/openapi.json",
         "sha256": hashlib.sha256(OPENAPI.read_bytes()).hexdigest(),
     }

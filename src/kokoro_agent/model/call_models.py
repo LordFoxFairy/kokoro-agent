@@ -217,7 +217,7 @@ class ModelCallEvidenceReceipt(BaseModel):
 
 
 class FinalModelCallEvidence(BaseModel):
-    """Exact immutable sealed head published to the Billing reader."""
+    """Exact immutable sealed event, including history, published to the Billing reader."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 

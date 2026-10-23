@@ -1,3 +1,10 @@
+## 当前历史 sealed 读取发行（2026-10-23）
+
+HTTP7.2 原件 SHA256 `4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db`。
+原专用 Billing GET 按精确 event 返回原 immutable sealed 修订，独立校验当前 head；不授执行权。
+路径、响应 schema、usage1历史／usage2及proof2不变；仅撤销新增description及版本可逐字恢复整个7.1原件，原7.0逆证明仍在。
+消费者固定本次Git commit／原件／provenance后正规生成，不从live checkout猜配对。工程与真实PG／HTTP及包验收见[CURRENT](../docs/CURRENT.md)；金融关联与逐事件ACK尚待，不宣称实际扣分已闭环。
+
 ## 当前 BFF 预算消费者
 
 `bff/internal-v1/openapi.yaml` 为 BFF 0082b5c 的固定 internal1.1 原字节；只生成

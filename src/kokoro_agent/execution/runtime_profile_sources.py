@@ -140,6 +140,7 @@ infrastructure/postgres.py
 infrastructure/postgres_chat_repository.py
 infrastructure/postgres_execution_proof_lease.py
 infrastructure/postgres_model_call_evidence.py
+infrastructure/postgres_model_call_final.py
 infrastructure/postgres_model_call_prepared.py
 infrastructure/postgres_model_call_repository.py
 infrastructure/postgres_run_admission.py

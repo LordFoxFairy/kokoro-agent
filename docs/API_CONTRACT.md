@@ -1,3 +1,9 @@
+## AGENT-1：精确历史证据读取（HTTP7.2，2026-10-22，本地已验）
+
+仍为GET /v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}，原专用Billing机器Bearer／受信tenant、无query/body／现大小与取消界限保持。HTTP7.2明确任一immutable sealed历史修订按原event返回，不限当前head；响应原bytes／artifact版本／revision／digest／observed_at不改写。请求row及独立实际head均须完整，坏head不因读历史绕过；其他tenant／attempt／missing／unsealed不暴露，不增加人类／服务caller身份。
+
+原7.1整件由仅撤销本语义description及version精确逆证明承接，既有7.1→7.0门继续；usage1只读历史／usage2当前生产与proof2原件不变，Billing须后继固定新HTTP发行。历史读取不代表新执行许可、当前成员资格或资金ACK，不新增恢复写旁路。
+
 ## AGENT-1：本轮预算结算的实际归属 profile（2026-10-22）
 
 通用usage2继续接受原合法Opaque归属，不改变schema／vectors／artifact版本。本轮预算业务只允许

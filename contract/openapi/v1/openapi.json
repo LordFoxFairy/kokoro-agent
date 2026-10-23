@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "7.1.0"
+    "version": "7.2.0"
   },
   "servers": [
     {
@@ -2873,7 +2873,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Read the exact immutable sealed event, including historical revisions, for the authenticated Billing reader tenant and attempt. Independently validate the current head and requested event against frozen attempt facts; a corrupt or missing head fails closed. Return original artifact bytes, revision, digest and observation time. This read does not grant execution permission or modify authorization, evidence or funds."
       }
     },
     "/v1/model-call-attempts/{attempt_id}/prepared": {

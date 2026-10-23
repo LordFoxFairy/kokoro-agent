@@ -1,3 +1,31 @@
+## 2026-10-23 AGENT-1：精确历史 sealed reader（本地已验）
+
+同一专用 Billing GET 现可读取任意原 sealed event，不再被最新 head 遮住；一个 MVCC 快照
+读取请求与当前 head（至多两行），两者独立核 canonical bytes、原版本／身份／revision／摘要／
+观察时间和冻结绑定，实际 head 另核 latest 三元组及 sealed_at。终态／失租不阻断原财务证据；
+无写入、补 grant、旧 fence 执行许可或金融 ACK 屏障。原 repository 薄委派具名只读模块，
+显式 production composition 闭包纳入该模块；无新表、Schema、依赖或服务。
+
+HTTP7.2 原件 SHA256 `4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db`。
+唯一变化为版本与历史语义 description，完整7.1／7.0逆证明均保持；usage1历史、usage2、proof2、
+SQL／pyproject／lock 与基线逐字相同。failure模型与provenance仅经正规生成。
+
+真实隔离 PG／HTTP **122 PASS／0SKIP**：三版本原 bytes，终态／失租、跨租户／attempt拒绝、
+请求与 head 独立损坏拒绝及原三表 xmin 零变化；unsealed损坏仍由原 CHECK 拒绝，不拆约束。
+401非文档输入停写，八工程门全部0，默认 **2461 PASS／806按marker未选**，原927上游提醒保留；
+仓外按锁定hash安装及 installed contract／历史reader／预算audit检查通过，201份runtime Python
+在wheel及sdist逐字核同，临时venv已清理。首offline安装因缓存元数据缺失失败，随后同registry、
+同hash联网安装，无依赖或锁变化；原日志保留，不称本次仓外安装全离线。
+
+业务历史读取及head时间RED保留。首完整门显式闭包漏新模块1FAIL，补原资源清单后focused10PASS；
+次完整门旧HTTP退出时限测试1FAIL，原断言／3秒界限不改，四项定向与最终完整重跑通过。
+该偶发失败未证明根因消除，不据此宣称退出时序永无问题。独立只读review及资源补项均Approved。
+13仓非递归fetch成功／main无新增，实际库94→94；正常服务、资金、模型／工具均未触动。
+
+后继 Billing 必须固定新commit原件；Agent仍须消费BFF internal1.3、保存独立金融关联和逐事件
+持久ACK／崩溃恢复，再装配唯一dispatch、同流真实usage及认证实际归属。未PR合并、未正常激活，
+不把本片读取验收当作真实模型扣分或完整产品目标完成。
+
 ## 2026-10-22 实际归属 profile 明确化（文档）
 
 为接Billing实际结算，明确本轮预算仅接受映射确认的原System provider/model目录ID；

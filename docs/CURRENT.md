@@ -1,3 +1,33 @@
+## 2026-10-23 AGENT-1：正式结算／恢复consumer（本地已验，持久ACK待接）
+
+固定BFF `5a303f2003fabeb50376c7f7e1f66f0d163adebb`／internal1.3原Git YAML，SHA256
+`4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39`；单一receipt只暴露
+create／recover／settle三操作，有限build-only编译器承接实际anyOf／allOf／const／null／not-pattern，
+以原生成器更新模型／provenance，无手写wire副本或新依赖。既有HTTP7.2／proof2／usage2／SQL保持。
+
+原BffModelBudgetClient共用同一pool及有界单发transport、metadata／EOF／strict JSON、独立close界限。
+create仍fresh proof／201／六事实／原held时间；recover无proof，只原命令原key，精确404才miss，
+不fallback reserve。settle无proof／金额，四字段body及原path／key，严格核原Run／attempt／event／
+revision／digest／admission与三态分支。返回不可变本地结果，不计算费用、改余额或把pending冒capture。
+客户端库尚未接worker，不据此删除finalhook拒绝；后继金融关联／逐事件持久ACK与恢复仍必要。
+
+21项缺正式模型／版本RED、37项缺实际client操作RED后，112 focused及独立canonical JSONschema
+oracle通过；6项真实loopback TCP通过（协议fixture，不冒BFF／数据库／供应商）。真实隔离PG授权7
+PASS／0SKIP；actual Agent client→BFF／Billing与IAM隔离组合33检查通过：QA100只hold10，停止
+执行Agent HTTP和IAM后client仍恢复原grant／miss零写，无usage／capture；原资金十表含xmin保持。
+BFF Chat事实seed，签名JWKS为具名fixture，收费参数明确QA，不冒浏览器／真实模型。库94→94，
+自有IAM Redis prefix精确清理。settle不归属admission按原owner隐私guard返回FORBIDDEN且零资金，
+不是本次改坏404；首次harness误期望NOT_FOUND已核原guard后修正，仅改fixture并保失败／清理收据。
+
+405非文档输入停写无漂移，八工程门全0，默认2522 PASS／812按marker未选，原927上游提醒保留。
+仓外同锁hash安装和installed contract／三操作audit通过，202份runtime Python在wheel及sdist逐字
+等于冻结源码，临时环境清理。首全门generated格式失败，修编译模板后正规重生，不手改generated；
+初始新测试类型错误只补类型／wire oracle调用、EOF测试配置明确自身20ms总预算，不放宽门禁或时限。
+一次初写PEP695泛型超当前py311声明已改为TypeVar，未升级工具链；独立只读review及最后模板复核Approved。
+
+正常服务／配置／资金未激活，无真实模型／工具请求；尚未PR合并，不勾AGENT-1／CREDIT-1整项。
+继续独立金融关联／逐事件持久ACK、seal后崩溃恢复和唯一dispatch／同流usage装配，再正常产品整链验收。
+
 ## 2026-10-23 AGENT-1：精确历史 sealed reader（本地已验）
 
 同一专用 Billing GET 现可读取任意原 sealed event，不再被最新 head 遮住；一个 MVCC 快照

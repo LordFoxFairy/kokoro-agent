@@ -5,13 +5,13 @@ HTTP7.2 原件 SHA256 `4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b
 路径、响应 schema、usage1历史／usage2及proof2不变；仅撤销新增description及版本可逐字恢复整个7.1原件，原7.0逆证明仍在。
 消费者固定本次Git commit／原件／provenance后正规生成，不从live checkout猜配对。工程与真实PG／HTTP及包验收见[CURRENT](../docs/CURRENT.md)；金融关联与逐事件ACK尚待，不宣称实际扣分已闭环。
 
-## 当前 BFF 预算消费者
+## 当前 BFF 预算／结算／恢复消费者
 
-`bff/internal-v1/openapi.yaml` 为 BFF 0082b5c 的固定 internal1.1 原字节；只生成
-createAgentModelAdmission 的严格消费模型。用 `uv run python scripts/generate_bff_admission_models.py`
-生成，用同命令 `--check` 或现 contract checker 校验；不手改生成物，不读取 sibling 源码。
-新增消费 receipt 与原 failure receipt 同时保持精确 inventory；两个生成器互不删除对方产物。
-本片不修改 Agent HTTP7.1／proof2／usage2，也不宣称正常派发与资金结算已完成。
+`bff/internal-v1/openapi.yaml` 固定BFF `5a303f2003fabeb50376c7f7e1f66f0d163adebb` 的internal1.3原字节，SHA256 `4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39`。
+只生成原create／recover／settle三操作及必要模型／标量，单一依赖回执和audit闭包由原checker核验。
+有限编译器保anyOf／allOf／const／null／not及codepoint／整数字符串上界；独立owner-schema oracle保护不丢条件分支。
+运行时不读取契约或运行生成器，只使用包内生成模型；原专用机器凭据单池，首次create需proof，恢复／结算禁proof，miss不重预占。
+HTTP7.2／proof2／usage2及Schema保持；库接线不是持久金融ACK或正常真实扣分完成证据，详见[CURRENT](../docs/CURRENT.md)。
 
 # kokoro-agent 契约治理
 

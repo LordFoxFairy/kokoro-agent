@@ -1,3 +1,7 @@
+## AGENT-1：金融consumer本段无持久化变化（2026-10-23）
+
+本段只接正式传输与本地不可变结果，无表／列／状态／schema或正常资金写。Run不携用户token；客户端收到ACK不自行改sealed authorization或授dispatch。后继须按原事实保存独立金融关联及逐事件持久ACK，本consumer通过不代表durable恢复完成。
+
 ## AGENT-1：历史sealed读取无新事实（2026-10-22）
 
 复用原attempt和全修订model_usage_evidence，无SQL schema／新列／表／缓存／状态或数据修复。一个只读MVCC快照读取请求row与实际head，返回原immutable版本；精确核原事件、摘要、观察时间和冻结绑定，并独立保head完整性。终态／失租后可读原财务证据，不改authorization bytes，不补grant／派发权。后继金融关联／逐事件ACK仍待单独按原owner事实装配，不借Chat outbox或用户token。

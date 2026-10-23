@@ -1,3 +1,7 @@
+## AGENT-1：固定 BFF internal1.3（2026-10-23，本地已验）
+
+固定5a303f2003fabeb50376c7f7e1f66f0d163adebb原始YAML及SHA4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39；现唯一receipt扩为create／recover／settle三操作，无新可编辑DTO。recover仅200原held创建ACK或精确404miss，settle仅200原sealed命令ACK／原错误，均禁proof／用户token；首次create仍201＋fresh proof。客户端严格核可信调用参数与ACK身份，不重算费用、不补0／夹预算／重发provider。三态及完整字符串限制由owner生成模型承接，不复制手写wire schema。
+
 ## AGENT-1：精确历史证据读取（HTTP7.2，2026-10-22，本地已验）
 
 仍为GET /v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}，原专用Billing机器Bearer／受信tenant、无query/body／现大小与取消界限保持。HTTP7.2明确任一immutable sealed历史修订按原event返回，不限当前head；响应原bytes／artifact版本／revision／digest／observed_at不改写。请求row及独立实际head均须完整，坏head不因读历史绕过；其他tenant／attempt／missing／unsealed不暴露，不增加人类／服务caller身份。

@@ -1,3 +1,9 @@
+## AGENT-1：正式结算／恢复消费者（2026-10-23，本地已验）
+
+沿Root同一16项与预算／真实结算裁决，Agent现有BFF consumer固定已验5a303f2／internal1.3 Git blobs，只开放原create、recover及settle三操作。既有build-only有限编译器承接实际anyOf／allOf／const／null／not-pattern，严格保每个branch约束；生成模型不手改，不引入JSONSchema runtime或依赖。原single pool客户端共享有界单发／UTF8闭集解析／无cookie代理跳转重试／取消与清理；recover不收proof，只原六事实／原key，精确404才返回miss，不自动reserve；settle四字段body＋原admission path／key，不收proof／金额，ACK须严格核原Run／attempt／event／revision／digest及三态依赖，unknown不是成功扣分。保原首次create fresh proof／201／held原时间要求。
+
+写区：原固定发行物／compiler／官方生成及provenance、原client共享私有transport、具名settlement本地command/result与decoder、既有包／资源闭包校验、直接contract／HTTP边界回归及现文档。无新SQL／journal／服务／用户token；原usage2／proof2／Agent HTTP7.2不变。资金持久关联／逐事件ACK与worker装配是依赖本consumer的下一段，不用内存HTTP冒崩溃恢复。本段验收：先缺操作／模型RED，逐分支／金额上界／Unicode／not约束与独立owner schema oracle；三个路由真实HTTP及deadline／取消／未知／无重试；原预算与proof门不删，再完整八门、仓外安装与只读审查。
+
 ## AGENT-1：结算恢复读取精确历史sealed（2026-10-22，本地已验）
 
 沿Root有效计划及已验BFF恢复，不重开Skills/MCP任务。Agent唯一拥有immutable evidence；在现read_final_evidence按tenant／attempt／event读任一已sealed修订，仍用同一受限Billing身份与端点。HTTP发行7.2仅明确历史语义，envelope／usage1历史及usage2／proof2不改；完整7.1原件精确逆证、旧7.0父门保持，消费者后继固定新artifact，不新增fallback／服务／数据。

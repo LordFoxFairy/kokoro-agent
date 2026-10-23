@@ -1,3 +1,11 @@
+## AGENT-1：响应完成与用量可结算分开判断（2026-10-23，本地已验）
+
+修复两处阻断：已文档化的 OpenRouter cost/cost_details 说明不再被误判成 token 类别；完整 SSE 缺最终 usage 帧仍保留一致响应编号/model，usage 继续 unresolved/missing_usage 且无虚构摘要或计数。非法费用说明、未知计量、冲突编号/model、无 DONE、压缩截断等仍受原保护。原 seal 同事务保存编号、pending 阻断后续派发及金融幂等保持；无新服务、认证、Schema、公开契约或价格变更。
+
+先复现11 FAIL/41 PASS，修复后观察器/producer59 PASS；真实 SDK/HTTP（具名供应商peer）376 PASS、隔离原生图/HTTP/PostgreSQL12 PASS，缺用量仍pending且请求次数不增，数据库库存94→94。完整默认2621 PASS/857资源marker未选、927既有上游warning；lock/frozen offline sync、格式/lint/types/contract/build通过，418非文档输入无漂移。wheel/sdist的208份Python及canonical schema逐字核同、无额外Python/退休OAuth模块；仓外新venv按lock hashes离线安装并运行contract通过。最初类型命令误选解释器导致3241错误，改为显式本仓venv后0错误；一次格式遗漏、包核对脚本错误路径已修正，不改产品行为或门禁。
+
+证据位于 Root ignored `var/dev/usage-response-semantics-20261023`，PG收据在原 `var/dev/model-response-receipt-20261023/usage-semantics-pg.json`。正常schema/进程未切换，本轮未发真实模型或工具请求，未动积分；原历史无编号/缺缓存量的pending尚未恢复。下一步保留现资金事实完成schema配对及核实供应商补证来源，之后真实整数结算与工具/产物旅程。不以具名peer的captured回执冒真实Billing扣分，不勾主链完成，待集中PR合并。
+
 ## AGENT-1：供应商响应编号随首次用量封口保存（2026-10-23，本地已验）
 
 沿 Root 正式产品主链，修复原观察器丢弃 response.id、金融异常先于 checkpoint 导致编号不可恢复的问题。新增有界 ASCII locator；流式全帧出现的编号必须一致，非法/冲突/截断/压缩完整性未验证均不采信。原 attempt 增加 nullable provider_response_id，与首次 usage seal 同事务保存；精确重放核同值，不替换或补填旧缺失事实。公开 usage2/HTTP/BFF/Billing 契约、原 usage digest 和定价不变，没有新服务或用户 token。

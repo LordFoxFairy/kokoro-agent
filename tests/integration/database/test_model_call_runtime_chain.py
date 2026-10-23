@@ -1942,7 +1942,15 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
 
 
 @pytest.mark.parametrize(
-    "mode", ["complete", "different_model", "missing_usage", "tool_call", "cancelled"]
+    "mode",
+    [
+        "complete",
+        "cost_metadata",
+        "different_model",
+        "missing_usage",
+        "tool_call",
+        "cancelled",
+    ],
 )
 @pytest.mark.parametrize("wire", ["sse", "json"])
 async def test_native_graph_dispatch_seals_same_stream_before_returning(
@@ -1995,7 +2003,7 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
     reservations: list[ModelBudgetCommand] = []
     settlements: list[ModelSettlementCommand] = []
     admissions: dict[str, str] = {}
-    completed_modes = {"complete", "tool_call"}
+    completed_modes = {"complete", "cost_metadata", "tool_call"}
 
     class NamedBudgetPeer:
         async def reserve(
@@ -2066,7 +2074,6 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
                 assert await fetch_one(cursor) == {
                     "provider_response_id": None
                     if mode == "cancelled"
-                    or (wire == "sse" and mode == "missing_usage")
                     else "chatcmpl-native-tool"
                     if wire == "sse" and mode == "tool_call" and not settlements
                     else "chatcmpl-r197"
@@ -2077,15 +2084,13 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
                 "cancelled" if mode == "cancelled" else "completed"
             )
             assert original.actual.state == (
-                "unknown"
-                if mode in {"different_model", "cancelled"}
-                or (wire == "sse" and mode == "missing_usage")
-                else "verified"
+                "unknown" if mode in {"different_model", "cancelled"} else "verified"
             )
             assert original.usage.state == (
                 "unresolved" if mode in {"missing_usage", "cancelled"} else "normalized"
             )
             if original.usage.state == "normalized":
+                assert original.usage.value.profile_assessment.state == "supported"
                 assert original.usage.value.input_total.model_dump() == {
                     "state": "reported",
                     "count": "1",
@@ -2094,6 +2099,10 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
                     "state": "reported",
                     "count": "1",
                 }
+            elif mode == "missing_usage":
+                assert original.usage.reason == "missing_usage"
+                if wire == "sse":
+                    assert original.usage.raw_usage_digest is None
             settlements.append(command)
             return ModelSettlementReceipt(
                 admission_ref=admission_ref,
@@ -2153,6 +2162,11 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
         )
     if mode != "different_model":
         body = body.replace(b"gateway-model-r197", b"provider-model-r197")
+    if mode == "cost_metadata":
+        body = body.replace(
+            b'"total_tokens":2',
+            b'"total_tokens":2,"cost":0.95,"cost_details":{"upstream_inference_cost":19}',
+        )
     if mode == "missing_usage":
         body = body.replace(
             b',"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}', b""

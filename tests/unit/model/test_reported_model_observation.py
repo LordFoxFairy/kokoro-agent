@@ -14,6 +14,7 @@ from kokoro_agent.model.usage_observation import (
     claim_usage_request,
     observe_usage_response,
 )
+from kokoro_agent.model.usage_producer import normalize_observed_usage
 
 
 def route() -> ResolvedModel:
@@ -48,6 +49,8 @@ def observe(
     compressed: bool = False,
     complete: bool = True,
     truncate_encoding: bool = False,
+    usage: object = Ellipsis,
+    omit_usage: bool = False,
 ):
     data: list[dict[str, object]] = [
         {
@@ -57,6 +60,11 @@ def observe(
         }
         for m in models
     ]
+    for document in data:
+        if omit_usage:
+            document.pop("usage")
+        elif usage is not Ellipsis:
+            document["usage"] = usage
     if response_ids is not None:
         for document, response_id in zip(data, response_ids, strict=True):
             if response_id is not Ellipsis:
@@ -208,6 +216,157 @@ def test_truncated_gzip_response_does_not_leave_a_lookup_id(streaming: bool) -> 
         truncate_encoding=True,
     )
     assert value.status == "unresolved" and value.provider_response_id is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_documented_cost_metadata_does_not_invalidate_token_usage(
+    streaming: bool,
+) -> None:
+    base: dict[str, object] = {
+        "prompt_tokens": 17,
+        "completion_tokens": 3,
+        "total_tokens": 20,
+        "prompt_tokens_details": {"cached_tokens": 2},
+    }
+    expected = observe(["raw-a"], streaming=streaming, usage=base)
+    value = observe(
+        ["raw-a"],
+        streaming=streaming,
+        usage={**base, "cost": 0.95, "cost_details": {"upstream_inference_cost": 19}},
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "supported"
+    assert normalized.value.input_cache_read.model_dump() == {
+        "state": "reported",
+        "count": "2",
+    }
+    assert value.projection_digest == expected.projection_digest
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"cost": None, "cost_details": None},
+        {"cost": 0, "cost_details": {"upstream_inference_cost": None}},
+    ],
+)
+def test_nullable_cost_metadata_does_not_invent_cache_counts(
+    extra: dict[str, object],
+) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=False,
+        usage={
+            "prompt_tokens": 17,
+            "completion_tokens": 3,
+            "total_tokens": 20,
+            **extra,
+        },
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "supported"
+    assert normalized.value.input_cache_read.state == "unreported"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"cost": True},
+        {"cost": -1},
+        {"cost": "0.95"},
+        {"cost_details": []},
+        {"cost_details": {"upstream_inference_cost": -1}},
+        {"cost_details": {"upstream_inference_cost": True}},
+        {"cost_details": {"unrecognized_fee": 1}},
+        {"unrecognized_tokens": 1},
+        {"prompt_tokens_details": {"cache_write_tokens": 1}},
+        {"prompt_tokens_details": {"audio_tokens": 1}},
+    ],
+)
+def test_cost_metadata_does_not_hide_unsupported_usage(
+    extra: dict[str, object],
+) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        usage={
+            "prompt_tokens": 17,
+            "completion_tokens": 3,
+            "total_tokens": 20,
+            "cost": 0.95,
+            **extra,
+        },
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "unsupported"
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("omit_usage", [False, True])
+def test_complete_stream_without_usage_preserves_lookup_but_not_usage(
+    compressed: bool,
+    omit_usage: bool,
+) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        response_ids=["gen-missing-usage"],
+        compressed=compressed,
+        usage=None,
+        omit_usage=omit_usage,
+    )
+    assert value.status == "complete" and value.compression_integrity == "validated"
+    assert (
+        value.provider_response_id == "gen-missing-usage"
+        and value.reported_model == "raw-a"
+    )
+    assert value.projection_digest is None
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "unresolved" and normalized.reason == "missing_usage"
+    assert all(count.value is None for count in value.counts.values())
+
+
+@pytest.mark.parametrize(
+    "response_ids,models,expected_id,expected_model",
+    [
+        (["gen-a", "gen-b"], ["raw-a", "raw-a"], None, "raw-a"),
+        (["gen-a", None], ["raw-a", "raw-a"], None, "raw-a"),
+        (["gen-a", "gen-a"], ["raw-a", "raw-b"], "gen-a", None),
+    ],
+)
+def test_missing_usage_does_not_allow_conflicting_response_identity(
+    response_ids: list[object],
+    models: list[object],
+    expected_id: str | None,
+    expected_model: str | None,
+) -> None:
+    value = observe(models, streaming=True, response_ids=response_ids, omit_usage=True)
+    assert value.status == "complete"
+    assert (
+        value.provider_response_id == expected_id
+        and value.reported_model == expected_model
+    )
+    assert normalize_observed_usage(value).state == "unresolved"
+
+
+@pytest.mark.parametrize("complete,truncate", [(False, False), (True, True)])
+def test_incomplete_stream_without_usage_never_preserves_lookup(
+    complete: bool, truncate: bool
+) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        response_ids=["gen-incomplete"],
+        omit_usage=True,
+        complete=complete,
+        compressed=True,
+        truncate_encoding=truncate,
+    )
+    assert value.status == "unresolved"
+    assert value.provider_response_id is None and value.reported_model is None
 
 
 async def test_production_hook_rejects_changed_credential_before_any_prepare_or_send() -> (

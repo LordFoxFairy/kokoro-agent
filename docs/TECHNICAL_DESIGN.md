@@ -1,3 +1,13 @@
+## AGENT-1：完整响应与可结算用量分开判断（2026-10-23）
+
+现观察器将 OpenRouter 的 `usage.cost` / `cost_details.upstream_inference_cost` 误判为 token 类别；同时，SSE 已完整结束但缺最终 usage 帧时抹掉有效 response.id。沿原观察器及 usage producer 修正，不新增认证、查询服务、Schema 或结算接口。
+
+- 仅识别上述已文档化的费用说明，值为非负 JSON number 或 null，cost_details 为对象或 null，未知成员及非法形状仍判 unsupported。说明字段不作为本地积分价格、用量、折扣或支付事实，不进入既有 token projection digest；缓存写入、音频及其他未支持计量仍拒绝结算。
+- SDK 消费完成、SSE `[DONE]` 且解码完整性通过后，即使无最终 usage 也保留各帧一致的有界 response.id/model；观察 status=complete 只证明传输观察结束。缺 usage 仍 unresolved/missing_usage，counts 缺失、projection_digest=null，不构造原始用量摘要，不生成零用量。
+- 编号/model 冲突、截断、无 DONE、解码尾未验证仍沿原规则拒绝采信；同 attempt 首次 seal 原子保存编号，金融 pending 阻断后续派发不变。此修复不为历史无编号调用补造凭据，不重发供应商请求。
+
+参考：[OpenRouter Usage Accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)，核对日期 2026-10-23；只用于解析已文档化响应语义，不证明当前转接网关支持补查或相同费率。验收覆盖真实 HTTPX 消费的 JSON/SSE、非法费用与未知计量、缺 usage 的编号/冲突/压缩边界，以及原 SDK→HTTP→PostgreSQL 首次封口/pending 旅程。供应商与金融 peer 证据单独标注，不冒真实扣分验收。
+
 ## AGENT-1：保留同一次供应商响应编号（2026-10-23）
 
 当前正常 attempt 的缓存用量缺失，且观察器丢弃 response.id，结算异常发生在模型 checkpoint 之前，后续没有可靠查询编号。沿既有 Agent owner 修复：原物理响应观察器读取有限 ASCII id；流式各帧有 id 时必须一致，冲突或非法值不产生可查询编号。完整且解码验证通过的观察才传给现 seal_observation；编号与原 usage evidence 在同一事务写入 attempt，先封口再写编号，任一步失败全部回滚。精确重放必须匹配原编号，不因 SDK 合成 ID 或别的请求填充。

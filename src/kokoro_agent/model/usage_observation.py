@@ -164,6 +164,29 @@ def _response_id(document: dict[str, object]) -> str | None:
     return None
 
 
+def _unsupported_cost_metadata(usage: dict[str, object]) -> bool:
+    """Documented monetary metadata is not a token category or our pricing input."""
+    details = usage.get("cost_details")
+    if details is not None and not isinstance(details, _JsonObject):
+        return True
+    if isinstance(details, _JsonObject) and details.keys() - {
+        "upstream_inference_cost"
+    }:
+        return True
+    amounts = [usage.get("cost")]
+    if isinstance(details, _JsonObject):
+        amounts.append(details.get("upstream_inference_cost"))
+    return any(
+        amount is not None
+        and (
+            not isinstance(amount, (int, float))
+            or isinstance(amount, bool)
+            or amount < 0
+        )
+        for amount in amounts
+    )
+
+
 def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     raw = document.get("usage")
     presence: Literal["missing", "null", "object"] = (
@@ -175,8 +198,14 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     counts = {name: _count(usage, name) for name in _NAMES[:3]}
     unknown = bool(
         usage.keys()
-        - {*_NAMES[:3], "prompt_tokens_details", "completion_tokens_details"}
-    )
+        - {
+            *_NAMES[:3],
+            "prompt_tokens_details",
+            "completion_tokens_details",
+            "cost",
+            "cost_details",
+        }
+    ) or _unsupported_cost_metadata(usage)
     for container, member in (
         ("prompt_tokens_details", "cached_tokens"),
         ("completion_tokens_details", "reasoning_tokens"),
@@ -326,13 +355,14 @@ class _Parser:
         self.utf8.decode(b"", final=True)
         if not self.done:
             _fail("missing_done")
-        if self.projection is None:
-            _fail("missing_final")
+        # A completed stream can omit final usage. Retain its lookup facts without
+        # inventing a usage object, counts or a digest of nonexistent usage.
+        projection = self.projection or PhysicalUsageObservation(
+            "complete", None, "pending", reported_model=self._seen_model
+        )
         return replace(
-            self.projection,
-            reported_model=None
-            if self._model_conflict
-            else self.projection.reported_model,
+            projection,
+            reported_model=None if self._model_conflict else projection.reported_model,
             provider_response_id=None
             if self._response_id_conflict
             else self._seen_response_id,

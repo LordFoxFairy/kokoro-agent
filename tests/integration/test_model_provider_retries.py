@@ -1461,7 +1461,18 @@ async def test_r231_capture_unknown_does_not_replace_sdk_response(
             capture.mark_sdk_consumption_complete()
         assert output == "ok"
         result = capture.snapshot()
-        assert result.status == ("complete" if fault == "duplicate" else "unresolved")
+        assert result.status == (
+            "complete" if fault in {"duplicate", "missing-final"} else "unresolved"
+        )
+        if fault == "missing-final":
+            from kokoro_agent.model.usage_producer import normalize_observed_usage
+
+            normalized = normalize_observed_usage(result)
+            assert (
+                normalized.state == "unresolved"
+                and normalized.reason == "missing_usage"
+            )
+            assert all(count.value is None for count in result.counts.values())
         if fault != "duplicate":
             assert result.projection_digest is None
         assert peer.request_count == 1

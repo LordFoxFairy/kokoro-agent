@@ -1,3 +1,22 @@
+## AGENT-1：BFF 预算消费者与持久授权恢复（2026-10-22）
+
+固定 BFF 0082b5c／internal1.1 原件，只生成 createAgentModelAdmission 的请求／回包／错误模型，
+不复制或暴露其他 BFF operation。原件 SHA、单依赖回执、确定性生成和包 audit 同步检查，
+原 Agent HTTP7.1／proof2／usage2／SQL 保持。运行时客户端不读取仓外契约、源码或用户 token。
+
+BffModelBudgetClient 由部署注入固定 origin 和按可信 tenant 取独立工作负载凭据的 callback；
+共享 HTTPX pool、逐调用 fresh credential、无 cookie／环境代理／跳转／自动重试。单次总 deadline，
+metadata＋EOF＋32KiB、strict UTF-8／原 JSON 重复键／深度、生成闭集模型和六事实／held／原时间核验；
+close 清理独立上限100ms，失败不解释为未预占，错误不外露 body／URL／proof／credential。
+
+ModelBudgetAuthorizer 仅消费已 prepare 的精确 Run／lease scope，稳定 request_ref 与 key 均为
+agent-model-admit:attempt_id。原 begin 事务先落 pending；完整 model-admit:1 tuple 摘要申请 fresh proof，
+事务外单次 BFF 预占；回包 admission_id（不是 hold_id）以原 pending digest 写 grant。
+已 granted 必须 strict canonical 核验后原 grant replay，零 proof／HTTP；newly_requested=false 不当状态。
+超时、取消、失租、未知或晚 ACK 保留现 journal／原资金，由原 fence 拒绝非法 grant；不释放、换 attempt
+或补发 provider。本片止于授权，不调用 start_dispatch；原 finalhook 的 prepare 后拒绝不变。
+CLI／worker 配置和正式派发仍待后继一次接入，不把库内能力冒正常启用，不新增服务／表／token broker。
+
 ## AGENT-1：消费 proof 复用原 Run 绑定（2026-10-22）
 
 沿用户确认的内部身份方案，原 ExecutionProofSupplier 的具名 context-bound 集合增加

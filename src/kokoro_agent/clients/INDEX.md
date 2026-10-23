@@ -5,6 +5,8 @@ Model owner 的领域模型。
 
 ## 当前协议
 
+- `model_budget.py`：固定 BFF internal1.1 的单次预算 POST；独立 workload credential、fresh Run proof、strict ACK／有界 EOF 与 close，无用户 token、自动重试或 provider 执行。
+
 - `skills.py`：`PlatformSkillClient`按已冻结exact ref调用Run-bound Resolve/Approved，每次读取重新授权并校验完整包，无名称grant与bytes授权缓存。
 - `package_transport.py`：共享固定ObjectStore origin的有界原始GET，禁止cookie、redirect和自动重试；具体owner策略由包装客户端裁决。
 - `mcp_package_transport.py`：MCP短时精确大小/受控headers下载，独立于Skill授权，不接收内部凭据头。

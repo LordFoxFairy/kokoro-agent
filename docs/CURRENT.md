@@ -1,3 +1,36 @@
+## 2026-10-22 AGENT-1：正式预算消费者与持久化授权（本地源码验收）
+
+固定 BFF `0082b5c`／internal1.1 原始 YAML，build-only 窄生成六字段请求和严格ACK／错误；
+唯一依赖回执、确定性生成及包audit承接原闭包，不改变 Agent HTTP7.1／proof2／usage2／Schema。
+HTTPX 单池独立机器凭据，固定origin、无环境代理／cookie／跳转／自动重试；总deadline、有界
+metadata与EOF、原JSON重复键／深度及闭集验证。清理独立100ms，取消／失败不泄漏凭据或原body。
+
+原prepare之后由库内authorizer稳定request_ref/key，begin先落pending，事务外鲜签具体摘要并
+只发送一次预占，原pending digest grant正式admission_id；不把hold_id当许可。已granted严格
+canonical回读后原grant恢复，零凭据读取／proof／HTTP；unknown不换attempt、不释放，失租／
+终态／晚取消由现repository屏障拒grant。该库尚未装配到worker/finalhook，原prepare后拒绝保持，
+本片没有start_dispatch、模型／工具调用或真实usage结算，不勾AGENT-1／CREDIT-1整项。
+
+当前主方证据：41项定向；补齐旧独立inventory后proof＋BFF契约61 PASS；真实隔离PG7 PASS／0SKIP，
+actual Agent预算client／authorizer／私钥supplier／当前PG lease／原生JWKS→compiled BFF→Billing→
+actual IAM→BFF live四方29检查通过。仅QA100发放／预算10预占，原授权在离线BFF且凭据与proof
+callback拒调用时恢复且Agent行版本不变，资金usage／capture仍0；库94→94，自有IAM键已清理。
+BFF Chat原提交为隔离seed，IAM JWKS为转发实际Agent端点的具名relay，不冒正常浏览器首发。
+
+首完整门399输入无漂移，默认2413 PASS／47 FAIL：旧proof测试独立OWNER_INVENTORY漏本次4资产，
+1项exact清单断言及46项夹具FileNotFound；现仅字面补4路径承接原顺序与全部安全负控，不改生产
+校验器／skip／断言，61项重验通过。失败日志保留；最终重新冻结399非文档输入无漂移，lock／frozen offline sync、Ruff格式／lint、
+锁定Pyright1.1.409、contract、默认pytest及wheel／sdist八阶段exit0；默认2460 PASS／796按marker
+未选，原927上游提醒保留。仓外独立venv按锁定hash离线安装依赖与wheel，installed contract及
+预算消费者／固定原件／生成闭包检查通过；200份runtime Python在wheel及sdist逐字等于冻结源码，
+临时环境已清理。两项传输清理RED和unknown inventory RED均保留；独审Approved，无确定P0–P2。
+
+13仓非递归fetch成功，main无新增；正常服务／配置／Schema／资金未动。下一步先由Billing复用现计价和capture/release事务原语收敛同admission结算及正式传输，
+再接共享proof生命周期／worker装配、原唯一派发、同SDK流usage capture及EOF封口；还须验证
+seal提交后通知前崩溃仍可恢复结算，不用内存单发HTTP替代持久恢复。不把旧声明接口或纯决策
+当成现运行服务，不新增用户token回程或供应商成本上界前置。最终仍按统一目标完成正常页面、
+有限真实模型／工具／整数扣分、后台及集中PR merge，真钱支付不做。
+
 ## 2026-10-22 AGENT-1：Run 消费 proof 接线（本地源码验收）
 
 原 ExecutionProofSupplier 已将具名 billing.credit.consume 纳入现 proof2 的 execution_binding，

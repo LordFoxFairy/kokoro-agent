@@ -24,6 +24,10 @@ from kokoro_agent.platform_binding_contract import (
     PLATFORM_AUDIT_FILES,
     validate_platform_binding_artifact,
 )
+from kokoro_agent.bff_admission_contract import (
+    BFF_ADMISSION_AUDIT_FILES,
+    validate_bff_admission_consumer,
+)
 from kokoro_agent.system_consumer_contract import validate_system_consumer_receipt
 from kokoro_agent.usage_history_contract import validate_usage_history
 
@@ -176,6 +180,7 @@ def validate(root: Path = ROOT) -> None:
     validate_openapi_document(read_document(root / OPENAPI_RELATIVE))
     validate_http_provenance(root, read_document(root / "contract/provenance.json"))
     validate_system_consumer_receipt(root)
+    validate_bff_admission_consumer(root)
     generate_failure_models(root, check=True)
     validate_execution_proof_contract(root)
     validate_platform_binding_artifact(root)
@@ -191,6 +196,7 @@ def main() -> int:
             *model_usage_v2_contract.USAGE_AUDIT_FILES,
             "contract/provenance.json",
             *PLATFORM_AUDIT_FILES,
+            *BFF_ADMISSION_AUDIT_FILES,
         }
     )
     validate(root)

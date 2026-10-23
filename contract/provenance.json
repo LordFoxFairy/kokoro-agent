@@ -14,9 +14,13 @@
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
-    "src/kokoro_agent/usage_history_contract.py"
+    "src/kokoro_agent/usage_history_contract.py",
+    "contract/bff/internal-v1/openapi.yaml",
+    "src/kokoro_agent/bff_admission_contract.py",
+    "src/kokoro_agent/clients/bff_admission_generated.py",
+    "scripts/generate_bff_admission_models.py"
   ],
-  "combined_sha256": "a92b66c1b493feebff957e149edaa931e47fe73baa896299188ca8479cf19232",
+  "combined_sha256": "427833101cb191497177e3cc7e8a8e715114942d225a5cc83affc2e21fe044f1",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
@@ -24,6 +28,13 @@
       "source": "contract/openapi/v1/openapi.json",
       "source_sha256": "6c0f532d983367ce3a22e05ffab00f83b7a4481de04f7121e72dd2a5098365a5",
       "generator": "scripts/generate_failure_models.py"
+    },
+    {
+      "path": "src/kokoro_agent/clients/bff_admission_generated.py",
+      "sha256": "db276224530dfd460ae010495e00fbe6bd406f25b0706f28e1617f7434874902",
+      "source": "contract/bff/internal-v1/openapi.yaml",
+      "source_sha256": "695901b23f1f0322fd18ec2a11be27c5b6efcce07b04f57839498eab402d17c6",
+      "generator": "scripts/generate_bff_admission_models.py"
     }
   ],
   "source_revision": "same Git commit as the listed files",
@@ -65,6 +76,16 @@
       "operations": [
         "POST /v1/system/model-catalog/resolve",
         "POST /v1/system/model-catalog/credentials/read"
+      ]
+    },
+    {
+      "owner": "kokoro-bff",
+      "contract": "contract/openapi/internal/v1/openapi.yaml",
+      "version": "1.1.0",
+      "source_commit": "0082b5cee4437367a608b5bd37732674a1622664",
+      "sha256": "695901b23f1f0322fd18ec2a11be27c5b6efcce07b04f57839498eab402d17c6",
+      "operations": [
+        "POST /internal/v1/model-admissions"
       ]
     }
   ],

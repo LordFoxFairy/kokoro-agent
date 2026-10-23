@@ -74,6 +74,8 @@ kokoro_agent = ["prompts/*.md"]
 "share/kokoro-agent/audit/contract/openapi/v1" = [
   "contract/openapi/v1/openapi.json",
 ]
+"share/kokoro-agent/audit/contract/bff/internal-v1" = ["contract/bff/internal-v1/openapi.yaml"]
+"share/kokoro-agent/audit/src/kokoro_agent/clients" = ["src/kokoro_agent/clients/bff_admission_generated.py"]
 "share/kokoro-agent/audit/contract/platform/v1" = [
   "contract/platform/v1/provenance.json",
   "contract/platform/v1/codegen.json",
@@ -127,9 +129,11 @@ kokoro_agent = ["prompts/*.md"]
   "scripts/generate_model_usage_models.py",
   "scripts/generate_model_usage_v2_models.py",
   "scripts/generate_failure_models.py",
+  "scripts/generate_bff_admission_models.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent" = [
   "src/kokoro_agent/system_consumer_contract.py",
+  "src/kokoro_agent/bff_admission_contract.py",
   "src/kokoro_agent/usage_history_contract.py",
   "src/kokoro_agent/model_usage_contract.py",
   "src/kokoro_agent/model_usage_v2_contract.py",

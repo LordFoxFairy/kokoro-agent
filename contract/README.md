@@ -1,3 +1,11 @@
+## 当前 BFF 预算消费者
+
+`bff/internal-v1/openapi.yaml` 为 BFF 0082b5c 的固定 internal1.1 原字节；只生成
+createAgentModelAdmission 的严格消费模型。用 `uv run python scripts/generate_bff_admission_models.py`
+生成，用同命令 `--check` 或现 contract checker 校验；不手改生成物，不读取 sibling 源码。
+新增消费 receipt 与原 failure receipt 同时保持精确 inventory；两个生成器互不删除对方产物。
+本片不修改 Agent HTTP7.1／proof2／usage2，也不宣称正常派发与资金结算已完成。
+
 # kokoro-agent 契约治理
 
 ## Owner

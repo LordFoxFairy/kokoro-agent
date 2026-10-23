@@ -1,3 +1,16 @@
+## AGENT-1：唯一 BFF internal1.1 预算消费（2026-10-22）
+
+固定 consumer：BFF 0082b5cee4437367a608b5bd37732674a1622664，原 internal1.1 YAML SHA256
+695901b23f1f0322fd18ec2a11be27c5b6efcce07b04f57839498eab402d17c6，build-only 生成 strict Python 边界。
+只 POST /internal/v1/model-admissions：独立机器 Bearer、Idempotency-Key、x-billing-execution-proof；
+body 仅 run_id／attempt_id／request_ref／attempt_binding_digest／planned_digest／final_request_digest。
+用户身份由 BFF 原提交事实派生；不发送 tenant/payer body、浏览器 token 或旧 consumption header。
+201 必须完整闭集、原六事实、held、created_at=updated_at、合法 UUID／整预算／摘要／毫秒UTC；
+映射 admission_id 为包内 admission_ref，Agent 不读取或计算价格。错误码与 status/retryable 精确配对。
+unknown／invalid ACK 不证明未预占，不自动重试；恢复只沿原 request_ref/key/body。
+
+不变更 Agent 自有 HTTP、RunRequest、proof2 或 usage2；normal worker／finalhook 未接入。
+
 ## AGENT-1：billing.credit.consume 的现 proof2 绑定（2026-10-22）
 
 不新增 HTTP、Redis wire 或 proof schema 版本。原 supplier 对具名 `billing.credit.consume`

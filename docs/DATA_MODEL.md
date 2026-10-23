@@ -1,3 +1,12 @@
+## AGENT-1：预算消费者复用原授权 journal（2026-10-22）
+
+无 Schema／列／新状态。首次 begin 先冻结唯一 agent-model-admit:attempt_id 及原 requested bytes/digest，
+资金 I/O 在事务外；grant 以原前驱 digest 绑定原 admission_id，余额／hold／金额仍在 Billing。
+begin 的重放可能返回 granted，不根据 newly_requested=false 猜 pending；已 granted 恢复保持原字节／
+摘要和 admission_ref，零网络。原 Run／attempt fence、租约、终态及 CAS 检查均承接，失租不补 grant。
+未知／取消不删 pending、不把 hold_id 当许可、不换 key／attempt、不自动释放；唯一次派发仍由后继
+start_dispatch.newly_started 决定，本片没有 provider dispatch 或 usage／capture／结算写入。
+
 ## AGENT-1：消费 proof 不保存登录凭据（2026-10-22）
 
 本片无 DDL、RunRequest 或 journal 状态变化。billing.credit.consume 的 execution_binding

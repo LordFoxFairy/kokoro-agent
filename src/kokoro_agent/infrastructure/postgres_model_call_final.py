@@ -51,31 +51,43 @@ async def read_final_evidence(
             connect_pg(database_url) as connection,
             connection.cursor() as cursor,
         ):
-            await execute_sql(
-                cursor,
-                f"""
-                SELECT a.tenant_id,a.run_id,a.call_id,a.attempt_id,
-                       a.attempt_ordinal,a.lease_owner,a.lease_generation,
-                       a.attempt_binding_bytes,a.attempt_binding_digest,
-                       a.planned_bytes,a.planned_digest,
-                       a.final_request_binding_version,a.final_request_digest,
-                       a.authorization_bytes,a.authorization_digest,
-                       a.authorization_state,a.prepared_at,a.dispatch_started_at,a.sealed_at,
-                       a.latest_revision,a.latest_event_id,a.latest_evidence_digest,
-                       e.event_id AS evidence_event_id,e.tenant_id AS evidence_tenant_id,
-                       e.run_id AS evidence_run_id,e.attempt_id AS evidence_attempt_id,
-                       e.call_id AS evidence_call_id,e.revision AS evidence_revision,
-                       e.evidence_bytes,e.evidence_digest,e.sealed AS evidence_sealed,
-                       e.observed_at AS evidence_observed_at
-                FROM {qualified(schema, MODEL_CALL_ATTEMPTS_TABLE)} a
-                JOIN {qualified(schema, MODEL_USAGE_EVIDENCE_TABLE)} e
-                  ON e.attempt_id=a.attempt_id AND e.tenant_id=a.tenant_id
-                WHERE a.tenant_id=%s AND a.attempt_id=%s AND a.sealed_at IS NOT NULL
-                  AND (e.event_id=%s OR e.event_id=a.latest_event_id) AND e.sealed=true
-                """,
-                (tenant_id, attempt_id, event_id),
+            return await read_final_evidence_in_cursor(
+                cursor, schema, tenant_id, attempt_id, event_id
             )
-            rows = await fetch_all(cursor)
+
+
+async def read_final_evidence_in_cursor(
+    cursor: object,
+    schema: str,
+    tenant_id: str,
+    attempt_id: str,
+    event_id: str,
+) -> FinalModelCallEvidence | None:
+    await execute_sql(
+        cursor,
+        f"""
+        SELECT a.tenant_id,a.run_id,a.call_id,a.attempt_id,
+               a.attempt_ordinal,a.lease_owner,a.lease_generation,
+               a.attempt_binding_bytes,a.attempt_binding_digest,
+               a.planned_bytes,a.planned_digest,
+               a.final_request_binding_version,a.final_request_digest,
+               a.authorization_bytes,a.authorization_digest,
+               a.authorization_state,a.prepared_at,a.dispatch_started_at,a.sealed_at,
+               a.latest_revision,a.latest_event_id,a.latest_evidence_digest,
+               e.event_id AS evidence_event_id,e.tenant_id AS evidence_tenant_id,
+               e.run_id AS evidence_run_id,e.attempt_id AS evidence_attempt_id,
+               e.call_id AS evidence_call_id,e.revision AS evidence_revision,
+               e.evidence_bytes,e.evidence_digest,e.sealed AS evidence_sealed,
+               e.observed_at AS evidence_observed_at
+        FROM {qualified(schema, MODEL_CALL_ATTEMPTS_TABLE)} a
+        JOIN {qualified(schema, MODEL_USAGE_EVIDENCE_TABLE)} e
+          ON e.attempt_id=a.attempt_id AND e.tenant_id=a.tenant_id
+        WHERE a.tenant_id=%s AND a.attempt_id=%s AND a.sealed_at IS NOT NULL
+          AND (e.event_id=%s OR e.event_id=a.latest_event_id) AND e.sealed=true
+        """,
+        (tenant_id, attempt_id, event_id),
+    )
+    rows = await fetch_all(cursor)
     requested = next((r for r in rows if str(r["evidence_event_id"]) == event_id), None)
     if requested is None:
         return None

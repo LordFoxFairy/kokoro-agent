@@ -1,3 +1,13 @@
+## AGENT-1：持久金融关联／逐事件ACK（2026-10-23，本地已验；worker装配待接）
+
+沿已验consumer与Root原16项，只在Agent现attempt追加financial_admission_ref，在现sealed evidence追加financial_ack_bytes／digest／acked_at；不建钱包、服务、重复命令ledger或用户token回程。前者是单次原预算的独立关联，不改封存authorization；后者存已验证BFF原ACK的本地canonical投递回执，不成为价格／余额事实。按event永久稳定key，原ACK全字段摘要和身份校验；相同回放零写，漂移冲突。SQL仅fresh canonical，正式旧schema启动拒绝，不自动ALTER／兼容填充；本片只自有隔离schema，不改正常数据。
+
+现历史reader提取同cursor函数供短事务复用（查询／验证语义保持）。新具名financial repository复用原attempt行锁，无Run活租约前置、无HTTP在锁内，核原冻结facts／请求事件及独立head；按revision选择最早未ACK事件，前序须完整、相邻ACK为pending才处理后继。terminal后出现新sealed财务事实不补扣／重发，保留冲突待核对；seal本身不被金融ACK阻塞。原requested_unknown只能经recover同六事实／原key取得关联，精确miss留待恢复，不当作永久无hold证明；granted关联须等原admission。
+
+有限coordinator处理一个durable事件：从PG重读→必要时recover→存关联→原event settle→存完整ACK。超时／取消／任意崩溃不造成功，不改原bytes或补执行许可；下次同key恢复。库、实际PG／提交前后及取消恢复窗口已验；worker周期扫描／finalhook与真实usage装配仍待，不以内存通知冒正常持久恢复。写区为原canonical／严格schema gate、同cursor reader提取、新financial domain／repository／coordinator及相关测试／现文档；HTTP7.2、proof2、usage2及owner pin保持。
+
+本片验证：410非文档输入冻结、完整八门均0，默认2550 PASS／836按marker未选（927上游warning不称消除）；24专项真实PG与原历史reader／预算授权回归合计153 PASS／0SKIP，库94→94。实际Agent journal/client→BFF／Billing／IAM隔离36检查通过：QA100非现金发放／hold10，Run终态与IAM停止后恢复原关联、owner释放10而本地ACK前注入崩溃，新进程同event/key取原ACK，第二次财务效果及本地ACK重放均零写，原执行／sealed核心事实不变。真实供应商／工具／usage扣分均0，Chat提交和签名JWKS仍为具名fixture，不冒正常产品旅程。codec非法Unicode先1FAIL后统一安全冲突；首组合fixture未序列化sealed_at失败已修且留证，不改生产断言／门禁。仓外同锁hash安装、原contract及205份runtime Python在wheel／sdist逐字核同通过；独立只读审查Approved，正常Schema／进程／资金不改，本片尚未PR合并。
+
 ## AGENT-1：正式结算／恢复消费者（2026-10-23，本地已验）
 
 沿Root同一16项与预算／真实结算裁决，Agent现有BFF consumer固定已验5a303f2／internal1.3 Git blobs，只开放原create、recover及settle三操作。既有build-only有限编译器承接实际anyOf／allOf／const／null／not-pattern，严格保每个branch约束；生成模型不手改，不引入JSONSchema runtime或依赖。原single pool客户端共享有界单发／UTF8闭集解析／无cookie代理跳转重试／取消与清理；recover不收proof，只原六事实／原key，精确404才返回miss，不自动reserve；settle四字段body＋原admission path／key，不收proof／金额，ACK须严格核原Run／attempt／event／revision／digest及三态依赖，unknown不是成功扣分。保原首次create fresh proof／201／held原时间要求。

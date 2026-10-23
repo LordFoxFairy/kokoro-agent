@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   latest_revision         BIGINT NOT NULL DEFAULT 0,
   latest_event_id         UUID,
   latest_evidence_digest  TEXT,
+  financial_admission_ref UUID,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   CONSTRAINT uq_model_attempt_call_ordinal UNIQUE (run_id, call_id, attempt_ordinal),
@@ -347,6 +348,9 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
     OR (status = 'unknown' AND authorization_state = 'granted' AND dispatch_started_at IS NOT NULL AND latest_revision > 0)
     OR (status = 'not_dispatched' AND authorization_state IN ('not_requested','requested_unknown','granted') AND dispatch_started_at IS NULL AND latest_revision > 0)
   ),
+  CONSTRAINT ck_model_attempt_financial CHECK (
+    financial_admission_ref IS NULL OR authorization_state IN ('requested_unknown','granted')
+  ),
   CONSTRAINT ck_model_attempt_times CHECK (
     (dispatch_started_at IS NULL OR dispatch_started_at >= prepared_at)
     AND (sealed_at IS NULL OR sealed_at >= prepared_at)
@@ -356,6 +360,10 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
 CREATE INDEX IF NOT EXISTS ix_model_attempt_unsealed
   ON kokoro_agent_model_call_attempt (run_id, status, attempt_id)
   WHERE status IN ('prepared','authorization_pending','authorized','dispatch_started');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_model_financial_admission
+  ON kokoro_agent_model_call_attempt (tenant_id, financial_admission_ref)
+  WHERE financial_admission_ref IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
   event_id                UUID PRIMARY KEY,
@@ -375,6 +383,15 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
   sealed                  BOOLEAN NOT NULL,
   observed_at             TIMESTAMPTZ(3) NOT NULL,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  financial_ack_bytes     BYTEA,
+  financial_ack_digest    TEXT,
+  financial_acked_at      TIMESTAMPTZ(3),
+  CONSTRAINT ck_model_evidence_financial_ack CHECK (
+    (financial_ack_bytes IS NULL AND financial_ack_digest IS NULL AND financial_acked_at IS NULL)
+    OR (financial_ack_bytes IS NOT NULL AND financial_ack_digest IS NOT NULL AND financial_acked_at IS NOT NULL
+        AND octet_length(financial_ack_bytes) BETWEEN 1 AND 16384
+        AND financial_ack_digest ~ '^[0-9a-f]{64}$')
+  ),
   CONSTRAINT uq_model_evidence_attempt_revision UNIQUE (attempt_id, revision),
   CONSTRAINT uq_model_evidence_attempt_digest UNIQUE (attempt_id, evidence_digest),
   CONSTRAINT ck_model_evidence_identity CHECK (
@@ -406,6 +423,10 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
 );
 CREATE INDEX IF NOT EXISTS ix_model_evidence_run
   ON kokoro_agent_model_usage_evidence (run_id, attempt_id, revision);
+
+CREATE INDEX IF NOT EXISTS ix_model_financial_pending
+  ON kokoro_agent_model_usage_evidence (tenant_id, attempt_id, revision)
+  WHERE financial_ack_bytes IS NULL;
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_sandbox_cleanup_intent (
   cleanup_id       TEXT PRIMARY KEY,

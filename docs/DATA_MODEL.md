@@ -1,3 +1,7 @@
+## AGENT-1：原两表金融投递元数据（2026-10-23，本地已验；worker装配待接）
+
+attempt新增nullable UUID financial_admission_ref及tenant／ref部分唯一索引；现sealed evidence新增nullable BYTEA financial_ack_bytes、TEXT financial_ack_digest、TIMESTAMPTZ(3) financial_acked_at，三者全空或全非空／有界／摘要CHECK，未ACK部分索引供有界扫描。原核心evidence／authorization bytes、digest、revision和observed_at不变；只有独立投递元数据更新，原Run完整性计数不动。无新表／FK／migration／跨owner SQL，原canonical和readiness精确门同步；fresh自有schema验收，正常旧schema本片不升级／清空。逐事件ACK作为可恢复投递事实保留，与原attempt／evidence共生命周期，不借Chat GC回收、不把本地ACK当新的余额或资金owner。
+
 ## AGENT-1：金融consumer本段无持久化变化（2026-10-23）
 
 本段只接正式传输与本地不可变结果，无表／列／状态／schema或正常资金写。Run不携用户token；客户端收到ACK不自行改sealed authorization或授dispatch。后继须按原事实保存独立金融关联及逐事件持久ACK，本consumer通过不代表durable恢复完成。

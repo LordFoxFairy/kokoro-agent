@@ -1,3 +1,7 @@
+## AGENT-1：本地金融投递回执（2026-10-23，本地已验；worker装配待接）
+
+不新增HTTP／RPC／wire版本。既有BFF1.3 consumer原请求／原key及ACK使用不变；Agent存独立预算关联与完整本地canonical ACK／domain digest供崩溃恢复，不对外投影金额或更改sealed证据。历史reader同cursor复用保持HTTP7.2语义与原canonical bytes。requested_unknown恢复不改granted授权、不授旧fence执行权；miss只留待核对。
+
 ## AGENT-1：固定 BFF internal1.3（2026-10-23，本地已验）
 
 固定5a303f2003fabeb50376c7f7e1f66f0d163adebb原始YAML及SHA4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39；现唯一receipt扩为create／recover／settle三操作，无新可编辑DTO。recover仅200原held创建ACK或精确404miss，settle仅200原sealed命令ACK／原错误，均禁proof／用户token；首次create仍201＋fresh proof。客户端严格核可信调用参数与ACK身份，不重算费用、不补0／夹预算／重发provider。三态及完整字符串限制由owner生成模型承接，不复制手写wire schema。

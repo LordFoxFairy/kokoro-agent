@@ -41,6 +41,7 @@ _YAML_TO_ENV: dict[str, str] = {
     "model.openai_reasoning": "KOKORO_OPENAI_REASONING",
     "model.anthropic_base_url": "ANTHROPIC_BASE_URL",
     "model.allow_loopback_http": "KOKORO_MODEL_ALLOW_LOOPBACK_HTTP",
+    "model_billing.bff_base_url": "KOKORO_BFF_BASE_URL",
     "stream.redis_url": "KOKORO_REDIS_URL",
     "database.url": "KOKORO_AGENT_DATABASE_URL",
     "database.schema": "KOKORO_AGENT_DATABASE_SCHEMA",

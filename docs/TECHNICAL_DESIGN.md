@@ -1,3 +1,11 @@
+## AGENT-1：Worker金融恢复装配（2026-10-23，本地已验；真实派发待接）
+
+沿原主线与abd1186c交付，在现Worker composition接同一个BFF预算pool和Agent金融repository；不新增服务／表／wire／token broker。部署显式提供BFF origin及按tenant隔离的专用机器secret快照（env-only、有限严格JSON、SecretStr，不复用System或浏览器凭据）；未配置完整时Worker启动拒绝，不保免费执行旁路。恢复不调用首次reserve／proof／provider，仍只按原requested六事实recover与原sealed event结算。
+
+恢复task归现Worker进程context，独立于Supervisor租约心跳／用户事件；每拍有界page、逐条有限reconcile，失败只记安全类型并继续，取消向下传播、先停止恢复task再关闭pool。原list_pending增加tenant/attempt键游标，扫完回绕；pending/miss/坏行不永久占首page而饿死后项，无新持久调度状态。先验配置／跨tenant／secret脱敏、分页公平及失败隔离／取消、真实PG分页与原结算恢复，再完整门与仓外包／真实隔离组合。当前finalhook仍拒绝实际派发，后继与真实usage同片解除，不以本片冒实际扣分或正常激活。
+
+本片证据：412非文档输入冻结、完整八门0，默认2569 PASS／837 marker未选，927原上游warning保留；25金融PG专项与历史／预算回归合计154 PASS／0SKIP，库94→94。实际Worker pool／恢复step→BFF／Billing及IAM隔离36检查通过：owner释放10而本地ACK前崩溃后，新Worker按原事件恢复ACK，无第二资金效果；Chat来源／签名JWKS仍具名fixture，未跑正常Supervisor用户旅程。仓外同锁hash安装及206份runtime Python在wheel／sdist逐字核同，独审Approved。缺配置与原keyset cursor／短canary错误外露均有实际RED；首缺模块setup错误、第一次红控移除语句未匹配而未真正改变baseline等日志均留证，不算业务RED。正常Schema／进程／资金不变，真实供应商／工具／usage扣分0，本片未PR合并。
+
 ## AGENT-1：持久金融关联／逐事件ACK（2026-10-23，本地已验；worker装配待接）
 
 沿已验consumer与Root原16项，只在Agent现attempt追加financial_admission_ref，在现sealed evidence追加financial_ack_bytes／digest／acked_at；不建钱包、服务、重复命令ledger或用户token回程。前者是单次原预算的独立关联，不改封存authorization；后者存已验证BFF原ACK的本地canonical投递回执，不成为价格／余额事实。按event永久稳定key，原ACK全字段摘要和身份校验；相同回放零写，漂移冲突。SQL仅fresh canonical，正式旧schema启动拒绝，不自动ALTER／兼容填充；本片只自有隔离schema，不改正常数据。

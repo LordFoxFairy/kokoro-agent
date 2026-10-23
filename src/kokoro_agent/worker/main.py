@@ -31,6 +31,15 @@ from kokoro_agent.execution.runtime_profile_sources import production_manifest
 from kokoro_agent.agents.native_profile import prepare_native_recipe
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from kokoro_agent.worker.platform import worker_platform_runtime
+from kokoro_agent.worker.model_financial import (
+    worker_model_billing,
+    ModelFinancialRecovery,
+    active_model_financial_recovery,
+)
+from kokoro_agent.model.financial_reconciliation import ModelFinancialReconciler
+from kokoro_agent.infrastructure.postgres_model_financial_repository import (
+    PostgresModelFinancialRepository,
+)
 from kokoro_agent.domain.run.repository import SandboxBackendKind
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.sandbox import teardown_backend_for_run
@@ -237,6 +246,10 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
     async with (
         worker_platform_runtime(config) as platform,
         worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
+        worker_model_billing(
+            base_url=config.bff_base_url,
+            secret_snapshot=config.bff_model_admission_secrets,
+        ) as model_billing,
         make_checkpointer(config.checkpoint) as saver,
         make_checkpointer(config.checkpoint) as interaction_reader,
         make_run_repository(config.run_repository) as run_repository,
@@ -256,6 +269,15 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             config.run_repository.schema_name,
         )
         await model_call_repository.assert_current_producer_ready()
+        financial_repository = PostgresModelFinancialRepository(
+            config.run_repository.database_url, config.run_repository.schema_name
+        )
+        financial_reconciler = ModelFinancialReconciler(
+            repository=financial_repository, client=model_billing
+        )
+        financial_recovery = ModelFinancialRecovery(
+            financial_repository, financial_reconciler
+        )
         interaction_checkpointer = make_interaction_checkpointer(
             saver=saver, reader=interaction_reader, repository=run_repository
         )
@@ -298,11 +320,12 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             "kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name()
         )
         # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。
-        await _serve_until_shutdown(
-            supervisor,
-            bus,
-            drain_timeout_s=config.drain_timeout_s,
-        )
+        async with active_model_financial_recovery(financial_recovery):
+            await _serve_until_shutdown(
+                supervisor,
+                bus,
+                drain_timeout_s=config.drain_timeout_s,
+            )
 
 
 def _exit_after_model_call_settlement_timeout(exit_code: int) -> Never:

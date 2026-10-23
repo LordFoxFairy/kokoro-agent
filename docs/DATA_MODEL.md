@@ -1,3 +1,7 @@
+## AGENT-1：Worker公平扫描无新数据模型（2026-10-23）
+
+沿abd1186c两表，DDL／索引／CHECK均不变。list_pending只增加tenant/attempt keyset分页；每进程短暂扫描游标不成为任务／资金事实，重启从头、尾页回绕，相同事件依旧由持久ACK与原owner幂等决定。未ACK／unknown／坏行保留原数据，不因分页略过即视为成功或删除；无跨owner SQL／migration／正常数据改写。
+
 ## AGENT-1：原两表金融投递元数据（2026-10-23，本地已验；worker装配待接）
 
 attempt新增nullable UUID financial_admission_ref及tenant／ref部分唯一索引；现sealed evidence新增nullable BYTEA financial_ack_bytes、TEXT financial_ack_digest、TIMESTAMPTZ(3) financial_acked_at，三者全空或全非空／有界／摘要CHECK，未ACK部分索引供有界扫描。原核心evidence／authorization bytes、digest、revision和observed_at不变；只有独立投递元数据更新，原Run完整性计数不动。无新表／FK／migration／跨owner SQL，原canonical和readiness精确门同步；fresh自有schema验收，正常旧schema本片不升级／清空。逐事件ACK作为可恢复投递事实保留，与原attempt／evidence共生命周期，不借Chat GC回收、不把本地ACK当新的余额或资金owner。

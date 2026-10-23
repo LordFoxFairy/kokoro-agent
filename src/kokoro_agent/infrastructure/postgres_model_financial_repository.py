@@ -288,17 +288,27 @@ class PostgresModelFinancialRepository:
             )
             return value
 
-    async def list_pending(self, *, limit: int = 32) -> list[tuple[str, str]]:
+    async def list_pending(
+        self, *, limit: int = 32, after: tuple[str, str] | None = None
+    ) -> list[tuple[str, str]]:
         if type(limit) is not int or not 1 <= limit <= 128:
             raise ValueError("invalid financial scan limit")
+        if after is not None and (len(after) != 2 or any(not value for value in after)):
+            raise ValueError("invalid financial scan cursor")
         async with self._cursor() as cursor:
             await execute_sql(
                 cursor,
                 f"""SELECT a.tenant_id,a.attempt_id FROM {self._attempt} a JOIN {self._evidence} e
                 ON e.attempt_id=a.attempt_id AND e.tenant_id=a.tenant_id
                 WHERE e.financial_ack_bytes IS NULL AND a.authorization_state IN ('granted','requested_unknown')
-                GROUP BY a.tenant_id,a.attempt_id ORDER BY min(e.created_at),a.tenant_id,a.attempt_id LIMIT %s""",
-                (limit,),
+                AND (%s::text IS NULL OR (a.tenant_id,a.attempt_id) > (%s::text,%s::uuid))
+                GROUP BY a.tenant_id,a.attempt_id ORDER BY a.tenant_id,a.attempt_id LIMIT %s""",
+                (
+                    None if after is None else after[0],
+                    None if after is None else after[0],
+                    None if after is None else after[1],
+                    limit,
+                ),
             )
             return [
                 (str(row["tenant_id"]), str(row["attempt_id"]))

@@ -53,3 +53,10 @@ retention:
   events_ttl_s: 0
   run_ttl_s: 0
 # API keys, service credentials, storage signing material, and internal auth are env/secret-only.
+
+# Billing recovery uses the BFF same internal boundary; dedicated per-tenant workload
+# secrets are env-only KOKORO_BFF_MODEL_ADMISSION_SECRETS (strict JSON map).
+
+# Set this origin together with the env-only credential map before starting a worker.
+# model_billing:
+#   bff_base_url: http://127.0.0.1:4310

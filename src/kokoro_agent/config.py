@@ -66,7 +66,9 @@ class AppConfig(BaseModel):
     模型、工具、Skill 和权限属于 worker-local Agent/Feature 声明与进程配置，不在 public
     LaunchRunRequest 中，也不由每次请求重写。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore", frozen=True)
+    model_config = ConfigDict(
+        populate_by_name=True, extra="ignore", frozen=True, hide_input_in_errors=True
+    )
 
     # --- model 域 ---
     disable_streaming: bool = Field(
@@ -162,6 +164,10 @@ class AppConfig(BaseModel):
     )
     system_timeout_s: float = Field(
         default=5, gt=0, le=60, validation_alias="KOKORO_SYSTEM_TIMEOUT_S"
+    )
+    bff_base_url: OptStr = Field(default=None, validation_alias="KOKORO_BFF_BASE_URL")
+    bff_model_admission_secrets: OptSecret = Field(
+        default=None, repr=False, validation_alias="KOKORO_BFF_MODEL_ADMISSION_SECRETS"
     )
     storage_base_url: OptStr = Field(
         default=None, validation_alias="KOKORO_STORAGE_BASE_URL"
@@ -269,6 +275,10 @@ class AppConfig(BaseModel):
         ):
             raise ValueError(
                 "Storage writes require URL, service credential and object origin"
+            )
+        if (self.bff_base_url is None) != (self.bff_model_admission_secrets is None):
+            raise ValueError(
+                "BFF model billing configuration requires origin and workload secrets"
             )
         values = (
             self.iam_base_url,

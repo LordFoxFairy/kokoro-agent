@@ -823,3 +823,20 @@ async def test_sql_wait_is_bounded_and_never_holds_external_io(
         and not owner.notifications
         and await sealed.facts() == before
     )
+
+
+@pytest.mark.parametrize("sealed", ["history"], indirect=True)
+async def test_pending_scan_keyset_boundary_deduplicates_events_and_preserves_rows(
+    sealed: Fixture,
+) -> None:
+    r = repository(sealed)
+    before = await sealed.facts()
+    key = (sealed.tenant, sealed.attempt)
+    assert await r.list_pending(limit=1) == [key]
+    assert await r.list_pending(limit=1, after=key) == []
+    assert await r.list_pending(
+        limit=1, after=(sealed.tenant, "00000000-0000-0000-0000-000000000000")
+    ) == [key]
+    assert await r.list_pending(limit=1, after=("tenant-0", sealed.attempt)) == [key]
+    assert await r.list_pending(limit=1, after=("tenant-z", sealed.attempt)) == []
+    assert await sealed.facts() == before

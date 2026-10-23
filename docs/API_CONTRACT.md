@@ -1,3 +1,7 @@
+## AGENT-1：Worker恢复接线（2026-10-23，本地已验）
+
+原HTTP7.2／BFF1.3／proof2／usage2均不变；仅在现Worker装配原BFF pool和逐事件恢复。内部机器secret按可信tenant选择，部署snapshot不进入Run，不复用用户／System／模型密钥。恢复只调用recover／settle，原六事实及event/key保持，无首次reserve或proof；未配置时启动拒绝，无免费／旧协议fallback。可观察产品功能和新派发尚未因此开放。
+
 ## AGENT-1：本地金融投递回执（2026-10-23，本地已验；worker装配待接）
 
 不新增HTTP／RPC／wire版本。既有BFF1.3 consumer原请求／原key及ACK使用不变；Agent存独立预算关联与完整本地canonical ACK／domain digest供崩溃恢复，不对外投影金额或更改sealed证据。历史reader同cursor复用保持HTTP7.2语义与原canonical bytes。requested_unknown恢复不改granted授权、不授旧fence执行权；miss只留待核对。

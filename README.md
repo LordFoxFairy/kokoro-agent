@@ -66,7 +66,7 @@ Redis LaunchRunRequest
 - `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的
   browser-live stream，因为两者的 generated envelope 和 seq owner 不同。不创建
   `conversation_messages`、持久 `run_events` 或独立 `event_outbox`。
-- 模型按同 attempt 的真实用量由 Billing 统一计价、冻结倍率后一次整数积分结算；先预算预占，unknown／超预算保留待核对，不按流式分片或重复回执各扣一次。当前正式资金 consumer 仍待接通。
+- 模型按同 attempt 的真实用量由 Billing 统一计价、冻结倍率后一次整数积分结算；先预算预占，unknown／超预算保留待核对，不按流式分片或重复回执各扣一次。Worker 已接原预算／结算恢复；首次执行预算授权、唯一派发和真实 usage 封口仍待装配，恢复扫描不等于模型已开放执行。
 
 ## 子仓文档
 
@@ -106,6 +106,14 @@ Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本
 `agent_not_configured`。启用完整执行 profile 时必须同时运行 `kokoro-agent-http`（BFF 的
 durable ingress）和 `kokoro-agent-worker`（实际执行 loop）；只运行 HTTP 进程只能完成 admission，
 不会执行任务。
+
+Worker 的财务恢复另需 `KOKORO_BFF_BASE_URL` 与 env-only
+`KOKORO_BFF_MODEL_ADMISSION_SECRETS`：后者是受信部署注入的 tenant ID → 专用机器
+secret JSON 对象，最多32项／64KiB，不接受重复键或跨租户默认 secret。它不是模型 API Key，
+也不是用户 token；须与 BFF 接收侧已配置的 model-admission 用途匹配。轮换后重启 Worker，
+不把值写进 YAML、Run、证据、日志或浏览器。缺少完整配置时 Worker 启动拒绝；HTTP 读进程
+不加载这份配置。独立恢复任务按有限页推进、逐条同 event/key 恢复，先停止任务再关闭 HTTP pool，
+不占用 Run 租约心跳。模型实际派发／用量封口及正常产品验收仍待，不将恢复轮询视为已扣分。
 
 启用 worker 时配置 `KOKORO_SYSTEM_BASE_URL` 和专用 `KOKORO_INTERNAL_SECRET_AGENT`。
 System6 独占后台写入的加密模型 Key；Agent 每次按当前业务与精确修订受控领取，

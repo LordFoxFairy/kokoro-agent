@@ -1,3 +1,7 @@
+## AGENT-1：原 attempt 保存供应商响应编号（2026-10-23）
+
+唯一 canonical database/schema.sql 在 kokoro_agent_model_call_attempt 新增 provider_response_id TEXT NULL，无默认/回填。NULL表示原响应没有有效编号，不是兼容分支。CHECK限定可见 ASCII 1–256字符，非NULL必须已派发且封口；schema verifier 同步精确列/空值/约束。编号与首次封口同事务保存，重放只读核相等，不更新旧行；现 evidence bytes/digest 与已知计量不变。暂不新增查询 API、补证表或通用恢复状态。正常数据仍保留，实施与隔离 fresh schema 验证不自动授权丢弃 pending 资金事实。
+
 ## AGENT-1：Worker公平扫描无新数据模型（2026-10-23）
 
 沿abd1186c两表，DDL／索引／CHECK均不变。list_pending只增加tenant/attempt keyset分页；每进程短暂扫描游标不成为任务／资金事实，重启从头、尾页回绕，相同事件依旧由持久ACK与原owner幂等决定。未ACK／unknown／坏行保留原数据，不因分页略过即视为成功或删除；无跨owner SQL／migration／正常数据改写。

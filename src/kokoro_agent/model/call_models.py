@@ -219,6 +219,9 @@ class SealModelCallObservation(BaseModel):
     outcome: Literal["completed", "failed", "cancelled", "unknown"]
     actual: ActualAttribution
     usage: UsageObservation
+    provider_response_id: (
+        Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[!-~]+$")] | None
+    ) = Field(default=None, repr=False)
 
 
 class ModelCallEvidenceReceipt(BaseModel):

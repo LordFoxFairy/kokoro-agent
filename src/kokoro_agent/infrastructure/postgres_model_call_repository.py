@@ -449,7 +449,13 @@ class PostgresModelCallRepository:
                             original.execution.outcome,
                             original.actual,
                             original.usage,
-                        ) != (command.outcome, command.actual, command.usage):
+                            attempt["provider_response_id"],
+                        ) != (
+                            command.outcome,
+                            command.actual,
+                            command.usage,
+                            command.provider_response_id,
+                        ):
                             raise ModelCallIdentityConflict(
                                 "observed response replay conflicts"
                             )
@@ -485,7 +491,7 @@ class PostgresModelCallRepository:
                         authorization_digest=command.authorization_digest,
                         evidence_bytes=raw,
                     )
-                    return await append_evidence_locked(
+                    receipt = await append_evidence_locked(
                         cursor,
                         run_table=qualified(self._schema, RUN_CLAIMS_TABLE),
                         attempt_table=qualified(
@@ -499,6 +505,17 @@ class PostgresModelCallRepository:
                         artifact=artifact,
                         allow_new_revision=True,
                     )
+                    if command.provider_response_id is not None:
+                        await execute_sql(
+                            cursor,
+                            f"UPDATE {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)} SET provider_response_id=%s WHERE tenant_id=%s AND attempt_id=%s",
+                            (
+                                command.provider_response_id,
+                                command.tenant_id,
+                                command.attempt_id,
+                            ),
+                        )
+                    return receipt
 
     async def _lock_evidence_attempt(
         self,

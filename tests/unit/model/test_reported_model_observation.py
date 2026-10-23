@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 
 import httpx
 import pytest
@@ -39,7 +40,15 @@ def route() -> ResolvedModel:
     )
 
 
-def observe(models: list[object], *, streaming: bool):
+def observe(
+    models: list[object],
+    *,
+    streaming: bool,
+    response_ids: list[object] | None = None,
+    compressed: bool = False,
+    complete: bool = True,
+    truncate_encoding: bool = False,
+):
     data: list[dict[str, object]] = [
         {
             "model": m,
@@ -48,12 +57,22 @@ def observe(models: list[object], *, streaming: bool):
         }
         for m in models
     ]
+    if response_ids is not None:
+        for document, response_id in zip(data, response_ids, strict=True):
+            if response_id is not Ellipsis:
+                document["id"] = response_id
     raw = (
         b"".join(b"data: " + json.dumps(d).encode() + b"\n\n" for d in data)
         + b"data: [DONE]\n\n"
         if streaming
         else json.dumps(data[0]).encode()
     )
+    if not complete:
+        raw = raw.removesuffix(b"data: [DONE]\n\n") if streaming else raw[:-1]
+    if compressed:
+        raw = gzip.compress(raw)
+    if truncate_encoding:
+        raw = raw[:-4]
     bound = route()
 
     def claim(request: httpx.Request) -> None:
@@ -64,9 +83,10 @@ def observe(models: list[object], *, streaming: bool):
             lambda _: httpx.Response(
                 200,
                 headers={
+                    **({"content-encoding": "gzip"} if compressed else {}),
                     "content-type": "text/event-stream"
                     if streaming
-                    else "application/json"
+                    else "application/json",
                 },
                 stream=httpx.ByteStream(raw),
             )
@@ -112,6 +132,82 @@ def test_existing_usage_projection_digest_does_not_change_with_model_label() -> 
         observe(["raw-a"], streaming=False).projection_digest
         == observe(["raw-other"], streaming=False).projection_digest
     )
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_provider_response_id_survives_consumed_bytes(streaming: bool) -> None:
+    value = observe(["raw-a"], streaming=streaming, response_ids=["gen-original"])
+    assert getattr(value, "provider_response_id", None) == "gen-original"
+    assert "gen-original" not in repr(value)
+
+
+def test_repeated_stream_response_id_is_one_lookup_reference() -> None:
+    value = observe(
+        ["raw-a", "raw-a"],
+        streaming=True,
+        response_ids=["gen-original", "gen-original"],
+    )
+    assert getattr(value, "provider_response_id", None) == "gen-original"
+
+
+@pytest.mark.parametrize(
+    "response_id", [None, 12, "", "x" * 257, "bad\nname", "a b", "编号"]
+)
+def test_invalid_response_id_does_not_destroy_known_usage(response_id: object) -> None:
+    value = observe(["raw-a"], streaming=False, response_ids=[response_id])
+    assert value.status == "complete" and value.counts["total_tokens"].value == 20
+    assert getattr(value, "provider_response_id", None) is None
+
+
+@pytest.mark.parametrize("second", ["gen-other", None, "bad\nname"])
+def test_conflicting_stream_response_ids_are_not_a_lookup_reference(
+    second: object,
+) -> None:
+    value = observe(
+        ["raw-a", "raw-a"], streaming=True, response_ids=["gen-original", second]
+    )
+    assert (
+        value.status == "complete"
+        and getattr(value, "provider_response_id", None) is None
+    )
+
+
+def test_response_locator_does_not_change_original_usage_digest() -> None:
+    assert (
+        observe(["raw-a"], streaming=False, response_ids=["gen-a"]).projection_digest
+        == observe(["raw-a"], streaming=False, response_ids=["gen-b"]).projection_digest
+    )
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_response_id_survives_validated_compression_only(streaming: bool) -> None:
+    value = observe(
+        ["raw-a"], streaming=streaming, response_ids=["gen-compressed"], compressed=True
+    )
+    assert value.provider_response_id == "gen-compressed"
+    incomplete = observe(
+        ["raw-a"], streaming=streaming, response_ids=["gen-incomplete"], complete=False
+    )
+    assert incomplete.status == "unresolved" and incomplete.provider_response_id is None
+
+
+def test_stream_lookup_id_may_be_reported_before_final_usage_frame() -> None:
+    value = observe(
+        ["raw-a", "raw-a"], streaming=True, response_ids=["gen-first-frame", Ellipsis]
+    )
+    assert value.provider_response_id == "gen-first-frame"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_truncated_gzip_response_does_not_leave_a_lookup_id(streaming: bool) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=streaming,
+        response_ids=["gen-truncated"],
+        compressed=True,
+        truncate_encoding=True,
+    )
+    assert value.status == "unresolved" and value.provider_response_id is None
 
 
 async def test_production_hook_rejects_changed_credential_before_any_prepare_or_send() -> (

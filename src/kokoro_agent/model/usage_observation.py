@@ -51,7 +51,7 @@ def _empty_counts() -> Mapping[str, ObservedCount]:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalUsageObservation:
-    """Only a bounded semantic projection; no body, credential, or provider identity."""
+    """Only bounded source facts and a lookup reference; no body or credential."""
 
     status: Status
     reason: str | None
@@ -62,6 +62,7 @@ class PhysicalUsageObservation:
     service_tier: Literal["absent", "null", "default", "unsupported"] = "absent"
     unsupported_usage_category: bool = False
     reported_model: str | None = None
+    provider_response_id: str | None = field(default=None, repr=False)
 
 
 class _ObservationError(Exception):
@@ -152,6 +153,17 @@ def _reported_model(document: dict[str, object]) -> str | None:
     return None
 
 
+def _response_id(document: dict[str, object]) -> str | None:
+    value = document.get("id")
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and all(33 <= ord(character) <= 126 for character in value)
+    ):
+        return value
+    return None
+
+
 def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     raw = document.get("usage")
     presence: Literal["missing", "null", "object"] = (
@@ -223,6 +235,7 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
         tier,
         unknown,
         _reported_model(document),
+        _response_id(document),
     )
 
 
@@ -238,6 +251,8 @@ class _Parser:
         self.projection: PhysicalUsageObservation | None = None
         self._seen_model: str | None = None
         self._model_conflict = False
+        self._seen_response_id: str | None = None
+        self._response_id_conflict = False
 
     def feed(self, chunk: bytes) -> None:
         if not self.streaming:
@@ -278,6 +293,15 @@ class _Parser:
             self.done = True
             return
         document = _document(data)
+        if "id" in document:
+            response_id = _response_id(document)
+            if response_id is None or (
+                self._seen_response_id is not None
+                and self._seen_response_id != response_id
+            ):
+                self._response_id_conflict = True
+            if response_id is not None:
+                self._seen_response_id = response_id
         if "model" in document:
             reported = _reported_model(document)
             if reported is None or (
@@ -309,6 +333,9 @@ class _Parser:
             reported_model=None
             if self._model_conflict
             else self.projection.reported_model,
+            provider_response_id=None
+            if self._response_id_conflict
+            else self._seen_response_id,
         )
 
     def clear(self) -> None:
@@ -433,6 +460,7 @@ def _observe(
             projection.service_tier,
             projection.unsupported_usage_category,
             projection.reported_model,
+            projection.provider_response_id if integrity == "validated" else None,
         )
     finally:
         parser.clear()

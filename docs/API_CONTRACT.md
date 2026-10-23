@@ -1,3 +1,7 @@
+## AGENT-1：供应商响应编号的内部观察（2026-10-23）
+
+HTTP7.2、usage2、BFF settle wire 不变。内部 PhysicalUsageObservation 与 SealModelCallObservation 增加可空 provider_response_id，限1–256个可见 ASCII 字符，来自同次已消费响应的 id；不接受 SDK 后合成编号。流式所有出现的 id 必须有效且一致，缺失保持未知。该编号不进入日志/公开事件/usage wire，不改变原 raw_usage_digest；只作 Agent 后续核查索引，不能用于签发权限或自报新用量。原 first-seal replay 同时比较编号，禁止替换或丢弃。
+
 ## 2026-10-23 Platform 执行认证 consumer 配对（实施中）
 
 固定 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的 `contract/auth/agent-execution-service-auth-v1.json` 原件，

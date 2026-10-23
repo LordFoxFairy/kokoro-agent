@@ -116,6 +116,10 @@ class ModelCallExecutor:
                     route=route, prepared=p, observation=observation
                 ),
                 usage=normalize_observed_usage(observation),
+                provider_response_id=observation.provider_response_id
+                if observation.status == "complete"
+                and observation.compression_integrity == "validated"
+                else None,
             )
         )
         receipt = await self._financial.reconcile(p.tenant_id, p.attempt_id)

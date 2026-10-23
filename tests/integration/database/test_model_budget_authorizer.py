@@ -433,12 +433,20 @@ async def test_observed_call_uses_owner_clock_and_replays_one_durable_financial_
         ),
         projection_digest="a" * 64,
         reported_model="actual-model",
+        provider_response_id="gen-durable-source",
     )
     call = await execution.authorize(prepared.prepared)
     result = await execution.seal(
         call=call, route=route, observation=observed, outcome="completed"
     )
     assert result.status == "captured" and result.captured_credits == "1"
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT provider_response_id FROM {qualified(prepared.schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s",
+            (prepared.prepared.attempt_id,),
+        )
+        assert await fetch_one(cur) == {"provider_response_id": "gen-durable-source"}
 
     async def facts():
         async with connect_pg(prepared.url) as c, c.cursor() as cur:
@@ -583,3 +591,110 @@ async def test_prior_unacked_observation_stops_new_dispatch(
         )
         row = await fetch_one(cur)
         assert row is not None and row["dispatch_started_at"] is None
+
+
+@pytest.mark.parametrize("reject_receipt_write", [False, True])
+async def test_source_response_locator_is_atomic_and_immutable(
+    prepared: Prepared, reject_receipt_write: bool
+) -> None:
+    from psycopg.errors import CheckViolation
+    from kokoro_agent.model.call_models import (
+        SealModelCallObservation,
+        StartModelCallDispatch,
+        ModelCallIdentityConflict,
+    )
+    from kokoro_agent.protocol.model_usage_v2_generated import (
+        UnknownAttribution,
+        UnresolvedUsage,
+    )
+
+    p = prepared.prepared
+    grant = await authorizer(prepared, Budget(), Proofs()).authorize(p)
+    await prepared.repo.start_dispatch(
+        StartModelCallDispatch(
+            tenant_id=p.tenant_id,
+            run_id=p.run_id,
+            attempt_id=p.attempt_id,
+            lease=p.lease,
+            attempt_binding_digest=p.attempt_binding_digest,
+            planned_digest=p.planned_digest,
+            authorization_digest=grant.authorization_digest,
+            request_ref=grant.request_ref,
+            admission_ref=grant.admission_ref,
+        )
+    )
+    command = SealModelCallObservation.model_validate(
+        {
+            "tenant_id": p.tenant_id,
+            "run_id": p.run_id,
+            "attempt_id": p.attempt_id,
+            "lease": p.lease,
+            "attempt_binding_digest": p.attempt_binding_digest,
+            "planned_digest": p.planned_digest,
+            "authorization_digest": grant.authorization_digest,
+            "outcome": "completed",
+            "actual": UnknownAttribution(state="unknown", reason="unverified_binding"),
+            "usage": UnresolvedUsage(
+                state="unresolved", reason="missing_usage", raw_usage_digest=None
+            ),
+            "provider_response_id": "gen-original-receipt",
+        }
+    )
+    table = qualified(prepared.schema, "kokoro_agent_model_call_attempt")
+    evidence = qualified(prepared.schema, "kokoro_agent_model_usage_evidence")
+    # A locator cannot exist before the physical observation has been sealed.
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        with pytest.raises(CheckViolation):
+            async with c.transaction():
+                await execute_sql(
+                    cur,
+                    f"UPDATE {table} SET provider_response_id=%s WHERE attempt_id=%s",
+                    ("gen-too-early", p.attempt_id),
+                )
+    if reject_receipt_write:
+        async with connect_pg(prepared.url) as c, c.cursor() as cur:
+            await execute_sql(
+                cur,
+                f"ALTER TABLE {table} ADD CONSTRAINT qa_receipt_write_failure CHECK (provider_response_id IS NULL)",
+            )
+        before = await prepared.row()
+        with pytest.raises(CheckViolation):
+            await prepared.repo.seal_observation(command)
+        assert await prepared.row() == before
+        async with connect_pg(prepared.url) as c, c.cursor() as cur:
+            await execute_sql(cur, f"SELECT count(*) AS count FROM {evidence}")
+            assert await fetch_one(cur) == {"count": 0}
+        return
+    receipt = await prepared.repo.seal_observation(command)
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT provider_response_id FROM {table} WHERE attempt_id=%s",
+            (p.attempt_id,),
+        )
+        assert await fetch_one(cur) == {"provider_response_id": "gen-original-receipt"}
+        for invalid in ("", "x" * 257, "bad\nname", "a b", "编号"):
+            with pytest.raises(CheckViolation):
+                async with c.transaction():
+                    await execute_sql(
+                        cur,
+                        f"UPDATE {table} SET provider_response_id=%s WHERE attempt_id=%s",
+                        (invalid, p.attempt_id),
+                    )
+        async with c.transaction(force_rollback=True):
+            await execute_sql(
+                cur,
+                f"UPDATE {table} SET provider_response_id=%s WHERE attempt_id=%s",
+                ("x" * 256, p.attempt_id),
+            )
+    # A new repository instance reads the original receipt, including after commit ACK loss.
+    reopened = PostgresModelCallRepository(prepared.url, prepared.schema)
+    before = await prepared.row()
+    replay = await reopened.seal_observation(command)
+    assert replay.replayed and replay.event_id == receipt.event_id
+    assert await prepared.row() == before
+    for replacement in (None, "gen-different"):
+        changed = command.model_copy(update={"provider_response_id": replacement})
+        with pytest.raises(ModelCallIdentityConflict):
+            await reopened.seal_observation(changed)
+        assert await prepared.row() == before

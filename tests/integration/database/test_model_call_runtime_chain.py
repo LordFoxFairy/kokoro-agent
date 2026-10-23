@@ -2054,6 +2054,25 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
             )
             assert final is not None
             original = parse_evidence(final.evidence_bytes)
+            async with (
+                connect_pg(run_chat_database_url) as connection,
+                connection.cursor() as cursor,
+            ):
+                await execute_sql(
+                    cursor,
+                    f"SELECT provider_response_id FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s",
+                    (command.attempt_id,),
+                )
+                assert await fetch_one(cursor) == {
+                    "provider_response_id": None
+                    if mode == "cancelled"
+                    or (wire == "sse" and mode == "missing_usage")
+                    else "chatcmpl-native-tool"
+                    if wire == "sse" and mode == "tool_call" and not settlements
+                    else "chatcmpl-r197"
+                    if wire == "sse"
+                    else "chatcmpl-native-financial"
+                }
             assert original.execution.outcome == (
                 "cancelled" if mode == "cancelled" else "completed"
             )
@@ -2190,7 +2209,9 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
                 b"data: "
                 + json.dumps(frame).encode()
                 + b"\n\n"
-                + b"\n\n".join(body.split(b"\n\n")[1:])
+                + b"\n\n".join(body.split(b"\n\n")[1:]).replace(
+                    b"chatcmpl-r197", b"chatcmpl-native-tool"
+                )
             )
     provider_release = asyncio.Event()
     async with (

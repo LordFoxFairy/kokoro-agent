@@ -1,3 +1,11 @@
+## AGENT-1：供应商响应编号随首次用量封口保存（2026-10-23，本地已验）
+
+沿 Root 正式产品主链，修复原观察器丢弃 response.id、金融异常先于 checkpoint 导致编号不可恢复的问题。新增有界 ASCII locator；流式全帧出现的编号必须一致，非法/冲突/截断/压缩完整性未验证均不采信。原 attempt 增加 nullable provider_response_id，与首次 usage seal 同事务保存；精确重放核同值，不替换或补填旧缺失事实。公开 usage2/HTTP/BFF/Billing 契约、原 usage digest 和定价不变，没有新服务或用户 token。
+
+单元先复现3 FAIL，修复后观察器/producer36 PASS（含最后追加gzip尾截断2项）；默认套件2596 PASS/855资源marker未选，随后只增上述2例和源码说明注释。真实 PostgreSQL/SDK/HTTP 四范围171 PASS/0 SKIP，覆盖SQL边界、失败事务回滚、持久重放、pending/取消时locator；Financial与Provider为具名本地peer，不冒真实结算。完整format/lint/pyright/contract/lock/frozen sync/build通过，208份运行源码及schema与wheel逐字一致，独审无确定新增缺陷。首次PG正则重复次数256超出PostgreSQL限制，改为字符范围加octet_length；首次native fixture同一response首尾ID不同被正确拒绝，统一该fixture并完整重跑171项，冲突负控保留。打包核验脚本首次误用schema资源路径，已按实际正式位置修正；失败证据均留本地ignored model-response-receipt-20261023。测试自有库均已删除，数据库库存94保持。
+
+本片未激活正常schema/进程、未发模型/工具请求或改积分。正常旧attempt无generation编号，10积分仍pending；当前网关不是OpenRouter官方origin，官方generation接口语义不能未经验证直接套用。本轮仅向已配置网关GET /v1/generation（无id）得到404非JSON，未证实它提供官方补查能力，密钥未发往别处。只读复核正常余额仍990可用/10冻结、原revision1，正常schema未加入新列。缺usage SSE沿原missing_final拒绝路径，不能宣称该类响应的补查已支持。下一步在现Agent模型模块核网关查询能力、绑定同一物理调用补证，并接现终态安全补证与既有Billing settle；不猜cache=0，不改冻结费率，不重派原请求。未PR/merge，不勾整链完成。
+
 ## 2026-10-23 AUTH-1：Agent → Platform 直接凭据消费者（本地已验，正常配对待验）
 
 固定 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的 agent-execution-service-auth-v1 原件及摘要，

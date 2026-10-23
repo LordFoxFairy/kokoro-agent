@@ -314,6 +314,7 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   latest_event_id         UUID,
   latest_evidence_digest  TEXT,
   financial_admission_ref UUID,
+  provider_response_id    TEXT,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   CONSTRAINT uq_model_attempt_call_ordinal UNIQUE (run_id, call_id, attempt_ordinal),
@@ -350,6 +351,12 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   ),
   CONSTRAINT ck_model_attempt_financial CHECK (
     financial_admission_ref IS NULL OR authorization_state IN ('requested_unknown','granted')
+  ),
+  CONSTRAINT ck_model_attempt_response CHECK (
+    provider_response_id IS NULL OR (
+      provider_response_id ~ '^[!-~]+$' AND octet_length(provider_response_id) BETWEEN 1 AND 256
+      AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL
+    )
   ),
   CONSTRAINT ck_model_attempt_times CHECK (
     (dispatch_started_at IS NULL OR dispatch_started_at >= prepared_at)

@@ -1,3 +1,11 @@
+## AGENT-1：保留同一次供应商响应编号（2026-10-23）
+
+当前正常 attempt 的缓存用量缺失，且观察器丢弃 response.id，结算异常发生在模型 checkpoint 之前，后续没有可靠查询编号。沿既有 Agent owner 修复：原物理响应观察器读取有限 ASCII id；流式各帧有 id 时必须一致，冲突或非法值不产生可查询编号。完整且解码验证通过的观察才传给现 seal_observation；编号与原 usage evidence 在同一事务写入 attempt，先封口再写编号，任一步失败全部回滚。精确重放必须匹配原编号，不因 SDK 合成 ID 或别的请求填充。
+
+写区限观察器、既有 seal 命令/执行/仓储、canonical schema/校验、相邻回归及三份设计文档。没有新服务、公开 API、依赖、执行权或 Billing 写入口；原 usage digest/费用/终态/幂等保持。此字段只是后续供应商核查的 locator，不证明用量或重新派发权限。旧原始缺失事实保持 NULL；不补造编号、不清数据。正常 schema/服务在完整数据验收与保留数据切换前保持原样。
+
+验收先复现非流式/流式编号丢失，再验证冲突、非法/缺失、截断、压缩；真实 PG 验证 seal 原子保存、失败回滚、精确重放无写与改变编号冲突，以及 fresh schema 检查。后继补查仍须核网关能力、同 attempt 绑定及 terminal 补证权限，不能把本片称为真实扣分已完成。
+
 ## 2026-10-23 AUTH-1：Agent → Platform 直接服务凭据（实施中）
 
 依据 Root ADR-035 与 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的正式 agent-execution-service-auth-v1。
